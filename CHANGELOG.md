@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.804.0] - 2026-11-12
+
+### Added
+- **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
+  counting as stock the shop has.** Nikolas, 2026-11-12: "If we are doing an item in a PO and
+  receiving it have it default warehouse to Stores, but then change Stores to Project Shelf. So
+  everything is received for Project Shelf by default but Parker can then change what location
+  the item is going to if he'd like upon receiving it. So everything but overhead items should
+  default to Project Shelf. … when it hits the project shelf it should be removed from QTY in
+  inventory. … I want to keep a historical record of each projects items and what was ordered
+  for them." Every judgement is in `inventory_enhancements/project_shelf_rules.py` (no Frappe);
+  `project_shelf.py` reads the database. The whole design is in
+  `inventory_enhancements/README.md`, *The Project Shelf*.
+  - **The location.** `patches/rename_stores_to_project_shelf` renames the warehouse `Stores` to
+    `Project Shelf` with Frappe's own `rename_doc`, so every Link follows it: Item Defaults,
+    Putaway Rules, on-hand and Stock Ledger rows, purchase order, receipt and material request
+    lines, and the Company's default warehouse. The shelf is named by one new setting,
+    `Inventory Scanner Settings.project_shelf_warehouse`, never by its name; blank switches the
+    feature off. A second new setting, `overhead_receiving_warehouse`, is where an Overhead
+    purchase lands when its item has no bin yet (the patch fills it with `Inventory Room`).
+  - **Two things about that rename that are not obvious.** ERPNext 16.54.0's Warehouse is not
+    renameable from the Desk (`allow_rename` is not set), so the patch passes `force`; and the
+    same version has **no rename hook on Warehouse** and no autoname field, so `rename_doc`
+    changes the docname and leaves `warehouse_name` saying "Stores". The patch sets it. Both
+    were read from the v16.54.0 tag, not from the `develop` checkout.
+  - **Where it sits.** It stays where `Stores` was, directly under the company's root group,
+    beside `Inventory - SF` and `Job Sites - SF`. Not under `Job Sites` (that group refuses bins
+    and everything in it reads as a job site) and not under `Inventory` (ERPNext's own reports and
+    23 of production's reorder rules read that group as the shop's stock, and no code of ours
+    runs inside them).
+  - **Receiving defaults.** A purchase order line for a project that is not an Overhead project
+    defaults to the shelf. A line for an Overhead project defaults to the item's own bin (the bin
+    it is assigned to, else its Item Default, else the warehouse a reorder rule asks for; never
+    the shelf, a job site or the Boneyard), and to the Overhead receiving warehouse when the item
+    has no bin yet. It is applied on the Purchase Order form as a line is filled in (once per line
+    and per item-and-project pair, never to a line that was already there or that came from a
+    Material Request), on a save with no form (`procurement_project.default_line_warehouses`,
+    blank warehouses only, and in `cascade_project_to_items` for a line whose project it fills),
+    in the order's Receive Items dialog (a new *Put in* column per line, editable), and in the
+    document-intake receipt drafts. A scan at a bin in Stock Scan still means "put it here" and
+    still wins; each open order line there now says which job it is for.
+  - **The order lines that were already open** all named `Stores`, so after the rename all of them
+    name the shelf, Overhead ones included (10 submitted lines on production on 2026-11-12). They
+    are not rewritten. The Receive Items dialog and the intake drafts offer an Overhead line that
+    names the shelf the item's own bin instead, and say so.
+  - **Shelf stock is not shop stock.** `project_shelf.not_shop_warehouses()` is every job site
+    plus the shelf, the one set every total reads. Stock Scan's search total leaves the shelf out
+    and shows it beside the total ("N for jobs"); the item card names it on its own line with its
+    jobs, never under "Also at"; and the Reorder Board leaves shelf stock and orders on their way
+    to it out of a rule's projected quantity at every group above the shelf. The 29 reorder rules
+    that roll up at `All Warehouses - SF` are not rewritten: it is the board's reading that leaves
+    the shelf out, as it already leaves job sites out. The shelf shows as its own place, not as a
+    job site, and stays a location that can be received to, counted and moved from.
+  - **Every unit on the shelf belongs to a job, and the Stock Ledger says which.** A receipt
+    carries its order line's project (ERPNext does that; checked at v16.54.0 and on production,
+    where 26 of the 28 ledger rows at `Stores` carry one). A take at the shelf must name a job
+    whatever *Require a Job for Every Take* says. Stock added there without an order must name
+    one. A move from the shelf to a job site carries that site's job; a move from the shelf to a
+    bin or the Boneyard carries the job it was bought for (the one named, or the only job that
+    holds the item; refused when several or none do and none is named); a move from a bin onto the
+    shelf carries the job it is set aside for. A store run is refused at the shelf, because its
+    receipt carries no project on purpose. `move_here`, `bin_assignments.move_to` and
+    `send_to_boneyard` take an optional `project` for this.
+  - **`project_shelf.shelf_stock(project=None, item_code=None)`** answers both "what is on the
+    shelf for project X" and "which projects have stock on the shelf", from the ledger. The new
+    reports and the Procurement Tracker call it, and a test pins its signature and return keys.
+    **Its numbers are derived from tags, and it says where they fall short:** a movement with no
+    project (a count, a Desk transfer) is listed in `untagged_movements`, the gap between what is
+    on hand and what the tags add up to is in `untagged` per item, a job that has had more taken
+    than it received keeps a negative quantity, and `exact` is true only when none of that is
+    there. Production already has two such rows: 13 units received for a job in September and
+    transferred out with no project.
+  - **The shelf is never an item's bin.** The 774 Item Defaults and 54 enabled Putaway Rules that
+    named `Stores` name the shelf after the rename. They are not deleted and not rewritten. The
+    shelf's list (`api.stock_scan._items_at`) shows what is there or on its way and nothing else,
+    `procurement_project.item_own_bin` skips the shelf, and *Put on this bin* and *Make … this
+    item's bin* are refused there. A leftover rule or default goes away when its stock is moved
+    off the shelf with *Make … this item's bin* ticked.
+  - **A QR label printed for `Stores` still opens the shelf.**
+  - **The patch cannot raise and says what it did.** Four steps (the rename, the search index,
+    the two settings), each in its own savepoint, each answering done, already, skipped or failed,
+    followed by counts of what now points at the shelf. A clean run writes no Error Log row; a
+    run with a skipped or failed step writes one, "Project Shelf patch
+    (rename_stores_to_project_shelf): finish these steps by hand". It skips a site without the
+    shop group `Inventory - SF`, merges nothing where both names exist, moves no stock, and never
+    writes over a stored setting. On a never-saved Single it writes every declared default before
+    the field, so the others keep reading as they did.
+  - **Not built:** the Bin Manager's moves do not ask for the job (a move off the shelf from
+    there uses the only job that holds the item); moving a part on the shelf from one job to
+    another without it leaving the shelf; and non-stock items, which never reach stock.
+
+### Changed
+- `tests/test_job_sites`, `tests/test_bin_assignments`, `tests/test_stock_scan_surface` and
+  `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
+  shared set, and the one more branch `receive_items` writes a warehouse in.
+
 ## [1.802.2] - 2026-11-12
 
 ### Changed

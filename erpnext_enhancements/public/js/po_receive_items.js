@@ -26,11 +26,18 @@
  *
  * "Arriving now" defaults to what is still pending, so the common case of "the whole rest
  * turned up" is one click, and a partial delivery is typing the smaller numbers.
+ *
+ * "Put in" (v1.804.0, Nik 2026-11-12) is where each line goes. It opens on the line's default
+ * place -- the Project Shelf for a job's line, the item's own bin for an Overhead one
+ * (`procurement_project.receiving_defaults`) -- and the person receiving can pick any other
+ * location per line. The dialog still opens if that lookup fails: each line then shows the
+ * order line's own warehouse, which is what a receipt used before.
  */
 frappe.provide("erpnext_enhancements.procurement");
 
 (function () {
 	const METHOD = "erpnext_enhancements.api.procurement.receive_items";
+	const DEFAULTS = "erpnext_enhancements.procurement_project.receiving_defaults";
 
 	function pending(row) {
 		// Same arithmetic as erpnext's make_purchase_receipt pre-fill, so the dialog and the
@@ -63,7 +70,31 @@ frappe.provide("erpnext_enhancements.procurement");
 		return frappe.utils.get_form_link("Purchase Receipt", name, true);
 	}
 
+	/** Where each line goes by default; `{}` when the lookup fails (the order's own places are used). */
+	function receiving_defaults(frm) {
+		return frappe
+			.call({ method: DEFAULTS, args: { purchase_order: frm.doc.name } })
+			.then((r) => (r && r.message) || {})
+			.catch(() => ({}));
+	}
+
+	/** One sentence under the table when a line is not going where the order said. */
+	function moved_note(defaults, rows) {
+		const lines = (defaults && defaults.lines) || {};
+		const moved = rows.filter((row) => (lines[row.purchase_order_item] || {}).changed);
+		if (!moved.length || !defaults.shelf_name) return "";
+		return __(
+			"{0} of these lines were ordered for {1} on an Overhead project. They are set to go to the item's own bin instead; change any of them here.",
+			[moved.length, frappe.utils.escape_html(defaults.shelf_name)]
+		);
+	}
+
 	erpnext_enhancements.procurement.receive_items = function (frm) {
+		receiving_defaults(frm).then((defaults) => open_dialog(frm, defaults));
+	};
+
+	function open_dialog(frm, defaults) {
+		const places = (defaults && defaults.lines) || {};
 		const rows = receivable_rows(frm).map((row) => ({
 			purchase_order_item: row.name,
 			item_code: row.item_code,
@@ -71,7 +102,9 @@ frappe.provide("erpnext_enhancements.procurement");
 			ordered: flt(row.qty),
 			received: flt(row.received_qty),
 			arriving: pending(row),
+			warehouse: (places[row.name] || {}).warehouse || row.warehouse || "",
 		}));
+		const note = moved_note(defaults, rows);
 
 		const dialog = new frappe.ui.Dialog({
 			title: __("Receive Items"),
@@ -95,7 +128,7 @@ frappe.provide("erpnext_enhancements.procurement");
 							label: __("Item"),
 							in_list_view: 1,
 							read_only: 1,
-							columns: 3,
+							columns: 2,
 						},
 						{
 							fieldtype: "Data",
@@ -131,8 +164,20 @@ frappe.provide("erpnext_enhancements.procurement");
 							columns: 2,
 							precision: precision("qty"),
 						},
+						{
+							fieldtype: "Link",
+							fieldname: "warehouse",
+							options: "Warehouse",
+							label: __("Put in"),
+							in_list_view: 1,
+							columns: 3,
+							get_query: () => ({
+								filters: { company: frm.doc.company, is_group: 0, disabled: 0 },
+							}),
+						},
 					],
 				},
+				{ fieldtype: "HTML", fieldname: "moved_note", options: note ? `<p class="text-muted small">${note}</p>` : "" },
 				{ fieldtype: "Section Break" },
 				{
 					fieldtype: "Date",
@@ -147,6 +192,7 @@ frappe.provide("erpnext_enhancements.procurement");
 				const lines = (values.lines || []).map((line) => ({
 					purchase_order_item: line.purchase_order_item,
 					qty: flt(line.arriving),
+					warehouse: line.warehouse || "",
 				}));
 				if (lines.some((line) => line.qty < 0)) {
 					frappe.msgprint(__("A received quantity cannot be negative."));
@@ -181,7 +227,7 @@ frappe.provide("erpnext_enhancements.procurement");
 			},
 		});
 		dialog.show();
-	};
+	}
 
 	frappe.ui.form.on("Purchase Order", {
 		refresh(frm) {

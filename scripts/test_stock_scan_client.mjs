@@ -1835,6 +1835,78 @@ async function appBinActions() {
 		const alsoLines = [...t.app.main.walk()].filter((node) => node.classList && node.classList.contains("ee-ss-also")).map((node) => node.textContent);
 		check("on a shelf: stock out on a job is named apart, never under Also at", alsoLines, ["Also at: Stores (3)", "On job sites, not in the shop: Job Site PRJ-90001 Water Wall (4)"]);
 
+		// 5c. The Project Shelf (v1.804.0): parts bought for a job wait there.
+		const SHELF = { warehouse: "Project Shelf - SF", warehouse_name: "Project Shelf" };
+		const WALL = { project: "PRJ-90001", project_name: "Water Wall", qty: 3 };
+		const LOBBY = { project: "PRJ-90002", project_name: "Lobby", qty: 2 };
+		const SHELF_ON = { settings: { boneyard_warehouse: "Boneyard - SF", job_sites: 1, project_shelf_warehouse: SHELF.warehouse, project_shelf_name: SHELF.warehouse_name } };
+		const atShelf = (jobs) => ({ ...SHELF, assigned: false, is_default: true, project_shelf: true, shelf_jobs: jobs });
+		// An item on a bin, with some of it on the shelf: named apart, with its jobs.
+		t = await open(SHELF_ON, { elsewhere: [{ ...SHELF, on_hand: 5, available: 5, project_shelf: true, jobs: [WALL, LOBBY] }] });
+		const shelfLines = [...t.app.main.walk()].filter((node) => node.classList && node.classList.contains("ee-ss-also")).map((node) => node.textContent);
+		check("on a bin: stock on the Project Shelf is named apart with its jobs, never under Also at", shelfLines, ["On Project Shelf, bought for a job: 5 (Water Wall (3), Lobby (2))"]);
+
+		// Opened AT the shelf, held for one job.
+		t = await open(SHELF_ON, atShelf([WALL]));
+		truthy("at the shelf: the item says what the shelf is and whose parts these are", /Parts here were bought for a job/.test(t.app.main.textContent) && /Held here for: Water Wall \(3\)/.test(t.app.main.textContent), t.app.main.textContent);
+		check("at the shelf: Remove from this bin is not offered, though it is the item's leftover default", !!t.inMain("Remove from this bin"), false);
+		let movesBefore = sent(".move_to").length;
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		truthy("shelf to a bin: asks which job it was bought for, and starts on the only one", /Bought for which job\?/.test(t.sheetText()) && /Water Wall3 here for this job · PRJ-90001✓/.test(t.sheetText()), t.sheetText());
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		let moved = sent(".move_to").slice(-1)[0] || {};
+		check("shelf to a bin: the move carries that job", [sent(".move_to").length - movesBefore, moved.from_warehouse, moved.to_warehouse, moved.project], [1, SHELF.warehouse, "Bin B2 - SF", "PRJ-90001"]);
+
+		// Held for two jobs: nothing is guessed.
+		t = await open(SHELF_ON, atShelf([WALL, LOBBY]));
+		movesBefore = sent(".move_to").length;
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		truthy("shelf to a bin, two jobs: refuses to guess, posts nothing, the sheet stays", /Pick the job these were bought for\./.test(t.sheetText()) && sent(".move_to").length === movesBefore && U.sheetDepth() === 1, t.sheetText());
+		t.sheetButtonStarting("Lobby").click();
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		moved = sent(".move_to").slice(-1)[0] || {};
+		check("shelf to a bin, two jobs: the picked job goes with the move", [sent(".move_to").length - movesBefore, moved.project], [1, "PRJ-90002"]);
+
+		// Shelf to a job site: the site's job is the answer, so nothing is asked.
+		t = await open(SHELF_ON, atShelf([WALL, LOBBY]));
+		t.inMain("Move to…").click();
+		t.sheetButton("A job site").click();
+		await settle();
+		t.sheetButtonStarting("Water Wall").click();
+		await settle();
+		truthy("shelf to a job site: no job question", !/Bought for which job\?/.test(t.sheetText()) && !!t.sheetButton(`Move 5 to ${SITE.warehouse_name}`), t.sheetText());
+		U.closeAllSheets();
+		await settle();
+
+		// A bin to the shelf: which job it is set aside for; never the item's bin.
+		t = await open(SHELF_ON, { elsewhere: [{ ...SHELF, on_hand: 0, available: 0, project_shelf: true, jobs: [] }] });
+		movesBefore = sent(".move_to").length;
+		t.inMain("Move to…").click();
+		t.sheetButtonStarting("Project Shelf").click();
+		truthy("bin to the shelf: asks which job it is for, never offers it as the item's bin", /Set aside for which job\?/.test(t.sheetText()) && t.homeRow().hidden && /waits on Project Shelf for its job/.test(t.sheetText()), t.sheetText());
+		t.sheetButton("Move 5 to Project Shelf").click();
+		await settle();
+		truthy("bin to the shelf: with no job picked nothing is posted", /Pick the job these are being set aside for\./.test(t.sheetText()) && sent(".move_to").length === movesBefore, t.sheetText());
+		U.closeAllSheets();
+		await settle();
+
+		// A take at the shelf needs a job even though the setting does not ask for one.
+		t = await open(SHELF_ON, atShelf([WALL]));
+		const takesBefore = sent(".take").length;
+		t.app.job = null;
+		t.app.change = -1;
+		t.app.save();
+		await settle();
+		truthy("take at the shelf: asks for the job first and posts nothing", /Which job are these parts for\?/.test(t.sheetText()) && sent(".take").length === takesBefore, t.sheetText());
+		U.closeAllSheets();
+		await settle();
+
 		// 6. Remove with nothing here: one tap posts unassign; the item leaves the list.
 		t = await open({}, { on_hand: 0, available: 0 });
 		const pushesBefore = t.pushes();
@@ -2332,14 +2404,41 @@ async function appBinActions() {
 		const stores = { warehouse: "Stores - SF", on_hand: 3 };
 		const site = { warehouse: "Job Site PRJ-90001 - SF", on_hand: 4, job_site: true };
 		const bin = { warehouse: "Bin B2 - SF", on_hand: 1, job_site: false };
-		check("splitPlaces: a job site is never one of the shop's places, order kept", L.splitPlaces([site, stores, bin]), { shop: [stores, bin], sites: [site] });
+		check("splitPlaces: a job site is never one of the shop's places, order kept", L.splitPlaces([site, stores, bin]), { shop: [stores, bin], shelf: [], sites: [site] });
 		check("splitPlaces: nothing, null and a hole are an empty answer, not a throw", [L.splitPlaces(null), L.splitPlaces(undefined), L.splitPlaces([null])], [
-			{ shop: [], sites: [] }, { shop: [], sites: [] }, { shop: [], sites: [] },
+			{ shop: [], shelf: [], sites: [] }, { shop: [], shelf: [], sites: [] }, { shop: [], shelf: [], sites: [] },
 		]);
 		const job = { project: "PRJ-90100" };
 		check("takeProject: at a job site the take is that site's job, whatever the chip says", L.takeProject({ job_site: { project: "PRJ-90001" } }, job), "PRJ-90001");
 		check("takeProject: ... and with no job picked at all", L.takeProject({ job_site: { project: "PRJ-90001" } }, null), "PRJ-90001");
 		check("takeProject: at a shelf it is the picked job, or none", [L.takeProject({ job_site: null }, job), L.takeProject({}, null), L.takeProject(null, null)], ["PRJ-90100", undefined, undefined]);
+	}
+
+	// ------------------------------------------------------------------ the Project Shelf (v1.804.0)
+	{
+		const bin = { warehouse: "Bin B2 - SF", on_hand: 1 };
+		const shelf = { warehouse: "Project Shelf - SF", on_hand: 5, project_shelf: true };
+		const site = { warehouse: "Job Site PRJ-90001 - SF", on_hand: 4, job_site: true };
+		check("splitPlaces: the Project Shelf is its own place, neither the shop's nor a job site", L.splitPlaces([site, shelf, bin]), { shop: [bin], shelf: [shelf], sites: [site] });
+		check("takeNeedsJob: on the shelf a take always needs a job, whatever the setting", [L.takeNeedsJob({ project_shelf: true }, 0, undefined), L.takeNeedsJob({ project_shelf: true }, 0, "PRJ-90001")], [true, false]);
+		check("takeNeedsJob: elsewhere it is the setting's call", [L.takeNeedsJob({}, 0, undefined), L.takeNeedsJob({}, 1, undefined), L.takeNeedsJob({}, "1", "PRJ-90001"), L.takeNeedsJob(null, 0, undefined)], [false, true, false, false]);
+		check(
+			"moveJobMode: off the shelf to a bin asks what it was bought for; onto it asks what it is for; a job site answers for itself",
+			[
+				L.moveJobMode({ project_shelf: true }, { job_site: false }),
+				L.moveJobMode({ job_site: false }, { project_shelf: true }),
+				L.moveJobMode({ project_shelf: true }, { job_site: true }),
+				L.moveJobMode({ job_site: { project: "PRJ-90001" } }, { project_shelf: true }),
+				L.moveJobMode({}, {}),
+				L.moveJobMode(null, { project_shelf: true }),
+			],
+			["off", "onto", "", "", "", ""]
+		);
+		const two = [{ project: "PRJ-90001", project_name: "Water Wall", qty: 3 }, { project: "PRJ-90002", project_name: "Lobby", qty: 2 }];
+		check("soleShelfJob: the only job that holds it, never a guess between two", [L.soleShelfJob([two[0]]), L.soleShelfJob(two), L.soleShelfJob([]), L.soleShelfJob(null)], [{ project: "PRJ-90001", project_name: "Water Wall" }, null, null, null]);
+		check("soleShelfJob: a job with nothing left holds nothing", L.soleShelfJob([two[0], { project: "PRJ-90002", qty: 0 }, { project: "PRJ-90003", qty: -2 }]), { project: "PRJ-90001", project_name: "Water Wall" });
+		check("shelfJobsText: names and quantities, most first as the server sent them", L.shelfJobsText(two), "Water Wall (3), Lobby (2)");
+		check("shelfJobsText: past the limit it counts the rest; nothing is an empty string", [L.shelfJobsText([...two, { project: "PRJ-90003", qty: 1 }], 2), L.shelfJobsText([]), L.shelfJobsText(undefined)], ["Water Wall (3), Lobby (2), and 1 more", "", ""]);
 	}
 	const moveTo = { action: "move_to", item_code: "PDT-0008", from_warehouse: "Bin A1 - SF", to_warehouse: "Bin B2 - SF", qty: 3, make_home: 1 };
 	truthy("saveKey: Move to… another place is a different save", L.saveKey(moveTo) !== L.saveKey({ ...moveTo, to_warehouse: "Bin C3 - SF" }));

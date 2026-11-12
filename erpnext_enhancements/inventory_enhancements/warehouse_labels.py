@@ -6,7 +6,8 @@
 A label goes on every warehouse that can hold stock: a **leaf** (``is_group = 0``), not
 disabled, and not a ``Transit`` warehouse — goods in transit sit on a truck, not a shelf.
 On production that is the ``Bin A1-3-1 - SF`` family under Inventory → Row → Bay → Shelf,
-plus ``Stores - SF``, ``Inventory Room - SF`` and the other standalone rooms.
+plus the Project Shelf (``Stores - SF`` until v1.804.0), ``Inventory Room - SF`` and the other
+standalone rooms.
 
 Each label carries the warehouse's own name, the breadcrumb of its group parents, and a
 QR code of ``<site>/stock-scan?w=<name>`` (:func:`stock_scan_rules.scan_url`), drawn by

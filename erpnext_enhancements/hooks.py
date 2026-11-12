@@ -1078,6 +1078,13 @@ doc_events = {
 		# the REST API, data import and Material-Request-mapped documents.
 		"before_validate": [
 			"erpnext_enhancements.procurement_project.cascade_project_to_items",
+			# The Project Shelf (v1.804.0, Nik 2026-11-12): a draft line with a project and no
+			# location gets the project's default place -- the Project Shelf for a job, the
+			# item's own bin for an Overhead project. After the cascade (it needs the project)
+			# and before ERPNext's set_missing_values, which would fill the blank from the Item
+			# Default. Fills blanks only, never raises; the Desk form does the same as the line
+			# is typed (public/js/purchase_order_project.js).
+			"erpnext_enhancements.procurement_project.default_line_warehouses",
 			# ER-2026-362239: push the header's expected delivery date into item rows
 			# that have none. NOT the Required By cascade -- ERPNext already does that
 			# one in buying_controller.validate_schedule_date(), and does more than

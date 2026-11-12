@@ -785,11 +785,14 @@ class TestAvailability(_Base):
 
 	def test_the_reorder_board_reads_sites_out(self):
 		"""On the source: the board's own suite runs on another stub. The arithmetic is
-		``TestRules``'; this pins that the board calls it, on every warehouse that is a site."""
+		``TestRules``'; this pins that the board calls it, on every warehouse that is a site.
+
+		Since v1.804.0 the set is ``project_shelf.not_shop_warehouses()``: every job site and
+		the Project Shelf (``tests/test_project_shelf.py`` pins that it holds the sites)."""
 		tree = ast.parse(REORDER.read_text(encoding="utf-8"))
 		build = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "build_board")
 		source = ast.unparse(build)
-		self.assertIn("sites = job_sites.site_warehouses()", source)
+		self.assertIn("sites = project_shelf.not_shop_warehouses()", source)
 		self.assertIn("projected_map = site_rules.without_sites(projected_map, sites, ancestors)", source)
 		self.assertIn("read_tracking(rule_rows, ancestors, today, sites)", source)
 		tracking = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "read_tracking")

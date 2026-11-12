@@ -23,6 +23,8 @@
   "boneyard_warehouse",
   "job_sites_warehouse",
   "job_site_project_types",
+  "project_shelf_warehouse",
+  "overhead_receiving_warehouse",
   "item_naming_section",
   "naming_digest_recipients",
   "reorder_board_section",
@@ -145,6 +147,20 @@
    "label": "Job Site Project Types"
   },
   {
+   "description": "The one warehouse where parts bought for a job wait until the job uses them. A purchase order line for a project that is not an Overhead project is received here by default, the person receiving can still pick another place, and stock here is not counted as stock the shop has. Nothing is kept here as its bin. Blank switches the Project Shelf off.",
+   "fieldname": "project_shelf_warehouse",
+   "fieldtype": "Link",
+   "label": "Project Shelf Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "description": "Where a purchase for an Overhead project is received when its item has no bin yet. An item that has a bin goes to its bin. Blank leaves such a line where the order put it.",
+   "fieldname": "overhead_receiving_warehouse",
+   "fieldtype": "Link",
+   "label": "Overhead Receiving Warehouse",
+   "options": "Warehouse"
+  },
+  {
    "description": "New Items are refused only when their code duplicates an existing one or their name is just the code. For everything else the naming rules find on a new Item, a weekly list goes to the addresses below.",
    "fieldname": "item_naming_section",
    "fieldtype": "Section Break",
@@ -173,7 +189,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-11 18:00:00.000000",
+ "modified": "2026-11-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",

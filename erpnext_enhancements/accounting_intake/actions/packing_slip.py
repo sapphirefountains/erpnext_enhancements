@@ -20,6 +20,11 @@ def post_packing_slip(doc):
 	from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
 	pr = make_purchase_receipt(po)
+	# Each line goes where a receipt of it goes by default (v1.804.0): the order line's place,
+	# except an Overhead line that names the Project Shelf, which goes to the item's own bin.
+	from erpnext_enhancements.procurement_project import apply_receiving_defaults
+
+	apply_receiving_defaults(pr)
 	pr.remarks = f"Created from Document Intake {doc.name}"
 	pr.flags.ignore_permissions = True
 	pr.insert(ignore_permissions=True)

@@ -21,6 +21,15 @@ whatever each line already says. The client mirrors this in
 Desk, because the mandatory check runs in the browser before the request is ever
 sent. This server copy covers the paths no form script sees: the REST API, data
 import, and documents mapped in from a Material Request.
+
+**Where a line is received** (v1.804.0, the owner's decision of 2026-11-12) is decided
+from the same project. A line for a job defaults to the Project Shelf; a line for one of
+the overhead buckets defaults to the item's own bin, and to the shop's general receiving
+location when the item has no bin yet (:func:`default_line_warehouse`; the rule itself is
+``inventory_enhancements/project_shelf_rules.line_warehouse``, tested bench-free). It is a
+default, applied when a line first has both its item and its project, and never forced
+afterwards: the purchaser can pick another place on the order, and the person receiving
+can pick another place per line (:func:`receiving_defaults`).
 """
 
 import frappe
@@ -48,6 +57,304 @@ def cascade_project_to_items(doc, method=None):
 	for row in doc.get("items") or []:
 		if not (row.get("project") or "").strip():
 			row.project = project
+			# The line had no project until now, so nothing chose its location with one in
+			# mind: it gets the project's default place (v1.804.0), unless a person picked one.
+			_default_row_warehouse(doc, row, filled_by_cascade=True)
+
+
+def is_overhead(project):
+	"""Whether ``project`` is one of the standing overhead buckets (Project Type
+	:data:`OVERHEAD_PROJECT_TYPE`). A blank or unknown project is not."""
+	project = (project or "").strip()
+	if not project:
+		return False
+	return frappe.db.get_value("Project", project, "project_type") == OVERHEAD_PROJECT_TYPE
+
+
+def _log(title):
+	"""Record a failure without ever becoming one: these run inside a Purchase Order's save."""
+	try:
+		frappe.log_error(title=title)
+	except Exception:
+		pass
+
+
+def _scanner_settings():
+	from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
+		get_settings,
+	)
+
+	return get_settings()
+
+
+def _usable_warehouses(names, company=None):
+	"""The names among ``names`` that are enabled leaf warehouses (of ``company`` when given),
+	in the order given."""
+	names = [name for name in names if name]
+	if not names:
+		return []
+	filters = {"name": ["in", names], "is_group": 0, "disabled": 0}
+	if company:
+		filters["company"] = company
+	found = {row.name for row in frappe.get_all("Warehouse", filters=filters, fields=["name"])}
+	return [name for name in names if name in found]
+
+
+def item_own_bin(item_code, company=None):
+	"""The item's own bin, or ``None``: the bin it is assigned to (an enabled Putaway Rule;
+	with several, the one holding the most, then by name), else its Item Default warehouse,
+	else the warehouse a reorder rule asks for. The Project Shelf, a job site and the
+	boneyard are never an item's bin and are skipped wherever they appear
+	(``project_shelf_rules.own_bin``).
+	"""
+	from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+	item_code = (item_code or "").strip()
+	if not item_code:
+		return None
+	putaway = [
+		row[0]
+		for row in frappe.db.sql(
+			"""
+			select pr.warehouse
+			from `tabPutaway Rule` pr
+			left join `tabBin` b on b.item_code = pr.item_code and b.warehouse = pr.warehouse
+			where pr.item_code = %(item)s and pr.disable = 0
+			order by pr.priority asc, coalesce(b.actual_qty, 0) desc, pr.warehouse asc
+			""",
+			{"item": item_code},
+		)
+	]
+	default_filters = {"parent": item_code, "parenttype": "Item"}
+	if company:
+		default_filters["company"] = company
+	defaults = frappe.get_all(
+		"Item Default", filters=default_filters, fields=["default_warehouse"], order_by="idx asc"
+	)
+	reorder = frappe.get_all(
+		"Item Reorder",
+		filters={"parent": item_code, "parenttype": "Item"},
+		fields=["warehouse"],
+		order_by="idx asc",
+	)
+	not_bins = set(project_shelf.not_shop_warehouses())
+	boneyard = (_scanner_settings().get("boneyard_warehouse") or "").strip()
+	if boneyard:
+		not_bins.add(boneyard)
+	candidates = _usable_warehouses(
+		[*putaway, *(row.default_warehouse for row in defaults), *(row.warehouse for row in reorder)],
+		company,
+	)
+	return project_shelf_rules.own_bin(candidates, not_bins=not_bins)
+
+
+def default_line_warehouse(item_code, project, company=None):
+	"""Where a purchase line for ``item_code`` on ``project`` is received by default:
+	``{"warehouse": name or None, "reason": "shelf" | "own_bin" | "fallback" | "none"}``.
+
+	A project that is not an overhead bucket: the Project Shelf. An overhead bucket: the
+	item's own bin (:func:`item_own_bin`), else the shop's general receiving location
+	(Inventory Scanner Settings). No project, or no Project Shelf set up: nothing
+	(``None``, ``"none"``), and the line keeps what it has. **Never raises**: it runs inside
+	a Purchase Order's save, and a failure there is logged and answered with "nothing".
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+		project = (project or "").strip()
+		shelf = project_shelf.warehouse()
+		if not project or not shelf:
+			return {"warehouse": None, "reason": project_shelf_rules.REASON_NONE}
+		overhead = is_overhead(project)
+		own = item_own_bin(item_code, company) if overhead else None
+		fallback = project_shelf.fallback_warehouse() if overhead and not own else None
+		warehouse, reason = project_shelf_rules.line_warehouse(True, overhead, shelf, own, fallback)
+		return {"warehouse": warehouse, "reason": reason}
+	except Exception:
+		_log("Purchase line location: the default could not be worked out")
+		return {"warehouse": None, "reason": "none"}
+
+
+def _item_default_warehouse(item_code, company):
+	if not item_code:
+		return None
+	filters = {"parent": item_code, "parenttype": "Item"}
+	if company:
+		filters["company"] = company
+	return frappe.db.get_value("Item Default", filters, "default_warehouse", order_by="idx asc")
+
+
+def _default_row_warehouse(doc, row, filled_by_cascade=False):
+	"""Give one draft Purchase Order line its default location, when nobody chose one.
+
+	A line with no location always gets it. A line whose project the cascade has just
+	filled gets it too when its location is one nobody chose (the Project Shelf, or the
+	item's Item Default: what ERPNext or a mapper put there). A line that came from a
+	Material Request keeps the request's location: that place was asked for on purpose.
+	Never raises.
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+		if doc.get("docstatus") or not (row.get("item_code") or "").strip():
+			return
+		current = (row.get("warehouse") or "").strip()
+		if current and (not filled_by_cascade or (row.get("material_request_item") or "").strip()):
+			return
+		company = doc.get("company")
+		if current:
+			automatic = (project_shelf.warehouse(), _item_default_warehouse(row.get("item_code"), company))
+			if not project_shelf_rules.may_default(current, automatic):
+				return
+		answer = default_line_warehouse(row.get("item_code"), row.get("project"), company)
+		if answer.get("warehouse") and answer["warehouse"] != current:
+			row.warehouse = answer["warehouse"]
+	except Exception:
+		_log("Purchase line location: the default could not be applied")
+
+
+def default_line_warehouses(doc, method=None):
+	"""``before_validate`` hook, after :func:`cascade_project_to_items`: a draft line that
+	has a project and no location gets the project's default place.
+
+	The Desk does this itself as the line is filled in (``purchase_order_project.js``),
+	where the purchaser can see it and change it. This is the copy for the paths with no
+	form: the REST API, data import, a mapped document. It runs before ERPNext's own
+	``set_missing_values``, which would otherwise fill the blank from the Item Default or
+	the Company's default warehouse. A location that is already there is never changed here.
+	"""
+	if doc.get("docstatus"):
+		return
+	for row in doc.get("items") or []:
+		if not (row.get("warehouse") or "").strip():
+			_default_row_warehouse(doc, row)
+
+
+#: The most lines one :func:`line_warehouses` call answers. A purchase order has a handful.
+MAX_LINES = 200
+
+
+@frappe.whitelist()
+def line_warehouses(rows, company=None):
+	"""The default location for each of a Purchase Order form's lines.
+
+	``rows`` is ``[{"key": <row name>, "item_code": ..., "project": ...}]``; the answer is
+	``{key: {"item_code", "project", "warehouse", "warehouse_name", "reason"}}``. The item and
+	project are echoed so the form can drop an answer for a line that changed while the
+	request was in flight. Reads only. Needs read on Purchase Order: the answer says where an
+	item is kept and whether a project is an overhead bucket.
+	"""
+	if not frappe.has_permission("Purchase Order", "read"):
+		frappe.throw(frappe._("You need permission to read Purchase Orders."), frappe.PermissionError)
+	if isinstance(rows, str):
+		rows = frappe.parse_json(rows)
+	out = {}
+	names = {}
+	for raw in (rows or [])[:MAX_LINES]:
+		if not isinstance(raw, dict):
+			continue
+		key = str(raw.get("key") or "").strip()
+		item_code = str(raw.get("item_code") or "").strip()
+		project = str(raw.get("project") or "").strip()
+		if not key or not item_code or not project:
+			continue
+		answer = default_line_warehouse(item_code, project, company)
+		warehouse = answer.get("warehouse")
+		if warehouse and warehouse not in names:
+			names[warehouse] = frappe.db.get_value("Warehouse", warehouse, "warehouse_name") or warehouse
+		out[key] = {
+			"item_code": item_code,
+			"project": project,
+			"warehouse": warehouse,
+			"warehouse_name": names.get(warehouse),
+			"reason": answer.get("reason"),
+		}
+	return out
+
+
+def _receiving_line(line, company, shelf, fallback, overhead_cache):
+	"""One order line's default receiving place (``project_shelf_rules.receiving_warehouse``)."""
+	from erpnext_enhancements.inventory_enhancements import project_shelf_rules
+
+	project = (line.get("project") or "").strip()
+	if project not in overhead_cache:
+		overhead_cache[project] = is_overhead(project)
+	overhead = overhead_cache[project]
+	ordered = (line.get("warehouse") or "").strip()
+	own = None
+	if shelf and project and overhead and (not ordered or ordered == shelf):
+		own = item_own_bin(line.get("item_code"), company)
+	warehouse, reason, changed = project_shelf_rules.receiving_warehouse(
+		ordered, bool(project), overhead, shelf, own, fallback
+	)
+	return {
+		"warehouse": warehouse,
+		"ordered_warehouse": ordered or None,
+		"reason": reason,
+		"changed": bool(changed),
+		"project": project or None,
+		"overhead": bool(overhead),
+	}
+
+
+@frappe.whitelist()
+def receiving_defaults(purchase_order):
+	"""Where each line of one Purchase Order is received by default, for the order's Receive
+	Items dialog: ``{"shelf", "shelf_name", "lines": {<row name>: {"warehouse",
+	"warehouse_name", "ordered_warehouse", "reason", "changed", "project", "overhead"}}}``.
+
+	It is the order line's own location, except that a line with none gets the project's
+	default, and an Overhead line that names the Project Shelf is offered the item's own bin
+	instead (``changed`` true): every order line that was open when ``Stores`` became the
+	shelf named Stores, Overhead ones included, and none of them was rewritten. The person
+	receiving can pick another place per line. Reads only; needs read on the order.
+	"""
+	from erpnext_enhancements.inventory_enhancements import project_shelf
+
+	po = frappe.get_doc("Purchase Order", purchase_order)
+	po.check_permission("read")
+	shelf = project_shelf.warehouse()
+	fallback = project_shelf.fallback_warehouse() if shelf else None
+	cache, lines, names = {}, {}, {}
+	for row in po.items:
+		answer = _receiving_line(row, po.company, shelf, fallback, cache)
+		warehouse = answer["warehouse"]
+		if warehouse and warehouse not in names:
+			names[warehouse] = frappe.db.get_value("Warehouse", warehouse, "warehouse_name") or warehouse
+		answer["warehouse_name"] = names.get(warehouse)
+		lines[row.name] = answer
+	return {"shelf": shelf, "shelf_name": project_shelf.label(), "lines": lines}
+
+
+def apply_receiving_defaults(receipt):
+	"""Put each line of an unsaved Purchase Receipt mapped from an order in its default
+	receiving place (:func:`receiving_defaults`' rule), for the receipts nobody fills in by
+	hand: the packing-slip and vendor-bill drafts of the document intake. Only a line with no
+	location, or an Overhead line that names the Project Shelf, changes. Returns how many
+	lines changed. Never raises: a draft that keeps the order's locations is still a draft a
+	person reviews before submitting.
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		shelf = project_shelf.warehouse()
+		if not shelf:
+			return 0
+		fallback = project_shelf.fallback_warehouse()
+		cache, changed = {}, 0
+		for row in receipt.get("items") or []:
+			answer = _receiving_line(row, receipt.get("company"), shelf, fallback, cache)
+			if answer["warehouse"] and answer["warehouse"] != (row.get("warehouse") or "").strip():
+				row.warehouse = answer["warehouse"]
+				changed += 1
+		if changed and (receipt.get("set_warehouse") or "").strip():
+			# ERPNext clears a header location the rows disagree with; cleared here so the
+			# draft does not open saying one place while its lines say another.
+			receipt.set_warehouse = None
+		return changed
+	except Exception:
+		_log("Receipt draft: the default locations could not be applied")
+		return 0
 
 
 def purchase_order_projects(doc):

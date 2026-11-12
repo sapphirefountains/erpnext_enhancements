@@ -398,15 +398,19 @@ export function makeHomeDefault(qty, onHand) {
  * server marks each such place `job_site`. The page names the two apart: stock on a job site
  * can be brought back, but it is not stock the shop has, and "Also at: Job Site …" under an
  * empty shelf would send somebody to buy nothing while a job goes short.
+ *
+ * The Project Shelf (v1.804.0, `project_shelf`) is the third kind: in the building, and
+ * bought for a job. It is never one of the shop's places either.
  */
 export function splitPlaces(places) {
 	const shop = [];
+	const shelf = [];
 	const sites = [];
 	for (const place of Array.isArray(places) ? places : []) {
 		if (!place) continue;
-		(place.job_site ? sites : shop).push(place);
+		(place.project_shelf ? shelf : place.job_site ? sites : shop).push(place);
 	}
-	return { shop, sites };
+	return { shop, shelf, sites };
 }
 
 /**
@@ -419,6 +423,58 @@ export function takeProject(item, job) {
 	const site = item && item.job_site;
 	if (site && site.project) return site.project;
 	return job && job.project ? job.project : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The Project Shelf (v1.804.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a take must name a job before it is sent: always at the Project Shelf (every unit
+ * there belongs to one), elsewhere when the setting says so. Never when the take already has
+ * one (`project`: the run's job, or a job site's own). The server refuses the same takes
+ * (`project_shelf_rules.take_needs_job`); this keeps the page from sending one it would refuse.
+ */
+export function takeNeedsJob(item, requireSetting, project) {
+	if (project) return false;
+	return !!(Number(requireSetting) || (item && item.project_shelf));
+}
+
+/**
+ * The question a move asks about its job, from its two ends (each `{project_shelf, job_site}`):
+ * "off" when stock leaves the Project Shelf for a bin (which job was it bought for), "onto"
+ * when stock is set aside on the shelf (which job is it for), "" when the move asks nothing.
+ * A move between the shelf and a job site asks nothing: the site's job is the answer. The
+ * server's rule is `project_shelf_rules.move_project`.
+ */
+export function moveJobMode(source, destination) {
+	if (!source || !destination) return "";
+	if (source.project_shelf && !destination.job_site) return "off";
+	if (destination.project_shelf && !source.job_site) return "onto";
+	return "";
+}
+
+/** The jobs that really hold an item on the shelf: a job and a quantity above zero. */
+function heldJobs(jobs) {
+	return (Array.isArray(jobs) ? jobs : []).filter((job) => job && job.project && Number(job.qty) > 0);
+}
+
+/**
+ * The job a move off the shelf starts on: the one job that holds the item there, or null when
+ * none or several do and the person has to say. The server picks the same one when the page
+ * sends none (`project_shelf_rules.sole_holder`).
+ */
+export function soleShelfJob(jobs) {
+	const held = heldJobs(jobs);
+	return held.length === 1 ? { project: held[0].project, project_name: held[0].project_name || held[0].project } : null;
+}
+
+/** "Water Wall (3), Lobby (2), and 1 more": the jobs that hold an item on the shelf. "" for none. */
+export function shelfJobsText(jobs, max = 3) {
+	const held = heldJobs(jobs);
+	if (!held.length) return "";
+	const shown = held.slice(0, max).map((job) => `${job.project_name || job.project} (${plain(job.qty)})`);
+	return `${shown.join(", ")}${held.length > max ? `, and ${held.length - max} more` : ""}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -1635,3 +1635,16 @@ erpnext_enhancements.patches.add_job_sites_warehouse
 # form would open with an empty Widget box on the page where the pilot is switched on. Writes "Classic" ONLY where
 # tabSingles has no row for the field, never over a stored value. Reads tabSingles with db.sql. Safe twice.
 erpnext_enhancements.patches.backfill_triton_widget_mode
+# The Project Shelf (v1.804.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
+# and stock there is not shop stock). Four steps, each logged and none able to stop the next: rename the warehouse
+# "Stores" to "Project Shelf" with Frappe's own rename_doc (force, because ERPNext 16.54.0's Warehouse is not
+# renameable from the Desk; every Link follows: Item Defaults, Putaway Rules, on-hand and ledger rows, order and
+# request lines, the Company's default warehouse) and set warehouse_name, which that ERPNext version has no rename
+# hook to do; index the Warehouse names again for the Desk's search; fill Inventory Scanner Settings
+# .project_shelf_warehouse and .overhead_receiving_warehouse ("Inventory Room") ONLY where tabSingles has no row
+# for the field (on a never-saved Single every declared default is written first). Skipped without the shop group
+# "Inventory - SF", and nothing is merged where both names exist. Moves no stock, rewrites no order line, clears
+# no Item Default or Putaway Rule; prints how many of each now point at the shelf. Cannot raise, safe twice. Each
+# step answers done / already / skipped / failed; when any did not finish, ONE Error Log row "Project Shelf patch
+# (rename_stores_to_project_shelf): finish these steps by hand" lists them with the by-hand fix.
+erpnext_enhancements.patches.rename_stores_to_project_shelf

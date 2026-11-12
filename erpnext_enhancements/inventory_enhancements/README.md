@@ -30,6 +30,8 @@ model, the pure rules and the label reads.
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.804.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
 | `maintain_stock.py` | Its reads (documents counted, up to three named), the switch (row lock, checks again, `db.set_value`, Comment, cache clear, next steps) and the guards on the switched item's old non-stock receipts: `Purchase Receipt` `before_cancel` and `validate` (returns), `Purchase Invoice` `validate`, and `Landed Cost Voucher` (`validate`, `before_cancel`), `Repost Item Valuation` and `Repost Accounting Ledger` (`validate`), which would rebuild the receipt's ledger from today's flag. A stock item's receipt line with no stock ledger entry may not be canceled, returned, billed or re-costed in ERPNext |
@@ -329,7 +331,7 @@ The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR
 
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.804.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -667,6 +669,135 @@ one Error Log row, "Job sites patch (add_job_sites_warehouse): finish these step
 all five with what to do. By hand: create a group Warehouse "Job Sites" under the company's root;
 choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
 safe twice.
+
+### The Project Shelf (v1.804.0)
+
+The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
+Parker can then change what location the item is going to", "everything but overhead items should
+default to Project Shelf", and "when it hits the project shelf it should be removed from QTY in
+inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested bench-free);
+`project_shelf.py` reads the database.
+
+**What it is.** One warehouse where parts bought for a job wait until the job uses them. It is the
+warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
+is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
+not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
+did before v1.804.0. It is an ordinary location in every other way: it has a QR label, it can be
+received to, counted and moved from.
+
+**Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
+`Job Sites - SF`, where `Stores` already was. Not under `Job Sites`: that group refuses bins and
+everything in it reads as a job site. Not under `Inventory`: ERPNext's own reports and 23 of
+production's reorder rules read that group as the shop's stock, no code of ours runs inside them,
+and a shelf placed there would count as shop stock in exactly the places this app cannot correct.
+
+**It is one warehouse, not one per job, so whose stock is on it is derived.** ERPNext keeps
+on-hand by item and warehouse and has no project there. Which job a part on the shelf belongs to
+is read from **the project on each Stock Ledger row** at the shelf:
+
+| Movement | The project on its ledger row |
+|---|---|
+| A receipt against a purchase order | The order line's project (ERPNext copies it from the receipt line; checked in `stock_controller.py` at v16.54.0) |
+| Stock added without an order, at the shelf | The job picked. Refused without one |
+| A take at the shelf | The job picked. Refused without one, whatever *Require a Job for Every Take* says |
+| Shelf → a job site | That site's job |
+| Shelf → a bin or the Boneyard (released to the shop) | The job it was bought for: the one the page names, or the only job that holds the item there. Refused when several or none hold it and none is named |
+| A bin → the shelf (set aside) | The job named. Refused without one, and for a finished job |
+| A job site → the shelf | The site's job |
+| A store run | Refused at the shelf: its receipt carries no project on purpose |
+| A count | None. A Stock Reconciliation has no project in ERPNext |
+
+`project_shelf.shelf_stock(project=None, item_code=None)` adds those rows up, and is **the one
+function that answers both "what is on the shelf for project X" and "which projects have stock on
+the shelf"**. The new reports and the Procurement Tracker call it; its signature and return shape
+are pinned by `tests/test_project_shelf.py`. It returns `rows` (job × item: `qty`, `qty_in`,
+`qty_out`, `last_movement`), `projects`, `untagged`, `untagged_movements` and `exact`.
+
+**Its limits, which every screen that shows the numbers must say.** A movement with no project (a
+count, a transfer made by hand in the Desk) changes what is on the shelf without changing any
+job's number. That drift is reported, never hidden: `untagged` is, per item, what is on hand minus
+what the tags add up to; `untagged_movements` lists each such ledger row, a count's change worked
+out from the balance before it; a job that has had more taken than it received keeps a **negative**
+`qty` (usually parts bought for one job and used on another); and `exact` is true only when none of
+that is there. On the day of the rename production already had two such rows: 13 units received
+for a job in September and transferred out with no project.
+
+**Receiving defaults** (`procurement_project.default_line_warehouse`; the rule is
+`project_shelf_rules.line_warehouse`):
+
+| The line's project | Where it is received by default |
+|---|---|
+| Any project that is not an Overhead project | The Project Shelf |
+| An Overhead project | The item's own bin: the bin it is assigned to (an enabled Putaway Rule; with several, the one holding the most), else its Item Default, else the warehouse a reorder rule asks for. Never the shelf, a job site or the Boneyard |
+| An Overhead project, and the item has no bin yet | `Inventory Scanner Settings.overhead_receiving_warehouse` (`Inventory Room` on production) |
+| No project yet, or no shelf set up | Nothing is decided; the line keeps what it has |
+
+It is a default at the moment a line first has both its item and its project, and it is never
+forced afterwards. Where it is applied:
+
+- **The Purchase Order form** (`public/js/purchase_order_project.js`): once per line and per
+  (item, project) pair, after ERPNext's own item lookup has come back. A line that was there when
+  the form opened, and a line that came from a Material Request, is never touched. After it is
+  applied the purchaser can pick any other warehouse and it stays.
+- **A save with no form** (`procurement_project.default_line_warehouses`, `before_validate`, and
+  `cascade_project_to_items`): a draft line with no warehouse gets the default; a line whose
+  project the cascade has just filled gets it when its warehouse is one nobody chose (the shelf,
+  or the item's Item Default). A warehouse that is already there is never changed on save.
+- **The order's Receive Items dialog** (`public/js/po_receive_items.js`): a *Put in* column per
+  line, opening on `procurement_project.receiving_defaults` and editable. It is the order line's
+  own warehouse, except that **an Overhead line that names the shelf is offered the item's own bin
+  instead**, with a sentence saying so. That is what handles the order lines that were open when
+  `Stores` became the shelf: every one of them named Stores, Overhead ones included, and nothing
+  rewrites them.
+- **Stock Scan receiving**: unchanged. A scan at a bin means "put it here" and still wins. Each
+  open order line now says which job it is for, and when it was ordered for the shelf it says
+  that receiving it here puts it on this bin instead.
+- **The document-intake drafts** (`accounting_intake/actions/packing_slip.py`, `vendor_bill.py`):
+  `procurement_project.apply_receiving_defaults`, the same rule as the dialog.
+
+**Shelf stock is not shop stock, on this app's own screens.** `project_shelf.not_shop_warehouses()`
+is every job site plus the shelf, the one set every total reads:
+
+| Where | What it shows |
+|---|---|
+| Stock Scan search, "on hand" | The shop's total (`on_hand_total`); `on_project_shelf` beside it as "N for jobs", and `on_job_sites` as before |
+| Item card, "Also at" | Shop locations only; the shelf on its own line with its jobs, "On Project Shelf, bought for a job: 5 (Water Wall (3), Lobby (2))"; job sites on theirs |
+| The shelf's own screen and an item opened there | A note saying what the shelf is, and each item's jobs |
+| Reorder Board | A rule's projected quantity leaves out stock on the shelf and orders on their way to it, at every group above it (`job_site_rules.without_sites`, given the shared set). No rule is rewritten |
+
+**The 29 reorder rules that roll up at `All Warehouses - SF`.** They are left as they are, as the
+job-site work left them, and the shelf is taken out of their reading the same way a job site is.
+That is the right outcome for them: an order for a job no longer makes the board think the shop is
+covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
+replenishment order placed on an Overhead project now defaults to the item's own bin, inside
+`Inventory - SF`, so both kinds of rule count it; before v1.804.0 it defaulted to `Stores` and the
+23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
+are not corrected: no code of ours runs inside them.
+
+**It is never an item's bin** (`project_shelf.refuse_as_bin`), as the Boneyard and a job site are
+not: *Put on this bin*, *New item here* and *Make … this item's bin* are refused there. On the day
+of the rename 774 Item Defaults and 54 enabled Putaway Rules named it, left by ERPNext's company
+default and by the v1.689.0 backfill. They are not deleted and not rewritten: the listing
+(`api.stock_scan._items_at`) lists the shelf by what is there or on its way and nothing else, and
+`item_own_bin` skips the shelf wherever it appears. A leftover rule or default goes away by itself
+when its stock is moved off the shelf with *Make … this item's bin* ticked, the same release a
+move out of any bin does.
+
+**A label printed for `Stores` still opens the shelf** (`project_shelf.former_name`,
+`api.stock_scan._warehouse`), unless a warehouse of that name exists again.
+
+**If the patch did not finish.** `patches/rename_stores_to_project_shelf` cannot raise (that would
+abort the deploy), so it is recorded as run whatever happened. Each of its four steps answers done,
+already, skipped or failed; the list and the counts of what now points at the shelf are in the
+migrate output, and when any step did not finish, one Error Log row, "Project Shelf patch
+(rename_stores_to_project_shelf): finish these steps by hand", lists them with what to do. It is
+safe to run again. It moves no stock, rewrites no order line and clears no Item Default or Putaway
+Rule.
+
+**Not built:** the Bin Manager's moves do not ask for the job (a move off the shelf from there uses
+the only job that holds the item, and is refused with a sentence when there are several); a way to
+move a part on the shelf from one job to another without it leaving the shelf; and non-stock items,
+which never enter stock and so never reach the shelf.
 
 ### The Bin Manager page (v1.693.0)
 
@@ -1214,6 +1345,7 @@ python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
 python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_site_rules; sites, moves, takes and totals on test_bin_assignments' stub; the setup patch
+python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 node scripts/test_stock_scan_client.mjs

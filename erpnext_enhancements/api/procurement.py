@@ -156,6 +156,23 @@ def _typed_quantities(rows):
     return typed
 
 
+def _typed_warehouses(rows):
+    """``rows`` as the dialog posts them -> ``{row name: warehouse}`` for the lines that say
+    where they were put (v1.804.0). A line that names no place is left out and keeps the order
+    line's own."""
+    if isinstance(rows, str):
+        rows = frappe.parse_json(rows)
+    places = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        name = (raw.get("purchase_order_item") or "").strip()
+        warehouse = (raw.get("warehouse") or "").strip()
+        if name and warehouse:
+            places[name] = warehouse
+    return places
+
+
 def _over_receipt_allowance(item_code):
     """The over-receipt allowance ERPNext applies to this item, in percent.
 
@@ -250,6 +267,11 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
       was put, which is right.
     * **``remarks``** replaces the receipt's remarks, so the page can say on the voucher that
       it came from a scan and who did it.
+    * **A row may name its own ``warehouse``** (v1.804.0): the Receive Items dialog shows where
+      each line goes (the Project Shelf for a job's line, the item's bin for an Overhead one,
+      ``procurement_project.receiving_defaults``) and the person receiving can change it per
+      line. It is checked like the single ``warehouse`` above and grants nothing more. The
+      single ``warehouse`` wins when both are sent: a scan at a bin means "put it here".
     """
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
@@ -289,9 +311,23 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         frappe.throw(_("Nothing to receive: every line is at 0."))
 
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
+    # Where each line was put, when the dialog said (v1.804.0). Checked before a document exists.
+    places = (
+        {}
+        if target
+        else {
+            name: _receiving_warehouse(place, po.company)
+            for name, place in _typed_warehouses(rows).items()
+            if name in wanted
+        }
+    )
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
     if target:
         receipt.set_warehouse = target
+    elif places:
+        # The lines no longer share one place, so the header must not name one: ERPNext never
+        # pushes it into the rows on the server, and a stale one would only mislead.
+        receipt.set_warehouse = None
     for item in receipt.items:
         # Accepted quantity is what was typed; nothing rejected. The receipt's own validate
         # recomputes stock_qty, received_stock_qty and every amount from these.
@@ -300,6 +336,8 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         item.rejected_qty = 0
         if target:
             item.warehouse = target
+        elif item.purchase_order_item in places:
+            item.warehouse = places[item.purchase_order_item]
     if remarks:
         receipt.remarks = remarks
     if posting_date:
