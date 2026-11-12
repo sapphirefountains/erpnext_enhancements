@@ -153,12 +153,19 @@ const CB_API = "erpnext_enhancements.project_enhancements.contract_builder";
 export function contract_types(doctype) {
 	const kind = CONTRACT_SOURCES[doctype];
 	if (kind === "customer") {
-		return [
+		const types = [
 			{ value: "owner", label: __("Owner Contract"), hint: __("Design / Build / Maintain") },
 			{ value: "rental", label: __("Events Agreement") },
 			{ value: "maintenance", label: __("Maintenance Services Agreement") },
 			{ value: "sow", label: __("Statement of Work"), hint: __("subcontractor — requires signed MSA") },
 		];
+		// v1.808.0: the one-year Certificate of Warranty, from a Project only. It is about finished
+		// work, and its project name, site address and number all come from the project; an
+		// Opportunity has none of that yet.
+		if (doctype === "Project") {
+			types.push({ value: "warranty", label: __("Certificate of Warranty (One Year)"), hint: __("signed by Sapphire only") });
+		}
+		return types;
 	}
 	if (kind === "supplier") {
 		return [
