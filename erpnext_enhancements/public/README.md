@@ -60,6 +60,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `procurement_links.js` | Purchase Order / Material Request | Per-item supplier purchase links | doctype_js |
 | `project.js` | Project | Mirror name → `custom_project_id` (one of several Project scripts) | doctype_js |
 | `project_enhancements.js` | Project | Comments App + Vue Procurement Tracker + `custom_btn_*` doc creators | doctype_js |
+| `supplier_return_start.js` | Purchase Receipt, Purchase Order, Purchase Invoice, Payment Entry, Project | Supplier Returns (v1.807.0): Create > Return to Supplier on a receipt and an order, the launcher the Procurement Tracker's Return buttons call, and a line at the top of a Purchase Return, Debit Note or refund payment naming its Supplier Return | doctype_js |
 | `project_merge.js` | Project | "Merge Project" tool (dry-run stats + execute) | doctype_js |
 | `project_migrated_scripts.js` | Project + Stakeholder child | Migrated: hide dashboard, stakeholder contact/address filtering | doctype_js |
 | `sales_order_enhancements.js` | Sales Order | Filter `custom_serial_no` query to a specific item | doctype_js |

@@ -173,6 +173,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     code and then its name on at most two lines, so one long description no longer sets the width
     of the table. The three levels are indented with a rule down the side. On a phone each line
     is a card with its columns named, and nothing scrolls sideways.
+  - **Return is still there.** Supplier Returns (v1.807.0) added a Return button to a receipt's
+    header in the tracker and a Return link on a line's receipt step. Both were carried into the
+    rewritten widget unchanged: the same rules for when they show, and the same launcher, which
+    opens an unsaved Supplier Return.
   - **The assistant tool** `project_procurement_status` gained `view="items"`, and every item row
     in every view carries the new keys (`line_state`, `needs_action`, `expected_date`,
     `supplier`, `where_now`, `where_now_text`, `location_tracked`, `received_at`). No key was
@@ -200,11 +204,324 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Project Shelf and Supplier Return modules present, absent and failing, the feed's new
   functions, a draft document that never joined a chain, and the two `SELECT`s of the feed's
   `UNION` held to the same columns in the same order, which otherwise fails only on MariaDB.
-  `scripts/test_procurement_tracker.mjs` (node, 108 checks): the address, the filters, sorting,
-  labels and escaping. Each has its own CI step.
+  `scripts/test_procurement_tracker.mjs` (node, 112 checks): the address, the filters, sorting,
+  labels and escaping. `tests/test_tracker_supplier_returns.py` (6 tests) runs the tracker's
+  reading of Supplier Returns against the real `supplier_returns.returned_lines`, on that
+  module's own test stub, rather than a stand-in. Each has its own CI step.
 - **Not run:** nothing here ran on a bench. `tests/test_procurement_status.py` needs one and is
   not in CI. The widget was checked in a browser against a stand-in Desk with made-up data, not
   against a real Project form.
+## [1.807.0] - 2026-11-12
+
+### Added
+- **Supplier Returns: sending something we bought back to the supplier, tracked from the request
+  to the money.** Nikolas, 2026-11-12: "we need to come up with a systemized way to process
+  returning items we purchased. Help me come up with a return process that is simple and tracked
+  ... like Supplier Quotation, we have a new DocType (unless one exists) that we can use to email
+  vendors and return to our suppliers ... a way to return them and track them and know if we got
+  our money back ... this all needs to work with the accounting system too (not QBO but
+  ERPNext)." The process, every accounting case and the rehearsal steps are in
+  [`docs/supplier-returns.md`](docs/supplier-returns.md).
+  - **What ERPNext already has, read in v16.54.0 (what production runs).** A Purchase Receipt
+    with `is_return` takes the goods out of stock and reverses the receipt's ledger entry (credit
+    the stock account, debit Stock Received But Not Billed); it also lowers the received quantity
+    on the purchase order line. A Purchase Invoice with `is_return`, the Debit Note, lowers what
+    we owe. A Payment Entry of type Receive is the refund. Nothing records the *request*: what we
+    asked the supplier, their return number, the tracking number, and whether the money came
+    back. There is no RMA document for purchases. That gap is all this release adds.
+  - **A new DocType, Supplier Return** (with Supplier Return Item for its lines and Supplier
+    Return Payment for its refunds and credits), in Inventory Enhancements,
+    where the Purchasing card, Stock Scan and the receipts' Maintain Stock guard already are. It
+    is a tracking record: it never writes a stock or ledger entry. It is not submittable; each
+    step is a button and the status is never typed (a save that changes it is put back).
+  - **It starts from what was received, so nobody retypes a line.** Create > Return to Supplier on
+    a Purchase Receipt (the ticked rows, or everything that can still go back) and on a Purchase
+    Order; Return buttons on receipts and lines in the Project form's Procurement Tracker; and
+    Return to supplier on an item in Stock Scan, which saves a Draft for purchasing to send. A
+    line may not return more than its receipt line received, less what other returns hold and
+    what was returned with ERPNext's own button.
+  - **The steps:** Draft; Requested (the email went, or the supplier was asked by phone, in person
+    or on their website); Approved by Supplier (their return number) or Denied; Sent Back (by
+    carrier with a tracking number, dropped off, or picked up; this is when stock leaves); then
+    Refund Received, Credit Received, Replacement Received or Closed Without Credit. Canceled
+    before the items go. The form says who the return is waiting on and for how many days; the
+    list has a Waiting on Money button; the workspace shortcut counts the returns waiting on
+    money.
+  - **Stock and money move through ERPNext's own documents, drafted and never submitted here.**
+    At Sent Back one click calls ERPNext's `make_purchase_return`, cuts the result to this
+    return's lines and quantities and saves a draft for the person to check and submit. When a
+    bill exists in ERPNext, one click drafts the Debit Note the same way (Update Stock off: the
+    Purchase Return moves the stock). The refund is ERPNext's `get_payment_entry`. No code here
+    writes a ledger entry or sets a docstatus.
+    - **The Debit Note lowers the bill when the bill can take it.** In ERPNext 16.54.0
+      `Purchase Invoice.update_outstanding_for_self` defaults to 1 and `make_return_doc` leaves it
+      there, so a debit note made the standard way is booked against *itself*
+      (`add_supplier_gl_entry`): the bill stays fully unpaid and nothing lowers it until somebody
+      runs Payment Reconciliation. If the bill is paid in the meantime, the supplier is overpaid.
+      A return against an unpaid bill means "pay this bill less", so the note drafted here has
+      that box turned **off** when the bill's outstanding amount covers the note: it is booked
+      against the bill, the bill's outstanding drops and the note's own is 0
+      (`taxes_and_totals.calculate_outstanding_amount`). When the bill cannot absorb the note (it
+      is paid, or nearly) the box is left **on**, and the note carries what the supplier owes us,
+      which is what a refund Payment Entry is made against. ERPNext applies the same rule itself
+      (`accounts_controller.validate_against_voucher_outstanding`). Chosen over keeping the
+      default and tracking Payment Reconciliation as a step: it is what the person means, it
+      closes the window in which the bill is paid in full by mistake, and it is ERPNext's own
+      checkbox, visible on the draft.
+    - **A fixed-amount charge on a partial return is said, not changed.** ERPNext's own return
+      reverses an "Actual" charge in full whatever part is going back. Nobody but the person knows
+      what the supplier will give back of a freight charge, so the figure stays as ERPNext made it
+      and the draft says so in its Remarks, on its timeline and in a message when it is created.
+      Production had one such row among 187 on submitted receipts.
+  - **Three kinds of line.** A stock item received into stock: the Purchase Return takes it out.
+    A non-stock line: nothing is in stock, and the Purchase Return posts nothing, but it lowers
+    the order's received quantity, which lets a replacement be received against the same line
+    and makes ERPNext bill the receipt for less. **A line received before its item kept stock is
+    record only.** ERPNext builds a return's ledger from what keeps stock today, so it would
+    take out stock that was never put in, and
+    `maintain_stock.refuse_unstocked_receipt_return` (v1.754.0) refuses that. The guard is not
+    touched and its `ignore_maintain_stock_guard` flag is never set: such a line is left off the
+    Purchase Return, the return is recorded and tracked anyway, and the record says why no stock
+    document was made.
+  - **No Custom Field on Purchase Receipt, Purchase Invoice or Payment Entry.** A Custom Field is
+    forever on this site (hidden, never deleted). The links live on the Supplier Return; the
+    standard forms ask which return they belong to and say so at the top. A submitted Receive
+    payment from the supplier that names a return's Debit Note (or the already-paid bill the note
+    was set against) is linked as its refund by that reference. A payment *to* a supplier is
+    never matched.
+  - **Knowing whether the money came back.** While bills are still entered outside ERPNext, a
+    refund or credit is an amount, a date and a reference typed by Accounts User, Accounts
+    Manager or Purchase Manager, and the form, the timeline and the report all say "Typed by
+    hand. It is not backed by an ERPNext payment." Once a submitted Debit Note or Payment Entry
+    backs the money, the outcome and the amount are read from it and cannot be typed: the
+    buttons are not offered, the endpoint refuses, a form save is put back, and anything typed
+    earlier gives way with a note on the timeline. A debit note the supplier still owes us on is
+    not "received". A daily job re-reads the Debit Note of each return still waiting, because
+    Payment Reconciliation changes a note's outstanding amount without any event this app hears.
+    - **Each refund or credit is a row, and a payment is counted once.** A row with a Payment
+      Entry holds *this return's share* of it: what the payment allocates to the return's Debit
+      Note, or, for one payment covering several returns, a split between them
+      (`supplier_return_rules.split_payment`); a payment linked by hand takes only what other
+      returns have not already counted. So one 100 refund for two returns is never 100 on each.
+    - **A refund that arrives in parts needs no reopen.** A typed entry can be ticked *More is
+      still expected*, and a return can hold several payments. *No More Is Coming* finishes a
+      return at what has come back; the report shows the difference.
+  - **The email to the supplier.** Send Return Request shows the recipient (the address on the
+    return, the supplier's contacts, the supplier's own address, or another one typed in), the
+    subject and the message, all editable, with a preview in the letterhead; the PDF is attached
+    and the email is on the return's timeline. The wording is the Desk Email Template *Supplier
+    Return Request*, seeded once. **It is sent only by that Send button.** Saving, every other
+    step, the documents' hooks and the daily job never send, and the endpoint refuses an API
+    key, a token and a background job (`signed_in_browser`, the rule the Maintain Stock switch
+    uses).
+    - *The Desk's text editor rewrites a table's markup*, so the items table is not in the text
+      the person edits. A marker line stands in for it and the server puts the real table,
+      built from the return's saved lines, in its place (or at the end if the marker was
+      deleted). The preview is what goes.
+  - **Print format Supplier Return - Sapphire**, in the buying documents' design: titled Return
+    Request for the supplier, with the reason and condition under each line, rates and the
+    amount expected back, and, once known, the return number and tracking number, so it is also
+    the paper that goes in the box. Nothing internal prints.
+  - **Report Supplier Returns: Money Outstanding**: by supplier, oldest first, with sent back on,
+    days waiting, expected, received, difference, where the amount comes from, and where the
+    bill stands. Views: Waiting on money, Came back short or over, All returns. Linked from the
+    Purchasing card of the Inventory Enhancements workspace with Supplier Returns itself.
+  - **The bill that should come in lower.** Billing from the receipt in ERPNext already subtracts
+    what a submitted Purchase Return took back. A bill typed by hand or made from the order now
+    shows an orange message naming the return when it covers a line that is on one with no
+    Debit Note (`supplier_returns.tell_the_bill`; never a refusal). While bills are entered
+    elsewhere, the report says "Not billed in ERPNext. The bill should come in lower".
+  - **The Order Stage needed no change.** `po_order_stage.advance_on_receipt` already walks an
+    order back when a Purchase Return lowers what was received. Reports that skip returns
+    (`api/supplier_search.py`, `kpi_dashboards/snapshots.py`, Store Run Charge Matching) filter
+    on `is_return = 0` and are untouched.
+  - **For other modules:** `supplier_returns.returned_lines(purchase_order_items=None,
+    project=None)`, one dict per Supplier Return line. The keys are a contract with the Project
+    Materials report. It never raises and gives `[]` before the DocType is installed.
+  - **The doc_events never raise.** Purchase Receipt, Purchase Invoice and Payment Entry each
+    gained `on_submit`, `on_cancel` and `on_trash` handlers that refresh a linked Supplier
+    Return inside a savepoint and log a failure. A stale label on a return must not be the
+    reason a receipt or a payment cannot be submitted. They read by name and do nothing when no
+    return names the document, which is every document today.
+  - **Found by the independent review of the pull request and fixed before merge.**
+    - *A reopened return is judged again.* While Denied or Canceled a return's quantities were
+      free for another return. Reopening one re-runs the quantity limit and refuses when they
+      have been taken (10 received, A denied, B takes 10, A reopened: 20 would have been claimed).
+    - *A Purchase Return made with ERPNext's own button is linked only if it says what the
+      Supplier Return says*: the same receipt lines at the same quantities. And a submitted return
+      that took more than its record says (the draft was changed) counts for the excess, in the
+      receipt line's own unit, and the record's Stock line says the two disagree.
+    - *A canceled receipt never traps its return.* ERPNext lets a receipt be canceled under a
+      return that is not finished. The form then says why in red, and Cancel Return, Supplier
+      Denied, Close Without Credit and recording what came back still work.
+    - *A finished return's fees, tracking and request are locked.* They stay open until the
+      outcome, because a restocking fee is often learned when the refund arrives; after it they
+      are part of it. Reopen is how a manager changes one.
+    - *`returned_lines("POI-1")`* takes a single name as a string.
+    - *The bill notice* is for returns still in motion, matches a bill row on its receipt line
+      when it names one (so the bill for a replacement receipt is not told about the return it
+      replaced), and *a bill's number* is shown on the form and the report only to somebody who
+      may read Purchase Invoices.
+  - **What a migrate does to a site:** three new DocTypes and one Report by model sync; the Email
+    Template *Supplier Return Request* created if absent (nothing is sent); the Print Format
+    upserted; the Inventory Enhancements workspace re-imported with two links and a shortcut. No
+    existing record is changed.
+  - **Tests.** `tests/test_supplier_return_rules.py` (the rules, no stub) and
+    `tests/test_supplier_returns.py` (the module on a frappe stub whose database is real SQLite:
+    the quantity limit on data, each accounting case through to the document it chooses, the
+    money rule, the email, the wiring), each its own CI step. **What they cannot prove** is the
+    standard Purchase Return and Debit Note actually posting; `docs/supplier-returns.md` has the
+    seventeen-step rehearsal for the production mirror.
+## [1.805.0] - 2026-11-12
+
+### Added
+- **Four inventory reports: what is at each location and what should be, where an item is, what was
+  bought for a job, and what is at each job site.** Nikolas, 2026-11-12: "We need to create reports
+  for Inventory, where a user can query what's at each location and see what items should be in
+  there ... I want to keep a historical record of each projects items and what was ordered for
+  them. I want to be able to view what's at the Job Site, and have it be useful so it filters by
+  project as well." All four are Script Reports in Inventory Enhancements, with every filter
+  optional (a Query Report cannot have an optional filter on Frappe 16.53 and later, the reason
+  Warehouse Transactions is not one either). Each opens on a useful list with nothing chosen.
+  - **Location Contents** (`/desk/query-report/Location Contents`). Pick a bin, or a group (a
+    shelf, a bay, a row, the whole inventory): one row per item that is there or should be, with on
+    hand, on order, whether it is assigned there (Putaway Rule, Item Default or both) and a plain
+    status: *As expected*; *Assigned here, none on hand*; *Here, not assigned*; *Here, assigned to
+    another bin* (the bin is named); *On order to here*; *Empty, not decided*. Filters: Location,
+    Item, Item Group, Status, and "Only problems", which starts ticked. The cards over the table
+    count every row at the chosen locations whatever those two filters hide.
+    - **The list is the Bin Manager's list.** For each location the report calls
+      `api.stock_scan._items_at`, the function behind the Bin Manager and Stock Scan's location
+      screen, with no row cap. It carries no copy of the listing rule, so the two cannot disagree
+      about which items belong to a bin.
+    - **The Project Shelf, a job site and the Boneyard are never an item's bin.** Stock there
+      reads *Held here* and is never a problem, and none of the three is ever named as an item's
+      "other bin". That second half matters on production: Putaway Rules and Item Defaults there
+      name the warehouse that is becoming the Project Shelf.
+    - **Cost.** `_items_at` is one query per location. Locations with no Bin row, no enabled
+      Putaway Rule and no Item Default are skipped first, since none of that function's clauses can
+      list anything there: 141 of production's 222 locations were left on 2026-11-12, at about 6 ms
+      each. With an Item chosen only that item's locations are asked.
+  - **Where Is This Item.** Pick an item or type words from its code or name: one row per place,
+    in the order shop bins, the Project Shelf (one row per job), job sites (with the job), vehicles,
+    the Boneyard. Each row has on hand, on order, value, whether the place is one of the item's
+    bins, the item's bins by name, and the last movement there with its voucher. An item's assigned
+    bins list even when empty. With nothing chosen it is every item on hand or on order anywhere
+    (the first 5,000 places; a search is capped at 500 items; the note says when either cut
+    something).
+  - **Project Materials.** With a Project: one row per item ordered or received for it, with
+    Ordered (its submitted Purchase Order lines), Received (its submitted Purchase Receipt lines, so
+    a store run with no order counts), On Project Shelf, At Job Site, Used on Job, Returned to
+    Supplier, Return Requested, Still to Come, Order Closed Not Received, Not Located, and the
+    Purchase Orders, Receipts and Supplier Returns behind the row, each name opening its document. Nothing in it reads the job's status,
+    so a finished job reads the same: it is the record of what was bought for it. Without a
+    Project: one row per job that holds stock now, on the shelf and at its site, with quantity and
+    value.
+    - **Which lines are a job's.** An order line's own Project, else its order's (production
+      still has lines that carry only the header's). A receipt line's own, else its receipt's, else
+      the order line's it was received against, else that order's.
+    - **Not Located is the honest column.** Most of what was bought for past jobs never entered
+      stock, because most items had Maintain Stock off. For those, ordered and received are the
+      whole record and the row says "Not a stock item: where it is was never recorded". For a stock
+      item it is stock received into a shop bin, where stock is not kept by job (*Received Into*
+      names the bin, read from the stock ledger), or received before Maintain Stock was on.
+    - **Used on Job** is ERPNext's own "consumed" rule in quantities (Material Issues, Delivery
+      Notes and Sales Invoices carrying the job), less parts brought back with a Material Receipt
+      carrying the job. A transfer is not use. A Material Receipt straight onto the Project Shelf or
+      a job site is stock arriving, not parts coming back, and does not lower it.
+    - **Not read:** a Purchase Invoice that receives stock itself (none on production), rejected
+      quantities, drafts and canceled documents.
+  - **Job Site Contents.** One row per item at a job's site warehouse, filtered by Project,
+    Customer, Item and Item Group: on hand, on order, value, Arrived, Last Arrival and Days There.
+    What a job site is comes from `inventory_enhancements/job_sites.py`. A finished job's site
+    still lists, since stock left there is the stock most worth finding. *Arrived* is the day the
+    balance last rose from nothing, so parts all used and sent again are not counted from the first
+    delivery; a count is read from its balance, because ERPNext 16 stores a Stock Reconciliation
+    row with `actual_qty = 0`.
+  - **The Project Shelf before it is set up.** Nikolas decided on one shared shelf, named in
+    `Inventory Scanner Settings.project_shelf_warehouse`, a field a separate change adds. These
+    reports read it from the settings document with `.get`, so before the field exists (or while it
+    is blank, or names a group or a disabled warehouse) nothing is the Project Shelf: that
+    warehouse reads as an ordinary shop location, every "on the shelf" figure is 0, and each report
+    says "No Project Shelf is set" over its table. Nothing raises.
+  - **Whose stock is on the shelf: one adapter.** ERPNext keeps on-hand by item and warehouse and
+    has no job there, so `inventory_report_data.shelf_stock_by_project` is the only place the
+    reports ask. How many there are is `tabBin` at the shelf. Whose they are is the stock ledger:
+    what came onto the shelf under each job, less what left under it. A job's share is that net;
+    the no-job share is what is on hand less every job's share, so the rows always add up to what
+    is there. A count carries no job, so a shelf counted lower than the jobs' rows add up to shows
+    a negative no-job share, and the reports say what that means in place of scaling the jobs
+    down. On production's would-be shelf on 2026-11-12 the two agreed item for item.
+    - **It asks the Project Shelf change's own module when that is installed.** That change ships
+      `inventory_enhancements/project_shelf.py` with `warehouse()` and
+      `shelf_stock(project=None, item_code=None)`. The adapter imports it inside a guard: present,
+      it supplies which warehouse is the shelf and each job's net, so these reports and the shelf's
+      own screens read one answer; absent, or there and failing to import for any
+      reason, the adapter reads the same ledger rows itself. Both
+      paths do the same arithmetic, so the two changes can merge in either order and no number
+      moves. An answer that is not for this shelf or not in the agreed shape falls back to the
+      adapter's own reading. The real module was not on `main` when this was written, so that path
+      is tested against a stand-in in the agreed shape, not against the module.
+  - **Returns to a supplier are counted once.** The Supplier Return change ships
+    `inventory_enhancements/supplier_returns.py` and settles
+    `returned_lines(purchase_order_items=None, project=None)` for other modules.
+    `inventory_report_data.supplier_return_lines` imports it inside a guard, so either change can
+    merge first, and answers nothing before it is installed or if the module fails to import. A
+    Supplier Return moves its stock
+    through ERPNext's own return receipt (a Purchase Receipt with *Is Return*), which Project
+    Materials also reads, so the same goods can show twice. Both records name the receipt line the
+    goods came in on, and per receipt line the larger of the two is what went back
+    (`inventory_report_rules.returned_by_item`): a record-only return counts, a return made by hand
+    in the Desk counts, and one that is both is not doubled. A return that was asked for and has
+    not been sent back is its own column, *Return Requested*, because those goods are still here.
+    The real module was not on `main` when this was written, so the seam is tested against a
+    stand-in in the settled shape.
+  - **Who.** Location Contents and Where Is This Item: Stock User, Stock Manager, Inventory Clerk,
+    Item Manager, System Manager. Project Materials and Job Site Contents add Projects User,
+    Projects Manager, Purchase User and Purchase Manager. Frappe also requires report permission
+    on a report's reference doctype (`frappe.desk.query_report.get_report_doc`), so the reference
+    doctypes are ones Stock User can report on: Warehouse, and Purchase Order for Project
+    Materials. Every Inventory Clerk and every Projects or Purchase user on production also holds
+    Stock User (2026-11-12), so nobody the roles admit is then refused. No permission is changed.
+    The reads are SQL behind those gates, as `_items_at` is, and do not apply User Permissions. Every
+    report says so over its own table, not only in the docs: "This report shows everything its
+    filters match. User Permissions do not narrow it."
+  - **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
+    hub's landing page). On the Operations Hub: Location Contents, Where Is This Item and Job Site
+    Contents in its Inventory card, Project Materials in its Reports card beside Pending Items by
+    Project. `patches/inventory_reports_hub_links` force-imports both workspaces, each in its own
+    savepoint (frappe's `import_doc` deletes the stored row before it inserts), logs a failure and
+    never raises. It writes no business data. A force-import replaces the stored workspace with
+    the file, so an edit made to either one in the Desk would be lost. On production on 2026-11-12
+    both stored workspaces were identical to the repo's files (content, links, shortcuts, quick
+    lists and roles compared), so nothing is lost there unless one is edited before the merge.
+  - **Print and export** are Frappe's own grid print, PDF, CSV and Excel. Each row holds plain
+    values under declared fieldnames; the status colors and the document links are added on screen
+    by the report's formatter, which the grid print also runs. No report has an `.html` template of
+    its own.
+  - **What ERPNext's own reports already cover** (read at v16.54.0, so none is rebuilt): Stock
+    Balance and Stock Projected Qty give quantities per item and warehouse; Stock Ledger gives
+    every movement; Warehouse Wise Item Balance Age and Value gives age by warehouse; Purchase
+    Order Analysis and Procurement Tracker give ordered against received per line; Project wise
+    Stock Tracking gives cost per project. None says whether an item belongs in the bin it is in,
+    whose job shelf stock is for, or where one job's items stand from order to use.
+  - **What the stock ledger reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound
+    index that helps, `item_code, warehouse, posting_datetime, creation`, and none on `project` or
+    leading with `warehouse`. A read that starts from item codes uses it. Three do not: a job's
+    ledger rows (Project Materials), the ledger at the job sites (Job Site Contents), and the whole
+    shelf's rows by job (the adapter's own reading, and Where Is This Item with nothing chosen).
+    Each looks at every ledger row, so its cost grows with the whole ledger, not with the job, the
+    sites or the shelf. Production had 832 ledger rows on 2026-11-12. No index is added here; an
+    index on `project` and one leading with `warehouse` are the fix when the ledger is large.
+  - **What the reports cannot show yet.** Where a non-stock item is (it never enters stock, so
+    it is never at a location, on the shelf or at a site: only ordered and received). Stock by job
+    in a shop bin. Anything on the Project Shelf until the shelf is set. A disabled item, which the Bin Manager's
+    listing rule leaves out of Location Contents (Where Is This Item does find it).
+  - **Tests:** `tests/test_inventory_reports.py` (166 tests, bench-free, its own CI step): the
+    status rules, the shelf and site split, the project roll-up, the stay at a site, the reports
+    themselves on a `frappe` stub, the shape of every query, the exported rows and the hub links.
+    Each query shape was also run read-only against production. Not run: the reports in a browser
+    (no bench here), so the screen, the print dialog and the export buttons are unchecked.
 
 ## [1.802.2] - 2026-11-12
 

@@ -3939,6 +3939,14 @@ jobs:
       # form script calls only what exists.
       - name: Procurement Tracker filters, address and sorting (node)
         run: node scripts/test_procurement_tracker.mjs
+      # The tracker's "returned to the supplier" against the REAL Supplier Return module (v1.807.0), not
+      # a stand-in: supplier_returns.returned_lines on test_supplier_returns' own stub (real SQL on
+      # SQLite, returns made through that module's own functions), read through project_stock._returns
+      # as places_for reads it. Fails the build if a key the tracker reads is renamed, if a status stops
+      # or starts meaning "the goods have left", if a quantity changes unit, or if the ledger's return
+      # rows and a Supplier Return are ever added together. Reuses that suite's stub, so its own step.
+      - name: Procurement Tracker against the real Supplier Return module (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_tracker_supplier_returns -v
       # Receive Items on the Purchase Order (ER-2026-458194): the endpoint is POST-only,
       # the receipt is inserted and submitted through the framework's permission checks
       # (no ignore_permissions), it is built by ERPNext's own mapper, and the form script
@@ -4175,6 +4183,18 @@ jobs:
       # workspace) drift. Own frappe stub, so its own step; unittest classes.
       - name: Warehouse Transactions report and hub links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v
+      # Inventory reports (v1.805.0): Location Contents, Where Is This Item, Project Materials and Job Site Contents.
+      # Fails the build if a status rule changes (as expected, assigned and empty, here and unassigned, here but
+      # assigned to another bin, on order, undecided, held at a place that is never a bin), if Location Contents
+      # stops calling the Bin Manager's own listing rule (api.stock_scan._items_at, no row cap) or grows a copy of
+      # it, if the Project Shelf's shares stop adding up to what is on the shelf, if the project roll-up changes
+      # (ordered from order lines, received from receipt lines, returns, still to come against closed-short, used
+      # less brought back, "not located" for non-stock lines), if a report raises before the Project Shelf field
+      # exists, if a stock ledger read stops skipping canceled entries or a value is interpolated into SQL, if a row
+      # carries markup (print and export read the raw cell), or if the hub links, card counts or the force-import
+      # patch (savepoint + rollback per workspace) drift. Own frappe stub, so its own step; unittest classes.
+      - name: Inventory reports and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_reports -v
       # "Turn on Maintain Stock" (v1.754.0): writes is_stock_item past ERPNext's Item.cant_change, so
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery
@@ -4189,6 +4209,36 @@ jobs:
       # step; unittest classes.
       - name: Turn on Maintain Stock (checks, switch, endpoints, receipt guards; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
+      # Supplier Returns (v1.807.0): the rules of sending something back to a supplier. Fails the
+      # build if an outcome (refund, credit, replacement, closed) can be recorded before the items
+      # were marked Sent Back, if a Stock User can mark money received or an Accounts User can ship,
+      # if a line can return more than its receipt line received less what other returns hold, if a
+      # receipt line of an item switched to a stock item later (no stock ledger entry) is put on the
+      # standard Purchase Return (ERPNext would take out stock that was never put in), if the
+      # standard return is cut to the wrong lines or a shortfall is trimmed in silence, if a typed
+      # refund is accepted once a Debit Note or Payment Entry is linked, if a debit note the
+      # supplier still owes on counts as money received, or if the keys the Project Materials
+      # report reads (returned_line) are renamed; if one payment covering two returns can be counted
+      # in full on each, if a finished return's fees stop being locked, or if a Purchase Return
+      # that took more than its record says can be linked. Pure: no frappe, no stub. unittest.
+      - name: Supplier Returns rules (steps, quantities, which document, the money rule; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v
+      # Supplier Returns, the module and its endpoints, with the module's own queries run for real
+      # on SQLite. Fails the build if a second return against a receipt can take what the first
+      # holds; if a record-only line reaches ERPNext's mapper or the Maintain Stock guard's
+      # ignore flag is ever set; if the drafted Purchase Return or Debit Note carries lines or
+      # quantities that are not this return's, is submitted, or (the debit note) moves stock a
+      # second time; if a status or an amount typed into a save sticks; if a payment TO a supplier
+      # is taken for a refund; if anything but the Send button's endpoint can send the return
+      # request (a save, a step, a doc_event, the daily job) or that endpoint accepts an API key;
+      # if a doc_event can raise into a Purchase Receipt's or a payment's submit; or if hooks, the
+      # DocType's options, the scripts' lists, Stock Scan's endpoint map, the print format, the
+      # workspace or the patches drift from the code; if a return reopened from Denied can claim
+      # what another return took meanwhile; if the Debit Note drafted against an unpaid bill is
+      # left booked against itself (ERPNext 16.54's default), so the bill stays unpaid; or if a
+      # canceled receipt leaves its return with no way out. Own frappe stub, so its own step.
+      - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the
