@@ -54,21 +54,88 @@ _TOKEN_REFRESH_MARGIN_SEC = 120
 
 # Default model new chats open with when nothing is configured.
 #
-# Empty means Auto: Triton picks a tier per message from the prompt, which for
-# ordinary questions is the same Flash this used to pin (`model_router`'s fast
-# tier), while a research-shaped question gets Pro and a trivial one gets Lite.
-# Pinning Flash here bought nothing over Auto and cost the two other tiers.
+# Empty means Auto, and Auto stays the default on purpose rather than a pinned
+# id. Three reasons, in order of weight:
+#
+#   1. It is the one value that cannot go stale. Google retires models on its
+#      own schedule and Triton's catalog follows; a pinned id here is wrong
+#      again at the next retirement, and Auto never is.
+#   2. It already resolves to the model Triton's owner chose as the default. An
+#      Auto turn is answered by Triton's default chat model (`gemini-4-argon` at
+#      medium reasoning since Triton 0.83.0, `DEFAULT_CHAT_MODEL_ID` in its
+#      `core/model_catalog.py`), with a trivial one-line lookup still going to
+#      the lite tier. Pinning that same id here would buy nothing.
+#   3. Pinning costs something. An explicit model on a request is what moves a
+#      Triton turn off its deployed agent and onto the in-process path, so a
+#      pinned default would do that to every turn of every user.
 _DEFAULT_MODEL = ""
 
-# Curated model choices shown in the widget's header picker. Values are the
-# Gemini model ids Triton routes to (see backend app/core/model_router.py); an
-# empty value means "let Triton auto-route per message" based on the prompt.
-TRITON_MODELS = [
-    {"value": "", "label": "Auto"},
-    {"value": "gemini-3.8-flash", "label": "Flash"},
-    {"value": "gemini-3.1-pro-preview", "label": "Pro"},
-    {"value": "gemini-3.5-flash-lite", "label": "Lite"},
-]
+# The fallback model list: what the widget's picker offers when the live list
+# cannot be fetched from Triton (`list_models` below), and what it paints first
+# on every page load before that fetch returns.
+#
+# These are the Gemini ids of Triton's catalog, in the catalog's order. The
+# truth lives in the Triton repository, `backend/app/core/model_catalog.py`
+# (`MODELS`, the Google provider) -- which is exactly what
+# `GET /api/v1/assistant/models` returns. This copy is only as good as the day
+# it was made (2026-11-11, Triton 0.86.0), so
+# `tests/test_triton_widget_defaults.py` holds a pinned copy of the catalog
+# and fails the build when an id here is not in it.
+#
+# It went stale once already. Until v1.801.1 it offered `gemini-3.1-pro-preview`
+# as "Pro", an id Triton dropped in 0.83.0 (2026-11-11) along with
+# `gemini-3.5-flash`, and it had no entry for the model Triton now answers with.
+TRITON_FALLBACK_MODEL_IDS = (
+    "gemini-4-argon",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+)
+
+
+def _pretty_model_label(model_id: str) -> str:
+    """Turn a raw model id into a short picker label.
+
+    "gemini-4-argon" -> "Argon 4", "gemini-3.8-flash" -> "Flash 3.8",
+    "gemini-3.5-flash-lite" -> "Flash Lite 3.5".
+
+    The ONE labeling rule for this widget: the live list and the fallback list
+    both go through it (`_models_from_ids`), so a label cannot change under the
+    user when the live list replaces the fallback a moment after the panel
+    paints. Triton's own app labels the same models from its catalog's
+    `short_label` ("4 Argon"); that label is served only by
+    `/assistant/models/catalog`, which this widget does not read.
+    """
+    s = (model_id or "").replace("gemini-", "")
+    parts = [p for p in s.split("-") if p]
+    if not parts:
+        return model_id or "Model"
+    version = parts[0]
+    tier_words = [w for w in parts[1:] if w.lower() != "preview"]
+    tier = " ".join(w.capitalize() for w in tier_words)
+    return f"{tier} {version}".strip() if tier else version
+
+
+def _models_from_ids(ids) -> list:
+    """Build the widget's {value,label} option list, with Auto first.
+
+    Anything that is not a list of strings yields Auto alone. A dict in
+    particular must not be iterated: its keys are strings, and an error body
+    that came back with a 200 would otherwise be offered as models.
+    """
+    models = [{"value": "", "label": "Auto"}]
+    if not isinstance(ids, (list, tuple)):
+        return models
+    for mid in ids:
+        if isinstance(mid, str) and mid:
+            models.append({"value": mid, "label": _pretty_model_label(mid)})
+    return models
+
+
+# The fallback as the picker takes it. Built by the same function as the live
+# list, never written out by hand: hand-written labels ("Flash", "Pro", "Lite")
+# are what this list carried before, and they disagreed with the live labels
+# ("Flash 3.8") the widget swapped in a moment later.
+TRITON_MODELS = _models_from_ids(TRITON_FALLBACK_MODEL_IDS)
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +493,62 @@ def start_session(
     settings = get_settings()
     payload = {
         "title": title or "ERPNext Chat",
-        "model_name": model or settings["default_model"],
+        # Either an id Triton lists right now, or Auto -- see the helper.
+        "model_name": _listed_model_or_auto(model or settings["default_model"], settings),
     }
     if persona_key is not None:
         payload["persona_key"] = persona_key
     return _request("POST", "/api/v1/assistant/sessions", payload)
+
+
+def _listed_model_or_auto(model_id: str | None, settings: dict | None = None) -> str:
+    """`model_id` when Triton offers it right now, otherwise "" (Auto).
+
+    This is what makes a stale *Default Model* harmless. That field is free text
+    on a Single, and an id typed there outlives the model it names. Before this
+    check the stored id went to Triton on every new chat -- by two routes, since
+    the widget's `ensureSession` falls back to `config.default_model` whenever
+    the picker sits on Auto, and `start_session` does the same -- and Triton
+    answered in one of two ways (its `schemas/chat.py::_known_model_or_auto`):
+
+      * a `gemini-*` id it no longer lists: read as Auto, with a warning in
+        Triton's log for every new chat;
+      * any other id it does not list (a typo, an id from another family): a
+        422, which `_request` turns into "Triton error (422)". No session, so no
+        new chat for anyone whose picker is on Auto, until somebody corrects a
+        settings field that gives no hint it is the cause.
+
+    "Offered right now" is `list_models()`: Triton's live list, cached five
+    minutes, or the fallback when Triton cannot be reached. Measuring against
+    the live list rather than the fallback means a model Triton adds tomorrow
+    can be pinned the day it appears, without a release of this app.
+
+    One consequence to know about. The live list is Gemini-only (Triton keeps
+    Claude out of `/assistant/models`), so a Claude id in *Default Model* is
+    Auto here as well. That changes what is stored on the Triton session and
+    not what answers: the picker never offered such an id, a turn from this
+    widget on Auto names no model, and Triton's router ignores a session
+    default that is not one of its own Auto tiers (`model_router.select_model`).
+
+    An empty id costs nothing: no cache read and no request.
+    """
+    model_id = (model_id or "").strip()
+    if not model_id:
+        return ""
+    try:
+        offered = {m.get("value") for m in list_models() if isinstance(m, dict)}
+    except Exception:
+        # `list_models` already swallows a Triton failure; this is the cache
+        # being unreachable. The fallback is still a better judge than none.
+        offered = {m["value"] for m in TRITON_MODELS}
+    if model_id in offered:
+        return model_id
+    if (settings or {}).get("debug"):
+        frappe.log_error(
+            title="Triton Chat",
+            message=f"Model {model_id!r} is not one Triton lists; the chat was started on Auto.",
+        )
+    return ""
 
 
 @frappe.whitelist()
@@ -439,38 +557,15 @@ def list_sessions() -> list:
     return _request("GET", "/api/v1/assistant/sessions")
 
 
-def _pretty_model_label(model_id: str) -> str:
-    """Turn a raw model id into a short picker label.
-
-    "gemini-3.8-flash" -> "Flash 3.8", "gemini-3.1-pro-preview" -> "Pro 3.1",
-    "gemini-3.5-flash-lite" -> "Flash Lite 3.5".
-    """
-    s = (model_id or "").replace("gemini-", "")
-    parts = [p for p in s.split("-") if p]
-    if not parts:
-        return model_id or "Model"
-    version = parts[0]
-    tier_words = [w for w in parts[1:] if w.lower() != "preview"]
-    tier = " ".join(w.capitalize() for w in tier_words)
-    return f"{tier} {version}".strip() if tier else version
-
-
-def _models_from_ids(ids) -> list:
-    """Build the widget's {value,label} option list, with Auto first."""
-    models = [{"value": "", "label": "Auto"}]
-    for mid in (ids or []):
-        if isinstance(mid, str) and mid:
-            models.append({"value": mid, "label": _pretty_model_label(mid)})
-    return models
-
-
 @frappe.whitelist()
 def list_models() -> list:
     """Live model choices for the widget picker, sourced from Triton so the
     list reflects backend changes globally without manual upkeep here.
 
     Cached briefly (per-site) to avoid hitting Triton on every page load; falls
-    back to the curated TRITON_MODELS when Triton is unreachable.
+    back to the curated TRITON_MODELS when Triton is unreachable. The two lists
+    are built by the same `_models_from_ids`, defined beside the fallback ids at
+    the top of this module.
     """
     cache = frappe.cache()
     ckey = "triton_models_list"

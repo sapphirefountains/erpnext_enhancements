@@ -50,6 +50,33 @@ from twilio.request_validator import RequestValidator
 
 from erpnext_enhancements import email_style
 
+# The realtime voice model `get_gateway_config` names when it has nothing better.
+#
+# The truth lives in the Triton repository: `LIVE_MODEL` and `VOICE_LIVE_MODEL`
+# in `backend/app/core/config.py`, both `gemini-3.8-live` since Triton 0.83.0
+# (2026-11-11). This was the 2.5-generation native-audio Live id until v1.801.1;
+# Google retires that one on 2026-12-13.
+#
+# What this constant does NOT do, checked on 2026-11-11 so nobody has to
+# rediscover it:
+#
+#   * Nothing reads it today. Triton has never called `get_gateway_config` (no
+#     commit in its history names it or `voice_model_id`); it runs its Live
+#     sessions on its own setting. The Desk softphone is a Twilio Voice client
+#     and names no model at all. The endpoint dates from March 2026, when the
+#     gateway was Poseidon, which is retired.
+#   * It is not the value of an empty `Triton Settings.voice_model_id`.
+#     `voice_model_id` is a declared field, so `getattr` finds it (None when
+#     blank) and never reaches its default. This id is returned only when the
+#     Single cannot be loaded at all.
+#   * Changing it changes no stored value. Whatever a person typed into Triton
+#     Settings is still there, and is theirs to change in the Desk.
+#
+# It is kept current for the same reason Triton keeps `VOICE_LIVE_MODEL`
+# current: a default that names a model which no longer exists is a trap for
+# the next thing that does read it.
+_DEFAULT_VOICE_MODEL_ID = "gemini-3.8-live"
+
 
 @frappe.whitelist(allow_guest=True)
 def get_gateway_config():
@@ -67,14 +94,14 @@ def get_gateway_config():
             # accessible endpoint. It exposes non-sensitive call-routing config only.
             "master_system_prompt": settings.master_system_prompt,
             "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
-            "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio"),
+            "voice_model_id": getattr(settings, "voice_model_id", _DEFAULT_VOICE_MODEL_ID),
         }
     except Exception as e:
         frappe.log_error(title="Gateway Config Error", message=f"Failed to fetch Triton settings: {e!s}")
         return {
             "master_system_prompt": "You are Triton.",
             "forwarding_phone_number": "+18018200044",
-            "voice_model_id": "gemini-live-2.5-flash-native-audio"
+            "voice_model_id": _DEFAULT_VOICE_MODEL_ID
         }
 
 def validate_twilio_request(func):
