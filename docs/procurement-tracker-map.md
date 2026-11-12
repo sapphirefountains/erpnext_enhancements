@@ -4,9 +4,126 @@ Orientation for the **Procurement Tracker**, the collapsible procurement tree on
 form's Budget tab.
 
 Written first as the groundwork for four queued changes, then updated once those landed
-(v1.194.0 – v1.197.0). Line references are against that merged state. Where a defect it
-originally documented has since been fixed, it says so rather than quietly dropping it — the
-reasoning is usually the part worth keeping.
+(v1.194.0 – v1.197.0). Line references are against that merged state, and **v1.811.0 moved most
+of them**: the widget's sorting moved into its own module and the renderer was restructured, so
+read a `:123` below as "about there, in the v1.197.0 file". Where a defect it originally
+documented has since been fixed, it says so rather than quietly dropping it — the reasoning is
+usually the part worth keeping.
+
+## v1.811.0: where it is now, filters, and the tracker by item
+
+Nik, 2026-11-12: *"it'd be nice to see what's where for items. So enhanced filtering and
+formatting of data."* Read this section first; it is the current shape.
+
+| Layer | Where |
+|---|---|
+| Endpoint the widget calls | `project_enhancements.get_procurement_overview` → `{groups, items, filters, located, today}`. `groups` is `get_procurement_documents`, unchanged in shape |
+| A line's state, the by-item rows, the filter choices | [`procurement_overview.py`](../erpnext_enhancements/procurement_overview.py) — app root, pure, no `frappe` import |
+| Where an item is now: the rule | [`inventory_enhancements/project_stock_rules.py`](../erpnext_enhancements/inventory_enhancements/project_stock_rules.py) — pure |
+| Where an item is now: the queries | [`inventory_enhancements/project_stock.py`](../erpnext_enhancements/inventory_enhancements/project_stock.py) — `places_for(project, item_codes)` |
+| The widget's decisions (filters, address, sorting, labels, print) | [`public/js/procurement_tracker/logic.js`](../erpnext_enhancements/public/js/procurement_tracker/logic.js), bundled as `procurement_tracker.bundle.js` → `window.sf_procurement_tracker` |
+| The widget itself | `public/js/project_enhancements.js` — `mountProcurementTracker` (the Vue app and template) and `render_procurement_tracker` (load, unmount, mount) |
+
+**Where it is now.** ERPNext keeps on-hand by item and warehouse, with no project on that table.
+The stock ledger does carry the project, so the answer is built from the ledger rows that name
+the job, added up by item and warehouse and **capped at what the Bin row holds now** (a move or a
+count made with no job on it takes stock away without the ledger saying whose it was). At the
+job's own site warehouse everything on hand is the job's, so the Bin rows there are read as they
+stand. A Material Issue or delivery with the job on it is *taken to the job*; a purchase return is
+*returned to the supplier*; what the purchasing documents say arrived and nothing accounts for is
+*place not recorded*, said in those words. A non-stock item reads *Location not tracked (not a
+stock item)*.
+
+Two refinements, both from the review of the first version:
+
+- **Parts brought back are counted once.** A Material Receipt with the job on it is parts coming
+  back from the job (`ledger_kind` → `LEDGER_BROUGHT_BACK`): they are at the place they came back
+  to, and what came back is taken off "taken to the job", never below zero.
+- **The Project Shelf's number is one number.** With the Project Shelf's module installed,
+  `places_for` takes the job's share of the shelf from `project_shelf.shelf_stock` (through
+  `project_stock._shelf_rows`, the adapter the Bin Manager also uses) and hands it to
+  `item_places` as `held`, instead of its own ledger sum. That function shares a short shelf out
+  between the jobs that claim it, so the tracker and the Bin Manager's By project view cannot
+  disagree. Without the module the ledger rule is already the answer on both screens.
+
+It is **per item for the project, not per line**: two lines of one item share one answer, and the
+cell says so (`where_now_lines`). The old Warehouse column, where the line was *received*, is
+still there as "Received at …" under the places, and still on the row as `warehouse` /
+`received_at`.
+
+The lookup is a fixed handful of queries for the whole project (the ledger grouped once, the Bin
+rows at the warehouses involved, their names, the items, and the job sites), never one per line.
+If it fails, the feed still answers, `located` is false, the widget says the locations could not
+be read, and the failure is in the Error Log.
+
+**The Project Shelf** is whatever `inventory_enhancements/project_shelf.py::warehouse()` says
+(another release's module, settled 2026-11-12). `project_stock.shelf_warehouse` imports it where
+it is used; on a site whose code does not have it yet, the setting
+`Inventory Scanner Settings.project_shelf_warehouse` is read with `Document.get`, and a site
+without that field has no shelf, so the old `Stores` is simply a named shop location.
+
+**Returned to the supplier** has two sources that describe the same goods: the ledger's
+purchase-return rows that name the job, and `supplier_returns.returned_lines(project=...)` (the
+Supplier Return record, another release again, imported the same way). They are never added; the
+larger figure is the place. Each Supplier Return that names the item is listed under the places
+with its status (`supplier_returns` on the row), "sent back" once its goods have left and "to go
+back" before, for a non-stock item too.
+
+**A line's state** is one of To order, Ordered, Partly received, Received, Late, Closed (plus
+Quote only and Bill only for documents that never joined a chain), from the line's own
+quantities. It is what the Status column now shows and what the status filter matches;
+`order_status` and `receive_status` are still on every row and still drive the Doc Chain badge
+and the document rollup. Three decisions worth knowing:
+
+- **Closed is not late.** An order that was closed (or delivered straight to the customer) with
+  goods outstanding, or a stopped request, is *Closed*: nobody is chasing it. 148 order lines on
+  production sat on orders closed with nothing received.
+- **A draft order is not an order**, so a line that sits only on a draft is *To order*. That
+  holds for a draft the per-doctype sweep finds too (`_minimal_item_row` reports its quantity as
+  `draft_ordered_qty`, as a chain row does).
+- **A split line is late per order.** One request line across two orders arrives as two rows,
+  each with the request's totals and its own order's date. The order that delivered its share is
+  not late because the other one is.
+
+**The by-item view** is one row per item for the project: requested, ordered and received across
+every document (de-duplicated on the child row before summing, quotes and bills left out of the
+quantities but kept in the Documents column), status, where it is now, the due date, suppliers
+and documents. It has its own **Print list**: the items on screen with where each is now, as a
+plain page for the browser's print dialog. The document PDFs were left alone on purpose: they go
+to suppliers.
+
+**Filters, and the address.** Where (Project Shelf, Job site, Shop bins, Taken to the job,
+Returned to supplier, Not received yet, Location not tracked), Status, Supplier and "Needs action
+only", plus the search box. Only choices that match at least one line are offered. The view and
+every filter are written into the address as `pt_view`, `pt_where`, `pt_status`, `pt_supplier`,
+`pt_action` and `pt_q` with `history.replaceState`: they survive a reload, come back with Back and
+Forward, and travel in a shared link, and a filter is never a history entry of its own. frappe
+copies an address's query into `frappe.route_options` on every route change; the widget takes its
+own keys back out so the next list view is not asked to filter on them.
+
+**Status labels** are the Desk's own badge (`.es-badge` with `data-theme`), with fallback colours
+for a Desk that predates it. `.status-badge` is no longer used here (the Tasks tree still uses it).
+
+**The address write waits a quarter of a second** (typing must not write it per key), and a write
+still waiting when the form refreshes is cancelled with its app (`beforeUnmount`), so the old view
+is never put back over the new one.
+
+**Three old gotchas are closed** (see *Gotchas*): the Vue app is unmounted before the next one is
+mounted, nothing reaches `v-html` unescaped, and the mount target is no longer a document-global
+id. What is expanded and how each table is sorted now survives a form refresh (`frm.__pt_keep`).
+
+**Return (Supplier Returns, v1.807.0).** `canReturn`, `returnToSupplier` and `canReturnLine` live
+in `mountProcurementTracker` with the other row actions: a Return button on a submitted receipt's
+header and a Return link on a line's receipt step, both through the launcher in
+`public/js/supplier_return_start.js` (an unsaved Supplier Return; nothing is saved, emailed or
+moved until its own form does it). `tests/test_supplier_returns.py` holds the script to them, and
+`tests/test_tracker_supplier_returns.py` runs the tracker's reading of returns against the real
+`returned_lines`.
+
+**The assistant tool** gained `view="items"`, and every item row in every view carries the new
+keys (`line_state`, `line_states`, `needs_action`, `is_late`, `expected_date`, `supplier`,
+`where_now`, `where_now_text`, `location_tracked`, `location_kinds`, `received_at`). Nothing was
+renamed or removed.
 
 ## First, the name collision
 
@@ -430,13 +547,6 @@ submitted Purchase Orders across 160 submitted MR item rows: **zero discrepancie
 
 Still open:
 
-- **The Vue app is never unmounted.** Every `refresh` does `$(wrapper).html(...)` and then
-  `createApp(...).mount(...)` on a fresh node, orphaning the previous instance with its watchers
-  still live. The mount target is a hard-coded document-global id, `#procurement-tracker-app`.
-  Fixing this is the prerequisite for any realtime refresh.
-- **`v-html` on unescaped data.** `highlight()` escapes the *search tokens* for the regex, but
-  never escapes `text` — item codes, item names, warehouses, supplier names and document names
-  all reach the DOM raw.
 - **`_supplementary_documents` swallows every exception** — a bare `except Exception` with
   `frappe.log_error`. A doctype whose sweep fails silently vanishes from the feed rather than
   erroring.
@@ -451,6 +561,14 @@ Still open:
 
 Closed, and worth not reintroducing:
 
+- The Vue app never being unmounted: every `refresh` mounted a new app over the last one's node
+  and left the old one alive with its watchers. `render_procurement_tracker` unmounts it first,
+  and mounts on its own node rather than a document-global id (v1.811.0).
+- `v-html` on unescaped data: item codes, names, suppliers and document names reached the DOM
+  raw. Every `v-html` now goes through `hl()` → `logic.highlight_html`, which escapes each piece
+  (v1.811.0; `tests/test_project_stock.py` holds the template to it).
+- A submitted Purchase Receipt with no order behind it (a store run) reading "Not Received" on
+  the receipt that received it (v1.811.0, `_minimal_item_row`).
 - The item row inheriting its parent's status (v1.194.0).
 - `ordered_qty` falling back to the requested quantity (v1.194.0).
 - `getStatusColorClass` collapsing partial and complete into one class (v1.194.0).
@@ -477,6 +595,14 @@ Closed, and worth not reintroducing:
 - [`tests/test_procurement_status.py`](../erpnext_enhancements/tests/test_procurement_status.py)
   — **bench-required**, so it does *not* run in CI. Carries the end-to-end reproduction through
   the real query, plus the draft-PO case.
+
+- [`tests/test_procurement_overview.py`](../erpnext_enhancements/tests/test_procurement_overview.py)
+  — bench-free **pytest**, own CI step: the where-now rule, the line states, the by-item sums.
+- [`tests/test_project_stock.py`](../erpnext_enhancements/tests/test_project_stock.py)
+  — bench-free unittest on its own `frappe` stub, own CI step: the lookup's queries, the feed's
+  new functions lifted out of the package, and the UNION's two column lists held equal.
+- [`scripts/test_procurement_tracker.mjs`](../scripts/test_procurement_tracker.mjs)
+  — node, own CI step: the widget's pure logic.
 
 Note the split is load-bearing: the pytest suite is bench-free and runs on every push; the
 unittest-style bench suite needs `bench --site <site> run-tests`. A new *pytest* suite must be

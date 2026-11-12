@@ -20,15 +20,27 @@ class ProjectProcurementStatus(BaseTool):
         self.description = (
             "Procurement pipeline for one project, following each item's chain "
             "Material Request -> RFQ -> Supplier Quotation -> Purchase Order -> "
-            "Purchase Receipt / Stock Entry -> Purchase Invoice. Two views: "
+            "Purchase Receipt / Stock Entry -> Purchase Invoice. Three views: "
             "(1) 'stage_summary' (default) — items grouped by the latest stage their "
             "chain has reached ('graduation' logic; subcontracted receipts surface as "
             "'Subcontracting Receipt'), each row carrying every document in its chain "
             "plus requested / ordered / received qty, a per-line order_status and "
             "receive_status, and completion %, with per-stage counts; "
             "(2) 'documents' — a document-centric tree (DocType -> documents -> item "
-            "rows) including project-linked documents that never joined a chain. "
-            "Use this to answer 'what materials are we waiting on for project X'. "
+            "rows) including project-linked documents that never joined a chain; "
+            "(3) 'items' — one row per item for the project: requested, ordered and "
+            "received across every document, its suppliers and documents, and where "
+            "it is now. "
+            "Use this to answer 'what materials are we waiting on for project X' and "
+            "'where is the material for project X'. "
+            "Every item row also carries line_state (to_order, ordered, partly_received, "
+            "received, late, closed), needs_action, expected_date, supplier, and "
+            "where_now / where_now_text: where that item is now for this project, read "
+            "from the stock ledger rows that name the job (on the Project Shelf, at the "
+            "job's site, in a named bin, taken to the job, returned to the supplier). "
+            "where_now is per item, not per line; a non-stock item's location is not "
+            "tracked and location_tracked is false. received_at is where the line was "
+            "received. "
             "Quantities are per line and never inherited from a parent document: "
             "order_status is that line's own ordered-vs-requested state (Not Ordered / "
             "Partially Ordered / Ordered / Over Ordered), so a fully ordered line inside "
@@ -46,9 +58,9 @@ class ProjectProcurementStatus(BaseTool):
                 "project": {"type": "string", "description": "Project docname (e.g. 'PROJ-0001')"},
                 "view": {
                     "type": "string",
-                    "enum": ["stage_summary", "documents"],
+                    "enum": ["stage_summary", "documents", "items"],
                     "default": "stage_summary",
-                    "description": "Item/stage-centric rollup or document-centric tree",
+                    "description": "Item/stage-centric rollup, document-centric tree, or one row per item",
                 },
             },
             "required": ["project"],
@@ -62,8 +74,19 @@ class ProjectProcurementStatus(BaseTool):
 
         from erpnext_enhancements.project_enhancements import (
             get_procurement_documents,
+            get_procurement_overview,
             get_procurement_status,
         )
+
+        if arguments.get("view") == "items":
+            overview = get_procurement_overview(project)
+            return {
+                "success": True,
+                "project": project,
+                "view": "items",
+                "items": overview["items"],
+                "located": overview["located"],
+            }
 
         if (arguments.get("view") or "stage_summary") == "documents":
             return {
