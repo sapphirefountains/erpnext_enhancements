@@ -23,6 +23,8 @@ Reads (GET):
   show it ("Show on map" from the Item form and Stock Scan, and the page's own search).
 * :func:`editor_data` -- what the editor offers: the boxes worth placing and where each already
   is, and every warehouse for the picker.
+* :func:`box_levels` -- one warehouse's front view in the automatic order, for a box the editor
+  has just tied (the stored map does not hold it yet).
 
 Writes (POST): :func:`save_map` and :func:`delete_map`. Nothing else is written, and neither
 touches a Warehouse, a Putaway Rule or stock.
@@ -38,15 +40,25 @@ Things this module is careful about:
   permission: the Warehouse Map Editor role, or System Manager. The role adds editing to someone
   who already works the inventory; by itself it does not open the page.
 * **The floor plan picture is a private file.** It is attached to the map's record, so Frappe
-  serves it to exactly the people who can read the map (``File.has_permission``), and the
-  DocType refuses a public file or a web address.
-* **A stale editor cannot overwrite a newer map.** :func:`save_map` takes the ``modified`` stamp
-  the editor was opened with and refuses when the record has moved on since.
+  serves it to exactly the people who can read the map (``File.has_permission``). The DocType
+  refuses an address that is not this map's own private File, and a ``File`` doc_event
+  (``inventory_enhancements/warehouse_map_files.py``) refuses a public File attached to a map.
+* **A stale editor cannot overwrite a newer map.** :func:`save_map` must be given the ``modified``
+  stamp the editor was opened with and refuses when the record has moved on since. It is not
+  optional: a caller that left it out would otherwise skip the check.
+* **The app's own sentence, not Frappe's.** ``Document.save`` checks Links *before* ``validate``
+  (``document.py`` ``_save``, read at v16.56.0), so a box tied to a deleted warehouse would be
+  refused as "Could not find Row #3: Warehouse", and a ``warehouse`` that is not text would trip
+  an ``assert``. :func:`save_map` therefore cleans the boxes with the rules first.
 * **Only named fields are written.** The editor's payload is a dict from the browser; the keys
   in :data:`_MAP_FIELDS` are read out of it and each box is rebuilt by
   ``warehouse_map_rules.clean_shape``. Nothing else in the payload reaches the record.
-* **A disabled map is hidden from everyone but editors**, here and in ``locate`` and
-  ``find_item``, so a map being drawn is not shown half-finished.
+* **A disabled map is left off the page for everyone but editors**, here and in ``locate`` and
+  ``find_item``, so a map being drawn is not shown half-finished. That is all it is: the stock
+  roles can read the DocType, so its own list in the Desk and the REST API still show a disabled
+  map and its picture to them. A half-drawn map is not a secret (the same people see it the day
+  it is finished), and hiding it there would take a ``has_permission`` hook and a permission
+  query that could not be run on a bench when this was written.
 
 Tabs, per ``CLAUDE.md`` (new file).
 """
@@ -67,7 +79,19 @@ SHAPE = "Warehouse Floor Map Shape"
 _MAP_FIELDS = ("sort_order", "disabled", "width", "height", "background")
 
 #: A box's fields. Each is cleaned by ``warehouse_map_rules.clean_shape`` in the DocType's validate.
-_SHAPE_FIELDS = ("shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from")
+_SHAPE_FIELDS = (
+	"shape_type",
+	"warehouse",
+	"label",
+	"x",
+	"y",
+	"w",
+	"h",
+	"rotation",
+	"shelves_from",
+	"bins_from",
+	"bin_order",
+)
 
 #: Kinds of place that are not in the building: listed beside the map, never drawn on it.
 _OFF_MAP_KINDS = ("vehicle", "job_site")
@@ -269,7 +293,11 @@ def get_map(name):
 			"rotation": flt(row.rotation),
 			"shelves_from": row.shelves_from or rules.TOP,
 			"bins_from": row.bins_from or rules.LEFT,
+			# The box's own order, where it has one; the page lays it over the automatic order.
+			"bin_order": rules.clean_order(row.get("bin_order")),
 			"missing": bool(warehouse and not rules.usable(node)),
+			# Why: "deleted" (the box has to go), "disabled" or "transit" (the box may stay).
+			"missing_reason": rules.missing_reason(node) if warehouse else "",
 			"is_group": bool(node and rules.is_group(node)),
 			"trail": rules.trail(warehouse, tree) if node else "",
 			"levels": [],
@@ -277,7 +305,7 @@ def get_map(name):
 		}
 		if node and rules.usable(node):
 			leaves = rules.leaves_under(warehouse, tree, kids)
-			shape["levels"] = rules.levels(warehouse, tree, kids)
+			shape["levels"] = rules.levels(warehouse, tree, kids, shape["bin_order"])
 			shape["summary"] = rules.summarize([bin_rows.get(leaf) or {} for leaf in leaves])
 			for leaf in leaves:
 				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree)
@@ -409,6 +437,26 @@ def editor_data():
 	return {"units": units, "warehouses": warehouses}
 
 
+@frappe.whitelist(methods=["GET"])
+def box_levels(warehouse):
+	"""One warehouse's front view in the automatic order (``warehouse_map_rules.levels`` with no
+	order of the box's own): ``{"is_group", "levels", "names"}``, ``names`` each row's and bin's
+	plain name. For the editor, which shows a box's shelves and bins so they can be put in order
+	by hand, and which may have tied the box a moment ago."""
+	_require_edit()
+	warehouse = cstr(warehouse).strip()
+	tree = _tree()
+	if warehouse not in tree:
+		frappe.throw(_("There is no location called {0}.").format(warehouse or _("that")))
+	levels = rules.levels(warehouse, tree, rules.children_index(tree))
+	names = {}
+	for level in levels:
+		names[level["warehouse"]] = rules._name_of(tree, level["warehouse"])
+		for leaf in level["bins"]:
+			names[leaf] = rules._name_of(tree, leaf)
+	return {"is_group": rules.is_group(tree[warehouse]), "levels": levels, "names": names}
+
+
 # ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------
@@ -430,9 +478,9 @@ def save_map(payload, name=None, modified=None):
 	"""Create a map (no ``name``) or save one, as the caller.
 
 	``payload``: ``map_name``, the keys in :data:`_MAP_FIELDS`, and ``shapes`` (the whole list of
-	boxes: it replaces what is stored). ``modified`` is the stamp the editor was opened with; a
-	record changed since is refused rather than overwritten. A new ``map_name`` on an existing map
-	renames it. Answers ``{"name", "modified"}``.
+	boxes: it replaces what is stored). ``modified`` is the stamp the editor was opened with and is
+	required for an existing map; a record changed since is refused rather than overwritten. A new
+	``map_name`` on an existing map renames it. Answers ``{"name", "modified"}``.
 	"""
 	_require_edit()
 	data = _payload(payload)
@@ -443,7 +491,9 @@ def save_map(payload, name=None, modified=None):
 		if not frappe.db.exists(MAP, name):
 			frappe.throw(_("There is no map called {0}.").format(name))
 		doc = frappe.get_doc(MAP, name)
-		if modified and cstr(doc.modified) != cstr(modified):
+		if not cstr(modified).strip():
+			frappe.throw(_("The map could not be read. Reload the page and try again."))
+		if cstr(doc.modified) != cstr(modified):
 			frappe.throw(
 				_(
 					"This map was changed by someone else after you opened it. Choose Refresh to load their version, then make your change again."
@@ -454,7 +504,9 @@ def save_map(payload, name=None, modified=None):
 			problem = rules.map_name_problem(title)
 			if problem:
 				frappe.throw(_(problem))
-			if frappe.db.exists(MAP, title):
+			# A change of capitals only ("shop floor" to "Shop Floor") finds its own row here: the
+			# database compares names without regard to case.
+			if title.lower() != doc.name.lower() and frappe.db.exists(MAP, title):
 				frappe.throw(_("There is already a map called {0}.").format(title))
 			doc = frappe.get_doc(MAP, frappe.rename_doc(MAP, name, title))
 			doc.map_name = title
@@ -474,10 +526,19 @@ def save_map(payload, name=None, modified=None):
 		shapes = data.get("shapes")
 		if not isinstance(shapes, list):
 			frappe.throw(_("The map could not be read. Reload the page and try again."))
+		# Cleaned here as well as in the DocType's validate, and before the rows exist: Frappe
+		# checks a row's Links before validate runs, so this is where a box tied to a deleted
+		# warehouse gets the app's sentence, and where a value that is not text is made text.
+		width, height = rules.canvas_size(doc.width, doc.height)
+		known = set(frappe.get_all("Warehouse", pluck="name"))
+		try:
+			cleaned = rules.clean_shapes(
+				[shape if isinstance(shape, dict) else {} for shape in shapes], width, height, known
+			)
+		except rules.MapError as error:
+			frappe.throw(_(str(error)))
 		doc.set("shapes", [])
-		for shape in shapes:
-			# Only the fields a box has; the DocType's validate cleans and checks each one.
-			shape = shape if isinstance(shape, dict) else {}
+		for shape in cleaned:
 			doc.append("shapes", {key: shape.get(key) for key in _SHAPE_FIELDS})
 	doc.save()
 	return {"name": doc.name, "modified": cstr(doc.modified)}

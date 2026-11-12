@@ -656,6 +656,81 @@
 	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
 }
 
+/* "Order as you face it": the picked box's shelves and bins, with arrows to move them. */
+.wm-order {
+	margin: 0 0 var(--sf-space-10, 8px);
+	padding-top: var(--sf-space-10, 8px);
+	border-top: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.wm-order h5 {
+	margin: 0 0 4px;
+	font-size: var(--sf-text-sm, 13px);
+	font-weight: 600;
+}
+
+.wm-order p {
+	margin: 0 0 6px;
+	font-size: var(--sf-text-xs, 12px);
+}
+
+.wm-orow {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 3px 0;
+}
+
+.wm-order-arrows {
+	display: flex;
+	flex: 0 0 52px;
+	gap: 2px;
+}
+
+.wm-orow-name {
+	flex: 0 0 72px;
+	padding-top: 3px;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-xs, 12px);
+	overflow-wrap: anywhere;
+}
+
+.wm-ochips {
+	display: flex;
+	flex: 1 1 auto;
+	flex-wrap: wrap;
+	gap: 3px;
+}
+
+.wm-ochip {
+	min-width: 28px;
+	min-height: 26px;
+	padding: 2px 6px;
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: 4px;
+	background: var(--sf-surface-sunken, var(--control-bg));
+	color: inherit;
+	font-size: var(--sf-text-xs, 12px);
+	cursor: pointer;
+}
+
+.wm-ochip.is-on {
+	border-color: var(--sf-primary, var(--primary));
+	outline: 2px solid var(--sf-primary, var(--primary));
+}
+
+.wm-ochip:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+}
+
+.wm-order-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 6px;
+}
+
 .wm-mapfields,
 .wm-elsewhere {
 	margin-top: var(--sf-space-15, 12px);

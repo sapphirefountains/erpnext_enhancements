@@ -87,14 +87,17 @@ export function options_for(state) {
 	return out;
 }
 
+// Spelled exactly as the Desk's router spells a query it writes itself (router.js set_route:
+// `key=` + encodeURIComponent(value), read at v16.56.0). The router decides whether an address is
+// new by comparing strings, so a query written here with a space as "+" would not match the
+// router's "%20", and going to the screen already on show would add a second history entry.
 export function query_string(options) {
-	const params = new URLSearchParams();
+	const parts = [];
 	["item", "bin"].forEach((key) => {
 		const value = text((options || {})[key]);
-		if (value) params.set(key, value);
+		if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
 	});
-	const out = params.toString();
-	return out ? `?${out}` : "";
+	return parts.length ? `?${parts.join("&")}` : "";
 }
 
 // The map a bare /desk/warehouse-map opens: the first one in the server's order.
@@ -111,9 +114,9 @@ export function shape_label(shape) {
 	return text(s.label) || text(s.warehouse_name) || text(s.warehouse);
 }
 
-// "Bin B1-2-10" on the shelf "Shelf B1-2" is position "10": the part of the bin's code the
+// "Bin K1-2-10" on the shelf "Shelf K1-2" is position "10": the part of the bin's code the
 // shelf's code does not already say. Anything that does not fit that pattern keeps its own name
-// (less a leading "Bin"), so "Alcove 1 Left" and "Blue-7" read as they are.
+// (less a leading "Bin"), so "Nook 1 Left" and "Red-7" read as they are.
 export function short_bin_label(bin_name, level_label) {
 	const full = text(bin_name);
 	const code = full.replace(/^bin\s+/i, "");
@@ -142,10 +145,25 @@ function count_word(n, one, many) {
 	return `${n} ${n === 1 ? one : many}`;
 }
 
+// Why a box's warehouse is not drawn, in a sentence, and in the few words the editor puts beside
+// its name. The server says which (warehouse_map_rules.missing_reason): a deleted warehouse's
+// box has to go before the map saves again; a disabled or Transit one's box may stay.
+export const MISSING = {
+	deleted: { sentence: "This warehouse was deleted", short: "deleted: remove this box or tie it to another warehouse" },
+	disabled: { sentence: "This warehouse is disabled", short: "disabled: not shown on the map until it is enabled" },
+	transit: { sentence: "This is a Transit warehouse", short: "a Transit warehouse: not shown on the map" },
+};
+
+export function missing_words(shape) {
+	const s = shape || {};
+	if (!s.missing) return null;
+	return MISSING[s.missing_reason] || MISSING.deleted;
+}
+
 // "36 bins · 30 with stock · 2 with a problem"
 export function summary_text(shape) {
 	const s = shape || {};
-	if (s.missing) return "This warehouse is gone or disabled";
+	if (s.missing) return missing_words(s).sentence;
 	const sum = s.summary;
 	if (!sum) return "";
 	if (!s.is_group) return bin_text({ on_hand_items: sum.items, status: sum.status });
@@ -198,6 +216,79 @@ export function level_rows(shape, bins, hits) {
 	});
 	if (s.shelves_from === "Bottom") rows = rows.reverse();
 	return rows;
+}
+
+// ---- a box's own order (the editor's "Order as you face it")
+//
+// The automatic order puts numbers and position words where they belong (the server's
+// warehouse_map_rules.position_key). Where no rule can know (rows named for colors), the editor
+// lets a person move a shelf up or down and a bin left or right. What is stored is the box's
+// whole order as it then stands: each shelf, then its bins. These work on the rows AS SHOWN,
+// which for a box whose shelf 1 is at the bottom or whose bin 1 is at the right is the stored
+// order turned over, so the arrow a person presses always moves the thing the way it points.
+
+function swapped(list, a, b) {
+	const out = list.slice();
+	const held = out[a];
+	out[a] = out[b];
+	out[b] = held;
+	return out;
+}
+
+// A row that is a shelf of its own. The first row of a box whose warehouse holds bins directly
+// has no name and always comes first; it cannot be moved, and nothing moves above it.
+function is_shelf(shape, level) {
+	return !!level && level.warehouse !== (shape || {}).warehouse;
+}
+
+/**
+ * The box's levels with the shelf shown at `index` moved one place up (delta -1) or down (+1).
+ * The same list back when it cannot move.
+ */
+export function move_level(shape, index, delta) {
+	const s = shape || {};
+	const levels = s.levels || [];
+	const flip = s.shelves_from === "Bottom";
+	const rows = flip ? levels.slice().reverse() : levels.slice();
+	const to = index + delta;
+	if (index < 0 || to < 0 || index >= rows.length || to >= rows.length) return levels;
+	if (!is_shelf(s, rows[index]) || !is_shelf(s, rows[to])) return levels;
+	const moved = swapped(rows, index, to);
+	return flip ? moved.reverse() : moved;
+}
+
+/**
+ * The box's levels with one bin of the shelf shown at `index` moved one place left (delta -1) or
+ * right (+1) as shown. The same list back when it cannot move.
+ */
+export function move_bin(shape, index, warehouse, delta) {
+	const s = shape || {};
+	const levels = s.levels || [];
+	const flip_rows = s.shelves_from === "Bottom";
+	const at = flip_rows ? levels.length - 1 - index : index;
+	const level = levels[at];
+	if (!level) return levels;
+	const flip = s.bins_from === "Right";
+	const bins = flip ? (level.bins || []).slice().reverse() : (level.bins || []).slice();
+	const from = bins.indexOf(warehouse);
+	const to = from + delta;
+	if (from < 0 || to < 0 || to >= bins.length) return levels;
+	const moved = swapped(bins, from, to);
+	const out = levels.slice();
+	out[at] = Object.assign({}, level, { bins: flip ? moved.reverse() : moved });
+	return out;
+}
+
+// The box's whole order as its levels now stand: each shelf, then its bins. This is what is
+// stored (Warehouse Floor Map Shape.bin_order) once a person has moved anything.
+export function order_from_levels(shape) {
+	const s = shape || {};
+	const out = [];
+	(s.levels || []).forEach((level) => {
+		if (is_shelf(s, level)) out.push(level.warehouse);
+		(level.bins || []).forEach((w) => out.push(w));
+	});
+	return out;
 }
 
 // Every bin a box shows, as a flat list of warehouses.
@@ -439,7 +530,7 @@ export function check_shapes(shapes) {
 	return null;
 }
 
-const SHAPE_FIELDS = ["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from"];
+const SHAPE_FIELDS = ["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"];
 
 // What Save sends: the map's own fields and the whole list of boxes, nothing the editor only
 // uses to draw.
@@ -460,6 +551,8 @@ export function save_payload(edit) {
 			});
 			out.warehouse = s.shape_type === LABEL ? "" : text(s.warehouse);
 			out.label = text(s.label).slice(0, MAX_LABEL);
+			// The box's own order, one warehouse per line; nothing when it follows the automatic one.
+			out.bin_order = out.warehouse && Array.isArray(s.bin_order) ? s.bin_order.map(text).filter(Boolean).join("\n") : "";
 			return out;
 		}),
 	};

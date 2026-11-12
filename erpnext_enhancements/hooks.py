@@ -1440,9 +1440,26 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name",
 		],
 		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
+		# Warehouse Map (v1.815.0): a File attached to a Warehouse Floor Map is a floor plan picture,
+		# a real building's layout, and is never public. The map's own validate only stops a public
+		# address being STORED on the map; this refuses the public File itself, however it was made
+		# (the Desk form's attach panel, the File form's Is Private box, any upload naming the
+		# DocType). Refused rather than re-saved privately: the throw rolls the request back and
+		# File.on_rollback removes the blob this insert wrote. Runs on EVERY File on the site, so
+		# it returns after one getattr for anything else. See
+		# inventory_enhancements/warehouse_map_files.py.
+		"validate": "erpnext_enhancements.inventory_enhancements.warehouse_map_files.refuse_public_file",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
+	},
+	# Warehouse Map (v1.815.0): a box on the map can carry its own order of shelves and bins
+	# (Warehouse Floor Map Shape.bin_order), a list of warehouse names kept as text. Frappe's
+	# rename rewrites Link fields and does not reach text, so this rewrites the lines that name the
+	# renamed warehouse. It cannot raise: it must never be the reason a rename failed. The only
+	# write is to the map's own rows. See inventory_enhancements/warehouse_map_files.py.
+	"Warehouse": {
+		"after_rename": "erpnext_enhancements.inventory_enhancements.warehouse_map_files.follow_warehouse_rename",
 	},
 	# knowledge_base (WI-080 PR 3, v1.555.0): no typed text about a DRAFT is kept outside the
 	# draft. A System Manager reads every Comment and every ToDo on the site (v16 comment.json's
@@ -3651,12 +3668,14 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
 # published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
-# Warehouse Floor Map / Warehouse Floor Map Shape (v1.815.0): a box on the warehouse map links the Warehouse it
-# stands for. A map only points at warehouses, so it must never be the reason an empty bin cannot be
-# deleted. The box left behind is drawn as "no longer a warehouse" in the map's editor and refused on
-# the map's next save until it is removed or tied to another warehouse. Both names are listed: Frappe
-# skips the child DocType that holds the Link, and the parent it reports. Added to the list above
-# rather than written into it, because two suites read that line as it stands.
+# Warehouse Floor Map / Warehouse Floor Map Shape (v1.815.0): a box on the warehouse map links the
+# Warehouse it stands for. A map only points at warehouses, so it must never be the reason an empty
+# bin cannot be deleted. The box left behind is drawn as "deleted" in the map's editor and refused
+# on the map's next save until it is removed or tied to another warehouse. (A warehouse that is only
+# DISABLED keeps its box: drawn dashed, saved as it is, and back when the warehouse is enabled.)
+# Both names are listed: Frappe skips the child DocType that holds the Link, and the parent it
+# reports. Added to the list above rather than written into it, because two suites read that line
+# as it stands.
 ignore_links_on_delete += ["Warehouse Floor Map", "Warehouse Floor Map Shape"]
 
 portal_menu_items = [

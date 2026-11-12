@@ -5,15 +5,16 @@
 // Targets: the "Item" doctype form. Loaded via: hooks.py `doctype_js["Item"]`.
 //
 // Shown for a saved stock item, to the roles that may open the page
-// (stock_scan_rules.SCAN_ROLES); the page and its endpoints check again on the server. The
-// Warehouse form's own button is in warehouse_stock_scan.js.
+// (stock_scan_rules.SCAN_ROLES), once a map exists (frappe.boot.ee_warehouse_map, boot.py): a
+// button that leads to "There is no map yet" helps nobody. The page and its endpoints check
+// again on the server. The Warehouse form's own button is in warehouse_stock_scan.js.
 
 (() => {
 	const ROLES = ["Stock User", "Stock Manager", "Inventory Clerk", "System Manager"];
 
 	frappe.ui.form.on("Item", {
 		refresh(frm) {
-			if (frm.is_new() || !frm.doc.is_stock_item) return;
+			if (frm.is_new() || !frm.doc.is_stock_item || !frappe.boot.ee_warehouse_map) return;
 			if (!ROLES.some((role) => frappe.user.has_role(role))) return;
 			frm.add_custom_button(__("Show on map"), () => frappe.set_route("warehouse-map", { item: frm.doc.name }));
 		},

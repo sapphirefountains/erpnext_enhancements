@@ -43,11 +43,27 @@ frappe.pages["warehouse-map"].on_page_load = function (wrapper) {
 		title: __("Warehouse Map"),
 		single_column: true,
 	});
+	// v16's container.change_to ends every route change with frappe.utils.scroll_to(0) unless the page
+	// wrapper sets disable_scroll_to_top (frappe/public/js/frappe/views/container.js, read at v16.56.0).
+	// Every screen of this page is a route (a floor, an opened box, a place an item is), so tapping a
+	// bay far down a phone's screen would jump to the top and away from the front view that just
+	// opened. The page scrolls to the top itself only when it is arrived at from somewhere else
+	// (on_page_show, below). Same as the Opportunity Board.
+	wrapper.disable_scroll_to_top = true;
 	wrapper.warehouse_map = new WarehouseMapPage(page, wrapper);
+	$(wrapper).on("hide", () => {
+		wrapper.warehouse_map.arriving = true;
+	});
 };
 
 frappe.pages["warehouse-map"].on_page_show = function (wrapper) {
-	if (wrapper.warehouse_map) wrapper.warehouse_map.route_changed();
+	const map = wrapper.warehouse_map;
+	if (!map) return;
+	if (map.arriving) {
+		map.arriving = false;
+		if (frappe.utils && typeof frappe.utils.scroll_to === "function") frappe.utils.scroll_to(0);
+	}
+	map.route_changed();
 };
 
 const WM_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "warehouse_map.bundle.js"];
@@ -85,6 +101,7 @@ class WarehouseMapPage {
 		this.edit = null; // the editor's state; kept while the Desk stays open
 		this.drag = null;
 		this.pointers = new Map();
+		this.arriving = true; // the page is being come to from another page (see on_page_show)
 		// v16's frappe.require calls back even when a file failed to load, so both globals are checked.
 		this.ready = new Promise((resolve) => frappe.require(WM_ASSETS, resolve)).then(() => {
 			this.sf = window.sf_kit && window.sf_kit.call ? window.sf_kit : null;
@@ -985,6 +1002,11 @@ class WarehouseMapPage {
 					error: "",
 					saving: false,
 					added: 0,
+					// warehouse -> { warehouse_name }, for the order list's labels (the shape of get_map's bins)
+					names: Object.assign({}, data.bins),
+					levels_loading: {},
+					order_pick: "",
+					uploading: false,
 				};
 				this.edit.saved = JSON.stringify(this.wm.save_payload(this.edit));
 				if (this.target.screen === "edit" && this.target.map === name) this.render_editor();
@@ -1042,7 +1064,9 @@ class WarehouseMapPage {
 	paint_edit_status() {
 		const ed = this.edit;
 		if (!ed) return;
-		this.$root.find(".wm-dirty").text(ed.saving ? __("Saving…") : this.edit_dirty() ? __("Not saved yet") : __("Saved"));
+		this.$root.find(".wm-dirty").text(
+			ed.uploading ? __("Uploading the picture…") : ed.saving ? __("Saving…") : this.edit_dirty() ? __("Not saved yet") : __("Saved")
+		);
 		this.$root.find(".wm-edit-error").text(ed.error || "");
 		this.$root.find('[data-act="save"]').prop("disabled", !!ed.saving);
 	}
@@ -1051,6 +1075,7 @@ class WarehouseMapPage {
 		const ed = this.edit;
 		ed.selected = index;
 		ed.pick = "";
+		ed.order_pick = "";
 		this.redraw_layer();
 		this.render_panel();
 	}
@@ -1091,7 +1116,7 @@ class WarehouseMapPage {
 		const map_fields = `<details class="wm-mapfields"><summary>${this.esc(__("This map"))}</summary>
 			<label>${this.esc(__("Name"))}<input class="form-control input-sm" data-field="map.title" value="${this.esc(ed.map.title)}" maxlength="60"></label>
 			<label>${this.esc(__("Order in the list of floors"))}<input type="number" class="form-control input-sm" data-field="map.sort_order" value="${this.esc(ed.map.sort_order)}"></label>
-			<label class="wm-check"><input type="checkbox" data-field="map.disabled" ${ed.map.disabled ? "checked" : ""}> ${this.esc(__("Hide this map from everyone but editors"))}</label>
+			<label class="wm-check"><input type="checkbox" data-field="map.disabled" ${ed.map.disabled ? "checked" : ""}> ${this.esc(__("Leave this map off the page for everyone but editors (while it is being drawn)"))}</label>
 			<p class="wm-muted">${this.esc(__("Drawing size: {0} by {1}", [Math.round(ed.map.width), Math.round(ed.map.height)]))}</p>
 			${ed.map.background ? `<button type="button" class="btn btn-xs btn-default" data-act="remove-picture">${this.esc(__("Remove the floor plan picture"))}</button>` : ""}
 			<button type="button" class="btn btn-xs btn-danger" data-act="delete-map">${this.esc(__("Delete this map"))}</button></details>`;
@@ -1120,7 +1145,7 @@ class WarehouseMapPage {
 		const kinds = wm.SHAPE_TYPES.map((k) => `<option value="${k}" ${s.shape_type === k ? "selected" : ""}>${this.esc(__(k))}</option>`).join("");
 		const is_label = s.shape_type === wm.LABEL;
 		const tied = s.warehouse
-			? `<div class="wm-tied"><span>${this.esc(s.warehouse_name || s.warehouse)}${s.missing ? ` <span class="wm-error">(${this.esc(__("no longer a warehouse"))})</span>` : ""}</span>
+			? `<div class="wm-tied"><span>${this.esc(s.warehouse_name || s.warehouse)}${s.missing ? ` <span class="wm-error">(${this.esc(__(wm.missing_words(s).short))})</span>` : ""}</span>
 				<button type="button" class="btn btn-xs btn-default" data-act="untie">${this.esc(__("Change"))}</button></div>`
 			: `<input class="form-control input-sm wm-pick-box" placeholder="${this.esc(__("Type a bay, shelf or room"))}" aria-label="${this.esc(__("Warehouse for this box"))}" value="${this.esc(
 					this.edit.pick
@@ -1141,10 +1166,87 @@ class WarehouseMapPage {
 			<div class="wm-grid4">${n("x", __("Left"))}${n("y", __("Top"))}${n("w", __("Width"))}${n("h", __("Height"))}</div>
 			<label>${this.esc(__("Turned (degrees, for a box that sits at an angle)"))}<input type="number" step="1" class="form-control input-sm" data-field="shape.rotation" value="${this.esc(s.rotation || 0)}"></label>
 			${facing}
+			${this.order_html(s)}
 			<div class="wm-boxacts">
 				<button type="button" class="btn btn-xs btn-default" data-act="turn">${this.esc(__("Turn 90°"))}</button>
 				<button type="button" class="btn btn-xs btn-default" data-act="remove-box">${this.esc(__("Remove box"))}</button>
 			</div></div>`;
+	}
+
+	// "Order as you face it": the picked box's shelves and bins, in the order the map will show them,
+	// with arrows to put right what the automatic order cannot know (rows named for colors, say).
+	// Nothing is stored until something is moved; then the box keeps its whole order.
+	order_html(s) {
+		const wm = this.wm;
+		const ed = this.edit;
+		if (!s.warehouse || s.shape_type === wm.LABEL || s.missing || !s.is_group) return "";
+		if (!Array.isArray(s.levels) || s.order_loading) {
+			this.load_levels(s.warehouse);
+			return `<div class="wm-order"><h5>${this.esc(__("Order as you face it"))}</h5><p class="wm-muted">${this.esc(__("Reading the shelves…"))}</p></div>`;
+		}
+		const rows = wm.level_rows(s, ed.names, {});
+		if (!rows.length) return "";
+		const body = rows
+			.map((row, i) => {
+				const shelf = row.warehouse !== s.warehouse;
+				const arrows = shelf
+					? `<span class="wm-order-arrows"><button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="-1" aria-label="${this.esc(__("Move {0} up", [row.label]))}">&#9650;</button>
+						<button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="1" aria-label="${this.esc(__("Move {0} down", [row.label]))}">&#9660;</button></span>`
+					: `<span class="wm-order-arrows"></span>`;
+				const bins = row.bins
+					.map(
+						(b) =>
+							`<button type="button" class="wm-ochip ${b.warehouse === ed.order_pick ? "is-on" : ""}" data-act="order-pick" data-row="${i}" data-bin="${this.esc(b.warehouse)}"
+							aria-pressed="${b.warehouse === ed.order_pick}" title="${this.esc(b.name)}">${this.esc(b.label)}</button>`
+					)
+					.join("");
+				return `<div class="wm-orow">${arrows}<span class="wm-orow-name">${this.esc(row.label || __("(no shelf)"))}</span><div class="wm-ochips">${bins}</div></div>`;
+			})
+			.join("");
+		const picked = ed.order_pick && wm.shape_bins(s).includes(ed.order_pick);
+		return `<div class="wm-order"><h5>${this.esc(__("Order as you face it"))}</h5>
+			<p class="wm-muted">${this.esc(__("Top shelf first, left bin first. If this is not what you see standing in front of it, move a shelf with its arrows, or pick a bin and move it."))}</p>
+			${body}
+			<div class="wm-order-acts">
+				<button type="button" class="btn btn-xs btn-default" data-act="order-bin" data-dir="-1" ${picked ? "" : "disabled"}>&#9664; ${this.esc(__("Move bin left"))}</button>
+				<button type="button" class="btn btn-xs btn-default" data-act="order-bin" data-dir="1" ${picked ? "" : "disabled"}>${this.esc(__("Move bin right"))} &#9654;</button>
+				${(s.bin_order || []).length ? `<button type="button" class="btn btn-xs btn-default" data-act="order-auto">${this.esc(__("Use the automatic order"))}</button>` : ""}
+			</div></div>`;
+	}
+
+	// The shelves and bins of a warehouse in the automatic order, for a box the stored map does not
+	// describe yet (just added or just tied) or one put back to the automatic order.
+	load_levels(warehouse) {
+		const ed = this.edit;
+		if (ed.levels_loading[warehouse]) return;
+		ed.levels_loading[warehouse] = true;
+		const put = (patch) => {
+			delete ed.levels_loading[warehouse];
+			const at = ed.shapes.findIndex((x) => x.warehouse === warehouse);
+			if (at < 0) return;
+			ed.shapes[at] = Object.assign({}, ed.shapes[at], patch, { order_loading: false });
+			if (this.target.screen === "edit" && ed.selected === at) this.render_panel();
+		};
+		this.call("box_levels", { warehouse }, true).then(
+			(answer) => {
+				Object.keys((answer && answer.names) || {}).forEach((key) => {
+					ed.names[key] = { warehouse_name: answer.names[key] };
+				});
+				put({ levels: (answer && answer.levels) || [], is_group: !!(answer && answer.is_group) });
+			},
+			() => put({ levels: [] })
+		);
+	}
+
+	order_changed(index, levels) {
+		const ed = this.edit;
+		const s = ed.shapes[index];
+		if (!s || levels === s.levels) return;
+		const next = Object.assign({}, s, { levels });
+		next.bin_order = this.wm.order_from_levels(next);
+		ed.shapes[index] = next;
+		this.render_panel();
+		this.paint_edit_status();
 	}
 
 	picks_html() {
@@ -1247,7 +1349,7 @@ class WarehouseMapPage {
 			this.redraw_layer();
 			this.render_panel();
 		} else if (act === "untie" && s) {
-			ed.shapes[ed.selected] = Object.assign({}, s, { warehouse: "", warehouse_name: "", missing: false });
+			ed.shapes[ed.selected] = Object.assign({}, s, { warehouse: "", warehouse_name: "", missing: false, missing_reason: "", levels: undefined, bin_order: [] });
 			ed.pick = "";
 			this.redraw_layer();
 			this.render_panel();
@@ -1255,10 +1357,34 @@ class WarehouseMapPage {
 		} else if (act === "tie" && s) {
 			const row = ed.warehouses.find((w) => w.name === String($el.data("warehouse")));
 			if (!row) return;
-			ed.shapes[ed.selected] = Object.assign({}, s, { warehouse: row.name, warehouse_name: row.warehouse_name, is_group: !!row.is_group, missing: false });
+			ed.shapes[ed.selected] = Object.assign({}, s, {
+				warehouse: row.name,
+				warehouse_name: row.warehouse_name,
+				is_group: !!row.is_group,
+				missing: false,
+				missing_reason: "",
+				levels: undefined,
+				bin_order: [],
+			});
 			ed.pick = "";
 			this.redraw_layer();
 			this.render_panel();
+		} else if (act === "order-row" && s) {
+			// A bin's row has a new place once the rows move, so the picked bin is let go.
+			ed.order_pick = "";
+			this.order_changed(ed.selected, this.wm.move_level(s, Number($el.data("row")), Number($el.data("dir"))));
+		} else if (act === "order-pick" && s) {
+			const bin = String($el.data("bin"));
+			ed.order_pick = ed.order_pick === bin ? "" : bin;
+			ed.order_row = Number($el.data("row"));
+			this.render_panel();
+		} else if (act === "order-bin" && s && ed.order_pick) {
+			this.order_changed(ed.selected, this.wm.move_bin(s, ed.order_row, ed.order_pick, Number($el.data("dir"))));
+		} else if (act === "order-auto" && s) {
+			ed.shapes[ed.selected] = Object.assign({}, s, { bin_order: [], levels: undefined });
+			ed.order_pick = "";
+			this.render_panel();
+			this.paint_edit_status();
 		} else if (act === "save") this.save();
 		else if (act === "upload") this.upload();
 		else if (act === "remove-picture") {
@@ -1309,22 +1435,68 @@ class WarehouseMapPage {
 	}
 
 	// The floor plan picture: a PRIVATE file attached to this map's record, so it is served to exactly
-	// the people who can read the map. The server refuses anything else on Save.
+	// the people who can read the map.
+	//
+	// Sent by this page itself (a file chooser and one POST to Frappe's own upload_file), NOT through
+	// frappe.ui.FileUploader, for two reasons read in its source at v16.56.0:
+	//
+	//   * The dialog offers a Private switch and a web-link tab, both on by default. Switched off, the
+	//     upload becomes a public file anyone can fetch without signing in. Here is_private is always
+	//     1 and there is nothing to switch. (The server refuses a public File on a map as well:
+	//     inventory_enhancements/warehouse_map_files.refuse_public_file.)
+	//   * It ticks "Optimize" for every image over 200 KB, and the server then shrinks the picture to
+	//     at most 1024 by 768 (frappe/utils/image.py optimize_image). A floor plan at that size is a
+	//     blur once the map is zoomed in. No `optimize` is sent here, so the picture is kept as it is.
 	upload() {
 		const ed = this.edit;
-		new frappe.ui.FileUploader({
-			doctype: "Warehouse Floor Map",
-			docname: ed.name,
-			fieldname: "background",
-			folder: "Home/Attachments",
-			make_attachments_public: false,
-			allow_multiple: false,
-			restrictions: { allowed_file_types: ["image/*"] },
-			on_success: (file_doc) => {
-				const url = file_doc && file_doc.file_url;
-				if (!url || !String(url).startsWith("/private/files/")) {
-					ed.error = __("That picture was uploaded as a public file. Upload it again with Private switched on, so only people signed in here can see the floor plan.");
-					this.paint_edit_status();
+		if (ed.uploading) return;
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = "image/png,image/jpeg,image/webp";
+		input.addEventListener("change", () => {
+			const file = input.files && input.files[0];
+			if (file) this.send_picture(file);
+		});
+		input.click();
+	}
+
+	send_picture(file) {
+		const ed = this.edit;
+		const fail = (message) => {
+			ed.uploading = false;
+			ed.error = message || __("The picture was not uploaded. Try again.");
+			this.paint_edit_status();
+		};
+		if (!/^image\/(png|jpeg|webp)$/.test(file.type || "")) {
+			fail(__("Use a PNG, JPG or WebP picture of the floor plan."));
+			return;
+		}
+		const form = new FormData();
+		form.append("file", file, file.name);
+		form.append("is_private", "1");
+		form.append("doctype", "Warehouse Floor Map");
+		form.append("docname", ed.name);
+		form.append("fieldname", "background");
+		form.append("folder", "Home/Attachments");
+		ed.uploading = true;
+		ed.error = "";
+		this.paint_edit_status();
+		window
+			.fetch("/api/method/upload_file", {
+				method: "POST",
+				headers: { Accept: "application/json", "X-Frappe-CSRF-Token": frappe.csrf_token || "" },
+				credentials: "same-origin",
+				body: form,
+			})
+			.then((response) => response.json().then((body) => ({ ok: response.ok, body }), () => ({ ok: false, body: null })))
+			.then(({ ok, body }) => {
+				const url = ok && body && body.message && body.message.file_url;
+				if (!url) {
+					fail(this.upload_error(body));
+					return;
+				}
+				if (!String(url).startsWith("/private/files/")) {
+					fail(__("That picture did not arrive as a private file, so it was not used. Tell a System Manager."));
 					return;
 				}
 				const probe = new Image();
@@ -1334,16 +1506,26 @@ class WarehouseMapPage {
 					ed.map.width = to.width;
 					ed.map.height = to.height;
 					ed.map.background = url;
+					ed.uploading = false;
 					delete this.views[ed.name];
 					this.render_editor();
 				};
-				probe.onerror = () => {
-					ed.error = __("That file could not be shown as a picture. Use a PNG or JPG.");
-					this.paint_edit_status();
-				};
+				probe.onerror = () => fail(__("That file could not be shown as a picture. Use a PNG or JPG."));
 				probe.src = url;
-			},
-		});
+			})
+			.catch(() => fail());
+	}
+
+	// The server's own sentence for a refused upload (too large, not permitted), or nothing.
+	upload_error(body) {
+		try {
+			const list = JSON.parse((body && body._server_messages) || "[]");
+			const first = list.length ? JSON.parse(list[0]) : null;
+			const words = first && first.message ? String(first.message).replace(/<[^>]+>/g, "").trim() : "";
+			return words || "";
+		} catch (e) {
+			return "";
+		}
 	}
 
 	delete_map() {

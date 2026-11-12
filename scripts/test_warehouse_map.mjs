@@ -50,7 +50,7 @@ function truthy(label, value) {
 }
 
 const MAP = { name: "Shop Floor", title: "Shop Floor", width: 1200, height: 800 };
-const BAY = "Bay B1 - SF";
+const BAY = "Bay K1 - ZZ";
 
 // ------------------------------------------------------------------ routes
 
@@ -61,8 +61,8 @@ check("a floor with a box open", L.parse_route(["warehouse-map", "Shop Floor", B
 check("the editor", L.parse_route(["warehouse-map", "Shop Floor", "edit"]), { screen: "edit", map: "Shop Floor", shape: "" });
 check(
 	"a warehouse with a slash in its name arrives in parts and is put back together",
-	L.parse_route(["warehouse-map", "Shop Floor", "Rack 1", "2 - SF"]),
-	{ screen: "floor", map: "Shop Floor", shape: "Rack 1/2 - SF" }
+	L.parse_route(["warehouse-map", "Shop Floor", "Rack 1", "2 - ZZ"]),
+	{ screen: "floor", map: "Shop Floor", shape: "Rack 1/2 - ZZ" }
 );
 check("junk is the bare page", L.parse_route(["warehouse-map", null, undefined]), { screen: "floor", map: "", shape: "" });
 
@@ -81,8 +81,19 @@ check("the query's three keys, trimmed", L.read_options({ w: " Bin 1 ", item: "E
 check("no options at all", L.read_options(null), { w: "", item: "", bin: "" });
 check("blanks are never carried", L.options_for({ item: "", bin: "  " }), {});
 check("what a screen keeps", L.options_for({ item: "ELBOW", bin: "Bin 1", w: "never" }), { item: "ELBOW", bin: "Bin 1" });
-check("the query in a fixed order", L.query_string({ bin: "Bin B1-2-1 - SF", item: "A&B" }), "?item=A%26B&bin=Bin+B1-2-1+-+SF");
+check("the query in a fixed order", L.query_string({ bin: "Bin K1-2-1 - ZZ", item: "A&B" }), "?item=A%26B&bin=Bin%20K1-2-1%20-%20ZZ");
 check("nothing looked for is no query", L.query_string({}), "");
+// The Desk's router spells a query it writes itself with encodeURIComponent and decides whether an
+// address is new by comparing strings (router.js set_route and push_state, v16.56.0). A space as "+"
+// here would not match its "%20", and going to the screen already on show would add a history entry.
+const as_router = (options) =>
+	"?" +
+	Object.entries(options)
+		.map(([key, value]) => `${key}=` + encodeURIComponent(String(value)))
+		.join("&");
+for (const options of [{ item: "A B" }, { item: "PVC+ELBOW 2\"", bin: "Bin K1-2-1 - ZZ" }, { bin: "Nook 1 Left - ZZ" }]) {
+	check(`the query for ${JSON.stringify(options)} is the router's own spelling`, L.query_string(options), as_router(L.options_for(options)));
+}
 
 check("the first map that is not hidden opens", L.default_map({ maps: [{ name: "Draft", disabled: true }, { name: "Shop Floor" }] }), "Shop Floor");
 check("an editor with only hidden maps gets the first", L.default_map({ maps: [{ name: "Draft", disabled: true }] }), "Draft");
@@ -91,15 +102,15 @@ check("no boot", L.default_map(null), "");
 
 // ------------------------------------------------------------------ words
 
-check("a box's own label wins", L.shape_label({ label: "B1", warehouse_name: "Bay B1" }), "B1");
-check("else the warehouse's name", L.shape_label({ label: " ", warehouse_name: "Bay B1", warehouse: BAY }), "Bay B1");
+check("a box's own label wins", L.shape_label({ label: "K1", warehouse_name: "Bay K1" }), "K1");
+check("else the warehouse's name", L.shape_label({ label: " ", warehouse_name: "Bay K1", warehouse: BAY }), "Bay K1");
 check("else its docname", L.shape_label({ warehouse: BAY }), BAY);
 
-check("a bin's short name is its position on its shelf", L.short_bin_label("Bin B1-2-10", "Shelf B1-2"), "10");
-check("a name that does not extend the shelf's code is kept", L.short_bin_label("Alcove 1 Left", "Alcove Row 1"), "Alcove 1 Left");
-check("so is one on a row with no code", L.short_bin_label("Blue-7", "Blue Row"), "Blue-7");
-check("B1-20 is not on shelf B1-2", L.short_bin_label("Bin B1-20-1", "Shelf B1-2"), "B1-20-1");
-check("a row with no name keeps the bin's", L.short_bin_label("Bin A1-3-1", ""), "A1-3-1");
+check("a bin's short name is its position on its shelf", L.short_bin_label("Bin K1-2-10", "Shelf K1-2"), "10");
+check("a name that does not extend the shelf's code is kept", L.short_bin_label("Nook 1 Left", "Nook Row 1"), "Nook 1 Left");
+check("so is one on a row with no code", L.short_bin_label("Red-7", "Red Row"), "Red-7");
+check("K1-20 is not on shelf K1-2", L.short_bin_label("Bin K1-20-1", "Shelf K1-2"), "K1-20-1");
+check("a row with no name keeps the bin's", L.short_bin_label("Bin J1-3-1", ""), "J1-3-1");
 check("a bin named only Bin", L.short_bin_label("Bin", "Shelf"), "Bin");
 
 check("a box's color is its summary's", L.shape_status({ summary: { status: "problem" } }), "problem");
@@ -115,7 +126,12 @@ check(
 check("one bin, no problems", L.summary_text({ is_group: true, summary: { bins: 1, stock_bins: 0, problem_bins: 0 } }), "1 bin · 0 with stock");
 check("a group with no bins yet", L.summary_text({ is_group: true, summary: { bins: 0, stock_bins: 0, problem_bins: 0 } }), "0 bins");
 check("a room that is one bin", L.summary_text({ is_group: false, summary: { bins: 1, items: 55, status: "stock" } }), "55 items on hand");
-check("a missing warehouse", L.summary_text({ missing: true }), "This warehouse is gone or disabled");
+check("a deleted warehouse", L.summary_text({ missing: true, missing_reason: "deleted" }), "This warehouse was deleted");
+check("a disabled one", L.summary_text({ missing: true, missing_reason: "disabled" }), "This warehouse is disabled");
+check("a Transit one", L.summary_text({ missing: true, missing_reason: "transit" }), "This is a Transit warehouse");
+check("a reason the page does not know reads as the one that needs doing something", L.summary_text({ missing: true }), "This warehouse was deleted");
+check("what the editor puts beside a disabled box's name", L.missing_words({ missing: true, missing_reason: "disabled" }).short, "disabled: not shown on the map until it is enabled");
+check("a box that can be drawn has no such words", L.missing_words({ missing: false, missing_reason: "disabled" }), null);
 check("a label says nothing", L.summary_text({ summary: null }), "");
 check("an empty bin", L.bin_text({}), "Nothing on hand");
 check(
@@ -132,53 +148,95 @@ const SHAPE = {
 	shelves_from: "Top",
 	bins_from: "Left",
 	levels: [
-		{ warehouse: "Shelf B1-1 - SF", label: "Shelf B1-1", bins: [] },
-		{ warehouse: "Shelf B1-2 - SF", label: "Shelf B1-2", bins: ["Bin B1-2-1 - SF", "Bin B1-2-2 - SF", "Bin B1-2-10 - SF"] },
+		{ warehouse: "Shelf K1-1 - ZZ", label: "Shelf K1-1", bins: [] },
+		{ warehouse: "Shelf K1-2 - ZZ", label: "Shelf K1-2", bins: ["Bin K1-2-1 - ZZ", "Bin K1-2-2 - ZZ", "Bin K1-2-10 - ZZ"] },
 	],
 };
 const BINS = {
-	"Bin B1-2-1 - SF": { warehouse_name: "Bin B1-2-1", status: "stock" },
-	"Bin B1-2-2 - SF": { warehouse_name: "Bin B1-2-2", status: "problem" },
+	"Bin K1-2-1 - ZZ": { warehouse_name: "Bin K1-2-1", status: "stock" },
+	"Bin K1-2-2 - ZZ": { warehouse_name: "Bin K1-2-2", status: "problem" },
 	// No status: a bin whose counts could not be read is drawn empty.
-	"Bin B1-2-10 - SF": { warehouse_name: "Bin B1-2-10" },
+	"Bin K1-2-10 - ZZ": { warehouse_name: "Bin K1-2-10" },
 };
 
-let rows = L.level_rows(SHAPE, BINS, { "Bin B1-2-2 - SF": { on_hand: 4 } });
-check("shelf 1 at the top", rows.map((r) => r.label), ["Shelf B1-1", "Shelf B1-2"]);
+let rows = L.level_rows(SHAPE, BINS, { "Bin K1-2-2 - ZZ": { on_hand: 4 } });
+check("shelf 1 at the top", rows.map((r) => r.label), ["Shelf K1-1", "Shelf K1-2"]);
 check("an empty shelf is a row with no bins", rows[0].bins, []);
 check("bin 1 at the left, each by its position", rows[1].bins.map((b) => b.label), ["1", "2", "10"]);
 check("each bin's color; one with no counts is empty", rows[1].bins.map((b) => b.status), ["stock", "problem", "empty"]);
 check("the bin the item is at is lit", rows[1].bins.map((b) => b.hit), [false, true, false]);
 check(
 	"a bin the map's list does not have at all keeps its docname and is drawn empty",
-	L.level_rows({ levels: [{ label: "Shelf Z", bins: ["Bin Z-1 - SF"] }] }, {}, null)[0].bins[0],
-	{ warehouse: "Bin Z-1 - SF", name: "Bin Z-1 - SF", label: "1 - SF", status: "empty", hit: false }
+	L.level_rows({ levels: [{ label: "Shelf Z", bins: ["Bin Z-1 - ZZ"] }] }, {}, null)[0].bins[0],
+	{ warehouse: "Bin Z-1 - ZZ", name: "Bin Z-1 - ZZ", label: "1 - ZZ", status: "empty", hit: false }
 );
 
 rows = L.level_rows(Object.assign({}, SHAPE, { shelves_from: "Bottom", bins_from: "Right" }), BINS, null);
-check("shelf 1 at the bottom turns the rows over", rows.map((r) => r.label), ["Shelf B1-2", "Shelf B1-1"]);
+check("shelf 1 at the bottom turns the rows over", rows.map((r) => r.label), ["Shelf K1-2", "Shelf K1-1"]);
 check("bin 1 at the right turns each row around", rows[0].bins.map((b) => b.label), ["10", "2", "1"]);
-check("the server's order is not disturbed", SHAPE.levels[1].bins[0], "Bin B1-2-1 - SF");
+check("the server's order is not disturbed", SHAPE.levels[1].bins[0], "Bin K1-2-1 - ZZ");
 check("a box with nothing inside", L.level_rows({ levels: [] }, BINS, null), []);
 check("no box", L.level_rows(null, null, null), []);
 
-check("every bin a bay shows", L.shape_bins(SHAPE), ["Bin B1-2-1 - SF", "Bin B1-2-2 - SF", "Bin B1-2-10 - SF"]);
-check("a room is its own bin", L.shape_bins({ warehouse: "Inventory Room - SF", is_group: false, levels: [] }), ["Inventory Room - SF"]);
+// ---- a box's own order: the arrows move things the way they point, whatever way the box faces
+
+const NOOKS = {
+	warehouse: "Nook Wall - ZZ",
+	is_group: true,
+	shelves_from: "Top",
+	bins_from: "Left",
+	levels: [
+		{ warehouse: "Nook Wall - ZZ", label: "", bins: ["top"] },
+		{ warehouse: "r1", label: "Red Row", bins: ["a", "b", "c"] },
+		{ warehouse: "r2", label: "Amber Row", bins: ["x"] },
+		{ warehouse: "r3", label: "Teal Row", bins: [] },
+	],
+};
+const row_names = (levels) => levels.map((l) => l.warehouse);
+check("a shelf moved down", row_names(L.move_level(NOOKS, 1, 1)), ["Nook Wall - ZZ", "r2", "r1", "r3"]);
+check("a shelf moved up", row_names(L.move_level(NOOKS, 3, -1)), ["Nook Wall - ZZ", "r1", "r3", "r2"]);
+check("the last shelf cannot move down", L.move_level(NOOKS, 3, 1) === NOOKS.levels, true);
+check("nothing moves above the row of bins that have no shelf", L.move_level(NOOKS, 1, -1) === NOOKS.levels, true);
+check("and that row does not move", L.move_level(NOOKS, 0, 1) === NOOKS.levels, true);
+check("a move does not disturb the box it started from", row_names(NOOKS.levels), ["Nook Wall - ZZ", "r1", "r2", "r3"]);
+check("a bin moved right", L.move_bin(NOOKS, 1, "a", 1)[1].bins, ["b", "a", "c"]);
+check("a bin moved left", L.move_bin(NOOKS, 1, "c", -1)[1].bins, ["a", "c", "b"]);
+check("the first bin cannot move left", L.move_bin(NOOKS, 1, "a", -1) === NOOKS.levels, true);
+check("a bin that is not on that shelf", L.move_bin(NOOKS, 2, "a", 1) === NOOKS.levels, true);
+check("a row that is not there", L.move_bin(NOOKS, 9, "a", 1) === NOOKS.levels, true);
+
+// Shelf 1 at the bottom and bin 1 at the right: what is shown is the stored order turned over, and
+// the arrow still moves the thing the way it points ON SCREEN.
+const TURNED = Object.assign({}, NOOKS, { shelves_from: "Bottom", bins_from: "Right" });
+check("as shown, the rows are", L.level_rows(TURNED, {}, null).map((r) => r.warehouse), ["r3", "r2", "r1", "Nook Wall - ZZ"]);
+let nudged = Object.assign({}, TURNED, { levels: L.move_level(TURNED, 0, 1) });
+check("the top row as shown, moved down, is second as shown", L.level_rows(nudged, {}, null).map((r) => r.warehouse), ["r2", "r3", "r1", "Nook Wall - ZZ"]);
+check("as shown, r1's bins are", L.level_rows(TURNED, {}, null)[2].bins.map((b) => b.warehouse), ["c", "b", "a"]);
+nudged = Object.assign({}, TURNED, { levels: L.move_bin(TURNED, 2, "c", 1) });
+check("the left bin as shown, moved right, is second as shown", L.level_rows(nudged, {}, null)[2].bins.map((b) => b.warehouse), ["b", "c", "a"]);
+check("in a turned box too, nothing moves past the row with no shelf", L.move_level(TURNED, 2, 1) === TURNED.levels, true);
+
+check("the order that is stored: each shelf, then its bins", L.order_from_levels(NOOKS), ["top", "r1", "a", "b", "c", "r2", "x", "r3"]);
+check("a box with nothing inside has no order", L.order_from_levels({ levels: [] }), []);
+check("no box", L.order_from_levels(null), []);
+
+check("every bin a bay shows", L.shape_bins(SHAPE), ["Bin K1-2-1 - ZZ", "Bin K1-2-2 - ZZ", "Bin K1-2-10 - ZZ"]);
+check("a room is its own bin", L.shape_bins({ warehouse: "Parts Room - ZZ", is_group: false, levels: [] }), ["Parts Room - ZZ"]);
 check("a label shows none", L.shape_bins({ levels: [] }), []);
 
 // ------------------------------------------------------------------ an item being looked for
 
 const PLACES = [
-	{ warehouse: "Bin B1-2-2 - SF", map: "Shop Floor", shape: BAY, on_hand: 4, assigned: false },
-	{ warehouse: "Alcove 1 Left - SF", map: "Upstairs", shape: "Panel Alcove - SF", on_hand: 0, assigned: true },
-	{ warehouse: "Van Shelf - SF", map: null, shape: null, on_hand: 9, assigned: false },
-	{ warehouse: "Shelf C1-1 - SF", map: "Shop Floor", shape: null, on_hand: 1, assigned: false },
+	{ warehouse: "Bin K1-2-2 - ZZ", map: "Shop Floor", shape: BAY, on_hand: 4, assigned: false },
+	{ warehouse: "Nook 1 Left - ZZ", map: "Upstairs", shape: "Nook Wall - ZZ", on_hand: 0, assigned: true },
+	{ warehouse: "Van Shelf - ZZ", map: null, shape: null, on_hand: 9, assigned: false },
+	{ warehouse: "Shelf M1-1 - ZZ", map: "Shop Floor", shape: null, on_hand: 1, assigned: false },
 ];
 let lit = L.highlight(PLACES, "Shop Floor");
 check("only this map's boxes are lit", Object.keys(lit.shapes), [BAY]);
-check("and this map's bins", Object.keys(lit.bins), ["Bin B1-2-2 - SF", "Shelf C1-1 - SF"]);
+check("and this map's bins", Object.keys(lit.bins), ["Bin K1-2-2 - ZZ", "Shelf M1-1 - ZZ"]);
 lit = L.highlight(PLACES, "Upstairs");
-check("another floor lights its own", Object.keys(lit.shapes), ["Panel Alcove - SF"]);
+check("another floor lights its own", Object.keys(lit.shapes), ["Nook Wall - ZZ"]);
 check("nothing looked for lights nothing", L.highlight(null, "Shop Floor"), { shapes: {}, bins: {} });
 
 check("how many are there", L.place_text(PLACES[0], "Unit"), "4 Unit here");
@@ -206,9 +264,9 @@ check("a 1,200-wide drawing is the measure", L.scale_of(MAP), 1);
 check("a 4,800-wide one is four times it", L.scale_of({ width: 4800 }), 4);
 check("a tiny one has a floor", L.scale_of({ width: 10 }), 0.25);
 
-let lay = L.label_layout({ label: "B1", w: 44, h: 110 }, 1);
+let lay = L.label_layout({ label: "K1", w: 44, h: 110 }, 1);
 check("a tall narrow box has its name turned", lay.vertical, true);
-lay = L.label_layout({ label: "Inventory Room", w: 150, h: 110 }, 1);
+lay = L.label_layout({ label: "Parts Room", w: 150, h: 110 }, 1);
 check("a wide box does not", lay.vertical, false);
 truthy("a long name on a small box still has a size that can be read", L.label_layout({ label: "x".repeat(60), w: 20, h: 20 }, 1).size >= 7);
 truthy("and a short name on a huge box is not huge", L.label_layout({ label: "A", w: 900, h: 600 }, 1).size <= 20);
@@ -257,10 +315,10 @@ check("two quarter turns are where it began", [L.turn_shape(quarter, MAP).x, L.t
 check("a turn is kept between 0 and 360", [L.hold_shape({ x: 0, y: 0, w: 10, h: 10, rotation: 450 }, MAP).rotation, L.hold_shape({ x: 0, y: 0, w: 10, h: 10, rotation: -90 }, MAP).rotation], [90, 270]);
 check("a box with no numbers is given some", L.hold_shape({}, MAP), { w: L.MIN_SIZE, h: L.MIN_SIZE, x: 0, y: 0, rotation: 0 });
 
-let fresh = L.new_shape(null, { warehouse: BAY, warehouse_name: "Bay B1", suggested_type: "Rack" }, MAP, FIT, 0);
-check("a new box from the list is tied and typed", [fresh.shape_type, fresh.warehouse, fresh.warehouse_name], ["Rack", BAY, "Bay B1"]);
+let fresh = L.new_shape(null, { warehouse: BAY, warehouse_name: "Bay K1", suggested_type: "Rack" }, MAP, FIT, 0);
+check("a new box from the list is tied and typed", [fresh.shape_type, fresh.warehouse, fresh.warehouse_name], ["Rack", BAY, "Bay K1"]);
 truthy("it lands in the middle of what is on screen", fresh.x > 500 && fresh.x < 700 && fresh.y > 300 && fresh.y < 400);
-const second = L.new_shape(null, { warehouse: "Bay B2 - SF", suggested_type: "Rack" }, MAP, FIT, 1);
+const second = L.new_shape(null, { warehouse: "Bay K2 - ZZ", suggested_type: "Rack" }, MAP, FIT, 1);
 truthy("the next one does not land on top of it", second.x !== fresh.x && second.y !== fresh.y);
 fresh = L.new_shape("Label", null, MAP, FIT, 0);
 check("an empty label has words to change", [fresh.shape_type, fresh.label, fresh.warehouse], ["Label", "Label", ""]);
@@ -291,7 +349,7 @@ check("a label tied to a warehouse by an earlier kind is not a duplicate", L.che
 const EDIT = {
 	map: { name: "Shop Floor", title: " Shop Floor ", sort_order: "2", disabled: false, width: 1200.04, height: 800, background: "/private/files/plan.png", modified: "stamp" },
 	shapes: [
-		Object.assign({ id: "row1", warehouse_name: "Bay B1", is_group: true, levels: [{ bins: ["x"] }], summary: { status: "stock" }, missing: false, trail: "Row 2" }, BOX),
+		Object.assign({ id: "row1", warehouse_name: "Bay K1", is_group: true, levels: [{ bins: ["x"] }], summary: { status: "stock" }, missing: false, trail: "Lane 7" }, BOX),
 		{ shape_type: "Label", label: "Dock door", warehouse: BAY, x: 1, y: 2, w: 3, h: 4 },
 	],
 };
@@ -300,7 +358,18 @@ check("Save sends the map's own fields", [payload.map_name, payload.sort_order, 
 check(
 	"and each box as its stored fields only",
 	Object.keys(payload.shapes[0]).sort(),
-	["bins_from", "h", "label", "rotation", "shape_type", "shelves_from", "w", "warehouse", "x", "y"]
+	["bin_order", "bins_from", "h", "label", "rotation", "shape_type", "shelves_from", "w", "warehouse", "x", "y"]
+);
+check("a box with no order of its own sends none", payload.shapes[0].bin_order, "");
+check(
+	"a box's own order is sent one warehouse per line",
+	L.save_payload({ map: EDIT.map, shapes: [Object.assign({}, EDIT.shapes[0], { bin_order: ["Red Row - ZZ", " ", "Red-2 - ZZ"] })] }).shapes[0].bin_order,
+	"Red Row - ZZ\nRed-2 - ZZ"
+);
+check(
+	"a label has no order to send, whatever it carries",
+	L.save_payload({ map: EDIT.map, shapes: [{ shape_type: "Label", label: "x", warehouse: BAY, bin_order: ["a"] }] }).shapes[0].bin_order,
+	""
 );
 check("a label carries no warehouse", payload.shapes[1].warehouse, "");
 check("a field the box never had is sent as nothing, not left out", payload.shapes[1].rotation, null);
@@ -314,27 +383,27 @@ check("what the editor only draws with is not", L.is_dirty(redrawn, saved), fals
 
 const UNITS = [
 	{ warehouse: BAY, on_map: "Shop Floor", via: [BAY] },
-	{ warehouse: "Bay B2 - SF", on_map: null, via: [] },
-	{ warehouse: "Panel Alcove - SF", on_map: "Upstairs", via: ["Alcove Row 1 - SF"] },
-	{ warehouse: "Bay C1 - SF", on_map: "Shop Floor", via: ["Shelf C1-1 - SF"] },
-	{ warehouse: "Bay D1 - SF", on_map: "Shop Floor", via: ["Row 4 - SF"] },
+	{ warehouse: "Bay K2 - ZZ", on_map: null, via: [] },
+	{ warehouse: "Nook Wall - ZZ", on_map: "Upstairs", via: ["Nook Row 1 - ZZ"] },
+	{ warehouse: "Bay M1 - ZZ", on_map: "Shop Floor", via: ["Shelf M1-1 - ZZ"] },
+	{ warehouse: "Bay N1 - ZZ", on_map: "Shop Floor", via: ["Lane 9 - ZZ"] },
 ];
-let lists = L.unit_lists(UNITS, [{ warehouse: BAY }, { warehouse: "Shelf C1-1 - SF" }, { warehouse: "Row 4 - SF" }], "Shop Floor");
-check("to place: what nothing shows", lists.todo.map((u) => u.warehouse), ["Bay B2 - SF"]);
-check("on another map", lists.elsewhere.map((u) => u.warehouse), ["Panel Alcove - SF"]);
+let lists = L.unit_lists(UNITS, [{ warehouse: BAY }, { warehouse: "Shelf M1-1 - ZZ" }, { warehouse: "Lane 9 - ZZ" }], "Shop Floor");
+check("to place: what nothing shows", lists.todo.map((u) => u.warehouse), ["Bay K2 - ZZ"]);
+check("on another map", lists.elsewhere.map((u) => u.warehouse), ["Nook Wall - ZZ"]);
 lists = L.unit_lists(UNITS, [], "Shop Floor");
-check("a box removed since the editor opened is to place again", lists.todo.map((u) => u.warehouse), [BAY, "Bay B2 - SF", "Bay C1 - SF", "Bay D1 - SF"]);
-lists = L.unit_lists(UNITS, [{ warehouse: "Bay B2 - SF" }], "Shop Floor");
-check("a box added since is not offered twice", lists.todo.map((u) => u.warehouse).includes("Bay B2 - SF"), false);
+check("a box removed since the editor opened is to place again", lists.todo.map((u) => u.warehouse), [BAY, "Bay K2 - ZZ", "Bay M1 - ZZ", "Bay N1 - ZZ"]);
+lists = L.unit_lists(UNITS, [{ warehouse: "Bay K2 - ZZ" }], "Shop Floor");
+check("a box added since is not offered twice", lists.todo.map((u) => u.warehouse).includes("Bay K2 - ZZ"), false);
 check("no units", L.unit_lists(null, null, "x"), { todo: [], elsewhere: [] });
 
 const WAREHOUSES = [
-	{ name: "Bay B1 - SF", warehouse_name: "Bay B1", trail: "Inventory › Row 2" },
-	{ name: "Bay B2 - SF", warehouse_name: "Bay B2", trail: "Inventory › Row 2" },
-	{ name: "Shelf B1-2 - SF", warehouse_name: "Shelf B1-2", trail: "Inventory › Row 2 › Bay B1" },
+	{ name: "Bay K1 - ZZ", warehouse_name: "Bay K1", trail: "Stock › Lane 7" },
+	{ name: "Bay K2 - ZZ", warehouse_name: "Bay K2", trail: "Stock › Lane 7" },
+	{ name: "Shelf K1-2 - ZZ", warehouse_name: "Shelf K1-2", trail: "Stock › Lane 7 › Bay K1" },
 ];
-check("every word typed has to be there", L.filter_warehouses(WAREHOUSES, "bay row", 30).map((w) => w.name), ["Bay B1 - SF", "Bay B2 - SF", "Shelf B1-2 - SF"]);
-check("by name", L.filter_warehouses(WAREHOUSES, "b1-2", 30).map((w) => w.name), ["Shelf B1-2 - SF"]);
+check("every word typed has to be there", L.filter_warehouses(WAREHOUSES, "bay lane", 30).map((w) => w.name), ["Bay K1 - ZZ", "Bay K2 - ZZ", "Shelf K1-2 - ZZ"]);
+check("by name", L.filter_warehouses(WAREHOUSES, "k1-2", 30).map((w) => w.name), ["Shelf K1-2 - ZZ"]);
 check("the list has a limit", L.filter_warehouses(WAREHOUSES, "b", 2).length, 2);
 check("nothing typed lists from the top", L.filter_warehouses(WAREHOUSES, "", 30).length, 3);
 check("not a list", L.filter_warehouses(null, "b", 30), []);
@@ -354,7 +423,7 @@ check(
 );
 check("the Bin Manager's page is the one the map sends bins to", L.BIN_MANAGER, bin_manager.PAGE);
 
-check("Stock Scan's link to a place", scan.mapUrl({ w: "Bin B1-2-10 - SF" }), "/desk/warehouse-map?w=Bin%20B1-2-10%20-%20SF");
+check("Stock Scan's link to a place", scan.mapUrl({ w: "Bin K1-2-10 - ZZ" }), "/desk/warehouse-map?w=Bin%20K1-2-10%20-%20ZZ");
 check("to an item", scan.mapUrl({ item: "A&B/1" }), "/desk/warehouse-map?item=A%26B%2F1");
 check("a place wins over an item", scan.mapUrl({ w: "X", item: "Y" }), "/desk/warehouse-map?w=X");
 check("nothing to point at is no link", [scan.mapUrl({}), scan.mapUrl(null), scan.mapUrl({ w: "  " })], ["", "", ""]);

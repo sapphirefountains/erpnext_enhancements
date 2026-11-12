@@ -4143,15 +4143,19 @@ jobs:
       # and the Warehouse Floor Map DocType): a drawn floor plan with a box for each bay and room. Its own
       # frappe stub (whose Document.save asks the write permission and runs the real validate) with
       # stand-ins for api.stock_scan, bin_assignments, bin_views and job_sites, so its own step. Fails
-      # the build if a read happens before the role gate, if a half-drawn (disabled) map is shown to
-      # anyone but its editors, if a save goes past the DocType's own permission or writes a key the
-      # payload merely carries, if a stale editor can overwrite a newer map, if one warehouse can sit on
-      # two boxes or two maps, if the floor plan picture can be a public file or a web address (it is a
-      # real building's layout and this repo is public), if a bay's front view is in creation order
-      # (bin 10 before bin 9), or if the endpoint file writes anything but the map's own record. Runs
-      # scripts/test_warehouse_map.mjs under node: every screen its own address, the front view's order,
-      # a box moved or sized stays inside the drawing, Save sends the stored fields only. unittest
-      # classes; node is on PATH here.
+      # the build if a read happens before the role gate, if a half-drawn (disabled) map is shown on
+      # the page to anyone but its editors, if a save goes past the DocType's own permission or writes
+      # a key the payload merely carries, if a stale editor can overwrite a newer map or a save can
+      # leave its stamp out, if one warehouse can sit on two boxes or two maps, if the floor plan
+      # picture can be anything but that map's own private File, if a public File attached to a map is
+      # let through (it is a real building's layout and this repo is public), if the page goes back to
+      # Frappe's upload dialog (a Private switch, and a picture shrunk to 1024 by 768), if a bay's front
+      # view is in creation order (bin 10 before bin 9) or puts Center before Left, if a map's name can
+      # hold a double quote (the Desk's own selector throws and the page never shows), if the rename
+      # hook can raise, or if the endpoint file writes anything but the map's own record. Runs
+      # scripts/test_warehouse_map.mjs under node: every screen its own address, the front view's
+      # order and the arrows that change it, a box moved or sized stays inside the drawing, Save sends
+      # the stored fields only. unittest classes; node is on PATH here.
       - name: Warehouse Map (rules, endpoints, permissions, page logic) (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_warehouse_map -v
       # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,

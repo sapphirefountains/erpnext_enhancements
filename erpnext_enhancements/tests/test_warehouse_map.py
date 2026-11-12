@@ -60,55 +60,78 @@ NODE_HARNESS = REPO_ROOT / "scripts" / "test_warehouse_map.mjs"
 MAP = "Warehouse Floor Map"
 SHAPE = "Warehouse Floor Map Shape"
 
-ROOT = "All Warehouses - SF"
-INV = "Inventory - SF"
-ROW2 = "Row 2 - SF"
-BAY = "Bay B1 - SF"
-BAY2 = "Bay B2 - SF"
-SHELF1 = "Shelf B1-1 - SF"
-SHELF2 = "Shelf B1-2 - SF"
-BIN1 = "Bin B1-2-1 - SF"
-BIN2 = "Bin B1-2-2 - SF"
-BIN9 = "Bin B1-2-9 - SF"
-BIN10 = "Bin B1-2-10 - SF"
-ROOM = "Inventory Room - SF"
-BONEYARD = "Boneyard - SF"
-UP = "Upstairs Storage - SF"
-ALCOVE = "Panel Alcove - SF"
-ALC_ROW = "Alcove Row 1 - SF"
-ALC_LEFT = "Alcove 1 Left - SF"
-ALC_TOP = "Alcove Top - SF"
-VANS = "Service Van - SF"
-VAN_BIN = "Van Shelf - SF"
-SITES = "Job Sites - SF"
-SITE = "Job Site PRJ-90001 Water Wall - SF"
-TRANSIT = "Goods In Transit - SF"
+ROOT = "All Warehouses - ZZ"
+INV = "Stock - ZZ"
+ROW2 = "Lane 7 - ZZ"
+BAY = "Bay K1 - ZZ"
+BAY2 = "Bay K2 - ZZ"
+SHELF1 = "Shelf K1-1 - ZZ"
+SHELF2 = "Shelf K1-2 - ZZ"
+BIN1 = "Bin K1-2-1 - ZZ"
+BIN2 = "Bin K1-2-2 - ZZ"
+BIN9 = "Bin K1-2-9 - ZZ"
+BIN10 = "Bin K1-2-10 - ZZ"
+ROOM = "Parts Room - ZZ"
+BONEYARD = "Boneyard - ZZ"
+UP = "Mezzanine - ZZ"
+NOOK = "Nook Wall - ZZ"
+NOOK_ROW = "Nook Row 1 - ZZ"
+NOOK_LEFT = "Nook 1 Left - ZZ"
+NOOK_CENTER = "Nook 1 Center - ZZ"
+NOOK_RIGHT = "Nook 1 Right - ZZ"
+NOOK_TOP = "Nook Top - ZZ"
+HUES = "Hue Rack - ZZ"
+HUE_RED = "Red Row - ZZ"
+HUE_AMBER = "Amber Row - ZZ"
+HUE_TEAL = "Teal Row - ZZ"
+RED1 = "Red-1 - ZZ"
+RED2 = "Red-2 - ZZ"
+RED10 = "Red-10 - ZZ"
+AMBER1 = "Amber-1 - ZZ"
+TEAL1 = "Teal-1 - ZZ"
+VANS = "Delivery Van - ZZ"
+VAN_BIN = "Van Shelf - ZZ"
+SITES = "Job Sites - ZZ"
+SITE = "Job Site PRJ-90001 Water Wall - ZZ"
+TRANSIT = "Goods In Transit - ZZ"
 
 
 def _tree_rows():
-	"""A small copy of production's shape: Inventory > Row > Bay > Shelf > Bin, two rooms, an
-	upstairs alcove, a van, a job site and a transit warehouse. Deliberately out of shelf order
-	(bin 10 is created before bin 9), as production's tree is."""
+	"""Made-up names in the shapes a real tree has: a group of lanes over bays over shelves over
+	numbered bins; two rooms; a wall of nooks whose bins are named Left, Center and Right; a rack
+	whose rows are named for colors; a van; a job site; a transit warehouse. Deliberately out of
+	order the way a real tree is: bin 10 is created before bin 9, and Center before Left."""
 	rows = [
 		(ROOT, "All Warehouses", None, 1),
-		(INV, "Inventory", ROOT, 1),
-		(ROW2, "Row 2", INV, 1),
-		(BAY, "Bay B1", ROW2, 1),
-		(BAY2, "Bay B2", ROW2, 1),
-		(SHELF2, "Shelf B1-2", BAY, 1),
-		(SHELF1, "Shelf B1-1", BAY, 1),
-		(BIN10, "Bin B1-2-10", SHELF2, 0),
-		(BIN2, "Bin B1-2-2", SHELF2, 0),
-		(BIN9, "Bin B1-2-9", SHELF2, 0),
-		(BIN1, "Bin B1-2-1", SHELF2, 0),
-		(ROOM, "Inventory Room", INV, 0),
+		(INV, "Stock", ROOT, 1),
+		(ROW2, "Lane 7", INV, 1),
+		(BAY, "Bay K1", ROW2, 1),
+		(BAY2, "Bay K2", ROW2, 1),
+		(SHELF2, "Shelf K1-2", BAY, 1),
+		(SHELF1, "Shelf K1-1", BAY, 1),
+		(BIN10, "Bin K1-2-10", SHELF2, 0),
+		(BIN2, "Bin K1-2-2", SHELF2, 0),
+		(BIN9, "Bin K1-2-9", SHELF2, 0),
+		(BIN1, "Bin K1-2-1", SHELF2, 0),
+		(ROOM, "Parts Room", INV, 0),
 		(BONEYARD, "Boneyard", INV, 0),
-		(UP, "Upstairs Storage", ROOT, 1),
-		(ALCOVE, "Panel Alcove", UP, 1),
-		(ALC_ROW, "Alcove Row 1", ALCOVE, 1),
-		(ALC_LEFT, "Alcove 1 Left", ALC_ROW, 0),
-		(ALC_TOP, "Alcove Top", ALCOVE, 0),
-		(VANS, "Service Van", ROOT, 1),
+		(UP, "Mezzanine", ROOT, 1),
+		(NOOK, "Nook Wall", UP, 1),
+		(NOOK_ROW, "Nook Row 1", NOOK, 1),
+		(NOOK_CENTER, "Nook 1 Center", NOOK_ROW, 0),
+		(NOOK_LEFT, "Nook 1 Left", NOOK_ROW, 0),
+		(NOOK_RIGHT, "Nook 1 Right", NOOK_ROW, 0),
+		(NOOK_TOP, "Nook Top", NOOK, 0),
+		(HUES, "Hue Rack", UP, 1),
+		(HUE_RED, "Red Row", HUES, 1),
+		(HUE_AMBER, "Amber Row", HUES, 1),
+		(HUE_TEAL, "Teal Row", HUES, 1),
+		(RED10, "Red-10", HUE_RED, 0),
+		(RED2, "Red-2", HUE_RED, 0),
+		(RED1, "Red-1", HUE_RED, 0),
+		(AMBER1, "Amber-1", HUE_AMBER, 0),
+		(TEAL1, "Teal-1", HUE_TEAL, 0),
+		(VANS, "Delivery Van", ROOT, 1),
 		(VAN_BIN, "Van Shelf", VANS, 0),
 		(SITES, "Job Sites", ROOT, 1),
 		(SITE, "Job Site PRJ-90001 Water Wall", SITES, 0),
@@ -147,9 +170,12 @@ class TestShapes(unittest.TestCase):
 		shape = rules.clean_shape(_box(owner="x", docstatus=1, idx=7, name="abc", levels=[1]), 1200, 800)
 		self.assertEqual(
 			sorted(shape),
-			sorted(["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from"]),
+			sorted(
+				["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"]
+			),
 		)
 		self.assertEqual((shape["shape_type"], shape["warehouse"], shape["label"]), ("Rack", BAY, None))
+		self.assertIsNone(shape["bin_order"])
 		self.assertEqual((shape["shelves_from"], shape["bins_from"]), ("Top", "Left"))
 
 	def test_a_box_is_held_inside_the_drawing(self):
@@ -206,10 +232,10 @@ class TestShapes(unittest.TestCase):
 
 	def test_a_box_tied_to_a_warehouse_that_is_gone_is_refused(self):
 		with self.assertRaises(rules.MapError) as caught:
-			rules.clean_shapes([_box(warehouse="Bay Z9 - SF")], 1200, 800, known={BAY})
+			rules.clean_shapes([_box(warehouse="Bay Z9 - ZZ")], 1200, 800, known={BAY})
 		self.assertIn("is not a warehouse any more", str(caught.exception))
 		# Without the list of warehouses the check is not made (the pure rules never read).
-		self.assertEqual(len(rules.clean_shapes([_box(warehouse="Bay Z9 - SF")], 1200, 800)), 1)
+		self.assertEqual(len(rules.clean_shapes([_box(warehouse="Bay Z9 - ZZ")], 1200, 800)), 1)
 
 	def test_too_many_boxes(self):
 		boxes = [_box(shape_type="Label", label=str(n)) for n in range(rules.MAX_SHAPES + 1)]
@@ -230,6 +256,15 @@ class TestTheMapItself(unittest.TestCase):
 		self.assertIsNotNone(rules.map_name_problem("x" * (rules.MAX_NAME + 1)))
 		for bad in ("A/B", "A?B", "A#B", "A%B", "A&B", "A\\B"):
 			self.assertIsNotNone(rules.map_name_problem(bad), bad)
+
+	def test_a_name_the_desk_itself_can_carry(self):
+		"""On every route change the Desk builds a jQuery selector from the first two parts of
+		the address (``container.js`` ``has_sidebar``, v16.56.0). A double quote in a map's name
+		makes it throw before the page is told it is on show, and the page sits on "Loading"."""
+		for bad in ('12" Rack Room', "A<B", "A>B", "Line\nBreak", "Tab\tbed", "Bell\x07", ".", ".."):
+			self.assertIsNotNone(rules.map_name_problem(bad), repr(bad))
+		for fine in ("Bob's Loft", "Room [2]", "Shop Floor (north)", "v1.2", "..."):
+			self.assertIsNone(rules.map_name_problem(fine), fine)
 
 	def test_the_drawing_has_a_sane_size(self):
 		self.assertEqual(rules.canvas_size(None, 0), (rules.DEFAULT_WIDTH, rules.DEFAULT_HEIGHT))
@@ -255,20 +290,20 @@ class TestTheTree(unittest.TestCase):
 	def test_a_bays_front_view_is_its_shelves_and_bins_in_shelf_order(self):
 		levels = rules.levels(BAY, _tree())
 		self.assertEqual([level["warehouse"] for level in levels], [SHELF1, SHELF2])
-		self.assertEqual([level["label"] for level in levels], ["Shelf B1-1", "Shelf B1-2"])
+		self.assertEqual([level["label"] for level in levels], ["Shelf K1-1", "Shelf K1-2"])
 		# An empty shelf is kept: it is there in the building.
 		self.assertEqual(levels[0]["bins"], [])
 		# 9 before 10, whatever order the tree made them in.
 		self.assertEqual(levels[1]["bins"], [BIN1, BIN2, BIN9, BIN10])
 
 	def test_bins_directly_under_the_box_are_a_first_row_with_no_name(self):
-		levels = rules.levels(ALCOVE, _tree())
-		self.assertEqual(levels[0], {"warehouse": ALCOVE, "label": "", "bins": [ALC_TOP]})
-		self.assertEqual(levels[1]["bins"], [ALC_LEFT])
+		levels = rules.levels(NOOK, _tree())
+		self.assertEqual(levels[0], {"warehouse": NOOK, "label": "", "bins": [NOOK_TOP]})
+		self.assertEqual(levels[1]["warehouse"], NOOK_ROW)
 
 	def test_a_bin_has_no_front_view(self):
 		self.assertEqual(rules.levels(ROOM, _tree()), [])
-		self.assertEqual(rules.levels("Nowhere - SF", _tree()), [])
+		self.assertEqual(rules.levels("Nowhere - ZZ", _tree()), [])
 
 	def test_a_disabled_or_transit_bin_is_never_drawn(self):
 		tree = _tree(disabled={BIN2, SHELF1})
@@ -284,14 +319,15 @@ class TestTheTree(unittest.TestCase):
 		self.assertEqual(
 			[(u["warehouse"], u["suggested_type"], u["bins"]) for u in units],
 			[
-				# In the tree's order, each level by name: the two rooms come before Row 2.
+				# In the tree's order, each level by name: Mezzanine's two racks, then Stock's.
+				(HUES, "Rack", 5),
+				(NOOK, "Rack", 4),
 				(BONEYARD, "Room", 1),
-				(ROOM, "Room", 1),
-				# A bay is one box: at most two steps above its bins. Row 2 is not (three).
+				# A bay is one box: at most two steps above its bins. Lane 7 is not (three).
 				(BAY, "Rack", 4),
 				# A group with no bins yet is a place, drawn as a room.
 				(BAY2, "Room", 0),
-				(ALCOVE, "Rack", 2),
+				(ROOM, "Room", 1),
 			],
 		)
 
@@ -313,21 +349,21 @@ class TestTheTree(unittest.TestCase):
 
 	def test_a_bin_is_shown_by_the_nearest_box_above_it(self):
 		tree = _tree()
-		placed = {BAY: "Shop Floor", ROOM: "Shop Floor", ALCOVE: "Upstairs"}
+		placed = {BAY: "Shop Floor", ROOM: "Shop Floor", NOOK: "Upstairs"}
 		self.assertEqual(rules.locate(BIN9, placed, tree), {"map": "Shop Floor", "shape": BAY})
 		self.assertEqual(rules.locate(BAY, placed, tree), {"map": "Shop Floor", "shape": BAY})
-		self.assertEqual(rules.locate(ALC_LEFT, placed, tree), {"map": "Upstairs", "shape": ALCOVE})
+		self.assertEqual(rules.locate(NOOK_LEFT, placed, tree), {"map": "Upstairs", "shape": NOOK})
 		# A shelf placed on its own wins over its bay: it is nearer.
 		placed[SHELF2] = "Shop Floor"
 		self.assertEqual(rules.locate(BIN9, placed, tree), {"map": "Shop Floor", "shape": SHELF2})
 
 	def test_a_group_nobody_placed_answers_with_the_map_that_shows_most_of_it(self):
 		tree = _tree()
-		placed = {BAY: "Shop Floor", ROOM: "Shop Floor", ALCOVE: "Upstairs"}
+		placed = {BAY: "Shop Floor", ROOM: "Shop Floor", NOOK: "Upstairs"}
 		self.assertEqual(rules.locate(ROW2, placed, tree), {"map": "Shop Floor", "shape": None})
 		self.assertEqual(rules.locate(ROOT, placed, tree), {"map": "Shop Floor", "shape": None})
 		self.assertIsNone(rules.locate(BONEYARD, placed, tree))
-		self.assertIsNone(rules.locate("Nowhere - SF", placed, tree))
+		self.assertIsNone(rules.locate("Nowhere - ZZ", placed, tree))
 		self.assertIsNone(rules.locate("", placed, tree))
 
 	def test_how_a_unit_is_already_shown(self):
@@ -342,7 +378,7 @@ class TestTheTree(unittest.TestCase):
 
 	def test_a_trail_drops_the_root(self):
 		tree = _tree()
-		self.assertEqual(rules.trail(BIN9, tree), "Inventory › Row 2 › Bay B1 › Shelf B1-2")
+		self.assertEqual(rules.trail(BIN9, tree), "Stock › Lane 7 › Bay K1 › Shelf K1-2")
 		self.assertEqual(rules.trail(INV, tree), "")
 
 	def test_a_loop_in_the_tree_ends(self):
@@ -350,6 +386,80 @@ class TestTheTree(unittest.TestCase):
 		tree[ROOT]["parent_warehouse"] = BIN9
 		self.assertTrue(rules.ancestors(BIN9, tree))
 		self.assertIsInstance(rules.units(tree), list)
+
+
+class TestTheOrderOnTheWall(unittest.TestCase):
+	"""F1 of the review of PR #1453. Sorted as words, Left / Center / Right come out Center,
+	Left, Right, so a row of nooks was drawn in an order nobody standing in front of it sees, and
+	turning the row around (bin 1 at the right) only gave Right, Left, Center."""
+
+	def test_position_words_sort_by_the_place_they_name(self):
+		names = ["Nook 1 Center", "Nook 1 Right", "Nook 1 Left"]
+		self.assertEqual(sorted(names, key=rules.position_key), ["Nook 1 Left", "Nook 1 Center", "Nook 1 Right"])
+		# The plain natural order, which the labels page still uses, is the wrong one here.
+		self.assertEqual(sorted(names, key=stock_scan_rules.natural_key)[0], "Nook 1 Center")
+		shelves = ["Bottom Shelf", "Top Shelf", "Middle Shelf"]
+		self.assertEqual(sorted(shelves, key=rules.position_key), ["Top Shelf", "Middle Shelf", "Bottom Shelf"])
+		self.assertEqual(sorted(["Rear", "Front"], key=rules.position_key), ["Front", "Rear"])
+		self.assertEqual(
+			sorted(["Pod Lower Right", "Pod Upper Left", "Pod Upper Right", "Pod Lower Left"], key=rules.position_key),
+			["Pod Upper Left", "Pod Upper Right", "Pod Lower Left", "Pod Lower Right"],
+		)
+
+	def test_numbers_still_count(self):
+		names = ["Bin K1-2-10", "Bin K1-2-9", "Bin K1-2-1"]
+		self.assertEqual(sorted(names, key=rules.position_key), ["Bin K1-2-1", "Bin K1-2-9", "Bin K1-2-10"])
+		self.assertEqual(sorted(["Red-10", "Red-2"], key=rules.position_key), ["Red-2", "Red-10"])
+		# A word that only contains a position word is a word.
+		self.assertEqual(sorted(["Leftovers", "Apex"], key=rules.position_key), ["Apex", "Leftovers"])
+		self.assertEqual(rules.position_key(None), [])
+
+	def test_a_row_of_nooks_reads_left_center_right(self):
+		"""The tree makes them Center, Left, Right (as production's does)."""
+		levels = rules.levels(NOOK, _tree())
+		self.assertEqual(levels[1]["bins"], [NOOK_LEFT, NOOK_CENTER, NOOK_RIGHT])
+		self.assertEqual(rules.levels(NOOK_ROW, _tree())[0]["bins"], [NOOK_LEFT, NOOK_CENTER, NOOK_RIGHT])
+
+	def test_no_rule_knows_the_order_of_colors_so_a_box_carries_its_own(self):
+		tree = _tree()
+		auto = rules.levels(HUES, tree)
+		self.assertEqual([level["warehouse"] for level in auto], [HUE_AMBER, HUE_RED, HUE_TEAL])
+		self.assertEqual(auto[1]["bins"], [RED1, RED2, RED10])
+		order = rules.clean_order("\n".join([HUE_TEAL, HUE_RED, RED10, RED1]))
+		own = rules.levels(HUES, tree, order=order)
+		self.assertEqual([level["warehouse"] for level in own], [HUE_TEAL, HUE_RED, HUE_AMBER])
+		# Listed bins first, in the box's order; a bin it does not list follows in the rule's.
+		self.assertEqual(own[1]["bins"], [RED10, RED1, RED2])
+		self.assertEqual(own[2]["bins"], [AMBER1])
+
+	def test_a_box_order_is_laid_over_the_rule(self):
+		self.assertEqual(rules.ordered(["a", "b", "c", "d"], ["c", "gone", "a"]), ["c", "a", "b", "d"])
+		self.assertEqual(rules.ordered(["a", "b"], []), ["a", "b"])
+		self.assertEqual(rules.ordered(["a", "b"], None), ["a", "b"])
+		self.assertEqual(rules.ordered([], ["a"]), [])
+
+	def test_a_box_order_is_cleaned(self):
+		self.assertEqual(rules.clean_order(" b \n\na\nb\n"), ["b", "a"])
+		self.assertEqual(rules.clean_order(["b", None, "a", "b", 7]), ["b", "a", "7"])
+		self.assertEqual(rules.clean_order(None), [])
+		self.assertEqual(rules.clean_order("b\na\nc", known={"a", "c"}), ["a", "c"])
+		self.assertEqual(len(rules.clean_order([f"w{n}" for n in range(rules.MAX_ORDER + 50)])), rules.MAX_ORDER)
+		shape = rules.clean_shape(_box(warehouse=HUES, bin_order=f"{HUE_TEAL}\n\n{HUE_RED}\n{HUE_TEAL}"), 1200, 800)
+		self.assertEqual(shape["bin_order"], f"{HUE_TEAL}\n{HUE_RED}")
+		# Only a box that stands for a warehouse has anything inside it to put in order.
+		self.assertIsNone(rules.clean_shape(_box(shape_type="Label", label="x", bin_order="a\nb"), 1200, 800)["bin_order"])
+		# A name that is no longer a warehouse leaves the order when the map is saved.
+		cleaned = rules.clean_shapes([_box(warehouse=HUES, bin_order=f"{HUE_TEAL}\nGone - ZZ")], 1200, 800, known={HUES, HUE_TEAL})
+		self.assertEqual(cleaned[0]["bin_order"], HUE_TEAL)
+
+	def test_why_a_warehouse_is_not_drawn(self):
+		tree = _tree(disabled={BAY})
+		self.assertEqual(rules.missing_reason(None), "deleted")
+		self.assertEqual(rules.missing_reason(tree[BAY]), "disabled")
+		self.assertEqual(rules.missing_reason(tree[TRANSIT]), "transit")
+		self.assertEqual(rules.missing_reason(tree[ROOM]), "")
+		self.assertFalse(rules.usable(None))
+		self.assertTrue(rules.usable(tree[ROOM]))
 
 
 class TestColors(unittest.TestCase):
@@ -386,12 +496,14 @@ _MODULES = (
 	"erpnext_enhancements.inventory_enhancements.bin_assignments",
 	"erpnext_enhancements.inventory_enhancements.bin_views",
 	"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map",
+	"erpnext_enhancements.inventory_enhancements.warehouse_map_files",
 )
 _PACKAGE_ATTRS = ("job_sites", "bin_assignments", "bin_views")
 
 STATE = {}
 _ORIGINAL = {}
 api = None
+files = None
 WarehouseMap = None
 
 
@@ -433,6 +545,8 @@ def _reset():
 				SITE: {"on_hand_items": 0, "kind": "job_site", "project_name": "Water Wall"},
 			},
 			"locations": {"ELBOW": {BIN9: {"on_hand": 4.0, "assigned": False}, BIN1: {"on_hand": 0.0, "assigned": True}}},
+			# (file_url, is_private, attached_to_doctype, attached_to_name)
+			"files": [],
 			"perms": set(VIEWER),
 			"access": True,
 			"calls": [],
@@ -487,6 +601,17 @@ def _install():
 			return [row["name"] for row in rows] if pluck == "name" else rows
 		if doctype == MAP:
 			return [_Row({key: stored.get(key) for key in fields}) for stored in STATE["maps"].values()]
+		if doctype == "File":
+			want = (filters["file_url"], filters["is_private"], filters["attached_to_doctype"], filters["attached_to_name"])
+			return [_Row(name=f"file{n}") for n, row in enumerate(STATE["files"]) if tuple(row) == want]
+		if doctype == SHAPE and "bin_order" in filters:
+			needle = filters["bin_order"][1].strip("%")
+			return [
+				_Row(name=row["name"], bin_order=row.get("bin_order"))
+				for stored in STATE["maps"].values()
+				for row in stored["shapes"]
+				if needle in (row.get("bin_order") or "")
+			]
 		if doctype == SHAPE:
 			assert filters.get("parenttype") == MAP, filters
 			op, value = filters["parent"]
@@ -505,9 +630,21 @@ def _install():
 			return any(all(m.get(k) == v for k, v in name.items()) for m in STATE["maps"].values())
 		return name in STATE["maps"]
 
+	def set_value(doctype, name, field, value, update_modified=True):
+		assert doctype == SHAPE and field == "bin_order" and update_modified is False, (doctype, field)
+		STATE["writes"].append(("set_value", name))
+		for stored in STATE["maps"].values():
+			for row in stored["shapes"]:
+				if row["name"] == name:
+					row[field] = value
+
 	class Document:
 		def __init__(self, data=None):
 			self.__dict__.update(data or {})
+			self.__dict__.setdefault("doctype", MAP)
+
+		def is_new(self):
+			return bool(self.__dict__.get("_new"))
 
 		def __getattr__(self, key):
 			return None
@@ -532,7 +669,20 @@ def _install():
 			for ptype in ("create", "write") if creating else ("write",):
 				if not has_permission(MAP, ptype):
 					raise _Denied(f"No {ptype} permission for {MAP}")
-			self.validate()
+			# As Frappe does (document.py insert / _save, v16.56.0): Links are checked BEFORE
+			# validate runs, and a Link value that is not text trips an assert.
+			for n, row in enumerate(self.__dict__.get("shapes") or [], 1):
+				warehouse = row.get("warehouse")
+				if warehouse is None:
+					continue
+				assert isinstance(warehouse, (str, int)), "a Link that is not text"
+				if warehouse not in STATE["tree"]:
+					raise _Throw(f"Could not find Row #{n}: Warehouse: {warehouse}")
+			self.__dict__["_new"] = creating
+			try:
+				self.validate()
+			finally:
+				self.__dict__.pop("_new", None)
 			if creating:
 				self.name = self.map_name
 			self.modified = _stamp()
@@ -558,9 +708,16 @@ def _install():
 		STATE["writes"].append(("rename", old, new))
 		if not has_permission(MAP, "write"):
 			raise _Denied("No write permission")
+		# As Frappe does (rename_doc.py, v16.56.0): before_rename runs, validate does not, and the
+		# attached Files follow the record.
+		get_doc(MAP, old).before_rename(old, new, False)
 		stored = STATE["maps"].pop(old)
 		stored.update({"name": new, "map_name": new})
 		STATE["maps"][new] = stored
+		STATE["files"] = [
+			(url, private, doctype, new if (doctype, name) == (MAP, old) else name)
+			for url, private, doctype, name in STATE["files"]
+		]
 		return new
 
 	def delete_doc(doctype, name):
@@ -576,10 +733,10 @@ def _install():
 	frappe.new_doc = new_doc
 	frappe.rename_doc = rename_doc
 	frappe.delete_doc = delete_doc
-	frappe.db = types.SimpleNamespace(exists=exists)
+	frappe.db = types.SimpleNamespace(exists=exists, set_value=set_value)
 	frappe._ = lambda text: text
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
-	frappe.log_error = lambda **kw: STATE["calls"].append(("log_error", kw.get("title")))
+	frappe.log_error = lambda *a, **kw: STATE["calls"].append(("log_error", kw.get("title")))
 	frappe.PermissionError = _Denied
 	frappe.TimestampMismatchError = _Stale
 	utils = types.ModuleType("frappe.utils")
@@ -678,7 +835,7 @@ def _load(name, path):
 
 
 def setUpModule():
-	global api, WarehouseMap
+	global api, files, WarehouseMap
 	for name in _MODULES:
 		_ORIGINAL[name] = sys.modules.pop(name, None)
 	_reset()
@@ -688,6 +845,10 @@ def setUpModule():
 	)
 	WarehouseMap = controller.WarehouseFloorMap
 	api = _load("erpnext_enhancements.api.warehouse_map", API_SOURCE)
+	files = _load(
+		"erpnext_enhancements.inventory_enhancements.warehouse_map_files",
+		APP / "inventory_enhancements" / "warehouse_map_files.py",
+	)
 
 
 def tearDownModule():
@@ -718,7 +879,7 @@ class _Base(unittest.TestCase):
 		return _seed(
 			"Shop Floor",
 			[
-				_box(warehouse=BAY, label="B1"),
+				_box(warehouse=BAY, label="K1"),
 				_box(shape_type="Room", warehouse=ROOM, x=300, w=150, h=120),
 				_box(shape_type="Label", label="Dock door", x=600),
 			],
@@ -732,6 +893,7 @@ class TestWhoMayLook(_Base):
 		("locate", (BIN9,)),
 		("find_item", ("ELBOW",)),
 		("editor_data", ()),
+		("box_levels", (BAY,)),
 	)
 
 	def test_every_read_asks_the_gate_before_it_reads_anything(self):
@@ -764,10 +926,12 @@ class TestWhoMayLook(_Base):
 		self.shop_floor()
 		with self.assertRaises(_Denied):
 			api.editor_data()
+		with self.assertRaises(_Denied):
+			api.box_levels(BAY)
 
 	def test_a_map_being_drawn_is_not_announced(self):
 		self.shop_floor()
-		_seed("Upstairs", [_box(warehouse=ALCOVE)], disabled=1)
+		_seed("Upstairs", [_box(warehouse=NOOK)], disabled=1)
 		self.assertEqual([m["name"] for m in api.boot()["maps"]], ["Shop Floor"])
 		with self.assertRaises(_Throw) as hidden:
 			api.get_map("Upstairs")
@@ -775,11 +939,11 @@ class TestWhoMayLook(_Base):
 			api.get_map("Basement")
 		self.assertEqual(str(hidden.exception).replace("Upstairs", "X"), str(absent.exception).replace("Basement", "X"))
 		# Its boxes do not answer "where is this" either.
-		self.assertIsNone(api.locate(ALC_LEFT)["map"])
+		self.assertIsNone(api.locate(NOOK_LEFT)["map"])
 		self.as_editor()
 		self.assertEqual([m["name"] for m in api.boot()["maps"]], ["Shop Floor", "Upstairs"])
 		self.assertEqual(api.get_map("Upstairs")["map"]["disabled"], True)
-		self.assertEqual(api.locate(ALC_LEFT)["map"], "Upstairs")
+		self.assertEqual(api.locate(NOOK_LEFT)["map"], "Upstairs")
 
 
 class TestReads(_Base):
@@ -803,9 +967,9 @@ class TestReads(_Base):
 		self.assertEqual((data["map"]["width"], data["map"]["height"]), (1200.0, 800.0))
 		self.assertTrue(data["map"]["modified"])
 		bay, room, label = data["shapes"]
-		self.assertEqual((bay["warehouse_name"], bay["label"], bay["is_group"], bay["missing"]), ("Bay B1", "B1", True, False))
-		self.assertEqual(bay["trail"], "Inventory › Row 2")
-		self.assertEqual([level["label"] for level in bay["levels"]], ["Shelf B1-1", "Shelf B1-2"])
+		self.assertEqual((bay["warehouse_name"], bay["label"], bay["is_group"], bay["missing"]), ("Bay K1", "K1", True, False))
+		self.assertEqual(bay["trail"], "Stock › Lane 7")
+		self.assertEqual([level["label"] for level in bay["levels"]], ["Shelf K1-1", "Shelf K1-2"])
 		self.assertEqual(bay["levels"][1]["bins"], [BIN1, BIN2, BIN9, BIN10])
 		self.assertEqual(
 			bay["summary"], {"bins": 4, "stock_bins": 2, "problem_bins": 2, "items": 3, "status": "problem"}
@@ -816,7 +980,7 @@ class TestReads(_Base):
 		self.assertEqual(sorted(data["bins"]), sorted([BIN1, BIN2, BIN9, BIN10, ROOM]))
 		self.assertEqual(data["bins"][BIN2]["status"], "problem")
 		self.assertEqual(data["bins"][BIN10]["status"], "empty")
-		self.assertEqual(data["bins"][BIN1]["warehouse_name"], "Bin B1-2-1")
+		self.assertEqual(data["bins"][BIN1]["warehouse_name"], "Bin K1-2-1")
 
 	def test_vehicles_and_job_sites_are_listed_beside_the_map(self):
 		self.shop_floor()
@@ -845,13 +1009,13 @@ class TestReads(_Base):
 		self.shop_floor()
 		self.assertEqual(
 			api.locate(BIN9),
-			{"warehouse": BIN9, "warehouse_name": "Bin B1-2-9", "is_group": False, "map": "Shop Floor", "shape": BAY},
+			{"warehouse": BIN9, "warehouse_name": "Bin K1-2-9", "is_group": False, "map": "Shop Floor", "shape": BAY},
 		)
 		self.assertEqual(api.locate(ROW2)["shape"], None)
 		self.assertEqual(api.locate(ROW2)["map"], "Shop Floor")
 		self.assertIsNone(api.locate(BONEYARD)["map"])
 		with self.assertRaises(_Throw):
-			api.locate("Nowhere - SF")
+			api.locate("Nowhere - ZZ")
 
 	def test_where_an_item_is(self):
 		self.shop_floor()
@@ -861,24 +1025,56 @@ class TestReads(_Base):
 		# On a map first (most on hand first), then the places no map shows.
 		self.assertEqual([p["warehouse"] for p in found["places"]], [BIN9, BIN1, VAN_BIN])
 		self.assertEqual(found["places"][0]["shape"], BAY)
-		self.assertEqual(found["places"][0]["trail"], "Inventory › Row 2 › Bay B1 › Shelf B1-2")
+		self.assertEqual(found["places"][0]["trail"], "Stock › Lane 7 › Bay K1 › Shelf K1-2")
 		self.assertEqual((found["places"][2]["map"], found["places"][2]["on_hand"]), (None, 9.0))
 		with self.assertRaises(_Throw):
 			api.find_item("NOPE")
 
+	def test_a_boxes_own_order_reaches_the_page(self):
+		_seed("Upstairs", [_box(warehouse=HUES, bin_order=f"{HUE_TEAL}\n{HUE_RED}\n{RED10}"), _box(warehouse=NOOK, x=300)])
+		hues, nook = api.get_map("Upstairs")["shapes"]
+		self.assertEqual(hues["bin_order"], [HUE_TEAL, HUE_RED, RED10])
+		self.assertEqual([level["warehouse"] for level in hues["levels"]], [HUE_TEAL, HUE_RED, HUE_AMBER])
+		self.assertEqual(hues["levels"][1]["bins"], [RED10, RED1, RED2])
+		# With no order of its own a box follows the rule: Left, Center, Right.
+		self.assertEqual(nook["bin_order"], [])
+		self.assertEqual(nook["levels"][1]["bins"], [NOOK_LEFT, NOOK_CENTER, NOOK_RIGHT])
+
+	def test_the_automatic_order_for_a_box_just_tied(self):
+		self.as_editor()
+		answer = api.box_levels(HUES)
+		self.assertTrue(answer["is_group"])
+		self.assertEqual([level["warehouse"] for level in answer["levels"]], [HUE_AMBER, HUE_RED, HUE_TEAL])
+		self.assertEqual(answer["names"][HUE_RED], "Red Row")
+		self.assertEqual(answer["names"][RED10], "Red-10")
+		self.assertEqual(api.box_levels(ROOM), {"is_group": False, "levels": [], "names": {}})
+		with self.assertRaises(_Throw):
+			api.box_levels("Nowhere - ZZ")
+
+	def test_a_disabled_warehouse_keeps_its_box_and_says_why(self):
+		"""F5: the page, the save and the hooks.py comment now agree. Deleted: the box has to go.
+		Disabled or Transit: the box stays, is not drawn as a place, and comes back by itself."""
+		self.shop_floor()
+		STATE["tree"][BAY]["disabled"] = 1
+		del STATE["tree"][ROOM]
+		bay, room, _label = api.get_map("Shop Floor")["shapes"]
+		self.assertEqual((bay["missing"], bay["missing_reason"]), (True, "disabled"))
+		self.assertEqual((room["missing"], room["missing_reason"]), (True, "deleted"))
+		self.assertEqual(_label["missing_reason"], "")
+
 	def test_what_the_editor_offers(self):
 		self.shop_floor()
-		_seed("Upstairs", [_box(warehouse=ALC_ROW)])
+		_seed("Upstairs", [_box(warehouse=NOOK_ROW)])
 		self.as_editor()
 		data = api.editor_data()
 		units = {u["warehouse"]: u for u in data["units"]}
 		# Vehicles and job sites are not in the building.
-		self.assertEqual(sorted(units), sorted([BAY, BAY2, BONEYARD, ROOM, ALCOVE]))
+		self.assertEqual(sorted(units), sorted([BAY, BAY2, BONEYARD, ROOM, NOOK, HUES]))
 		self.assertEqual((units[BAY]["on_map"], units[BAY]["via"]), ("Shop Floor", [BAY]))
 		self.assertEqual((units[BONEYARD]["on_map"], units[BONEYARD]["via"]), (None, []))
 		# A part of the alcove is placed upstairs, so the alcove is not offered whole again.
-		self.assertEqual((units[ALCOVE]["on_map"], units[ALCOVE]["via"]), ("Upstairs", [ALC_ROW]))
-		self.assertEqual(units[BAY]["trail"], "Inventory › Row 2")
+		self.assertEqual((units[NOOK]["on_map"], units[NOOK]["via"]), ("Upstairs", [NOOK_ROW]))
+		self.assertEqual(units[BAY]["trail"], "Stock › Lane 7")
 		names = [w["name"] for w in data["warehouses"]]
 		self.assertIn(SHELF2, names)
 		self.assertNotIn(TRANSIT, names)
@@ -905,10 +1101,10 @@ class TestSaving(_Base):
 
 	def test_a_new_map(self):
 		self.as_editor()
-		saved = api.save_map(self.payload(width=4032, height=3024, background="/private/files/plan.png", sort_order="3"))
+		saved = api.save_map(self.payload(width=4032, height=3024, sort_order="3"))
 		self.assertEqual(saved["name"], "Shop Floor")
 		stored = STATE["maps"]["Shop Floor"]
-		self.assertEqual((stored["width"], stored["height"], stored["background"]), (4032.0, 3024.0, "/private/files/plan.png"))
+		self.assertEqual((stored["width"], stored["height"], stored["sort_order"]), (4032.0, 3024.0, "3"))
 		self.assertEqual(stored["shapes"][0]["warehouse"], BAY)
 		self.assertEqual(saved["modified"], stored["modified"])
 		with self.assertRaises(_Throw) as caught:
@@ -925,7 +1121,9 @@ class TestSaving(_Base):
 		self.assertNotIn("docstatus", stored)
 		self.assertEqual(
 			sorted(k for k in stored["shapes"][0] if k != "name"),
-			sorted(["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from"]),
+			sorted(
+				["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"]
+			),
 		)
 
 	def test_the_whole_list_of_boxes_replaces_what_was_stored(self):
@@ -951,12 +1149,12 @@ class TestSaving(_Base):
 
 	def test_the_doctypes_rules_hold_a_save(self):
 		self.shop_floor()
-		_seed("Upstairs", [_box(warehouse=ALCOVE)])
+		_seed("Upstairs", [_box(warehouse=NOOK)])
 		self.as_editor()
 		refused = [
 			(self.payload(shapes=[_box(), _box(x=200)]), "on this map twice"),
-			(self.payload(shapes=[_box(warehouse="Bay Z9 - SF")]), "not a warehouse any more"),
-			(self.payload(shapes=[_box(warehouse=ALCOVE)]), "already on the map Upstairs"),
+			(self.payload(shapes=[_box(warehouse="Bay Z9 - ZZ")]), "not a warehouse any more"),
+			(self.payload(shapes=[_box(warehouse=NOOK)]), "already on the map Upstairs"),
 			(self.payload(shapes=[_box(warehouse="")]), "a rack needs"),
 			(self.payload(background="/files/plan.png"), "private file"),
 			(self.payload(background="https://example.com/a.png"), "private file"),
@@ -964,9 +1162,88 @@ class TestSaving(_Base):
 		before = STATE["maps"]["Shop Floor"]["modified"]
 		for payload, words in refused:
 			with self.assertRaises(_Throw) as caught:
-				api.save_map(payload, name="Shop Floor")
+				api.save_map(payload, name="Shop Floor", modified=before)
 			self.assertIn(words, str(caught.exception))
 		self.assertEqual(STATE["maps"]["Shop Floor"]["modified"], before)
+
+	def test_the_stale_save_check_cannot_be_skipped(self):
+		"""F6: ``modified`` used to be optional, so a caller that left it out overwrote anything."""
+		self.shop_floor()
+		self.as_editor()
+		for stamp in (None, "", "  "):
+			with self.assertRaises(_Throw) as caught:
+				api.save_map(self.payload(shapes=[]), name="Shop Floor", modified=stamp)
+			self.assertIn("could not be read", str(caught.exception))
+		self.assertEqual(len(STATE["maps"]["Shop Floor"]["shapes"]), 3)
+		self.assertEqual(STATE["writes"], [])
+
+	def test_a_deleted_warehouse_is_refused_in_the_apps_own_words(self):
+		"""Frappe checks a row's Links before ``validate`` runs (this suite's stub does the same),
+		so without the endpoint cleaning first the editor would read "Could not find Row #1:
+		Warehouse: ..." and a value that is not text would be a crash."""
+		stored = self.shop_floor()
+		self.as_editor()
+		with self.assertRaises(_Throw) as caught:
+			api.save_map(self.payload(shapes=[_box(warehouse="Gone - ZZ")]), name="Shop Floor", modified=stored["modified"])
+		self.assertIn("Box 1: Gone - ZZ is not a warehouse any more", str(caught.exception))
+		self.assertNotIn("Could not find", str(caught.exception))
+		for junk in (["Bay"], {"a": 1}, 3.5):
+			with self.assertRaises(_Throw) as caught:
+				api.save_map(self.payload(shapes=[_box(warehouse=junk)]), name="Shop Floor", modified=stored["modified"])
+			self.assertIn("is not a warehouse any more", str(caught.exception))
+		self.assertEqual(STATE["writes"], [])
+
+	def test_a_disabled_warehouses_box_still_saves(self):
+		stored = self.shop_floor()
+		self.as_editor()
+		STATE["tree"][BAY]["disabled"] = 1
+		api.save_map(self.payload(shapes=[_box(warehouse=BAY), _box(warehouse=TRANSIT, x=300)]), name="Shop Floor", modified=stored["modified"])
+		self.assertEqual([row["warehouse"] for row in STATE["maps"]["Shop Floor"]["shapes"]], [BAY, TRANSIT])
+
+	def test_a_boxes_own_order_is_stored_clean(self):
+		stored = _seed("Upstairs")
+		self.as_editor()
+		box = _box(warehouse=HUES, bin_order=f"{HUE_TEAL}\n{HUE_TEAL}\n\nGone - ZZ\n{RED10}")
+		api.save_map(json.dumps({"map_name": "Upstairs", "shapes": [box]}), name="Upstairs", modified=stored["modified"])
+		self.assertEqual(STATE["maps"]["Upstairs"]["shapes"][0]["bin_order"], f"{HUE_TEAL}\n{RED10}")
+
+	def test_the_picture_is_this_maps_own_private_file(self):
+		"""F3: the address alone proves nothing about the file behind it."""
+		stored = self.shop_floor()
+		_seed("Upstairs")
+		self.as_editor()
+		STATE["files"] = [
+			("/private/files/mine.png", 1, MAP, "Shop Floor"),
+			("/private/files/theirs.png", 1, MAP, "Upstairs"),
+			("/private/files/payslip.png", 1, "Salary Slip", "SAL-0001"),
+			("/private/files/turned-public.png", 0, MAP, "Shop Floor"),
+		]
+		for url in ("/private/files/theirs.png", "/private/files/payslip.png", "/private/files/nothing.png", "/private/files/turned-public.png"):
+			with self.assertRaises(_Throw) as caught:
+				api.save_map(self.payload(background=url), name="Shop Floor", modified=stored["modified"])
+			self.assertIn("has to be a private file uploaded to this map", str(caught.exception), url)
+		api.save_map(self.payload(background="/private/files/mine.png"), name="Shop Floor", modified=stored["modified"])
+		self.assertEqual(STATE["maps"]["Shop Floor"]["background"], "/private/files/mine.png")
+		# A map that is not saved yet has no File of its own to point at.
+		with self.assertRaises(_Throw):
+			api.save_map(json.dumps({"map_name": "Annex", "background": "/private/files/mine.png"}))
+		self.assertNotIn("Annex", STATE["maps"])
+		# A rename takes the map's Files with it, so the picture still belongs to it afterwards.
+		now = STATE["maps"]["Shop Floor"]["modified"]
+		saved = api.save_map(self.payload(map_name="Ground Floor", background="/private/files/mine.png"), name="Shop Floor", modified=now)
+		self.assertEqual(STATE["maps"][saved["name"]]["background"], "/private/files/mine.png")
+
+	def test_a_rename_in_the_desk_form_is_held_to_the_name_rule(self):
+		"""A rename runs no ``validate``; ``before_rename`` is the only place the rule can stand."""
+		self.shop_floor()
+		doc = WarehouseMap(dict(STATE["maps"]["Shop Floor"]))
+		for bad in ("A/B", 'Bay "A"', "..", ""):
+			with self.assertRaises(_Throw):
+				doc.before_rename("Shop Floor", bad, False)
+		with self.assertRaises(_Throw) as caught:
+			doc.before_rename("Shop Floor", "Upstairs", True)
+		self.assertIn("cannot be merged", str(caught.exception))
+		self.assertIsNone(doc.before_rename("Shop Floor", "Ground Floor", False))
 
 	def test_a_bad_name_or_a_payload_that_is_not_a_map(self):
 		self.as_editor()
@@ -984,7 +1261,7 @@ class TestSaving(_Base):
 	def test_a_box_that_is_not_a_dict_is_refused_not_crashed_on(self):
 		self.as_editor()
 		with self.assertRaises(_Throw):
-			api.save_map(self.payload(shapes=["Bay B1", None]))
+			api.save_map(self.payload(shapes=["Bay K1", None]))
 
 	def test_a_new_name_renames_the_map(self):
 		stored = self.shop_floor()
@@ -994,11 +1271,15 @@ class TestSaving(_Base):
 		self.assertEqual(saved["name"], "Ground Floor")
 		self.assertEqual(sorted(STATE["maps"]), ["Ground Floor", "Upstairs"])
 		self.assertEqual(STATE["maps"]["Ground Floor"]["map_name"], "Ground Floor")
+		now = STATE["maps"]["Ground Floor"]["modified"]
 		with self.assertRaises(_Throw) as caught:
-			api.save_map(self.payload(map_name="Upstairs"), name="Ground Floor")
+			api.save_map(self.payload(map_name="Upstairs"), name="Ground Floor", modified=now)
 		self.assertIn("already a map called Upstairs", str(caught.exception))
 		with self.assertRaises(_Throw):
-			api.save_map(self.payload(map_name="A?B"), name="Ground Floor")
+			api.save_map(self.payload(map_name="A?B"), name="Ground Floor", modified=now)
+		# A change of capitals only finds its own row in a database that ignores case; it is a rename.
+		saved = api.save_map(self.payload(map_name="GROUND floor"), name="Ground Floor", modified=now)
+		self.assertEqual(saved["name"], "GROUND floor")
 
 	def test_deleting_a_map(self):
 		self.shop_floor()
@@ -1054,6 +1335,7 @@ class TestTheFiles(unittest.TestCase):
 				"locate": [["GET"]],
 				"find_item": [["GET"]],
 				"editor_data": [["GET"]],
+				"box_levels": [["GET"]],
 				"save_map": [["POST"]],
 				"delete_map": [["POST"]],
 			},
@@ -1106,6 +1388,50 @@ class TestTheFiles(unittest.TestCase):
 		stored = set(rules.clean_shape(_box(), 1200, 800))
 		self.assertEqual(stored, {f["fieldname"] for f in doctype["fields"] if "Break" not in f["fieldtype"]})
 		self.assertEqual(stored, set(api._SHAPE_FIELDS))
+
+	def test_the_fields_the_review_asked_for(self):
+		parent = json.loads((CONTROLLER_SOURCE.parent / "warehouse_floor_map.json").read_text(encoding="utf-8"))
+		fields = {f["fieldname"]: f for f in parent["fields"]}
+		# The Desk form cannot upload a picture at all: its Attach dialog has the Private switch.
+		self.assertEqual(fields["background"].get("read_only"), 1)
+		# The claim about a hidden map is the one the permissions keep.
+		self.assertIn("This list still shows it", fields["disabled"]["description"])
+		path = APP / "inventory_enhancements" / "doctype" / "warehouse_floor_map_shape" / "warehouse_floor_map_shape.json"
+		child = {f["fieldname"]: f for f in json.loads(path.read_text(encoding="utf-8"))["fields"]}
+		self.assertEqual(child["bin_order"]["fieldtype"], "Small Text")
+		# A User Permission on Warehouse must not make a whole map, and its picture, unreadable.
+		self.assertEqual(child["warehouse"].get("ignore_user_permissions"), 1)
+
+	def test_the_hooks_that_guard_the_picture_and_follow_a_rename(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		events = {}
+		for node in tree.body:
+			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events":
+				for key, value in zip(node.value.keys, node.value.values):
+					if isinstance(key, ast.Constant) and key.value in ("File", "Warehouse"):
+						events[key.value] = ast.literal_eval(value)
+		module = "erpnext_enhancements.inventory_enhancements.warehouse_map_files."
+		self.assertEqual(events["File"]["validate"], module + "refuse_public_file")
+		self.assertEqual(events["Warehouse"], {"after_rename": module + "follow_warehouse_rename"})
+		for name in ("refuse_public_file", "follow_warehouse_rename", "has_visible_map"):
+			self.assertTrue(callable(getattr(files, name)), name)
+
+	def test_every_door_waits_for_a_map(self):
+		"""F9: Stock Scan hid its link until a map existed and the Desk's doors did not."""
+		boot = (APP / "boot.py").read_text(encoding="utf-8")
+		self.assertIn("bootinfo.ee_warehouse_map = _warehouse_map_flag()", boot)
+		body = boot[boot.index("def _warehouse_map_flag()") :]
+		body = body[: body.index("\ndef ", 10)]
+		self.assertIn("except Exception:", body)
+		self.assertIn("return 0", body)
+		for path in (
+			"public/js/warehouse_map_links.js",
+			"public/js/warehouse_stock_scan.js",
+			"inventory_enhancements/page/bin_manager/bin_manager.js",
+			"inventory_enhancements/report/where_is_this_item/where_is_this_item.js",
+			"inventory_enhancements/report/location_contents/location_contents.js",
+		):
+			self.assertIn("frappe.boot.ee_warehouse_map", (APP / path).read_text(encoding="utf-8"), path)
 
 	def test_a_map_never_stops_a_warehouse_being_deleted(self):
 		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
@@ -1194,9 +1520,17 @@ class TestTheFiles(unittest.TestCase):
 		self.assertIn('"warehouse_map.bundle.js"', code)
 		self.assertNotIn("/assets/erpnext_enhancements/js/warehouse_map", code)
 		self.assertTrue((APP / "public" / "js" / "warehouse_map.bundle.js").exists())
-		# The picture is uploaded as a private file attached to the map's own record.
-		self.assertIn("make_attachments_public: false", code)
-		self.assertIn('doctype: "Warehouse Floor Map"', code)
+		# The picture is sent by the page itself, always private, attached to the map's own record,
+		# and never through Frappe's upload dialog: that dialog offers a Private switch and a web
+		# link (a public floor plan), and has the server shrink any picture over 200 KB to at most
+		# 1024 by 768 (FileUploader.vue and utils/image.py, v16.56.0).
+		self.assertNotIn("frappe.ui.FileUploader(", code)
+		self.assertIn('form.append("is_private", "1")', code)
+		self.assertIn('form.append("doctype", "Warehouse Floor Map")', code)
+		self.assertIn('"/api/method/upload_file"', code)
+		self.assertNotRegex(code, r"""append\(\s*["']optimize["']""")
+		# Every screen is a route, and the Desk scrolls to the top on every route unless told not to.
+		self.assertIn("wrapper.disable_scroll_to_top = true", code)
 
 	def test_the_doors_into_the_map(self):
 		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
@@ -1218,6 +1552,88 @@ class TestTheFiles(unittest.TestCase):
 		body = body[: body.index("\ndef ", 10)]
 		self.assertIn("except Exception:", body)
 		self.assertIn("return False", body)
+
+
+class TestThePictureStaysPrivate(_Base):
+	"""F2: ``warehouse_map_files.refuse_public_file`` (``File`` ``validate``). The map's own check
+	only stopped a public address being stored on the map; the public File itself stayed on the
+	site, readable without signing in."""
+
+	def file(self, **over):
+		row = {"attached_to_doctype": MAP, "attached_to_name": "Shop Floor", "is_private": 1, "is_folder": 0}
+		row.update(over)
+		return types.SimpleNamespace(**row)
+
+	def test_a_public_file_on_a_map_is_refused(self):
+		for doc in (self.file(is_private=0), self.file(is_private=None), self.file(is_private="0")):
+			with self.assertRaises(_Throw) as caught:
+				files.refuse_public_file(doc)
+			self.assertIn("kept private", str(caught.exception))
+		# A web link is not a private file either.
+		with self.assertRaises(_Throw):
+			files.refuse_public_file(self.file(is_private=0, file_url="https://example.com/plan.png"))
+
+	def test_everything_else_is_left_alone(self):
+		self.assertIsNone(files.refuse_public_file(self.file()))
+		self.assertIsNone(files.refuse_public_file(self.file(is_private=0, attached_to_doctype="Item")))
+		self.assertIsNone(files.refuse_public_file(self.file(is_private=0, attached_to_doctype=None)))
+		self.assertIsNone(files.refuse_public_file(self.file(is_private=0, is_folder=1)))
+		# A File with none of these attributes at all (a stub, an odd caller) is not this hook's business.
+		self.assertIsNone(files.refuse_public_file(types.SimpleNamespace()))
+		self.assertEqual(STATE["calls"], [])
+
+	def test_it_reads_nothing_and_writes_nothing(self):
+		source = (APP / "inventory_enhancements" / "warehouse_map_files.py").read_text(encoding="utf-8")
+		body = source[source.index("def refuse_public_file") : source.index("def follow_warehouse_rename")]
+		for call in ("frappe.db", "frappe.get_all", "frappe.get_doc", "delete_doc"):
+			self.assertNotIn(call, body, call)
+
+
+class TestARenameReachesABoxesOrder(_Base):
+	def test_the_renamed_warehouse_is_rewritten_where_it_stood(self):
+		_seed("Upstairs", [_box(warehouse=HUES, bin_order=f"{HUE_TEAL}\n{HUE_RED}\n{RED10}"), _box(warehouse=NOOK, x=300)])
+		files.follow_warehouse_rename(None, "after_rename", HUE_RED, "Crimson Row - ZZ", False)
+		rows = STATE["maps"]["Upstairs"]["shapes"]
+		self.assertEqual(rows[0]["bin_order"], f"{HUE_TEAL}\nCrimson Row - ZZ\n{RED10}")
+		self.assertIsNone(rows[1]["bin_order"])
+		self.assertEqual(STATE["writes"], [("set_value", rows[0]["name"])])
+
+	def test_only_a_whole_line_is_a_name(self):
+		_seed("Upstairs", [_box(warehouse=HUES, bin_order=f"{RED10}\n{RED1}")])
+		# "Red-1 - ZZ" is inside "Red-10 - ZZ" as text; only the line that IS the name changes.
+		files.follow_warehouse_rename(None, "after_rename", "Red-1", "Rouge-1", False)
+		self.assertEqual(STATE["maps"]["Upstairs"]["shapes"][0]["bin_order"], f"{RED10}\n{RED1}")
+		self.assertEqual(STATE["writes"], [])
+
+	def test_a_merge_lists_the_place_once(self):
+		_seed("Upstairs", [_box(warehouse=HUES, bin_order=f"{RED1}\n{RED2}\n{RED10}")])
+		files.follow_warehouse_rename(None, "after_rename", RED2, RED1, True)
+		self.assertEqual(STATE["maps"]["Upstairs"]["shapes"][0]["bin_order"], f"{RED1}\n{RED10}")
+
+	def test_it_cannot_be_why_a_rename_failed(self):
+		_seed("Upstairs", [_box(warehouse=HUES, bin_order=HUE_RED)])
+		held = sys.modules["frappe"].get_all
+		sys.modules["frappe"].get_all = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no table yet"))
+		try:
+			self.assertIsNone(files.follow_warehouse_rename(None, "after_rename", HUE_RED, "Crimson Row - ZZ"))
+		finally:
+			sys.modules["frappe"].get_all = held
+		self.assertIn(("log_error", "Warehouse Map: a renamed warehouse was not carried into a box's order"), STATE["calls"])
+		for old, new in ((None, "x"), ("x", None), ("x", "x"), ("", "")):
+			self.assertIsNone(files.follow_warehouse_rename(None, "after_rename", old, new))
+
+	def test_the_boot_flag_never_raises(self):
+		self.assertFalse(files.has_visible_map())
+		_seed("Draft", disabled=1)
+		self.assertFalse(files.has_visible_map())
+		_seed("Shop Floor")
+		self.assertTrue(files.has_visible_map())
+		held = sys.modules["frappe"].db.exists
+		sys.modules["frappe"].db.exists = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no table yet"))
+		try:
+			self.assertFalse(files.has_visible_map())
+		finally:
+			sys.modules["frappe"].db.exists = held
 
 
 class TestTheRolePatch(unittest.TestCase):

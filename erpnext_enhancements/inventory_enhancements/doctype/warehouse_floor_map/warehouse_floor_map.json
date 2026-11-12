@@ -36,7 +36,7 @@
   },
   {
    "default": "0",
-   "description": "A disabled map is hidden from everyone but its editors.",
+   "description": "A disabled map is left off the Warehouse Map page for everyone but its editors. This list still shows it to anyone who can read maps.",
    "fieldname": "disabled",
    "fieldtype": "Check",
    "label": "Disabled"
@@ -46,10 +46,11 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "The floor plan picture drawn behind the boxes. A private file only: a public file or a web address is refused.",
+   "description": "The floor plan picture drawn behind the boxes. Uploaded on the Warehouse Map page (Edit map), always as a private file: a public file or a web address is refused.",
    "fieldname": "background",
    "fieldtype": "Attach Image",
-   "label": "Floor Plan Picture"
+   "label": "Floor Plan Picture",
+   "read_only": 1
   },
   {
    "default": "1200",

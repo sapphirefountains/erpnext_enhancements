@@ -22,6 +22,11 @@ What is decided here:
   group directly under the box's warehouse is one row (a shelf), holding every bin below it;
   bins directly under the box's own warehouse are a first row with no name. A shelf with no bins
   is kept: it is there in the building, and an empty row says so.
+* :func:`position_key` -- the order of the bins on a shelf and of the shelves in a box. Numbers
+  count (bin 9 before bin 10), and a position word is read as a position (Left, Center, Right;
+  Top, Middle, Bottom), because sorted as words "Center" comes before "Left" and the row on
+  screen would not match the row on the wall. Where no rule can know the order (rows named for
+  colors, say), a box carries its own (``bin_order``, :func:`clean_order`, :func:`ordered`).
 * :func:`units` -- the boxes worth placing: the highest group that is at most two steps above its
   bins (a bay over shelves over bins; a row of alcoves over bins) and every bin that hangs
   higher than that (a room). It is only a suggestion list for the editor; any warehouse can be
@@ -39,6 +44,7 @@ Indentation is tabs (new file).
 """
 
 import math
+import re
 
 from erpnext_enhancements.inventory_enhancements.stock_scan_rules import natural_key
 
@@ -69,8 +75,13 @@ MAX_NAME = 60
 #: A floor plan picture must be a private file on this site.
 PRIVATE_PREFIX = "/private/files/"
 
-#: A map's name is one part of the page's address, so it cannot hold what splits an address.
-_NAME_REFUSED = "/\\?#%&"
+#: A map's name is one part of the page's address, so it cannot hold what splits an address
+#: (``/ \ ? # % &``). It also cannot hold a double quote: on every route change the Desk builds a
+#: jQuery selector out of the first two parts of the address
+#: (``container.js`` ``has_sidebar``: ``.page-container[data-page-route="<page>/<map>"]``, read at
+#: v16.56.0), a quote in it makes jQuery throw before the page is told it is on show, and the page
+#: then sits on "Loading" for everyone. ``<`` and ``>`` are Frappe's own refusals for any name.
+_NAME_REFUSED = "/\\?#%&\"<>"
 
 STATUS_PROBLEM = "problem"
 STATUS_STOCK = "stock"
@@ -78,6 +89,34 @@ STATUS_EMPTY = "empty"
 
 #: How far above its bins a group may be and still be suggested as one box.
 UNIT_HEIGHT = 2
+
+#: Words that say where something is, with the place each takes when names are put in order:
+#: left to right as you face the rack, top to bottom, front to back. Sorted as words they come
+#: out Center, Left, Right, which is not the order on the wall. Production's tree (read on
+#: 2026-11-12) uses Left, Center, Right and Top; the rest are the same idea in other words.
+POSITION_RANK = {
+	"left": 0,
+	"center": 1,
+	"centre": 1,
+	"middle": 1,
+	"mid": 1,
+	"right": 2,
+	"top": 0,
+	"upper": 0,
+	"bottom": 2,
+	"lower": 2,
+	"front": 0,
+	"back": 2,
+	"rear": 2,
+}
+
+#: A box's own order holds at most this many names: more than any one rack has places.
+MAX_ORDER = 600
+
+#: Why a box's warehouse cannot be drawn (:func:`missing_reason`).
+MISSING_DELETED = "deleted"
+MISSING_DISABLED = "disabled"
+MISSING_TRANSIT = "transit"
 
 
 class MapError(ValueError):
@@ -119,8 +158,12 @@ def map_name_problem(name):
 		return "Give the map a name, like Shop Floor or Upstairs."
 	if len(name) > MAX_NAME:
 		return f"A map's name can be at most {MAX_NAME} characters."
-	if any(ch in name for ch in _NAME_REFUSED):
-		return "A map's name cannot contain / \\ ? # % or &."
+	if any(ch in name for ch in _NAME_REFUSED) or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+		return "A map's name cannot contain / \\ ? # % & \" < or >."
+	# The browser reads "." and ".." in an address as "here" and "up one", so the page's address
+	# for such a map would be some other page's.
+	if name in (".", ".."):
+		return "A map's name cannot be only dots."
 	return None
 
 
@@ -197,7 +240,29 @@ def clean_shape(raw, width, height, index=0):
 		"rotation": round(rotation, 1) % 360.0,
 		"shelves_from": BOTTOM if text(_get(raw, "shelves_from")) == BOTTOM else TOP,
 		"bins_from": RIGHT if text(_get(raw, "bins_from")) == RIGHT else LEFT,
+		# Only a box that stands for a warehouse has anything inside it to put in order.
+		"bin_order": "\n".join(clean_order(_get(raw, "bin_order"))) or None if warehouse else None,
 	}
+
+
+def clean_order(value, known=None):
+	"""A box's own order as a list of warehouse names: what was sent (lines of text, or a list),
+	each name once, blanks dropped, cut to :data:`MAX_ORDER`. With ``known`` (the warehouses that
+	exist), a name that is no longer a warehouse is dropped, so a deleted bin leaves no trace."""
+	if isinstance(value, (list, tuple)):
+		lines = value
+	else:
+		lines = text(value).splitlines()
+	out, seen = [], set()
+	for line in lines:
+		name = text(line)[:140]
+		if not name or name in seen or (known is not None and name not in known):
+			continue
+		seen.add(name)
+		out.append(name)
+		if len(out) >= MAX_ORDER:
+			break
+	return out
 
 
 def clean_shapes(rows, width, height, known=None):
@@ -205,7 +270,9 @@ def clean_shapes(rows, width, height, known=None):
 
 	Refused: more than :data:`MAX_SHAPES`; one warehouse on two boxes (a tap on it would have two
 	answers); and, when ``known`` (the warehouses that exist) is given, a box tied to a warehouse
-	that is not there.
+	that is not there. ``known`` is every warehouse there is, disabled ones included: a box whose
+	bay was disabled keeps its place and is drawn again when the bay is enabled, where a box
+	whose warehouse was deleted has nothing left to stand for.
 	"""
 	rows = list(rows or [])
 	if len(rows) > MAX_SHAPES:
@@ -226,6 +293,8 @@ def clean_shapes(rows, width, height, known=None):
 					f"Box {index + 1}: {warehouse} is not a warehouse any more. "
 					"Remove the box or tie it to another warehouse."
 				)
+			if known is not None and shape["bin_order"]:
+				shape["bin_order"] = "\n".join(clean_order(shape["bin_order"], known)) or None
 		out.append(shape)
 	return out
 
@@ -259,23 +328,72 @@ def is_group(row):
 def usable(row):
 	"""Whether a warehouse is drawn at all: not disabled, and not Transit (goods in transit sit
 	on a truck, not a shelf; the labels page leaves them out for the same reason)."""
+	return missing_reason(row) == ""
+
+
+def missing_reason(row):
+	"""Why a box's warehouse cannot be drawn, or ``""`` when it can: it was deleted, it is
+	disabled, or it is a Transit warehouse. The editor says which, because what to do differs:
+	a deleted warehouse's box has to go (the map's next save is refused until it does), and a
+	disabled one's box may stay and comes back with the warehouse."""
 	if row is None:
-		return False
+		return MISSING_DELETED
 	if int(number(_get(row, "disabled"), 0) or 0):
-		return False
-	return text(_get(row, "warehouse_type")) != "Transit"
+		return MISSING_DISABLED
+	if text(_get(row, "warehouse_type")) == "Transit":
+		return MISSING_TRANSIT
+	return ""
+
+
+_WORDS = re.compile(r"(\d+|[^\W\d_]+)", re.UNICODE)
+
+
+def position_key(name):
+	"""The key that puts sibling warehouses in the order a person sees them.
+
+	``stock_scan_rules.natural_key`` with one more reading: a position word sorts by the place it
+	names (:data:`POSITION_RANK`), not by its spelling. So ``Bin K1-2-9`` is before
+	``Bin K1-2-10`` and ``Nook 1 Left``, ``Nook 1 Center``, ``Nook 1 Right`` come out in that
+	order, where plain sorting gives Center, Left, Right. A number or a position sorts before a
+	word, as a number does in ``natural_key``. Punctuation between the parts is ignored, so
+	``A-2`` and ``A 2`` are the same place.
+	"""
+	key = []
+	for part in _WORDS.findall(text(name)):
+		lowered = part.lower()
+		if part.isdigit():
+			key.append((0, int(part), ""))
+		elif lowered in POSITION_RANK:
+			key.append((0, POSITION_RANK[lowered], ""))
+		else:
+			key.append((1, 0, lowered))
+	return key
+
+
+def ordered(names, order):
+	"""``names`` (already in the rule's order) with a box's own order laid over them: the names
+	the box lists come first, in its order, and every other name follows in the rule's order. So
+	a bin made after the order was set still shows, at the end of its shelf, and a name the box
+	lists that is no longer here is simply skipped."""
+	names = list(names or [])
+	if not order:
+		return names
+	place = {name: n for n, name in enumerate(order)}
+	listed = sorted((name for name in names if name in place), key=lambda name: place[name])
+	return listed + [name for name in names if name not in place]
 
 
 def children_index(tree):
-	"""``{parent: [children]}``, each list in shelf-number order (``Bin B1-2-9`` before
-	``Bin B1-2-10``). The tree's own order is creation order, which on production already reads
-	``Bin C2-3-6`` before ``Bin C2-3-5``."""
+	"""``{parent: [children]}``, each list in the order a person sees them
+	(:func:`position_key`): ``Bin K1-2-9`` before ``Bin K1-2-10``, Left before Center before
+	Right. The tree's own order is creation order, which on production already reads
+	``Bin C2-3-6`` before ``Bin C2-3-5``, so it is never used."""
 	out = {}
 	for name, row in tree.items():
 		parent = text(_get(row, "parent_warehouse"))
 		out.setdefault(parent if parent in tree else "", []).append(name)
 	for parent in out:
-		out[parent].sort(key=lambda n: (natural_key(_name_of(tree, n)), n))
+		out[parent].sort(key=lambda n: (position_key(_name_of(tree, n)), n))
 	return out
 
 
@@ -297,9 +415,13 @@ def leaves_under(name, tree, kids):
 	return out
 
 
-def levels(name, tree, kids=None):
+def levels(name, tree, kids=None, order=None):
 	"""A box's front view: ``[{"warehouse", "label", "bins": [...]}]``, top row first as the
-	tree numbers them. Empty for a bin (a room that is one bin has nothing inside to show)."""
+	tree numbers them. Empty for a bin (a room that is one bin has nothing inside to show).
+
+	``order`` is the box's own order (:func:`clean_order`), or nothing. It is one list of names
+	for the rows and the bins alike, laid over the rule's order by :func:`ordered`.
+	"""
 	row = tree.get(name)
 	if row is None or not is_group(row):
 		return []
@@ -312,9 +434,15 @@ def levels(name, tree, kids=None):
 		(groups if is_group(child_row) else direct).append(child)
 	out = []
 	if direct:
-		out.append({"warehouse": name, "label": "", "bins": direct})
-	for group in groups:
-		out.append({"warehouse": group, "label": _name_of(tree, group), "bins": leaves_under(group, tree, kids)})
+		out.append({"warehouse": name, "label": "", "bins": ordered(direct, order)})
+	for group in ordered(groups, order):
+		out.append(
+			{
+				"warehouse": group,
+				"label": _name_of(tree, group),
+				"bins": ordered(leaves_under(group, tree, kids), order),
+			}
+		)
 	return out
 
 
@@ -389,7 +517,7 @@ def ancestors(name, tree):
 
 
 def trail(name, tree):
-	"""``Row 2 › Bay B1``: the groups above ``name``, outermost first, the tree's root dropped."""
+	"""``Lane 7 › Bay K1``: the groups above ``name``, outermost first, the tree's root dropped."""
 	names = [_name_of(tree, a) for a in reversed(ancestors(name, tree))]
 	return " › ".join(names[1:])
 

@@ -17,7 +17,8 @@
   "rotation",
   "column_break_front",
   "shelves_from",
-  "bins_from"
+  "bins_from",
+  "bin_order"
  ],
  "fields": [
   {
@@ -36,7 +37,8 @@
    "in_list_view": 1,
    "label": "Warehouse",
    "options": "Warehouse",
-   "search_index": 1
+   "search_index": 1,
+   "ignore_user_permissions": 1
   },
   {
    "description": "What the box says. Blank shows the warehouse's own name.",
@@ -96,6 +98,12 @@
    "fieldtype": "Select",
    "label": "Bin 1 Is At The",
    "options": "Left\nRight"
+  },
+  {
+   "description": "Only when the automatic order is wrong: the shelves and bins of this box, one warehouse per line, in the order you see them facing it (top shelf first, left bin first). Set from the Warehouse Map page's editor. Anything not listed follows in the automatic order.",
+   "fieldname": "bin_order",
+   "fieldtype": "Small Text",
+   "label": "Order As You Face It"
   }
  ],
  "index_web_pages_for_search": 0,

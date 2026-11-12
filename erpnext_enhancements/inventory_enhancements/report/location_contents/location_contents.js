@@ -61,6 +61,8 @@ frappe.query_reports["Location Contents"] = {
 	// Item lit up, when there is one); with neither, the map itself. A Desk route, so Back returns to
 	// this report with its filters.
 	onload(report) {
+		// Offered once a map exists (frappe.boot.ee_warehouse_map, boot.py).
+		if (!frappe.boot.ee_warehouse_map) return;
 		report.page.add_inner_button(__("Show on map"), () => {
 			const options = {};
 			const location = report.get_filter_value("location");

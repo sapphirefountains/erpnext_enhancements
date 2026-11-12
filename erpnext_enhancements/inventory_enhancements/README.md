@@ -29,7 +29,8 @@ model, the pure rules and the label reads.
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
 | `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.815.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
-| `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, in shelf-number order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
+| `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, numbers and position words in the order a person sees them, or the box's own order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
+| `warehouse_map_files.py` | The map's two doc_events on other DocTypes, and its boot flag: `refuse_public_file` (`File` `validate`: a File attached to a map is never public), `follow_warehouse_rename` (`Warehouse` `after_rename`: a box's own order follows a rename; cannot raise), `has_visible_map` (`frappe.boot.ee_warehouse_map`). Imports nothing but Frappe |
 | `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.815.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
@@ -1141,8 +1142,8 @@ view. An item being looked for is outlined on top of that, on every floor it is 
 
 | | |
 |---|---|
-| `doctype/warehouse_floor_map/` | DocType **Warehouse Floor Map**, one floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (hidden from everyone but editors while it is being drawn), `background` (the floor plan picture), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
-| `doctype/warehouse_floor_map_shape/` | DocType **Warehouse Floor Map Shape**, one box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from` |
+| `doctype/warehouse_floor_map/` | DocType **Warehouse Floor Map**, one floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (left off the page for everyone but editors while it is being drawn), `background` (the floor plan picture; read-only in the Desk form, uploaded on the page), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
+| `doctype/warehouse_floor_map_shape/` | DocType **Warehouse Floor Map Shape**, one box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself; `ignore_user_permissions`, so a User Permission on Warehouse cannot make a whole map unreadable), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from`, `bin_order` (the box's own order, when the automatic one is wrong) |
 | `warehouse_map_rules.py` | Every judgement, no Frappe: what a box may be, the front view, the boxes worth placing, which box shows a warehouse, the colors |
 | `api/warehouse_map.py` | The endpoints (see [`api/README.md`](../api/README.md)) |
 | `page/warehouse_map/` | The page script (draws and wires) and its CSS, every selector under `.wm-` |
@@ -1158,18 +1159,59 @@ view. An item being looked for is outlined on top of that, on every floor it is 
   way in) is held to them too: a box is the named fields only, finite and inside the drawing; a
   rack is tied to a warehouse and a label has words; **one warehouse is on one box and one map**,
   so "show this bin on the map" has one answer.
-- **The floor plan picture is a private file or nothing** (`background_problem`): never a public
-  file, never a web address. It is attached to the map's own record, so Frappe serves it to
-  exactly the people who can read the map (`File.has_permission`, read at v16.56.0). The editor
-  uploads with `make_attachments_public: false` and refuses a file that came back public.
-- **A map reads warehouses and never writes one.** `Warehouse Floor Map` and `Warehouse Floor Map Shape` are
-  in `ignore_links_on_delete` (`hooks.py`), so a map is never the reason an empty bin cannot be
-  deleted. The box left behind is drawn dashed in red ("no longer a warehouse") and the next save
-  is refused until it is removed or tied to another warehouse.
+- **The floor plan picture is a private file or nothing, on the map and on the site.** It is
+  attached to the map's own record, so Frappe serves it to exactly the people who can read the
+  map (`File.has_permission`, read at v16.56.0). Four things hold that, because the first alone
+  did not (review of PR #1453):
+  - the map refuses an address that is not `/private/files/...` (`background_problem`);
+  - the map refuses an address unless a File with it exists, is private and is attached to
+    **this** map (`WarehouseFloorMap._background_file_problem`); an address alone proves nothing
+    about the file behind it;
+  - **a public File attached to a map is refused, whoever makes it and however**
+    (`warehouse_map_files.refuse_public_file`, a `File` `validate` doc_event). Without this the
+    map only declined to *store* a public address while the public file stayed on the site,
+    readable without signing in. The refusal leaves nothing behind: the throw rolls the request
+    back and `File.on_rollback` deletes the blob the insert wrote. Production does not restrict
+    public uploads (System Settings, read 2026-11-12), so nothing else would have;
+  - the page uploads the picture itself (a file chooser and one POST to `upload_file` with
+    `is_private=1`), **not** through `frappe.ui.FileUploader`. That dialog offers a Private switch
+    and a web-link tab, and it ticks *Optimize* for any image over 200 KB, after which the server
+    shrinks the picture to at most 1024 by 768 (`frappe/utils/image.py` `optimize_image`): a
+    floor plan at that size is a blur once the map is zoomed. The Desk form's own field is
+    read-only for the same reason.
+- **A map reads warehouses and never writes one.** `Warehouse Floor Map` and
+  `Warehouse Floor Map Shape` are in `ignore_links_on_delete` (`hooks.py`), so a map is never the
+  reason an empty bin cannot be deleted. What happens to the box depends on what happened to the
+  warehouse (`warehouse_map_rules.missing_reason`):
+  - **deleted**: the box is drawn dashed in red, the editor says "deleted", and the map's next
+    save is refused, in the app's own sentence, until the box is removed or tied to another
+    warehouse. (`save_map` cleans the boxes before the rows exist, because Frappe checks a row's
+    Links *before* `validate`, and would say "Could not find Row #3: Warehouse".)
+  - **disabled**, or made a **Transit** warehouse: the box is kept and still saves. It is drawn
+    dashed, cannot be opened, and comes back by itself when the warehouse is enabled again.
+- **A map's name can be part of an address, and of a jQuery selector.** Refused: `/ \ ? # % &`
+  (they split an address), `"`, `<`, `>`, control characters, and a name that is only `.` or `..`.
+  The double quote is not about the address: on every route change the Desk builds a selector out
+  of the first two parts of the address (`container.js` `has_sidebar`, read at v16.56.0), a quote
+  in it makes jQuery throw before the page is told it is on show, and the page then sits on
+  "Loading" for everyone. The rule also runs on a rename (`before_rename`), which runs no
+  `validate`.
 - **A disabled or Transit warehouse is never drawn**, as on the labels page.
-- **Shelf order is the names', not the tree's.** The tree's own order is creation order
-  (production reads `Bin C2-3-6` before `Bin C2-3-5`); every row is sorted with
-  `stock_scan_rules.natural_key`.
+- **Shelf order is the names', not the tree's, and a position word is a position.** The tree's
+  own order is creation order (production reads `Bin C2-3-6` before `Bin C2-3-5`), so it is never
+  used. Siblings are sorted with `warehouse_map_rules.position_key`: numbers count (bin 9 before
+  bin 10), and Left / Center / Right, Top / Middle / Bottom, Front / Back sort by the place they
+  name. Plain sorting put a row of Left, Center and Right bins on screen as Center, Left, Right,
+  and turning the row around (*Bin 1 is at the Right*) only gave Right, Left, Center (review of
+  PR #1453). Production's tree, read on 2026-11-12, uses Left, Center, Right and Top and no other
+  position word.
+- **Where no rule can know, a box carries its own order.** Rows named for colors have no order a
+  rule could find. The editor's *Order as you face it* moves a shelf up or down and a bin left
+  or right, and the box then stores its whole order (`bin_order`, one warehouse per line). What
+  the box lists comes first, in its order; anything it does not list (a bin made later) follows
+  in the automatic order. A warehouse renamed later is rewritten in every box's order by
+  `warehouse_map_files.follow_warehouse_rename`, since Frappe's rename reaches Link fields and
+  not text; one deleted leaves the order on the map's next save.
 
 ### The editor
 
@@ -1181,7 +1223,9 @@ the arrow keys, turned 90° by swapping its sides (a rack is a rectangle; `rotat
 that really sits at an angle), and tied to any warehouse through the picker.
 
 - **Save sends the whole list of boxes** with the `modified` stamp the editor opened with; a map
-  changed since is refused rather than overwritten.
+  changed since is refused rather than overwritten, and the stamp is required (a save without it
+  is refused, so the check cannot be skipped). *Refresh* in the editor loads the stored map
+  again, after asking about boxes not saved.
 - **Leaving with unsaved boxes is not blocked**, because blocking a route change breaks Back. The
   boxes are kept while the Desk stays open, the page says so when you leave, and the browser asks
   before the tab is closed.
@@ -1191,6 +1235,27 @@ that really sits at an angle), and tied to any warehouse through the picker.
   exists before the DocType names it) with a one-role Role Profile, and is granted to nobody: who
   holds it is decided in the Desk. The role adds editing to someone who already works the
   inventory; by itself it does not open the page.
+
+### The doors, and a page that is every screen a route
+
+Every *Show on map* door waits for a map: the Bin Manager's button, the Item and Warehouse
+forms and the two reports read `frappe.boot.ee_warehouse_map` (`boot.py`, 1 when a map that is
+not hidden exists), and Stock Scan reads the same fact in its own boot. The Bin Manager's *Map*
+tab is also shown to someone who may create a map, so there is a way to draw the first one. The
+flag is read when the Desk loads, so a door appears on the next page load after the first map is
+saved.
+
+The page sets `disable_scroll_to_top` on its wrapper, as the Opportunity Board does: the Desk
+ends every route change by scrolling to the top, and here opening a bay is a route, so a tap far
+down a phone's screen would jump away from the front view that just opened. It scrolls to the top
+itself only when it is come to from another page.
+
+**A hidden map is hidden on the page, not from the DocType.** *Leave this map off the page* keeps
+a half-drawn map out of the page's floors, its search and its *Show on map* answers for everyone
+but editors. The stock roles can read the DocType, so its list in the Desk and the REST API still
+show a disabled map and its picture to them. That is deliberate: a half-drawn map is not a secret
+(the same people see it the day it is finished), and closing it would take a `has_permission`
+hook and a permission query that could not be run on a bench when this was written.
 
 ### Print
 
@@ -1844,7 +1909,7 @@ python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
-python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints and the DocType on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
+python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints, the DocType, the File and rename hooks and the role patch on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
 

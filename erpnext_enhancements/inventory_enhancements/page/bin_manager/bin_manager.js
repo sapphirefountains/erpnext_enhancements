@@ -295,6 +295,17 @@ class BinManagerPage {
 		}
 	}
 
+	// Whether the Warehouse Map's doors are shown (v1.815.0): a map exists (the boot's flag), or, for
+	// the tab only, this person may create one. Anything unreadable is "no".
+	map_offered(or_can_create) {
+		try {
+			if (frappe.boot && frappe.boot.ee_warehouse_map) return true;
+			return !!(or_can_create && frappe.model && frappe.model.can_create("Warehouse Floor Map"));
+		} catch (e) {
+			return false;
+		}
+	}
+
 	// The link to the Reorder Board, or nothing. One frappe.set_route: the board is its own history entry, so
 	// Back lands here again (on this bin, when it was one).
 	board_link() {
@@ -583,7 +594,9 @@ class BinManagerPage {
 				.join(" ") +
 				toggle +
 				(this.board_link() ? ` ${this.board_link()}` : "") +
-				` <button type="button" class="btn btn-sm btn-default bm-map-link" data-act="show-on-map">${this.esc(__("Show on map"))}</button>`
+				(this.map_offered(false)
+					? ` <button type="button" class="btn btn-sm btn-default bm-map-link" data-act="show-on-map">${this.esc(__("Show on map"))}</button>`
+					: "")
 		);
 		this.draw_notice();
 		this.draw_items(loc);
@@ -731,7 +744,11 @@ class BinManagerPage {
 		// The Warehouse Map (v1.815.0) is its own page (inventory_enhancements/page/warehouse_map), drawn
 		// with these same tabs, so from here it reads as one more view. One frappe.set_route: its own
 		// history entry, and Back lands here again.
-		const map = `<button type="button" class="bm-tab" role="tab" aria-selected="false" data-act="open-map">${this.esc(__("Map"))}</button>`;
+		// Offered once a map exists (frappe.boot.ee_warehouse_map, boot.py), and before that only to
+		// someone who may draw the first one: a tab that leads to "There is no map yet" helps nobody else.
+		const map = this.map_offered(true)
+			? `<button type="button" class="bm-tab" role="tab" aria-selected="false" data-act="open-map">${this.esc(__("Map"))}</button>`
+			: "";
 		return `<div class="bm-tabs" role="tablist" aria-label="${this.esc(__("Bin Manager views"))}">${tabs}${map}</div>`;
 	}
 

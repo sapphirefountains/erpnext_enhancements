@@ -24,11 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it, or are its bin, are outlined, with a list of every place it is, on every floor.
   - **Show on map** from a bin in the Bin Manager, the Item form, the Warehouse form, the *Where Is
     This Item* and *Location Contents* reports, and a location or an item in Stock Scan on the phone
-    (shown there only once a map exists; it opens in a new tab so the scan run is not lost).
+    (it opens there in a new tab so the scan run is not lost). Every one of these waits until a map
+    exists, so none of them leads to an empty page; the Bin Manager's *Map* tab also shows to
+    someone who may draw the first one.
   - **Print**: one sheet per floor with every box named, then what is in each rack.
   - **The editor** (*Edit map*): upload the floor plan picture, add a box from the *Not on a map yet*
     list or tie one to any warehouse, drag it into place, drag its corner to size it, turn it, name
-    it, and say where shelf 1 and bin 1 are when a rack is numbered the other way. *New map* starts
+    it, and say where shelf 1 and bin 1 are when a rack is numbered the other way. *Order as you
+    face it* shows the picked box's shelves and bins and lets you move a shelf up or down and a bin
+    left or right when the automatic order is not what you see on the wall. *New map* starts
     another floor.
   - **Who.** Everyone who uses Stock Scan and the Bin Manager can look. Editing needs the new role
     **Warehouse Map Editor** (or System Manager). The role is created by this release and given to
@@ -38,12 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the Warehouse tree. Production has 5 rows, 10 bays, 50 shelves and 166 bins in the shop alone,
   and the tree already says which bin is on which shelf of which bay. So about thirty boxes are
   placed, and a bin made in ERPNext later shows up inside its bay with nobody touching the map.
-  Shelves and bins are listed in shelf-number order, not the tree's own (creation) order, which on
-  production reads `Bin C2-3-6` before `Bin C2-3-5`.
-- **The floor plan stays on the site.** It is a real building's layout and this repository is public,
-  so nothing of it ships here: the picture is a **private file** attached to the map's own record,
-  served by Frappe to exactly the people who can read the map. A public file or a web address is
-  refused, by the DocType itself.
+  Shelves and bins are listed in the order a person sees them, not the tree's own (creation) order,
+  which on production reads `Bin C2-3-6` before `Bin C2-3-5`: numbers count (bin 9 before bin 10),
+  and a position word is read as a position (Left, Center, Right; Top, Middle, Bottom), because
+  sorted as words "Center" comes before "Left". Where no rule can know the order (rows named for
+  colors), a box carries its own.
+- **The floor plan stays on the site, and stays private.** It is a real building's layout and this
+  repository is public, so nothing of it ships here: the picture is a **private file** attached to
+  the map's own record, served by Frappe to exactly the people who can read the map.
+  - The map accepts only its own private file: the address must be `/private/files/...` **and** a
+    File with that address must exist, be private and be attached to that map.
+  - **A public File attached to a map is refused on the server, however it is made** (a `File`
+    `validate` doc_event, `inventory_enhancements/warehouse_map_files.py`): the Desk form's attach
+    panel, the File form's *Is Private* box, any upload that names the DocType. The refusal leaves
+    no file behind (`File.on_rollback` removes what the insert wrote). Production does not restrict
+    public uploads, so without this an editor who switched *Private* off would have left a copy of
+    the plan that anyone could fetch without signing in.
+  - The page uploads the picture itself, always private, and **at full size**. Frappe's upload
+    dialog was not used because it offers a *Private* switch and a web link, and because it ticks
+    *Optimize* for any image over 200 KB, after which the server shrinks it to at most 1024 by 768
+    (`frappe/utils/image.py`, read at v16.56.0): a floor plan that small is a blur when zoomed.
 - New DocTypes **Warehouse Floor Map** and **Warehouse Floor Map Shape** (Inventory Enhancements), the
   endpoints in `api/warehouse_map.py`, and the rules in
   `inventory_enhancements/warehouse_map_rules.py`.
@@ -59,12 +77,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - **Nothing here writes a Warehouse, a Putaway Rule or stock.** The map only points at warehouses.
   Renaming one carries into the map by itself (the box holds a Link). Deleting one is never blocked
-  by a map (`ignore_links_on_delete`); the box left behind is drawn as "no longer a warehouse" and
-  the map's next save asks for it to be removed or tied to another.
+  by a map (`ignore_links_on_delete`); the box left behind is drawn as "deleted" and the map's next
+  save asks, in the app's own sentence, for it to be removed or tied to another. A warehouse that is
+  only **disabled** keeps its box: drawn dashed, not opened, and back by itself when it is enabled.
+  A box's own order is text, which a rename does not reach, so a `Warehouse` `after_rename`
+  doc_event rewrites it; that hook cannot raise, and its only write is to the map's own rows.
 - **One warehouse is on one box and one map**, so "show this bin on the map" always has one answer.
-- **A map being drawn can be hidden** (*Hide this map from everyone but editors*) until it is ready.
+- **A map being drawn can be left off the page** (*Leave this map off the page for everyone but
+  editors*) until it is ready. That hides it on the Warehouse Map page: its floors, its search and
+  its *Show on map* answers. It does not hide the record: the stock roles can read the DocType, so
+  its list in the Desk still shows a hidden map. A half-drawn map is not a secret, and closing that
+  would have taken two permission hooks that could not be run on a bench here.
 - **Two people editing.** A save is refused when someone else changed the map after the editor was
-  opened, rather than overwriting their work.
+  opened, rather than overwriting their work, and a save that does not say which version it was
+  opened on is refused too. *Refresh* in the editor loads the other person's version.
+- **A map's name** cannot contain `/ \ ? # % & " < >`, a control character, or be only dots. The
+  double quote is the surprising one: the Desk builds a jQuery selector out of the page's address on
+  every route change (`container.js` `has_sidebar`, read at v16.56.0), a quote makes it throw, and
+  the page would sit on "Loading" for everyone. The rule runs on a rename as well.
+- **A User Permission on Warehouse does not hide a map.** Frappe applies User Permissions to Link
+  fields in child rows, so someone restricted to a few warehouses would have been refused the whole
+  map and its picture. The box's Link ignores them (production has none on Warehouse today).
+- **Opening a bay does not jump the page to the top.** The Desk scrolls to the top on every route
+  change, and here each screen is a route; the page turns that off for itself, as the Opportunity
+  Board does.
 - **No map ships with this release.** A site's map is drawn in the editor. Until one exists the page
   says so, and Stock Scan shows no link.
 - **Not built yet**, agreed as later steps: creating a bay, shelf or bin from the editor; a
@@ -73,8 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DocTypes sync, inside the deploy's migrate, so each of its two steps (the role, its Role Profile)
   is on its own and a failure becomes one Error Log row, "Warehouse Map Editor role seed", saying
   what to create by hand. Until the role exists only a System Manager can edit a map.
-- Tested bench-free (`tests/test_warehouse_map.py`, 70 tests on its own frappe stub, and
-  `scripts/test_warehouse_map.mjs` under node), both in CI. Not run on a bench.
+- **Found in review before anything was loaded** (two independent reviews of PR #1453, each against
+  Frappe v16.56.0's source): the Left / Center / Right order, the public copy of the floor plan, the
+  shrunk picture, the quote in a map's name, the optional stale-save stamp, the scroll to the top,
+  and the User Permission case above. Each has a test that fails without its fix.
+- Tested bench-free (`tests/test_warehouse_map.py`, 98 tests on its own frappe stub, and
+  `scripts/test_warehouse_map.mjs`, 179 checks under node), both in CI. Not run on a bench.
 
 ## [1.814.0] - 2026-11-12
 
