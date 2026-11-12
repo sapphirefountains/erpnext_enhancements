@@ -53,8 +53,11 @@ In this order, each in its own step:
    ERPNext does not add a new default row to the item at its next save
    (``Item.update_defaults_from_item_group`` adds one only where there is none). A blank
    default warehouse is legal on ERPNext 16.54.0 (the field is not required) and is what the
-   Bin Manager's *Remove from this bin* already writes. The item's ``modified`` is not moved: a
-   migration is not somebody's edit.
+   Bin Manager's *Remove from this bin* already writes. For a new line ERPNext then goes on
+   down its own order (``get_item_details.get_item_warehouse_``): the document's own warehouse,
+   the item's default, its item group's, its brand's, the row's own, and last the Company's
+   default, which is the shelf. The item's ``modified`` is not moved: a migration is not
+   somebody's edit.
 
 **Where the shelf sits, and why it is not moved.** It stays directly under the company's root
 group, beside ``Inventory - SF`` and ``Job Sites - SF``. Not under ``Job Sites``: that group
@@ -83,7 +86,9 @@ says so in one line each, and **no Error Log row is written**: that log alerts p
 
 Safe twice: the second run finds the shelf, an indexed name, no saved filter left to rewrite,
 both settings' rows and no non-stock item's default left on the shelf, and answers "already"
-(the index step answers "done" again; it is a rebuild).
+(the index step answers "done" again; it is a rebuild). **A run by hand some time later is not
+a no-op: it applies each rule again.** A non-stock item that somebody has pointed at the shelf
+on purpose since the deploy is blanked again by step 6.
 """
 
 import frappe

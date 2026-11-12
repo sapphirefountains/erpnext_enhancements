@@ -849,13 +849,16 @@ the item has Maintain Stock off, a disabled item included. The rule is read when
 an item switched to Maintain Stock before the deploy keeps its row, and no count is expected. Only
 that field is written: the row and its other defaults stay, so ERPNext adds no new row at the next
 save. The rows on items that maintain stock are left for the owner to sort by hand, and the patch
-prints how many. Nothing reads a blank as a place: ERPNext 16.54.0 does not require the field and
-falls back to the Company's default warehouse (the shelf, so its own forms offer what they did),
-and every reader in this app asks for a set value or an exact warehouse
-(`tests/test_project_shelf.py`, `TestAnItemWithNoDefaultWarehouse`). One effect to know: an item
-switched to Maintain Stock that has an open order line with no warehouse now has no default to give
-that line, and answers "can't switch yet" until a default is set (no such line on production on
-2026-11-12).
+prints how many. Nothing reads a blank as a place. ERPNext 16.54.0 does not require the field, and
+for a new line it goes on down its own order (`get_item_details.get_item_warehouse_`): the
+document's own warehouse, the item's default, its item group's, its brand's, the row's own, and
+last the Company's default, which is the shelf. None of these items is in a group or brand with a
+default, so ERPNext's forms offer what they did. Every reader in this app asks for a set value or
+an exact warehouse (`tests/test_project_shelf.py`, `TestAnItemWithNoDefaultWarehouse`). The one
+that did depend on the default was Maintain Stock's switch, which gives a warehouse-less open order
+line a warehouse: it read the item's default and then Stock Settings', and would have refused a
+blanked item. It now asks ERPNext what a new line would get (`maintain_stock._fill_warehouses`), so
+such a line gets the Company's default, as it would from ERPNext itself.
 
 **An item's first count never opens there** (`maintain_stock.first_count_warehouse`, rule in
 `project_shelf_rules.first_count_warehouse`). After Maintain Stock is switched on for one item,
@@ -882,9 +885,10 @@ abort the deploy), so it is recorded as run whatever happened. Each of its six s
 already, skipped or failed; the list and the counts of what still points at the shelf are in the
 migrate output, and when any step did not finish, one Error Log row, "Project Shelf patch
 (rename_stores_to_project_shelf): finish these steps by hand", lists them with what to do. It is
-safe to run again. It moves no stock, rewrites no order line, disables no Putaway Rule and changes
-no Item Default of an item that maintains stock. On a site that never had the warehouse (no `Inventory - SF`, or no `Stores` and no `Project
-Shelf`) every step answers "not needed here" and no Error Log row is written.
+safe to run again, and a later run applies its rules again rather than doing nothing: a non-stock
+item pointed at the shelf on purpose since the deploy is blanked again. It moves no stock, rewrites no order line, disables no Putaway Rule and changes
+no Item Default of an item that maintains stock. On a site that never had the warehouse (no
+`Inventory - SF`, or no `Stores` and no `Project Shelf`) every step answers "not needed here" and no Error Log row is written.
 
 **The stock KPIs** (`kpi_dashboards/snapshots.py`): *Stocked Items Below Reorder*, *Stocked Items
 Out of Stock* and *Out-of-Stock Sellable Items* mean **shop stock** and leave out job sites and the
@@ -1793,8 +1797,9 @@ flow and an assistant's `create_document` take the default.
 **An item on an open Purchase Order can be switched.** `maintain_stock_rules` no longer refuses an
 open Purchase Order or Material Request line. The switch recounts the Bin with ERPNext's own
 `stock_balance.get_ordered_qty`, `get_indented_qty` and `update_bin_qty` for each warehouse an
-open line names, gives a line with no warehouse the item's default (else Stock Settings') and
-says so on the order, and refuses only when there is no warehouse to give. What was already
+open line names, gives a line with no warehouse the one ERPNext would give a new line for the
+item (its default, its group's, its brand's, then the Company's default; v1.815.0, it read Stock
+Settings' default before, which ERPNext never does) and says so on the order, and refuses only when there is no warehouse to give. What was already
 received on a partly received line stays out of stock and guarded; what is left goes into stock
 when it is received. The module docstring has each case as read from ERPNext v16.54.0. An open
 Sales Order still refuses.

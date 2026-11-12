@@ -151,22 +151,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       v1.692.0.
     - **A blank is legal and nothing here expects a value.** At ERPNext 16.54.0
       `Item Default.default_warehouse` is not required, `validate_item_default_company_links`
-      checks a warehouse only when one is there, and with none `get_item_warehouse_` falls back
-      to the Company's default warehouse, which is the shelf: so ERPNext's own forms offer the
-      same warehouse for these items after the step as before it. In this app every reader
+      checks a warehouse only when one is there, and `get_item_warehouse_` goes on down its
+      order: the document's own warehouse, the item's default (now blank), its item group's, its
+      brand's, the row's own, and last the Company's default, which is the shelf. None of these
+      items is in a group or a brand that has a default (production has three group defaults
+      and no brand default), so ERPNext's own forms offer the same warehouse for them after the
+      step as before it. An item whose group or brand is given a default later gets that
+      instead, ahead of the Company's. In this app every reader
       asks either for a set value or for an exact warehouse (`item_own_bin`, Stock Scan's
       location list, bin assignments, Location Contents, the other reports, Maintain Stock);
       the Reorder Board reads the default supplier from that table and never the warehouse. A
       purchase line for one of these items defaults exactly as it did, because the shelf was
       already skipped as an item's bin. `TestAnItemWithNoDefaultWarehouse` pins each.
-    - **One thing changes at the Maintain Stock switch.** When an item is switched and has an
-      open order or request line with no warehouse, the switch gives the line the item's
-      default, else Stock Settings' (which is not set here). With the default blanked there is
-      none to give, and that item answers "can't switch yet: set a default warehouse" until
-      somebody does. Production has no open line without a warehouse today.
-    - **Undoing it.** On the day it was decided no non-stock item had a blank default
-      warehouse, so afterwards "blank, on an item that does not maintain stock" is the list of
-      what the step changed.
+    - **The Maintain Stock switch gives a warehouse-less open line what ERPNext would
+      (fixed here, found by review).** When an item is switched and has an open order or
+      request line with no warehouse, the switch (v1.809.0, single and bulk) writes one onto
+      the line. It took the item's default, else Stock Settings' default, and its docstring
+      called that ERPNext's order. It is not: ERPNext never reads Stock Settings for a line and
+      ends on the Company's default. With the item's default blanked by the step above and
+      Stock Settings' default unset, such an item would have answered "can't switch yet", where
+      ERPNext gives a new line for it the shelf without a word. `maintain_stock._fill_warehouses`
+      now asks ERPNext's own `get_item_details.get_item_warehouse_` (never a copy of its
+      order), then reads the item's default and the Company's default itself, for a version
+      where that function has moved or a user whose warehouse permissions hide its answer, and
+      takes the first that is a real, enabled, non-group warehouse of the company. The fill is
+      one warehouse a company and does not read a line's project: an Overhead line may be given
+      the shelf, as ERPNext would give it, and is moved to the item's own bin when it is
+      received, like every open Overhead line that already names the shelf. **The refusal no
+      longer says to set a default in Stock Settings:** ERPNext copies that one into every new
+      item, which is how 774 items came to name one warehouse. It now says to set the item's
+      own Default Warehouse to the bin it is kept in. Production has no open line without a
+      warehouse today, so nothing there changes; the bulk switch of several hundred items is
+      what would have met it.
+    - **Undoing it, and running it again.** On the day it was decided no non-stock item had a
+      blank default warehouse, so right after the deploy "blank, on an item that does not
+      maintain stock" is the list of what the step changed. That wears out: the Bin Manager's
+      *Remove from this bin* and new items add rows that match. And a run by hand weeks later
+      is not a no-op: it applies the rule again, so a non-stock item somebody has since
+      pointed at the shelf on purpose is blanked again.
   - **An item's first count never opens on the shelf.** Maintain Stock's switch (v1.809.0) ends
     on *Open a Stock Reconciliation*, with the item and a warehouse already on the row. The
     warehouse was the item's Item Default (`maintain_stock._default_warehouse`), and the switch

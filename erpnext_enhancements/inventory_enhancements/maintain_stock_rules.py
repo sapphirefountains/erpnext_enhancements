@@ -37,9 +37,11 @@ them except one: the receipts.
     that projected quantity and the open lines themselves, so it needs nothing of its own.
   - *A line with no warehouse.* A non-stock line may leave it empty; a stock line may not
     (``buying.utils.validate_stock_item_warehouse``), and ``get_purchase_order_qty`` counts a line
-    only at its warehouse. The switch writes the item's default warehouse (else Stock Settings')
-    onto such a line and says so on the order. With no default to use, the check refuses and says
-    what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
+    only at its warehouse. The switch writes onto such a line the warehouse ERPNext would give a
+    new line for the item (the item's default, its group's, its brand's, then the Company's
+    default; ``maintain_stock._fill_warehouses``, corrected in v1.815.0: it read Stock Settings'
+    default, which ERPNext never does) and says so on the order. With none to use, the check
+    refuses and says what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
     a warehouse.
   - *A partly received line.* ``received_qty`` already holds what came in while the item kept no
     stock, so only the rest is on order (``qty - received_qty``), and only the rest enters stock
@@ -359,12 +361,18 @@ def open_orders_detail(groups, plan):
 
 
 def open_orders_stuck_detail(plan):
-	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it."""
+	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it.
+
+	The advice names the item's own default and nothing else (v1.815.0). It used to offer Stock
+	Settings' Default Warehouse as well; ERPNext copies that into every new item, so setting it
+	to get one item switched gives every later item the same default warehouse.
+	"""
 	return (
 		f"{_first_upper(_order_rows(plan['stuck']))} "
 		f"{'has' if len(plan['stuck']) == 1 else 'have'} no warehouse, and a stock item's order line "
-		"needs one. Set a default warehouse on the item (its Item Defaults table) or in Stock "
-		"Settings, then run this again."
+		"needs one. Neither the item nor the company has a default warehouse to give it. Set the "
+		"item's Default Warehouse (its Item Defaults table) to the bin it is kept in, then run "
+		"this again."
 	)
 
 

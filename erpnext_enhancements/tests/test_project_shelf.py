@@ -1940,12 +1940,17 @@ class TestTheFirstCountAfterTheSwitch(_Base):
 		self.assertIn("if (out.warehouse) values.warehouse = out.warehouse;", script)
 		self.assertEqual(script.count("values.warehouse ="), 1)
 
-	def test_a_line_with_no_warehouse_on_an_open_order_is_still_filled_from_the_items_default(self):
-		"""Left as it was on purpose: an open order line's right place depends on its project,
-		and for a job's line the shelf is right. Production has no such line today."""
+	def test_a_line_with_no_warehouse_on_an_open_order_is_not_given_the_first_counts_place(self):
+		"""A different question with a different answer: an open order line gets what ERPNext
+		would give a new line for the item (its default, then the Company's, which is the
+		shelf), because a job's line belongs on the shelf. Production has no such line today."""
 		tree = ast.parse((APP / "inventory_enhancements" / "maintain_stock.py").read_text(encoding="utf-8"))
 		fill = ast.unparse(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_fill_warehouses"))
+		self.assertIn("_erpnext_line_warehouse(item_code, company)", fill)
 		self.assertIn("_default_warehouse(item_code, company)", fill)
+		self.assertIn("_company_default_warehouse(company)", fill)
+		self.assertNotIn("first_count_warehouse", fill)
+		self.assertNotIn("Stock Settings", fill.split('"""')[-1])
 
 	def test_the_bulk_switch_page_suggests_no_place_for_a_first_count(self):
 		"""It turns items on and records that it did. It opens no count and keeps no warehouse."""
@@ -2656,6 +2661,29 @@ class TestAnItemWithNoDefaultWarehouse(_Base):
 		base._item(self.SUPPLY, is_stock_item=0)
 		base._default(self.SUPPLY, None)
 		self.assertIsNone(switch.first_count_warehouse(self.SUPPLY, COMPANY))
+
+	def test_it_still_switches_with_an_open_line_that_has_no_warehouse(self):
+		"""The one reader that did change with the blank (review round 5). The switch gives a
+		warehouse-less open line what ERPNext gives a new line: with no item default, the
+		Company's default, which after the rename is the shelf. It read Stock Settings before,
+		found nothing, and would have refused the item."""
+		from erpnext_enhancements.inventory_enhancements import maintain_stock_rules as switch_rules
+
+		original = switch._company_default_warehouse
+		switch._company_default_warehouse = lambda company: SHELF
+		line = {"doctype": "Purchase Order Item", "parent": "PO-0001", "name": "poi-1", "idx": 1, "warehouse": "", "company": COMPANY, "received": 0}
+		try:
+			fill = switch._fill_warehouses(self.SUPPLY, [line])
+		finally:
+			switch._company_default_warehouse = original
+		self.assertEqual(fill, {COMPANY: SHELF})
+		plan = switch_rules.plan_open_orders([line], fill)
+		self.assertEqual(plan["stuck"], [])
+		self.assertEqual([row["warehouse"] for row in plan["fill"]], [SHELF])
+		# With no Company default either there is nothing to give, and the words say what to set.
+		plan = switch_rules.plan_open_orders([line], switch._fill_warehouses(self.SUPPLY, [line]))
+		self.assertEqual(plan["stuck"], [line])
+		self.assertNotIn("Stock Settings", switch_rules.open_orders_stuck_detail(plan))
 
 	def test_the_reports_and_the_bin_manager_find_no_place_for_it(self):
 		from erpnext_enhancements.inventory_enhancements import inventory_report_rules as report_rules
