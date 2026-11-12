@@ -50,6 +50,11 @@ model, the pure rules and the label reads.
 | `page/reorder_board/` | The Reorder Board (v1.730.0, `/desk/reorder-board`): Needs reorder, On order and Snoozed, each its own history entry |
 | `page/stock_scan/` | `/desk/stock-scan` (v1.751.0): only sends the browser on to the Stock Scan web page at `/stock-scan`, with `location.replace` so Back is not trapped on it. It exists for the Dock rail, whose rows open through `frappe.set_route` and so need a desk route (the field technicians' rail, `setup/dock_profiles.py`). Same roles as the page it leads to (`stock_scan_rules.SCAN_ROLES`), same shape as `workforce/page/time_kiosk/` |
 | `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
+| `doctype/supplier_return/`, `doctype/supplier_return_item/`, `doctype/supplier_return_payment/` | **Supplier Return** (v1.807.0), its lines, and its refunds and credits: something we bought going back to the supplier. The request we emailed, the supplier's return number, how it went back, and whether the money came back. A tracking record: it links ERPNext's own Purchase Return, Debit Note and Payment Entry and never moves stock or money itself. Not submittable; the status is set by the form's step buttons. See *Supplier Returns* below |
+| `supplier_return_rules.py` | Every judgement of the return process: the steps and who may take each, the quantity limit, the three kinds of line (stock, non-stock, record only) and which stock document each gets, the standard return cut to this return's lines, the money rule (typed by hand until a document is linked), the bill notice, the email's words and recipients, the report's rows, and the contract other modules read. No Frappe, no I/O |
+| `supplier_returns.py` | Its reads (what a receipt line has left to return), `validate`, the steps, the drafts of ERPNext's Purchase Return and Debit Note, the sync from linked documents (doc_events on Purchase Receipt, Purchase Invoice and Payment Entry, and a daily job), the bill notice, the one email sender, and `returned_lines` for other modules' reports. The endpoints are `api/supplier_returns.py` |
+| `setup_supplier_return_print_format.py` | **Supplier Return - Sapphire**, the PDF attached to a return request and the paper that goes in the box, built from `print_style` and the buying formats' fragments. `after_migrate` upsert |
+| `report/supplier_returns_money_outstanding/` | **Supplier Returns: Money Outstanding** (v1.807.0): returns that went back and were not paid for, by supplier and age, with expected, received, difference, where the amount comes from, and where the bill stands |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 | `report/warehouse_transactions/` | Warehouse Transactions (v1.797.0): every stock movement and the person who made it. See *Warehouse Transactions* below |
 | `report/location_contents/` | Location Contents (v1.805.0): what is at a bin or a group of bins, and what should be, with a plain status per item. See *Inventory reports* below |
@@ -1426,6 +1431,103 @@ sent back is *Return Requested*: those goods are still here.
   report's formatter. There is no report `.html` of our own.
 - **Tests:** `tests/test_inventory_reports.py`, its own CI step.
 
+## Supplier Returns (v1.807.0)
+
+Nik, 2026-11-12: "a return process that is simple and tracked", using ERPNext's own pieces where
+they exist. The whole process, each accounting case, the rehearsal steps and the open questions
+are in [`docs/supplier-returns.md`](../../docs/supplier-returns.md). In short:
+
+**ERPNext already returns goods, lowers a bill and takes a refund.** A Purchase Receipt with
+`is_return` takes stock out and reverses the receipt's ledger entry. A Purchase Invoice with
+`is_return` (the Debit Note) lowers what we owe. A Payment Entry of type Receive is the refund.
+What it has no record of is the request: what we emailed the supplier, the return number they
+gave, the tracking number, and whether the money ever came back. A **Supplier Return** is that
+record, and nothing more. It never writes a stock or ledger entry.
+
+**Why this module.** The Purchasing card lives on this module's workspace, Stock Scan and the
+receipts' Maintain Stock guard are here, and the goods are stock. A return is a stock event first
+and a money event second.
+
+**It starts from a receipt, so nobody retypes a line.** Create > Return to Supplier on a Purchase
+Receipt (ticked rows, or everything that can still go back) or a Purchase Order, the Return
+buttons in the Project form's Procurement Tracker, and Return to supplier on an item in Stock
+Scan (which saves a Draft for purchasing to send). A line may not return more than its receipt
+line received, less what other returns hold and what was returned with ERPNext's own button.
+
+**Each step is a button.** Draft, Requested (the email went, or the supplier was asked another
+way), Approved by Supplier or Denied, Sent Back, then Refund Received, Credit Received,
+Replacement Received or Closed Without Credit; Canceled before the items go. The status is never
+typed: a save that changes it is put back. The headline says who the return waits on and for how
+many days.
+
+**Three kinds of line.** *Stock*: the Purchase Return takes it out of stock. *Non-stock*: nothing
+is in stock, but the Purchase Return lowers the order's received quantity, which lets a
+replacement be received and makes ERPNext bill the receipt for less; it posts nothing. *Record
+only*: the item keeps stock now but this receipt line never wrote a stock ledger entry (it was
+received before the item kept stock). ERPNext would take out stock that was never put in, and
+`maintain_stock.refuse_unstocked_receipt_return` refuses that. Such a line is left off the
+Purchase Return, the return is recorded anyway, and the record says why. The guard is not
+touched, and its `ignore_maintain_stock_guard` flag is never set here (a test fails the build if
+it is).
+
+**The standard documents are drafted, never submitted.** `make_purchase_return` and
+`make_debit_note` call ERPNext's own mappers, cut the result to this return's lines and
+quantities, and save a draft for the person to check and submit. The Debit Note is drafted with
+Update Stock off, because the Purchase Return moves the stock. The refund is ERPNext's
+`get_payment_entry`, opened unsaved.
+
+**The Debit Note lowers the bill when the bill can take it.** ERPNext 16.54.0 books a debit note
+against itself by default (*Update Outstanding for Self*, on), which leaves the bill fully unpaid
+until Payment Reconciliation. `make_debit_note` turns that box off when the bill's outstanding
+amount covers the note, so we pay the bill for less and the return reads Credit Received at once;
+it leaves the box on when the bill is paid, so the note carries what the supplier owes us for the
+refund payment. The reasons are in the function's docstring and in `docs/supplier-returns.md`.
+
+**A fixed-amount charge on a partial return** is reversed in full by ERPNext's own return. The
+figure is left as ERPNext made it, and the draft says so (Remarks, timeline, and a message).
+
+**The quantity limit is re-run when a return comes back into play** (reopened from Denied or
+Canceled), counts a linked Purchase Return's excess over its record, and compares in the receipt
+line's unit. A Purchase Return made with ERPNext's own button is linked only when it returns the
+same lines at the same quantities.
+
+**A canceled receipt never traps its return.** The ways out stay open (cancel, deny, close,
+record what came back) and everything else says why.
+
+**No Custom Field on the standard doctypes.** The links (`purchase_return`, `debit_note`,
+`replacement_receipt`, and the Payment Entries in the `payments` table) live on the Supplier
+Return. Purchase Receipt, Purchase
+Invoice and Payment Entry find their return by asking (`api/supplier_returns.linked`) and say so
+at the top of the form. A submitted Receive payment from the supplier that names a return's Debit
+Note is linked as its refund by that reference.
+
+**Money typed by hand says so.** While bills are entered outside ERPNext, a refund or credit is
+an amount, a date and a reference typed by an Accounts role or a Purchase Manager, and
+`money_source` reads "Typed by hand": the form, the timeline and the report say it is not backed
+by an ERPNext payment. Once a submitted Debit Note or Payment Entry backs the money, the outcome
+and the amount are read from it on every sync and cannot be typed.
+
+**Each refund or credit is a row of `payments`, and a payment is counted once.** A row with a
+Payment Entry holds this return's share of it (`supplier_return_rules.split_payment`,
+`by_hand_share`), so a payment covering two returns is never its full amount on each. A refund
+that arrives in parts is several rows: a typed part can be marked "more is still expected", and
+*No More Is Coming* finishes a return at what came back. Fees, tracking and the request lock at a
+final status (`LOCKED_WHEN_FINAL`); Reopen is how a manager changes one.
+
+**The email goes only from the Send button.** `supplier_returns.send_request` is the module's
+only caller of `frappe.sendmail`, reached only from the POST endpoint, which also refuses an API
+key, a token and a job. The wording is the Desk Email Template *Supplier Return Request*; the
+items table is built on the server from the return's own lines and put where the marker line
+stands in the message the person edits.
+
+**For other modules:** `supplier_returns.returned_lines(purchase_order_items=None, project=None)`.
+One dict per Supplier Return line, keys in `supplier_return_rules.RETURNED_LINE_KEYS`; Canceled
+and Denied left out; never raises; `[]` before the DocType is installed. The keys are a contract
+with the Project Materials report: added to, never renamed.
+
+**The doc_events never raise.** `on_document_change` (Purchase Receipt, Purchase Invoice, Payment
+Entry: submit, cancel, delete) syncs inside a savepoint and logs a failure. A stale label on a
+Supplier Return must not be the reason a receipt or a payment cannot be submitted.
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -1597,6 +1699,8 @@ python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Acco
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
+python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v  # Supplier Returns: every rule, no stub
+python -m unittest erpnext_enhancements.tests.test_supplier_returns -v       # frappe stub on SQLite: each accounting case's documents, the money rule, the email
 python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_site_rules; sites, moves, takes and totals on test_bin_assignments' stub; the setup patch
 python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
