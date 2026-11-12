@@ -125,6 +125,51 @@ keys (`line_state`, `line_states`, `needs_action`, `is_late`, `expected_date`, `
 `where_now`, `where_now_text`, `location_tracked`, `location_kinds`, `received_at`). Nothing was
 renamed or removed.
 
+## v1.814.0: what was spent
+
+Nik, 2026-11-12: *"on the procurement tracker, there should be another column for the price of the
+item we spent."* A reading of it, built and open to correction; read it after the v1.811.0 section.
+
+| Layer | Where |
+|---|---|
+| The rules: what a line costs, no price vs no charge, spent, unit price, a document's total | [`procurement_prices.py`](../erpnext_enhancements/procurement_prices.py) — app root, pure |
+| The price columns of the query, who may see them | `project_enhancements/__init__.py` — `_chain_rows(project, prices)`, `_price_access`, `_price_total`, `_line_counts` |
+| By-item sums | `procurement_overview.by_item(rows, today, prices=True)` → `procurement_prices.item_spending` |
+| The widget | `logic.js` (`price_cells`, `price_text`, `item_price_view`, `doc_price_text`, `spent_summary`, the `rate` / `amount` / `unit_price` / `spent` sort columns, the `pt_noprice` filter) and `mountProcurementTracker` |
+
+- **ERPNext holds no bills.** The only price is the purchase order line's rate. **Spent is what
+  was ordered** (the submitted lines' own `base_amount`, company currency); the received value
+  (`received_value`, received quantity times `base_rate`) is a second figure. Neither is "billed" or
+  "paid", and nothing on screen says so.
+- **A missing price is not a zero.** `price_state` is `priced`, `no_price` (rate 0 or blank) or
+  `no_charge` (rate 0 and `is_free_item`). A `no_price` line carries no `po_rate` / `po_amount`, is
+  left out of every sum, and is counted (`no_price_lines`). Purchase Order Item has no
+  `allow_zero_valuation_rate` (Purchase Receipt Item has, and the receipt-only path reads it).
+- **A quote is not a spend.** `quote_*` keys, shown on the line as "quote" and "quoted, not
+  spent", never in `spent`. A request or an RFQ has no price.
+- **A draft is not an order**, as for quantities: `draft_spent`, not `spent`. A cancelled order's
+  line (its join comes back empty) has none.
+- **Money is keyed on the order line.** One request line split across two orders is one request
+  line and two prices; `dedupe_lines` (request-line grain) is the wrong grain for it, so
+  `procurement_prices._distinct` keys on `po_item`. An order line seen twice (the receipt and invoice
+  joins repeat it) counts once.
+- **A receipt is valued at the order's rate**, not its own copied one (`receipt_value`): the receipt
+  line's rate is 0 exactly where the price was left off the order and added later with Update Items.
+- **An order can span jobs.** `price_total` is this job's lines (`job_lines`), with `doc_lines` from
+  one `count(*) group by parent` per doctype, `partial` when they differ and `doc_total` (the
+  order's own `base_total`) then. The sweep skips a line that names another job.
+- **Who sees it.** The endpoints and the Project form ask only for Project read. `_price_access()`
+  returns `None` unless the person may read Purchase Orders (quotes: Supplier Quotation too), and then
+  no price key is on any row, item or document, `prices` is absent from the overview and the widget
+  draws no price column. `test_procurement_prices.py` holds this, and holds every pre-existing key.
+- **Units.** `po_unit_rate` is per stock unit (`base_rate / conversion_factor`). On production an
+  FT line and a Unit line of one item can both have factor 1, so a range can be two prices for two
+  things: `price_uoms` lists the units and the cell says "Priced per FT and per Unit".
+- **Print.** The by-item Print list gains Unit price and Spent and a total, on a landscape page. The
+  document PDFs (`procurement_print.py`) are Frappe's own print formats and go to suppliers: untouched.
+- **The address** carries the new filter as `pt_noprice=1` beside the others, written with
+  `history.replaceState`; a person who is sent no prices has it switched off on load.
+
 ## First, the name collision
 
 ERPNext ships a **standard Script Report called "Procurement Tracker"** (module Buying,

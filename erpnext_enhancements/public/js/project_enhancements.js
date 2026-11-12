@@ -297,8 +297,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 	groups.forEach((g) => {
 		if (!(g.doctype in keep.collapsedGroups)) keep.collapsedGroups[g.doctype] = true;
 	});
-	const columns = (registry) =>
-		Object.keys(registry).map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "" }));
+	// What the person may see of prices (v1.814.0). The server sends this key only to someone who may
+	// read Purchase Orders, and puts no price on any row for anyone else; the columns follow it.
+	const prices = data.prices || null;
 	const esc = frappe.utils.escape_html;
 	let address_timer = null;
 
@@ -324,6 +325,8 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				items: data.items || [], // one row per item for the project
 				options: data.filters || {},
 				located: data.located !== false,
+				// { currency, spent, ... } for a person who may see prices, else null.
+				prices: prices,
 				// { view, location, status, supplier, action, q }: what the address says.
 				view: pt.read_query(window.location.search),
 				collapsedGroups: keep.collapsedGroups,
@@ -347,6 +350,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 		created() {
 			// frappe copied the address's query into route_options; ours come back out.
 			frappe.route_options = pt.without_own_keys(frappe.route_options);
+			// A shared link may carry "no price only" to someone who is shown no prices: there is no
+			// checkbox for it, so it must not be left switched on.
+			if (!prices) this.view.noprice = false;
 			if (pt.is_narrowed(this.view)) this.expandMatches();
 		},
 		watch: {
@@ -361,11 +367,25 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 		computed: {
 			// Headers are rendered from the same registry the comparator reads, so a column
 			// cannot exist in one and not the other.
+			hasPrices() {
+				return !!this.prices;
+			},
+			currency() {
+				return (this.prices && this.prices.currency) || "";
+			},
 			lineColumns() {
-				return columns(pt.LINE_COLUMNS);
+				return pt.visible_columns(pt.LINE_COLUMNS, this.hasPrices);
 			},
 			itemColumns() {
-				return columns(pt.ITEM_COLUMNS);
+				return pt.visible_columns(pt.ITEM_COLUMNS, this.hasPrices);
+			},
+			// The total under the by-item table, over the items it is showing: it follows every filter.
+			spentSummary() {
+				return this.hasPrices ? pt.spent_summary(this.filteredItems, this.currency) : null;
+			},
+			// The Spent column is not the first money column: the total sits under it.
+			spentIndex() {
+				return this.itemColumns.findIndex((c) => c.key === "spent");
 			},
 			filteredGroups() {
 				return pt.filter_groups(this.groups, this.view);
@@ -382,9 +402,10 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			},
 			summaryText() {
 				if (this.byItem) {
-					return this.narrowed
+					const base = this.narrowed
 						? `${this.filteredItems.length} of ${this.items.length} items`
 						: `${this.items.length} items`;
+					return this.spentSummary ? `${base} · spent ${this.spentSummary.text}` : base;
 				}
 				const total = pt.count_lines(this.groups);
 				return this.narrowed ? `${pt.count_lines(this.filteredGroups)} of ${total} lines` : `${total} lines`;
@@ -597,6 +618,8 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 						subtitle: frm.doc.project_name || "",
 						filters: pt.describe_filters(this.view, this.options),
 						printed: frappe.datetime.str_to_user(frappe.datetime.get_today()),
+						prices: this.hasPrices,
+						currency: this.currency,
 					},
 					esc
 				);
@@ -631,7 +654,27 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			},
 			// Search and filters narrow first, then sort sorts.
 			displayItems(doctype, doc) {
-				return pt.sort_rows(doc.items || [], pt.LINE_COLUMNS, this.sortFor(doctype, doc.name));
+				// The document's type goes along: what a price cell holds depends on it.
+				return pt.sort_rows(doc.items || [], pt.LINE_COLUMNS, this.sortFor(doctype, doc.name), doctype);
+			},
+			// What things cost (v1.814.0). Money is formatted by pt.fmt_money, never as a quantity.
+			money(value) {
+				return pt.fmt_money(value, this.currency);
+			},
+			priceCells(row, doctype) {
+				return pt.price_cells(row, doctype);
+			},
+			priceText(cells, field) {
+				return pt.price_text(cells, field, this.currency);
+			},
+			priceTitle(cells) {
+				return pt.price_title(cells, this.currency);
+			},
+			docPrice(doctype, doc) {
+				return pt.doc_price_text(doc.price_total, doctype, this.currency);
+			},
+			itemPrice(row) {
+				return pt.item_price_view(row, this.currency);
 			},
 			fmtQty(value) {
 				return pt.fmt_qty(value);
@@ -739,6 +782,8 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 							</select>
 						</label>
 						<label class="pt-check"><input type="checkbox" v-model="view.action"> Needs action only</label>
+						<!-- Only for a person who is shown prices: the lines purchasing has to put a price on. -->
+						<label v-if="hasPrices" class="pt-check" title="Order lines whose rate is 0 (not the free ones)"><input type="checkbox" v-model="view.noprice"> No price only</label>
 						<button v-if="narrowed" type="button" class="btn btn-default btn-xs pt-clear" @click="clearFilters">Clear</button>
 						<button v-if="byItem" type="button" class="btn-print pt-print-list" @click="printList"
 								title="Print the items on screen, with where each one is now">Print list</button>
@@ -780,6 +825,18 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 										{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
 									</td>
 									<td data-label="Received" class="qty-col">{{ fmtQty(row.received_qty) }}</td>
+									<template v-if="hasPrices">
+										<!-- One price when the lines agree, "low - high" when they differ. "No price" is a
+										     line with a rate of 0, never a $0.00. -->
+										<td data-label="Unit price" class="money-col" :title="'Per ' + (row.stock_uom || 'unit') + ', over the order lines that have a price'"><div class="pt-money-cell">
+											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).unit }">{{ itemPrice(row).unit }}</span>
+											<small v-for="n in itemPrice(row).unit_notes" :key="n" class="pt-where-note">{{ n }}</small>
+										</div></td>
+										<td data-label="Spent" class="money-col" title="What was ordered for this job: the submitted order lines' amounts. ERPNext holds no bills, so this is not billed or paid."><div class="pt-money-cell">
+											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).spent }">{{ itemPrice(row).spent }}</span>
+											<small v-for="n in itemPrice(row).spent_notes" :key="n" class="pt-where-note">{{ n }}</small>
+										</div></td>
+									</template>
 									<td data-label="Status" class="pt-status">
 										<span v-for="s in row.states" :key="s" class="es-badge pt-pill" :data-theme="stateTheme(s)">{{ stateLabel(s) }}</span>
 									</td>
@@ -797,6 +854,16 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 									</td>
 								</tr>
 							</tbody>
+							<!-- The total follows the filters: it is over the items shown. -->
+							<tfoot v-if="spentSummary">
+								<tr class="pt-total">
+									<td v-if="spentIndex > 0" :colspan="spentIndex" data-label="Total">Total spent on these items <small class="pt-where-note">Ordered, not billed or paid</small></td>
+									<td class="money-col" data-label="Spent"><div class="pt-money-cell">{{ spentSummary.text }}
+										<small v-for="n in spentSummary.notes" :key="n" class="pt-where-note">{{ n }}</small>
+									</div></td>
+									<td :colspan="itemColumns.length - spentIndex + 1"></td>
+								</tr>
+							</tfoot>
 						</table>
 					</div>
 				</div>
@@ -839,6 +906,8 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 									     entirely when there is nothing to total, so an RFQ header does
 									     not gain a "0 req · 0 ord · 0 rec" that reads as an error. -->
 									<span v-if="hasRollup(doc)" class="doc-meta doc-qty-rollup" :title="rollupTitle(doc)">{{ rollupText(doc) }}</span>
+									<!-- This document's total for the job's lines. Only for a person who is shown prices. -->
+									<span v-if="hasPrices && docPrice(group.doctype, doc).text" class="doc-meta doc-price" :title="docPrice(group.doctype, doc).title">{{ docPrice(group.doctype, doc).text }}</span>
 									<span class="doc-meta doc-itemcount">{{ itemCountText(doc) }}</span>
 									<!-- @click.stop is load-bearing: .doc-header's own click toggles
 									     expansion, so without it every Receive click also collapses
@@ -878,7 +947,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 											</thead>
 											<tbody>
 												<tr v-if="(doc.items || []).length === 0">
-													<td colspan="7" class="text-center text-muted">No items.</td>
+													<td :colspan="lineColumns.length + 1" class="text-center text-muted">No items.</td>
 												</tr>
 												<tr v-for="row in displayItems(group.doctype, doc)" :key="row.row_id" class="procurement-item-row">
 													<td data-label="Item" class="pt-item"
@@ -896,6 +965,19 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 														{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
 													</td>
 													<td data-label="Received" class="qty-col" :title="lineReceiveTitle(row)">{{ fmtQty(row.received_qty) }}</td>
+													<template v-if="hasPrices">
+														<!-- By the kind of document: an order's own line, a receipt at the ORDER's rate, a
+														     quote on its own. A request has no price: its cells stay empty. -->
+														<td data-label="Rate" class="money-col"><div class="pt-money-cell">
+															<span :class="{ 'pt-no-price': priceCells(row, group.doctype) && priceCells(row, group.doctype).state !== 'priced' }">{{ priceText(priceCells(row, group.doctype), 'rate') }}</span>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">quote</small>
+														</div></td>
+														<td data-label="Amount" class="money-col" :title="priceTitle(priceCells(row, group.doctype))"><div class="pt-money-cell">
+															<span v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).state === 'priced'">{{ priceText(priceCells(row, group.doctype), 'amount') }}</span>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'order' && priceCells(row, group.doctype).received > 0 && priceCells(row, group.doctype).received !== priceCells(row, group.doctype).amount" class="pt-where-note">received {{ money(priceCells(row, group.doctype).received) }}</small>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">quoted, not spent</small>
+														</div></td>
+													</template>
 													<td data-label="Status" class="pt-status">
 														<!-- THIS line's own state, from its own quantities; never the
 														     document's label (the v1.194.0 defect). -->

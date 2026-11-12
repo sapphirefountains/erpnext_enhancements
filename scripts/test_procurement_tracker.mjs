@@ -13,6 +13,8 @@
  *                  somebody chases them, item codes as numbers, and never in place
  *   labels         a half-done status never gets a finished status's colour
  *   markup         a name is never read as HTML, in the table or on the printed list
+ *   prices         (v1.814.0) the Rate, Amount, Unit price and Spent columns, "No price" and "No charge",
+ *                  a range when lines differ, the total following the filters, sorting with blanks last
  *
  * Nik's rule: a view a person can return to is in the address, and Back and Forward still work.
  * The widget writes the address with history.replaceState and never pushes; the last test reads
@@ -114,7 +116,7 @@ const names = (groups) => groups.map((g) => `${g.doctype}: ${g.documents.map((d)
 // ------------------------------------------------------------------ the address
 
 test("the view state round-trips through the address", () => {
-	const state = { view: "items", location: "project_shelf", status: "late", supplier: "Acme Supply", action: true, q: "elbow 2 in" };
+	const state = { view: "items", location: "project_shelf", status: "late", supplier: "Acme Supply", action: true, noprice: false, q: "elbow 2 in" };
 	const query = pt.write_query("", state);
 	check("query", query, "?pt_view=items&pt_where=project_shelf&pt_status=late&pt_supplier=Acme+Supply&pt_action=1&pt_q=elbow+2+in");
 	check("read back", pt.read_query(query), state);
@@ -324,8 +326,8 @@ test("the printed list escapes every value and lists each place", () => {
 
 test("the form script draws every column from the registries and never pushes history", () => {
 	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-	check("line columns", code.includes("columns(pt.LINE_COLUMNS)"), true);
-	check("item columns", code.includes("columns(pt.ITEM_COLUMNS)"), true);
+	check("line columns", code.includes("visible_columns(pt.LINE_COLUMNS"), true);
+	check("item columns", code.includes("visible_columns(pt.ITEM_COLUMNS"), true);
 	check("reads the address", code.includes("pt.read_query(window.location.search)"), true);
 	check("writes it in place", code.includes("window.history.replaceState("), true);
 	check("never pushes", /pushState\(/.test(code), false);
@@ -354,6 +356,228 @@ test("the form script draws every column from the registries and never pushes hi
 	const defined = new Set([...SCRIPT.matchAll(/^\t\t\t([a-zA-Z_]\w*)\([^)]*\) \{$/gm)].map((m) => m[1]));
 	const missing = [...called].filter((name) => !defined.has(name) && !["String", "rect"].includes(name));
 	check("template calls only what exists", missing, []);
+});
+
+// ------------------------------------------------------------------ prices (v1.814.0)
+//
+// Nik, 2026-11-12: "on the procurement tracker, there should be another column for the price of the
+// item we spent." Every figure below is made up. ERPNext holds no bills, so nothing here is billed or
+// paid; Spent is what was ordered.
+
+// Two items on a job. 417-080: three order lines, two prices, one with no price. 2622-010: only a
+// line with no price, and a quote. 100-001: only a request, so nothing to say about a price.
+function priced_items() {
+	return [
+		{
+			row_id: "item#417-080", item_code: "417-080", item_name: "FITTING, ELBOW", stock_uom: "Unit", states: ["ordered"], state: "ordered", needs_action: true,
+			spent: 132.5, spent_lines: 2, no_price_lines: 1, no_charge_lines: 0, draft_spent: null, draft_no_price_lines: 0,
+			unit_price_low: 10, unit_price_high: 12, unit_price_avg: 11.0417, received_value: 40, quote_low: null, quote_high: null, quote_count: 0,
+		},
+		{
+			row_id: "item#2622-010", item_code: "2622-010", item_name: "VALVE, BALL", stock_uom: "Unit", states: ["ordered"], state: "ordered", needs_action: true,
+			spent: null, spent_lines: 0, no_price_lines: 2, no_charge_lines: 0, draft_spent: null, draft_no_price_lines: 0,
+			unit_price_low: null, unit_price_high: null, unit_price_avg: null, received_value: null, quote_low: 8, quote_high: 9.5, quote_count: 2,
+		},
+		{
+			row_id: "item#100-001", item_code: "100-001", item_name: "PIPE, 1 IN", stock_uom: "Unit", states: ["to_order"], state: "to_order", needs_action: true,
+			spent: null, spent_lines: 0, no_price_lines: 0, no_charge_lines: 0, draft_spent: null, draft_no_price_lines: 0,
+			unit_price_low: null, unit_price_high: null, unit_price_avg: null, received_value: null, quote_low: null, quote_high: null, quote_count: 0,
+		},
+		{
+			row_id: "item#300-300", item_code: "300-300", item_name: "SPONGE", stock_uom: "Unit", states: ["received"], state: "received", needs_action: false,
+			spent: 20, spent_lines: 1, no_price_lines: 0, no_charge_lines: 1, draft_spent: 15, draft_no_price_lines: 0,
+			unit_price_low: 4, unit_price_high: 4, unit_price_avg: 4, received_value: 20, quote_low: null, quote_high: null, quote_count: 0,
+		},
+	];
+}
+
+test("money reads as money, a rate to four places, and a missing value as a dash", () => {
+	check("whole", pt.fmt_money(1234.5, "USD"), "$1,234.50");
+	check("zero is a value", pt.fmt_money(0, "USD"), "$0.00");
+	check("a rate", pt.fmt_money(0.0125, "USD"), "$0.0125");
+	check("two places at least", pt.fmt_money(10, "USD"), "$10.00");
+	check("blank", [pt.fmt_money(null), pt.fmt_money(undefined), pt.fmt_money(""), pt.fmt_money("x")], ["-", "-", "-", "-"]);
+	check("an unknown currency still reads", pt.fmt_money(5, "ZZZZ?").includes("5.00"), true);
+});
+
+test("the price columns exist only for a person who was sent prices", () => {
+	const keys = (registry, prices) => pt.visible_columns(registry, prices).map((c) => c.key);
+	check("by item without", keys(pt.ITEM_COLUMNS, false), ["item", "requested", "ordered", "received", "status", "where", "due"]);
+	check("by item with", keys(pt.ITEM_COLUMNS, true), ["item", "requested", "ordered", "received", "unit_price", "spent", "status", "where", "due"]);
+	check("by document without", keys(pt.LINE_COLUMNS, false), ["item", "where", "requested", "ordered", "received", "status"]);
+	check("by document with", keys(pt.LINE_COLUMNS, true), ["item", "where", "requested", "ordered", "received", "rate", "amount", "status"]);
+	// Nothing is called billed or paid: ERPNext holds no bills.
+	const labels = [...pt.visible_columns(pt.ITEM_COLUMNS, true), ...pt.visible_columns(pt.LINE_COLUMNS, true)].map((c) => c.label.toLowerCase()).join(" ");
+	check("no column says billed or paid", /bill|paid/.test(labels), false);
+});
+
+test("the unit price is one price when the lines agree and a range when they differ", () => {
+	const [elbow, valve, pipe, sponge] = priced_items();
+	check("a range", pt.item_price_view(elbow, "USD").unit, "$10.00 – $12.00");
+	check("with its average", pt.item_price_view(elbow, "USD").unit_notes, ["$11.0417 on average"]);
+	check("one price", pt.item_price_view(sponge, "USD").unit, "$4.00");
+	check("one price has no average line", pt.item_price_view(sponge, "USD").unit_notes, []);
+	// A request has no price: its cells are empty, not a dash and not $0.00.
+	check("a request", [pt.item_price_view(pipe, "USD").unit, pt.item_price_view(pipe, "USD").spent], ["", ""]);
+	check("a quote on its own line", pt.item_price_view(valve, "USD").unit_notes, ["Quoted $8.00 – $9.50"]);
+	// A range over lines written in different units may be two prices for two things (FT and Unit).
+	check("units that differ are named", pt.item_price_view(Object.assign({}, elbow, { price_uoms: ["FT", "Unit"] }), "USD").unit_notes.includes("Priced per FT and per Unit"), true);
+	check("one unit says nothing", pt.item_price_view(Object.assign({}, elbow, { price_uoms: ["Unit"] }), "USD").unit_notes.length, 1);
+});
+
+test("a missing price is 'No price', never $0.00, and a sum says how many lines it leaves out", () => {
+	const [elbow, valve, , sponge] = priced_items();
+	const view = pt.item_price_view(elbow, "USD");
+	check("spent is the priced lines'", view.spent, "$132.50");
+	check("and says what it left out", view.spent_notes.includes("1 line with no price"), true);
+	check("and what has arrived", view.spent_notes.includes("Received $40.00"), true);
+	const none = pt.item_price_view(valve, "USD");
+	check("only unpriced lines", [none.unit, none.spent], ["No price", "No price"]);
+	check("plural", none.spent_notes, ["2 lines with no price"]);
+	check("never a zero", [none.unit, none.spent].some((t) => t.includes("$0")), false);
+	// A deliberately free line reads No charge; a mix says so; a draft is not counted.
+	check("a free line in a priced item", pt.item_price_view(sponge, "USD").spent_notes.includes("1 line no charge"), true);
+	check("a draft is shown and not counted", pt.item_price_view(sponge, "USD").spent_notes.includes("$15.00 on draft orders, not counted"), true);
+	check("only free", pt.item_price_view({ spent_lines: 0, no_charge_lines: 1 }, "USD").spent, "No charge");
+	check("a draft with no price counts as no price", pt.item_price_view({ spent_lines: 0, draft_no_price_lines: 1 }, "USD").spent, "No price");
+});
+
+test("a line's price cells depend on the document it is shown in; a request has none", () => {
+	const row = {
+		po: "PO-1", pr: "PR-1", sq: "SQ-1", price_state: "priced", po_rate: 3, po_amount: 30, po_rate_uom: "Unit", received_value: 12,
+		receipt_state: "priced", receipt_rate: 3, receipt_value: 12, sq_item: "SQI-1", quote_rate: 2.5, quote_amount: 25,
+	};
+	check("an order's own line", pt.price_cells(row, "Purchase Order"), { kind: "order", state: "priced", rate: 3, amount: 30, uom: "Unit", received: 12 });
+	check("a receipt at the order's rate", pt.price_cells(row, "Purchase Receipt").amount, 12);
+	check("a quote", [pt.price_cells(row, "Supplier Quotation").kind, pt.price_cells(row, "Supplier Quotation").amount], ["quote", 25]);
+	for (const doctype of ["Material Request", "Request for Quotation", "Purchase Invoice"]) {
+		check("no price in " + doctype, [pt.price_cells(row, doctype), pt.price_text(pt.price_cells(row, doctype), "rate", "USD"), pt.price_text(pt.price_cells(row, doctype), "amount", "USD")], [null, "", ""]);
+	}
+	check("a person sent no prices has nothing", pt.price_cells({ po: "PO-1" }, "Purchase Order"), null);
+	const no_price = pt.price_cells({ price_state: "no_price", po_rate: null, po_amount: null }, "Purchase Order");
+	check("a rate of 0 says so", [pt.price_text(no_price, "rate", "USD"), pt.price_text(no_price, "amount", "USD")], ["No price", "No price"]);
+	const free = pt.price_cells({ price_state: "no_charge" }, "Purchase Order");
+	check("a free line says so", pt.price_text(free, "rate", "USD"), "No charge");
+	check("the tooltip says it is not billed or paid", pt.price_title(pt.price_cells(row, "Purchase Order"), "USD").includes("not what was billed or paid"), true);
+	check("and what has arrived", pt.price_title(pt.price_cells(row, "Purchase Order"), "USD").includes("received so far: $12.00"), true);
+	check("a quote is not a spend", pt.price_title(pt.price_cells(row, "Supplier Quotation"), "USD").includes("not added into what was spent"), true);
+});
+
+test("a document's total says it is this job's lines when the document has others", () => {
+	const whole = { amount: 1200, lines: 3, no_price_lines: 0, no_charge_lines: 0, job_lines: 3, doc_lines: 3, partial: false, doc_total: null };
+	check("a whole order", pt.doc_price_text(whole, "Purchase Order", "USD").text, "$1,200.00");
+	const part = { amount: 500, lines: 1, no_price_lines: 0, no_charge_lines: 0, job_lines: 1, doc_lines: 4, partial: true, doc_total: 2100 };
+	const said = pt.doc_price_text(part, "Purchase Order", "USD");
+	check("a part", said.text, "$500.00 · this job's lines");
+	check("and the whole in the tooltip", said.title.includes("1 of the document's 4 lines") && said.title.includes("$2,100.00"), true);
+	const gaps = pt.doc_price_text({ amount: 300, lines: 2, no_price_lines: 3, no_charge_lines: 0, job_lines: 5, doc_lines: 5, partial: false }, "Purchase Order", "USD");
+	check("what it leaves out", gaps.text, "$300.00 · 3 lines with no price");
+	check("only unpriced", pt.doc_price_text({ amount: 0, lines: 0, no_price_lines: 2, no_charge_lines: 0, job_lines: 2, partial: false }, "Purchase Order", "USD").text, "No price");
+	check("a receipt is what arrived", pt.doc_price_text(whole, "Purchase Receipt", "USD").text, "$1,200.00 received");
+	check("a quotation is a quote", pt.doc_price_text(whole, "Supplier Quotation", "USD").text, "$1,200.00 quoted");
+	check("a document with no price", pt.doc_price_text(null, "Material Request", "USD"), { text: "", title: "" });
+});
+
+test("sorting by Spent and Unit price: items with no price last in both directions", () => {
+	const items = priced_items();
+	const codes = (key, dir) => pt.sort_rows(items, pt.ITEM_COLUMNS, { key, dir }).map((r) => r.item_code);
+	check("spent ascending", codes("spent", "asc"), ["300-300", "417-080", "2622-010", "100-001"]);
+	check("spent descending", codes("spent", "desc"), ["417-080", "300-300", "2622-010", "100-001"]);
+	check("unit price ascending", codes("unit_price", "asc"), ["300-300", "417-080", "2622-010", "100-001"]);
+	check("unit price descending", codes("unit_price", "desc"), ["417-080", "300-300", "2622-010", "100-001"]);
+	check("the click cycle works on the new columns", pt.next_sort(null, "spent", pt.ITEM_COLUMNS), { key: "spent", dir: "asc" });
+	check("the original is untouched", items.map((r) => r.item_code), ["417-080", "2622-010", "100-001", "300-300"]);
+});
+
+test("sorting a document's lines by Rate and Amount follows the document it is in", () => {
+	const lines = [
+		{ row_id: "a", item_code: "A", price_state: "priced", po_rate: 9, po_amount: 90, receipt_state: "priced", receipt_rate: 9, receipt_value: 36 },
+		{ row_id: "b", item_code: "B", price_state: "no_price", po_rate: null, po_amount: null, receipt_state: "no_price" },
+		{ row_id: "c", item_code: "C", price_state: "priced", po_rate: 2, po_amount: 200, receipt_state: "priced", receipt_rate: 2, receipt_value: 8 },
+		{ row_id: "d", item_code: "D" },
+	];
+	const ids = (key, dir, doctype) => pt.sort_rows(lines, pt.LINE_COLUMNS, { key, dir }, doctype).map((r) => r.row_id);
+	check("order rate ascending, no price last", ids("rate", "asc", "Purchase Order"), ["c", "a", "b", "d"]);
+	check("order rate descending, no price still last", ids("rate", "desc", "Purchase Order"), ["a", "c", "b", "d"]);
+	check("order amount", ids("amount", "desc", "Purchase Order"), ["c", "a", "b", "d"]);
+	check("receipt amount is what arrived, not the order's", ids("amount", "desc", "Purchase Receipt"), ["a", "c", "b", "d"]);
+	check("a request has nothing to order by: rows come back as they were", ids("amount", "asc", "Material Request"), ["a", "b", "c", "d"]);
+});
+
+test("'No price only' finds the lines to fix, in both views", () => {
+	const on = { noprice: true };
+	check("items", pt.filter_items(priced_items(), on).map((r) => r.item_code), ["417-080", "2622-010"]);
+	check("a draft's missing price counts too", pt.has_no_price({ draft_no_price_lines: 1 }), true);
+	check("off", pt.filter_items(priced_items(), {}).length, 4);
+	const lines = [
+		{ row_id: "a", item_code: "A", price_state: "priced" },
+		{ row_id: "b", item_code: "B", price_state: "no_price" },
+		{ row_id: "c", item_code: "C", price_state: "no_charge" },
+	];
+	const groups = [{ doctype: "Purchase Order", documents: [{ name: "PO-1", items: lines }, { name: "PO-2", items: [lines[0]] }] }];
+	const out = pt.filter_groups(groups, on);
+	check("only the line, and only the document that has one", out.map((g) => g.documents.map((d) => [d.name, d.items.map((r) => r.item_code)])), [[["PO-1", ["B"]]]]);
+	check("a free line is not a missing price", pt.has_no_price({ price_state: "no_charge" }), false);
+	check("no prices sent, nothing is flagged", pt.has_no_price({ item_code: "X" }), false);
+	check("it narrows, so Clear is offered", [pt.is_filtered(on), pt.is_narrowed(on)], [true, true]);
+	check("it is said in words", pt.describe_filters({ noprice: true, action: true }, {}), "needs action · no price");
+});
+
+test("'No price only' and the view are in the address, and Back and Forward are not touched", () => {
+	const state = { view: "items", noprice: true, status: "ordered" };
+	const query = pt.write_query("", state);
+	check("written", query, "?pt_view=items&pt_status=ordered&pt_noprice=1");
+	check("read back", pt.read_query(query).noprice, true);
+	check("off writes nothing", pt.write_query("?pt_noprice=1", { noprice: false }), "");
+	check("the key is the widget's", pt.without_own_keys({ pt_noprice: "1", scroll_to: "x" }), { scroll_to: "x" });
+	check("cleared keeps the view and drops the filter", pt.cleared(state), { view: "items", location: "", status: "", supplier: "", action: false, noprice: false, q: "" });
+});
+
+test("the total follows the filters and says what it leaves out", () => {
+	const all = pt.spent_summary(priced_items(), "USD");
+	check("everything", [all.amount, all.text], [152.5, "$152.50"]);
+	check("counts", [all.lines, all.no_price_lines, all.no_charge_lines], [3, 3, 1]);
+	check("says how many", all.notes, ["3 lines with no price", "1 line no charge"]);
+	// With a filter on, the total is over the rows that are showing.
+	const unpriced = pt.spent_summary(pt.filter_items(priced_items(), { noprice: true }), "USD");
+	check("no price only", [unpriced.amount, unpriced.notes], [132.5, ["3 lines with no price"]]);
+	const ordered_only = pt.spent_summary(pt.filter_items(priced_items(), { status: "ordered" }), "USD");
+	check("by status", ordered_only.amount, 132.5);
+	const searched = pt.spent_summary(pt.filter_items(priced_items(), { q: "sponge" }), "USD");
+	check("by search", [searched.amount, searched.notes], [20, ["1 line no charge"]]);
+	const none = pt.spent_summary([], "USD");
+	check("nothing shown", [none.amount, none.notes], [0, []]);
+	check("a request-only item adds nothing and says nothing", pt.spent_summary([priced_items()[2]], "USD").notes, []);
+});
+
+test("the printed list gains the price columns only for someone who was sent prices", () => {
+	const items = priced_items().map((r) => Object.assign({ state_label: "Ordered", requested_qty: 5, ordered_qty: 5, received_qty: 1, suppliers: [], where_now: [] }, r));
+	const plain = pt.print_html(items, { title: "PRJ-1 materials" }, esc);
+	check("no price column", /Unit price|Spent|landscape/.test(plain), false);
+	const priced = pt.print_html(items, { title: "PRJ-1 materials", prices: true, currency: "USD" }, esc);
+	check("the columns", priced.includes("<th class=\"n\">Unit price</th>") && priced.includes("<th class=\"n\">Spent</th>"), true);
+	check("a range and a total", priced.includes("$10.00 – $12.00") && priced.includes("$152.50"), true);
+	check("the total says what it is", priced.includes("Total spent") && priced.includes("not billed or paid"), true);
+	check("No price on paper", priced.includes("No price"), true);
+	check("ten columns want a landscape page", priced.includes("@page{size:landscape}"), true);
+	const hostile = pt.print_html([Object.assign({}, items[0], { item_name: "<img src=x onerror=alert(1)>" })], { prices: true, currency: "USD" }, esc);
+	check("still escaped", hostile.includes("<img src=x") , false);
+});
+
+test("the form script draws the price columns from the registries, behind the server's say-so", () => {
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	check("columns follow the prices", code.includes("pt.visible_columns(pt.LINE_COLUMNS, this.hasPrices)") && code.includes("pt.visible_columns(pt.ITEM_COLUMNS, this.hasPrices)"), true);
+	check("prices only if the server sent them", code.includes("const prices = data.prices || null;"), true);
+	check("by-item cells only with prices", /<template v-if="hasPrices">[\s\S]*?data-label="Unit price"[\s\S]*?data-label="Spent"/.test(code), true);
+	check("by-document cells only with prices", /<template v-if="hasPrices">[\s\S]*?data-label="Rate"[\s\S]*?data-label="Amount"/.test(code), true);
+	check("the total is a footer that follows the filters", code.includes("spentSummary() {") && code.includes("pt.spent_summary(this.filteredItems, this.currency)") && code.includes('<tfoot v-if="spentSummary">'), true);
+	check("the document total is in the header, for those who see prices", code.includes('v-if="hasPrices && docPrice(group.doctype, doc).text"'), true);
+	check("the quick filter is offered only with prices", code.includes('<label v-if="hasPrices" class="pt-check"') && code.includes('v-model="view.noprice"'), true);
+	check("a shared link cannot leave it on for someone who has no prices", code.includes("if (!prices) this.view.noprice = false;"), true);
+	check("sorting is told the document's type", code.includes("this.sortFor(doctype, doc.name), doctype)"), true);
+	check("the print hands over prices only when there are some", code.includes("prices: this.hasPrices,"), true);
+	check("never bills or pays", /\b(billed|paid)\b/i.test(SCRIPT.slice(SCRIPT.indexOf("template: `"))) && !/<th[^>]*>\s*(billed|paid)/i.test(code), true);
+	check("the colspan is not a hard-coded 7", code.includes(':colspan="lineColumns.length + 1"'), true);
 });
 
 // ------------------------------------------------------------------ run
