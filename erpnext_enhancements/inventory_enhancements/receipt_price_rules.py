@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""A price is required when a stock item is received (v1.803.0). No Frappe, no I/O.
+"""A price is required when a stock item is received (v1.809.0). No Frappe, no I/O.
 
 Nik's decision of 2026-11-12. Stock comes in at the price on its receipt line, so a $0 line puts
 the part on the shelf valued at nothing, and every job it is later issued to is charged nothing
@@ -28,7 +28,7 @@ an item that is valued at nothing today.
 Rate") on the line: a free sample, a warranty replacement. No new field.
 
 **A tick a person made is judged at the submit, whoever made it and wherever** (round 2 of the
-v1.803.0 review). The first draft held "no charge" to the right people only on the two receiving
+v1.809.0 review). The first draft held "no charge" to the right people only on the two receiving
 screens, and said the form's tick "is not touched". So a receiver whose line the dialog had just
 held could open the order in the Desk, make a Purchase Receipt, tick the box and submit: stock at
 $0, no reason, no Comment. The intake's drafts worked the same way. Now the refusal itself asks,

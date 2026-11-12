@@ -141,7 +141,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Inventory",
-   "link_count": 11,
+   "link_count": 14,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -257,6 +257,36 @@
   },
   {
    "hidden": 0,
+   "is_query_report": 1,
+   "label": "Location Contents",
+   "link_count": 0,
+   "link_to": "Location Contents",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Where Is This Item",
+   "link_count": 0,
+   "link_to": "Where Is This Item",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Job Site Contents",
+   "link_count": 0,
+   "link_to": "Job Site Contents",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
    "is_query_report": 0,
    "label": "Field and travel",
    "link_count": 4,
@@ -307,7 +337,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 8,
+   "link_count": 9,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -390,9 +420,19 @@
    "link_type": "Report",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Project Materials",
+   "link_count": 0,
+   "link_to": "Project Materials",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-11-05 10:00:00.000000",
+ "modified": "2026-11-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Operations Hub",

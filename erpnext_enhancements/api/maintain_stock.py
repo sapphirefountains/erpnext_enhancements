@@ -24,7 +24,7 @@ session and the form only hides its button:
 Reads are GET or POST; the switch is POST only. The work, and every reason behind it, is in
 ``inventory_enhancements/maintain_stock.py`` and ``maintain_stock_rules.py``.
 
-**The bulk page** (v1.803.0, *Switch Items to Maintain Stock*) has its own endpoints below, all
+**The bulk page** (v1.809.0, *Switch Items to Maintain Stock*) has its own endpoints below, all
 named ``bulk_...`` and all behind the same three gates, with write on Item asked of the doctype
 rather than of one record. They preview, keep a person's choice for an item, queue the switch, and
 report on it. The work is ``inventory_enhancements/maintain_stock_bulk.py``.

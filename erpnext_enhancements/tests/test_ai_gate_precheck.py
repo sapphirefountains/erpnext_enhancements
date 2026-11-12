@@ -111,7 +111,7 @@ class TestSelectProblems(unittest.TestCase):
         )
 
     def test_a_new_item_must_say_whether_it_keeps_stock(self):
-        """v1.803.0: a new Item defaults to Maintain Stock on. A person sees the box; an assistant
+        """v1.809.0: a new Item defaults to Maintain Stock on. A person sees the box; an assistant
         does not, so a create that leaves the field out is refused with what to send."""
 
         def create(data, doctype="Item"):

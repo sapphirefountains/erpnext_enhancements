@@ -12,7 +12,7 @@ is later issued to is charged nothing for it. On 2026-09-24, 281 of the 327 subm
 Purchase Order lines dated in the previous 90 days had a rate of 0 (the Operations
 dashboard's *Unpriced PO Lines* KPI counts them nightly).
 
-**Since v1.803.0 the receipt refuses** (Nik, 2026-11-12): a stock item's line with no price
+**Since v1.809.0 the receipt refuses** (Nik, 2026-11-12): a stock item's line with no price
 can't be received (``inventory_enhancements/receipt_price_rules.py``). This order-time warning
 stays a warning, and its words say what happens at the dock.
 

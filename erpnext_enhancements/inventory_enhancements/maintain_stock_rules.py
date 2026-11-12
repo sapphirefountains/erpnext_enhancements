@@ -23,7 +23,7 @@ them except one: the receipts.
   recomputed from. A finished line counts for nothing there, so it refuses nothing here. That is
   one place this module is looser than ``cant_change``, and on purpose: nearly every item has a
   fully received Purchase Order behind it.
-* An *open* **Purchase Order or Material Request** line no longer refuses (v1.803.0; Nik,
+* An *open* **Purchase Order or Material Request** line no longer refuses (v1.809.0; Nik,
   2026-11-12: "I can't change Maintain Stock ... when the item is in an active PO. I'd like to be
   able to do that"). Read from ERPNext v16.54.0, three things go wrong when a non-stock item with
   an open order line starts keeping stock, and the switch handles each:
@@ -140,9 +140,9 @@ def may_switch(user, roles):
 #:   ``submitted`` -- any submitted line refuses
 #:   ``open``      -- an open line refuses (ERPNext's Bin rule; see :data:`OPEN_RULES`)
 #:   ``recount``   -- an open line is allowed: the switch recounts the Bin with ERPNext's own
-#:                    functions, and fills a missing warehouse (v1.803.0)
+#:                    functions, and fills a missing warehouse (v1.809.0)
 #:   ``sales_invoice`` -- a submitted line refuses, unless the relaxed rule is asked for and no
-#:                    invoice updated stock (v1.803.0)
+#:                    invoice updated stock (v1.809.0)
 #:   ``bundle``    -- the item is a Product Bundle; refuses
 LOCK_HANDLING = {
 	"Purchase Receipt Item": "guarded",

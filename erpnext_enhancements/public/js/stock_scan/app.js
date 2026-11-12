@@ -1933,7 +1933,7 @@ export class StockScanApp {
 				return;
 			}
 			if (isOrderPricePrompt(result)) {
-				// Not a save either (v1.803.0): the order line has no price, a stock item can't be received
+				// Not a save either (v1.809.0): the order line has no price, a stock item can't be received
 				// without one, and the server has posted nothing. Ask, and send this save again with the answer.
 				this.updateStepper();
 				if (sheetUi) sheetUi.showError(result.why || "That order line still has no price. Ask purchasing to put it on the order.");
@@ -2054,7 +2054,7 @@ export class StockScanApp {
 	}
 
 	/**
-	 * "What did one cost?" (v1.803.0). The server answered a receive with `needs_order_price`
+	 * "What did one cost?" (v1.809.0). The server answered a receive with `needs_order_price`
 	 * (`isOrderPricePrompt`): the order line is a stock item's and has no price, and the receipt would be
 	 * refused. What the sheet offers depends on who is holding the phone, and the server says which:
 	 *   - may price the order (`can_price`): a price box, sent as `order_rate` (per unit of the ORDER's

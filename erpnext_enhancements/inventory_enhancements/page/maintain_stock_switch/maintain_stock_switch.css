@@ -1,4 +1,4 @@
-/* Switch Items to Maintain Stock (v1.803.0). Every selector under .mss-: a Desk Page's stylesheet
+/* Switch Items to Maintain Stock (v1.809.0). Every selector under .mss-: a Desk Page's stylesheet
    is global once loaded. Colors are Frappe's own variables, so light and dark both work. */
 .mss-page { padding: var(--padding-md) 0; }
 .mss-intro { max-width: 60rem; color: var(--text-muted); margin-bottom: var(--margin-md); }

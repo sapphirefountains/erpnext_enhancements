@@ -1113,7 +1113,7 @@ def add(
 	stock and no GL for a non-stock line (84 of 103 submitted receipts on production are
 	non-stock only). Every other path keeps ``_stock_item``'s refusal.
 
-	**A stock item's order line with no price** (v1.803.0; ``receipt_price_rules`` has the rule):
+	**A stock item's order line with no price** (v1.809.0; ``receipt_price_rules`` has the rule):
 	the receipt would be refused, so nothing is posted and the answer is a payload,
 	``{needs_order_price: True, item_code, item_name, uom, purchase_order, row, can_price,
 	can_mark_free, reason_required, why, asked, qty, max_rate}``. A person who may price the
@@ -1587,7 +1587,7 @@ def _quick_item(spec, location):
 	the receipt then fails, the request rolls back and the Item goes with it.
 
 	``is_stock_item`` is set here whatever the site's default is (a Property Setter kept it at 0
-	until v1.803.0, and 1 since): a part bought on a store run always keeps stock. The Item
+	until v1.809.0, and 1 since): a part bought on a store run always keeps stock. The Item
 	Default is the bin it was bought into, for this company: without one, ERPNext copies the
 	Item Group's defaults or the global default warehouse (``Stores - SF``), and the item would
 	list at Stores with nothing there. No leaf group carries defaults on production.

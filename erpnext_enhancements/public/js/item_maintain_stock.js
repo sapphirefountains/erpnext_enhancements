@@ -8,7 +8,7 @@
 //
 // Two ways in:
 //   * Actions > Turn on Maintain Stock, on a saved Item that keeps no stock.
-//     Since v1.803.0 an open Purchase Order or Material Request no longer fails a check: the
+//     Since v1.809.0 an open Purchase Order or Material Request no longer fails a check: the
 //     check passes and says what the switch will do about it (what is left counts as on order and
 //     goes into stock when received). A passing check with something to say shows it the same way.
 //   * Save, after ticking Maintain Stock on such an Item. When ERPNext's own form would refuse (the
@@ -292,7 +292,7 @@
 			if (!cint(frm.doc.is_stock_item) && !cint(frm.doc.is_fixed_asset)) {
 				frm.add_custom_button(__("Turn on Maintain Stock"), () => start(frm), __("Actions"));
 			}
-			// v1.803.0: the way to the page that lists every non-stock item and switches the physical
+			// v1.809.0: the way to the page that lists every non-stock item and switches the physical
 			// ones together (inventory_enhancements/page/maintain_stock_switch). A route, so Back returns.
 			frm.add_custom_button(
 				__("Switch Many Items to Maintain Stock"),

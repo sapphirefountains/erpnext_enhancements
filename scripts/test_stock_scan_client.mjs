@@ -2002,7 +2002,7 @@ async function appBinActions() {
 	}
 	const L = await load("logic.js");
 
-	// v1.803.0: "what did one cost?" for an order line with no price (api/stock_scan.add answers
+	// v1.809.0: "what did one cost?" for an order line with no price (api/stock_scan.add answers
 	// `needs_order_price` instead of saving; inventory_enhancements/receipt_price_rules.py).
 	check("order price: the question is told from a save and from the unit-cost question",
 		[L.isOrderPricePrompt({ needs_order_price: true }), L.isOrderPricePrompt({ needs_valuation_rate: true }), L.isOrderPricePrompt({ log: {} }), L.isOrderPricePrompt(null)],

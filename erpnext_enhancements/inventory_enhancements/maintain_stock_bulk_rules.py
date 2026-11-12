@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Which existing items get Maintain Stock turned on, in bulk (v1.803.0). No Frappe, no I/O.
+"""Which existing items get Maintain Stock turned on, in bulk (v1.809.0). No Frappe, no I/O.
 
 Nik, 2026-11-12: "Go in and check every Maintain Stock for every item to Yes or Checked". The
 decided scope is physical items only, and it is not a migrate patch: a person sees the list, can
@@ -131,7 +131,7 @@ SERVICE_WORDS = (
 	"software",
 	"subscription",
 	"insurance",
-	# Added after reading every name on production (v1.803.0 review). None of these is in a
+	# Added after reading every name on production (v1.809.0 review). None of these is in a
 	# part's name there today; each is here so a new service line is caught.
 	"installation",
 	"cleaning",

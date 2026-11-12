@@ -823,7 +823,7 @@ export function isCostPrompt(result) {
 
 /**
  * Whether a save's answer is the question "what did one cost?" for an order line with no price
- * (v1.803.0): `add` answers `{needs_order_price: true, ...}` when the line being received is a stock
+ * (v1.809.0): `add` answers `{needs_order_price: true, ...}` when the line being received is a stock
  * item's and its order has no price on it. Nothing was posted.
  */
 export function isOrderPricePrompt(result) {

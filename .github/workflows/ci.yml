@@ -4137,6 +4137,18 @@ jobs:
       # workspace) drift. Own frappe stub, so its own step; unittest classes.
       - name: Warehouse Transactions report and hub links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v
+      # Inventory reports (v1.805.0): Location Contents, Where Is This Item, Project Materials and Job Site Contents.
+      # Fails the build if a status rule changes (as expected, assigned and empty, here and unassigned, here but
+      # assigned to another bin, on order, undecided, held at a place that is never a bin), if Location Contents
+      # stops calling the Bin Manager's own listing rule (api.stock_scan._items_at, no row cap) or grows a copy of
+      # it, if the Project Shelf's shares stop adding up to what is on the shelf, if the project roll-up changes
+      # (ordered from order lines, received from receipt lines, returns, still to come against closed-short, used
+      # less brought back, "not located" for non-stock lines), if a report raises before the Project Shelf field
+      # exists, if a stock ledger read stops skipping canceled entries or a value is interpolated into SQL, if a row
+      # carries markup (print and export read the raw cell), or if the hub links, card counts or the force-import
+      # patch (savepoint + rollback per workspace) drift. Own frappe stub, so its own step; unittest classes.
+      - name: Inventory reports and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_reports -v
       # "Turn on Maintain Stock" (v1.754.0): writes is_stock_item past ERPNext's Item.cant_change, so
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery
@@ -4150,7 +4162,7 @@ jobs:
       # (tests/sqlite_sql_helper.py), and the form script under node. Own frappe stub, so its own
       # step; unittest classes.
       #
-      # v1.803.0, same module and stub: an open Purchase Order or Material Request no longer refuses,
+      # v1.809.0, same module and stub: an open Purchase Order or Material Request no longer refuses,
       # so the build fails if the switch stops recounting the Bin through ERPNext's own
       # stock_balance functions, recounts before the flag is written and the cache cleared, leaves a
       # line without a warehouse, or lets an open Sales Order through. And the bulk page (Switch
@@ -4165,7 +4177,7 @@ jobs:
       # Runs scripts/test_maintain_stock_switch.mjs under node as well.
       - name: Turn on Maintain Stock (checks, switch, open orders, bulk page; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
-      # A price is required when a stock item is received (v1.803.0). Fails the build if a stock
+      # A price is required when a stock item is received (v1.809.0). Fails the build if a stock
       # item's $0 line can be submitted on a Purchase Receipt or a stock-updating Purchase Invoice,
       # if ERPNext's own Allow Zero Valuation Rate stops being the way to say "free on purpose", if
       # a draft is refused instead of warned (the intake makes drafts), if the warning can raise, if

@@ -31,7 +31,7 @@ frappe.provide("erpnext_enhancements.procurement");
 
 (function () {
 	const METHOD = "erpnext_enhancements.api.procurement.receive_items";
-	// v1.803.0: which open lines are a stock item's with no price. Such a line can't be received
+	// v1.809.0: which open lines are a stock item's with no price. Such a line can't be received
 	// until it has one (inventory_enhancements/receipt_price_rules.py), so the dialog asks here.
 	const NEEDS_PRICE = "erpnext_enhancements.api.procurement.lines_needing_price";
 

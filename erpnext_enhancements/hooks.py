@@ -1060,7 +1060,7 @@ doc_events = {
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
-		# v1.803.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
+		# v1.809.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
 		# page's memory of it) link to the Item, and Frappe refuses to delete a document that is
 		# linked to. on_trash runs before that check, so the rows go first and an Item can still
 		# be deleted or merged away. Never raises; nothing happens for an item with no row.
@@ -1156,7 +1156,7 @@ doc_events = {
 	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
 	# the ledger; validate catches a return at its first save, before it can be submitted.
 	#
-	# v1.803.0 -- a price is required when a stock item is received (Nik, 2026-11-12;
+	# v1.809.0 -- a price is required when a stock item is received (Nik, 2026-11-12;
 	# inventory_enhancements/receipt_price_rules.py has the rule and why). before_submit REFUSES a
 	# stock item's line whose rate is $0 and that is not ticked Allow Zero Valuation Rate (ERPNext's
 	# own field: a free sample, a warranty replacement). It is the one refusal behind every way a
@@ -1183,7 +1183,7 @@ doc_events = {
 	# line of its receipt credited that account, or when it names no receipt, so billing an old
 	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
 	# Purchase Invoice had no doc_events block before this one.
-	# v1.803.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
+	# v1.809.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
 	# to bring stock in. ERPNext swaps a typed $0 for the item's last valuation, and refuses when
 	# there is none; but it takes a last valuation of exactly 0 without a word, so an item whose
 	# stock is already valued at nothing could be received again at $0. Refused at submit for a
@@ -1195,7 +1195,7 @@ doc_events = {
 		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 	},
-	# v1.803.0 -- and the price rule above, for an invoice that receives stock itself (Update
+	# v1.809.0 -- and the price rule above, for an invoice that receives stock itself (Update
 	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {
 		"validate": [
@@ -1204,7 +1204,7 @@ doc_events = {
 		],
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 	},
-	# v1.803.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
+	# v1.809.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
 	# Invoices never updated stock (the relaxed rule, behind a tick box). Canceling or crediting
 	# such an invoice moves no stock, but Create > Delivery Note on one would take out of stock
 	# goods that left long ago. Refused, for an item switched that way, against an invoice posted
@@ -1758,7 +1758,7 @@ scheduler_events = {
 			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
 			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
-			# v1.803.0 -- the Switch Items to Maintain Stock page's background job, started again
+			# v1.809.0 -- the Switch Items to Maintain Stock page's background job, started again
 			# while any Maintain Stock Decision row is still Queued. The rows are the work list, so
 			# a deploy that flushes the job queue loses nothing: this picks the run back up within
 			# ten minutes. With nothing Queued (the usual state) it is one count and nothing else.

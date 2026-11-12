@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for Maintain Stock Decision (v1.803.0): what the *Switch Items to Maintain Stock*
+"""Controller for Maintain Stock Decision (v1.809.0): what the *Switch Items to Maintain Stock*
 page knows about one item that the Item itself cannot say.
 
 A row exists only for an item somebody chose something for, or that was queued to switch:

@@ -22,7 +22,7 @@ Three parts, each with its reasons:
   readers such as ``get_stock_items`` would otherwise see the old flag), the open orders counted
   (below), a Comment that says who, when and how, and what to do next.
 
-  **Open Purchase Orders and Material Requests** (v1.803.0) no longer refuse. After the flag is
+  **Open Purchase Orders and Material Requests** (v1.809.0) no longer refuse. After the flag is
   written, a line with no warehouse gets one (:func:`_fill_order_warehouses`, with a Comment on
   its order), and each warehouse an open line names has its Bin recounted by ERPNext's own
   ``stock_balance`` functions (:func:`_recount_bins`), never by a copy of their arithmetic.
@@ -66,7 +66,7 @@ Three parts, each with its reasons:
   would not be guarded.
 
   - **Deliver against an old invoice** (``refuse_delivering_old_invoices``, ``Delivery Note``
-    ``validate``, v1.803.0). Only for an item switched under the relaxed Sales Invoice rule, which
+    ``validate``, v1.809.0). Only for an item switched under the relaxed Sales Invoice rule, which
     leaves a ``Maintain Stock Decision`` row saying so and when. *Create > Delivery Note* on an
     invoice posted on or before that day would take out of stock goods that left long ago.
 

@@ -1,5 +1,5 @@
 /**
- * The Switch Items to Maintain Stock page's decisions (v1.803.0), without a browser.
+ * The Switch Items to Maintain Stock page's decisions (v1.809.0), without a browser.
  *
  * `inventory_enhancements/page/maintain_stock_switch/maintain_stock_switch.js` keeps what it decides
  * in one plain object, MSS: which tab a route means, which rows a tab and the search box show, what

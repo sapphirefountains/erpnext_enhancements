@@ -23,7 +23,7 @@ Five parts:
   functions that exist, and the form script's roles and endpoints match the server's. The form
   script itself runs under node in ``scripts/test_item_maintain_stock.mjs``.
 
-Added in v1.803.0, on the same stubs: an open Purchase Order or Material Request no longer
+Added in v1.809.0, on the same stubs: an open Purchase Order or Material Request no longer
 refuses (the Bin recounted through ERPNext's own functions, a missing warehouse filled, a partly
 received line said so); the relaxed Sales Invoice rule and the Delivery Note guard behind it; and
 the bulk page (``maintain_stock_bulk_rules``, ``maintain_stock_bulk``, the ``bulk_...`` endpoints):
@@ -1822,7 +1822,7 @@ class WiringTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Open purchase orders and material requests (v1.803.0)
+# Open purchase orders and material requests (v1.809.0)
 # ---------------------------------------------------------------------------
 
 STORES = "Stores - TC"
@@ -2187,7 +2187,7 @@ class DeliveryGuardTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# The bulk page: which items, in words (v1.803.0)
+# The bulk page: which items, in words (v1.809.0)
 # ---------------------------------------------------------------------------
 
 
@@ -2908,7 +2908,7 @@ class BulkEndpointTest(unittest.TestCase):
 
 
 class DecisionRowFollowsTheItemTest(unittest.TestCase):
-	"""An Item with a row can still be renamed, merged and deleted (v1.803.0, found in review)."""
+	"""An Item with a row can still be renamed, merged and deleted (v1.809.0, found in review)."""
 
 	def setUp(self):
 		reset_state()
@@ -3016,7 +3016,7 @@ class DecisionRowFollowsTheItemTest(unittest.TestCase):
 
 
 class ItemCreatorsSayStockOnPurposeTest(unittest.TestCase):
-	"""New items default to Maintain Stock on (v1.803.0), so code that creates an Item must say
+	"""New items default to Maintain Stock on (v1.809.0), so code that creates an Item must say
 	which it means. A new creator that leaves the field out fails here, before it can quietly
 	make a labor line a stock item."""
 

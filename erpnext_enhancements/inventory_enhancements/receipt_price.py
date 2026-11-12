@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""A price is required when a stock item is received (v1.803.0): the hooks and the reads.
+"""A price is required when a stock item is received (v1.809.0): the hooks and the reads.
 
 Every judgement and every sentence is ``receipt_price_rules``; this module finds which items keep
 stock, and talks to ERPNext.

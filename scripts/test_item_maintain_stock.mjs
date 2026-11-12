@@ -160,7 +160,7 @@ const switched = {
 // 1. Button: shown once for a role holder on a non-stock item; not for others / stock items / assets.
 let frm = makeFrm({});
 handlers.refresh(frm);
-// Two since v1.803.0: the single switch first, then the way to the bulk page.
+// Two since v1.809.0: the single switch first, then the way to the bulk page.
 assert.equal(frm.buttons.length, 2);
 assert.equal(frm.buttons[0].label, "Turn on Maintain Stock");
 assert.equal(frm.buttons[0].group, "Actions");

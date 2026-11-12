@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for "a price is required when a stock item is received" (v1.803.0).
+"""Bench-free tests for "a price is required when a stock item is received" (v1.809.0).
 
 Three parts:
 

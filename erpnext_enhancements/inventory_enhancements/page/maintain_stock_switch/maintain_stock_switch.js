@@ -1,4 +1,4 @@
-// Switch Items to Maintain Stock (v1.803.0). Nik, 2026-11-12: "Go in and check every Maintain Stock
+// Switch Items to Maintain Stock (v1.809.0). Nik, 2026-11-12: "Go in and check every Maintain Stock
 // for every item to Yes or Checked"; decided scope, physical items only, and a list he approves
 // before anything changes. This page is that list. Nothing switches until "Switch N items" is
 // pressed and confirmed, and each item then goes through the same checked switch as the Item form's

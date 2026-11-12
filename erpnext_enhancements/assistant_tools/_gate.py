@@ -1574,7 +1574,7 @@ def _error_response(message, error_type="AIGateError"):
 #: Tools whose arguments are {doctype, data, ...} with `data` written onto the document.
 PRECHECKED_TOOLS = frozenset({"create_document", "update_document"})
 
-#: Since v1.803.0 a new Item starts with Maintain Stock ticked. A person at the form sees the
+#: Since v1.809.0 a new Item starts with Maintain Stock ticked. A person at the form sees the
 #: box; an assistant's create_document does not, so a labor line or a fee created without the
 #: field would quietly become a stock item, and that can't be undone from the form once the
 #: item is used. So a create of an Item must say `is_stock_item` on purpose, either way. This

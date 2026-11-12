@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Switch the existing physical items to Maintain Stock, with a list a person approves (v1.803.0).
+"""Switch the existing physical items to Maintain Stock, with a list a person approves (v1.809.0).
 
 The *Switch Items to Maintain Stock* page (``page/maintain_stock_switch``) is the screen; the
 endpoints are in ``api/maintain_stock.py``. Nothing here runs on migrate: no item changes until a

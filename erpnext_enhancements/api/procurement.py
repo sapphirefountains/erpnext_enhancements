@@ -222,7 +222,7 @@ def _receiving_warehouse(warehouse, company):
 
 @frappe.whitelist(methods=["GET", "POST"])
 def lines_needing_price(purchase_order):
-    """The open lines of one order that need a price before they can be received (v1.803.0).
+    """The open lines of one order that need a price before they can be received (v1.809.0).
 
     The Receive Items dialog asks when it opens, so it can show a price box on those rows.
     ``{"lines": [{"purchase_order_item", "idx", "item_code", "item_name", "uom"}], "can_price",
@@ -312,7 +312,7 @@ def receive_items(
       was put, which is right.
     * **``remarks``** replaces the receipt's remarks, so the page can say on the voucher that
       it came from a scan and who did it.
-    * **A stock item's line with no price is settled before a receipt exists** (v1.803.0;
+    * **A stock item's line with no price is settled before a receipt exists** (v1.809.0;
       ``inventory_enhancements/receipt_price_rules.py`` has the rule and why). A row may carry
       ``rate`` (what each one cost) or ``no_charge: 1`` (free on purpose, with a reason in the
       row's ``reason`` or in ``no_charge_reason``). A price goes on the order line through
@@ -458,7 +458,7 @@ def receive_order_line(
     rounding would receive goods that did not arrive.
 
     ``rate``, ``no_charge`` and ``no_charge_reason`` are the receiver's answer for a stock
-    item's line with no price (v1.803.0). ``rate`` is per unit of the **order line's** UOM, the
+    item's line with no price (v1.809.0). ``rate`` is per unit of the **order line's** UOM, the
     unit the order is priced in. A line this person can neither price nor mark free refuses here
     (``hold_unpriced=0``): the page asked first, and made purchasing's ToDo when it did.
     """
