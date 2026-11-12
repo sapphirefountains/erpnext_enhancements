@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     never touches this), **Location audit**, **Items with no place recorded**, **Money (by item)**,
     **Money (by document)** (Rate and Amount exist only by document, Unit price and Spent only by item),
     **Missing prices** and **To chase**. They are in `data/procurement_tracker_views.json`.
-  - **Your own views** are `Procurement Tracker View` records, one person's, seen by nobody else, the
+  - **Your own views** are `Procurement Tracker View` records, one person's, private to them (a System Manager can open the DocType's list), the
     same on every project and on every device. **Not Frappe's user settings:** on this site those are
     served from Redis, which every deploy flushes. The DocType gives no role but System Manager any
     permission, so nothing reaches another person's views through `/api/resource`; the four endpoints in
@@ -42,19 +42,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     one **Clear filters** button.
   - **The browser remembers the last layout** per person and grouping (`localStorage`, every access in
     try/catch), with unsaved changes on top of it, and the address still wins: `pt_layout` names the view
-    in a link (absent for Standard), and a filter turned off that the view has on is written as off, so a
-    reload does not bring it back. Back and Forward are untouched (`history.replaceState`, never a new
+    in a link (absent for Standard), a filter turned off that the view has on is written as off, so a
+    reload does not bring it back, and the filters on columns are written too (`pt_rules`, only where they
+    differ from the view's own and only when short enough for an address). **A link shows its sender's
+    rows:** when the address names a view or a filter, every toolbar filter and every filter on a column
+    comes from the address, never from the recipient's browser memory (which still supplies the columns and
+    the sort, which cannot hide a row, when it is the same view). Without an address, the memory is the
+    whole answer. Back and Forward are untouched (`history.replaceState`, never a new
     entry), and nothing here changes the Project form, so it is never marked as changed.
   - **Who may see what has not changed.** A layout is a list of names, not data: the price columns are not in
     the response for anybody who may not read Purchase Orders (v1.814.0), so a view that names them has
     nothing to draw. A money view opened by such a person shows the columns it can and says which are
     missing and why; their filters on price columns are set aside the same way.
+  - Also: switching By item / By document carries every toolbar filter across as it stands, an unticked one
+    included; the printed list's "Showing:" line names the filters on columns; the tracker waits at most four
+    seconds for the saved views and then draws without them; a saved view that is no longer there falls back
+    to Standard with a note, and one that merely could not be looked up keeps its place.
   - Not in this change: sharing a personal view; the by-item Print list still prints its own columns; the
-    picker has no drag-to-reorder; filters on columns are in the view and the browser's memory, not the
-    address.
+    picker has no drag-to-reorder; a very long set of filters on columns is not written to the address (a
+    reload then goes back to the view's own).
   - New bench-free suite `tests/test_procurement_view_rules.py` (layout rules, repair, owner checks on the
     endpoints and the controller, the DocType's permissions) in its own `ci.yml` step, and the node suite
-    grew from 39 to 56 tests: the browser's column registries are held to the server's catalog key for key,
+    grew from 39 to 64 tests: the browser's column registries are held to the server's catalog key for key,
     every preset is accepted, applying a view, column order, each filter test, the fallback for a bad stored
     view, and the address against the remembered layout. See `docs/procurement-tracker-map.md`.
 

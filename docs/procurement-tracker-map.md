@@ -265,10 +265,15 @@ column names; they simply do not draw for them.
    (absent for the two standard views, as a plain address already means them); `pt_view` is the
    grouping. A view in the link that is not the person's (a stranger's id, a deleted one) opens the
    standard view and says so.
-2. What the person changed **on top of that same view** (columns, sort, filters on columns, which the
-   address does not carry) comes back from what the form kept across a refresh, then from the browser's
-   memory, but only when that memory is of the same view. A link to another view does not take them.
-3. With **no address at all**, the browser's last layout is used, else Standard by document.
+2. **Every filter comes from the address**, over the view's own: the five toolbar filters (absent means
+   the view's own, which for Standard is off) and the filters on columns (`pt_rules`, JSON, written only
+   where they differ from the view's own and only up to 1,500 characters). **Never from this person's
+   memory**: a link must show the recipient the rows its sender saw. Only what cannot hide a row, the
+   columns and the sort, comes back from what the form kept across a refresh or the browser's memory, and
+   only when that memory is of the same view.
+3. With **no address at all**, the browser's last layout is used, else Standard by document. A remembered
+   view that no longer exists (deleted on another device) opens Standard with a note; when the saved views
+   could not be loaded at all (`views_ok` false) its id is kept, so a failed request does not erase it.
 
 The address also says when a filter the view has on has been turned **off** (`pt_action=0`,
 `pt_status=`), otherwise a reload would bring a cleared filter back from the saved view. It is written
@@ -284,16 +289,20 @@ brings By document back as it was), `{id, layout}` each, the search left out. Ev
 older release is mended and an unreadable one is ignored. A write still waiting when the form refreshes
 is made, not dropped.
 
-**Switching grouping** takes the layout last used in that grouping (or its Standard view) and carries the
-toolbar filters and the search across, as it always has; the filters on columns stay with their view.
+**Switching grouping** takes the layout last used in that grouping (or its Standard view) and carries every
+toolbar filter and the search across as they stand now, an unticked one included
+(`switch_grouping`); the filters on columns stay with their view.
 
 **A sort.** A click on a header in By item changes the view's sort (a change to the view). A click on a
 document's table is that document's own, as before; the view's sort is the starting point of every
 document's table. "Not sorted" in the Columns panel clears it.
 
-**Known limits.** Filters on columns are not in the address (they are in the view and the browser's
-memory), so a shared link carries the view's id and the toolbar filters but not a person's unsaved
-column filters. A view shared by link opens for somebody else only if it is a built-in one; there is no
+**The tracker never waits on the views.** `get_views` is fetched beside the feed and the tracker draws
+after at most four seconds without it (frappe never calls the error callback for a query timeout or a
+deadlock, so settling on the callbacks alone could hang); the server answers `unavailable` instead of a
+500 when it cannot read the table (a deploy not yet migrated). **Known limits.** A very long set of filters
+on columns does not fit an address and is left out of it. A person without Purchase Order read who opens
+Missing prices sees every item and is told why. A view shared by link opens for somebody else only if it is a built-in one; there is no
 sharing of personal views (not asked for). The picker reorders with up and down buttons, not by dragging.
 The by-item **Print list** still prints its own fixed columns, not the view's. Not run on a bench: see the
 pull request.

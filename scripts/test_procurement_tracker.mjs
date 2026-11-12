@@ -864,7 +864,7 @@ test("the address names a view; what the browser remembered fills in the rest", 
 	check("and an address's filter is the address's", pt.resolve_start({ search: "?pt_status=late", views: views, prices: true }).view.status, "late");
 	check("the no-price filter from a link, for somebody who sees no prices, is off", pt.resolve_start({ search: "?pt_view=items&pt_noprice=1", views: views, prices: false }).view.noprice, false);
 	const deleted = pt.resolve_start({ search: "", views: views, memory: memory("items", "PTV-00007", edited), prices: true });
-	check("a remembered view that has been deleted: its layout is kept, under the standard name", [deleted.layout.id, deleted.layout.columns], ["std-items", ["item", "status"]]);
+	check("a remembered view that has been deleted goes with its layout: the standard view, and it says so", [deleted.layout.id, deleted.layout.columns, deleted.notes.length], ["std-items", pt.STANDARD_COLUMNS.items, 1]);
 	check("the search comes from the address", pt.resolve_start({ search: "?pt_q=pipe", views: views, prices: true }).view.q, "pipe");
 });
 
@@ -932,7 +932,7 @@ test("the form script keeps views off the form, off Redis, in try/catch storage,
 	check("the memory is per person", code.includes("pt.storage_key(frappe.session.user)"), true);
 	check("the layout is chosen by the same function the tests run", code.includes("pt.resolve_start({"), true);
 	check("the view in the address is written without a history entry", code.includes("pt.write_view_query(window.location.search"), true);
-	check("the views are fetched beside the feed, and the tracker draws without them", code.includes("procurement_views.get_views") && code.includes("error: () => resolve(null)"), true);
+	check("the views are fetched beside the feed, and the tracker draws without them", code.includes("procurement_views.get_views") && code.includes("error: () => settle(null)"), true);
 	check("a pending memory write is made, not dropped, when the app goes", /beforeUnmount\(\) \{[\s\S]*?if \(memory_timer\) flushMemory\(\);/.test(code), true);
 	check("the columns are the view's, by the shown_columns rule", code.includes("pt.shown_columns(this.layout.columns, this.mode, this.hasPrices)"), true);
 	check("the price filter and columns are behind the server's say-so", code.includes("prices: !!prices,") && code.includes("pt.usable_rules(this.layout.rules, this.mode, this.hasPrices)"), true);
@@ -944,6 +944,135 @@ test("the form script keeps views off the form, off Redis, in try/catch storage,
 		check("endpoint " + name, code.includes(`"${name}"`) && new RegExp(`def ${name}\\(`).test(VIEWS_PY), true);
 	}
 	check("the writes are POSTs, on the server and from here", /whitelist\(methods=\["POST"\]\)\s*\ndef save_view/.test(VIEWS_PY) && code.includes('type: "POST"'), true);
+});
+
+// ------------------------------------------------------------------ review fixes (PR 1452)
+
+const memory_of = (mode, id, layout, other) => ({ v: 1, mode: mode, modes: Object.assign({ [mode]: { id: id, layout: layout } }, other || {}) });
+const noisy_layout = () => ({
+	columns: ["item", "status"],
+	sort: null,
+	filters: { location: "project_shelf", status: "ordered", supplier: "North Supply", action: true, noprice: false, rules: [{ column: "received", op: "between", min: 5, max: null }] },
+});
+
+test("M1: a link shows its sender's rows: every filter comes from the address, never from the recipient's memory", () => {
+	const views = all_views();
+	const memory = memory_of("items", "std-items", noisy_layout());
+	const old_link = pt.resolve_start({ search: "?pt_view=items&pt_status=late", views: views, memory: memory, prices: true });
+	check("the link's own filter", old_link.view.status, "late");
+	check("none of the recipient's toolbar filters", [old_link.view.location, old_link.view.supplier, old_link.view.action], ["", "", false]);
+	check("and no column filter of theirs", old_link.layout.rules, []);
+	check("their columns are only a look, and stay", old_link.layout.columns, ["item", "status"]);
+	const bare = pt.resolve_start({ search: "?pt_view=items", views: views, memory: memory, prices: true });
+	check("a bare link opens unfiltered", [bare.view.supplier, bare.view.action, bare.layout.rules], ["", false, []]);
+	const link_to_money = pt.resolve_start({ search: "?pt_layout=money-items&pt_view=items", views: views, memory: memory_of("items", "money-items", noisy_layout()), prices: true });
+	check("a view's link: the view's own filters (none), not the memory's", [link_to_money.view.supplier, link_to_money.view.action, link_to_money.layout.rules], ["", false, []]);
+	// A reload of one's own page is an address too: what is filtering is in it.
+	const filtering = Object.assign(pt.default_state(), { view: "items", supplier: "North Supply", action: true });
+	const rules = noisy_layout().filters.rules;
+	const std = pt.standard_layout("items").filters;
+	const written = pt.write_view_query("", filtering, "std-items", std, rules);
+	const reload = pt.resolve_start({ search: written, views: views, memory: memory, prices: true });
+	check("the address carries the toolbar filters and the column filters", [reload.view.supplier, reload.view.action, reload.layout.rules], ["North Supply", true, rules]);
+	check("a column filter is written only where it differs from the view's own", [pt.write_view_query("", pt.default_state(), "std-items", std, []).includes("pt_rules"), written.includes("pt_rules")], [false, true]);
+	const chase = CATALOG.presets.find((p) => p.id === "to-chase");
+	const gaps = CATALOG.presets.find((p) => p.id === "location-gaps");
+	const cleared_rules = pt.write_view_query("", Object.assign(pt.default_state(), { view: "items" }), "location-gaps", gaps.layout.filters, []);
+	check("a view's own column filter, removed, is written as removed", pt.resolve_start({ search: cleared_rules, views: views, prices: true }).layout.rules, []);
+	check("and left alone, the view's own comes back", pt.resolve_start({ search: "?pt_layout=location-gaps&pt_view=items", views: views, prices: true }).layout.rules, gaps.layout.filters.rules);
+	check("an address that cannot be read keeps the view's own", pt.resolve_start({ search: "?pt_view=items&pt_layout=location-gaps&pt_rules=%7Bnot", views: views, prices: true }).layout.rules, gaps.layout.filters.rules);
+	const huge = new Array(12).fill({ column: "item", op: "contains", value: "x".repeat(120) });
+	check("too long for an address: left out, not cut in half", pt.write_view_query("", Object.assign(pt.default_state(), { view: "items" }), "std-items", std, huge).includes("pt_rules"), false);
+	check("the rules key is the widget's, handed back to frappe", pt.without_own_keys({ pt_rules: "[]", a: 1 }), { a: 1 });
+	check("a person without prices never gets the price filter from a link", pt.resolve_start({ search: "?pt_view=items&pt_noprice=1&pt_rules=" + encodeURIComponent(JSON.stringify([{ column: "spent", op: "between", min: 1 }])), views: views, prices: false }).view.noprice, false);
+	check("no address: the memory is the whole answer, as before", pt.resolve_start({ search: "", views: views, memory: memory, prices: true }).view.supplier, "North Supply");
+	check("the shipped to-chase link keeps its filter off when turned off", pt.resolve_start({ search: pt.write_view_query("", Object.assign(pt.default_state(), { view: "items" }), "to-chase", chase.layout.filters, chase.layout.filters.rules), views: views, prices: true }).view.action, false);
+});
+
+test("M2: switching grouping carries every toolbar filter, an unticked one stays unticked", () => {
+	const views = all_views();
+	const memory = memory_of("items", "std-items", noisy_layout(), { documents: { id: "std-documents", layout: pt.standard_layout("documents") } });
+	const now = Object.assign(pt.default_state(), { view: "items", action: false, supplier: "", q: "pipe" });
+	const to_docs = pt.switch_grouping({ views: views, memory: memory, view: now, name: "documents", prices: true });
+	check("the grouping", to_docs.view.view, "documents");
+	const back = pt.switch_grouping({ views: views, memory: memory, view: Object.assign({}, to_docs.view, { action: false }), name: "items", prices: true });
+	check("By item again: the filters that were turned off are off, though By item's memory had them on", [back.view.action, back.view.supplier, back.view.status, back.view.location], [false, "", "", ""]);
+	check("the layout is the grouping's own memory (columns), the search comes along", [back.layout.columns, back.view.q], [["item", "status"], "pipe"]);
+	const on = pt.switch_grouping({ views: views, memory: null, view: Object.assign(pt.default_state(), { view: "documents", action: true, status: "late" }), name: "items", prices: true });
+	check("filters that are on come across", [on.view.action, on.view.status], [true, "late"]);
+	check("a grouping with nothing remembered opens its standard view", [on.layout.id, on.layout.columns], ["std-items", pt.STANDARD_COLUMNS.items]);
+	check("without prices the no-price filter stays off", pt.switch_grouping({ views: views, view: Object.assign(pt.default_state(), { noprice: true }), name: "items", prices: false }).view.noprice, false);
+	check("a view that could not be looked up (views not loaded) keeps its id", pt.switch_grouping({ views: pt.fallback_views(), views_ok: false, memory: memory_of("items", "PTV-1", noisy_layout()), view: pt.default_state(), name: "items", prices: true }).layout.id, "PTV-1");
+	check("the widget uses it", SCRIPT.includes("pt.switch_grouping({"), true);
+});
+
+test("M3: the printed list says what filters its rows, columns included", () => {
+	const options = { states: [], locations: [], suppliers: [] };
+	const rules = [{ column: "received", op: "between", min: 2, max: null }];
+	const words = pt.describe_filters(Object.assign(pt.default_state(), { view: "items" }), options, rules, "items");
+	check("the words", words, "Received is at least 2");
+	const page = pt.print_html(view_rows(), { title: "T", filters: words, prices: false }, (v) => String(v));
+	check("the sheet's heading carries them", page.includes("Showing: Received is at least 2"), true);
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "");
+	check("the form script hands the column filters to the heading", code.includes("filters: pt.describe_filters(this.view, this.options, this.filterCtx.rules, this.mode),"), true);
+});
+
+test("M4: the tracker never waits on the saved views, and a save that never answers does not stay busy", () => {
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	check("a time limit", code.includes("const SAVED_VIEWS_WAIT_MS = 4000;") && code.includes("setTimeout(() => settle(null), SAVED_VIEWS_WAIT_MS)"), true);
+	check("it settles on the error, and on the promise frappe.call returns", code.includes("error: () => settle(null)") && code.includes("call.then(null, () => settle(null))"), true);
+	check("a throw settles it too", /\} catch \(e\) \{\s*settle\(null\);/.test(code), true);
+	check("it settles once", code.includes("if (settled) return;"), true);
+	check("the feed is not held up by anything else", code.includes("Promise.all([logic, feed, saved])"), true);
+	check("busy lets go after a while, and on any answer", code.includes("}, 30000);") && code.includes("error: finish,"), true);
+	check("the server says when the person's own views could not be read", code.includes("saved.unavailable"), true);
+	// Without the views the tracker uses the standard ones and offers no saving.
+	check("fallback views", pt.fallback_views().length, 2);
+});
+
+test("L1: a saved view that is gone falls back to Standard, and one that could not be looked up keeps its place", () => {
+	const views = all_views();
+	const edited = noisy_layout();
+	const gone = pt.resolve_start({ search: "", views: views, memory: memory_of("items", "PTV-9", edited), prices: true });
+	check("gone: the standard view, its layout, a note", [gone.layout.id, gone.layout.columns, gone.notes.length], ["std-items", pt.STANDARD_COLUMNS.items, 1]);
+	const down = pt.resolve_start({ search: "", views: pt.fallback_views(), views_ok: false, memory: memory_of("items", "PTV-9", edited), prices: true });
+	check("views not loaded: the id and the layout are kept, so the memory is not overwritten", [down.layout.id, down.layout.columns], ["PTV-9", ["item", "status"]]);
+	const link = pt.resolve_start({ search: "?pt_view=items&pt_layout=PTV-9", views: pt.fallback_views(), views_ok: false, prices: true });
+	check("a link to a view while views are not loaded keeps the id (the address is not rewritten) and says why", [link.layout.id, link.notes[0].includes("could not be loaded")], ["PTV-9", true]);
+	const stranger = pt.resolve_start({ search: "?pt_view=items&pt_layout=PTV-9", views: views, prices: true });
+	check("with the views loaded it is somebody else's or gone: Standard, and a note", [stranger.layout.id, stranger.notes.length], ["std-items", 1]);
+	check("the widget says the view is not loaded rather than naming Standard", SCRIPT.includes('"Saved view (not loaded)"'), true);
+});
+
+test("L2: a column named after something every object has is not a column", () => {
+	const out = pt.clean_layout({ columns: ["constructor", "__proto__", "toString", "hasOwnProperty", "item"], sort: { key: "constructor", dir: "asc" } }, "items");
+	check("only the real one", out.layout.columns, ["item"]);
+	check("and it says it was mended", [out.repaired, out.layout.sort], [true, null]);
+	check("shown_columns skips them", pt.shown_columns(["constructor", "item", "__proto__"], "documents", true).columns.map((c) => c.key), ["item"]);
+	check("a filter on one is no filter", [pt.clean_rule({ column: "constructor", op: "blank" }, "items"), pt.clean_rule({ column: "__proto__", op: "blank" }, "items")], [null, null]);
+	check("hide, show and sort ignore them", [pt.with_column(["item"], "constructor", true, "items"), pt.fix_sort({ key: "constructor", dir: "asc" }, ["constructor"], "items"), pt.next_sort(null, "toString", pt.ITEM_COLUMNS)], [["item"], null, null]);
+	// A value from storage that is not text never reaches String().
+	const evil = { column: "item", op: "contains", value: { toString: null } };
+	check("an object where text should be is no filter, and does not throw", pt.clean_rule(evil, "items"), null);
+	check("a layout holding it still draws", pt.clean_layout({ columns: ["item"], filters: { status: { toString: null }, rules: [evil] } }, "items").layout.columns, ["item"]);
+	check("memory holding it is mended, not thrown", pt.parse_remembered(JSON.stringify({ v: 1, mode: "items", modes: { items: { id: "std-items", layout: { columns: ["item"], filters: { rules: [evil] } } } } })).modes.items.layout.filters.rules, []);
+	check("the registries have no prototype", [Object.getPrototypeOf(pt.LINE_COLUMNS), Object.getPrototypeOf(pt.ITEM_COLUMNS)], [null, null]);
+});
+
+test("a view that filters on 'no price' says so to a person who is shown no prices", () => {
+	const missing = CATALOG.presets.find((p) => p.id === "missing-prices");
+	check("for them, a sentence", pt.noprice_note(missing.layout.filters, false), "This view lists the items with no price, which needs permission to read Purchase Orders, so it lists every item.");
+	check("for a person who sees prices, nothing", pt.noprice_note(missing.layout.filters, true), "");
+	check("a view without that filter, nothing", pt.noprice_note(pt.standard_layout("items").filters, false), "");
+});
+
+test("L5 and L6: no claim that nobody else can see a view, and a column move does not reopen closed documents", () => {
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	check("the wording", code.includes("Only you can see your views"), false);
+	check("private to you, except administrators", code.includes("private to you; only an administrator can see them in the system"), true);
+	const layout_watch = code.slice(code.indexOf("layout: {\n\t\t\t\tdeep: true"), code.indexOf('"layout.rules"'));
+	check("the layout watcher does not open folders", layout_watch.includes("expandMatches"), false);
+	check("the column filters' watcher does", /"layout\.rules": \{[\s\S]*?expandMatches\(\)/.test(code), true);
 });
 
 // ------------------------------------------------------------------ run

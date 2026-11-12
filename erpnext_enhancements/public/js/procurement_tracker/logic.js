@@ -36,16 +36,22 @@ export const QUERY_KEYS = {
 	action: "pt_action",
 	noprice: "pt_noprice",
 	q: "pt_q",
-	// The saved view the layout started as (v1.815.0). Absent for the standard views.
+	// The saved view the layout started as (v1.816.0). Absent for the standard views.
 	layout: "pt_layout",
+	// The filters on columns (JSON), written only where they differ from the view's own.
+	rules: "pt_rules",
 };
 
 export function default_state() {
 	return { view: VIEW_DOCUMENTS, location: "", status: "", supplier: "", action: false, noprice: false, q: "" };
 }
 
+// Text, trimmed. Only text and numbers are text: an object from storage or an address is nothing, never
+// "[object Object]", and never a call into its own toString.
 function text(value) {
-	return value === null || value === undefined ? "" : String(value).trim();
+	if (typeof value === "string") return value.trim();
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return "";
 }
 
 // The view state an address's query names. Anything it does not say is the default; a view it
@@ -307,7 +313,9 @@ const document_names = (r) => {
 };
 const qty_column = (label, field) => ({ label, cls: "qty-col", type: "number", filter: "number", value: (r) => r[field], fv: (r) => r[field] });
 
-export const LINE_COLUMNS = {
+// Both registries are made without a prototype: a column key read from storage or a link is looked up here,
+// and "constructor", "toString" or "__proto__" must not find anything.
+export const LINE_COLUMNS = Object.assign(Object.create(null), {
 	item: { label: "Item", type: "text", filter: "text", value: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim(), fv: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim() },
 	where: { label: "Where it is now", type: "text", filter: "choice", options: "locations", value: (r) => r.where_now_text, fv: (r) => r.location_kinds || [], ft: (r) => r.where_now_text || "" },
 	requested: qty_column("Requested", "requested_qty"),
@@ -327,10 +335,10 @@ export const LINE_COLUMNS = {
 	received_at: { label: "Received at", type: "text", filter: "text", value: (r) => r.received_at, fv: (r) => joined(r.received_at) },
 	unit: { label: "Unit", type: "text", filter: "text", value: (r) => r.stock_uom, fv: (r) => r.stock_uom || "" },
 	doc_chain: { label: "Doc Chain", type: "text", filter: "text", sortable: false, value: () => null, fv: (r) => document_names(r) },
-};
+});
 
 // The by-item table. More columns than a document's: the date the item is due, its suppliers and documents.
-export const ITEM_COLUMNS = {
+export const ITEM_COLUMNS = Object.assign(Object.create(null), {
 	item: LINE_COLUMNS.item,
 	requested: LINE_COLUMNS.requested,
 	ordered: LINE_COLUMNS.ordered,
@@ -353,7 +361,7 @@ export const ITEM_COLUMNS = {
 	received_at: LINE_COLUMNS.received_at,
 	unit: LINE_COLUMNS.unit,
 	lines: { label: "Lines on this job", cls: "qty-col", type: "number", filter: "number", value: (r) => r.line_count, fv: (r) => r.line_count },
-};
+});
 
 function no_price_count(r) {
 	if (r.no_price_lines === undefined && r.draft_no_price_lines === undefined) return null;
@@ -775,7 +783,7 @@ export function spent_summary(items, currency) {
 	return out;
 }
 
-// ------------------------------------------------------------------ saved views (v1.815.0)
+// ------------------------------------------------------------------ saved views (v1.816.0)
 
 /*
  * A VIEW is a named layout for one of the two groupings: which columns show and in what order, the
@@ -828,6 +836,7 @@ const FILTERS_OFF = { location: "", status: "", supplier: "", action: false, nop
 const BASIC_FILTERS = ["location", "status", "supplier", "action", "noprice"];
 const STORAGE_PREFIX = "sf_pt_layout_v1:";
 const STORAGE_LIMIT = 60000;
+const RULES_ADDRESS_LIMIT = 1500;
 
 export function mode_of(mode) {
 	return VIEWS.includes(mode) ? mode : VIEW_DOCUMENTS;
@@ -1205,10 +1214,19 @@ export function address_names_view(search) {
  * view itself has it on: without that, a reload would bring a cleared filter back from the saved view.
  * `base` is the view's own filters ({ location, status, supplier, action, noprice }).
  */
-export function write_view_query(search, state, layout_id, base) {
+export function write_view_query(search, state, layout_id, base, rules) {
 	const params = new URLSearchParams(write_query(search, state));
 	const s = Object.assign(default_state(), state || {});
 	const b = base || {};
+	// The filters on columns, where they differ from the view's own: a link then shows the rows its sender saw.
+	// Too long for an address (more than RULES_ADDRESS_LIMIT characters): left out, and a reload goes back to the
+	// view's own.
+	if (rules !== undefined) {
+		const now = JSON.stringify(ready_rules(rules, s.view));
+		const was = JSON.stringify(ready_rules(b.rules, s.view));
+		if (now !== was && now.length <= RULES_ADDRESS_LIMIT) params.set(QUERY_KEYS.rules, now);
+		else params.delete(QUERY_KEYS.rules);
+	}
 	["location", "status", "supplier"].forEach((key) => {
 		if (!text(s[key]) && text(b[key])) params.set(QUERY_KEYS[key], "");
 	});
@@ -1290,6 +1308,9 @@ export function parse_remembered(textValue) {
 export function resolve_start(opts) {
 	const o = opts || {};
 	const views = o.views || [];
+	// False when the saved views could not be fetched: a view that is not in the list is then not known to be
+	// gone, so its id is kept (and written back) instead of being replaced by the standard view.
+	const views_ok = o.views_ok !== false;
 	const find = (id) => views.find((v) => v.id === id) || null;
 	const prices = !!o.prices;
 	const notes = [];
@@ -1311,12 +1332,27 @@ export function resolve_start(opts) {
 				mode = hit.mode;
 				id = hit.id;
 				base = hit.layout;
-			} else {
+			} else if (views_ok) {
 				notes.push("The view named in this link is not one of yours, so the standard view is shown.");
+			} else {
+				id = wanted;
+				notes.push("Your saved views could not be loaded, so the view named in this link is not shown.");
 			}
 		}
+		// The address says WHICH rows: every toolbar filter and every filter on a column comes from it, over the
+		// view's own, and never from this person's memory (a link must show the rows its sender saw). Only what
+		// cannot hide a row, the columns and the sort, comes back from the memory, for the same view.
 		const kept = entry_for(mode);
-		const layout = kept && kept.id === id ? kept.layout : base;
+		const shown = kept && kept.id === id ? kept.layout : base;
+		let rules = base.filters.rules;
+		if (params.has(QUERY_KEYS.rules)) {
+			try {
+				rules = ready_rules(JSON.parse(params.get(QUERY_KEYS.rules)), mode);
+			} catch (e) {
+				rules = base.filters.rules;
+			}
+		}
+		const layout = { columns: shown.columns, sort: shown.sort, filters: Object.assign({}, base.filters, { rules: rules }) };
 		const state = state_from_layout(layout, mode, { id: id, q: address.q, prices: prices });
 		BASIC_FILTERS.forEach((key) => {
 			if (params.has(QUERY_KEYS[key])) state.view[key] = address[key];
@@ -1329,12 +1365,50 @@ export function resolve_start(opts) {
 	if (entry) {
 		const mode = mode_of(entry.mode);
 		const known = find(entry.id);
-		const id = known && known.mode === mode ? entry.id : STANDARD_VIEW_IDS[mode];
-		const state = state_from_layout(entry.layout, mode, { id: id, q: "", prices: prices });
+		let id = entry.id;
+		let layout = entry.layout;
+		if (!(known && known.mode === mode) && views_ok) {
+			// The view last used is gone (deleted on another device): its layout goes with it.
+			id = STANDARD_VIEW_IDS[mode];
+			layout = (find(id) || standard_view(mode)).layout;
+			notes.push("The saved view you last used is no longer available, so the standard view is shown.");
+		}
+		const state = state_from_layout(layout, mode, { id: id, q: "", prices: prices });
 		return { view: state.view, layout: state.layout, notes: notes };
 	}
 	const state = state_from_layout(standard_layout(VIEW_DOCUMENTS), VIEW_DOCUMENTS, { id: STANDARD_VIEW_IDS.documents, prices: prices });
 	return { view: state.view, layout: state.layout, notes: notes };
+}
+
+/**
+ * The state after a click on By item / By document: the layout last used in that grouping (or its standard
+ * view), with **every** toolbar filter and the search as they stand now, an unticked one included: a filter a
+ * person turned off stays off. `opts`: { views, views_ok, memory, view (the state now), name, prices }.
+ */
+export function switch_grouping(opts) {
+	const o = opts || {};
+	const name = mode_of(o.name);
+	const views = o.views || [];
+	const std = STANDARD_VIEW_IDS[name];
+	const kept = o.memory && o.memory.modes && o.memory.modes[name];
+	const known = kept && views.find((v) => v.id === kept.id && v.mode === name);
+	const use_kept = !!kept && (!!known || o.views_ok === false);
+	const id = use_kept ? kept.id : std;
+	const layout = use_kept ? kept.layout : (views.find((v) => v.id === std) || standard_view(name)).layout;
+	const current = o.view || {};
+	const next = state_from_layout(layout, name, { id: id, q: current.q, prices: o.prices });
+	BASIC_FILTERS.forEach((key) => {
+		next.view[key] = current[key] === undefined ? next.view[key] : current[key];
+	});
+	if (o.prices === false) next.view.noprice = false;
+	return next;
+}
+
+// The sentence for a view that filters on "no price" when the person is not shown prices: the filter is off for
+// them (there is nothing to filter on), so the view lists every item.
+export function noprice_note(filters, prices) {
+	if (prices || !filters || !filters.noprice) return "";
+	return "This view lists the items with no price, which needs permission to read Purchase Orders, so it lists every item.";
 }
 
 // ------------------------------------------------------------------ print

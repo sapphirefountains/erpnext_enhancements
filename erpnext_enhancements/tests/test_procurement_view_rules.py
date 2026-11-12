@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for the Procurement Tracker's saved views (v1.815.0).
+"""Bench-free tests for the Procurement Tracker's saved views (v1.816.0).
 
 Three layers, one file (pytest; own CI step):
 
@@ -456,6 +456,9 @@ class Env:
 		self.project_readers = {ALICE, BOB}
 		self.counter = 0
 		self.deleted = []
+		self.locks = []
+		self.errors = []
+		self.fail_reads = False
 
 
 def install(env):
@@ -503,8 +506,12 @@ def install(env):
 		else False
 	)
 	frappe.parse_json = json.loads
+	frappe.log_error = lambda message=None, title=None, **_kw: env.errors.append(title)
+	frappe.get_traceback = lambda: "traceback"
 
 	def get_all(doctype, filters=None, fields=None, order_by=None, limit_page_length=None, **_kw):
+		if env.fail_reads:
+			raise RuntimeError("Table 'tabProcurement Tracker View' doesn't exist")
 		rows = [dict(r) for r in env.table.values() if all(r.get(k) == v for k, v in (filters or {}).items())]
 		rows.sort(key=lambda r: r["view_name"].lower())
 		rows = rows[: limit_page_length or len(rows)]
@@ -514,8 +521,13 @@ def install(env):
 
 	db = types.SimpleNamespace()
 
-	def get_value(doctype, name, fields, as_dict=False):
-		row = env.table.get(name)
+	def get_value(doctype, name, fields, as_dict=False, for_update=False):
+		if for_update:
+			env.locks.append((doctype, name))
+		if not isinstance(name, str):
+			# Frappe reads a dict as a filter, across every person's rows: the stand-in does the same.
+			env.reads_across = getattr(env, "reads_across", 0) + 1
+		row = env.table.get(name) if isinstance(name, str) else next(iter(env.table.values()), None)
 		if not row:
 			return None
 		return {k: row.get(k) for k in fields}
@@ -875,3 +887,81 @@ class TestDocType:
 		meta = self.meta()
 		assert not meta.get("issingle") and not meta.get("istable")
 		assert meta["autoname"].startswith("format:PTV-")
+
+
+class TestReviewFixes:
+	"""The review of PR 1452 (L3, L4) and the get_views safety net (M4's server half)."""
+
+	def test_a_number_too_long_to_be_a_float_is_a_message_not_a_crash(self):
+		for big in (10**400, -(10**400)):
+			with pytest.raises(rules.ViewError, match="out of range"):
+				rules.validate_layout(
+					with_rules({"column": "received", "op": "between", "min": big}), "items"
+				)
+		stored = with_rules(
+			{"column": "received", "op": "between", "min": 10**400}, {"column": "item", "op": "blank"}
+		)
+		out, repaired = rules.repair_layout(stored, "items")
+		assert [r["column"] for r in out["filters"]["rules"]] == ["item"] and repaired is True
+
+	def test_the_endpoints_declare_their_argument_types(self, world):
+		v = world.views
+		assert v.save_view.__annotations__["view_name"] is str
+		assert v.save_view.__annotations__["mode"] is str
+		assert v.save_view.__annotations__["name"] == (str | None)
+		assert (
+			v.rename_view.__annotations__["name"] is str and v.rename_view.__annotations__["view_name"] is str
+		)
+		assert v.delete_view.__annotations__["name"] is str
+
+	def test_a_name_that_is_not_text_is_not_found_and_reads_nobody_elses_view(self, world):
+		save(world, "Alice's")
+		world.user = BOB
+		for name in ({"view_name": "Alice's"}, ["PTV-00001"], 7, True):
+			with pytest.raises(world.frappe.DoesNotExistError, match="not found"):
+				world.views.delete_view(name)
+			with pytest.raises(world.frappe.DoesNotExistError):
+				world.views.rename_view(name, "x")
+			with pytest.raises(world.frappe.DoesNotExistError):
+				save(world, "x", name=name)
+		assert getattr(world, "reads_across", 0) == 0
+		assert len(world.table) == 1
+
+	def test_saving_and_renaming_take_the_persons_lock_first(self, world):
+		made = save(world, "A")
+		assert world.locks == [("User", ALICE)]
+		world.views.rename_view(made["id"], "B")
+		assert world.locks == [("User", ALICE), ("User", ALICE)]
+		# Reads and deletes need no lock.
+		world.views.get_views()
+		world.views.delete_view(made["id"])
+		assert len(world.locks) == 2
+
+	def test_the_lock_is_taken_before_the_views_are_counted(self, world):
+		order = []
+		real_get_all = world.frappe.get_all
+		real_get_value = world.frappe.db.get_value
+		world.frappe.get_all = lambda *a, **k: (order.append("count"), real_get_all(*a, **k))[1]
+		world.frappe.db.get_value = lambda *a, **k: (
+			order.append("lock") if k.get("for_update") else None,
+			real_get_value(*a, **k),
+		)[1]
+		save(world, "A")
+		assert order.index("lock") < order.index("count")
+
+	def test_an_unreadable_table_leaves_the_tracker_standing(self, world):
+		world.fail_reads = True
+		out = world.views.get_views()
+		assert out["mine"] == [] and out["unavailable"] is True
+		assert out["catalog"]["presets"] and out["user"] == ALICE
+		assert world.errors == ["Procurement Tracker views: the person's views could not be read"]
+
+	def test_a_readable_table_does_not_say_unavailable(self, world):
+		assert "unavailable" not in world.views.get_views()
+
+	def test_the_permission_gate_still_comes_first(self, world):
+		world.fail_reads = True
+		world.user = "carol@example.test"
+		with pytest.raises(world.frappe.PermissionError):
+			world.views.get_views()
+		assert world.errors == []

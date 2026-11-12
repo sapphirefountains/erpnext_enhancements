@@ -1,4 +1,4 @@
-"""The endpoints behind the Procurement Tracker's saved views (v1.815.0).
+"""The endpoints behind the Procurement Tracker's saved views (v1.816.0).
 
 Three questions, one door each, and the owner is checked on every one:
 
@@ -72,9 +72,11 @@ def _own_rows(user):
 
 def _owned(name, user):
 	"""The stored row of one of the person's own views. Anything else is "not found"."""
+	# `name` is text or nothing: a dict or list (a JSON body can send one) would make get_value read across
+	# every person's views as a filter. Frappe enforces the annotations on the endpoints; this is the backstop.
 	row = (
 		frappe.db.get_value(DOCTYPE, name, ["name", "owner", "view_name", "mode"], as_dict=True)
-		if name
+		if isinstance(name, str) and name
 		else None
 	)
 	try:
@@ -98,15 +100,22 @@ def get_views():
 	"""``{"catalog", "mine", "user"}``: the views that ship with the app (inside ``catalog``), the
 	person's own, and who they are. Only the caller's own records are ever read."""
 	user = _gate()
-	return {
-		"catalog": rules.catalog_for_client(),
-		"mine": [_view(row) for row in _own_rows(user)],
-		"user": user,
-	}
+	out = {"catalog": rules.catalog_for_client(), "mine": [], "user": user}
+	try:
+		out["mine"] = [_view(row) for row in _own_rows(user)]
+	except Exception:
+		# The table is not there yet (a deploy that has not finished migrating) or the read failed: the tracker
+		# must still open, on the built-in views, and say the person's own could not be loaded. A 500 here would
+		# put a "Server Error" dialog in front of everybody who opens a Project.
+		frappe.log_error(
+			frappe.get_traceback(), "Procurement Tracker views: the person's views could not be read"
+		)
+		out["unavailable"] = True
+	return out
 
 
 @frappe.whitelist(methods=["POST"])
-def save_view(view_name, mode, layout, name=None):
+def save_view(view_name: str, mode: str, layout: str | dict, name: str | None = None):
 	"""Create a view, or (with ``name``) change one the person owns. Returns the saved view.
 
 	The layout is validated strictly before anything is written, the name must be new among the
@@ -116,6 +125,9 @@ def save_view(view_name, mode, layout, name=None):
 	try:
 		clean = rules.clean_name(view_name)
 		stored = rules.validate_layout(_layout_arg(layout), mode)
+		# Two saves at once (two tabs, a script) must not both pass the 50-view limit or both take one name: the
+		# person's User row is locked until this request commits, so a second save waits and then counts again.
+		frappe.db.get_value("User", user, "name", for_update=True)
 		mine = _own_rows(user)
 		if name:
 			current = _owned(name, user)
@@ -137,12 +149,13 @@ def save_view(view_name, mode, layout, name=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def rename_view(name, view_name):
+def rename_view(name: str, view_name: str):
 	"""Rename one of the person's own views, leaving its layout as stored."""
 	user = _gate()
 	try:
 		clean = rules.clean_name(view_name)
 		_owned(name, user)
+		frappe.db.get_value("User", user, "name", for_update=True)
 		rules.check_unique_name(clean, [r["view_name"] for r in _own_rows(user) if r["name"] != name])
 		frappe.db.set_value(DOCTYPE, name, "view_name", clean)
 		row = frappe.db.get_value(DOCTYPE, name, ["name", "view_name", "mode", "layout"], as_dict=True)
@@ -152,7 +165,7 @@ def rename_view(name, view_name):
 
 
 @frappe.whitelist(methods=["POST"])
-def delete_view(name):
+def delete_view(name: str):
 	"""Delete one of the person's own views."""
 	user = _gate()
 	_owned(name, user)

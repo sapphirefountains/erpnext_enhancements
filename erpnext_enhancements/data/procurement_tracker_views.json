@@ -1,5 +1,5 @@
 {
-  "_comment": "The Procurement Tracker's saved views (v1.815.0): the columns each grouping can show, the limits a stored view is held to, and the views that ship with the app. ONE file read by both sides: procurement_view_rules.py (the server validates every stored view against it) and scripts/test_procurement_tracker.mjs (which holds the browser's column registry, public/js/procurement_tracker/logic.js, to the same keys, so the two cannot drift). Every figure and word here is made up or generic; the repo is public.",
+  "_comment": "The Procurement Tracker's saved views (v1.816.0): the columns each grouping can show, the limits a stored view is held to, and the views that ship with the app. ONE file read by both sides: procurement_view_rules.py (the server validates every stored view against it) and scripts/test_procurement_tracker.mjs (which holds the browser's column registry, public/js/procurement_tracker/logic.js, to the same keys, so the two cannot drift). Every figure and word here is made up or generic; the repo is public.",
   "limits": {
     "max_views_per_user": 50,
     "max_name_length": 60,

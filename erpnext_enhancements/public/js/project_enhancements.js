@@ -303,9 +303,9 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 	const esc = frappe.utils.escape_html;
 	let address_timer = null;
 	let memory_timer = null;
-	// SAVED VIEWS (v1.815.0). `saved` is get_views' answer ({ catalog, mine, user }), or null when it could not
+	// SAVED VIEWS (v1.816.0). `saved` is get_views' answer ({ catalog, mine, user }), or null when it could not
 	// be fetched: the tracker then draws from the two standard views and offers no saving.
-	const savedOk = !!(saved && saved.catalog);
+	const savedOk = !!(saved && saved.catalog && !saved.unavailable);
 	const viewList = savedOk ? pt.merge_views(saved.catalog, saved.mine) : pt.fallback_views();
 	// What this browser remembers of the last layouts, per person. Storage can be missing or refuse
 	// (a private window, blocked site data): everything works without it, only the memory is lost.
@@ -322,6 +322,8 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 		kept: keep.layout || null,
 		memory: memory,
 		prices: !!prices,
+		// Without the saved views, a view that is not in the list is not known to be gone: its id is kept.
+		views_ok: savedOk,
 	});
 	// The view, column and filter panels close on a click elsewhere and on Escape.
 	let vm = null;
@@ -422,6 +424,13 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 				handler() {
 					this.writeAddress();
 					this.persist();
+				},
+			},
+			// Only a change to the column filters opens the folders that hold a match: moving a column or changing
+			// the sort must not reopen documents the person closed.
+			"layout.rules": {
+				deep: true,
+				handler() {
 					if (this.narrowed) this.expandMatches();
 				},
 			},
@@ -440,7 +449,12 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 			},
 			// The saved view in use, whether it is the person's own or one of the built-in ones.
 			currentView() {
-				return this.views.find((v) => v.id === this.layout.id) || pt.standard_view(this.mode);
+				const known = this.views.find((v) => v.id === this.layout.id);
+				if (known) return known;
+				const standard = pt.standard_view(this.mode);
+				// Without the saved views the id of one is kept (it is remembered and written to the address), and
+				// shown under a name that says it is not loaded.
+				return this.viewsOk ? standard : Object.assign(standard, { name: "Saved view (not loaded)" });
 			},
 			isOwn() {
 				return this.viewsOk && !this.currentView.preset;
@@ -459,7 +473,8 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 				return this.shown.columns;
 			},
 			withheldText() {
-				return pt.withheld_text(this.shown.withheld.concat(this.ruleSet.withheld));
+				const labels = this.shown.withheld.concat(this.ruleSet.withheld.filter((l) => !this.shown.withheld.includes(l)));
+				return [pt.withheld_text(labels), pt.noprice_note(this.currentView.layout.filters, this.hasPrices)].filter(Boolean).join(" ");
 			},
 			// The column filters that apply to this person.
 			ruleSet() {
@@ -561,16 +576,15 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 			},
 			setView(name) {
 				if (name === this.view.view) return;
-				// To the other grouping: the layout last used there (or its standard view). The toolbar filters and
-				// the search come along, as they always have.
-				const kept = memory && memory.modes && memory.modes[name];
-				const known = kept && this.views.find((v) => v.id === kept.id && v.mode === name);
-				const id = known ? kept.id : pt.STANDARD_VIEW_IDS[name];
-				const layout = kept ? kept.layout : (this.views.find((v) => v.id === id) || pt.standard_view(name)).layout;
-				const next = pt.state_from_layout(layout, name, { id: id, q: this.view.q, prices: this.hasPrices });
-				const carry = ["location", "status", "supplier", "action", "noprice"];
-				carry.forEach((key) => {
-					if (this.view[key]) next.view[key] = this.view[key];
+				// To the other grouping: the layout last used there (or its standard view). Every toolbar filter and the
+				// search come along as they stand, an unticked one included (pt.switch_grouping).
+				const next = pt.switch_grouping({
+					views: this.views,
+					views_ok: this.viewsOk,
+					memory: memory,
+					view: this.view,
+					name: name,
+					prices: this.hasPrices,
 				});
 				this.notes = [];
 				this.menu = "";
@@ -615,17 +629,24 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 			// One call to the saved-views endpoints; the person's message from the server is shown by frappe.
 			callViews(method, args, done) {
 				this.busy = true;
+				// frappe never calls `error` for a query timeout or a deadlock (it only shows a dialog), so a call that
+				// never answers must not leave Save, Rename and Delete disabled until the page is reloaded.
+				const release = setTimeout(() => {
+					this.busy = false;
+				}, 30000);
+				const finish = () => {
+					clearTimeout(release);
+					this.busy = false;
+				};
 				frappe.call({
 					method: "erpnext_enhancements.procurement_views." + method,
 					type: "POST",
 					args: args,
 					callback: (r) => {
-						this.busy = false;
+						finish();
 						if (r && r.message) done(r.message);
 					},
-					error: () => {
-						this.busy = false;
-					},
+					error: finish,
 				});
 			},
 			// A view the server returned goes into the list (replacing the one it changed) and is the one in use.
@@ -775,7 +796,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 					if (route[0] !== "Form" || route[1] !== "Project" || route[2] !== project) return;
 					// The view the layout started as: what it says is filtering, and what a cleared filter must say is OFF.
 					const base = this.currentView.layout.filters;
-					const next = pt.write_view_query(window.location.search, this.view, this.layout.id, base);
+					const next = pt.write_view_query(window.location.search, this.view, this.layout.id, base, this.layout.rules);
 					if (next === window.location.search) return;
 					try {
 						window.history.replaceState(
@@ -944,7 +965,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 					{
 						title: __("{0} materials", [project]),
 						subtitle: frm.doc.project_name || "",
-						filters: pt.describe_filters(this.view, this.options),
+						filters: pt.describe_filters(this.view, this.options, this.filterCtx.rules, this.mode),
 						printed: frappe.datetime.str_to_user(frappe.datetime.get_today()),
 						prices: this.hasPrices,
 						currency: this.currency,
@@ -1100,7 +1121,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 							<button type="button" class="btn btn-default btn-sm" :class="{ active: byItem }" :aria-pressed="String(byItem)" @click="setView('items')">By item</button>
 						</div>
 
-						<!-- SAVED VIEWS (v1.815.0): the layout in use, a menu of the built-in views and the person's own,
+						<!-- SAVED VIEWS (v1.816.0): the layout in use, a menu of the built-in views and the person's own,
 						     a column picker and the column filters. Each opens a panel under its button; Escape or a click
 						     elsewhere closes it. -->
 						<div class="pt-menu-wrap">
@@ -1115,7 +1136,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 								</button>
 								<div class="pt-menu-head">My views</div>
 								<p v-if="!viewsOk" class="pt-menu-note">Your saved views could not be loaded just now. Reload the page to try again.</p>
-								<p v-else-if="!listedViews.mine.length" class="pt-menu-note">You have none yet. Change the columns or filters, then choose Save as a new view. Only you can see your views.</p>
+								<p v-else-if="!listedViews.mine.length" class="pt-menu-note">You have none yet. Change the columns or filters, then choose Save as a new view. Your views are private to you; only an administrator can see them in the system.</p>
 								<button v-for="v in listedViews.mine" :key="v.id" type="button" role="menuitemradio" :aria-checked="String(v.id === layout.id)"
 									class="pt-menu-item" :class="{ current: v.id === layout.id }" @click="pickView(v.id)">
 									<span>{{ v.name }}</span><small>{{ modeLabel(v.mode) }}</small>
@@ -1571,16 +1592,33 @@ frappe.ui.form.on("Project", {
 				})
 			);
 
-			// The person's saved views (v1.815.0), fetched beside the feed. Never rejects: without them the tracker
-			// still draws, from the standard views, and says its saved views could not be loaded.
-			const saved = new Promise((resolve) =>
-				frappe.call({
-					method: "erpnext_enhancements.procurement_views.get_views",
-					callback: (r) => resolve((r && r.message) || null),
-					error: () => resolve(null),
-					silent: true,
-				})
-			);
+			// The person's saved views (v1.816.0), fetched beside the feed. The tracker must never depend on them: this
+			// settles on the answer, on an error, on the promise frappe.call returns, or after SAVED_VIEWS_WAIT_MS,
+			// whichever comes first (frappe never calls `error` for a query timeout or a deadlock, so on its own a
+			// slow call would leave the tracker on "Loading..." with the feed already in hand). With nothing, the
+			// tracker draws from the standard views and says its saved views could not be loaded.
+			const SAVED_VIEWS_WAIT_MS = 4000;
+			const saved = new Promise((resolve) => {
+				let settled = false;
+				const settle = (value) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					resolve(value);
+				};
+				const timer = setTimeout(() => settle(null), SAVED_VIEWS_WAIT_MS);
+				try {
+					const call = frappe.call({
+						method: "erpnext_enhancements.procurement_views.get_views",
+						callback: (r) => settle((r && r.message) || null),
+						error: () => settle(null),
+						silent: true,
+					});
+					if (call && typeof call.then === "function") call.then(null, () => settle(null));
+				} catch (e) {
+					settle(null);
+				}
+			});
 
 			Promise.all([logic, feed, saved]).then(
 				([, r, views]) => {

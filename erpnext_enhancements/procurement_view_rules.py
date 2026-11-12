@@ -1,4 +1,4 @@
-"""The Procurement Tracker's saved views: what a layout may hold, and who may touch one (v1.815.0).
+"""The Procurement Tracker's saved views: what a layout may hold, and who may touch one (v1.816.0).
 
 Pure functions, no ``frappe`` import, so ``tests/test_procurement_view_rules.py`` runs them in CI
 without a bench. ``procurement_views.py`` is the thin layer that reads and writes the records; every
@@ -183,7 +183,12 @@ def _number(value, what):
 		return None
 	if isinstance(value, bool) or not isinstance(value, (int, float)):
 		raise ViewError(f"{what} must be a number.")
-	if not math.isfinite(value) or abs(value) > 1e12:
+	try:
+		in_range = math.isfinite(value) and abs(value) <= 1e12
+	except OverflowError:
+		# An integer too long to be a float (10 ** 400): out of range, not a crash.
+		in_range = False
+	if not in_range:
 		raise ViewError(f"{what} is out of range.")
 	return value
 

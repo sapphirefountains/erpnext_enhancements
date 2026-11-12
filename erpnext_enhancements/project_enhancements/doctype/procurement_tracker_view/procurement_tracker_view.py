@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Procurement Tracker View: one person's saved layout for the tracker on the Project form (v1.815.0).
+"""Procurement Tracker View: one person's saved layout for the tracker on the Project form (v1.816.0).
 
 The record is owned by whoever created it (Frappe's own ``owner``). **Nobody but a System Manager has
 a DocPerm on it**: people reach their own views only through ``procurement_views.py``, which checks
