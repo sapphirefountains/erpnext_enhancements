@@ -104,7 +104,7 @@ CONTRACT = {
 		{"item_code", "warehouse", "qty", "client_ref"},
 		{"purchase_order_item", "without_po", "project", "scanned_code", "rate"},
 	),
-	# ``project`` (v1.804.0): the job a move onto or off the Project Shelf carries.
+	# ``project`` (v1.809.0): the job a move onto or off the Project Shelf carries.
 	"MOVE": (
 		"move_here",
 		{"item_code", "warehouse", "from_warehouse", "qty", "client_ref"},

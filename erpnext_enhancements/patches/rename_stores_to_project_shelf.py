@@ -1,4 +1,4 @@
-"""Rename the ``Stores`` warehouse to ``Project Shelf`` and name it in the settings (v1.804.0).
+"""Rename the ``Stores`` warehouse to ``Project Shelf`` and name it in the settings (v1.809.0).
 
 The owner's decision of 2026-11-12: everything ordered for a project is received onto one
 shared Project Shelf, and stock there is not stock the shop has

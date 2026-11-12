@@ -30,7 +30,7 @@ model, the pure rules and the label reads.
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
-| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.804.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.809.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
 | `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
@@ -52,6 +52,12 @@ model, the pure rules and the label reads.
 | `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 | `report/warehouse_transactions/` | Warehouse Transactions (v1.797.0): every stock movement and the person who made it. See *Warehouse Transactions* below |
+| `report/location_contents/` | Location Contents (v1.805.0): what is at a bin or a group of bins, and what should be, with a plain status per item. See *Inventory reports* below |
+| `report/where_is_this_item/` | Where Is This Item (v1.805.0): every place an item is, split into shop bins, the Project Shelf by job, job sites by job, vehicles and the Boneyard |
+| `report/project_materials/` | Project Materials (v1.805.0): what was ordered and received for a job and where each item stands; with no Project, what each job holds now |
+| `report/job_site_contents/` | Job Site Contents (v1.805.0): what is at each job site, by job, with value, when it arrived and how long it has been there |
+| `inventory_report_rules.py` | Every judgement the four reports make: a location's status for an item, the kind of place a warehouse is, the Project Shelf's shares by job, one project's item roll-up, how long stock has been at a site. No Frappe |
+| `inventory_report_data.py` | What the four reports read in common: the Project Shelf (read so a missing field never raises), the Boneyard, vehicles, job sites, the by-project shelf adapter, the Supplier Return lines |
 
 ## The count flow
 
@@ -331,7 +337,7 @@ The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR
 
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.804.0) and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.809.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -670,7 +676,7 @@ all five with what to do. By hand: create a group Warehouse "Job Sites" under th
 choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
 safe twice.
 
-### The Project Shelf (v1.804.0)
+### The Project Shelf (v1.809.0)
 
 The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
 Parker can then change what location the item is going to", "everything but overhead items should
@@ -682,7 +688,7 @@ inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested be
 warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
 is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
 not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
-did before v1.804.0. It is an ordinary location in every other way: it has a QR label, it can be
+did before v1.809.0. It is an ordinary location in every other way: it has a QR label, it can be
 received to, counted and moved from.
 
 **Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
@@ -809,7 +815,7 @@ job-site work left them, and the shelf is taken out of their reading the same wa
 That is the right outcome for them: an order for a job no longer makes the board think the shop is
 covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
 replenishment order placed on an Overhead project now defaults to the item's own bin, inside
-`Inventory - SF`, so both kinds of rule count it; before v1.804.0 it defaulted to `Stores` and the
+`Inventory - SF`, so both kinds of rule count it; before v1.809.0 it defaulted to `Stores` and the
 23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
 are not corrected: no code of ours runs inside them.
 
@@ -1230,6 +1236,196 @@ TASK-2026-03136 and -03137.
   site-made Inventory Enhancements sidebar is not in the repo and is unchanged.
 - **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
 
+## Inventory reports (v1.805.0)
+
+Nik, 2026-11-12: "We need to create reports for Inventory, where a user can query what's at each
+location and see what items should be in there ... I want to keep a historical record of each
+projects items and what was ordered for them. I want to be able to view what's at the Job Site,
+and have it be useful so it filters by project as well." Four Script Reports, every filter
+optional, each opening on a useful list with nothing chosen.
+
+| Report | Answers | Opens on |
+|---|---|---|
+| **Location Contents** | What is at this bin, shelf, bay, row or the whole inventory, and what should be | every location's problems ("Only problems" ticked) |
+| **Where Is This Item** | Every place an item is, and whose it is | every item on hand or on order anywhere |
+| **Project Materials** | What was ordered and received for a job, and where each item stands | what each job holds now, on the shelf and at its site |
+| **Job Site Contents** | What is at each job site, by job, customer and item | everything out on every job |
+
+### What ERPNext's own reports already do, and what these add
+
+Read at ERPNext v16.54.0 (production), so nothing here rebuilds them.
+
+| ERPNext report | Gives | Does not give |
+|---|---|---|
+| Stock Balance | opening, in, out, balance and value per item and warehouse over a period | whether the item belongs in that bin; any job |
+| Stock Projected Qty | actual, ordered, requested, reserved and projected per item and warehouse | the same two |
+| Stock Ledger | every movement, filterable by Project | a roll-up; what was ordered; where it is now |
+| Warehouse Wise Item Balance Age and Value | one column per warehouse with age and value | a status; a job; the shelf by job |
+| Purchase Order Analysis, Procurement Tracker | ordered, received, pending and billed per order line | stock on the shelf or at the site; what was used |
+| Project wise Stock Tracking | cost purchased, issued and delivered per project, one row a project | items; quantities; where anything is |
+
+What these four add: **expected against actual** per bin (Putaway Rules and Item Defaults beside
+on-hand), **the job** behind stock on the shared Project Shelf, **one project's whole record**
+from order to use in one row per item, and **job sites as places with an age**.
+
+### Location Contents
+
+For each location the report calls `api.stock_scan._items_at` (the function behind the Bin Manager
+and Stock Scan's location screen) with no row cap and reads what it returns. It carries no copy of
+the listing rule, so the report and the Bin Manager cannot disagree about which items belong to a
+bin. What it adds is a status (`inventory_report_rules.location_status`):
+
+| Status | Means | A problem |
+|---|---|---|
+| As expected | on hand here, and assigned here (Putaway Rule or Item Default) | |
+| Assigned here, none on hand | this is the item's bin and it is empty | yes |
+| Here, not assigned | on hand here, and no bin is the item's | yes |
+| Here, assigned to another bin | on hand here, and its bin is elsewhere; *Assigned To* names it | yes |
+| On order to here | none on hand, and an order is on its way to this location | |
+| Empty, not decided | it was here, is gone, and nobody kept it on the bin or took it off | yes |
+| Held here | on hand at the Project Shelf, a job site or the Boneyard | |
+| Nothing here | listed at one of those three with none on hand | |
+
+- **The three places that are never an item's bin** hold stock without assigning it, so stock there
+  is never a problem. They are also never the "other bin": production has Putaway Rules and Item
+  Defaults that name the warehouse becoming the Project Shelf, and "assigned to the Project Shelf"
+  would send somebody to put shop stock on it.
+- **The cards count every row** at the chosen locations. "Only problems" and Status narrow the
+  table and leave the cards alone, so a short list still says how big the picture is.
+- **Cost.** `_items_at` is one query per location. Locations with no Bin row, no enabled Putaway
+  Rule and no Item Default are skipped first (none of that function's clauses can list anything
+  there); on production on 2026-11-12 that left 141 of 222 locations. With an Item chosen, only
+  that item's locations are asked. Each call is a pass over the stock items, about 6 ms at 484;
+  if the item list grows a hundredfold the place to batch is `_items_at` itself.
+
+### Where Is This Item
+
+One row per place, in this order: shop bins, the Project Shelf, job sites, vehicles, the Boneyard
+(`inventory_report_rules.place_kind`, a job site winning over everything). Each has on hand, on
+order, value, whether the place is one of the item's bins, the item's bins by name, and the last
+movement there with its voucher. The item's assigned bins list even when empty.
+
+The Project Shelf is one warehouse, so `tabBin` has one figure per item there. Its rows are split
+by job, one per job with a share and a last row under no job for what no job's ledger rows account
+for, which also carries what is on order to the shelf. A search is capped at 500 items and the unfiltered list at 5,000
+rows, and the note says when either cut something.
+
+### Project Materials
+
+**With a Project:** one row per item ordered or received for it.
+
+| Column | From |
+|---|---|
+| Ordered | the job's submitted Purchase Order lines (the line's own Project, else its order's) |
+| Received | the job's submitted Purchase Receipt lines, so a store run with no order counts |
+| On Project Shelf, At Job Site | the shelf adapter, and `tabBin` at the job's site |
+| Used on Job | the job's ledger: Material Issues, Delivery Notes, Sales Invoices, less parts brought back |
+| Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
+| Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
+| Still to Come / Order Closed, Not Received | what order lines are short, on open orders and on Closed or Delivered ones |
+| Not Located | received and kept, but not on the shelf, at the site or used |
+| Purchase Orders, Receipts, Supplier Returns | the documents behind the row; each name opens its document |
+
+**Not Located is the honest column.** Most of what was bought for past jobs never entered stock,
+so ordered and received are the whole record and the note says "Not a stock item: where it is was
+never recorded". For a stock item it is stock received into a shop bin, where stock is not kept by
+job (*Received Into* names the bin, read from the stock ledger), or received before Maintain Stock
+was on. *Stock Item* is the item's flag today. Nothing in this view reads the job's status, so a
+finished job reads the same: it is the record of what was bought for it.
+
+**Without a Project:** one row per job that holds stock now, on the shelf and at its site, with
+quantity and value. Shelf stock no job claims is counted in the note over the table.
+
+Not read: a Purchase Invoice that receives stock itself (none on production), rejected quantities,
+drafts and canceled documents.
+
+### Job Site Contents
+
+One row per item at a job's site warehouse: on hand, on order, value, *Arrived*, *Last Arrival*
+and *Days There*. What a job site is comes from `job_sites.py` (the field, and everything under the
+Job Sites group); a place under that group with no job lists with a blank Project. A finished job's
+site still lists. *Arrived* is the day the balance last rose from nothing
+(`inventory_report_rules.stay`), so parts all used and sent again are not counted from the first
+delivery; a count is read from its balance, as in Warehouse Transactions. Non-stock items never
+enter stock and so are never here.
+
+### The Project Shelf, before and after it is set up
+
+One shared shelf (Nik, 2026-11-12), named in `Inventory Scanner Settings.project_shelf_warehouse`,
+a field added by a separate change. `inventory_report_data.project_shelf` reads it from the
+settings document with `.get`, so before the field exists (or while it is blank, or names a group
+or a disabled warehouse) the answer is `None`. Then nothing is the Project Shelf, the warehouse
+that will become it is treated as an ordinary shop location, every "on the shelf" figure is 0, and
+each report says "No Project Shelf is set" over its table.
+
+Whose stock is on the shelf comes through **one adapter**,
+`inventory_report_data.shelf_stock_by_project(shelf, item_codes=None, projects=None)`, returning
+`[{item_code, project, qty, value}]`. Two facts, two sources:
+
+- **How many there are** is `tabBin` at the shelf.
+- **Whose they are** is the stock ledger: what came onto the shelf under each job, less what left
+  under it. The Project Shelf change ships `inventory_enhancements/project_shelf.py`; when that
+  module is installed the adapter asks its `shelf_stock()` for those nets (and its `warehouse()`
+  for which warehouse is the shelf), so these reports and the shelf's own screens read one answer.
+  Before it is installed, or if it is there and fails to import, the adapter reads the same ledger
+  rows itself. Both paths do the same
+  arithmetic, so the swap changes no number, and an answer that is not for this shelf or not in the
+  agreed shape falls back to the adapter's own reading.
+
+`inventory_report_rules.shelf_shares` puts the two side by side without changing either. A job's
+share is its ledger net. The no-job share is what is on hand less every job's share, so the rows
+always add up to what is on the shelf. A count carries no job, so when somebody counts the shelf
+lower than the jobs' rows add up to, the no-job share is negative by the difference: Where Is This
+Item shows that row and says what it means, and Project Materials says for how many items *On
+Project Shelf* can be more than is there. On production's would-be shelf on 2026-11-12 the two
+agreed item for item (one item: four jobs' 10, 18, 31 and 12 against 71 on hand).
+
+**Returns to a supplier** come through the same kind of seam,
+`inventory_report_data.supplier_return_lines(project)`. The Supplier Return change ships
+`inventory_enhancements/supplier_returns.py` and settles `returned_lines(purchase_order_items=None,
+project=None)` for other modules; the seam imports it inside a guard, so either change can merge
+first, and answers nothing before it is installed.
+
+A Supplier Return moves its stock through ERPNext's own return receipt (a Purchase Receipt with
+*Is Return*), which Project Materials already reads. So the same goods can show twice: as a return
+receipt's line, and as a Supplier Return line whose goods have left. Both name the receipt line the
+goods came in on, and `inventory_report_rules.returned_by_item` takes the larger of the two per
+receipt line. A record-only return (no return receipt) counts, a return made by hand in the Desk
+counts, and one that is both is not doubled. A Supplier Return that was asked for and has not been
+sent back is *Return Requested*: those goods are still here.
+
+### Who, where, print
+
+- **Roles.** Location Contents and Where Is This Item: Stock User, Stock Manager, Inventory Clerk,
+  Item Manager, System Manager. Project Materials and Job Site Contents add Projects User,
+  Projects Manager, Purchase User and Purchase Manager. Frappe also asks for report permission on
+  the reference doctype (Warehouse; Purchase Order for Project Materials), which Stock User holds
+  for both. Every Inventory Clerk and every Projects or Purchase user on production holds Stock
+  User (2026-11-12), so nobody the roles admit is then refused.
+- **Permissions.** The reads are SQL behind those gates, like `_items_at`; they do not apply User
+  Permissions. Every report says so over its own table: "This report shows everything its filters
+  match. User Permissions do not narrow it." (`inventory_report_data.message`).
+- **What the stock ledger reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound index that helps,
+  `item_code, warehouse, posting_datetime, creation`, and none on `project` or leading with
+  `warehouse`. A read
+  that starts from item codes uses it (Where Is This Item with an item or a search). Three reads do
+  not: a job's ledger rows (Project Materials), the ledger at the job sites (Job Site Contents) and
+  the whole shelf's rows by job (the adapter's own reading, and Where Is This Item with nothing
+  chosen). Each looks at every ledger row, so its cost grows with the whole ledger, not with the
+  job, the sites or the shelf. Production had 832 ledger rows on 2026-11-12. No index is added here;
+  when the ledger is large, an index on `project` and one leading with `warehouse` are the fix.
+- **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
+  hub's landing page). On the Operations Hub, three in its Inventory card and Project Materials in
+  its Reports card. `patches/inventory_reports_hub_links` force-imports both workspaces, each in
+  its own savepoint. A force-import replaces the stored workspace with the file, so an edit made to
+  either one in the Desk would be lost. On production on 2026-11-12 both stored workspaces were
+  identical to the repo's files (content, links, shortcuts, quick lists and roles compared), so
+  nothing is lost there unless one is edited before the merge.
+- **Print and export** use Frappe's own grid print, PDF, CSV and Excel. A row holds plain values
+  under declared fieldnames; the status colors and the document links are added on screen by each
+  report's formatter. There is no report `.html` of our own.
+- **Tests:** `tests/test_inventory_reports.py`, its own CI step.
+
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -1405,6 +1601,7 @@ python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_
 python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
+python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
 node scripts/test_stock_scan_client.mjs
 ```
 

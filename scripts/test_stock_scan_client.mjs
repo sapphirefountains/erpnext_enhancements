@@ -1835,7 +1835,7 @@ async function appBinActions() {
 		const alsoLines = [...t.app.main.walk()].filter((node) => node.classList && node.classList.contains("ee-ss-also")).map((node) => node.textContent);
 		check("on a shelf: stock out on a job is named apart, never under Also at", alsoLines, ["Also at: Stores (3)", "On job sites, not in the shop: Job Site PRJ-90001 Water Wall (4)"]);
 
-		// 5c. The Project Shelf (v1.804.0): parts bought for a job wait there.
+		// 5c. The Project Shelf (v1.809.0): parts bought for a job wait there.
 		const SHELF = { warehouse: "Project Shelf - SF", warehouse_name: "Project Shelf" };
 		const WALL = { project: "PRJ-90001", project_name: "Water Wall", qty: 3 };
 		const LOBBY = { project: "PRJ-90002", project_name: "Lobby", qty: 2 };
@@ -2425,7 +2425,7 @@ async function appBinActions() {
 		check("takeProject: at a shelf it is the picked job, or none", [L.takeProject({ job_site: null }, job), L.takeProject({}, null), L.takeProject(null, null)], ["PRJ-90100", undefined, undefined]);
 	}
 
-	// ------------------------------------------------------------------ the Project Shelf (v1.804.0)
+	// ------------------------------------------------------------------ the Project Shelf (v1.809.0)
 	{
 		const bin = { warehouse: "Bin B2 - SF", on_hand: 1 };
 		const shelf = { warehouse: "Project Shelf - SF", on_hand: 5, project_shelf: true };
