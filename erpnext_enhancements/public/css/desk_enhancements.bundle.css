@@ -501,9 +501,39 @@ header.navbar {
 /* The three quantity columns. Right-aligned and nowrap so the digits line up and a
    long item description cannot push them onto two lines. */
 .procurement-tracker .glass-table th.qty-col,
-.procurement-tracker .glass-table td.qty-col {
+.procurement-tracker .glass-table td.qty-col,
+.procurement-tracker .glass-table th.money-col,
+.procurement-tracker .glass-table td.money-col {
     text-align: right;
     white-space: nowrap;
+}
+
+/* What things cost (v1.814.0): the price columns share the quantity columns' alignment. A line with
+   no price says so in words, in a muted amber, so it reads as a gap to fix and never as $0.00. */
+.procurement-tracker .pt-no-price {
+    color: var(--yellow-600, #b7791f);
+    font-style: italic;
+}
+
+/* The value and its small print stack inside one box, so on a phone (where the cell is a flex row of
+   label and value) the notes wrap under the figure instead of running off the edge. */
+.procurement-tracker .pt-money-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .doc-price {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.procurement-tracker .pt-total td {
+    font-weight: 600;
+    border-top: 2px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .pt-total small {
+    font-weight: 400;
 }
 
 /* Quantity sitting on unsubmitted Purchase Orders. Muted because it is context, not
@@ -879,7 +909,9 @@ mark {
 }
 
 .procurement-tracker .glass-table th.qty-col,
-.procurement-tracker .glass-table td.qty-col {
+.procurement-tracker .glass-table td.qty-col,
+.procurement-tracker .glass-table th.money-col,
+.procurement-tracker .glass-table td.money-col {
     font-variant-numeric: tabular-nums;
     width: 1%;
 }
@@ -1047,7 +1079,8 @@ mark {
     }
 
     .procurement-tracker .pt-table td,
-    .procurement-tracker .glass-table.pt-table td.qty-col {
+    .procurement-tracker .glass-table.pt-table td.qty-col,
+    .procurement-tracker .glass-table.pt-table td.money-col {
         display: flex;
         gap: 10px;
         padding: 6px 10px;
@@ -1061,6 +1094,16 @@ mark {
 
     .procurement-tracker .pt-table tr td:last-child {
         border-bottom: 0;
+    }
+
+    .procurement-tracker .pt-total td:empty {
+        display: none;
+    }
+
+    .procurement-tracker .pt-table .pt-money-cell {
+        flex: 1 1 auto;
+        white-space: normal;
+        text-align: left;
     }
 
     .procurement-tracker .pt-table td[data-label]::before {

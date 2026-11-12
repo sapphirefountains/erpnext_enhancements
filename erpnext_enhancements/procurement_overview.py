@@ -40,6 +40,7 @@ about the item, not a blank.
 Indentation is tabs (new file, as ``procurement_quantities``).
 """
 
+from erpnext_enhancements import procurement_prices
 from erpnext_enhancements import procurement_quantities as quantities
 from erpnext_enhancements.inventory_enhancements import project_stock_rules as stock_rules
 
@@ -268,7 +269,7 @@ def _counts_toward_quantities(row):
 	return not _chainless(row, _QUOTE_DOCTYPES | {"Purchase Invoice"})
 
 
-def by_item(rows, today=None):
+def by_item(rows, today=None, prices=False):
 	"""One row per item for the project, in item-code order.
 
 	Each is ``{"item_code", "item_name", "stock_uom", "line_count", "requested_qty",
@@ -280,6 +281,11 @@ def by_item(rows, today=None):
 	"nobody asked" that a direct order line carries. ``documents`` is ``{doctype: [names]}``
 	over every row of the item, quotes and bills included: they are part of its paper trail even
 	though they are left out of its quantities.
+
+	With ``prices`` (only for a person who may read Purchase Orders) each row also carries
+	``procurement_prices.ITEM_PRICE_KEYS``: what was spent, the unit price (or its range), what has
+	arrived at the order's rate, and any quote, each from the order lines the item has on the job.
+	Without it those keys are not on the row at all.
 	"""
 	groups = {}
 	for row in rows or ():
@@ -323,7 +329,7 @@ def by_item(rows, today=None):
 			if names:
 				documents[doctype] = names
 		first = item_rows[0]
-		out.append(
+		row = (
 			{
 				"item_code": item_code,
 				"item_name": next((r.get("item_name") for r in item_rows if r.get("item_name")), "") or item_code,
@@ -349,6 +355,9 @@ def by_item(rows, today=None):
 				"documents": documents,
 			}
 		)
+		if prices:
+			row.update(procurement_prices.item_spending(item_rows))
+		out.append(row)
 	out.sort(key=lambda r: stock_rules.natural_key(r["item_code"] or r["item_name"] or ""))
 	return out
 
@@ -420,7 +429,7 @@ def where_now(found, received=None, waiting=False):
 	}
 
 
-def attach(rows, found_items=None, today=None):
+def attach(rows, found_items=None, today=None, prices=False):
 	"""Put the state and the where-now on every line, and return the by-item rows with theirs.
 
 	``rows`` are the feed's item rows (mutated in place: the same dict sits under every document
@@ -430,10 +439,10 @@ def attach(rows, found_items=None, today=None):
 
 	The where-now is **per item for the project**, not per line: ERPNext keeps stock by item,
 	so two lines of one item share one answer, and ``where_now_lines`` on each row says how many
-	lines that answer is spread over.
+	lines that answer is spread over. ``prices`` is passed on to :func:`by_item`.
 	"""
 	rows = list(rows or ())
-	items = by_item(rows, today)
+	items = by_item(rows, today, prices)
 	blocks = {}
 	for item in items:
 		found = None if found_items is None else found_items.get(item["item_code"])

@@ -550,7 +550,7 @@ class TestTheFeedsNewFunctions(unittest.TestCase):
 
 		class _Overview:
 			@staticmethod
-			def attach(rows, found, today):
+			def attach(rows, found, today, prices=False):
 				calls.append(("attach", found, today))
 				return [{"item_code": "A"}]
 
@@ -567,7 +567,9 @@ class TestTheFeedsNewFunctions(unittest.TestCase):
 					get_traceback=lambda: "traceback",
 				),
 				"require_project_read": lambda project: calls.append(("gate", project)),
-				"_documents_and_overview": lambda project: (
+				# Nobody may see prices in this class; test_procurement_prices_feed holds the rule.
+				"_price_access": lambda: None,
+				"_documents_and_overview": lambda project, prices=None: (
 					calls.append(("read", project)) or ([{"doctype": "Purchase Order"}], [{}], [{"item_code": "A"}], True)
 				),
 			}

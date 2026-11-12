@@ -1051,6 +1051,13 @@ Buying), which is unrelated and not in this repo.
   address as `pt_*` keys, written with `history.replaceState`. The widget's decisions are
   [`public/js/procurement_tracker/logic.js`](../public/js/procurement_tracker/logic.js), tested
   under node.
+- **What was spent (v1.814.0).** The query also reads the order, receipt and quotation lines'
+  prices ([`procurement_prices.py`](../procurement_prices.py), pure): **Spent** is what was
+  ordered (the submitted order lines' `base_amount`; ERPNext holds no bills), a rate of 0 is
+  *No price* and left out of every sum, a quote is never a spend, and a document's total says when
+  it is only this job's lines. The keys are on the rows **only for a person who may read Purchase
+  Orders** (`_price_access`): the endpoints themselves ask only for Project read. See
+  [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md).
 - **Printing (v1.517.0):** every document row has **Print** (Frappe's print view, new tab) and
   every group header has **Print**, which prints the group as one PDF — **All**, or **Open**
   where the doctype has one (Material Request, Purchase Order, Purchase Invoice). "Open" is
