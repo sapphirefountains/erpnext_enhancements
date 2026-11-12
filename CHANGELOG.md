@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     2026-11-11), and nothing on screen said the model was a remembered choice.
   - **What the site does.** It does not keep the pick. Its `stores/models.ts` says why: an
     explicit model on a turn is what moves it off its deployed agent, the spend Auto exists to
-    avoid. It opens on Auto on every visit. Under Auto, Triton answers with its default model
+    avoid. A new chat opens on Auto on every visit (reopening an earlier chat puts the picker
+    back on that chat's own model). Under Auto, Triton answers with its default model
     (`gemini-4-argon` at medium reasoning today).
   - **The pick is no longer stored.** `applyModels` chooses: this page's pick if the list still
     has it, then the pinned *Default Model*, then Auto. A pick lasts until the page is reloaded.
