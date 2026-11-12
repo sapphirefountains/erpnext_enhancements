@@ -12,9 +12,9 @@ Location Contents, Where Is This Item, Project Materials and Job Site Contents. 
   here" at a place that is never a bin.
 * **Location Contents calls the Bin Manager's listing rule** (``api.stock_scan._items_at``) once
   per location that could list anything, with no row cap, and carries no copy of it.
-* **The shelf and site split** (``place_kind``, ``allocate_shelf``): a job site wins, then the
-  Project Shelf, the Boneyard, a vehicle; shelf shares add up to what is on the shelf whatever the
-  ledger claims.
+* **The shelf and site split** (``place_kind``, ``shelf_shares``): a job site wins, then the
+  Project Shelf, the Boneyard, a vehicle; a job's shelf share is its ledger net, and the no-job
+  share makes the rows add up to what is on the shelf, going negative when a count left less.
 * **The project roll-up** (``project_item_rows``): ordered from order lines, received from
   receipt lines (a store run has no order), returns, still to come against closed-short, used
   less brought back, and "not located" for what the stock ledger cannot place, with a line that
@@ -22,7 +22,8 @@ Location Contents, Where Is This Item, Project Materials and Job Site Contents. 
 * **How long stock has been at a job site** (``stay``), counts included.
 * **The Project Shelf before it exists.** The setting is read with ``.get`` on the settings
   document and never raises; with no shelf every report still runs and says so. The by-project
-  answer comes through one adapter.
+  answer comes through one adapter, which asks the Project Shelf change's own module when that
+  is installed and reads the same ledger rows itself until then, with the same arithmetic.
 * **The queries.** Every stock ledger read skips canceled entries, every order and receipt read
   takes submitted documents only, values travel as bound parameters, and the only names
   interpolated into SQL are fixed clauses.
@@ -426,6 +427,7 @@ class _Case(unittest.TestCase):
 		self.addCleanup(self.patched.restore)
 		STATE["get_all"]["Item"] = list(ITEMS.values())
 		STATE["get_all"]["Project"] = list(PROJECTS.values())
+		self.patched.set(data, "_shelf_module", lambda: None)
 
 	def places(self, **kwargs):
 		where = _where(**kwargs)
@@ -693,25 +695,41 @@ class TestPlaces(unittest.TestCase):
 class TestShelfSplit(unittest.TestCase):
 	def test_the_jobs_shares_add_up_to_the_shelf(self):
 		# Production's own shape on 2026-11-12: four jobs' receipts of one item, 71 on the shelf.
-		shares = rules.allocate_shelf(71, {"J1": 10, "J2": 18, "J3": 31, "J4": 12})
+		shares = rules.shelf_shares(71, {"J1": 10, "J2": 18, "J3": 31, "J4": 12})
 		self.assertEqual(shares, [("J1", 10.0), ("J2", 18.0), ("J3", 31.0), ("J4", 12.0)])
 
-	def test_what_no_job_claims_is_under_no_job_and_comes_last(self):
-		self.assertEqual(rules.allocate_shelf(10, {"J2": 3, "J1": 2}), [("J1", 2.0), ("J2", 3.0), ("", 5.0)])
-		self.assertEqual(rules.allocate_shelf(4, {}), [("", 4.0)])
-		self.assertEqual(rules.allocate_shelf(4, None), [("", 4.0)])
+	def test_what_no_job_accounts_for_is_under_no_job_and_comes_last(self):
+		self.assertEqual(rules.shelf_shares(10, {"J2": 3, "J1": 2}), [("J1", 2.0), ("J2", 3.0), ("", 5.0)])
+		self.assertEqual(rules.shelf_shares(4, {}), [("", 4.0)])
+		self.assertEqual(rules.shelf_shares(4, None), [("", 4.0)])
 
-	def test_a_count_below_the_claims_scales_every_share(self):
-		shares = rules.allocate_shelf(6, {"J1": 4, "J2": 8})
-		self.assertEqual(shares, [("J1", 2.0), ("J2", 4.0)])
+	def test_a_count_below_the_claims_leaves_the_jobs_alone_and_shows_the_gap(self):
+		# The jobs' figures are the ledger's, the same ones the Project Shelf's own screens show.
+		# The no-job share carries the difference, so the rows still add up to what is there.
+		shares = rules.shelf_shares(6, {"J1": 4, "J2": 8})
+		self.assertEqual(shares, [("J1", 4.0), ("J2", 8.0), ("", -6.0)])
 		self.assertAlmostEqual(sum(q for _p, q in shares), 6)
 
-	def test_a_job_that_took_back_more_than_it_brought_claims_nothing(self):
-		self.assertEqual(rules.allocate_shelf(5, {"J1": -2, "J2": 0, "J3": 5}), [("J3", 5.0)])
+	def test_a_job_that_had_more_leave_than_arrive_reads_negative(self):
+		shares = rules.shelf_shares(5, {"J1": -2, "J2": 0, "J3": 5})
+		self.assertEqual(shares, [("J1", -2.0), ("J3", 5.0), ("", 2.0)])
+		self.assertAlmostEqual(sum(q for _p, q in shares), 5)
 
-	def test_an_empty_shelf_has_no_shares(self):
-		self.assertEqual(rules.allocate_shelf(0, {"J1": 5}), [])
-		self.assertEqual(rules.allocate_shelf(-1, {"J1": 5}), [])
+	def test_an_empty_shelf_still_shows_what_the_ledger_claims(self):
+		self.assertEqual(rules.shelf_shares(0, {"J1": 5}), [("J1", 5.0), ("", -5.0)])
+		self.assertEqual(rules.shelf_shares(0, {}), [])
+		self.assertEqual(rules.shelf_shares(0, None), [])
+
+	def test_the_gaps_are_counted_by_item(self):
+		rows = [
+			{"item_code": "A", "project": "J1", "qty": 4},
+			{"item_code": "A", "project": "", "qty": 2},
+			{"item_code": "B", "project": "", "qty": -3},
+			{"item_code": "C", "project": "", "qty": -1},
+			{"item_code": "D", "project": "J1", "qty": -9},
+		]
+		self.assertEqual(rules.shelf_gaps(rows), (1, 2))
+		self.assertEqual(rules.shelf_gaps([]), (0, 0))
 
 
 def _order(item, po, qty, received=0, status="To Receive and Bill", cf=1, **extra):
@@ -1112,43 +1130,18 @@ class TestSharedReads(_Case):
 		self.assertEqual(data.chunks(["b", "a", "b", None, ""], size=1), [["a"], ["b"]])
 		self.assertEqual(data.chunks([]), [])
 
-	def test_the_adapter_is_one_call_to_this_modules_own_reading(self):
-		seen = []
-		self.patched.set(
-			data,
-			"_own_shelf_stock_by_project",
-			lambda shelf, item_codes=None, projects=None: seen.append((shelf, item_codes, projects)) or ["x"],
-		)
-		self.assertEqual(data.shelf_stock_by_project("S", item_codes=["A"], projects=["J"]), ["x"])
-		self.assertEqual(seen, [("S", ["A"], ["J"])])
-		# One statement: swapping in the Project Shelf change's function is a one-line edit.
-		tree = ast.parse((INV / "inventory_report_data.py").read_text(encoding="utf-8"))
-		fn = next(
-			n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "shelf_stock_by_project"
-		)
-		body = [n for n in fn.body if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
-		self.assertEqual(len(body), 1)
-		self.assertIsInstance(body[0], ast.Return)
+	def _shelf_sql(self, bins, claims):
+		_answer_sql("from `tabBin`", bins)
+		_answer_sql("from `tabStock Ledger Entry`", claims)
 
-	def test_nothing_but_the_adapter_asks_the_own_reading(self):
-		for path in [INV / "inventory_report_data.py", *sorted(REPORTS.glob("*/*.py"))]:
-			source = _strip_py(path.read_text(encoding="utf-8"))
-			calls = source.count("_own_shelf_stock_by_project(")
-			self.assertEqual(calls, 2 if path.name == "inventory_report_data.py" else 0, path.name)
-
-	def test_the_own_reading_fits_the_ledger_to_the_shelf(self):
-		_answer_sql(
-			"from `tabBin`",
+	def test_before_the_project_shelf_module_is_installed_the_adapter_reads_the_ledger_itself(self):
+		self._shelf_sql(
 			[
 				{"item_code": "A", "actual_qty": 10, "valuation_rate": 2.0},
 				{"item_code": "B", "actual_qty": 6, "valuation_rate": 1.5},
 			],
-		)
-		_answer_sql(
-			"from `tabStock Ledger Entry`",
 			[
 				{"item_code": "A", "project": "JOB-1", "qty": 4},
-				{"item_code": "A", "project": "", "qty": 6},
 				{"item_code": "B", "project": "JOB-1", "qty": 4},
 				{"item_code": "B", "project": "JOB-2", "qty": 8},
 			],
@@ -1159,27 +1152,160 @@ class TestSharedReads(_Case):
 			[
 				("A", "JOB-1", 4.0, 8.0),
 				("A", "", 6.0, 12.0),
-				("B", "JOB-1", 2.0, 3.0),
-				("B", "JOB-2", 4.0, 6.0),
+				("B", "JOB-1", 4.0, 6.0),
+				("B", "JOB-2", 8.0, 12.0),
+				("B", "", -6.0, -9.0),
 			],
 		)
 		for query, params, _as_dict in STATE["sql_calls"]:
 			self.assertEqual(params, {"shelf": "Project Shelf - SF"})
 			self.assertNotIn("in %(items)s", query)
+		ledger = next(q for q, _p, _d in STATE["sql_calls"] if "tabStock Ledger Entry" in q)
+		# A row with no Project is not a claim; what it leaves is the gap to tabBin.
+		self.assertIn("coalesce(project, '') <> ''", ledger)
+		self.assertIn("is_cancelled = 0", ledger)
 
-	def test_the_own_reading_narrows_by_item_and_by_job(self):
-		_answer_sql("from `tabBin`", [{"item_code": "A", "actual_qty": 10, "valuation_rate": 1}])
-		_answer_sql("from `tabStock Ledger Entry`", [{"item_code": "A", "project": "JOB-1", "qty": 4}])
+	def test_the_adapter_narrows_by_item_and_by_job(self):
+		self._shelf_sql(
+			[{"item_code": "A", "actual_qty": 10, "valuation_rate": 1}],
+			[{"item_code": "A", "project": "JOB-1", "qty": 4}],
+		)
 		rows = data.shelf_stock_by_project("Project Shelf - SF", item_codes=["A", "A"], projects=["JOB-1"])
 		self.assertEqual([(r["project"], r["qty"]) for r in rows], [("JOB-1", 4.0)])
 		for query, params, _as_dict in STATE["sql_calls"]:
 			self.assertIn("and item_code in %(items)s", query)
 			self.assertEqual(params["items"], ("A",))
 
+	def test_a_claim_with_nothing_left_on_the_shelf_still_shows(self):
+		self._shelf_sql([], [{"item_code": "A", "project": "JOB-1", "qty": 3}])
+		rows = data.shelf_stock_by_project("Project Shelf - SF")
+		self.assertEqual([(r["project"], r["qty"]) for r in rows], [("JOB-1", 3.0), ("", -3.0)])
+
 	def test_no_shelf_or_no_items_asks_nothing(self):
 		self.assertEqual(data.shelf_stock_by_project(None), [])
 		self.assertEqual(data.shelf_stock_by_project("Project Shelf - SF", item_codes=[]), [])
 		self.assertEqual(STATE["sql_calls"], [])
+
+	def _module(self, answer=None, warehouse="Project Shelf - SF", raises=False):
+		"""A stand-in for the Project Shelf change's module, in the shape its note settles."""
+		calls = []
+
+		def shelf_stock(project=None, item_code=None):
+			calls.append((project, item_code))
+			if raises:
+				raise RuntimeError("boom")
+			return answer
+
+		def shelf_warehouse():
+			if raises:
+				raise RuntimeError("boom")
+			return warehouse
+
+		module = types.SimpleNamespace(shelf_stock=shelf_stock, warehouse=shelf_warehouse, calls=calls)
+		self.patched.set(data, "_shelf_module", lambda: module)
+		return module
+
+	def test_with_the_project_shelf_module_installed_the_adapter_asks_it(self):
+		module = self._module(
+			{
+				"warehouse": "Project Shelf - SF",
+				"rows": [
+					{"project": "JOB-1", "item_code": "A", "qty": 4.0, "qty_in": 10.0, "qty_out": 6.0},
+					{"project": "JOB-2", "item_code": "A", "qty": -1.0},
+					{"project": "JOB-1", "item_code": "B", "qty": 2.0},
+					{"project": "", "item_code": "A", "qty": 99.0},
+				],
+				"untagged": [],
+				"exact": False,
+			}
+		)
+		_answer_sql(
+			"from `tabBin`",
+			[
+				{"item_code": "A", "actual_qty": 5, "valuation_rate": 2.0},
+				{"item_code": "B", "actual_qty": 2, "valuation_rate": 1.0},
+			],
+		)
+		rows = data.shelf_stock_by_project("Project Shelf - SF")
+		self.assertEqual(
+			[(r["item_code"], r["project"], r["qty"]) for r in rows],
+			[("A", "JOB-1", 4.0), ("A", "JOB-2", -1.0), ("A", "", 2.0), ("B", "JOB-1", 2.0)],
+		)
+		self.assertEqual(module.calls, [(None, None)])
+		# The ledger is not read twice: only tabBin is asked here.
+		self.assertFalse([q for q, _p, _d in STATE["sql_calls"] if "tabStock Ledger Entry" in q])
+
+	def test_one_item_is_asked_for_by_name_and_several_are_filtered_here(self):
+		answer = {
+			"warehouse": "Project Shelf - SF",
+			"rows": [
+				{"project": "JOB-1", "item_code": "A", "qty": 1.0},
+				{"project": "JOB-1", "item_code": "C", "qty": 1.0},
+			],
+		}
+		module = self._module(answer)
+		data.shelf_stock_by_project("Project Shelf - SF", item_codes=["A"])
+		rows = data.shelf_stock_by_project("Project Shelf - SF", item_codes=["A", "B"])
+		self.assertEqual(module.calls, [(None, "A"), (None, None)])
+		self.assertEqual({r["item_code"] for r in rows}, {"A"})
+
+	def test_an_answer_that_cannot_be_used_falls_back_to_the_own_reading(self):
+		for kwargs in (
+			{"answer": {"warehouse": "Another - SF", "rows": [{"project": "X", "item_code": "A", "qty": 9}]}},
+			{"answer": None},
+			{"answer": ["not", "a", "dict"]},
+			{"raises": True},
+		):
+			with self.subTest(**{k: str(v)[:20] for k, v in kwargs.items()}):
+				_reset()
+				self._module(**kwargs)
+				self._shelf_sql(
+					[{"item_code": "A", "actual_qty": 4, "valuation_rate": 1}],
+					[{"item_code": "A", "project": "JOB-1", "qty": 4}],
+				)
+				rows = data.shelf_stock_by_project("Project Shelf - SF")
+				self.assertEqual([(r["project"], r["qty"]) for r in rows], [("JOB-1", 4.0)])
+
+	def test_which_warehouse_is_the_shelf_is_the_modules_answer_when_installed(self):
+		STATE["settings"] = {"project_shelf_warehouse": "Stale - SF"}
+		self._module(warehouse="Project Shelf - SF")
+		self.assertEqual(data.project_shelf(), "Project Shelf - SF")
+		self._module(warehouse=None)
+		self.assertIsNone(data.project_shelf())
+		# A module that raises is not trusted: back to this module's own reading of the setting.
+		STATE["settings"] = {"project_shelf_warehouse": "Project Shelf - SF"}
+		STATE["values"][("Warehouse", "Project Shelf - SF")] = {"name": "Project Shelf - SF"}
+		self._module(raises=True)
+		self.assertEqual(data.project_shelf(), "Project Shelf - SF")
+
+	def test_the_module_is_found_by_import_and_its_absence_is_not_an_error(self):
+		self.patched.restore()
+		name = "erpnext_enhancements.inventory_enhancements.project_shelf"
+		had = name in sys.modules
+		saved = sys.modules.get(name)
+		try:
+			sys.modules[name] = None  # what a failed import looks like to the import system
+			self.assertIsNone(data._shelf_module())
+			fake = types.ModuleType(name)
+			sys.modules[name] = fake
+			self.assertIs(data._shelf_module(), fake)
+		finally:
+			if had:
+				sys.modules[name] = saved
+			else:
+				sys.modules.pop(name, None)
+
+	def test_nothing_but_the_adapter_reads_whose_stock_is_on_the_shelf(self):
+		for path in sorted(REPORTS.glob("*/*.py")):
+			source = _strip_py(path.read_text(encoding="utf-8"))
+			for word in (
+				"_shelf_claims",
+				"_own_shelf_claims",
+				"_shelf_module",
+				"shelf_stock(",
+				"project_shelf_warehouse",
+			):
+				self.assertNotIn(word, source, f"{path.name}: {word}")
 
 	def test_the_supplier_return_seam_answers_nothing_yet(self):
 		self.assertEqual(data.supplier_returns_by_item("JOB-1"), {})
@@ -1508,6 +1634,31 @@ class TestWhereIsThisItem(_Case):
 			[(r["project"], r["on_hand"], r["on_order"]) for r in rows], [("JOB-1", 9.0, 0.0), ("", 0.0, 3.0)]
 		)
 
+	def test_a_shelf_counted_lower_than_the_jobs_claim_shows_the_gap_and_says_what_it_means(self):
+		self.shares = [
+			{"item_code": "A", "project": "JOB-1", "qty": 12.0, "value": 120.0},
+			{"item_code": "A", "project": "", "qty": -3.0, "value": -30.0},
+		]
+		_columns, rows, message, _chart, _summary = self.run_report(item_code="A")
+		shelf = [r for r in rows if r["kind"] == rules.KIND_SHELF]
+		self.assertEqual([(r["project"], r["on_hand"]) for r in shelf], [("JOB-1", 12.0), ("", -3.0)])
+		self.assertEqual(sum(r["on_hand"] for r in shelf), 9.0)
+		self.assertIn(where_item.SHORT_SHELF_NOTE, message)
+		self.shares = [{"item_code": "A", "project": "JOB-1", "qty": 9.0, "value": 90.0}]
+		self.assertIsNone(self.run_report(item_code="A")[2])
+
+	def test_a_claim_on_an_item_with_nothing_left_on_the_shelf_still_gets_its_rows(self):
+		self.shares = [
+			{"item_code": "C", "project": "JOB-2", "qty": 2.0, "value": 0.0},
+			{"item_code": "C", "project": "", "qty": -2.0, "value": 0.0},
+		]
+		rows = [r for r in self.run_report()[1] if r["item_code"] == "C"]
+		self.assertEqual(
+			[(r["kind"], r["project"], r["on_hand"]) for r in rows],
+			[(rules.KIND_SHELF, "JOB-2", 2.0), (rules.KIND_SHELF, "", -2.0)],
+		)
+		self.assertEqual(rows[0]["project_name"], "Second Job")
+
 	def test_a_job_site_row_carries_its_job_and_a_shop_row_its_last_movement(self):
 		rows = {r["warehouse"]: r for r in self.run_report(item_code="A")[1] if r["kind"] != rules.KIND_SHELF}
 		self.assertEqual(rows["Site J1 - SF"]["project_name"], "First Job")
@@ -1796,6 +1947,27 @@ class TestProjectMaterials(_Case):
 		)
 		self.assertEqual(len(every), 3)
 
+	def test_the_shelf_is_asked_for_the_job_and_for_the_no_job_shares(self):
+		asked = []
+
+		def shelf(shelf, item_codes=None, projects=None):
+			asked.append(projects)
+			return [
+				{"item_code": "A", "project": "JOB-1", "qty": 5.0, "value": 50.0},
+				{"item_code": "A", "project": "", "qty": -2.0, "value": -20.0},
+				{"item_code": "D", "project": "", "qty": -9.0, "value": -9.0},
+			]
+
+		self.patched.set(data, "shelf_stock_by_project", shelf)
+		_c, rows, message, _ch, _s = self.run_report(project="JOB-1")
+		self.assertEqual(asked, [["JOB-1", ""]])
+		by_item = {r["item_code"]: r for r in rows}
+		# The job's own figure is the ledger's; the no-job share is not the job's stock.
+		self.assertEqual(by_item["A"]["on_shelf"], 5)
+		self.assertNotIn("D", by_item)
+		# One of this job's shelf items is short on the shelf; D is not this job's.
+		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1), message)
+
 	def test_a_finished_job_reads_the_same(self):
 		# Nothing in the one-project view reads the job's status.
 		rows = self.run_report(project="JOB-2")[1]
@@ -1838,6 +2010,11 @@ class TestProjectMaterials(_Case):
 		self.assertEqual(first["total_value"], 80)
 		self.assertEqual((rows[1]["shelf_value"], rows[1]["site_value"]), (8, 20))
 		self.assertIn("1 item(s) on the Project Shelf are under no job", message)
+		self.assertNotIn("counted lower", message)
+		self.shelf_rows.append({"item_code": "B", "project": "", "qty": -4.0, "value": -4.0})
+		message = self.run_report(include_finished=1)[2]
+		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1), message)
+		self.shelf_rows.pop()
 		values = {card["label"]: card["value"] for card in cards}
 		self.assertEqual(values["Jobs holding stock"], 2)
 		self.assertEqual(values["On the Project Shelf"], 58)

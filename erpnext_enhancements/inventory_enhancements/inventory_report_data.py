@@ -19,10 +19,12 @@ in the note over its table. Nothing here raises for a missing field.
 
 **Whose stock is on the shelf: one adapter.** ERPNext keeps on-hand by item and warehouse
 (``tabBin``) and has no job there, so the job comes from the stock ledger.
-:func:`shelf_stock_by_project` is the only place the reports ask that question. Today it answers
-from this module's own reading (:func:`_own_shelf_stock_by_project`). When the Project Shelf
-change provides its function, the body of :func:`shelf_stock_by_project` becomes one call to it
-and nothing else in the reports changes.
+:func:`shelf_stock_by_project` is the only place the reports ask that question. The Project Shelf
+change ships its own module, ``inventory_enhancements/project_shelf.py``. When that module is
+installed the adapter asks it (``project_shelf.warehouse`` for which warehouse is the shelf,
+``project_shelf.shelf_stock`` for each job's net quantity), so the reports and the shelf's own
+screens read one answer. Before it is installed the adapter reads the same ledger rows itself
+(:func:`_own_shelf_claims`). Both paths do the same arithmetic, so the swap changes no number.
 
 **Returns to a supplier: one seam.** :func:`supplier_returns_by_item` is where the Supplier
 Return record will be read once it exists. Until then it answers nothing, and Project Materials
@@ -84,7 +86,15 @@ def _single_location(name):
 
 
 def project_shelf():
-	"""The Project Shelf warehouse, or ``None`` when none is set (see the module docstring)."""
+	"""The Project Shelf warehouse, or ``None`` when none is set (see the module docstring).
+	The Project Shelf change's own answer when its module is installed, else this module's
+	reading of the setting. Never raises."""
+	module = _shelf_module()
+	if module is not None:
+		try:
+			return module.warehouse() or None
+		except Exception:
+			pass
 	return _single_location(_setting(SHELF_FIELD))
 
 
@@ -259,80 +269,136 @@ def site_bins(where, projects=None, item_codes=None):
 # --- The Project Shelf, by job --------------------------------------------------------------
 
 
+def _shelf_module():
+	"""The Project Shelf change's own module (``inventory_enhancements/project_shelf.py``), or
+	``None`` on a site where it is not installed yet."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf as module
+	except ImportError:
+		return None
+	return module
+
+
 def shelf_stock_by_project(shelf, item_codes=None, projects=None):
 	"""THE ADAPTER: what is on the Project Shelf, split by the job it is for.
 
-	Returns ``[{item_code, project, qty, value}, ...]``. ``project`` is ``""`` for shelf stock
-	no job claims. ``item_codes`` and ``projects`` narrow the answer; ``None`` means all.
+	Returns ``[{item_code, project, qty, value}, ...]``. ``project`` is ``""`` for the row that
+	holds what no job's ledger rows account for. ``item_codes`` and ``projects`` narrow the
+	answer; ``None`` means all. Every report asks this function and nothing else.
 
-	Every report asks this function and nothing else. When the Project Shelf change provides
-	its own function, replace the one line below with a call to it (mapping its rows to these
-	four keys if they differ) and delete :func:`_own_shelf_stock_by_project`.
-	"""
-	return _own_shelf_stock_by_project(shelf, item_codes=item_codes, projects=projects)
+	**Two facts, two sources.** How many there are is ``tabBin`` at the shelf. Whose they are is
+	the stock ledger: the net quantity each job's rows put on the shelf (:func:`_shelf_claims`).
+	``rules.shelf_shares`` puts the two side by side without changing either: each job's share is
+	its ledger net, and the no-job row is what is on hand less every job's share, so the rows
+	always add up to what is on the shelf. That last row is negative when a count left fewer
+	than the jobs' rows claim; the reports say so rather than scale the jobs down, so a job's
+	figure here is the same figure the Project Shelf's own screens show.
 
-
-def _own_shelf_stock_by_project(shelf, item_codes=None, projects=None):
-	"""This module's own reading, until the Project Shelf change provides one.
-
-	The shelf's on-hand per item is ``tabBin`` (the truth about how many there are). The job is
-	the stock ledger's: the net of ``actual_qty`` over the live rows at the shelf, by the Project
-	each row carries. ``rules.allocate_shelf`` fits the second to the first. Value is the share's
-	quantity at the shelf's valuation rate for the item.
-
-	Two grouped queries, both on the one warehouse, so they stay small however long the ledger
-	gets.
+	Value is each share's quantity at the shelf's valuation rate for the item.
 	"""
 	if not shelf:
 		return []
 	codes = None if item_codes is None else sorted({c for c in item_codes if c})
 	if codes is not None and not codes:
 		return []
+	bins = _shelf_bins(shelf, codes)
+	claims = _shelf_claims(shelf, codes)
+	wanted = None if projects is None else set(projects)
+	out = []
+	for code in sorted(set(bins) | set(claims)):
+		on_hand, rate = bins.get(code, (0.0, 0.0))
+		for project, qty in rules.shelf_shares(on_hand, claims.get(code)):
+			if wanted is not None and project not in wanted:
+				continue
+			out.append({"item_code": code, "project": project, "qty": qty, "value": qty * rate})
+	return out
+
+
+def _shelf_bins(shelf, codes):
+	"""``{item_code: (on hand, valuation rate)}`` at the shelf."""
 	item_clause = "and item_code in %(items)s" if codes else ""
 	params = {"shelf": shelf}
 	if codes:
 		params["items"] = tuple(codes)
-	bins = frappe.db.sql(
+	rows = frappe.db.sql(
 		f"""
 		select item_code, actual_qty, valuation_rate
 		from `tabBin`
-		where warehouse = %(shelf)s and actual_qty > 0 {item_clause}
+		where warehouse = %(shelf)s {item_clause}
 		""",
 		params,
 		as_dict=True,
 	)
-	if not bins:
-		return []
-	ledger = frappe.db.sql(
+	return {
+		row.get("item_code"): (rules._num(row.get("actual_qty")), rules._num(row.get("valuation_rate")))
+		for row in rows
+	}
+
+
+def _shelf_claims(shelf, codes):
+	"""``{item_code: {project: net ledger quantity}}`` at the shelf.
+
+	Asked of the Project Shelf change's ``project_shelf.shelf_stock`` when that module is
+	installed, so these reports and its screens read one answer. Before it is installed, or if
+	its answer is not for this shelf or not in the agreed shape, this module's own reading of the
+	same ledger rows is used (:func:`_own_shelf_claims`).
+	"""
+	module = _shelf_module()
+	if module is not None:
+		claims = _claims_from_module(module, shelf, codes)
+		if claims is not None:
+			return claims
+	return _own_shelf_claims(shelf, codes)
+
+
+def _claims_from_module(module, shelf, codes):
+	"""``project_shelf.shelf_stock``'s rows as claims, or ``None`` when they cannot be used.
+
+	The agreed shape (the Project Shelf session's note of 2026-11-12):
+	``shelf_stock(project=None, item_code=None)`` returns ``{"warehouse": ..., "rows": [{"project",
+	"item_code", "qty", ...}]}``, ``qty`` being what came onto the shelf under the job less what
+	left under it. One item is asked for by name; several are filtered here.
+	"""
+	try:
+		answer = module.shelf_stock(item_code=codes[0] if codes and len(codes) == 1 else None)
+		if not isinstance(answer, dict) or answer.get("warehouse") != shelf:
+			return None
+		wanted = None if codes is None else set(codes)
+		claims = {}
+		for row in answer.get("rows") or ():
+			code, project = row.get("item_code"), row.get("project")
+			if not code or not project or (wanted is not None and code not in wanted):
+				continue
+			by_project = claims.setdefault(code, {})
+			by_project[project] = by_project.get(project, 0.0) + rules._num(row.get("qty"))
+		return claims
+	except Exception:
+		return None
+
+
+def _own_shelf_claims(shelf, codes):
+	"""This module's own reading: the net of ``actual_qty`` over the live ledger rows at the
+	shelf, by the Project each row carries. One grouped query on the one warehouse, so it stays
+	small however long the ledger gets. Rows with no Project are not a claim; what they leave
+	shows up as the gap between the claims and ``tabBin``."""
+	item_clause = "and item_code in %(items)s" if codes else ""
+	params = {"shelf": shelf}
+	if codes:
+		params["items"] = tuple(codes)
+	rows = frappe.db.sql(
 		f"""
-		select item_code, coalesce(project, '') as project, sum(actual_qty) as qty
+		select item_code, project, sum(actual_qty) as qty
 		from `tabStock Ledger Entry`
-		where warehouse = %(shelf)s and is_cancelled = 0 {item_clause}
-		group by item_code, coalesce(project, '')
+		where warehouse = %(shelf)s and is_cancelled = 0 and coalesce(project, '') <> '' {item_clause}
+		group by item_code, project
 		""",
 		params,
 		as_dict=True,
 	)
 	claims = {}
-	for row in ledger:
-		if row.get("project"):
-			claims.setdefault(row.get("item_code"), {})[row.get("project")] = row.get("qty")
-	wanted = None if projects is None else set(projects)
-	out = []
-	for row in bins:
-		rate = rules._num(row.get("valuation_rate"))
-		for project, qty in rules.allocate_shelf(row.get("actual_qty"), claims.get(row.get("item_code"))):
-			if wanted is not None and project not in wanted:
-				continue
-			out.append(
-				{
-					"item_code": row.get("item_code"),
-					"project": project,
-					"qty": qty,
-					"value": qty * rate,
-				}
-			)
-	return out
+	for row in rows:
+		claims.setdefault(row.get("item_code"), {})[row.get("project")] = rules._num(row.get("qty"))
+	return claims
 
 
 # --- Returns to a supplier ------------------------------------------------------------------

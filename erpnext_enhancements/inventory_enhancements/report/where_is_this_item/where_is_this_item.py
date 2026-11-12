@@ -23,9 +23,11 @@ empty bin is on its list of places: that is where the next one goes.
 
 **The Project Shelf is one warehouse, so its split by job is not in ``tabBin``.** It comes from
 ``inventory_report_data.shelf_stock_by_project``: each job's share, and a last row under no job
-for what no job claims, which also carries what is on order to the shelf (an order's quantity is
-kept by warehouse, not by job). Before a Project Shelf is set, no row is of that kind and the
-note over the table says so.
+for what no job's ledger rows account for, which also carries what is on order to the shelf (an
+order's quantity is kept by warehouse, not by job). The rows add up to what is on the shelf. A
+job's share is the ledger's, so when somebody counted the shelf lower than the jobs' rows add up
+to, the no-job row is negative by the difference, and the note over the table says what that
+means. Before a Project Shelf is set, no row is of that kind and the note says so.
 
 **The last movement** is the newest live Stock Ledger row for the item at the place
 (``posting_datetime``, then ``creation``). On the Project Shelf it is the newest row carrying
@@ -53,6 +55,11 @@ MAX_ITEMS = 500
 MAX_ROWS = 5000
 
 NO_JOB = "(no job)"
+
+SHORT_SHELF_NOTE = (
+	"A negative (no job) row on the Project Shelf means the shelf was counted lower than the jobs' "
+	"stock ledger rows add up to. The jobs' figures are the ledger's."
+)
 
 
 def execute(filters=None):
@@ -249,7 +256,11 @@ def get_rows(filters, where):
 		notes.append(
 			_("Showing the first {0} places. Choose an item or search to see the rest.").format(MAX_ROWS)
 		)
-	codes = {row.get("item_code") for row in bins}
+	shelf_shares = {}
+	if where.shelf:
+		for share in data.shelf_stock_by_project(where.shelf, item_codes=item_codes):
+			shelf_shares.setdefault(share.get("item_code"), []).append(share)
+	codes = {row.get("item_code") for row in bins} | set(shelf_shares)
 	if item_codes is not None:
 		codes.update(item_codes)
 	if not codes:
@@ -257,13 +268,19 @@ def get_rows(filters, where):
 
 	items = data.item_info(codes)
 	rules_by_item, defaults_by_item = data.assignments(codes)
-	shelf_shares = {}
-	if where.shelf:
-		for share in data.shelf_stock_by_project(where.shelf, item_codes=item_codes):
-			shelf_shares.setdefault(share.get("item_code"), []).append(share)
 	by_place, by_job = last_movements(item_codes, where.shelf)
 
 	places = {(row.get("item_code"), row.get("warehouse")): row for row in bins}
+	# A job's ledger rows can claim shelf stock a count has since written off: no Bin quantity,
+	# and still a share to show.
+	for code in shelf_shares:
+		places.setdefault((code, where.shelf), {"item_code": code, "warehouse": where.shelf})
+	if any(
+		not s.get("project") and rules._num(s.get("qty")) < 0
+		for shares in shelf_shares.values()
+		for s in shares
+	):
+		notes.append(_(SHORT_SHELF_NOTE))
 	if rules._on(filters.get("include_empty")):
 		for code in codes:
 			for warehouse in rules_by_item.get(code, set()) | defaults_by_item.get(code, set()):
@@ -315,8 +332,9 @@ def get_rows(filters, where):
 
 def _shelf_rows(base, place, shares, by_job, project_names):
 	"""The Project Shelf's rows for one item: one per job with a share, then one under no job for
-	what no job claims. What is on order to the shelf sits on the no-job row (it is kept by
-	warehouse, not by job), which is added for that alone when no stock is unclaimed."""
+	what no job's ledger rows account for. What is on order to the shelf sits on the no-job row
+	(it is kept by warehouse, not by job), which is added for that alone when the jobs' shares
+	are the whole of what is there."""
 	out = []
 	on_order = rules._num(place.get("ordered_qty"))
 	has_no_job = False

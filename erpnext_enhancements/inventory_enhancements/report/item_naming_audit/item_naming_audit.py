@@ -60,11 +60,23 @@ def execute(filters=None):
 def get_columns():
 	return [
 		{"label": _("Severity"), "fieldname": "severity", "fieldtype": "Data", "width": 90},
-		{"label": _("Item Code"), "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 230},
+		{
+			"label": _("Item Code"),
+			"fieldname": "item_code",
+			"fieldtype": "Link",
+			"options": "Item",
+			"width": 230,
+		},
 		{"label": _("Item Name"), "fieldname": "item_name", "fieldtype": "Data", "width": 300},
 		{"label": _("Findings"), "fieldname": "findings", "fieldtype": "Data", "width": 320},
 		{"label": _("Family"), "fieldname": "family", "fieldtype": "Data", "width": 110},
-		{"label": _("Item Group"), "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 150},
+		{
+			"label": _("Item Group"),
+			"fieldname": "item_group",
+			"fieldtype": "Link",
+			"options": "Item Group",
+			"width": 150,
+		},
 		{"label": _("What to do"), "fieldname": "first_message", "fieldtype": "Data", "width": 420},
 	]
 
@@ -89,10 +101,12 @@ def _message(result):
 	summary = result.get("summary") or {}
 	corpus = result.get("corpus") or {}
 	notes = [
-		_("Sorted worst-first: STOP before FIX before NOTE. A STOP is a record that should not "
-		  "be transacted against; a FIX is one that is merely untidy. None of this blocks a save of "
-		  "an existing Item; from 2026-10-01 a new Item is refused only for a duplicate code or a name that is "
-		  "just its code."),
+		_(
+			"Sorted worst-first: STOP before FIX before NOTE. A STOP is a record that should not "
+			"be transacted against; a FIX is one that is merely untidy. None of this blocks a save of "
+			"an existing Item; from 2026-10-01 a new Item is refused only for a duplicate code or a name that is "
+			"just its code."
+		),
 	]
 
 	live = summary.get("live_rows") or 0
@@ -100,26 +114,29 @@ def _message(result):
 	pct = summary.get("compliance_pct")
 	if pct is not None:
 		notes.append(
-			_("<b>{0} of {1} live records ({2}%) pass every check.</b> {3} rows carry a "
-			  "'(deleted)' suffix from the QuickBooks migration and are hidden unless you ask "
-			  "for them — they are one batch retirement (WI-070), not {3} decisions.").format(
-				passing, live, round(pct, 1), summary.get("tombstone_rows") or 0
-			)
+			_(
+				"<b>{0} of {1} live records ({2}%) pass every check.</b> {3} rows carry a "
+				"'(deleted)' suffix from the QuickBooks migration and are hidden unless you ask "
+				"for them — they are one batch retirement (WI-070), not {3} decisions."
+			).format(passing, live, round(pct, 1), summary.get("tombstone_rows") or 0)
 		)
 
 	# The normalisation is printed because a duplicate count is a property of it, not of the
 	# data — quoting one without the other is unfalsifiable. See item_naming_rules.NORMALISATION.
 	notes.append(
-		_("Duplicate detection normalises names by: <i>{0}</i>. Note what that cannot catch — "
-		  "the same physical part filed under two codes and two wordings collides on nothing. "
-		  "Use the 'Check naming' button on an Item form for scored near-neighbours."
-		  ).format(summary.get("normalisation") or "")
+		_(
+			"Duplicate detection normalises names by: <i>{0}</i>. Note what that cannot catch — "
+			"the same physical part filed under two codes and two wordings collides on nothing. "
+			"Use the 'Check naming' button on an Item form for scored near-neighbours."
+		).format(summary.get("normalisation") or "")
 	)
 
 	if corpus.get("permission_filtered"):
 		notes.append(
-			_("<b>You can see {0} of {1} Items.</b> This list, and the counts above, describe "
-			  "only what your permissions allow.").format(corpus.get("visible"), corpus.get("total"))
+			_(
+				"<b>You can see {0} of {1} Items.</b> This list, and the counts above, describe "
+				"only what your permissions allow."
+			).format(corpus.get("visible"), corpus.get("total"))
 		)
 	return "<br><br>".join(notes)
 

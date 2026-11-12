@@ -14,7 +14,7 @@ database in their own module and hand the rows here. What a row *means* is decid
 * **What kind of place a warehouse is** (:func:`place_kind`): a shop bin, the Project Shelf, a job
   site, the Boneyard, a vehicle. The same split Stock Scan makes between the shop and job sites
   (``job_site_rules.split_places``), with the other places named.
-* **Whose stock is on the Project Shelf** (:func:`allocate_shelf`): the shelf is one warehouse, so
+* **Whose stock is on the Project Shelf** (:func:`shelf_shares`): the shelf is one warehouse, so
   ``tabBin`` has one figure per item there and the job comes from the stock ledger.
 * **One project's items** (:func:`project_item_rows`): ordered, received, on the shelf, at the job
   site, used, returned to the supplier, still to come, and what was received that the stock ledger
@@ -254,33 +254,27 @@ def _on(value):
 NO_PROJECT = ""
 
 
-def allocate_shelf(on_hand, by_project):
-	"""Split one item's Project Shelf stock between the jobs it was received for.
+def shelf_shares(on_hand, by_project):
+	"""One item's Project Shelf stock, by the job it is for.
 
-	``on_hand`` is what ``tabBin`` says is on the shelf: the truth about how many there are.
-	``by_project`` is ``{project: net ledger quantity}``, what the stock ledger says came in for
-	each job less what went back out carrying the same job. The two disagree whenever somebody
-	counted the shelf (a count carries no job), so the shelf's own figure wins:
+	``on_hand`` is what ``tabBin`` says is on the shelf: how many there are. ``by_project`` is
+	``{project: net ledger quantity}``: what came onto the shelf under each job, less what left
+	under it. Neither is changed to fit the other:
 
-	* a job's share is its net quantity, never less than nothing;
-	* what the jobs do not claim is the shelf's own, under no job (``NO_PROJECT``);
-	* when the jobs claim more than is there, every share is scaled down by the same factor, so
-	  the shares still add up to what is on the shelf.
+	* a job's share is its ledger net, whatever its sign (a job that had more leave under its
+	  name than arrive reads negative, as it does on the Project Shelf's own screens);
+	* the no-job share (``NO_PROJECT``) is what is on hand less every job's share. It is the
+	  stock no job's rows account for, and it is negative when somebody counted the shelf lower
+	  than the jobs' rows add up to (a count carries no job).
 
-	Returns ``[(project, qty), ...]``, jobs by name and the no-job remainder last, with nothing
-	at zero.
+	So the shares always add up to what is on the shelf. Returns ``[(project, qty), ...]``, jobs
+	by name and the no-job share last, with nothing at zero.
 	"""
-	total = max(_num(on_hand), 0.0)
-	claims = {p: _num(q) for p, q in (by_project or {}).items() if p and _num(q) > TOLERANCE}
-	if total <= TOLERANCE:
-		return []
-	claimed = sum(claims.values())
-	if claimed > total + TOLERANCE:
-		factor = total / claimed
-		return [(p, round(claims[p] * factor, 6)) for p in sorted(claims)]
+	total = _num(on_hand)
+	claims = {p: _num(q) for p, q in (by_project or {}).items() if p and abs(_num(q)) > TOLERANCE}
 	out = [(p, claims[p]) for p in sorted(claims)]
-	rest = total - claimed
-	if rest > TOLERANCE:
+	rest = total - sum(claims.values())
+	if abs(rest) > TOLERANCE:
 		out.append((NO_PROJECT, round(rest, 6)))
 	return out
 
@@ -616,8 +610,9 @@ def held_by_project(shelf_rows, site_rows, projects=None):
 	"""What is physically held for each project, one row per project.
 
 	``shelf_rows`` and ``site_rows`` are ``[{project, item_code, qty, value}, ...]``: the Project
-	Shelf split by job (:func:`allocate_shelf`) and the stock at each job's site. Shelf stock
-	under no job is not any project's and is left out; the caller reports it in a note.
+	Shelf split by job (:func:`shelf_shares`) and the stock at each job's site. The shelf's no-job
+	share is not any project's and is left out, and so is a job's share that is not above
+	nothing; the caller reports both in a note (:func:`shelf_gaps`).
 	``projects`` is ``{project: {project_name, customer, project_type, status}}``.
 	"""
 	projects = projects or {}
@@ -669,6 +664,16 @@ def held_by_project(shelf_rows, site_rows, projects=None):
 			}
 		)
 	return rows
+
+
+def shelf_gaps(shelf_rows):
+	"""``(unclaimed, short)``: how many items on the shelf have stock no job's rows account for,
+	and how many have less on the shelf than the jobs' rows claim. Read from the no-job shares."""
+	unclaimed = {
+		r.get("item_code") for r in shelf_rows or () if not r.get("project") and _num(r.get("qty")) > 0
+	}
+	short = {r.get("item_code") for r in shelf_rows or () if not r.get("project") and _num(r.get("qty")) < 0}
+	return len(unclaimed), len(short)
 
 
 # --- Job Site Contents ---------------------------------------------------------------------

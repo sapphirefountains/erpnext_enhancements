@@ -81,12 +81,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     says "No Project Shelf is set" over its table. Nothing raises.
   - **Whose stock is on the shelf: one adapter.** ERPNext keeps on-hand by item and warehouse and
     has no job there, so `inventory_report_data.shelf_stock_by_project` is the only place the
-    reports ask. Today it answers from its own reading: the net of `actual_qty` at the shelf by the
-    Project each ledger row carries, fitted to what `tabBin` says is there (a job's share is its
-    net; the rest is under no job; when a count left less than the jobs claim, every share is
-    scaled by the same factor so they still add up). On production's would-be shelf on 2026-11-12
-    the two already agreed item for item. When the Project Shelf change provides its own function,
-    the adapter's one line calls it.
+    reports ask. How many there are is `tabBin` at the shelf. Whose they are is the stock ledger:
+    what came onto the shelf under each job, less what left under it. A job's share is that net;
+    the no-job share is what is on hand less every job's share, so the rows always add up to what
+    is there. A count carries no job, so a shelf counted lower than the jobs' rows add up to shows
+    a negative no-job share, and the reports say what that means in place of scaling the jobs
+    down. On production's would-be shelf on 2026-11-12 the two agreed item for item.
+    - **It asks the Project Shelf change's own module when that is installed.** That change ships
+      `inventory_enhancements/project_shelf.py` with `warehouse()` and
+      `shelf_stock(project=None, item_code=None)`. The adapter imports it inside a guard: present,
+      it supplies which warehouse is the shelf and each job's net, so these reports and the shelf's
+      own screens read one answer; absent, the adapter reads the same ledger rows itself. Both
+      paths do the same arithmetic, so the two changes can merge in either order and no number
+      moves. An answer that is not for this shelf or not in the agreed shape falls back to the
+      adapter's own reading. The real module was not on `main` when this was written, so that path
+      is tested against a stand-in in the agreed shape, not against the module.
   - **Returns to a supplier: one seam.** The column counts ERPNext's own return receipts now.
     `inventory_report_data.supplier_returns_by_item` is where the Supplier Return record will be
     read once that doctype exists; it answers nothing today. If a Supplier Return posts its stock
@@ -120,7 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     in a shop bin. Anything on the Project Shelf until the shelf is set. Supplier Returns made
     through the new record until its seam is filled. A disabled item, which the Bin Manager's
     listing rule leaves out of Location Contents (Where Is This Item does find it).
-  - **Tests:** `tests/test_inventory_reports.py` (143 tests, bench-free, its own CI step): the
+  - **Tests:** `tests/test_inventory_reports.py` (152 tests, bench-free, its own CI step): the
     status rules, the shelf and site split, the project roll-up, the stay at a site, the reports
     themselves on a `frappe` stub, the shape of every query, the exported rows and the hub links.
     Each query shape was also run read-only against production. Not run: the reports in a browser

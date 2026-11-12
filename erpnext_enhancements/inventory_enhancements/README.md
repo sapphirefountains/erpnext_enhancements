@@ -54,7 +54,7 @@ model, the pure rules and the label reads.
 | `report/where_is_this_item/` | Where Is This Item (v1.805.0): every place an item is, split into shop bins, the Project Shelf by job, job sites by job, vehicles and the Boneyard |
 | `report/project_materials/` | Project Materials (v1.805.0): what was ordered and received for a job and where each item stands; with no Project, what each job holds now |
 | `report/job_site_contents/` | Job Site Contents (v1.805.0): what is at each job site, by job, with value, when it arrived and how long it has been there |
-| `inventory_report_rules.py` | Every judgement the four reports make: a location's status for an item, the kind of place a warehouse is, the Project Shelf's split by job, one project's item roll-up, how long stock has been at a site. No Frappe |
+| `inventory_report_rules.py` | Every judgement the four reports make: a location's status for an item, the kind of place a warehouse is, the Project Shelf's shares by job, one project's item roll-up, how long stock has been at a site. No Frappe |
 | `inventory_report_data.py` | What the four reports read in common: the Project Shelf (read so a missing field never raises), the Boneyard, vehicles, job sites, the by-project shelf adapter, the Supplier Return seam |
 
 ## The count flow
@@ -1118,8 +1118,8 @@ order, value, whether the place is one of the item's bins, the item's bins by na
 movement there with its voucher. The item's assigned bins list even when empty.
 
 The Project Shelf is one warehouse, so `tabBin` has one figure per item there. Its rows are split
-by job, one per job with a share and a last row under no job for the remainder, which also carries
-what is on order to the shelf. A search is capped at 500 items and the unfiltered list at 5,000
+by job, one per job with a share and a last row under no job for what no job's ledger rows account
+for, which also carries what is on order to the shelf. A search is capped at 500 items and the unfiltered list at 5,000
 rows, and the note says when either cut something.
 
 ### Project Materials
@@ -1171,12 +1171,24 @@ each report says "No Project Shelf is set" over its table.
 
 Whose stock is on the shelf comes through **one adapter**,
 `inventory_report_data.shelf_stock_by_project(shelf, item_codes=None, projects=None)`, returning
-`[{item_code, project, qty, value}]`. Today it answers from this module's own reading: the net of
-`actual_qty` at the shelf by the Project each ledger row carries, fitted to `tabBin`
-(`allocate_shelf`: a job's share is its net, the rest is under no job, and when a count left less
-than the jobs claim every share is scaled by the same factor). On production's would-be shelf on
-2026-11-12 the two already agreed item for item (one item: four jobs' 10, 18, 31 and 12 against 71
-on hand). When the Project Shelf change provides its function, the adapter's one line calls it.
+`[{item_code, project, qty, value}]`. Two facts, two sources:
+
+- **How many there are** is `tabBin` at the shelf.
+- **Whose they are** is the stock ledger: what came onto the shelf under each job, less what left
+  under it. The Project Shelf change ships `inventory_enhancements/project_shelf.py`; when that
+  module is installed the adapter asks its `shelf_stock()` for those nets (and its `warehouse()`
+  for which warehouse is the shelf), so these reports and the shelf's own screens read one answer.
+  Before it is installed the adapter reads the same ledger rows itself. Both paths do the same
+  arithmetic, so the swap changes no number, and an answer that is not for this shelf or not in the
+  agreed shape falls back to the adapter's own reading.
+
+`inventory_report_rules.shelf_shares` puts the two side by side without changing either. A job's
+share is its ledger net. The no-job share is what is on hand less every job's share, so the rows
+always add up to what is on the shelf. A count carries no job, so when somebody counts the shelf
+lower than the jobs' rows add up to, the no-job share is negative by the difference: Where Is This
+Item shows that row and says what it means, and Project Materials says for how many items *On
+Project Shelf* can be more than is there. On production's would-be shelf on 2026-11-12 the two
+agreed item for item (one item: four jobs' 10, 18, 31 and 12 against 71 on hand).
 
 `inventory_report_data.supplier_returns_by_item(project)` is the same kind of seam for the Supplier
 Return record, and answers nothing until that doctype exists. If a Supplier Return posts its stock

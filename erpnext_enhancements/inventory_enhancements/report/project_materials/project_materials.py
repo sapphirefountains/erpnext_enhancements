@@ -56,6 +56,11 @@ from erpnext_enhancements.inventory_enhancements import inventory_report_data as
 from erpnext_enhancements.inventory_enhancements import inventory_report_rules as rules
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as scan_rules
 
+SHORT_SHELF_NOTE = (
+	"For {0} item(s) the Project Shelf was counted lower than the jobs' stock ledger rows add up to. "
+	"On Project Shelf is the ledger's figure, so it can be more than is there."
+)
+
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
@@ -73,13 +78,21 @@ def one_project(project, filters, where):
 	info = data.project_info([project]).get(project)
 	if not info:
 		frappe.throw(_("There is no project {0}.").format(project))
-	rows = project_rows(project, where)
+	# The job's shares of the shelf, and the no-job shares beside them: the second says when the
+	# shelf holds fewer of an item than the jobs' ledger rows claim.
+	shelf_rows = []
+	if where.shelf:
+		shelf_rows = data.shelf_stock_by_project(where.shelf, projects=[project, rules.NO_PROJECT])
+	rows = project_rows(project, where, shelf_rows)
 	item_code = (filters.get("item_code") or "").strip()
 	show = (filters.get("show") or "").strip() or rules.SHOW_ALL
 	shown = [
 		row for row in rows if (not item_code or row["item_code"] == item_code) and rules.show_row(row, show)
 	]
-	return item_columns(), shown, project_message(project, info, where), None, item_summary(rows)
+	mine = {row.get("item_code") for row in shelf_rows if row.get("project") == project}
+	_unclaimed, short = rules.shelf_gaps([row for row in shelf_rows if row.get("item_code") in mine])
+	message = project_message(project, info, where, short)
+	return item_columns(), shown, message, None, item_summary(rows)
 
 
 def order_lines(project):
@@ -140,12 +153,14 @@ def job_ledger(project):
 	)
 
 
-def project_rows(project, where):
+def project_rows(project, where, shelf_rows=()):
 	orders = order_lines(project)
 	receipts = receipt_lines(project)
 	shelf = {}
 	if where.shelf:
-		for share in data.shelf_stock_by_project(where.shelf, projects=[project]):
+		for share in shelf_rows:
+			if share.get("project") != project:
+				continue
 			shelf[share.get("item_code")] = shelf.get(share.get("item_code"), 0.0) + rules._num(
 				share.get("qty")
 			)
@@ -217,8 +232,9 @@ def item_columns():
 	]
 
 
-def project_message(project, info, where):
-	"""The line over the table: whose job it is, and where its stock would be."""
+def project_message(project, info, where, short=0):
+	"""The line over the table: whose job it is, and where its stock would be. ``short`` is how
+	many of the job's shelf items the shelf holds fewer of than the jobs' ledger rows claim."""
 	parts = [project]
 	for key in ("project_name", "status", "customer"):
 		if info.get(key):
@@ -235,6 +251,8 @@ def project_message(project, info, where):
 		lines.append(_("This job has no job site warehouse, so nothing is shown as at the job site."))
 	if not where.shelf:
 		lines.append(_(data.NO_SHELF_NOTE))
+	if short:
+		lines.append(_(SHORT_SHELF_NOTE).format(short))
 	return "<br>".join(lines)
 
 
@@ -320,13 +338,15 @@ def held_message(shelf_rows, where):
 	if not where.shelf:
 		lines.append(_(data.NO_SHELF_NOTE))
 	else:
-		unclaimed = [row for row in shelf_rows if not row.get("project")]
+		unclaimed, short = rules.shelf_gaps(shelf_rows)
 		if unclaimed:
 			lines.append(
 				_("{0} item(s) on the Project Shelf are under no job and are not in this list.").format(
-					len({row.get("item_code") for row in unclaimed})
+					unclaimed
 				)
 			)
+		if short:
+			lines.append(_(SHORT_SHELF_NOTE).format(short))
 	if not where.sites_ready:
 		lines.append(_("Job sites are not set up on this site, so nothing is shown as at a job site."))
 	return "<br>".join(lines)
