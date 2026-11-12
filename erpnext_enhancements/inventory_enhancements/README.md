@@ -715,8 +715,12 @@ Site."
   opened first by `api.stock_scan.job_site`, which refuses what the move itself would refuse. The
   page asks why nothing can be sent before it offers the button (`project_view.send_refusal`).
   Only the job's own share of the shelf can be sent from this view.
-- **The Project Shelf's numbers come through `project_stock.shelf_stock`**, the one door: the
-  job's ledger sum at the shelf, never more than the shelf holds.
+- **The Project Shelf's numbers come through `project_stock.shelf_stock` and
+  `shelf_by_project`**, the one door, which answer from `project_shelf.shelf_stock` once that
+  module is installed (and from the ledger by the same rule until then). A job's balance there is
+  by the job on each ledger row and can exceed what the shelf holds; a row is cut to what the
+  shelf can hand over and shows "of N on record" when the two differ. `bin_views.py` has no shelf
+  query of its own.
 - **Who sees what.** Every read is behind the Stock Scan role gate. A job's customer is added only
   for a caller who can read Projects; stock value only for one who can read the Stock Ledger.
 - The pure decisions are `public/js/bin_manager/views.js`; the routes and saves stay in

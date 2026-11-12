@@ -153,9 +153,10 @@ def _sql(query, values=None, as_dict=False):
 			if w == values["warehouse"] and q > 0
 		]
 	if text.startswith("select sle.project, sle.item_code, sum(sle.actual_qty)"):
+		# project_stock's ledger fallback, used here because this stub has no Project Shelf module.
 		sums = {}
 		for project, item, warehouse, qty in STATE["ledger"]:
-			if warehouse == values["shelf"] and project:
+			if warehouse == values["shelf"] and project and values.get("project") in (None, project):
 				sums[(project, item)] = sums.get((project, item), 0) + qty
 		return [_Row(project=p, item_code=i, qty=q) for (p, i), q in sums.items() if q > 0]
 	if text.startswith("select warehouse, count(*) as item_count from `tabBin`"):
@@ -485,15 +486,6 @@ class TestProjectView(_Base):
 		super().setUp()
 		STATE["ledger"] = [(BUILD, "ELBOW", SHELF, 10), (BUILD, "ELBOW", SHELF, -4), ("PRJ-OTHER", "ELBOW", SHELF, 5)]
 		STATE["bins"] = [("ELBOW", SHELF, 11, 5.5), ("PUMP", SITE, 2, 500.0), ("ELBOW", SITE, 4, 2.0)]
-		# project_stock.shelf_stock reads the ledger through its own query; answer it here.
-		stock = sys.modules["erpnext_enhancements.inventory_enhancements.project_stock"]
-		self._ledger_rows = stock.ledger_rows
-		stock.ledger_rows = lambda project: [
-			{"item_code": i, "warehouse": w, "kind": "move", "qty": q} for p, i, w, q in STATE["ledger"] if p == project
-		]
-
-	def tearDown(self):
-		sys.modules["erpnext_enhancements.inventory_enhancements.project_stock"].ledger_rows = self._ledger_rows
 
 	def test_the_shelf_is_the_jobs_share_and_the_site_is_everything_there(self):
 		out = views.project_view(BUILD)
@@ -504,7 +496,7 @@ class TestProjectView(_Base):
 		# 6 of the shelf's 11 elbows are this job's.
 		self.assertEqual(
 			out["shelf"]["items"],
-			[{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6}],
+			[{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6, "recorded": 6}],
 		)
 		self.assertEqual(out["site"]["warehouse"], SITE)
 		self.assertEqual(
@@ -521,6 +513,42 @@ class TestProjectView(_Base):
 			self.assertEqual(views.project_view(BUILD)["shelf"]["items"][0]["item_code"], "FROM-THE-ADAPTER")
 		finally:
 			stock.shelf_stock = original
+
+	def test_a_shelf_that_holds_less_than_the_records_say_gives_both_figures(self):
+		STATE["bins"] = [("ELBOW", SHELF, 2, 1.0)]
+		row = views.project_view(BUILD)["shelf"]["items"][0]
+		self.assertEqual((row["qty"], row["recorded"]), (2, 6))
+
+	def test_the_views_answer_from_the_project_shelf_module_once_it_is_installed(self):
+		"""``project_shelf.shelf_stock`` (settled 2026-11-12), through project_stock's adapter."""
+		import erpnext_enhancements.inventory_enhancements as package
+
+		asked = []
+
+		def shelf_stock(project=None, item_code=None):
+			asked.append(project)
+			rows = [
+				{"project": BUILD, "item_code": "PUMP", "item_name": "PUMP", "stock_uom": "Each", "qty": 3.0},
+				{"project": DONE, "item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 5.0},
+			]
+			return {"warehouse": SHELF, "rows": [r for r in rows if project in (None, r["project"])], "untagged": [], "exact": True}
+
+		module = types.ModuleType("erpnext_enhancements.inventory_enhancements.project_shelf")
+		module.warehouse = lambda: SHELF
+		module.shelf_stock = shelf_stock
+		sys.modules[module.__name__] = module
+		package.project_shelf = module
+		try:
+			out = views.project_view(BUILD)
+			self.assertEqual([(r["item_code"], r["qty"]) for r in out["shelf"]["items"]], [("PUMP", 3.0)])
+			index = {r["project"]: r["shelf_items"] for r in views.project_index()}
+			self.assertEqual((index[BUILD], index[DONE]), (1, 1))
+			finished = views.problems()["finished_shelf"]["rows"]
+			self.assertEqual([(r["project"], r["item_code"], r["qty"]) for r in finished], [(DONE, "ELBOW", 5.0)])
+			self.assertEqual(asked, [BUILD, None, None])
+		finally:
+			sys.modules.pop(module.__name__, None)
+			delattr(package, "project_shelf")
 
 	def test_a_job_with_no_site_yet_can_still_be_sent_to_when_it_is_a_build(self):
 		STATE["site_map"] = {}
@@ -651,6 +679,14 @@ class TestTheGate(_Base):
 		for node in endpoints:
 			self.assertIn("methods=['GET']", ast.unparse(node.decorator_list[0]), node.name)
 			self.assertIn("scan._check_access()", ast.unparse(node.body[1]), node.name)
+
+	def test_there_is_no_shelf_query_in_this_file(self):
+		"""The Project Shelf's numbers have one door, in project_stock."""
+		source = SOURCE.read_text(encoding="utf-8")
+		code = "\n".join(line for line in source.split("\n") if not line.strip().startswith("#"))
+		self.assertNotIn("tabStock Ledger Entry", code)
+		self.assertIn("project_stock.shelf_stock(", code)
+		self.assertIn("project_stock.shelf_by_project()", code)
 
 	def test_no_sql_function_is_written_as_a_get_all_field(self):
 		"""Frappe 16 refuses ``count(...)`` as a string field; every aggregate here is ``db.sql``."""

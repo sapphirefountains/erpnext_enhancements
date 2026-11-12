@@ -975,7 +975,9 @@ class BinManagerPage {
 		const open = `<button type="button" class="btn btn-xs btn-default" data-act="bin" data-bin="${this.esc(section.warehouse)}">${this.esc(
 			__("Open {0}", [section.warehouse_name])
 		)}</button>`;
-		const blocked = section.blocked ? `<p class="bm-muted">${this.esc(section.blocked)}</p>` : "";
+		const blocked =
+			(section.blocked ? `<p class="bm-muted">${this.esc(section.blocked)}</p>` : "") +
+			(section.note ? `<p class="bm-note">${this.esc(__(section.note))}</p>` : "");
 		if (!section.rows.length) {
 			return `<section class="bm-section"><h3 class="bm-section-title">${this.esc(__(section.title))} ${open}</h3>${blocked}<p class="bm-muted">${this.esc(
 				__(section.empty)
@@ -989,7 +991,9 @@ class BinManagerPage {
 					: "";
 				return `<tr>
 					<td class="bm-item">${this.item_cell(r, this.perms())}</td>
-					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
+					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}${
+					r.recorded ? ` <span class="bm-muted">${this.esc(__("of {0} on record", [this.bm.plain(r.recorded)]))}</span>` : ""
+				}</td>
 					${priced ? `<td class="bm-qty">${r.value === null || r.value === undefined ? "" : this.esc(this.money(r.value))}</td>` : ""}
 					<td class="bm-row-actions">${button}</td>
 				</tr>`;

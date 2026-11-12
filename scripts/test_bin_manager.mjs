@@ -1630,7 +1630,13 @@ test("job sites: one row per site, live jobs first, with totals and what wants d
 test("by project: the two places, and which way each row moves", () => {
 	const perms = logic.permissions(VIEW_BOOT);
 	const s = views.project_sections(PROJECT_VIEW, perms);
-	check("shelf rows are the job's share, shaped for the Move dialog", s.shelf.rows, [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", on_hand: 6, value: null }]);
+	check("shelf rows are the job's share, shaped for the Move dialog", s.shelf.rows, [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", on_hand: 6, value: null, recorded: null }]);
+	// The Project Shelf module's balance is by the job on each ledger row; where the shelf holds less,
+	// the row is what can be handed over, and says what the records say.
+	const short = Object.assign({}, PROJECT_VIEW, { shelf: Object.assign({}, PROJECT_VIEW.shelf, { items: [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", qty: 2, recorded: 6 }] }) });
+	const cut = views.project_sections(short, perms).shelf;
+	check("a short shelf: the row moves what is there and names what is on record", [cut.rows[0].on_hand, cut.rows[0].recorded, /Count the shelf/.test(cut.note)], [2, 6, true]);
+	check("an exact shelf says nothing", [s.shelf.note, s.shelf.rows[0].recorded], [null, null]);
 	check("shelf rows go to the site", s.shelf.move, { key: "to_site", label: "Send to job site" });
 	check("site rows come back", s.site.move, { key: "to_shelf", label: "Bring back to the shelf" });
 	check("to the site", views.project_move("to_site", PROJECT_VIEW), { from_warehouse: SHELF, to_warehouse: SITE, needs_site: false });

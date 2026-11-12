@@ -29,9 +29,11 @@ caller who can read Projects; a job's name was already shown to these roles on a
 Stock *value* is added only for a caller who can read the Stock Ledger, the permission ERPNext's
 own stock reports ask for.
 
-**The Project Shelf's numbers come through one door**, ``project_stock.shelf_stock``, so the
-day the Project Shelf's own module answers "what is on the shelf for this job", nothing here
-changes.
+**The Project Shelf's numbers come through one door**, ``project_stock.shelf_stock`` and
+``project_stock.shelf_by_project``, which answer from the Project Shelf's own module
+(``project_shelf.shelf_stock``) once it is installed. There is no shelf query in this file. A
+job's row is what the shelf can hand over; where the records say the job has more than the shelf
+holds, the row carries both figures (``qty`` and ``recorded``) and the page says so.
 
 **Never the reason the page fails.** :func:`decorate` answers with what it could read: a site
 without the Project Shelf setting, without the job-site field or without the Employee vehicle
@@ -351,8 +353,9 @@ def project_view(project):
 	"site": {"warehouse", "warehouse_name", "items", "disabled"} or None, "send_refusal": sentence or
 	None}``. ``shelf`` is ``None`` on a site with no Project Shelf set; ``site`` is ``None`` until
 	material is first sent to the job (the page opens it then, through ``api.stock_scan.job_site``).
-	Shelf items are this job's share (``project_stock.shelf_stock``); site items are everything on
-	hand at the site.
+	Shelf items are this job's share (``project_stock.shelf_stock``: ``qty`` is what the shelf
+	can hand over, ``recorded`` the job's ledger balance, higher when the shelf holds less than
+	the records say); site items are everything on hand at the site.
 	"""
 	scan._check_access()
 	name = cstr(project).strip()
@@ -397,48 +400,13 @@ def project_view(project):
 	}
 
 
-def _shelf_by_project(shelf):
-	"""``{project: {item_code: qty}}``: every job's share of the Project Shelf, by the same rule
-	as ``project_stock.shelf_stock`` (the job's ledger sum at the shelf, never more than the shelf
-	holds). One grouped ledger query and one Bin read."""
-	if not shelf:
-		return {}
-	rows = frappe.db.sql(
-		"""
-		select sle.project, sle.item_code, sum(sle.actual_qty) as qty
-		from `tabStock Ledger Entry` sle
-		where sle.warehouse = %(shelf)s and sle.is_cancelled = 0
-			and coalesce(sle.project, '') <> ''
-		group by sle.project, sle.item_code
-		having sum(sle.actual_qty) > 0
-		""",
-		{"shelf": shelf},
-		as_dict=True,
-	)
-	if not rows:
-		return {}
-	on_hand = {
-		row.item_code: flt(row.actual_qty)
-		for row in frappe.get_all(
-			"Bin", filters={"warehouse": shelf, "actual_qty": [">", 0]}, fields=["item_code", "actual_qty"]
-		)
-	}
-	out = {}
-	for row in rows:
-		here = min(flt(row.qty), on_hand.get(row.item_code, 0.0))
-		if here > rules.TOLERANCE:
-			out.setdefault(row.project, {})[row.item_code] = here
-	return out
-
-
 @frappe.whitelist(methods=["GET"])
 def project_index():
 	"""The jobs that have material on the Project Shelf or at a job site, for the *By project*
 	view's list: ``[{"project", "project_name", "customer", "status", "closed", "site",
 	"site_items", "shelf_items"}]``, jobs still in progress first, then by name."""
 	scan._check_access()
-	shelf = project_stock.shelf_warehouse()
-	shelf_share = _shelf_by_project(shelf)
+	shelf_share = project_stock.shelf_by_project()
 	site_map = _quietly(job_sites.site_map, {})
 	site_items = {}
 	if site_map:
@@ -561,7 +529,7 @@ def problems():
 		if row.warehouse in names and row.warehouse not in skip
 	]
 
-	shelf_share = _shelf_by_project(shelf)
+	shelf_share = project_stock.shelf_by_project() if shelf else {}
 	projects = _projects(set(shelf_share) | set(site_map.values()))
 	closed = {name for name, row in projects.items() if row.get("status") in rules.CLOSED_JOB_STATUSES}
 

@@ -36,10 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `bin_assignments.move_to`: a logged Material Transfer that carries the job and can be undone.
     Nothing is made an item's bin from here. A job with no site has it opened first, through the
     existing `api.stock_scan.job_site`. Only the job's own share of the shelf can be sent.
-  - **What "on the Project Shelf for this job" means.** The job's stock ledger rows at the shelf,
-    added up, and never more than the shelf holds. It comes through one function,
-    `project_stock.shelf_stock`, so it can be swapped for the Project Shelf module's own answer
-    in one place.
+  - **What "on the Project Shelf for this job" means.** The job's balance at the shelf from the
+    Project Shelf's own function, `project_shelf.shelf_stock` (the stock ledger rows that name the
+    job). That balance can be more than the shelf holds, after a count or a move made with no job
+    on it. So a row shows what the shelf can hand over, says "of N on record" when the records
+    say more, and a line above the list says to count the shelf. It all comes through
+    `project_stock.shelf_stock` and `shelf_by_project`; there is no shelf query in the Bin
+    Manager's own module. `project_shelf` arrives with another release and is imported where it
+    is used, so either can merge first: until it is there the same rule is applied to the ledger
+    directly.
   - **Kinds of place are decided on the server** (`inventory_enhancements/bin_views.py`): the
     Project Shelf from `Inventory Scanner Settings.project_shelf_warehouse`, the sites from the
     job-site field, vehicles from `Employee.custom_default_vehicle_warehouse`. A site without one
@@ -52,9 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     someone who can read the Stock Ledger.
 
 ### Tests
-- `tests/test_bin_views.py` (23 tests, own frappe stub, own CI step): the gate before every read,
-  no writes, the kinds, the counts, the customer and value gates, By project and Problems.
-  `scripts/test_bin_manager.mjs` grew from 342 to 486 checks: the new routes, the filters through
+- `tests/test_bin_views.py` (26 tests, own frappe stub, own CI step): the gate before every read,
+  no writes, the kinds, the counts, the customer and value gates, By project and Problems, with
+  and without the Project Shelf module.
+  `scripts/test_bin_manager.mjs` grew from 342 to 488 checks: the new routes, the filters through
   the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,
   and the real page script drawing each view. `tests/test_bin_manager.py` holds the boot's new
   keys, the new endpoints as whitelisted, and the page to `replaceState` only.

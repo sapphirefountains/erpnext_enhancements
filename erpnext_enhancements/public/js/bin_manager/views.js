@@ -276,13 +276,21 @@ export function project_counts_text(row) {
 export function project_sections(view, perms) {
 	const v = view || {};
 	const p = perms || {};
-	const row = (r) => ({
-		item_code: r.item_code,
-		item_name: r.item_name || r.item_code,
-		stock_uom: r.stock_uom || "",
-		on_hand: Number(r.qty) || 0,
-		value: r.value === undefined ? null : r.value,
-	});
+	const row = (r) => {
+		const qty = Number(r.qty) || 0;
+		const recorded = Number(r.recorded);
+		return {
+			item_code: r.item_code,
+			item_name: r.item_name || r.item_code,
+			stock_uom: r.stock_uom || "",
+			on_hand: qty,
+			value: r.value === undefined ? null : r.value,
+			// The job's balance on the records, when the shelf holds less than that (the Project
+			// Shelf's numbers come from the project on each ledger row; a count or a move made with
+			// no job on it makes them drift). Null when the two agree.
+			recorded: Number.isFinite(recorded) && recorded > qty + TOLERANCE ? recorded : null,
+		};
+	};
 	const shelf = v.shelf
 		? {
 				key: "shelf",
@@ -291,6 +299,10 @@ export function project_sections(view, perms) {
 				warehouse_name: v.shelf.warehouse_name,
 				rows: (v.shelf.items || []).map(row),
 				empty: "Nothing is on the Project Shelf for this job.",
+				// Said once above the rows when any of them was cut to what the shelf holds.
+				note: (v.shelf.items || []).some((r) => Number(r.recorded) > (Number(r.qty) || 0) + TOLERANCE)
+					? "The shelf holds less of some items than the records say is this job's. A count or a move made with no job on it does that. Count the shelf to put it right."
+					: null,
 				// To the job's site: needs the right to move, and a site that can take it.
 				move: p.can_move && !v.send_refusal ? { key: "to_site", label: "Send to job site" } : null,
 				blocked: p.can_move ? v.send_refusal || null : null,
