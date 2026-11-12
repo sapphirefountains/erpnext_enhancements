@@ -328,8 +328,13 @@ def capped_shelf_rows(rows, untagged):
 	module says the item's tagged total and its on-hand differ, and a row with nothing left is
 	dropped.
 
+	Since that module's own review it does this cut itself: ``qty`` arrives already held to the
+	shelf's on-hand, and the uncut ledger balance is in ``tagged``. Both shapes are read, so the
+	answer is the same whichever version is installed.
+
 	Returns ``[{"project", "item_code", "item_name", "stock_uom", "qty", "recorded"}]``:
-	``recorded`` is the job's ledger balance, and it is above ``qty`` exactly when the row was cut.
+	``recorded`` is the job's ledger balance (``tagged`` when the row has it), and it is above
+	``qty`` exactly when the row was cut.
 	"""
 	on_hand = {
 		row.get("item_code"): _qty(row.get("on_hand")) for row in untagged or () if row.get("item_code")
@@ -337,10 +342,10 @@ def capped_shelf_rows(rows, untagged):
 	out = []
 	for row in rows or ():
 		code = row.get("item_code")
-		recorded = _qty(row.get("qty"))
-		qty = recorded
+		qty = _qty(row.get("qty"))
+		recorded = _qty(row.get("tagged")) if row.get("tagged") is not None else qty
 		if code in on_hand:
-			qty = min(recorded, max(on_hand[code], 0.0))
+			qty = min(qty, max(on_hand[code], 0.0))
 		if not code or qty <= TOLERANCE:
 			continue
 		out.append(
