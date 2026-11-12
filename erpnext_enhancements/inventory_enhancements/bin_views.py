@@ -75,6 +75,25 @@ def can_see_value():
 	return bool(_quietly(lambda: frappe.has_permission("Stock Ledger Entry", "read"), False))
 
 
+def shelf_job_moves():
+	"""Whether a move onto or off the Project Shelf names its job on this site: the Project
+	Shelf's module is installed and ``bin_assignments.move_to`` takes a ``project``.
+
+	Asked of the code that is actually installed, because the two arrive with another release
+	(v1.804.0) and this page must work on either side of it. False means the page moves stock
+	exactly as it did before: no job is asked for and none is sent. Never raises.
+	"""
+	try:
+		import inspect
+
+		from erpnext_enhancements.inventory_enhancements import bin_assignments, project_shelf
+
+		takes_job = "project" in inspect.signature(bin_assignments.move_to).parameters
+		return bool(project_shelf) and takes_job
+	except Exception:
+		return False
+
+
 def _can_read_projects():
 	return bool(_quietly(lambda: frappe.has_permission("Project", "read"), False))
 
@@ -186,8 +205,12 @@ def decorate(bins):
 	it, ``stock_value``.
 
 	Returned: ``shelf_warehouse`` / ``shelf_name``, ``job_sites`` (whether sites are set up),
-	``can_see_value`` and ``can_send`` (whether the caller may post a transfer is already
-	``can_move``; this is whether sending to a job site is switched on).
+	``can_see_value``, and ``shelf_job_moves`` (:func:`shelf_job_moves`: whether the page asks
+	which job a move onto or off the Project Shelf is for, and sends it).
+
+	Nothing is kept at the Project Shelf, a job site or the boneyard as an item's bin, so
+	``assigned_items`` and ``missing_items`` are 0 there whatever Putaway Rules are left over
+	from before (production's shelf was ``Stores``, with 54 of them).
 	"""
 	shelf = project_stock.shelf_warehouse()
 	# The boot has already decided which bin is the boneyard (set, and not disabled): one answer.
@@ -221,8 +244,11 @@ def decorate(bins):
 				}
 			)
 		count = counts.get(name) or {}
-		row["missing_items"] = cint(count.get("missing_items"))
-		row["unassigned_items"] = cint(count.get("unassigned_items")) if kind in _UNASSIGNED_KINDS else 0
+		keeps = kind in _UNASSIGNED_KINDS
+		if not keeps:
+			row["assigned_items"] = 0
+		row["missing_items"] = cint(count.get("missing_items")) if keeps else 0
+		row["unassigned_items"] = cint(count.get("unassigned_items")) if keeps else 0
 		if value:
 			row["stock_value"] = flt(count.get("stock_value"))
 	return {
@@ -230,6 +256,7 @@ def decorate(bins):
 		"shelf_name": shelf_name,
 		"job_sites": bool(_quietly(job_sites.enabled, False)),
 		"can_see_value": value,
+		"shelf_job_moves": bool(shelf_name) and shelf_job_moves(),
 	}
 
 
@@ -464,7 +491,8 @@ def problems():
 	the bin that fixes each row:
 
 	* ``assigned_empty`` -- an item assigned to a bin (an enabled Putaway Rule) with nothing on
-	  hand there: restock it, or take it off the bin.
+	  hand there: restock it, or take it off the bin. Never a job site, the boneyard or the Project
+	  Shelf either: a rule left over there is not a bin to restock.
 	* ``unassigned_stock`` -- stock on hand at a shop bin or a vehicle with no assignment there:
 	  put the item on the bin, or move it to its own. Never a job site, the boneyard or the Project
 	  Shelf, where nothing is assigned by design.
@@ -491,6 +519,9 @@ def problems():
 		""",
 		as_dict=True,
 	)
+	# Nothing is kept at a job site, the boneyard or the Project Shelf as an item's bin, so a
+	# rule left over there (the shelf was once Stores) is not an empty bin to restock.
+	skip = sites | {shelf, boneyard}
 	assigned_empty = [
 		{
 			"warehouse": row.warehouse,
@@ -500,7 +531,7 @@ def problems():
 			"stock_uom": row.stock_uom,
 		}
 		for row in empty
-		if row.warehouse in names
+		if row.warehouse in names and row.warehouse not in skip
 	]
 
 	loose = frappe.db.sql(
@@ -515,7 +546,6 @@ def problems():
 		""",
 		as_dict=True,
 	)
-	skip = sites | {shelf, boneyard}
 	unassigned_stock = [
 		{
 			"warehouse": row.warehouse,

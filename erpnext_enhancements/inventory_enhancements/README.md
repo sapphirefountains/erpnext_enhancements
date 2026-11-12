@@ -721,6 +721,18 @@ Site."
   by the job on each ledger row and can exceed what the shelf holds; a row is cut to what the
   shelf can hand over and shows "of N on record" when the two differ. `bin_views.py` has no shelf
   query of its own.
+- **A move onto or off the Project Shelf names its job** (with the Project Shelf's v1.804.0).
+  `logic.shelf_move` says when: off the shelf to a bin or the boneyard ("Which job were these
+  bought for?"), or onto it from a bin ("Which job are these being set aside for?"); never
+  between the shelf and a job site, whose job the site names. The Move and Send to boneyard
+  dialogs list the jobs that hold the item (`api.stock_scan.get_item`: `shelf_jobs`), start on the
+  only one only when `shelf_jobs_exact` is true, and otherwise make the person choose, by name
+  through `search_projects` if need be. The job is sent as `project` to `move_to` /
+  `send_to_boneyard`. The page asks only when the boot says `shelf_job_moves`
+  (`bin_views.shelf_job_moves`: the Project Shelf module is installed and the installed `move_to`
+  takes a `project`); otherwise it moves stock exactly as before.
+- **Nothing is assigned at the shelf, a job site or the boneyard**, so `assigned_items` and
+  `missing_items` are 0 there and Problems leaves their leftover Putaway Rules out.
 - **Who sees what.** Every read is behind the Stock Scan role gate. A job's customer is added only
   for a caller who can read Projects; stock value only for one who can read the Stock Ledger.
 - The pure decisions are `public/js/bin_manager/views.js`; the routes and saves stay in

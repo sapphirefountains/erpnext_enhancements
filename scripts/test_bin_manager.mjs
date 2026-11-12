@@ -148,6 +148,9 @@ function makeServer(options) {
 				return { needs_valuation_rate: true, item_code: args.item_code, item_name: "ELBOW, 2 IN", uom: "Unit", qty: args.qty, suggestion: 6.5, source: "the last purchase of it: Purchase Order PO-0007, Oct 3", max_rate: 100000, max_value: 25000 };
 			}
 			if (name === "search_items") return [{ item_code: "PDT-0009", item_name: "VALVE", is_stock_item: 1, on_hand_here: 0 }];
+			// The item's card at a location: at the Project Shelf it says which jobs hold the item (v1.804.0).
+			if (name === "get_item") return JSON.parse(JSON.stringify(fixture.shelf_item || { item_code: args.item_code, project_shelf: false, shelf_jobs: [], shelf_jobs_exact: true }));
+			if (name === "search_projects") return JSON.parse(JSON.stringify(fixture.jobs_found || [{ project: "PRJ-90007", project_name: "Courtyard Rill", customer: "Greenway Homes", status: "Active" }]));
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
 			server.seq += 1;
 			const log = {
@@ -163,7 +166,7 @@ function makeServer(options) {
 	};
 	server.writes = () =>
 		server.calls.filter(
-			(c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder|item_locations|project_index|project_view|problems|job_site/.test(c.method)
+			(c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder|item_locations|project_index|project_view|problems|job_site|get_item|search_projects/.test(c.method)
 		);
 	return server;
 }
@@ -1934,6 +1937,262 @@ test("the real page: a filtered picker comes back after a bin, and a boot withou
 	check("every bin still listed", (old.registry.found[".bm-list"][0].innerHTML.match(/data-act="bin"/g) || []).length, BOOT.bins.length);
 	check("the boneyard is still marked", /Boneyard<\/span>/.test(old.registry.found[".bm-list"][0].innerHTML), true);
 	check("no job box with no jobs", /bm-project-filter/.test(old.registry.found[".bm-filters"][0].innerHTML), false);
+});
+
+// ------------------------------------------------------------------ a move onto or off the Project Shelf names its job
+
+// A site where the Project Shelf's release is installed: the boot says moves name their job.
+const SHELF_BOOT = Object.assign({}, VIEW_BOOT, { shelf_job_moves: true });
+const ONE_JOB = { item_code: "PDT-0001", project_shelf: true, shelf_jobs: [{ project: "PRJ-90001", project_name: "Water Wall", qty: 4 }], shelf_jobs_exact: true };
+const TWO_JOBS = { item_code: "PDT-0001", project_shelf: true, shelf_jobs: [{ project: "PRJ-90001", project_name: "Water Wall", qty: 3 }, { project: "PRJ-80000", project_name: "Old Lobby", qty: 1 }], shelf_jobs_exact: true };
+const NO_JOBS = { item_code: "PDT-0001", project_shelf: true, shelf_jobs: [], shelf_jobs_exact: false };
+
+const jobHandler = (d, selector) => d.fields_dict.bm_job.$wrapper.__state.handlers.find((h) => h.selector === selector);
+const pickJob = (d, project) => jobHandler(d, "[data-bm-job]").fn({ currentTarget: { getAttribute: () => project } });
+const jobHtml = (d) => d.fields_dict.bm_job.$wrapper.__state.html || "";
+// Whether the dialog is asking for a job at all (a picker that never had a rule draws nothing).
+const asksForJob = (d) => /Which job|bm-job-search|data-bm-job/.test(jobHtml(d));
+const afterSearch = async () => {
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	await settle();
+};
+
+test("the shelf's job: when a move names one, and which job it starts on", () => {
+	const is_site = (w) => w === SITE;
+	check("no shelf on this site: nothing ever asks", [logic.shelf_move(null, SHELF, BIN_A, is_site), logic.shelf_move(null, BIN_A, SHELF, is_site)], [null, null]);
+	check("off the shelf to a bin", logic.shelf_move(SHELF, SHELF, BIN_A, is_site), "off");
+	check("off the shelf to the boneyard", logic.shelf_move(SHELF, SHELF, BONEYARD, is_site), "off");
+	check("off the shelf, destination not picked yet", logic.shelf_move(SHELF, SHELF, null, is_site), "off");
+	check("shelf to a job site: the site names the job", logic.shelf_move(SHELF, SHELF, SITE, is_site), null);
+	check("a job site back to the shelf: the same", logic.shelf_move(SHELF, SITE, SHELF, is_site), null);
+	check("a bin onto the shelf", logic.shelf_move(SHELF, BIN_A, SHELF, is_site), "onto");
+	check("bin to bin", logic.shelf_move(SHELF, BIN_A, BIN_B, is_site), null);
+	check("the only job, when the tags are exact", logic.job_preselect(ONE_JOB).project, "PRJ-90001");
+	check("the only job, but the tags are not exact: nobody is assumed", logic.job_preselect(Object.assign({}, ONE_JOB, { shelf_jobs_exact: false })), null);
+	check("several jobs: the person picks", logic.job_preselect(TWO_JOBS), null);
+	check("none", [logic.job_preselect(NO_JOBS), logic.job_choices(NO_JOBS)], [null, []]);
+	check("an answer from before the shelf (no keys) is no jobs", [logic.job_choices({}), logic.job_preselect({}), logic.job_choices(null)], [[], null, []]);
+	check("a job in the list", logic.job_label(TWO_JOBS.shelf_jobs[0], "Unit"), "Water Wall · 3 Unit here");
+	check("the capability comes from the boot, with a shelf", [logic.permissions(SHELF_BOOT).shelf, logic.permissions(VIEW_BOOT).shelf, logic.permissions(Object.assign({}, SHELF_BOOT, { shelf_warehouse: null })).shelf], [SHELF, null, null]);
+	// The job is refused in words when it is missing, and travels only when there is one.
+	const row = { item_code: "PDT-0001", on_hand: 4, stock_uom: "Unit" };
+	check("off, no job", logic.check_values("move", row, { qty: 1, to_warehouse: BIN_A, job_rule: "off" }, SHELF), "Pick the job these were bought for.");
+	check("onto, no job", logic.check_values("move", row, { qty: 1, to_warehouse: SHELF, job_rule: "onto" }, BIN_A), "Pick the job these are being set aside for.");
+	check("boneyard, no job", logic.check_values("boneyard", row, { qty: 1, job_rule: "off" }, SHELF), "Pick the job these were bought for.");
+	check("with a job", logic.check_values("move", row, { qty: 1, to_warehouse: BIN_A, job_rule: "off", project: "PRJ-90001" }, SHELF), null);
+	check("no rule, no job: as before", logic.check_values("move", row, { qty: 1, to_warehouse: BIN_B }, BIN_A), null);
+	check("move carries it", logic.request("move", SHELF, row, { qty: 1, to_warehouse: BIN_A, project: " PRJ-90001 " }, "bm-x-00000001").args.project, "PRJ-90001");
+	check("boneyard carries it", logic.request("boneyard", SHELF, row, { qty: 1, project: "PRJ-90001" }, "bm-x-00000001").args.project, "PRJ-90001");
+	check("no job: the request is the one it always was", Object.keys(logic.request("move", BIN_A, row, { qty: 1, to_warehouse: BIN_B }, "bm-x-00000001").args), ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home"]);
+	check("nothing is made a home at the shelf or a job site", [logic.make_home_offered(logic.permissions(SHELF_BOOT), SHELF, "project_shelf"), logic.make_home_offered(logic.permissions(SHELF_BOOT), SITE, "job_site"), logic.make_home_offered(logic.permissions(SHELF_BOOT), BIN_B, "shop_bin")], [false, false, true]);
+});
+
+test("the real page: a move off the shelf with one exact job starts on it and sends it", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT, shelf_item: ONE_JOB }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	await settle();
+	const asked = server.calls.find((c) => c.method.endsWith("stock_scan.get_item"));
+	check("the jobs that hold it were asked for, at the shelf", asked && asked.args, { item_code: "PDT-0001", warehouse: SHELF });
+	check("the only job is already chosen, and can be changed", [/Bought for <b>Water Wall<\/b>/.test(jobHtml(d)), /data-bm-job-change/.test(jobHtml(d))], [true, true]);
+	pickDestination(d, BIN_A);
+	d.values.qty = 2;
+	await d.click_primary();
+	await settle();
+	const move = server.writes().pop();
+	check("move_to carries the job", [move.method.endsWith("bin_assignments.move_to"), move.args.from_warehouse, move.args.to_warehouse, move.args.project], [true, SHELF, BIN_A, "PRJ-90001"]);
+	check("the dialog closed", d.shown, false);
+
+	// To a job site instead: the site names the job, so none is asked for and none is sent.
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const s = registry.dialogs.pop();
+	await settle();
+	pickDestination(s, SITE);
+	check("no question once a job site is the destination", asksForJob(s), false);
+	check("and nothing is made a home there", s.props["make_home.hidden"], 1);
+	s.values.qty = 1;
+	await s.click_primary();
+	await settle();
+	check("shelf to a job site sends no job", "project" in server.writes().pop().args, false);
+
+	// Send to boneyard from the shelf names the job too.
+	click({ "data-act": "boneyard", "data-item": "PDT-0001" });
+	const b = registry.dialogs.pop();
+	await settle();
+	b.values.qty = 1;
+	await b.click_primary();
+	await settle();
+	const trip = server.writes().pop();
+	check("send_to_boneyard carries the job", [trip.method.endsWith("bin_assignments.send_to_boneyard"), trip.args.project, trip.args.qty], [true, "PRJ-90001", 1]);
+});
+
+test("the real page: a move off the shelf with several jobs makes the person choose", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT, shelf_item: TWO_JOBS }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	await settle();
+	check("nobody is chosen for them", /Bought for <b>/.test(jobHtml(d)), false);
+	check("both jobs are offered, with what each holds", [/Which job were these bought for\?/.test(jobHtml(d)), /data-bm-job="PRJ-90001">Water Wall · 3 Unit here/.test(jobHtml(d)), /data-bm-job="PRJ-80000">Old Lobby · 1 Unit here/.test(jobHtml(d))], [true, true, true]);
+	pickDestination(d, BIN_A);
+	d.values.qty = 1;
+	const before = server.writes().length;
+	await d.click_primary();
+	await settle();
+	check("no job picked: refused in words, nothing sent", [/Pick the job these were bought for\./.test(msgOf(d)), server.writes().length, d.shown], [true, before, true]);
+	// A finished job may be named: releasing its leftovers is the main reason to move anything off.
+	pickJob(d, "PRJ-80000");
+	check("the choice is shown", /Bought for <b>Old Lobby<\/b>/.test(jobHtml(d)), true);
+	await d.click_primary();
+	await settle();
+	check("sent with the job that was picked", server.writes().pop().args.project, "PRJ-80000");
+	// One job on record but the tags do not account for everything there: still the person's call.
+	const loose = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT, shelf_item: Object.assign({}, ONE_JOB, { shelf_jobs_exact: false }) }));
+	loose.world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	loose.click({ "data-act": "move", "data-item": "PDT-0001" });
+	const l = loose.registry.dialogs.pop();
+	await settle();
+	check("one job, tags not exact: offered, not assumed", [/Bought for <b>/.test(jobHtml(l)), /data-bm-job="PRJ-90001"/.test(jobHtml(l))], [false, true]);
+});
+
+test("the real page: a move off the shelf with no job on record finds one by name", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT, shelf_item: NO_JOBS }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	await settle();
+	check("it says there is none on record, and offers the search", [/No job is on record for this item on the shelf/.test(jobHtml(d)), /bm-job-search/.test(jobHtml(d))], [true, true]);
+	pickDestination(d, BIN_A);
+	d.values.qty = 1;
+	const before = server.writes().length;
+	await d.click_primary();
+	await settle();
+	check("nothing is guessed and nothing is sent", [/Pick the job these were bought for\./.test(msgOf(d)), server.writes().length], [true, before]);
+	jobHandler(d, ".bm-job-search").fn({ currentTarget: { value: "court" } });
+	await afterSearch();
+	const search = server.calls.find((c) => c.method.endsWith("stock_scan.search_projects"));
+	check("the job search was asked", search && search.args, { query: "court" });
+	check("its results are listed, with the customer", /data-bm-job="PRJ-90007">Courtyard Rill · Greenway Homes/.test(registry.found[".bm-job-results"].__state.html), true);
+	pickJob(d, "PRJ-90007");
+	check("the found job is chosen by name", /Bought for <b>Courtyard Rill<\/b>/.test(jobHtml(d)), true);
+	await d.click_primary();
+	await settle();
+	check("sent with it", server.writes().pop().args.project, "PRJ-90007");
+	// A read of the jobs that fails is the same as none: the person can still find one.
+	const down = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT }));
+	down.server.fail.set("get_item", { status: 500, message: "boom" });
+	down.world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	down.click({ "data-act": "move", "data-item": "PDT-0001" });
+	const f = down.registry.dialogs.pop();
+	await settle();
+	check("a failed read still opens the dialog with the search", [f.shown, /bm-job-search/.test(jobHtml(f))], [true, true]);
+});
+
+test("the real page: a move onto the shelf asks which job it is set aside for", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_BOOT }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	await settle();
+	check("a bin's Move asks nothing until the shelf is the destination", asksForJob(d), false);
+	check("and the shelf's jobs are not read for it", server.calls.some((c) => c.method.endsWith("stock_scan.get_item")), false);
+	pickDestination(d, SHELF);
+	check("now it asks, with the search and no list of holders", [/Which job are these being set aside for\?/.test(jobHtml(d)), /bm-job-search/.test(jobHtml(d)), /data-bm-job=/.test(jobHtml(d))], [true, true, false]);
+	check("the shelf is nobody's bin: no make-home box", d.props["make_home.hidden"], 1);
+	d.values.qty = 2;
+	const before = server.writes().length;
+	await d.click_primary();
+	await settle();
+	check("no job: refused in words, nothing sent", [/Pick the job these are being set aside for\./.test(msgOf(d)), server.writes().length], [true, before]);
+	jobHandler(d, ".bm-job-search").fn({ currentTarget: { value: "court" } });
+	await afterSearch();
+	pickJob(d, "PRJ-90007");
+	check("chosen", /Set aside for <b>Courtyard Rill<\/b>/.test(jobHtml(d)), true);
+	await d.click_primary();
+	await settle();
+	const move = server.writes().pop();
+	check("move_to onto the shelf carries the job, and no home", [move.args.from_warehouse, move.args.to_warehouse, move.args.project, move.args.make_home], [BIN_A, SHELF, "PRJ-90007", 0]);
+	// Back to an ordinary bin: the question goes away and no job travels.
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const o = registry.dialogs.pop();
+	await settle();
+	pickDestination(o, SHELF);
+	pickDestination(o, BIN_B);
+	check("another bin picked instead: no question", asksForJob(o), false);
+	o.values.qty = 1;
+	await o.click_primary();
+	await settle();
+	check("bin to bin sends no job", "project" in server.writes().pop().args, false);
+});
+
+test("the real page: on a site without the Project Shelf's release, moves are what they always were", async () => {
+	// The boot has a shelf (the setting can exist) but does not say moves name their job.
+	const { server, world, registry, click } = loadPage(VIEW_FIXTURE);
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	await settle();
+	check("no question", asksForJob(d), false);
+	check("nothing extra is read", server.calls.some((c) => /get_item|search_projects/.test(c.method)), false);
+	pickDestination(d, BIN_A);
+	d.values.qty = 1;
+	await d.click_primary();
+	await settle();
+	check("the request is exactly the old one", Object.keys(server.writes().pop().args), ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home"]);
+	click({ "data-act": "boneyard", "data-item": "PDT-0001" });
+	const b = registry.dialogs.pop();
+	await settle();
+	b.values.qty = 1;
+	await b.click_primary();
+	await settle();
+	check("and so is the boneyard trip", Object.keys(server.writes().pop().args), ["item_code", "from_warehouse", "qty", "client_ref"]);
+	// Onto the shelf from a bin: no question either.
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "move", "data-item": "PDT-0001" });
+	const o = registry.dialogs.pop();
+	await settle();
+	pickDestination(o, SHELF);
+	check("onto the shelf: no question", asksForJob(o), false);
+	o.values.qty = 1;
+	await o.click_primary();
+	await settle();
+	check("and no job sent", "project" in server.writes().pop().args, false);
+	// A boot from before the views (no kinds, no shelf): the same.
+	const old = loadPage();
+	old.world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	old.click({ "data-act": "move", "data-item": "PDT-0001" });
+	const p = old.registry.dialogs.pop();
+	await settle();
+	pickDestination(p, BIN_B);
+	check("the old boot: the make-home box is offered as before", p.props["make_home.hidden"], 0);
+});
+
+test("by project: the job on screen is named on the way to the site, and left out on the way back", async () => {
+	const { server, world, ctl } = makeViewController({ boot: SHELF_BOOT });
+	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	const sections = views.project_sections(ctl.state.project.data, ctl.perms());
+	await ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 1 }, "bm-proj-0000011");
+	check("to the site: the view's job", server.writes().pop().args.project, "PRJ-90001");
+	await ctl.project_submit("to_shelf", sections.site.rows[0], { qty: 1 }, "bm-proj-0000012");
+	// The site names the job; a job named for stock going onto the shelf must still be in progress,
+	// which would refuse bringing back a finished job's leftovers.
+	check("back to the shelf: nothing, the site names it", "project" in server.writes().pop().args, false);
+	const plain = makeViewController();
+	plain.world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	await plain.ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 1 }, "bm-proj-0000013");
+	check("a site without the release: no job sent", "project" in plain.server.writes().pop().args, false);
 });
 
 // ------------------------------------------------------------------ run

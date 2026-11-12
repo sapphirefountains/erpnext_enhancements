@@ -453,10 +453,92 @@ class TestDecorate(_Base):
 		self.assertEqual(by[VAN], "vehicle")
 		self.assertEqual((extras["shelf_warehouse"], extras["job_sites"]), (None, False))
 
+	def test_nothing_is_assigned_at_the_shelf_a_job_site_or_the_boneyard(self):
+		"""Production's shelf was Stores, with 54 Putaway Rules left over. Nothing is kept there as
+		an item's bin, so they are not "assigned" and an empty one is not "missing"."""
+		STATE["rules"] = [("ELBOW", SHELF, 0), ("PUMP", SHELF, 0), ("PUMP", SITE, 0), ("PUMP", BIN_A, 0)]
+		STATE["bins"] = [("ELBOW", SHELF, 3, 1.0)]
+		bins = _boot_bins()
+		for row in bins:
+			row["assigned_items"] = 2 if row["warehouse"] in (SHELF, SITE, BONEYARD) else 1
+		views.decorate(bins)
+		by = {b["warehouse"]: b for b in bins}
+		for place in (SHELF, SITE, BONEYARD):
+			self.assertEqual((by[place]["assigned_items"], by[place]["missing_items"]), (0, 0), place)
+		self.assertEqual((by[BIN_A]["assigned_items"], by[BIN_A]["missing_items"]), (1, 1))
+		# And the Problems view does not ask anyone to restock the shelf's or a site's leftover rules.
+		empty = views.problems()["assigned_empty"]["rows"]
+		self.assertEqual([(r["warehouse"], r["item_code"]) for r in empty], [(BIN_A, "PUMP")])
+
 	def test_a_shelf_setting_that_names_no_usable_bin_is_no_shelf(self):
 		STATE["settings"]["project_shelf_warehouse"] = "Gone - SF"
 		extras = views.decorate(_boot_bins())
 		self.assertEqual((extras["shelf_warehouse"], extras["shelf_name"]), (None, None))
+
+
+def _fake(name, **functions):
+	import erpnext_enhancements.inventory_enhancements as package
+
+	module = types.ModuleType(f"erpnext_enhancements.inventory_enhancements.{name}")
+	for key, fn in functions.items():
+		setattr(module, key, fn)
+	sys.modules[module.__name__] = module
+	setattr(package, name, module)
+
+
+def _unfake(*names):
+	import erpnext_enhancements.inventory_enhancements as package
+
+	for name in names:
+		sys.modules.pop(f"erpnext_enhancements.inventory_enhancements.{name}", None)
+		if hasattr(package, name):
+			delattr(package, name)
+
+
+class TestShelfJobMoves(_Base):
+	"""Whether the page asks which job a move onto or off the Project Shelf is for: only when the
+	installed code can take the answer (the Project Shelf's release, v1.804.0)."""
+
+	def tearDown(self):
+		_unfake("bin_assignments", "project_shelf")
+
+	def test_without_the_project_shelf_release_the_page_does_not_ask(self):
+		self.assertFalse(views.shelf_job_moves())
+		self.assertFalse(views.decorate(_boot_bins())["shelf_job_moves"])
+
+	def test_with_it_the_page_asks(self):
+		def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0, project=None):
+			raise AssertionError("never called: only its signature is read")
+
+		_fake("bin_assignments", move_to=move_to)
+		_fake("project_shelf", warehouse=lambda: SHELF, shelf_stock=lambda project=None, item_code=None: {"rows": [], "untagged": []})
+		self.assertTrue(views.shelf_job_moves())
+		self.assertTrue(views.decorate(_boot_bins())["shelf_job_moves"])
+
+	def test_either_half_alone_is_not_enough(self):
+		def old_move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0):
+			raise AssertionError("never called")
+
+		def new_move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0, project=None):
+			raise AssertionError("never called")
+
+		# The module is there but move_to takes no project: sending one would be dropped unheard.
+		_fake("bin_assignments", move_to=old_move_to)
+		_fake("project_shelf", warehouse=lambda: SHELF)
+		self.assertFalse(views.shelf_job_moves())
+		# move_to takes a project but there is no Project Shelf module.
+		_unfake("project_shelf")
+		_fake("bin_assignments", move_to=new_move_to)
+		self.assertFalse(views.shelf_job_moves())
+
+	def test_no_shelf_on_the_site_means_no_question_whatever_the_code(self):
+		def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0, project=None):
+			raise AssertionError("never called")
+
+		_fake("bin_assignments", move_to=move_to)
+		_fake("project_shelf", warehouse=lambda: None, shelf_stock=lambda project=None, item_code=None: {"rows": [], "untagged": []})
+		extras = views.decorate(_boot_bins())
+		self.assertEqual((extras["shelf_warehouse"], extras["shelf_job_moves"]), (None, False))
 
 
 class TestItemLocations(_Base):

@@ -1313,14 +1313,132 @@ class BinManagerPage {
 		});
 	}
 
+	// "Which job?" in a Move or Send to boneyard dialog (v1.806.1, for the Project Shelf's v1.804.0).
+	// Everything on the Project Shelf belongs to a job, and whose it is is read from the job on each
+	// stock ledger row, so a move onto or off the shelf has to name one or the shelf's by-project
+	// numbers drift. `rule` says when (logic.shelf_move): "off" lists the jobs that hold the item
+	// there and starts on the only one when the server says those jobs account for every unit of it
+	// (shelf_jobs_exact); otherwise, and always for "onto", the person picks, by name if need be.
+	// With no rule the picker draws nothing and gives no job: the dialog is the one it always was.
+	//
+	// Drawn into an HTML field, whose wrapper always exists (a Data field that starts hidden has no
+	// input to listen on: see move_dialog). The search box is drawn once per question and only the
+	// results under it are replaced, so typing is never interrupted.
+	job_picker(d, row) {
+		const wrap = d.fields_dict.bm_job.$wrapper;
+		const state = { rule: null, chosen: null, jobs: [], loaded: false, loading: false };
+		const names = {};
+		let timer = null;
+		let seq = 0;
+		const remember = (jobs) => (jobs || []).forEach((j) => (names[j.project] = j.project_name || j.project));
+		const list = (jobs, label) =>
+			`<ul class="bm-pick-list">${jobs
+				.map((j) => `<li><button type="button" class="bm-pick" data-bm-job="${this.esc(j.project)}">${this.esc(label(j))}</button></li>`)
+				.join("")}</ul>`;
+		const draw = () => {
+			if (!state.rule) {
+				wrap.html("");
+				return;
+			}
+			if (state.chosen) {
+				wrap.html(
+					`<div class="bm-chosen">${this.esc(state.rule === "off" ? __("Bought for") : __("Set aside for"))} <b>${this.esc(
+						names[state.chosen] || state.chosen
+					)}</b> <button type="button" class="btn btn-xs btn-default" data-bm-job-change="1">${this.esc(__("Change"))}</button></div>`
+				);
+				return;
+			}
+			let held = "";
+			if (state.rule === "off") {
+				if (state.loading) held = `<p class="bm-muted">${this.esc(__("Finding the jobs that hold it…"))}</p>`;
+				else if (state.jobs.length) held = list(state.jobs, (j) => this.bm.job_label(j, row.stock_uom));
+				else held = `<p class="bm-muted">${this.esc(__("No job is on record for this item on the shelf. Find the job by name."))}</p>`;
+			}
+			wrap.html(
+				`<div class="bm-jobpick"><p class="bm-preview-head">${this.esc(__(this.bm.JOB_QUESTIONS[state.rule]))}</p>
+				<p class="bm-muted">${this.esc(__("Everything on the Project Shelf belongs to a job, so this move names it."))}</p>
+				${held}
+				<input type="search" class="form-control bm-job-search" autocomplete="off"
+					placeholder="${this.esc(__("Find a job: type part of its name"))}" aria-label="${this.esc(__("Find a job"))}">
+				<div class="bm-job-results"></div></div>`
+			);
+		};
+		const load = () => {
+			state.loading = true;
+			this.ctl.shelf_jobs(row.item_code).then((answer) => {
+				state.loading = false;
+				state.loaded = true;
+				state.jobs = answer.jobs || [];
+				remember(state.jobs);
+				if (answer.preselect && !state.chosen) state.chosen = answer.preselect.project;
+				draw();
+			});
+		};
+		const search = (query) => {
+			const mine = ++seq;
+			const results = wrap.find(".bm-job-results");
+			if (!query) {
+				results.html("");
+				return;
+			}
+			results.html(`<p class="bm-muted">${this.esc(__("Searching…"))}</p>`);
+			this.ctl.search_jobs(query).then(
+				(rows) => {
+					if (mine !== seq) return;
+					rows = rows || [];
+					remember(rows);
+					results.html(
+						rows.length
+							? list(rows, (j) => (j.customer ? `${j.project_name || j.project} · ${j.customer}` : j.project_name || j.project))
+							: `<p class="bm-muted">${this.esc(__("No job matches."))}</p>`
+					);
+				},
+				(err) => {
+					if (mine === seq) results.html(`<p class="bm-dialog-msg">${this.esc((err && err.message) || "")}</p>`);
+				}
+			);
+		};
+		wrap.on("click", "[data-bm-job]", (e) => {
+			state.chosen = e.currentTarget.getAttribute("data-bm-job");
+			draw();
+		});
+		wrap.on("click", "[data-bm-job-change]", () => {
+			state.chosen = null;
+			draw();
+		});
+		wrap.on("input", ".bm-job-search", (e) => {
+			const query = String(e.currentTarget.value || "").trim();
+			clearTimeout(timer);
+			timer = setTimeout(() => search(query), BM_SEARCH_DELAY_MS);
+		});
+		return {
+			set_rule: (rule) => {
+				if (rule === state.rule) return;
+				state.rule = rule || null;
+				if (state.rule === "off" && !state.loaded && !state.loading) load();
+				draw();
+			},
+			rule: () => state.rule,
+			project: () => (state.rule && state.chosen ? state.chosen : ""),
+		};
+	}
+
 	boneyard_dialog(row) {
 		const perms = this.perms();
+		let picker = null;
 		this.save_dialog({
 			kind: "boneyard",
 			row,
 			title: __("Send {0} to the boneyard", [this.safe(row.item_name)]),
 			primary_label: __("Send to boneyard"),
+			// From the Project Shelf the trip names the job the stock was bought for (job_picker).
+			values: (d, picked) => Object.assign({}, picked || {}, { project: picker.project(), job_rule: picker.rule() }),
+			on_build: (d) => {
+				picker = this.job_picker(d, row);
+				picker.set_rule(this.ctl.job_rule(this.here(), perms.boneyard));
+			},
 			fields: [
+				{ fieldtype: "HTML", fieldname: "bm_job" },
 				{
 					fieldtype: "Float",
 					fieldname: "qty",
@@ -1353,8 +1471,12 @@ class BinManagerPage {
 				make_home = this.bm.make_home_touched(input.prop("checked"));
 			});
 		};
+		// "Which job?" when the move is onto or off the Project Shelf (job_picker); decided again each
+		// time the destination changes, since a job site needs none.
+		let picker = null;
+		const sync_job = () => picker && picker.set_rule(this.ctl.job_rule(this.here(), chosen && chosen.warehouse));
 		const sync_home = (d) => {
-			const offered = this.bm.make_home_offered(perms, chosen && chosen.warehouse);
+			const offered = this.bm.make_home_offered(perms, chosen && chosen.warehouse, chosen && this.bm.views.bin_kind(chosen));
 			d.set_df_property("make_home", "hidden", offered ? 0 : 1);
 			if (!offered) return;
 			bind_home(d);
@@ -1391,6 +1513,7 @@ class BinManagerPage {
 			fields: [
 				{ fieldtype: "Data", fieldname: "dest_search", label: __("Move to bin"), placeholder: __("Type part of a bin's name") },
 				{ fieldtype: "HTML", fieldname: "dest_list" },
+				{ fieldtype: "HTML", fieldname: "bm_job" },
 				{
 					fieldtype: "Float",
 					fieldname: "qty",
@@ -1410,9 +1533,13 @@ class BinManagerPage {
 			values: (d, picked) => ({
 				to_warehouse: chosen && chosen.warehouse,
 				qty: picked && picked.qty !== undefined ? picked.qty : d.get_value("qty"),
-				make_home: this.bm.make_home_offered(perms, chosen && chosen.warehouse) && !!d.get_value("make_home"),
+				make_home:
+					this.bm.make_home_offered(perms, chosen && chosen.warehouse, chosen && this.bm.views.bin_kind(chosen)) && !!d.get_value("make_home"),
+				project: picker.project(),
+				job_rule: picker.rule(),
 			}),
 			on_build: (d) => {
+				picker = this.job_picker(d, row);
 				d.fields_dict.dest_search.$input.on("input", () => draw_dest(d));
 				d.fields_dict.dest_list.$wrapper.on("click", "[data-bm-dest]", (e) => {
 					const name = e.currentTarget.getAttribute("data-bm-dest");
@@ -1420,11 +1547,13 @@ class BinManagerPage {
 					chosen = this.ctl.bin(name);
 					draw_dest(d);
 					sync_home(d);
+					sync_job();
 				});
 				d.fields_dict.dest_list.$wrapper.on("click", "[data-bm-change]", () => {
 					chosen = null;
 					draw_dest(d);
 					sync_home(d);
+					sync_job();
 					d.fields_dict.dest_search.$input.trigger("focus");
 				});
 				// The box is decided again on every change of quantity, until the person touches it.
@@ -1434,6 +1563,7 @@ class BinManagerPage {
 				});
 				draw_dest(d);
 				sync_home(d);
+				sync_job();
 			},
 		});
 	}

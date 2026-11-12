@@ -45,6 +45,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Manager's own module. `project_shelf` arrives with another release and is imported where it
     is used, so either can merge first: until it is there the same rule is applied to the ledger
     directly.
+  - **A move onto or off the Project Shelf names its job.** Whose stock is on the shelf is read
+    from the job on each stock ledger row, so a move with no job on it makes the shelf's
+    by-project numbers drift. On a site with the Project Shelf's release (v1.804.0), the Move
+    and Send to boneyard dialogs ask:
+    - *Off the shelf, to a bin or the boneyard:* "Which job were these bought for?", listing the
+      jobs that hold the item there with what each holds (`api.stock_scan.get_item`'s
+      `shelf_jobs`). The only job is chosen for the person only when the server says those jobs
+      account for every unit of it (`shelf_jobs_exact`). With several, with none, or when the
+      tags do not add up, the person picks, by name if the job is not listed. A finished job may
+      be named.
+    - *Onto the shelf from a bin:* "Which job are these being set aside for?", found by name.
+    - *Between the shelf and a job site:* nothing is asked and nothing is sent; the site names
+      its job. The make-it-this-item's-bin box is not offered for the shelf or a job site.
+    - *In By project:* the job on screen is sent on the way to the site. On the way back it is
+      left out, because the site names it and the server holds a job named for stock going onto
+      the shelf to one still in progress, which would refuse a finished job's leftovers.
+    The job goes to `bin_assignments.move_to` / `send_to_boneyard` as `project`, and a missing
+    one is refused in the dialog before anything is sent. **On a site without that release the
+    page asks nothing and sends nothing extra**: the server says whether it can take a job
+    (`shelf_job_moves`, read from the installed `move_to`'s own signature), so the two releases
+    can merge in either order.
+  - **Leftover rules at the shelf are not assignments.** Nothing is kept at the Project Shelf, a
+    job site or the boneyard as an item's bin, so those places show 0 assigned and 0 missing
+    whatever Putaway Rules remain from before (production's shelf was `Stores`, with 54), and
+    Problems does not list them as assigned but empty.
   - **Kinds of place are decided on the server** (`inventory_enhancements/bin_views.py`): the
     Project Shelf from `Inventory Scanner Settings.project_shelf_warehouse`, the sites from the
     job-site field, vehicles from `Employee.custom_default_vehicle_warehouse`. A site without one
@@ -57,10 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     someone who can read the Stock Ledger.
 
 ### Tests
-- `tests/test_bin_views.py` (26 tests, own frappe stub, own CI step): the gate before every read,
+- `tests/test_bin_views.py` (31 tests, own frappe stub, own CI step): the gate before every read,
   no writes, the kinds, the counts, the customer and value gates, By project and Problems, with
-  and without the Project Shelf module.
-  `scripts/test_bin_manager.mjs` grew from 342 to 488 checks: the new routes, the filters through
+  and without the Project Shelf module, and when the page may ask for a job.
+  `scripts/test_bin_manager.mjs` grew from 342 to 552 checks, among them a move off the shelf
+  with one exact job, with several, with none, a move onto the shelf, and a site without the
+  Project Shelf's release: the new routes, the filters through
   the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,
   and the real page script drawing each view. `tests/test_bin_manager.py` holds the boot's new
   keys, the new endpoints as whitelisted, and the page to `replaceState` only.

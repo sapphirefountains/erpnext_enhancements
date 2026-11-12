@@ -371,6 +371,8 @@ class TestManagerBoot(_Base):
 		self.assertEqual(by[BONEYARD]["unassigned_items"], 0, "nothing is ever assigned to the boneyard")
 		self.assertIsNone(out["shelf_warehouse"])
 		self.assertFalse(out["job_sites"])
+		# No Project Shelf release on this stub: the page asks for no job and sends none.
+		self.assertIs(out["shelf_job_moves"], False)
 		self.assertIn("can_see_value", out)
 
 	def test_the_views_data_failing_leaves_the_page_as_it_was(self):
@@ -640,7 +642,10 @@ class TestThePageFiles(unittest.TestCase):
 			"VIEWS": "erpnext_enhancements.inventory_enhancements.bin_views.",
 		}
 		found = re.findall(r'(BA|SCAN|VIEWS) \+ "(\w+)"', code)
-		self.assertGreaterEqual(len(found), 16)
+		self.assertGreaterEqual(len(found), 18)
+		# The two reads a move onto or off the Project Shelf makes: who holds the item, and a job by name.
+		self.assertIn(("SCAN", "get_item"), found)
+		self.assertIn(("SCAN", "search_projects"), found)
 		self.assertEqual(
 			sorted(name for prefix, name in found if prefix == "VIEWS"),
 			["item_locations", "problems", "project_index", "project_view"],

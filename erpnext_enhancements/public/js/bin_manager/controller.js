@@ -388,6 +388,33 @@ export class Controller {
 		);
 	}
 
+	// Whether a place is a job's site (the boot says each bin's kind).
+	is_site(warehouse) {
+		const bin = this.bin(warehouse);
+		return !!bin && views.bin_kind(bin) === views.KIND_SITE;
+	}
+
+	// Whether a move between two places must name a job: "off", "onto" or null (logic.shelf_move).
+	job_rule(from_warehouse, to_warehouse) {
+		return logic.shelf_move(this.perms().shelf, from_warehouse, to_warehouse, (w) => this.is_site(w));
+	}
+
+	// The jobs that hold an item on the Project Shelf, and whether they account for all of it:
+	// { jobs, preselect }. A read that fails answers with no jobs, and the person finds one by name.
+	shelf_jobs(item_code) {
+		const warehouse = this.perms().shelf;
+		if (!warehouse || !item_code) return Promise.resolve({ jobs: [], preselect: null });
+		return this.env.call(logic.READS.item, { item_code, warehouse }, { quiet: true }).then(
+			(answer) => ({ jobs: logic.job_choices(answer), preselect: logic.job_preselect(answer) }),
+			() => ({ jobs: [], preselect: null })
+		);
+	}
+
+	// Jobs by name, for a move onto the shelf or a job the shelf's list does not show.
+	search_jobs(query) {
+		return this.env.call(logic.READS.search_projects, { query }, { quiet: true });
+	}
+
 	destinations(query) {
 		const bins = (this.state.boot && this.state.boot.bins) || [];
 		return logic.destinations(bins, this.state.target && this.state.target.warehouse, query);
@@ -470,11 +497,16 @@ export class Controller {
 		const held = this.state.project;
 		const move = views.project_move(direction, held && held.data);
 		if (!move) return Promise.reject({ message: "That move cannot be made from here.", keep_ref: false });
+		// The job is the one on screen. It is named on the way to the site, on a site that takes
+		// it (the server uses the site's own job there either way). On the way back it is left
+		// out: the site names the job, and a job named for stock going ONTO the shelf must be one
+		// still in progress, which would refuse bringing back a finished job's leftovers.
+		const project = direction === "to_site" && this.perms().shelf ? held.project : "";
 		const send = (to_warehouse) =>
 			this.submit(
 				"move",
 				row,
-				{ qty: (values || {}).qty, to_warehouse, from_warehouse: move.from_warehouse, make_home: false },
+				{ qty: (values || {}).qty, to_warehouse, from_warehouse: move.from_warehouse, make_home: false, project },
 				ref
 			);
 		if (!move.needs_site) return send(move.to_warehouse);

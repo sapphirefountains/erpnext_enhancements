@@ -467,6 +467,22 @@
 	font-weight: var(--sf-weight-bold, 600);
 }
 
+/* "Which job?" in the Move and Send to boneyard dialogs, for a move onto or off the Project Shelf. */
+.bm-jobpick {
+	margin: var(--sf-space-10, 8px) 0;
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--sf-radius-control, 6px);
+}
+
+.bm-jobpick .bm-job-search {
+	margin-top: var(--sf-space-10, 8px);
+}
+
+.bm-job-results {
+	margin-top: var(--sf-space-05, 4px);
+}
+
 @media (max-width: 640px) {
 	.bm-tab {
 		flex: 1 1 auto;
