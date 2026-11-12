@@ -112,6 +112,14 @@ is never put back over the new one.
 mounted, nothing reaches `v-html` unescaped, and the mount target is no longer a document-global
 id. What is expanded and how each table is sorted now survives a form refresh (`frm.__pt_keep`).
 
+**Return (Supplier Returns, v1.807.0).** `canReturn`, `returnToSupplier` and `canReturnLine` live
+in `mountProcurementTracker` with the other row actions: a Return button on a submitted receipt's
+header and a Return link on a line's receipt step, both through the launcher in
+`public/js/supplier_return_start.js` (an unsaved Supplier Return; nothing is saved, emailed or
+moved until its own form does it). `tests/test_supplier_returns.py` holds the script to them, and
+`tests/test_tracker_supplier_returns.py` runs the tracker's reading of returns against the real
+`returned_lines`.
+
 **The assistant tool** gained `view="items"`, and every item row in every view carries the new
 keys (`line_state`, `line_states`, `needs_action`, `is_late`, `expected_date`, `supplier`,
 `where_now`, `where_now_text`, `location_tracked`, `location_kinds`, `received_at`). Nothing was

@@ -50,6 +50,19 @@ export const BIN = {
 };
 Object.freeze(BIN);
 
+/**
+ * Supplier Returns (v1.807.0): the item sheet's **Return to supplier**, which reads and posts to
+ * `erpnext_enhancements.api.supplier_returns.*`. A map of its own for the same reason as `BIN`;
+ * `tests/test_supplier_returns.py` pins it to that module's whitelisted functions and the
+ * parameters the page sends. `START` saves a Draft Supplier Return: no stock moves and nothing is
+ * emailed, so it writes no Stock Scan Log row and has nothing to undo.
+ */
+export const RET = {
+	CHOICES: "erpnext_enhancements.api.supplier_returns.receipt_choices",
+	START: "erpnext_enhancements.api.supplier_returns.start_from_scan",
+};
+Object.freeze(RET);
+
 /** How long a receipt photo may take to go up on a warehouse's signal before we give up. */
 export const UPLOAD_TIMEOUT_MS = 60000;
 

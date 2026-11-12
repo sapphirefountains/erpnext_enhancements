@@ -1,0 +1,197 @@
+{
+ "actions": [],
+ "creation": "2026-11-12 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_name",
+  "qty",
+  "uom",
+  "column_break_item",
+  "reason",
+  "condition_notes",
+  "money_section",
+  "rate",
+  "amount",
+  "column_break_money",
+  "line_kind",
+  "received_qty",
+  "already_returned_qty",
+  "source_section",
+  "purchase_order",
+  "project",
+  "warehouse",
+  "column_break_source",
+  "purchase_receipt_item",
+  "purchase_order_item",
+  "conversion_factor"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Quantity",
+   "reqd": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_item",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "fieldname": "reason",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Reason",
+   "options": "\nWrong item\nDamaged\nDefective\nNot needed\nOver-shipped\nOther",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "What is wrong with it, and the state it is in. Photos go in the attachments.",
+   "fieldname": "condition_notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Condition Notes"
+  },
+  {
+   "fieldname": "money_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "columns": 1,
+   "description": "What the receipt says we paid.",
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Rate",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_money",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "description": "Stock: the Purchase Return takes it out of stock. Non-stock: nothing is in stock to take out. Record only: this receipt never added the item to stock, so no stock document is made.",
+   "fieldname": "line_kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Stock Handling",
+   "options": "\nStock\nNon-stock\nRecord only",
+   "read_only": 1
+  },
+  {
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "label": "Received on This Line",
+   "read_only": 1
+  },
+  {
+   "fieldname": "already_returned_qty",
+   "fieldtype": "Float",
+   "label": "Already Returned or on Another Return",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "Where It Came From"
+  },
+  {
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Purchase Order",
+   "options": "Purchase Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "label": "Received Into",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "purchase_receipt_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Receipt Line",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "purchase_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Purchase Order Line",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "label": "Conversion Factor",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Supplier Return Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

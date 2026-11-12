@@ -543,6 +543,30 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 					freeze_message: __("Building the receipt..."),
 				});
 			},
+			// Supplier Returns (v1.807.0): send something that was received back to the supplier.
+			// On a submitted receipt that is not itself a return and has not been returned in full,
+			// for somebody who may create a Supplier Return. The launcher
+			// (public/js/supplier_return_start.js, loaded with this form) opens an UNSAVED Supplier
+			// Return through the mapper: nothing is saved, emailed or moved until the person does
+			// that on its form.
+			canReturn(doctype, doc) {
+				if (doctype !== "Purchase Receipt" || doc.docstatus !== 1) return false;
+				if (["Return", "Return Issued", "Closed"].includes(doc.status)) return false;
+				const launcher = (window.erpnext_enhancements || {}).supplier_return;
+				return !!(launcher && launcher.can_start());
+			},
+			returnToSupplier(receiptName, itemCode) {
+				const launcher = (window.erpnext_enhancements || {}).supplier_return;
+				if (!launcher) return;
+				launcher.start_from_receipt(receiptName, itemCode ? { item_code: itemCode } : {});
+			},
+			// One line's own Return link: the row names a submitted receipt it came in on.
+			canReturnLine(row) {
+				if (!row.pr || !row.item_code || !(Number(row.received_qty) > 0)) return false;
+				if (["Draft", "Cancelled", "Return", "Return Issued"].includes(row.pr_status)) return false;
+				const launcher = (window.erpnext_enhancements || {}).supplier_return;
+				return !!(launcher && launcher.can_start());
+			},
 			// Hidden, not disabled, without print permission on the doctype: the same test
 			// Frappe's own form uses for its print icon.
 			canPrintDoctype(doctype) {
@@ -822,6 +846,10 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 									<button v-if="canReceive(group.doctype, doc)" type="button" class="btn-receive"
 											@click.stop="receiveAgainst(doc.name)"
 											:title="'Create a Purchase Receipt against ' + doc.name">Receive</button>
+									<!-- Supplier Returns (v1.807.0). @click.stop for the same reason as Receive. -->
+									<button v-if="canReturn(group.doctype, doc)" type="button" class="btn-receive"
+											@click.stop="returnToSupplier(doc.name)"
+											:title="'Start a Supplier Return for items on ' + doc.name">Return</button>
 									<!-- Only where Frappe would actually print it; see procurementPrintBlocker. -->
 									<button v-if="canPrintDoc(group.doctype, doc)" type="button" class="btn-print"
 											@click.stop="printDoc(group.doctype, doc.name)"
@@ -905,6 +933,11 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 																<span class="text-muted">PR:</span>
 																<span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="hl(row.pr)"></span>
 																<span class="es-badge pt-pill" :data-theme="statusTheme(row.pr_status)">{{ row.pr_status }}</span>
+																<!-- Supplier Returns (v1.807.0): this line's own Return, on the receipt it came in on. -->
+																<span v-if="canReturnLine(row)" class="doc-link" role="button" tabindex="0"
+																	:title="'Return ' + row.item_code + ' on ' + row.pr + ' to the supplier'"
+																	@click="returnToSupplier(row.pr, row.item_code)"
+																	@keydown.enter.prevent="returnToSupplier(row.pr, row.item_code)">Return</span>
 															</div>
 															<div v-if="row.pi" class="doc-chain-step">
 																<span class="text-muted">PI:</span>

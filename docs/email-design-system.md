@@ -452,6 +452,7 @@ alert also needs **Send Change Alerts**, which is off until someone ticks it.
 | Enhancement request update | `product_feedback/notify.py` | Status/decision change | staff |
 | Training assigned / due / escalation / pass | `training/notifications.py` | Assignment; cron `15 7 * * *` | staff |
 | Payment link | `stripe_payments/core/api.py` | Desk action | **customer** |
+| Supplier return request (PDF attached; the items table is built from the return's lines) | `inventory_enhancements/supplier_returns.py` | Desk action: Send Return Request on a Supplier Return, after the person has seen the recipient and the message | **supplier** |
 | Card declined / autopay paused | `stripe_payments/core/dunning.py` | `daily` dunning cycle | **customer** |
 
 ### `Notification` records (`fixtures/notification.json`, 19)

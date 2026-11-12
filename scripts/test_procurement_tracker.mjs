@@ -342,6 +342,12 @@ test("the form script draws every column from the registries and never pushes hi
 	check("receive", code.includes('@click.stop="receiveAgainst(doc.name)"'), true);
 	check("print one", code.includes('@click.stop="printDoc(group.doctype, doc.name)"'), true);
 	check("print a group", code.includes('@click.stop="printGroup(group.doctype)"'), true);
+	// Supplier Returns (v1.807.0) put a Return on a receipt's header and on a line's receipt step; both
+	// were carried into this widget when it was rewritten, with the same rules and the same launcher.
+	check("return on a receipt's header, without toggling it", code.includes('<button v-if="canReturn(group.doctype, doc)" type="button" class="btn-receive"') && code.includes('@click.stop="returnToSupplier(doc.name)"'), true);
+	check("return on one line, by mouse and by keyboard", code.includes('v-if="canReturnLine(row)"') && code.includes('@click="returnToSupplier(row.pr, row.item_code)"') && code.includes('@keydown.enter.prevent="returnToSupplier(row.pr, row.item_code)"'), true);
+	check("only through the launcher, which opens an unsaved return", (code.match(/launcher\.can_start\(\)/g) || []).length === 2 && code.includes("launcher.start_from_receipt(receiptName, itemCode ? { item_code: itemCode } : {})"), true);
+	check("never on a return, a draft or a canceled receipt", code.includes('["Return", "Return Issued", "Closed"].includes(doc.status)') && code.includes('["Draft", "Cancelled", "Return", "Return Issued"].includes(row.pr_status)'), true);
 	// Every method and computed the template names exists on the app.
 	const template = SCRIPT.slice(SCRIPT.indexOf("template: `"), SCRIPT.indexOf("app.mount(el)"));
 	const called = new Set([...template.matchAll(/\b([a-zA-Z_]\w*)\(/g)].map((m) => m[1]));
