@@ -2080,17 +2080,32 @@ class TestWiring(unittest.TestCase):
 				self.assertIn(
 					handler, registered if isinstance(registered, list) else [registered], (doctype, event)
 				)
-		self.assertEqual(
-			by_doctype["Purchase Receipt"]["on_submit"][0],
-			"erpnext_enhancements.po_order_stage.advance_on_receipt",
+		submitted = by_doctype["Purchase Receipt"]["on_submit"]
+		self.assertLess(
+			submitted.index("erpnext_enhancements.po_order_stage.advance_on_receipt"),
+			submitted.index(handler),
 			"the order stage is walked back before the return is refreshed",
 		)
-		self.assertEqual(
-			by_doctype["Purchase Receipt"]["validate"],
-			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
-			"the Maintain Stock guard is untouched",
+
+		# A string or a list: another change may add handlers beside these, and may not remove them.
+		def handlers(doctype, event):
+			registered = by_doctype[doctype][event]
+			return registered if isinstance(registered, list) else [registered]
+
+		guards = "erpnext_enhancements.inventory_enhancements.maintain_stock."
+		self.assertIn(
+			guards + "refuse_unstocked_receipt_return",
+			handlers("Purchase Receipt", "validate"),
+			"the Maintain Stock guard on returns is still registered",
 		)
-		self.assertIn("supplier_returns.tell_the_bill", by_doctype["Purchase Invoice"]["validate"][1])
+		bill = handlers("Purchase Invoice", "validate")
+		notice = "erpnext_enhancements.inventory_enhancements.supplier_returns.tell_the_bill"
+		self.assertIn(notice, bill)
+		self.assertLess(
+			bill.index(guards + "refuse_billing_unstocked_receipts"),
+			bill.index(notice),
+			"a refused bill is not also given advice",
+		)
 
 	def test_the_start_script_is_loaded_where_a_return_starts(self):
 		tree = ast.parse(self.hooks)
@@ -2222,7 +2237,16 @@ class TestWiring(unittest.TestCase):
 		card = next(
 			l for l in workspace["links"] if l.get("type") == "Card Break" and l.get("label") == "Purchasing"
 		)
-		self.assertEqual(card["link_count"], 4)
+		at = workspace["links"].index(card)
+		in_card = []
+		for link in workspace["links"][at + 1 :]:
+			if link.get("type") == "Card Break":
+				break
+			in_card.append(link.get("link_to"))
+		self.assertTrue(
+			{DOCTYPE, "Supplier Returns Money Outstanding"} <= set(in_card), "both are on the Purchasing card"
+		)
+		self.assertEqual(card["link_count"], len(in_card), "the card's count is the links under it")
 
 	def test_the_report_is_a_script_report_for_the_people_who_chase_money(self):
 		report = json.loads(

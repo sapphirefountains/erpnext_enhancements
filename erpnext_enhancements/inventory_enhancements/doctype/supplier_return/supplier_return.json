@@ -254,7 +254,7 @@
   {
    "fieldname": "requested_how",
    "fieldtype": "Select",
-   "label": "Requested By",
+   "label": "How It Was Requested",
    "no_copy": 1,
    "options": "\nEmail\nPhone\nIn person\nSupplier's website",
    "read_only": 1
@@ -262,7 +262,7 @@
   {
    "fieldname": "requested_by",
    "fieldtype": "Link",
-   "label": "Requested By (Person)",
+   "label": "Requested By",
    "no_copy": 1,
    "options": "User",
    "read_only": 1
