@@ -7,6 +7,9 @@
  *   routes          /desk/bin-manager is the picker, /desk/bin-manager/<warehouse> one bin. Each is
  *                   its own history entry. ?warehouse=<name> on the bare route (frappe.route_options,
  *                   since v16.50 also in the address) opens that bin in place of the picker.
+ *                   Since v1.812.0 three more screens have a route of their own:
+ *                   /desk/bin-manager/by-project (and /by-project/<project>), /job-sites and
+ *                   /problems. What each shows is views.js.
  *   actions         which buttons a row shows, from what the server said the caller may do
  *                   (manager_boot: can_manage, can_count, can_move, can_create_items, the boneyard)
  *   make-home       "Make <bin> this item's bin" is ticked when the whole quantity on hand moves,
@@ -26,6 +29,7 @@ import { unitCostProblem } from "../stock_scan/logic.js";
 export const PAGE = "bin-manager";
 export const BA = "erpnext_enhancements.inventory_enhancements.bin_assignments.";
 export const SCAN = "erpnext_enhancements.api.stock_scan.";
+export const VIEWS = "erpnext_enhancements.inventory_enhancements.bin_views.";
 
 // stock_scan_rules.TOLERANCE: what counts as "nothing left".
 export const TOLERANCE = 1e-6;
@@ -37,7 +41,20 @@ export const READS = {
 	recent: SCAN + "get_recent",
 	search_items: SCAN + "search_items",
 	check_new_item: SCAN + "check_new_item",
+	// The views beyond one bin (v1.812.0, inventory_enhancements/bin_views.py): all reads.
+	item_locations: VIEWS + "item_locations",
+	project_index: VIEWS + "project_index",
+	project_view: VIEWS + "project_view",
+	problems: VIEWS + "problems",
+	// For a move onto or off the Project Shelf: the jobs that hold an item there (get_item's
+	// shelf_jobs and shelf_jobs_exact, the Project Shelf's v1.804.0), and a job found by name.
+	item: SCAN + "get_item",
+	search_projects: SCAN + "search_projects",
 };
+
+// Opens a job's site warehouse the first time something is sent to the job (v1.801.0). The By
+// project view calls it before a move to a job that has no site yet.
+export const OPEN_SITE = SCAN + "job_site";
 
 // The kinds of save, each one endpoint. "keep" and "add" are both an assign: "keep" puts an item
 // already listed here on the bin (an undecided or default-only row), "add" one found by search.
@@ -64,16 +81,51 @@ export const ACTION_LABELS = {
 
 // ------------------------------------------------------------------ routes
 
+// The screens with a word of their own after the page's name. A warehouse's docname ends in
+// its company's abbreviation ("Bin A1-1-1 - SF"), so none can be one of these words; a bin is
+// every other second segment, as it always was.
+export const SEGMENT_PROJECTS = "by-project";
+export const SEGMENT_SITES = "job-sites";
+export const SEGMENT_PROBLEMS = "problems";
+
+// The tabs across the top, in order. A bin belongs to Bins and one job to By project.
+export const TABS = [
+	{ screen: "picker", label: "Bins" },
+	{ screen: "projects", label: "By project" },
+	{ screen: "sites", label: "Job sites" },
+	{ screen: "problems", label: "Problems" },
+];
+
+export function tab_of(target) {
+	const screen = target && target.screen;
+	if (screen === "bin") return "picker";
+	if (screen === "project") return "projects";
+	return TABS.some((t) => t.screen === screen) ? screen : "picker";
+}
+
 // The screen a route names, or null when it is not this page's.
 export function parse_route(route) {
 	const parts = Array.isArray(route) ? route : [];
 	if (parts[0] !== PAGE) return null;
-	const warehouse = typeof parts[1] === "string" ? parts[1].trim() : "";
-	return warehouse ? { screen: "bin", warehouse } : { screen: "picker" };
+	const first = typeof parts[1] === "string" ? parts[1].trim() : "";
+	if (!first) return { screen: "picker" };
+	if (first === SEGMENT_PROJECTS) {
+		const project = typeof parts[2] === "string" ? parts[2].trim() : "";
+		return project ? { screen: "project", project } : { screen: "projects" };
+	}
+	if (first === SEGMENT_SITES) return { screen: "sites" };
+	if (first === SEGMENT_PROBLEMS) return { screen: "problems" };
+	return { screen: "bin", warehouse: first };
 }
 
 export function build_route(target) {
-	return target && target.screen === "bin" && target.warehouse ? [PAGE, target.warehouse] : [PAGE];
+	const t = target || {};
+	if (t.screen === "bin" && t.warehouse) return [PAGE, t.warehouse];
+	if (t.screen === "project" && t.project) return [PAGE, SEGMENT_PROJECTS, t.project];
+	if (t.screen === "projects") return [PAGE, SEGMENT_PROJECTS];
+	if (t.screen === "sites") return [PAGE, SEGMENT_SITES];
+	if (t.screen === "problems") return [PAGE, SEGMENT_PROBLEMS];
+	return [PAGE];
 }
 
 export function route_key(target) {
@@ -88,6 +140,12 @@ export function read_route_options(options) {
 	const out = { warehouse: text(opts.warehouse), q: text(opts.q) };
 	out.any = Object.keys(opts).length > 0;
 	return out;
+}
+
+// A copy of the route options, taken before they are cleared: the picker's filters are read out
+// of it (views.read_filters).
+export function copy_route_options(options) {
+	return options && typeof options === "object" ? Object.assign({}, options) : {};
 }
 
 // ------------------------------------------------------------------ saves
@@ -155,6 +213,8 @@ export function check_values(kind, row, values, current) {
 			if (!v.to_warehouse) return "Pick the bin to move it to.";
 			if (v.to_warehouse === current) return "Pick a different bin.";
 		}
+		// A move onto or off the Project Shelf names its job (shelf_move says when).
+		if (v.job_rule && JOB_REFUSALS[v.job_rule] && !String(v.project || "").trim()) return JOB_REFUSALS[v.job_rule];
 		return null;
 	}
 	if (kind === "add" && !(v.item_code || (row && row.item_code))) return "Pick an item.";
@@ -185,21 +245,27 @@ export function request(kind, warehouse, row, values, ref) {
 		if ("rate" in v && v.rate !== null && v.rate !== undefined && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
 		return { method, args };
 	}
+	// The job a move onto or off the Project Shelf is for. Sent only when there is one: on a site
+	// whose move_to takes no project, no dialog ever gives one, and the request is the one it was.
+	const project = String(v.project || "").trim();
 	if (kind === "move") {
-		return {
-			method,
-			args: {
-				item_code,
-				from_warehouse: warehouse,
-				to_warehouse: v.to_warehouse,
-				qty: number(v.qty),
-				client_ref: ref,
-				make_home: v.make_home ? 1 : 0,
-			},
+		const args = {
+			item_code,
+			// `warehouse` is the place the row is at: the bin on screen, or (By project) the
+			// shelf or the site the row was listed under.
+			from_warehouse: warehouse,
+			to_warehouse: v.to_warehouse,
+			qty: number(v.qty),
+			client_ref: ref,
+			make_home: v.make_home ? 1 : 0,
 		};
+		if (project) args.project = project;
+		return { method, args };
 	}
 	if (kind === "boneyard") {
-		return { method, args: { item_code, from_warehouse: warehouse, qty: number(v.qty), client_ref: ref } };
+		const args = { item_code, from_warehouse: warehouse, qty: number(v.qty), client_ref: ref };
+		if (project) args.project = project;
+		return { method, args };
 	}
 	if (kind === "create") {
 		return {
@@ -232,7 +298,69 @@ export function permissions(boot) {
 		can_open_items: b.can_open_items !== false,
 		boneyard: b.boneyard_warehouse || null,
 		boneyard_name: b.boneyard_name || b.boneyard_warehouse || null,
+		// The Project Shelf, when a move onto or off it names its job on this site
+		// (bin_views.shelf_job_moves): else null, and the page moves stock as it always did.
+		shelf: b.shelf_job_moves === true && b.shelf_warehouse ? b.shelf_warehouse : null,
 	};
+}
+
+// ------------------------------------------------------------------ the Project Shelf's job
+
+// Everything on the Project Shelf belongs to a job, and whose it is is read from the job on each
+// stock ledger row. So a move onto or off the shelf must carry the job, or the shelf's by-project
+// numbers drift (the Project Shelf's v1.804.0; the server refuses a move that needs one and has none).
+
+// What the dialog asks, and what it says when the answer is missing.
+export const JOB_QUESTIONS = {
+	off: "Which job were these bought for?",
+	onto: "Which job are these being set aside for?",
+};
+export const JOB_REFUSALS = {
+	off: "Pick the job these were bought for.",
+	onto: "Pick the job these are being set aside for.",
+};
+
+/**
+ * Whether a move must name a job: "off" (leaving the shelf for a bin or the boneyard), "onto"
+ * (going onto the shelf from a bin), or null.
+ *
+ * `shelf` is permissions(boot).shelf: null on a site that does not ask, and then nothing ever
+ * does. `is_site(warehouse)` says whether a place is a job's site. A move between the shelf and
+ * a job site names nothing: the site already says whose it is. With the destination not picked
+ * yet, a move off the shelf asks (it is dropped again if a site is then picked).
+ */
+export function shelf_move(shelf, from_warehouse, to_warehouse, is_site) {
+	if (!shelf) return null;
+	const site = typeof is_site === "function" ? is_site : () => false;
+	if (from_warehouse === shelf) {
+		if (to_warehouse === shelf) return null;
+		return to_warehouse && site(to_warehouse) ? null : "off";
+	}
+	if (to_warehouse === shelf) return site(from_warehouse) ? null : "onto";
+	return null;
+}
+
+// The jobs that hold an item on the shelf, from get_item's answer: [{ project, project_name, qty }].
+export function job_choices(answer) {
+	const jobs = answer && Array.isArray(answer.shelf_jobs) ? answer.shelf_jobs : [];
+	return jobs
+		.filter((j) => j && j.project)
+		.map((j) => ({ project: j.project, project_name: j.project_name || j.project, qty: Number(j.qty) || 0 }));
+}
+
+// The job to start on, or null: the only job that holds the item, and only when the server says
+// those jobs account for every unit of it (shelf_jobs_exact). Where they do not, part of what is
+// there has no job on record, and hanging it on the one job that has a tag would be a guess.
+export function job_preselect(answer) {
+	const jobs = job_choices(answer);
+	return answer && answer.shelf_jobs_exact === true && jobs.length === 1 ? jobs[0] : null;
+}
+
+// A job in a list: "Water Wall · 4 here".
+export function job_label(job, uom) {
+	const j = job || {};
+	const name = j.project_name || j.project || "";
+	return Number(j.qty) > TOLERANCE ? `${name} · ${amount(j.qty, uom)} here` : name;
 }
 
 // What a save has already done to the row on screen, before the list is read again (the read follows and is
@@ -320,8 +448,11 @@ export function make_home_touched(value) {
 
 // Whether the box shows at all: it changes assignments (the module gate), and nothing is ever
 // assigned to the boneyard (bin_assignments._refuse_boneyard).
-export function make_home_offered(perms, to_warehouse) {
+export function make_home_offered(perms, to_warehouse, to_kind) {
 	const p = perms || {};
+	// Nor to the Project Shelf or a job site: nothing is kept at either as an item's bin, and the
+	// server refuses both as a home.
+	if (to_kind === "project_shelf" || to_kind === "job_site") return false;
 	return !!p.can_manage && !!to_warehouse && to_warehouse !== p.boneyard;
 }
 

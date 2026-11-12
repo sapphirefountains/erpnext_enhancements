@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.812.0] - 2026-11-12
+
+### Added
+- **The Bin Manager has filters on its picker and three more views: By project, Job sites and
+  Problems.** Nikolas, 2026-11-12: "In the Bin Manager page, having more filters and different
+  views would be good. So for example I want to be able to see by Project which items are at the
+  Job Site, etc."
+  - **Filters on the picker.** The kind of place (shop bins, Project Shelf, job sites, Boneyard,
+    vehicles, each with its count), a job (shown with its customer), an item (the places that
+    hold it or have it assigned, with how much is there), and one quick filter: has stock, empty,
+    assigned items missing, unassigned stock. They combine with the box for typing a name.
+  - **By project** (`/desk/bin-manager/by-project`). The jobs that have material on the Project
+    Shelf or at a job site. Pick one to see both lists side by side. Each shelf row has **Send to
+    job site** and each site row has **Bring back to the shelf**.
+  - **Job sites** (`/desk/bin-manager/job-sites`). Every job site with its job, customer, item
+    count and value, with a total. A finished job whose site still holds stock is flagged.
+  - **Problems** (`/desk/bin-manager/problems`). Four lists, each row linked to the bin or job
+    that fixes it: assigned but empty, stock with no assignment, stock on the Project Shelf for a
+    finished job, and stock still at a finished job's site. On production today that is 108
+    assigned-but-empty rows and 30 with no assignment.
+  - **Back and Forward.** The four tabs are routes, so each is one history entry. The picker's
+    filters are written into the picker's own address in place
+    (`?kind=job_site&project=PRJ-00597`), so a filter is never a history entry, Back from a bin
+    lands on the picker as it was left, and a link carries the filters. The old
+    `/desk/bin-manager/<warehouse>` and `?warehouse=` links work as before.
+  - **The moves are the page's ordinary Move.** Send and Bring back call the existing
+    `bin_assignments.move_to`: a logged Material Transfer that carries the job and can be undone.
+    Nothing is made an item's bin from here. A job with no site has it opened first, through the
+    existing `api.stock_scan.job_site`. Only the job's own share of the shelf can be sent.
+  - **What "on the Project Shelf for this job" means.** The job's share of the shelf from the
+    Project Shelf's own function, `project_shelf.shelf_stock`: its `qty`, which that function
+    holds to what is physically on the shelf and shares out between the jobs that claim it. The
+    job's ledger balance is beside it as `tagged`, and can be more, after a count or a move made
+    with no job on it. So a row shows what the shelf can hand over, says "of N on record" when
+    `tagged` is more, and a line above the list says to count the shelf. The Procurement Tracker
+    shows the same number. It all comes through
+    `project_stock.shelf_stock` and `shelf_by_project`; there is no shelf query in the Bin
+    Manager's own module. `project_shelf` arrives with another release and is imported where it
+    is used, so either can merge first: until it is there the same rule is applied to the ledger
+    directly.
+  - **A move onto or off the Project Shelf names its job.** Whose stock is on the shelf is read
+    from the job on each stock ledger row, so a move with no job on it makes the shelf's
+    by-project numbers drift. On a site with the Project Shelf's release (v1.804.0), the Move
+    and Send to boneyard dialogs ask:
+    - *Off the shelf, to a bin or the boneyard:* "Which job were these bought for?", listing the
+      jobs that hold the item there with what each holds (`api.stock_scan.get_item`'s
+      `shelf_jobs`). The only job is chosen for the person only when the server says those jobs
+      account for every unit of it (`shelf_jobs_exact`). With several, with none, or when the
+      tags do not add up, the person picks, by name if the job is not listed. A finished job may
+      be named.
+    - *Onto the shelf from a bin:* "Which job are these being set aside for?", found by name.
+    - *Between the shelf and a job site:* nothing is asked and nothing is sent; the site names
+      its job. The make-it-this-item's-bin box is not offered for the shelf or a job site.
+    - *In By project:* nothing is sent either way, for the same reason: one end of every move
+      there is the job's site. The server checks a job it is sent before the site's own job
+      wins, so sending the job on screen could only add a refusal the site alone would not give.
+    The job goes to `bin_assignments.move_to` / `send_to_boneyard` as `project`, and a missing
+    one is refused in the dialog before anything is sent. **On a site without that release the
+    page asks nothing and sends nothing extra**: the server says whether it can take a job
+    (`shelf_job_moves`, read from the installed `move_to`'s own signature), so the two releases
+    can merge in either order.
+  - **Leftover rules at the shelf are not assignments.** Nothing is kept at the Project Shelf, a
+    job site or the boneyard as an item's bin, so those places show 0 assigned and 0 missing
+    whatever Putaway Rules remain from before (production's shelf was `Stores`, with 54), and
+    Problems does not list them as assigned but empty.
+  - **Kinds of place are decided on the server** (`inventory_enhancements/bin_views.py`): the
+    Project Shelf from `Inventory Scanner Settings.project_shelf_warehouse`, the sites from the
+    job-site field, vehicles from `Employee.custom_default_vehicle_warehouse`. A site without one
+    of those simply has none of that kind. If that data cannot be read at all, the page is the
+    one it was before this release.
+  - **Stock at a job site, the boneyard or the Project Shelf is never "unassigned".** Nothing is
+    assigned to those places by design.
+  - **Who sees what.** Every new read is behind the same role gate as the rest of the page. A
+    job's customer is shown only to someone who can read Projects, and stock value only to
+    someone who can read the Stock Ledger. The By project view of one job takes the job's id
+    from the address, so it is stricter: the job's status, type and customer go only to someone
+    who may read that Project (the role and any User Permission). Anyone else gets the id, the
+    name the job's site already shows them, and the stock, is not told ahead of time that the
+    job is finished, and gets the same answer for a job they may not read as for one that does
+    not exist.
+
+### Tests
+- `tests/test_bin_views.py` (33 tests, own frappe stub, own CI step): the gate before every read,
+  no writes, the kinds, the counts, the customer and value gates, a project's details only for
+  someone who may read it, By project and Problems, with and without the Project Shelf module,
+  and when the page may ask for a job.
+  `scripts/test_bin_manager.mjs` grew from 342 to 555 checks, among them a move off the shelf
+  with one exact job, with several, with none, a move onto the shelf, and a site without the
+  Project Shelf's release: the new routes, the filters through
+  the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,
+  and the real page script drawing each view. `tests/test_bin_manager.py` holds the boot's new
+  keys, the new endpoints as whitelisted, and the page to `replaceState` only.
+- **Not run:** nothing here ran on a bench or against production. The page was checked in a
+  browser against a stand-in Desk with made-up data.
+
 ## [1.811.0] - 2026-11-12
 
 ### Added

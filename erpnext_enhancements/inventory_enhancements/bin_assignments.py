@@ -1004,6 +1004,11 @@ def manager_boot():
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
 	* ``item_groups`` / ``uoms`` / ``refuse_from`` -- the quick Item's pick lists and the naming
 	  guard's go-live date, the same ones the store run offers.
+	* Since v1.812.0, what the page's filters and views need (``bin_views.decorate``): on each bin
+	  its ``kind`` (shop bin, Project Shelf, job site, boneyard, vehicle), a job site's ``project``
+	  / ``project_name`` / ``customer``, and ``missing_items`` / ``unassigned_items`` /
+	  ``stock_value``; and on the boot ``shelf_warehouse`` / ``shelf_name``, ``job_sites`` and
+	  ``can_see_value``. If that part cannot be read the page still gets everything above.
 
 	Role-checked like every endpoint here (``api.stock_scan._check_access``). Read-only, GET.
 	"""
@@ -1028,7 +1033,17 @@ def manager_boot():
 		for row in rows
 	]
 	bins.sort(key=lambda b: rules.natural_key(b["warehouse_name"]))
+	extras = {}
+	try:
+		# Imported here: bin_views imports this module's neighbours, and the page must load even
+		# if that module cannot.
+		from erpnext_enhancements.inventory_enhancements import bin_views
+
+		extras = bin_views.decorate(bins)
+	except Exception:
+		frappe.log_error(title="Bin Manager: the views' data could not be read")
 	return {
+		**extras,
 		"bins": bins,
 		"can_manage": can_manage(),
 		"can_count": bool(
