@@ -15,15 +15,51 @@ endpoints are ``api/maintain_stock.py``.
 a non-stock line would go wrong once the item keeps stock. This module refuses every one of
 them except one: the receipts.
 
-* A Delivery Note, Sales or POS Invoice, Purchase Invoice, Stock Entry, Stock Reconciliation,
+* A Delivery Note, POS Invoice, Purchase Invoice, Stock Entry, Stock Reconciliation,
   Work Order or BOM posted while the item was non-stock moved no stock. Canceling or returning
   one after the switch would move stock that never moved. Any submitted one refuses.
-* An *open* Purchase Order, Material Request or Sales Order line would leave the Bin's ordered,
-  requested or reserved quantity wrong. ERPNext counts those only for stock items. "Open" is
-  ERPNext's own rule from ``erpnext/stock/stock_balance.py`` at v16.52.1, the rule a Bin is
+* An *open* Sales Order line would leave the Bin's reserved quantity wrong, so it refuses.
+  "Open" is ERPNext's own rule from ``erpnext/stock/stock_balance.py``, the rule a Bin is
   recomputed from. A finished line counts for nothing there, so it refuses nothing here. That is
-  the one place this module is looser than ``cant_change``, and on purpose: nearly every item
-  has a fully received Purchase Order behind it.
+  one place this module is looser than ``cant_change``, and on purpose: nearly every item has a
+  fully received Purchase Order behind it.
+* An *open* **Purchase Order or Material Request** line no longer refuses (v1.809.0; Nik,
+  2026-11-12: "I can't change Maintain Stock ... when the item is in an active PO. I'd like to be
+  able to do that"). Read from ERPNext v16.54.0, three things go wrong when a non-stock item with
+  an open order line starts keeping stock, and the switch handles each:
+
+  - *The Bin's ordered and requested quantities.* ``PurchaseOrder.update_ordered_qty`` and
+    ``MaterialRequest.update_requested_qty`` skip a non-stock item, so the open quantity was
+    never counted. After the flag is written the switch calls ERPNext's own
+    ``stock_balance.get_ordered_qty`` / ``get_indented_qty`` and ``update_bin_qty`` for each
+    warehouse an open line names. Those are the functions the order itself calls, and
+    ``update_bin_columns`` recomputes the projected quantity with them. The Reorder Board reads
+    that projected quantity and the open lines themselves, so it needs nothing of its own.
+  - *A line with no warehouse.* A non-stock line may leave it empty; a stock line may not
+    (``buying.utils.validate_stock_item_warehouse``), and ``get_purchase_order_qty`` counts a line
+    only at its warehouse. The switch writes the item's default warehouse (else Stock Settings')
+    onto such a line and says so on the order. With no default to use, the check refuses and says
+    what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
+    a warehouse.
+  - *A partly received line.* ``received_qty`` already holds what came in while the item kept no
+    stock, so only the rest is on order (``qty - received_qty``), and only the rest enters stock
+    when it is received. The earlier receipt lines stay non-stock and guarded, exactly like a
+    fully received order's. A bill made from the *new* receipt names its own receipt line and
+    passes the bill guard; a bill made straight from the order line cannot say which goods it
+    means and is refused, as before.
+
+  The over-receipt limit (``StatusUpdater``'s quantity check) applies only to stock items, so a
+  line the supplier already over-delivered is simply not open any more.
+* A submitted **Sales Invoice** refuses, unless the caller asks for the relaxed rule
+  (``relax_sales_invoices``, offered only on the bulk page behind a tick box). The relaxed rule
+  passes when none of the item's invoices updated stock. Read from v16.54.0: such an invoice's
+  cancel touches the stock ledger only ``if self.update_stock == 1``; a credit note against it
+  may not tick Update Stock (``validate_return_against``: "'Update Stock' can not be checked
+  because items are not delivered via ..."); and its GL holds income, receivable and tax, none of
+  which depend on the flag. One thing is left: *Create > Delivery Note* on such an invoice would
+  take the goods out of stock a second time. ``maintain_stock.refuse_delivering_old_invoices``
+  refuses that for an item switched under the relaxed rule. Every submitted Sales Invoice on
+  production had Update Stock off on 2026-11-12, and there were no Delivery Notes at all.
 * A Product Bundle must stay non-stock (``ProductBundle.validate_main_item``). So must a fixed
   asset item (``Item.validate_fixed_asset``).
 * A variant takes Maintain Stock from its template. The default Item Variant Settings copy every
@@ -103,19 +139,23 @@ def may_switch(user, roles):
 #:   ``guarded``  -- allowed; the lines stay non-stock and ``maintain_stock``'s guards protect them
 #:   ``submitted`` -- any submitted line refuses
 #:   ``open``      -- an open line refuses (ERPNext's Bin rule; see :data:`OPEN_RULES`)
+#:   ``recount``   -- an open line is allowed: the switch recounts the Bin with ERPNext's own
+#:                    functions, and fills a missing warehouse (v1.809.0)
+#:   ``sales_invoice`` -- a submitted line refuses, unless the relaxed rule is asked for and no
+#:                    invoice updated stock (v1.809.0)
 #:   ``bundle``    -- the item is a Product Bundle; refuses
 LOCK_HANDLING = {
 	"Purchase Receipt Item": "guarded",
 	"Delivery Note Item": "submitted",
-	"Sales Invoice Item": "submitted",
+	"Sales Invoice Item": "sales_invoice",
 	"POS Invoice Item": "submitted",
 	"Purchase Invoice Item": "submitted",
 	"Stock Entry Detail": "submitted",
 	"Stock Reconciliation Item": "submitted",
 	"Work Order Item": "submitted",
 	"BOM": "submitted",
-	"Purchase Order Item": "open",
-	"Material Request Item": "open",
+	"Purchase Order Item": "recount",
+	"Material Request Item": "recount",
 	"Sales Order Item": "open",
 	"Product Bundle": "bundle",
 }
@@ -132,12 +172,14 @@ OPEN_RULES = {
 		"outstanding": ("qty", "received_qty"),
 		"closed_statuses": ("Closed", "Delivered"),
 		"skip_drop_ship": True,
+		"bin_field": "ordered_qty",
 	},
 	"Material Request Item": {
 		"parent": "Material Request",
 		"outstanding": ("stock_qty", "ordered_qty"),
 		"closed_statuses": ("Stopped",),
 		"skip_drop_ship": False,
+		"bin_field": "indented_qty",
 	},
 	"Sales Order Item": {
 		"parent": "Sales Order",
@@ -177,6 +219,12 @@ SUBMITTED_DOCTYPES = tuple(d for d, how in LOCK_HANDLING.items() if how == "subm
 
 #: The doctypes whose open lines refuse.
 OPEN_DOCTYPES = tuple(d for d, how in LOCK_HANDLING.items() if how == "open")
+
+#: The doctypes whose open lines are allowed and recounted at the switch.
+RECOUNT_DOCTYPES = tuple(d for d, how in LOCK_HANDLING.items() if how == "recount")
+
+#: The one doctype the relaxed rule can let through.
+SALES_INVOICE = "Sales Invoice Item"
 
 #: How many example documents a check names. Enough to find the problem, short enough to read.
 EXAMPLES = 3
@@ -251,17 +299,124 @@ def _check(key, label, ok, detail="", examples=None):
 	return {"key": key, "label": label, "ok": bool(ok), "detail": detail, "examples": list(examples or [])}
 
 
-def evaluate(facts):
+def plan_open_orders(open_lines, fill_warehouses):
+	"""What the switch does about the open Purchase Order and Material Request lines.
+
+	``open_lines`` are dicts with ``doctype`` (the child doctype), ``parent``, ``name``, ``idx``,
+	``warehouse``, ``company`` and ``received`` (what already came in on the line).
+	``fill_warehouses`` is ``{company: warehouse}``: the warehouse a line without one gets.
+
+	Returns ``{"fill", "recount", "stuck", "part_received"}``: the lines to give a warehouse (each
+	with the ``warehouse`` it gets), the ``(bin_field, warehouse)`` pairs to recount, the lines
+	that need a warehouse and have none to take, and the lines that were partly received.
+	"""
+	fill, stuck, part_received, recount = [], [], [], []
+	for line in open_lines or ():
+		warehouse = (line.get("warehouse") or "").strip()
+		if not warehouse:
+			warehouse = ((fill_warehouses or {}).get(line.get("company")) or "").strip()
+			if not warehouse:
+				stuck.append(line)
+				continue
+			fill.append(dict(line, warehouse=warehouse))
+		rule = OPEN_RULES.get(line.get("doctype")) or {}
+		pair = (rule.get("bin_field"), warehouse)
+		if pair[0] and pair not in recount:
+			recount.append(pair)
+		if (line.get("received") or 0) > 0:
+			part_received.append(line)
+	return {"fill": fill, "recount": recount, "stuck": stuck, "part_received": part_received}
+
+
+def _order_rows(lines):
+	"""``"Purchase Order PO-1 row 2"`` for each line, joined."""
+	parts = []
+	for line in lines:
+		parent = (OPEN_RULES.get(line.get("doctype")) or {}).get("parent") or "Document"
+		parts.append(f"{parent} {line.get('parent')} row {line.get('idx')}")
+	return ", ".join(parts)
+
+
+def open_orders_detail(groups, plan):
+	"""The words under the open-orders check when it passes with something open."""
+	if not groups:
+		return ""
+	text = (
+		f"{_phrases(groups)} still {_verb(groups, 'has', 'have')} some of it to receive or order. "
+		"What is left will count as on order or requested from now on, and will go into stock "
+		"when it is received."
+	)
+	if plan["part_received"]:
+		text += (
+			f" {_first_upper(_order_rows(plan['part_received']))} "
+			f"{'was' if len(plan['part_received']) == 1 else 'were'} partly received while the item "
+			"kept no stock. That part stays out of stock: count it in with a Stock Reconciliation."
+		)
+	if plan["fill"]:
+		named = "; ".join(f"{_order_rows([line])} gets {line['warehouse']}" for line in plan["fill"])
+		text += f" A stock item's order line needs a warehouse: {named}."
+	return text
+
+
+def open_orders_stuck_detail(plan):
+	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it."""
+	return (
+		f"{_first_upper(_order_rows(plan['stuck']))} "
+		f"{'has' if len(plan['stuck']) == 1 else 'have'} no warehouse, and a stock item's order line "
+		"needs one. Set a default warehouse on the item (its Item Defaults table) or in Stock "
+		"Settings, then run this again."
+	)
+
+
+def sales_invoice_detail(invoices, invoices_with_stock, relaxed):
+	"""The words under the Sales Invoice check: why it fails, or what a relaxed pass means."""
+	count = (invoices or {}).get("count") or 0
+	if not count:
+		return ""
+	with_stock = (invoices_with_stock or {}).get("count") or 0
+	uses = "uses" if count == 1 else "use"
+	if with_stock:
+		return (
+			f"{count_phrase(count, SALES_INVOICE)} {uses} it, and {with_stock} of them updated "
+			"stock. Canceling or returning one after the switch would move stock that never moved."
+		)
+	if relaxed:
+		return (
+			f"{count_phrase(count, SALES_INVOICE)} {uses} it. None updated stock, so canceling or "
+			"crediting one moves no stock. Making a Delivery Note from one of them is refused from "
+			"now on: those goods already left."
+		)
+	return (
+		f"{count_phrase(count, SALES_INVOICE)} {uses} it. "
+		f"{'It was' if count == 1 else 'They were'} posted while the item kept no stock. None "
+		"updated stock, so the Switch Items to Maintain Stock page can switch this item when its "
+		"Sales Invoice box is ticked."
+	)
+
+
+def evaluate(facts, relax_sales_invoices=False):
 	"""Every safety check, in the order the dialog shows them.
 
 	``facts`` is what ``maintain_stock.gather_facts`` read: the item's own flags, and for each
 	document group a ``{"count": n, "examples": [{"doctype", "name"}]}``. Each check is
-	``{key, label, ok, detail, examples}``; ``detail`` says what failed, in words.
+	``{key, label, ok, detail, examples}``; ``detail`` says what failed, in words, or what the
+	switch will do when a passing check has something to say.
+
+	``relax_sales_invoices`` asks for the relaxed Sales Invoice rule (the module docstring): pass
+	when none of the item's submitted invoices updated stock.
 	"""
 	submitted = {d: (facts.get("submitted") or {}).get(d) for d in SUBMITTED_DOCTYPES}
 	submitted = {d: g for d, g in submitted.items() if g and g.get("count")}
 	open_lines = {d: (facts.get("open") or {}).get(d) for d in OPEN_DOCTYPES}
 	open_lines = {d: g for d, g in open_lines.items() if g and g.get("count")}
+	recount = {d: (facts.get("open") or {}).get(d) for d in RECOUNT_DOCTYPES}
+	recount = {d: g for d, g in recount.items() if g and g.get("count")}
+	plan = plan_open_orders(facts.get("open_lines"), facts.get("fill_warehouses"))
+	invoices = (facts.get("submitted") or {}).get(SALES_INVOICE) or {}
+	invoices_with_stock = facts.get("sales_invoices_with_stock") or {}
+	invoices_ok = not invoices.get("count") or (
+		bool(relax_sales_invoices) and not invoices_with_stock.get("count")
+	)
 	ledger = facts.get("stock_ledger") or {}
 	bundles = facts.get("bundles") or {}
 	packed = {d: g for d, g in (facts.get("packed") or {}).items() if g and g.get("count")}
@@ -340,7 +495,8 @@ def evaluate(facts):
 		),
 		_check(
 			"no_stock_documents",
-			"No submitted delivery notes, invoices, stock entries, reconciliations, work orders or BOMs",
+			"No submitted delivery notes, POS or purchase invoices, stock entries, reconciliations, "
+			"work orders or BOMs",
 			not submitted,
 			""
 			if not submitted
@@ -366,18 +522,31 @@ def evaluate(facts):
 			returns.get("examples"),
 		),
 		_check(
-			"no_open_orders",
-			"No open purchase orders, material requests or sales orders",
+			"sales_invoices",
+			"No submitted Sales Invoices, or none that updated stock",
+			invoices_ok,
+			sales_invoice_detail(invoices, invoices_with_stock, relax_sales_invoices),
+			(invoices_with_stock.get("examples") or invoices.get("examples") or [])[:EXAMPLES],
+		),
+		_check(
+			"no_open_sales_orders",
+			"No open sales orders",
 			not open_lines,
 			""
 			if not open_lines
 			else (
-				f"{_phrases(open_lines)} still {_verb(open_lines, 'has', 'have')} some of it to receive, "
-				"order or deliver. ERPNext "
-				"counts what is on order, requested and reserved only for stock items, so those "
-				"numbers would start out wrong. Receive, close or finish them first."
+				f"{_phrases(open_lines)} still {_verb(open_lines, 'has', 'have')} some of it to deliver. "
+				"ERPNext reserves stock for an order only when the item keeps stock, so the reserved "
+				"number would start out wrong. Deliver, close or finish them first."
 			),
 			_examples(open_lines),
+		),
+		_check(
+			"open_orders_ready",
+			"Open purchase orders and material requests can be counted",
+			not plan["stuck"],
+			open_orders_stuck_detail(plan) if plan["stuck"] else open_orders_detail(recount, plan),
+			_examples(recount),
 		),
 		_check(
 			"known_lock",
@@ -410,11 +579,20 @@ def refusal_message(item_code, checks):
 	return f"Maintain Stock was not turned on for {item_code}. " + " ".join(failed)
 
 
-def switch_comment(full_name, when, receipt_count):
-	"""The Comment left on the Item: who, when, how, and what stays protected."""
+#: How the switch was asked for, as the Comment says it.
+VIA_FORM = 'through the Item form\'s "Turn on Maintain Stock" action'
+VIA_BULK = "through the Switch Items to Maintain Stock page"
+
+
+def switch_comment(full_name, when, receipt_count, via=None, open_orders="", invoices=0):
+	"""The Comment left on the Item: who, when, how, and what stays protected.
+
+	``open_orders`` is :func:`open_orders_detail`'s sentence when an open order was recounted;
+	``invoices`` the number of Sales Invoices let through by the relaxed rule.
+	"""
 	text = (
-		f"{full_name} turned on Maintain Stock on {when}, through the Item form's "
-		'"Turn on Maintain Stock" action. Every safety check passed first. ERPNext\'s form refuses '
+		f"{full_name} turned on Maintain Stock on {when}, {via or VIA_FORM}. "
+		"Every safety check passed first. ERPNext's form refuses "
 		"this change once a submitted document uses the item, so the action wrote the flag directly."
 	)
 	if receipt_count:
@@ -423,7 +601,32 @@ def switch_comment(full_name, when, receipt_count):
 			"stock. They stay as they are: this app refuses canceling, returning, billing or re-costing "
 			"them in ERPNext."
 		)
+	if open_orders:
+		text += f" {open_orders}"
+	if invoices:
+		text += (
+			f" {count_phrase(invoices, SALES_INVOICE)} billed it while it kept no stock. None updated "
+			"stock. This app refuses a Delivery Note made from one of them."
+		)
 	return text
+
+
+def order_comment(item_code, full_name, rows, warehouse):
+	"""The Comment left on an order whose line was given a warehouse at the switch."""
+	return (
+		f"{full_name} turned on Maintain Stock for {item_code}. A stock item's order line needs a "
+		f"warehouse, so row {rows} was given {warehouse}."
+	)
+
+
+def delivery_refusal(lines):
+	"""Why a Delivery Note can't deliver against an invoice older than the item's switch."""
+	return (
+		f"This Delivery Note can't deliver {_rows(lines)}. The Sales Invoice it delivers was posted "
+		"before the item kept stock, so those goods already left without coming out of stock. "
+		"Delivering them here would take them out of stock a second time. Remove the line, or ask "
+		"accounting."
+	)
 
 
 def next_steps(item_code, account, account_is_company_default):

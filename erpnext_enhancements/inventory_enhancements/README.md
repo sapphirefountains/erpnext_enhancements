@@ -35,6 +35,12 @@ model, the pure rules and the label reads.
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
 | `maintain_stock.py` | Its reads (documents counted, up to three named), the switch (row lock, checks again, `db.set_value`, Comment, cache clear, next steps) and the guards on the switched item's old non-stock receipts: `Purchase Receipt` `before_cancel` and `validate` (returns), `Purchase Invoice` `validate`, and `Landed Cost Voucher` (`validate`, `before_cancel`), `Repost Item Valuation` and `Repost Accounting Ledger` (`validate`), which would rebuild the receipt's ledger from today's flag. A stock item's receipt line with no stock ledger entry may not be canceled, returned, billed or re-costed in ERPNext |
+| `maintain_stock_bulk_rules.py` | Which existing items get Maintain Stock turned on together (v1.809.0): the name-and-group rule that tells a part from labor, a fee, rent, freight, a deposit, an old QuickBooks line or an asset, in a fixed order and with the reason in words; a person's choice that beats it; the three outcomes; what an apply queues; and the before-and-after list as CSV. No Frappe, no I/O. See *Maintain Stock for every physical item* below |
+| `maintain_stock_bulk.py` | The page's reads and its run: the same facts as the single switch read for every item at once (`bulk_facts`, held equal to `maintain_stock.gather_facts` by a test), the preview, a person's choice, the queue, the background job (`process_queue`, one commit an item, each through `maintain_stock.turn_on`) and `resume_queue`, which the scheduler calls every ten minutes so a run outlives a deploy |
+| `doctype/maintain_stock_decision/` | One row for an item the page has a choice or a result for (v1.809.0): a person's choice, Queued / Switched / Refused and why, and what the Delivery Note guard reads. Found by its `item_code` Link and named by a hash, so the Item can still be renamed or merged; the Item's `on_trash` removes its rows, so it can still be deleted. Written by the page and its job only |
+| `page/maintain_stock_switch/` | **Switch Items to Maintain Stock** (v1.809.0, `/desk/maintain-stock-switch`): Will switch, Stays non-stock, Can't switch yet and Results, each its own history entry. Item Manager, Stock Manager, System Manager |
+| `receipt_price_rules.py` | A price is required when a stock item is received (v1.809.0): which line is unpriced, which documents are judged, ERPNext's own *Allow Zero Valuation Rate* as the mark for a free sample or a warranty replacement, the words of the refusal, and the rows for ERPNext's *Update Items*. No Frappe, no I/O. See *A price at receipt* below |
+| `receipt_price.py` | Its hooks: `Purchase Receipt` and `Purchase Invoice` `before_submit` refuse, `validate` warns on a draft and never raises. And the reads the two receiving screens use to ask for the price first and put it on the order line through ERPNext's own `update_child_qty_rate` |
 | `qr_svg.py` | QR codes as one compact inline `<path>` SVG, encoded with the `pyqrcode` Frappe already depends on. No Frappe |
 | `warehouse_labels.py` | The reads behind `/warehouse-labels`: which warehouses get a label, their breadcrumbs, their QR codes |
 | `item_naming_rules.py` | The Item naming schema as executable rules. No Frappe, no I/O |
@@ -1492,6 +1498,138 @@ makes `item_name <> TRIM(item_name)` always false**, so the SQL form of the trai
 check returns 0 on a corpus with three offenders. Compared by length, in Python, where a
 trailing space is still a character. Use `BINARY` if you must write it in SQL.
 
+## Maintain Stock for every physical item (v1.809.0)
+
+Nik's decisions of 2026-11-12, so that stock shows what is at each location and what belongs to
+each project. On that day 1,102 of 1,586 enabled items kept no stock, so most purchase receipts
+added nothing to it.
+
+**New items start with Maintain Stock ticked.** The `Item-is_stock_item-default` Property Setter
+(`fixtures/property_setter.json`) went from 0 to 1, and its description now says it is on for
+parts and materials and off for labor, fees and assets (the guided Item flow's hint is the same
+sentence, `form_kit/help_text/item.json`). Every place in this app that creates an Item sets
+the box itself and is unchanged: store-run and Bin Manager items and the configurator's parts are
+stock; the QuickBooks import, the water catalog loaders and the pump and equipment seeds are
+non-stock; the document intake copies the reviewer's tick. Only a new Item form, the guided Item
+flow and an assistant's `create_document` take the default.
+
+**An item on an open Purchase Order can be switched.** `maintain_stock_rules` no longer refuses an
+open Purchase Order or Material Request line. The switch recounts the Bin with ERPNext's own
+`stock_balance.get_ordered_qty`, `get_indented_qty` and `update_bin_qty` for each warehouse an
+open line names, gives a line with no warehouse the item's default (else Stock Settings') and
+says so on the order, and refuses only when there is no warehouse to give. What was already
+received on a partly received line stays out of stock and guarded; what is left goes into stock
+when it is received. The module docstring has each case as read from ERPNext v16.54.0. An open
+Sales Order still refuses.
+
+**The existing physical items are switched from a list a person approves**, never by a patch.
+`/desk/maintain-stock-switch` lists every enabled non-stock item with one of three outcomes and
+why:
+
+| Outcome | Which items |
+|---|---|
+| Will switch | A physical item by its name and group, and every safety check of the single switch passes |
+| Stays non-stock | A fixed asset; a name ending in `(deleted)` (an old QuickBooks line); an item this app keeps non-stock on purpose; a placeholder, a copy, or an item with no name of its own; the Service item group; the Office item group (Nik's decision of 2026-11-12; `CONSUMABLE_GROUPS`); a code starting `SRV-`; a name starting with a value stream and a dash (`BUILD - ...`, `Rent - ...`); a whole word such as labor, fee, rent, travel, mileage, freight, delivery, deposit, consulting, service, tax, expense, installation, permit, warranty, discount; a line in All Item Groups with no `PDT-` product code |
+| Can't switch yet | A physical item one check refuses, with that check's words |
+
+The rule is a guess from the name, and the page says so: any line can be changed with *Your
+choice* (switch it, or keep it non-stock), which is kept on a `Maintain Stock Decision` row and
+beats the rule. Only a fixed asset cannot be chosen, because ERPNext refuses one that keeps stock.
+
+**The rule refuses to guess.** A switch can't be undone from the form once the item has a
+submitted document, and a consumable switched by mistake then needs a price on every receipt and
+shows up in Stock Scan and on the Reorder Board. So nothing whose name does not say what it is
+switches by rule, and in the QuickBooks catch-all group only a `PDT-` product code does. A part
+the rule keeps back is one click on the page. Words left out of the service list on purpose,
+each for a real part on production: "tips" (nozzle tips), "repair" (a repair coupling),
+"winterizing" (a winterizing plug), "charge" (a charge controller), "shipping" (a label).
+*Switch N items* queues the rows and a background job switches each through
+`maintain_stock.turn_on` (the row lock, every check again, the Comment on the item), committing
+after each. The queue is the rows, not the job, so a deploy that flushes the job queue loses
+nothing: `resume_queue` starts the job again within ten minutes. A job that runs out of time
+leaves its item Queued, not Refused. *Download this list* is the
+before-and-after list to approve; *Download results* is what a run switched or refused.
+
+**Sales Invoices, behind a tick box.** A submitted Sales Invoice refuses the single switch. On
+production every one has Update Stock off, and about 90 physical items are held back by nothing
+else. For such an invoice, read from ERPNext v16.54.0: a cancel touches the stock ledger only when
+Update Stock is on; a credit note against it may not turn Update Stock on; its ledger entries do
+not depend on the item's flag. So the page's box lets those items switch. One thing is left, and
+it is guarded: *Create > Delivery Note* on such an invoice would take the goods out of stock a
+second time, so `maintain_stock.refuse_delivering_old_invoices` refuses a Delivery Note line
+against an invoice posted on or before the day its item was switched that way.
+
+**The Bin, and a receipt at the same moment.** The switch recounts what is on order inside its
+own transaction, and once more straight after it commits (`maintain_stock._recount_after_commit`),
+so a receipt that committed while the switch ran is counted. One case is left: a receipt that
+began before the switch committed and commits after that second recount. It still carries the old
+flag, so it posts no stock (and its line is guarded like any other old receipt line), and the
+Bin's on-order figure stays too high by what it received until the next order or receipt for that
+item and warehouse is saved, which recounts it. Nothing in ERPNext offers a lock that would close
+this without locking every transaction table.
+
+**What only production can show.** The bench-free tests run the checks and the queue on SQLite and
+on stand-ins for ERPNext. That ERPNext's `update_bin_qty` writes the Bin as expected, that the
+job runs under the real worker, and how long 500 items take are seen only on the site.
+
+## A price at receipt (v1.809.0)
+
+Stock comes in at the price on its receipt line. A $0 line puts the part on the shelf valued at
+nothing, and every job it is issued to is charged nothing for it. 373 of 543 Purchase Order lines
+in the 180 days before 2026-11-12 had a rate of 0.
+
+* **The rule.** A Purchase Receipt line (or a Purchase Invoice line when the invoice updates
+  stock) for an item that keeps stock, with a rate under half a cent, refuses the **submit**. The
+  message names the row and says what to do. A draft still saves, with an orange warning.
+* **Free on purpose** is ERPNext's own tick on the row, *Allow Zero Valuation Rate*: a free
+  sample, a warranty replacement. No new field.
+* **Where the price goes.** Buying Settings keeps *Maintain Same Rate* on with the action Stop, so
+  a receipt's rate must equal its order's. The price therefore goes on the order line, through
+  ERPNext's *Update Items*, which also re-runs this app's approval and requester gates.
+* **Who may do what on the two receiving screens** (`receipt_price.price_block`):
+
+  | Person | Price the line | Mark it no charge | Otherwise |
+  |---|---|---|---|
+  | May edit the order, and did not raise the request it fills | Yes | Yes, with a reason | Asked again until one or the other is given |
+  | Cannot edit the order | No | No | The line is left unreceived; the rest is received; purchasing gets a ToDo |
+  | Raised the Material Request the order fills | No (*Update Items* would refuse them: separation of duties) | No | The same, and they are told why in their own words |
+
+  "No charge only for a person who may price, and with a reason" is **Nik's decision of
+  2026-11-12**. The two constants that hold it are `NO_CHARGE_NEEDS_ORDER_WRITE` and
+  `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules.py`.
+* **The same two questions are asked at the submit, on the server, however the document was
+  made** (`receipt_price._refuse_ticks`). A stock row at $0 with *Allow Zero Valuation Rate*
+  ticked by a person needs: the person submitting to be allowed to price that row's order (with
+  no order on the row, a receipt made by hand or a Material Receipt, to edit purchase orders at
+  all); and a line in the document's Remarks starting `No charge:` that says why. So the
+  Purchase Receipt form and an intake draft are not a way around the two screens, which write
+  that Remarks line themselves. Left alone, because ERPNext frees them itself: a
+  customer-provided item (the Item's flag) and a pricing rule's free item (`is_free_item` with
+  the rule's name in `pricing_rules`). The rule named must be real: it exists, is enabled, is for
+  buying, gives a product, and gives that row's item. The two fields are read-only on the form
+  only, so a made-up rule name proves nothing.
+* **The ToDo** goes to the order's author when they can still price it, otherwise to the people
+  the Reorder Board alerts (`Inventory Scanner Settings.reorder_alert_role`, Purchase Manager by
+  default; `reorder_board.recipients()`), never the asker or a service account. It sits on the
+  order and starts "Price needed". There is one open ToDo a person for an order, and every held
+  line is named in it exactly once: a line held later is added, a row priced since drops out.
+* **A Stock Entry of type Material Receipt** is judged on its Basic Rate. ERPNext swaps a typed $0
+  for the item's last valuation and refuses when there is none, but takes a last valuation of
+  exactly 0 in silence; that row is refused at submit. A Stock Reconciliation is not judged.
+* **Each way a receipt is made:**
+
+| Path | What a person sees |
+|---|---|
+| Purchase Receipt form | The submit is refused; the draft is kept. Ticking *Allow Zero Valuation Rate* is refused too, unless the person may price the order and Remarks says `No charge: ...` |
+| Purchase Order > Receive Items | For a person who may price: *Price each*, *No charge* and *Why no charge*, and the price is put on the order before it receives. For anyone else: no extra column; the note says those rows will be left for purchasing, and the answer names who was asked |
+| Stock Scan, and the store-run sheet's *Receive on PO* | Nothing is posted. A person who may price gets "What did one cost?" with *Receive at this price*, *It was free* (with a reason) and *Stop*. Anyone else gets "This one can't be received yet", why, who was asked, and *OK* |
+| Stock Entry > Material Receipt | The submit is refused for a row that would come in at $0 |
+| Packing-slip and vendor-bill intake | They make drafts, so the warning speaks when the draft is saved and the refusal when a person submits it. Who submits is who is judged, and the intake's own remark is not a reason |
+| The order itself | Still only warns at submit (`po_price_check`), now saying the receipt will ask |
+
+Left alone: returns, internal transfers, non-stock lines, and every document already submitted.
+Accounting's way past it in a console is `doc.flags.ignore_receipt_price_guard`.
+
 ## Tests
 
 Needs a bench (a `FrappeTestCase`; not in CI):
@@ -1513,6 +1651,8 @@ python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Acco
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
+python -m unittest erpnext_enhancements.tests.test_maintain_stock -v      # the single switch, open orders, the bulk page and its job; SQLite; runs two node harnesses
+python -m unittest erpnext_enhancements.tests.test_receipt_price -v       # a price at receipt: the rule, the hooks, every receiving path
 python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v  # Supplier Returns: every rule, no stub
 python -m unittest erpnext_enhancements.tests.test_supplier_returns -v       # frappe stub on SQLite: each accounting case's documents, the money rule, the email
 python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_site_rules; sites, moves, takes and totals on test_bin_assignments' stub; the setup patch
