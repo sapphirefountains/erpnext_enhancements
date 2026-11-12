@@ -4221,8 +4221,38 @@ jobs:
       # a repost rebuilds it from today's flag). The check queries run for real on SQLite
       # (tests/sqlite_sql_helper.py), and the form script under node. Own frappe stub, so its own
       # step; unittest classes.
-      - name: Turn on Maintain Stock (checks, switch, endpoints, receipt guards; bench-free, SQLite)
+      #
+      # v1.809.0, same module and stub: an open Purchase Order or Material Request no longer refuses,
+      # so the build fails if the switch stops recounting the Bin through ERPNext's own
+      # stock_balance functions, recounts before the flag is written and the cache cleared, leaves a
+      # line without a warehouse, or lets an open Sales Order through. And the bulk page (Switch
+      # Items to Maintain Stock): the name rule that tells a part from labor or a fee, a person's
+      # choice beating it, the bulk reader held equal to the single-item one, an apply that queues
+      # only what the server itself would switch, the job committing each item and refusing one
+      # without stopping the rest, a run picked up from its rows after a deploy, nothing switching
+      # on migrate, and the Delivery Note guard behind the relaxed Sales Invoice rule. Also: the
+      # rule calling a placeholder, a copy, a nameless item, an office supply or an uncoded
+      # catch-all line a part; an Item creator in the app that does not state is_stock_item; a job
+      # timeout recorded as a refusal; and the second Bin recount after the commit going missing.
+      # Runs scripts/test_maintain_stock_switch.mjs under node as well.
+      - name: Turn on Maintain Stock (checks, switch, open orders, bulk page; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
+      # A price is required when a stock item is received (v1.809.0). Fails the build if a stock
+      # item's $0 line can be submitted on a Purchase Receipt or a stock-updating Purchase Invoice,
+      # if ERPNext's own Allow Zero Valuation Rate stops being the way to say "free on purpose", if
+      # a draft is refused instead of warned (the intake makes drafts), if the warning can raise, if
+      # a price reaches an order any way but ERPNext's update_child_qty_rate or for a person who may
+      # not edit the order, or if Receive Items or Stock Scan stops asking before it builds a
+      # receipt. Also: "no charge" open to a person who may not price the order or given without
+      # a reason, a line such a person cannot settle coming in at $0 or blocking the rest of the
+      # delivery instead of being left for purchasing with a ToDo, a screen telling them to tick
+      # anything, and a Material Receipt bringing a stock item in at $0. And the Desk form and
+      # an intake draft as a way around it: a row ticked Allow Zero Valuation Rate by a person
+      # who may not price the order, or with no "No charge:" reason in Remarks, must refuse at
+      # submit, while a customer-provided item and a pricing rule's free item still pass. Own
+      # frappe stub, so its own step; unittest classes.
+      - name: A price at receipt (rule, hooks, every receiving path; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_receipt_price -v
       # Supplier Returns (v1.807.0): the rules of sending something back to a supplier. Fails the
       # build if an outcome (refund, credit, replacement, closed) can be recorded before the items
       # were marked Sent Back, if a Stock User can mark money received or an Accounts User can ship,

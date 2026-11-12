@@ -1574,6 +1574,18 @@ def _error_response(message, error_type="AIGateError"):
 #: Tools whose arguments are {doctype, data, ...} with `data` written onto the document.
 PRECHECKED_TOOLS = frozenset({"create_document", "update_document"})
 
+#: Since v1.809.0 a new Item starts with Maintain Stock ticked. A person at the form sees the
+#: box; an assistant's create_document does not, so a labor line or a fee created without the
+#: field would quietly become a stock item, and that can't be undone from the form once the
+#: item is used. So a create of an Item must say `is_stock_item` on purpose, either way. This
+#: is refused before a card is made, with what to send, like a bad Select value.
+ITEM_STOCK_CHOICE = (
+    "Item: say whether it keeps stock. Add \"is_stock_item\": 1 for a part or material that sits "
+    "on a shelf, or \"is_stock_item\": 0 for labor, a fee, freight, rent or any other service "
+    "(and for a fixed asset). New items default to keeping stock, so leaving it out would make "
+    "a service a stock item."
+)
+
 #: Whole options strings that `Meta.get_select_fields()` skips (frappe v16 meta.py).
 _PLACEHOLDER_SELECT_OPTIONS = frozenset({"[Select]", "Loading..."})
 
@@ -1666,6 +1678,8 @@ def _precheck_problems(arguments, get_meta, tool_name="update_document"):
     is_sensitive = _sensitive_key_predicate()
     meta = _meta(get_meta, doctype)
     problems = _select_problems(meta, data, f"{doctype} ", is_sensitive)
+    if tool_name == "create_document" and doctype == "Item" and "is_stock_item" not in data:
+        problems.append(ITEM_STOCK_CHOICE)
     for df in getattr(meta, "fields", None) or []:
         if getattr(df, "fieldtype", None) not in _TABLE_FIELDTYPES:
             continue

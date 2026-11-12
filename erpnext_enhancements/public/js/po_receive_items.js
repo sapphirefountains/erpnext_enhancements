@@ -31,6 +31,9 @@ frappe.provide("erpnext_enhancements.procurement");
 
 (function () {
 	const METHOD = "erpnext_enhancements.api.procurement.receive_items";
+	// v1.809.0: which open lines are a stock item's with no price. Such a line can't be received
+	// until it has one (inventory_enhancements/receipt_price_rules.py), so the dialog asks here.
+	const NEEDS_PRICE = "erpnext_enhancements.api.procurement.lines_needing_price";
 
 	function pending(row) {
 		// Same arithmetic as erpnext's make_purchase_receipt pre-fill, so the dialog and the
@@ -63,7 +66,71 @@ frappe.provide("erpnext_enhancements.procurement");
 		return frappe.utils.get_form_link("Purchase Receipt", name, true);
 	}
 
+	// Opens the dialog once the server has said which lines need a price. If that question fails,
+	// the dialog opens without the price columns: the server still refuses an unpriced line, in words.
 	erpnext_enhancements.procurement.receive_items = function (frm) {
+		let opened = false;
+		const open = (answer) => {
+			if (opened) return;
+			opened = true;
+			open_dialog(frm, answer || { lines: [], can_price: false });
+		};
+		try {
+			frappe
+				.call({ method: NEEDS_PRICE, type: "GET", args: { purchase_order: frm.doc.name } })
+				.then(
+					(r) => open(r && r.message),
+					() => open(null)
+				);
+		} catch (e) {
+			open(null);
+		}
+	};
+
+	// What the dialog says above the table. Three people: one who may price the order (a price or
+	// "no charge" with a reason), one who may only mark a line free (if the site allows that), and one
+	// who can do neither. For the last, the server leaves those lines unreceived and asks purchasing
+	// with a ToDo; the dialog says so before Receive is pressed, and never tells them to tick anything.
+	function price_note(needing, answer) {
+		const esc = frappe.utils.escape_html;
+		const rows = needing.map((line) => esc(`${line.idx} (${line.item_code})`)).join(", ");
+		const lead =
+			needing.length === 1
+				? __("Row {0} has no price on this order.", [rows])
+				: __("Rows {0} have no price on this order.", [rows]);
+		const why = __("Stock comes in at the price on the order, so a line with none can't be received.");
+		let how;
+		if (answer.can_price) {
+			how = __(
+				"Enter what each one cost in Price each, and it is put on the order. If it was free (a sample or a warranty replacement), tick No charge and say why below."
+			);
+		} else if (answer.can_mark_free) {
+			how =
+				(answer.why || "") +
+				" " +
+				__(
+					"If it was free (a sample or a warranty replacement), tick No charge and say why below. Otherwise it is left for purchasing, who will be asked when you press Receive."
+				);
+		} else {
+			how =
+				(answer.why || "") +
+				" " +
+				__(
+					"Those lines are left unreceived, and purchasing is asked for the price when you press Receive. Everything else is received as usual. Set the goods aside until the order has a price."
+				);
+		}
+		return `<div class="alert alert-warning" style="margin-bottom:var(--margin-md)">${lead} ${esc(
+			why
+		)} ${esc(how)}</div>`;
+	}
+
+	function open_dialog(frm, answer) {
+		const needing = (answer.lines || []).filter((line) => line && line.purchase_order_item);
+		const needs = new Set(needing.map((line) => line.purchase_order_item));
+		const asks = needs.size > 0;
+		const can_price = asks && !!answer.can_price;
+		const can_free = asks && !!answer.can_mark_free;
+		const reason_required = answer.reason_required !== false;
 		const rows = receivable_rows(frm).map((row) => ({
 			purchase_order_item: row.name,
 			item_code: row.item_code,
@@ -71,12 +138,38 @@ frappe.provide("erpnext_enhancements.procurement");
 			ordered: flt(row.qty),
 			received: flt(row.received_qty),
 			arriving: pending(row),
+			price: null,
+			no_charge: 0,
 		}));
+		// A column only for what this person may do. Someone who can neither price nor mark a line
+		// free gets no extra column at all: there is nothing for them to fill in.
+		const price_fields = [];
+		if (can_price) {
+			price_fields.push({
+				fieldtype: "Currency",
+				fieldname: "price",
+				label: __("Price each"),
+				in_list_view: 1,
+				columns: 2,
+			});
+		}
+		if (can_free) {
+			price_fields.push({
+				fieldtype: "Check",
+				fieldname: "no_charge",
+				label: __("No charge"),
+				in_list_view: 1,
+				columns: 1,
+			});
+		}
+		const extra = (can_price ? 2 : 0) + (can_free ? 1 : 0);
+		const wide = extra ? 2 : 3;
 
 		const dialog = new frappe.ui.Dialog({
 			title: __("Receive Items"),
-			size: "large",
+			size: asks ? "extra-large" : "large",
 			fields: [
+				{ fieldtype: "HTML", fieldname: "price_note", hidden: asks ? 0 : 1 },
 				{
 					fieldname: "lines",
 					fieldtype: "Table",
@@ -95,7 +188,7 @@ frappe.provide("erpnext_enhancements.procurement");
 							label: __("Item"),
 							in_list_view: 1,
 							read_only: 1,
-							columns: 3,
+							columns: wide,
 						},
 						{
 							fieldtype: "Data",
@@ -103,7 +196,7 @@ frappe.provide("erpnext_enhancements.procurement");
 							label: __("Item Name"),
 							in_list_view: 1,
 							read_only: 1,
-							columns: 3,
+							columns: wide,
 						},
 						{
 							fieldtype: "Float",
@@ -128,10 +221,18 @@ frappe.provide("erpnext_enhancements.procurement");
 							fieldname: "arriving",
 							label: __("Arriving now"),
 							in_list_view: 1,
-							columns: 2,
+							columns: extra === 3 ? 1 : 2,
 							precision: precision("qty"),
 						},
+						...price_fields,
 					],
+				},
+				{
+					fieldtype: "Data",
+					fieldname: "no_charge_reason",
+					label: __("Why no charge"),
+					description: __("For the lines ticked No charge: a free sample, a warranty replacement."),
+					hidden: can_free ? 0 : 1,
 				},
 				{ fieldtype: "Section Break" },
 				{
@@ -144,10 +245,15 @@ frappe.provide("erpnext_enhancements.procurement");
 			],
 			primary_action_label: __("Receive"),
 			primary_action(values) {
-				const lines = (values.lines || []).map((line) => ({
-					purchase_order_item: line.purchase_order_item,
-					qty: flt(line.arriving),
-				}));
+				const lines = (values.lines || []).map((line) => {
+					const out = { purchase_order_item: line.purchase_order_item, qty: flt(line.arriving) };
+					// Only an unpriced stock line's answer is sent; the server ignores any other.
+					if (needs.has(line.purchase_order_item)) {
+						if (can_free && cint(line.no_charge)) out.no_charge = 1;
+						else if (can_price && flt(line.price) > 0) out.rate = flt(line.price);
+					}
+					return out;
+				});
 				if (lines.some((line) => line.qty < 0)) {
 					frappe.msgprint(__("A received quantity cannot be negative."));
 					return;
@@ -157,31 +263,61 @@ frappe.provide("erpnext_enhancements.procurement");
 					frappe.msgprint(__("Nothing to receive: every line is at 0."));
 					return;
 				}
+				// Only a person who may price is held to an answer here. For anyone else the server
+				// leaves the line unreceived and asks purchasing; that is not something to fix in the dialog.
+				const unanswered = can_price
+					? arriving.filter((line) => needs.has(line.purchase_order_item) && !line.no_charge && !line.rate)
+					: [];
+				if (unanswered.length) {
+					frappe.msgprint(
+						__(
+							"Enter a price, or tick No charge, for each line that has no price on the order. To receive the rest now, set that line to 0."
+						)
+					);
+					return;
+				}
+				const reason = (values.no_charge_reason || "").trim();
+				if (reason_required && !reason && arriving.some((line) => line.no_charge)) {
+					frappe.msgprint(__("Say why it was no charge (a free sample, a warranty replacement)."));
+					return;
+				}
 				frappe.call({
 					method: METHOD,
 					args: {
 						purchase_order: frm.doc.name,
 						rows: arriving,
 						posting_date: values.posting_date,
+						no_charge_reason: reason || undefined,
 					},
 					freeze: true,
 					freeze_message: __("Receiving..."),
 					callback(r) {
 						dialog.hide();
-						const receipt = r.message && r.message.purchase_receipt;
+						const out = r.message || {};
+						const receipt = out.purchase_receipt;
 						if (receipt) {
 							frappe.show_alert(
 								{ message: __("Received on {0}", [receipt_link(receipt)]), indicator: "green" },
 								8
 							);
 						}
+						// Lines left unreceived for want of a price: the server's own sentence says which,
+						// why, and who was asked. A dialog of its own, so it is read, not missed.
+						if (out.message) {
+							frappe.msgprint({
+								title: receipt ? __("Some lines were not received") : __("Nothing was received"),
+								message: frappe.utils.escape_html(out.message),
+								indicator: "orange",
+							});
+						}
 						frm.reload_doc();
 					},
 				});
 			},
 		});
+		if (asks) dialog.fields_dict.price_note.$wrapper.html(price_note(needing, answer));
 		dialog.show();
-	};
+	}
 
 	frappe.ui.form.on("Purchase Order", {
 		refresh(frm) {
