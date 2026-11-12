@@ -59,7 +59,7 @@ const LINE_WAREHOUSES = "erpnext_enhancements.procurement_project.line_warehouse
 
 /** What a line's default location depends on; "" until the line has both. */
 function line_key(row) {
-	return row && row.item_code && row.project ? `${row.item_code}${row.project}` : "";
+	return row && row.item_code && row.project ? JSON.stringify([row.item_code, row.project]) : "";
 }
 
 /**
