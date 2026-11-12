@@ -95,7 +95,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports",
-   "link_count": 2,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -120,6 +120,50 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Warehouse Transactions"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Location Contents",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Location Contents"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Where Is This Item",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Where Is This Item"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Project Materials",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Project Materials"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Job Site Contents",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Job Site Contents"
   },
   {
    "hidden": 0,

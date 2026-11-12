@@ -1635,6 +1635,11 @@ erpnext_enhancements.patches.add_job_sites_warehouse
 # form would open with an empty Widget box on the page where the pilot is switched on. Writes "Classic" ONLY where
 # tabSingles has no row for the field, never over a stored value. Reads tabSingles with db.sql. Safe twice.
 erpnext_enhancements.patches.backfill_triton_widget_mode
+# Inventory reports (v1.805.0): force-import the Inventory Enhancements workspace and the Operations Hub so the four
+# new reports (Location Contents, Where Is This Item, Project Materials, Job Site Contents) show in their cards on a
+# site whose stored rows are as new as the files. Each import in its own savepoint; a failure is logged and rolled
+# back, never raised. Writes no business data. Safe twice.
+erpnext_enhancements.patches.inventory_reports_hub_links
 # Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
 # return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
 # back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a
