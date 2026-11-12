@@ -2233,6 +2233,9 @@ scheduler_events = {
 # (Maintenance, Morning Briefing, CRM, Projects, Time Kiosk, Travel, Training, Stock Scan, the same
 # as their Dock rail) for anyone whose dock profile is Field Tech. Hides tiles only; System and
 # Workspace Managers keep the whole grid (v1.751.0, setup/dock_profiles.trim_home_grid).
+# And frappe.boot.triton_frame ({origin, url, page_context}), ONLY for a person Triton Assistant Settings
+# puts on the framed Triton widget (v1.802.0, api/triton_frame.frame_config). Absent for everyone else,
+# which is everyone until that setting is changed: its absence is what keeps the classic widget in charge.
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------

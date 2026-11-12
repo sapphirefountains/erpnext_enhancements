@@ -1,0 +1,80 @@
+/* triton_frame.bundle.css: the framed Triton widget (v1.802.0).
+ *
+ * Loaded only for a person on the framed widget, with triton_frame.bundle.js, by
+ * global_enhancements/triton_frame_gate.js. Never in app_include_css.
+ *
+ * This is NOT a second skin. The button and the panel carry the classic widget's own classes
+ * (.triton-fab, .triton-panel, .triton-visible, .triton-header), so their position, size, shadow,
+ * open animation, phone sheet, reduced-motion handling and the two lifts (above the quick bar on
+ * phones, above the Guided Entry footer) all come from global_enhancements/triton_widget.css and
+ * the two bundles that already target .triton-fab. What follows is only what a frame needs: the
+ * frame filling the panel, the waiting state, and the phone sheet's height.
+ */
+
+.triton-frame-panel .triton-frame {
+	flex: 1 1 auto;
+	width: 100%;
+	min-height: 0;
+	border: 0;
+	display: block;
+	background: var(--card-bg, #fff);
+}
+
+/* The waiting state: the classic header with a working Close, and one line of plain words.
+   While it shows, the frame is loading behind it and takes no room. */
+.triton-frame-shell {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+.triton-frame-shell[hidden] {
+	display: none;
+}
+.triton-frame-panel:not(.triton-frame-live) .triton-frame {
+	flex: 0 0 0;
+	height: 0;
+	visibility: hidden;
+}
+.triton-frame-status {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 24px;
+	text-align: center;
+	color: var(--text-muted, #6c7680);
+	font-size: 13px;
+}
+.triton-frame-words {
+	margin: 0;
+	max-width: 30ch;
+}
+.triton-frame-retry[hidden] {
+	display: none;
+}
+
+/* Phones. triton_widget.css already makes the panel a sheet inset 8px from each edge. The framed
+   page cannot see the on-screen keyboard, so the loader measures the visible screen
+   (visualViewport) and sets these two properties, and the sheet ends where the keyboard begins
+   with the frame's message box still on screen. 100dvh is the fallback where a browser has no
+   visualViewport. */
+@media (max-width: 480px) {
+	.triton-frame-panel {
+		top: calc(var(--triton-sheet-top, 0px) + 8px);
+		bottom: auto;
+		height: calc(var(--triton-sheet-height, 100dvh) - 16px);
+	}
+	/* 44px: the smallest target a thumb reliably hits. The classic header's 26px is a desktop size. */
+	.triton-frame-shell .triton-header .triton-icon-btn {
+		width: 44px;
+		height: 44px;
+		line-height: 44px;
+		font-size: 16px;
+	}
+	.triton-frame-shell .triton-header .triton-title {
+		display: block;
+	}
+}

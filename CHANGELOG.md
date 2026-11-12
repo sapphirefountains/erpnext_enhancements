@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.802.0] - 2026-11-11
+
+### Added
+- **The framed Triton widget, switched off: the Desk's half of showing Triton's own chat page in
+  the panel.** Merging this changes nothing for anyone. *Triton Assistant Settings > Widget* is
+  new and defaults to **Classic**, and on Classic the only new code that runs is one read of a
+  boot key that is not there.
+  - **Why.** The parity audit of 2026-11-11 found the widget and the Triton site are two separate
+    chat programs sharing only a backend: about 3,000 lines of hand-written JavaScript here plus a
+    16-method relay, against a Vue app there, each ahead of the other in places and every new
+    Triton feature built twice. Nik's decision is to keep in the Desk only what the Desk alone can
+    do (the button, the panel, the open record, the sign-in) and show Triton's own compact chat
+    page (`/embed.html`, served by Triton) in a frame where the transcript used to be. A one-day
+    proof passed 12 of 12 browser checks. This release is the ERPNext loader; the page it frames
+    is a Triton pull request. **Stage 1 of 2:** the bridge's message names are provisional
+    (`public/js/triton_frame/contract.js` says so) until Triton's contract document lands.
+  - **The switch** (`Triton Assistant Settings`, new section *Framed Widget (pilot)*): **Widget**
+    = Classic / Framed for pilot users / Framed for everyone, a **Pilot Users** table, and an
+    optional **Framed Site Address** for a Gateway URL the browser cannot open. The master switch
+    and the allow-list above it still decide who sees the assistant at all. The answer reaches
+    the page as `frappe.boot.triton_frame` (`{origin, url, page_context}`), present **only** for a
+    person on the framed widget; the browser never reads the settings, which would show everyone
+    but a System Manager a "No permission" dialog. A change takes effect on the next Desk load.
+  - **Classic whenever anything is unclear** (`api/triton_frame.py` `frame_config`): a missing
+    mode, a value the code does not know, no usable Triton address (it must be `https`; plain
+    `http` only on a developer's own machine), no shared secret, a person outside the allow-list.
+    A wrong "framed" would take a working assistant away, so every failure to decide lands on the
+    widget that works today.
+  - **`patches/backfill_triton_widget_mode.py`.** A `default` on a new field of a Single never
+    reaches the row that already exists, so on every live site `widget_mode` reads `None` while
+    the JSON says Classic. Behaviour does not depend on the patch (a missing mode is Classic);
+    without it the settings form would open with an empty *Widget* box on the page where the
+    pilot is switched on. It writes Classic only where `tabSingles` has no row for the field,
+    reads that table with `frappe.db.sql`, and is safe twice.
+  - **The loader is its own bundle** (`triton_frame.bundle.js` + `triton_frame.bundle.css`,
+    code in `public/js/triton_frame/`), never in `app_include_js`. The main bundle gains only
+    `global_enhancements/triton_frame_gate.js`, which reads the boot key and returns. For a person
+    on the framed widget the gate fetches the two files with its own tags, not `frappe.require`:
+    v16's `frappe.require` freezes the whole Desk while it loads and resolves the same way
+    whether the file arrived or not ("resolve even on error", `assets.js` at v16.56.0).
+  - **Back and Forward.** The frame's address is assigned once, before the frame joins the page,
+    and never again; the frame is never moved to another parent; nothing touches `history`. The
+    proof measured why: with the address set once, three messages across two chats and four chat
+    switches added no entry to the tab's history. Checked again here in a browser against a stub
+    frame: opening the panel added no entry, two Desk moves added two, Back and Forward moved the
+    Desk and the frame was the same document throughout. `scripts/test_triton_frame.mjs` counts
+    writes to `src` and fails on a second.
+  - **Never a dead panel.** If the frame has not said "ready" within 6 seconds, says it in a
+    contract version this loader does not know, or Triton has no ticket route, the framed widget
+    is removed whole (its listeners too: two widgets answering Alt+T open and close each other)
+    and the classic one is started in its place, once, open if the panel was open and with any
+    waiting `SapphireTriton.ask()` prompt carried over. The same happens when the loader's files
+    do not arrive within 10 seconds. One `console.info` line, nothing on screen. There is no way
+    back to the framed widget until the page is reloaded: a panel that swaps under a person twice
+    is worse than one a version behind. Until the frame is ready the panel shows the classic
+    header with a working Close, so a phone is never stuck under a blank full-screen sheet.
+  - **The classic widget's two changes**, both in `triton_widget.js`'s bootstrap and nowhere else.
+    `init()` returns early while boot carries `triton_frame` (no `get_config` call, nothing built,
+    no second Alt+T listener), and `SapphireTriton.startClassic()` lets the gate hand the button
+    back. Its private `_booted` latch is why this could not be done from outside the file. With no
+    `triton_frame` in boot the check is false and the widget is as it was.
+  - **Signing the frame in** (`api.triton_frame.get_ticket`, POST only). The Desk's server asks
+    Triton for a ticket that works once, with the shared secret and the identity bridge's own
+    pattern; the loader posts it to the frame, which trades it for the usual 30-minute token.
+    Nobody off the framed widget can get one by calling the method directly (the master switch,
+    the allow-list, the mode and the pilot list all sit behind it, and no call to Triton is made).
+    The secret is still read in one place, `triton_chat.get_settings`; the route and payload are
+    in one function, `_request_ticket`. A person is limited to 20 tickets a minute, and the
+    loader to 6, so a frame stuck asking cannot hammer two servers.
+  - **Nothing leaks, and nothing pops up.** A failure logs the HTTP status and nothing else, and
+    only with *Debug Logging* on; Triton's reply body is never written anywhere (on a success it
+    *is* the ticket), and nothing is raised around the HTTP call, because an exception escaping
+    with the request's frames attached is how a header reaches the Error Log. An expected failure
+    is an answer (`{ok: False, reason, message}`), not a `frappe.throw`, and the loader calls
+    with a plain `fetch` rather than `frappe.call`: v16's `request.js` shows its own dialog for a
+    403 or a 502 whatever is passed to it, and this call runs without the person having asked for
+    anything. The panel says it once, in plain words, with *Try again*.
+  - **Who is listened to** (`bridge.js`). A Desk page receives `message` events from anything
+    holding a reference to the window. A message is handled only when its origin is Triton's
+    configured origin **and** its source is our own frame's window, and every message out names
+    that origin as its target, never `*`: the first thing sent is a sign-in ticket.
+  - **Records the frame asks to open** go through `frappe.set_route`, in the Desk the person is
+    in, only when the target is a DocType in `frappe.boot.user.can_read` and, optionally, a name
+    (`record_link.js`). Never a URL. On a phone the sheet closes so the record is visible.
+  - **The current page** (`page_source.js`) is the classic "Add this page" reference from the
+    same function (`capture/page_context.js`), sent when the route changes and when the panel
+    opens, and only when *Enable "Add page to context"* is on. One fix on the way: `cur_list`
+    outlives its page, so filters are kept only when they belong to the list the route names;
+    harmless behind a button, wrong for a source that reports on its own.
+  - **Phones.** The classic sheet, with its height set from `visualViewport`. A framed page
+    cannot see the on-screen keyboard (inside a frame `visualViewport` is the frame's own box),
+    so the Desk shrinks the sheet and the frame's message box stays above the keyboard. Checked
+    at 375 px with a simulated 300 px keyboard; **not checked on a real phone.**
+  - **Not a second skin.** The button and panel carry the classic classes, so position, the phone
+    sheet, the lift above the quick bar and above the Guided Entry footer, the open animation and
+    reduced-motion handling all come from the classic stylesheet and cannot drift from it.
+  - **Production headers, read 2026-11-11** (`curl -sI https://erp.sapphirefountains.com/login`):
+    no `Content-Security-Policy` and no `Permissions-Policy`, so nothing on the Desk's side
+    blocks the frame or the microphone; `X-Frame-Options: SAMEORIGIN` there governs who may
+    frame the Desk, not what the Desk may frame. The app sets neither header anywhere, and the
+    nginx config is regenerated from bench's template on every boot. If a policy is ever added,
+    it needs `frame-src https://triton.sapphirefountains.com` and must not forbid `microphone`.
+  - **Tests**, both bench-free and both wired into `ci.yml`: `scripts/test_triton_frame.mjs` (51
+    checks, the real modules under node against a stand-in window) and
+    `tests/test_triton_frame.py` (75, pytest). Each was run against deliberately broken code to
+    confirm it fails.
+  - **Not in this release:** the final message names, the clock-in card (it stays a Desk-side
+    card the frame can only request), reply-finished notifications, and removing the classic
+    widget and the relay, which waits for a pilot.
+
 ## [1.801.0] - 2026-11-11
 
 ### Added

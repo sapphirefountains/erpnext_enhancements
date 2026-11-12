@@ -3700,6 +3700,16 @@ jobs:
         run: node scripts/test_triton_markdown.mjs
       - name: Triton inline citation renderer (bench-free, node)
         run: node scripts/test_triton_citations.mjs
+      # The framed Triton widget's loader, gate and bridge (v1.802.0), run for real against a
+      # stand-in window. Each rule it holds fails with nothing thrown and nothing on screen:
+      # the frame's address written a second time (chat navigation then lands in the tab's
+      # history and Back stops moving the Desk), a frame that never says "ready" leaving a dead
+      # panel instead of the classic widget, a `message` from any other origin or window opening
+      # a record or drawing a sign-in ticket, and the gate fetching or wrapping anything for a
+      # person on the classic widget. It also pins that the loader stays out of the Desk's main
+      # bundle and that triton_widget.js sleeps while boot says "framed".
+      - name: Framed Triton widget loader, gate and bridge (bench-free, node)
+        run: node scripts/test_triton_frame.mjs
       # The browser half of Triton clock-in. Pins the rules that make it safe rather
       # than merely working: location is requested ONLY inside a click handler (never
       # on boot), always with maximumAge 0 and enableHighAccuracy -- a cached or coarse
@@ -4160,6 +4170,16 @@ jobs:
       # (the picker just opens on Flash), so it needs a test rather than review.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
+      # The framed Triton widget's server half (v1.802.0): who is put on it, and the one-time
+      # sign-in ticket. Its own step because it re-installs the frappe/requests stubs and swaps
+      # frappe.throw. pytest, not unittest: it uses monkeypatch and parametrize. What it pins:
+      # every unclear case reads as Classic (the mode field is new, so on every live site it has
+      # no row and reads None), the framed widget cannot go around the master switch or the
+      # allow-list, a ticket is issued only over POST and only to someone on the framed widget,
+      # a failure comes back as a plain sentence rather than a Desk dialog, and neither the
+      # shared secret nor a ticket reaches a log line or the cache.
+      - name: Framed Triton widget mode and sign-in ticket (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_triton_frame.py -q
       # Gemini Enterprise Agent Platform client (v1.476.0). Its own step for the reason the
       # two above have one: it installs its own frappe/requests/google-auth stubs at module
       # scope. What it pins is the shape of the one request this app sends to the platform:
