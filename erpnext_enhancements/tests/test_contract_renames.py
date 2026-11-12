@@ -447,7 +447,9 @@ class TestGenerateContractList(unittest.TestCase):
 			code.index("export function contract_types(") : code.index("function enabled_contract_types(")
 		]
 		values = re.findall(r'value: "([a-z_]+)"', block)
-		self.assertEqual(values, ["owner", "rental", "maintenance", "sow", "msa", "sow"])
+		# v1.808.0: the Certificate of Warranty joins the customer list, for a Project only
+		# (tests/test_warranty_certificate pins that condition).
+		self.assertEqual(values, ["owner", "rental", "maintenance", "sow", "warranty", "msa", "sow"])
 		self.assertIn('label: __("Events Agreement")', block)
 		# No Design Agreement here: create_contract prefills the party from the project's customer,
 		# and the other side of a Design Agreement is the architect (the Builder's start dialog asks).
