@@ -446,7 +446,7 @@ for (const { fn, destructive } of MUST_GUARD) {
 		{ value: 'gemini-3.8-flash', label: '3.8 Flash' },
 	];
 
-	function widget({ stored, defaultModel = '' } = {}) {
+	const widget = ({ stored, defaultModel = '' } = {}) => {
 		const store = new Map(stored === undefined ? [] : [['triton_model', stored]]);
 		const touched = [];
 		const storage = {
@@ -481,12 +481,12 @@ for (const { fn, destructive } of MUST_GUARD) {
 		};
 		const fns = build(state, { createElement: () => ({}) }, storage, 'triton_model');
 		return { state, select, store, touched, ...fns };
-	}
+	};
 
-	function check(ok, good, bad) {
+	const check = (ok, good, bad) => {
 		if (ok) pass(good);
 		else fail(bad);
-	}
+	};
 
 	// 1. The case that was reported: an old stored pick, no pinned default.
 	let w = widget({ stored: 'gemini-3.8-flash' });
