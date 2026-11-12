@@ -1191,6 +1191,80 @@ class TestTheFiles(unittest.TestCase):
 		self.assertIn("return False", body)
 
 
+class TestTheRolePatch(unittest.TestCase):
+	"""``patches/seed_warehouse_map_editor_role`` on a frappe of its own: it runs pre-model-sync,
+	inside the deploy's migrate, so the one thing it must never do is raise."""
+
+	def run_patch(self, existing=(), fail_on=()):
+		log = {"inserted": [], "commits": 0, "rollbacks": 0, "errors": []}
+		existing = set(existing)
+
+		class Doc:
+			def __init__(self, doctype):
+				self.doctype = doctype
+				self.roles = []
+
+			def append(self, key, row):
+				self.roles.append(row)
+
+			def insert(self, ignore_permissions=False):
+				assert ignore_permissions, "a migrate has no session user to hold a permission"
+				if self.doctype in fail_on:
+					raise RuntimeError(f"{self.doctype} could not be inserted")
+				name = getattr(self, "role_name", None) or getattr(self, "role_profile", None)
+				existing.add((self.doctype, name))
+				log["inserted"].append((self.doctype, name, getattr(self, "desk_access", None), list(self.roles)))
+
+		def bump(key):
+			log[key] += 1
+
+		fake = types.ModuleType("frappe")
+		fake.db = types.SimpleNamespace(
+			exists=lambda doctype, name: (doctype, name) in existing,
+			commit=lambda: bump("commits"),
+			rollback=lambda: bump("rollbacks"),
+		)
+		fake.new_doc = Doc
+		fake.get_traceback = lambda: "traceback"
+		fake.log_error = lambda message, title: log["errors"].append(title)
+		held = sys.modules.get("frappe")
+		sys.modules["frappe"] = fake
+		try:
+			spec = importlib.util.spec_from_file_location(
+				"seed_warehouse_map_editor_role_under_test", APP / "patches" / "seed_warehouse_map_editor_role.py"
+			)
+			module = importlib.util.module_from_spec(spec)
+			spec.loader.exec_module(module)
+			module.execute()
+		finally:
+			sys.modules["frappe"] = held
+		return log
+
+	def test_it_creates_the_role_and_a_one_role_profile(self):
+		role = rules.EDITOR_ROLE
+		log = self.run_patch(existing={("DocType", "Role Profile")})
+		self.assertEqual(log["inserted"], [("Role", role, 1, []), ("Role Profile", role, None, [{"role": role}])])
+		self.assertEqual((log["commits"], log["rollbacks"], log["errors"]), (2, 0, []))
+
+	def test_a_second_run_inserts_nothing(self):
+		role = rules.EDITOR_ROLE
+		log = self.run_patch(existing={("DocType", "Role Profile"), ("Role", role), ("Role Profile", role)})
+		self.assertEqual((log["inserted"], log["errors"]), ([], []))
+
+	def test_a_site_without_role_profiles_gets_the_role_alone(self):
+		log = self.run_patch()
+		self.assertEqual([row[0] for row in log["inserted"]], ["Role"])
+
+	def test_it_cannot_raise(self):
+		for fail_on in ({"Role"}, {"Role Profile"}, {"Role", "Role Profile"}):
+			log = self.run_patch(existing={("DocType", "Role Profile")}, fail_on=fail_on)
+			self.assertEqual(log["rollbacks"], len(fail_on))
+			self.assertEqual(log["errors"], ["Warehouse Map Editor role seed"] * len(fail_on))
+		# The role still goes in when only the profile fails.
+		log = self.run_patch(existing={("DocType", "Role Profile")}, fail_on={"Role Profile"})
+		self.assertEqual([row[0] for row in log["inserted"]], ["Role"])
+
+
 class TestThePageUnderNode(unittest.TestCase):
 	def test_the_node_harness_passes(self):
 		node = shutil.which("node")

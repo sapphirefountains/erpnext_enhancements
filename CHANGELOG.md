@@ -61,7 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so, and Stock Scan shows no link.
 - **Not built yet**, agreed as later steps: creating a bay, shelf or bin from the editor; a
   free-space view for deciding where new stock goes; a walk order for counts.
-- Tested bench-free (`tests/test_warehouse_map.py`, 65 tests on its own frappe stub, and
+- **The role's patch cannot stop a deploy.** `patches/seed_warehouse_map_editor_role` runs before the
+  DocTypes sync, inside the deploy's migrate, so each of its two steps (the role, its Role Profile)
+  is on its own and a failure becomes one Error Log row, "Warehouse Map Editor role seed", saying
+  what to create by hand. Until the role exists only a System Manager can edit a map.
+- Tested bench-free (`tests/test_warehouse_map.py`, 69 tests on its own frappe stub, and
   `scripts/test_warehouse_map.mjs` under node), both in CI. Not run on a bench.
 
 ## [1.814.0] - 2026-11-12
