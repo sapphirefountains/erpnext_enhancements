@@ -751,7 +751,13 @@ def _relaxed_switches(item_codes):
 		)
 	except Exception:
 		return {}
-	return {row.item_code: str(row.switched_on or "")[:10] for row in rows if row.switched_on}
+	# Two rows for one item (two Items merged): the later switch covers the most invoices.
+	switched = {}
+	for row in rows:
+		day = str(row.switched_on or "")[:10]
+		if day and day > switched.get(row.item_code, ""):
+			switched[row.item_code] = day
+	return switched
 
 
 def refuse_delivering_old_invoices(doc, method=None):

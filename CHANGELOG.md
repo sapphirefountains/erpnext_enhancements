@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     queued; nothing is switched twice.
   - *Download this list* is the before-and-after list to approve; *Download results* is what a
     run switched or refused. Cells that could run as a spreadsheet formula are written as text.
+  - **An item with a row on this page can still be renamed, merged and deleted.** The first draft
+    named each `Maintain Stock Decision` row by its item code, with a unique index. A review
+    against frappe v16.56.0 showed what that does: a rename rewrites the Link but leaves the
+    row's name behind, so the next save makes a second row and hits the index; a merge of two
+    items that both have rows fails on the index; and a delete is refused because the row links
+    to the Item. The row is now named by a hash and always found by its item, a merge's two rows
+    are read as one (`best_row`), and the Item's `on_trash` removes its rows, which Frappe runs
+    before its link check.
+  - **Two jobs overlapping across a deploy cannot undo each other.** The second waits for the
+    Item's row lock, finds the item already on, and used to write Refused over the first job's
+    Switched, which is the row the Delivery Note guard reads. It now leaves a Switched row alone.
   - **Sales Invoices, behind a tick box.** About 90 physical items are held back only by
     submitted Sales Invoices, and every submitted Sales Invoice on production has Update Stock
     off. Read from ERPNext v16.54.0, such an invoice moves no stock whatever the item's flag: a
@@ -104,7 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     *Stop*, and posts nothing until answered. Both put the price on the order through ERPNext's
     *Update Items* (`update_child_qty_rate`), which checks write permission on the order and
     re-runs this app's approval-threshold and requester gates. A person who may not edit the
-    order is told to ask purchasing, and can still mark a line free or receive the rest.
+    order is told to ask purchasing, and can still mark a line free or receive the rest. A line
+    received as free leaves a Comment on the order saying who and which row, since it changes no
+    price. The order is read again at the moment the price is written, because *Update Items*
+    deletes any row it is not sent.
   - **The order still only warns** at submit, as decided on 2026-09-24; its words now say the
     receipt will ask. Returns, internal transfers, non-stock lines and every document already
     submitted are left alone. No rate on an existing receipt is changed.

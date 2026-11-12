@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 0,
- "autoname": "field:item_code",
+ "autoname": "hash",
  "creation": "2026-11-12 12:00:00.000000",
  "description": "One row for an item the Switch Items to Maintain Stock page has a choice or a result for: a person's choice that beats the name rule, and what happened when the item was queued to switch. Written by the page and its background job, never by hand.",
  "doctype": "DocType",
@@ -34,7 +34,8 @@
    "options": "Item",
    "reqd": 1,
    "set_only_once": 1,
-   "unique": 1
+   "search_index": 1,
+   "read_only": 1
   },
   {
    "fetch_from": "item_code.item_name",
@@ -144,7 +145,7 @@
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Maintain Stock Decision",
- "naming_rule": "By fieldname",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {

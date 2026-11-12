@@ -203,6 +203,22 @@ def outcome(item, checks, decision=""):
 	)
 
 
+def best_row(rows):
+	"""The one Maintain Stock Decision row that speaks for an item when it has several.
+
+	Merging two Items re-points both rows at the survivor. A row that says Switched wins (it is
+	what the Delivery Note guard reads), then one still Queued or Refused, then the newest.
+	``None`` for no rows.
+	"""
+
+	def rank(row):
+		status = row.get("status") or ""
+		return (status == STATUS_SWITCHED, bool(status), str(row.get("modified") or ""))
+
+	rows = list(rows or ())
+	return max(rows, key=rank) if rows else None
+
+
 def blocked_only_by_sales_invoices(checks):
 	"""Whether the Sales Invoice check is the one thing in the way."""
 	failed = [check.get("key") for check in checks or () if not check.get("ok")]

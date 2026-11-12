@@ -178,7 +178,9 @@ class DecisionDoc:
 		return {column: _plain(getattr(self, column)) for column in DECISION_COLUMNS}
 
 	def insert(self, ignore_permissions=False):
-		self.name = self.item_code
+		# A name that has nothing to do with the item code, like the doctype's hash naming.
+		STATE["tick"] += 1
+		self.name = f"msd-{STATE['tick']:04d}"
 		STATE["calls"].append(("insert", DECISION, self.name, bool(ignore_permissions)))
 		_insert(DECISION, name=self.name, **self._values())
 		return self
@@ -413,6 +415,13 @@ def build_frappe():
 	def rollback():
 		STATE["calls"].append(("rollback",))
 
+	def delete(doctype, filters=None):
+		if STATE.get("delete_raises"):
+			raise RuntimeError("the database is away")
+		where, values = _where(filters)
+		CONN.execute(f"delete from `tab{doctype}`{where}", values)
+
+	db.delete = delete
 	db.count = count
 	db.commit = commit
 	db.rollback = rollback
@@ -1765,6 +1774,10 @@ class WiringTest(unittest.TestCase):
 			("Repost Accounting Ledger", "validate"): "refuse_rebuilding_unstocked_receipts",
 			("Delivery Note", "validate"): "refuse_delivering_old_invoices",
 		}
+		# And the Item's rows are cleared before Frappe's link check could refuse a delete.
+		trash = ast.literal_eval(_key(_key(events, "Item"), "on_trash"))
+		self.assertEqual(trash, "erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.forget_item")
+		self.assertTrue(callable(bulk.forget_item))
 		for (doctype, event), function in expected.items():
 			with self.subTest(doctype=doctype, event=event):
 				block = _key(events, doctype)
@@ -2371,7 +2384,8 @@ def add_invoice(code=OTHER, name="SI-T-1", update_stock=0):
 
 def decision_row(code):
 	cur = CONN.execute(
-		f"select status, result, queued_by, invoices_before_switch, decision from `tab{DECISION}` where name = ?",
+		f"select status, result, queued_by, invoices_before_switch, decision from `tab{DECISION}` "
+		"where item_code = ? order by name",
 		(code,),
 	)
 	row = cur.fetchone()
@@ -2760,6 +2774,114 @@ class BulkEndpointTest(unittest.TestCase):
 		self.assertTrue(api.bulk_list_csv(which="results")["filename"].startswith("maintain-stock-results-"))
 
 
+class DecisionRowFollowsTheItemTest(unittest.TestCase):
+	"""An Item with a row can still be renamed, merged and deleted (v1.803.0, found in review)."""
+
+	def setUp(self):
+		reset_state()
+		bulk_db()
+
+	def rows(self, code):
+		return CONN.execute(
+			f"select name, status from `tab{DECISION}` where item_code = ?", (code,)
+		).fetchall()
+
+	def rename(self, old, new):
+		"""What Frappe's rename does to this table: the Link follows, the row's name stays."""
+		CONN.execute("update `tabItem` set name = ? where name = ?", (new, old))
+		CONN.execute(f"update `tab{DECISION}` set item_code = ? where item_code = ?", (new, old))
+
+	def test_a_renamed_item_keeps_its_row(self):
+		bulk.set_decision(ITEM, "Stay non-stock")
+		name = self.rows(ITEM)[0][0]
+		self.assertNotEqual(name, ITEM)
+		self.rename(ITEM, "TST-PUMP-NEW")
+		rows = {row["item_code"]: row for row in bulk.preview()["rows"]}
+		self.assertEqual(rows["TST-PUMP-NEW"]["decision"], "Stay non-stock")
+		bulk.set_decision("TST-PUMP-NEW", "")
+		self.assertEqual(
+			[row[0] for row in self.rows("TST-PUMP-NEW")], [name], "the same row, not a second one"
+		)
+
+	def test_a_renamed_item_can_be_queued_and_switched(self):
+		bulk.set_decision(ITEM, "Switch")
+		self.rename(ITEM, "TST-PUMP-NEW")
+		bulk.queue_switch()
+		bulk.process_queue()
+		self.assertEqual(stock_flag("TST-PUMP-NEW"), 1)
+		self.assertEqual(len(self.rows("TST-PUMP-NEW")), 1)
+
+	def test_two_rows_after_a_merge_and_the_one_that_matters_speaks(self):
+		bulk.queue_switch()
+		bulk.process_queue()  # both items Switched, a row each
+		bulk.set_decision(FEE, "Stay non-stock")
+		self.rename(FEE, "TST-GONE")
+		# The merge: the fee's row is re-pointed at the surviving item, which already has one.
+		CONN.execute(f"update `tab{DECISION}` set item_code = ? where item_code = ?", (ITEM, "TST-GONE"))
+		self.assertEqual(len(self.rows(ITEM)), 2)
+		self.assertEqual(bulk._decisions()[ITEM]["status"], "Switched")
+		self.assertEqual(bulk._row(ITEM).status, "Switched")
+
+	def test_the_best_row(self):
+		rows = [
+			{"name": "a", "status": "", "modified": "2026-11-12 09:00:00"},
+			{"name": "b", "status": "Refused", "modified": "2026-11-12 08:00:00"},
+			{"name": "c", "status": "Switched", "modified": "2026-11-01 08:00:00"},
+		]
+		self.assertEqual(bulk_rules.best_row(rows)["name"], "c")
+		self.assertEqual(bulk_rules.best_row(rows[:2])["name"], "b")
+		self.assertEqual(bulk_rules.best_row(rows[:1])["name"], "a")
+		self.assertIsNone(bulk_rules.best_row([]))
+
+	def test_the_later_of_two_switches_guards_the_delivery_note(self):
+		for name, day in (("msd-a", "2026-10-01 10:00:00"), ("msd-b", "2026-11-12 10:00:00")):
+			_insert(
+				DECISION,
+				name=name,
+				item_code=ITEM,
+				status="Switched",
+				invoices_before_switch=1,
+				switched_on=day,
+			)
+		_insert("Sales Invoice", name="SI-T-MID", docstatus=1, update_stock=0, posting_date="2026-10-20")
+		note = Doc(
+			"Delivery Note",
+			"DN-T-1",
+			{"items": [{"idx": 1, "item_code": ITEM, "against_sales_invoice": "SI-T-MID"}]},
+		)
+		with self.assertRaises(FRAPPE.ValidationError):
+			ms.refuse_delivering_old_invoices(note)
+
+	def test_deleting_an_item_removes_its_rows_first(self):
+		bulk.set_decision(ITEM, "Switch")
+		bulk.set_decision(OTHER, "Switch")
+		bulk.forget_item(Doc("Item", ITEM))
+		self.assertEqual(self.rows(ITEM), [])
+		self.assertEqual(len(self.rows(OTHER)), 1)
+
+	def test_the_cleanup_never_raises(self):
+		STATE["delete_raises"] = True
+		bulk.forget_item(Doc("Item", ITEM))
+		self.assertEqual(len(STATE["errors"]), 1)
+
+	def test_a_second_job_does_not_write_refused_over_switched(self):
+		"""Two jobs can overlap across a deploy. The second waits for the Item's row lock, finds
+		the item already on, and must leave the first job's Switched row alone."""
+		add_invoice(OTHER, "SI-T-1")
+		bulk.queue_switch(relax_sales_invoices=1)
+		queued = FRAPPE.get_all(
+			DECISION,
+			filters={"status": "Queued"},
+			fields=["name", "item_code", "queued_by", "relax_sales_invoices"],
+		)
+		bulk.process_queue()
+		for row in queued:  # the second job, holding the rows it read before the first one ran
+			self.assertFalse(bulk._switch_one(row))
+		for code in (ITEM, OTHER):
+			self.assertEqual(decision_row(code).status, "Switched", code)
+		self.assertEqual(decision_row(OTHER).invoices, 1, "the Delivery Note guard still has its row")
+
+
 BULK_PAGE_DIR = APP / "inventory_enhancements" / "page" / "maintain_stock_switch"
 DECISION_JSON = (
 	APP / "inventory_enhancements" / "doctype" / "maintain_stock_decision" / "maintain_stock_decision.json"
@@ -2794,7 +2916,9 @@ class BulkWiringTest(unittest.TestCase):
 		self.assertEqual({r["role"] for r in page["roles"]}, {"System Manager", *rules.SWITCH_ROLES})
 		doctype = json.loads(DECISION_JSON.read_text(encoding="utf-8"))
 		self.assertEqual(doctype["name"], DECISION)
-		self.assertEqual(doctype["autoname"], "field:item_code")
+		# Named by a hash and found by its item: a rename or a merge of the Item must not strand it.
+		self.assertEqual(doctype["autoname"], "hash")
+		self.assertFalse(next(f for f in doctype["fields"] if f["fieldname"] == "item_code").get("unique"))
 		fields = {f["fieldname"]: f for f in doctype["fields"]}
 		for column in DECISION_COLUMNS:
 			self.assertIn(column, fields)

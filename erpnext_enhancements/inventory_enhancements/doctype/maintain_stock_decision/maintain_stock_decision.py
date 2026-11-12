@@ -16,8 +16,15 @@ A row exists only for an item somebody chose something for, or that was queued t
   (``maintain_stock.refuse_delivering_old_invoices``) for an item switched although Sales
   Invoices used it.
 
-The name is the item code, so there is never a second row for one item. Written by
-``maintain_stock_bulk`` only; every field is read-only on the form.
+**The row is found by its item, never by its name.** ``item_code`` is a Link, so renaming an Item
+carries the row along, and the name is a hash, so the rename has nothing else to keep in step.
+Merging two Items can leave two rows for the survivor; every reader takes the one that matters
+(``maintain_stock_bulk_rules.best_row``). Deleting an Item removes its rows first
+(``maintain_stock_bulk.forget_item``, the Item's ``on_trash``), so a row never stands in the way
+of the delete. The first version named the row by the item code with a unique index: a rename
+then left the name behind, a merge hit the index, and a delete was refused by the link.
+
+Written by ``maintain_stock_bulk`` only; every field is read-only on the form.
 """
 
 from frappe.model.document import Document

@@ -285,6 +285,14 @@ def price_changes(order_rows, prices):
 	return out
 
 
+def free_comment(full_name, rows):
+	"""The Comment left on the order when a line was received as free on purpose."""
+	return (
+		f"{full_name} received row {rows} at no charge (a free sample or a warranty replacement), "
+		"so it came into stock at $0."
+	)
+
+
 def price_comment(full_name, rows):
 	"""The Comment left on the order: who priced which rows while receiving. No amounts."""
 	return f"{full_name} entered the price for row {rows} while receiving it."

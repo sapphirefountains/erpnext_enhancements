@@ -26,6 +26,10 @@ person presses the button.
   job picks up where the rows say. An item the killed job had not committed is still Queued and
   still non-stock; one it had committed is Switched. Nothing is switched twice: ``turn_on`` refuses
   an item that is already on.
+* **An Item can still be renamed, merged and deleted.** A row is found by its ``item_code``
+  Link, which a rename carries along; a merge may leave two rows for one item, and
+  ``bulk_rules.best_row`` picks the one that matters; :func:`forget_item` (the Item's
+  ``on_trash``) removes the rows before Frappe's link check could refuse the delete.
 * **The before-and-after list** is the same rows, as CSV (``maintain_stock_bulk_rules.to_csv``):
   before applying it is the list to approve; afterwards each row says Switched or Refused and why.
 
@@ -223,7 +227,11 @@ _DECISION_FIELDS = [
 
 
 def _decisions():
-	return {row.item_code: row for row in frappe.get_all(DECISION, fields=_DECISION_FIELDS)}
+	"""``{item_code: row}``: the row that speaks for each item (``bulk_rules.best_row``)."""
+	by_item = {}
+	for row in frappe.get_all(DECISION, fields=[*_DECISION_FIELDS, "modified"]):
+		by_item.setdefault(row.item_code, []).append(row)
+	return {code: bulk_rules.best_row(rows) for code, rows in by_item.items()}
 
 
 def _items():
@@ -350,9 +358,14 @@ def status():
 
 
 def _row(item_code):
-	"""The item's Maintain Stock Decision row, made (unsaved) when there is none."""
-	if frappe.db.exists(DECISION, item_code):
-		return frappe.get_doc(DECISION, item_code)
+	"""The item's Maintain Stock Decision row, made (unsaved) when there is none.
+
+	Found by ``item_code``, never by name: an Item can be renamed, and the row follows its Link.
+	"""
+	rows = frappe.get_all(DECISION, filters={"item_code": item_code}, fields=["name", "status", "modified"])
+	found = bulk_rules.best_row(rows)
+	if found:
+		return frappe.get_doc(DECISION, found.name)
 	doc = frappe.new_doc(DECISION)
 	doc.item_code = item_code
 	return doc
@@ -416,6 +429,22 @@ def stop():
 	return {"stopped": len(names)}
 
 
+def forget_item(doc, method=None):
+	"""``Item`` → ``on_trash``: remove the item's Maintain Stock Decision rows.
+
+	The rows link to the Item, and Frappe refuses to delete a document something links to.
+	``on_trash`` runs before that check (``frappe/model/delete_doc.py``, v16.56.0), so clearing
+	them here keeps a row from ever being the reason an Item can't be deleted or merged away.
+	Never raises: if this fails, Frappe's own link check says which row is in the way.
+	"""
+	try:
+		if not frappe.db.table_exists(DECISION):
+			return
+		frappe.db.delete(DECISION, {"item_code": doc.name})
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Maintain Stock Decision: cleanup on Item delete failed")
+
+
 def _enqueue():
 	frappe.enqueue(
 		JOB_METHOD,
@@ -470,7 +499,11 @@ def _switch_one(row):
 		else:
 			frappe.log_error(frappe.get_traceback(), "Maintain Stock bulk switch failed")
 			result = "Something went wrong while switching it. The Error Log has the details."
-		frappe.db.set_value(DECISION, row.name, {"status": bulk_rules.STATUS_REFUSED, "result": result})
+		# Another job may have switched this very item while this one waited for the Item's row
+		# lock (a deploy can leave an old worker finishing as a new one starts). Its row says
+		# Switched, and the Delivery Note guard reads that: never write Refused over it.
+		if frappe.db.get_value(DECISION, row.name, "status") != bulk_rules.STATUS_SWITCHED:
+			frappe.db.set_value(DECISION, row.name, {"status": bulk_rules.STATUS_REFUSED, "result": result})
 		frappe.db.commit()
 		return False
 

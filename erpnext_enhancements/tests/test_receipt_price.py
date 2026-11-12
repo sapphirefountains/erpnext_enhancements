@@ -128,7 +128,8 @@ def build_frappe():
 	frappe.has_permission = has_permission
 	frappe.log_error = log_error
 	frappe.get_traceback = lambda *a, **k: "traceback"
-	frappe.get_doc = lambda doctype, name: Doc(doctype, name)
+	# The order as the database holds it now, which may be newer than the one a caller holds.
+	frappe.get_doc = lambda doctype, name: STATE["orders"].get(name) or Doc(doctype, name)
 
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(float(v)) if v not in (None, "") else 0
@@ -148,6 +149,7 @@ def reset_state(**overrides):
 		"permission_checks": [],
 		"denied": set(),
 		"updates": [],
+		"orders": {},
 	}
 	STATE.update(overrides)
 	FRAPPE.flags = _dict()
@@ -227,7 +229,9 @@ def order(rows=None):
 			"description": "Freight",
 		},
 	]
-	return Doc("Purchase Order", ORDER, items=rows)
+	doc = Doc("Purchase Order", ORDER, items=rows)
+	STATE["orders"][ORDER] = doc
+	return doc
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +467,18 @@ class PricingTheOrderTest(unittest.TestCase):
 		self.assertIn("Test Receiver entered the price for row 1", comment[3])
 		self.assertNotIn("19.99", comment[3], "no amounts in a comment")
 
+	def test_the_rows_sent_are_the_orders_rows_now_not_the_callers_copy(self):
+		"""Update Items deletes a row it is not sent, so a row somebody added since the request
+		began must be in the list."""
+		stale = order()
+		newer = order()
+		newer.items.append(
+			_dict(name="poi-4", idx=4, item_code=OTHER_PART, rate=2, qty=1, uom="Nos", conversion_factor=1)
+		)
+		price.price_order_lines(stale, {"poi-1": 19.99})
+		rows = STATE["updates"][0][1]
+		self.assertEqual([r["docname"] for r in rows], ["poi-1", "poi-2", "poi-3", "poi-4"])
+
 	def test_a_person_who_may_not_edit_the_order_is_told_who_to_ask(self):
 		STATE["denied"].add(("Purchase Order", "write"))
 		with self.assertRaises(FRAPPE.PermissionError) as caught:
@@ -482,6 +498,11 @@ class PricingTheOrderTest(unittest.TestCase):
 		self.assertEqual(STATE["updates"], [])
 		self.assertEqual(price.settle_before_receipt(po, {"poi-1"}, {"poi-1": {"no_charge": 1}}), ["poi-1"])
 		self.assertEqual(STATE["updates"], [], "a free line changes no price")
+		# But it leaves a trace on the order: who, and which row.
+		self.assertEqual(len(STATE["comments"]), 1)
+		self.assertEqual(STATE["comments"][0][:3], ("Purchase Order", ORDER, "Comment"))
+		self.assertIn("Test Receiver received row 1 at no charge", STATE["comments"][0][3])
+		STATE["comments"].clear()
 		self.assertEqual(price.settle_before_receipt(po, {"poi-1"}, {"poi-1": {"rate": "8"}}), [])
 		self.assertEqual(STATE["updates"][0][1][0]["rate"], 8.0)
 		# Lines that need no price cost nothing: no permission is even asked.

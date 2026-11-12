@@ -1060,6 +1060,11 @@ doc_events = {
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
+		# v1.803.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
+		# page's memory of it) link to the Item, and Frappe refuses to delete a document that is
+		# linked to. on_trash runs before that check, so the rows go first and an Item can still
+		# be deleted or merged away. Never raises; nothing happens for an item with no row.
+		"on_trash": "erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.forget_item",
 	},
 	# WI-013: block submitting a Purchase Order above the configurable approval
 	# threshold (ERPNext Enhancements Settings.po_approval_threshold, default 500;

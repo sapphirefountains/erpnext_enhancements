@@ -18,7 +18,8 @@ stock, and talks to ERPNext.
   *Update Items* (``update_child_qty_rate``). That function checks write permission on the order,
   re-runs this app's submit gates (``hooks.py``: the approval threshold and the requester
   separation both listen on ``on_update_after_submit``), recalculates the order and recounts its
-  Bin. Nothing here writes a rate itself.
+  Bin. Nothing here writes a rate itself. A line received as free on purpose changes no price,
+  so it gets a Comment on the order instead: who, and which rows.
 
 The refusal stands aside during install, migrate, patch and test runs (``doc_events`` fire in
 ERPNext's own test bootstrap) and for a document whose ``flags.ignore_receipt_price_guard`` is
@@ -75,7 +76,9 @@ def refuse_unpriced_stock_lines(doc, method=None):
 		return
 	lines = _unpriced(doc)
 	if lines:
-		frappe.throw(rules.submit_refusal(doc.doctype, lines), title=_("A line has no price"))
+		frappe.throw(
+			html.escape(rules.submit_refusal(doc.doctype, lines), quote=False), title=_("A line has no price")
+		)
 
 
 def warn_unpriced_stock_lines(doc, method=None):
@@ -151,8 +154,11 @@ def price_order_lines(po, prices):
 		frappe.throw(rules.cannot_price_refusal(po.name), frappe.PermissionError)
 	from erpnext.controllers.accounts_controller import update_child_qty_rate
 
-	update_child_qty_rate("Purchase Order", json.dumps(rules.price_changes(po.items, prices)), po.name)
-	rows = ", ".join(str(row.idx) for row in po.items if row.name in prices)
+	# Read the order again, now: Update Items deletes any row it is not sent, so the rows must be
+	# the ones the order holds at this moment, not the ones it held when the request began.
+	fresh = frappe.get_doc("Purchase Order", po.name)
+	update_child_qty_rate("Purchase Order", json.dumps(rules.price_changes(fresh.items, prices)), po.name)
+	rows = ", ".join(str(row.idx) for row in fresh.items if row.name in prices)
 	comment = rules.price_comment(get_fullname(frappe.session.user), rows)
 	frappe.get_doc("Purchase Order", po.name).add_comment("Comment", html.escape(comment, quote=False))
 
@@ -179,4 +185,9 @@ def settle_before_receipt(po, wanted, typed):
 			title=_("Nothing was received"),
 		)
 	price_order_lines(po, prices)
+	if free:
+		# A free line changes no price, so it would leave no trace on the order. Say who and which.
+		rows = ", ".join(str(line["idx"]) for line in needing if line["purchase_order_item"] in free)
+		comment = rules.free_comment(get_fullname(frappe.session.user), rows)
+		frappe.get_doc("Purchase Order", po.name).add_comment("Comment", html.escape(comment, quote=False))
 	return free
