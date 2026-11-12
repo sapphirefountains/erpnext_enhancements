@@ -354,6 +354,7 @@ def test_nobody_off_the_framed_widget_can_get_a_ticket(monkeypatch, behavior):
 		(ConnectionError("Max retries exceeded with url: /api/v1/auth"), "unreachable"),
 		(_Response(500, text="Internal Server Error"), "unreachable"),
 		(_Response(502), "unreachable"),
+		(_Response(504), "unreachable"),
 		(_Response(200, None), "unreachable"),  # a proxy's HTML page with a 200
 		(_Response(200, {"detail": "ok"}), "unreachable"),  # no ticket in it
 		(_Response(200, {"ticket": ""}), "unreachable"),
@@ -363,8 +364,11 @@ def test_nobody_off_the_framed_widget_can_get_a_ticket(monkeypatch, behavior):
 		(_Response(404), "unsupported"),
 		(_Response(405), "unsupported"),
 		(_Response(501), "unsupported"),
-		(_Response(401), "refused"),
-		(_Response(403), "refused"),
+		(_Response(401), "setup"),  # the shared secret is wrong
+		# No secret configured on Triton, OR its database is down: Triton answers 503 for both.
+		(_Response(503), "unreachable"),
+		(_Response(400), "refused"),  # the email is missing or malformed
+		(_Response(403), "refused"),  # not a company address, or the Triton account is disabled
 	],
 )
 def test_a_failure_is_an_answer_in_plain_words_not_an_exception(monkeypatch, reply, reason):
@@ -378,6 +382,8 @@ def test_a_failure_is_an_answer_in_plain_words_not_an_exception(monkeypatch, rep
 	assert "ticket" not in result
 	message = result["message"]
 	assert message and message[0].isupper() and message.endswith(".")
+	# The bridge's `ticket-error` carries this sentence to the frame, which shows it as written.
+	assert len(message) <= 300
 	for leak in (SECRET, "Bearer", "Max retries", "/api/v1", "Traceback", "500", "Internal Server Error"):
 		assert leak not in message, f"the person was shown {leak!r}"
 	assert state.logs == [], "something was logged with Debug Logging off"
@@ -424,6 +430,16 @@ def test_too_many_requests_in_a_minute_stops_asking_triton(monkeypatch):
 	# One person's limit is not another's.
 	frappe.session.user = "nik@example.com"
 	assert triton_frame.get_ticket()["ok"] is True
+
+
+def test_the_server_gives_up_before_the_frame_does(monkeypatch):
+	"""The frame waits 15 seconds for a ticket and then says "the ERPNext page did not answer".
+	The call to Triton must fail inside that, so the person reads this server's sentence."""
+	triton_frame, _, state = _load(monkeypatch)
+
+	triton_frame.get_ticket()
+
+	assert 0 < state.posts[0][1]["timeout"] <= 10
 
 
 def test_an_odd_expiry_from_triton_falls_back_to_a_minute(monkeypatch):

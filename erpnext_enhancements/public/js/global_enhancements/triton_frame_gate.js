@@ -18,8 +18,9 @@
  *    Triton with a prompt works from the first moment;
  * 3. hands the button back to the classic widget, ONCE, when the framed one cannot work: the
  *    loader did not arrive, the frame never said "ready", it speaks a contract this loader does
- *    not know, or Triton has no ticket route. `triton_widget.js` stays asleep while boot says
- *    "framed" and wakes when `SapphireTriton.startClassic()` is called. If the framed panel was
+ *    not know, it could not sign the person in, or Triton has no ticket route (the loader decides
+ *    which; `docs/triton-framed-widget.md` lists them). `triton_widget.js` stays asleep while
+ *    boot says "framed" and wakes when `SapphireTriton.startClassic()` is called. If the panel was
  *    open, the classic one opens in its place, and a prompt that was waiting is carried over.
  *    One line goes to the console and nothing is shown to the person: from where they sit,
  *    Triton opened.

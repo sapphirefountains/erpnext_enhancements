@@ -40,15 +40,18 @@ What this module is careful about
   how a header ends up in the Error Log (``frappe.log_error`` with no message renders frame
   locals).
 * **An expected failure is an answer, not an exception.** "Triton could not be reached" comes back
-  as ``{"ok": False, "reason": ..., "message": ...}`` so the panel can say it once, in its own
-  words. A ``frappe.throw`` would put a red Desk dialog in front of a person who only pressed a
-  button, and would repeat on every retry.
+  as ``{"ok": False, "reason": ..., "message": ...}``. The loader passes the sentence to the frame
+  (the bridge's ``ticket-error``) and the frame shows it once, as written. A ``frappe.throw``
+  would put a red Desk dialog in front of a person who only pressed a button, and would repeat on
+  every retry.
 * **The frame's address is checked before it is trusted.** The loader posts sign-in tickets to
   this origin and to nothing else, so it must be ``https`` (plain ``http`` only for a local
   development host) and carry no user name, path or query.
 
-The Triton route and payload live in :func:`_request_ticket` alone. If Triton's contract changes,
-that function is the only one that does.
+The Triton route and payload live in :func:`_request_ticket` alone. They are Triton's contract
+(``docs/embed-bridge.md`` in the Triton repository, version 1); if it changes, that function is
+the only one that does. ``docs/triton-framed-widget.md`` is this app's account of the whole
+arrangement.
 """
 
 from urllib.parse import urlsplit
@@ -80,7 +83,10 @@ _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 # "sign me in again" loop would send.
 TICKET_LIMIT = 20
 TICKET_WINDOW_SEC = 60
-_TICKET_TIMEOUT_SEC = 15
+# The frame waits 15 seconds for a ticket and then tells the person "the ERPNext page did not
+# answer". This must give up well inside that, so the sentence the person reads is ours
+# ("Triton could not be reached") and not the frame's guess.
+_TICKET_TIMEOUT_SEC = 8
 # Longer than any ticket Triton issues, shorter than anything else it could send by mistake.
 _TICKET_MAX_LENGTH = 512
 
@@ -225,13 +231,23 @@ def get_ticket():
 	Returns ``{"ok": True, "ticket": ..., "expires_in": seconds}``, or
 	``{"ok": False, "reason": ..., "message": ...}`` where ``reason`` is one of:
 
-	* ``unreachable``: Triton did not answer, or answered with something that is not a ticket.
-	  Worth trying again.
+	* ``unreachable``: Triton did not answer, answered 5xx, or answered with something that is not
+	  a ticket. Worth trying again. A 503 is here on purpose: Triton's contract gives it one
+	  meaning ("no gateway secret configured") and Triton itself answers 503 for a second ("database
+	  temporarily unavailable", seen against a local Triton on 2026-11-12). The two cannot be told
+	  apart without reading the reply's body, which this module never does, and "try again in a
+	  minute" is wrong for neither for long: with *Debug Logging* on, the status is in the Error Log.
 	* ``unsupported``: Triton has no ticket route (404, 405 or 501). The loader falls back to the
 	  classic widget, which does not need one.
-	* ``refused``: Triton answered 401 or 403. The shared secret is wrong or the account is not
-	  allowed. Trying again will not help.
+	* ``setup``: Triton answered 401: the shared secret is wrong. An administrator's to fix;
+	  trying again will not help.
+	* ``refused``: Triton answered 400 or 403. It will not sign this person in: the email is not
+	  one it accepts, or the person's Triton account is disabled.
 	* ``busy``: more than :data:`TICKET_LIMIT` requests in a minute from this person.
+
+	``message`` is one plain sentence of at most 300 characters. The loader passes it to the
+	frame as the bridge's ``ticket-error`` and the frame shows it to the person as written, so it
+	never carries a status code, an address or anything from Triton's reply.
 
 	Raises ``PermissionError`` for a Guest and for anyone who is not on the framed widget: the
 	master switch, the allow-list, the mode and the pilot list all sit behind
@@ -272,11 +288,13 @@ def get_ticket():
 
 	if status in (404, 405, 501):
 		return _failure("unsupported", _("This Triton does not offer the framed assistant yet."))
-	if status in (401, 403):
+	if status == 401:
+		return _failure("setup", _("Triton is not set up correctly. Tell an administrator."))
+	if status in (400, 403):
 		return _failure(
 			"refused",
 			_(
-				"Triton did not accept the sign-in for your account. Ask an administrator to check the Triton connection."
+				"Triton does not accept your ERPNext account. Ask an administrator to check your Triton account."
 			),
 		)
 	return _failure("unreachable", _("Triton could not be reached. Try again in a minute."))

@@ -1,73 +1,59 @@
 /**
- * "Open this record", as asked by the framed Triton chat page, turned into a Desk route or refused.
+ * "Open this page of the Desk", as asked by the framed Triton chat page: checked, or refused.
  *
- * The frame is another origin's page showing text a model wrote. What it asks the Desk to open
- * must therefore be a record, described as a record: a DocType this person can read and,
- * optionally, a name. It is never a URL to follow. `recordRoute` returns the arguments for
- * `frappe.set_route` (which moves the Desk the person is already in, with a normal history entry,
- * so Back returns to where they were) or null, and the loader does nothing on null.
+ * The person followed a link in a reply. The frame does not navigate; it sends the link's path
+ * and asks the Desk to. The frame is another origin's page showing text a model wrote, so the
+ * path is checked here before anything acts on it, and the answer is either a route for the Desk's
+ * own router or null. The loader does nothing on null.
  *
- * Two spellings are accepted while the contract is provisional:
- *   { doctype: "Sales Order", name: "SO-0001" }     name is optional; without it, the list
- *   { path: "/app/sales-order/SO-0001" }            or /desk/...; the slug must resolve to a DocType
+ * WHAT IS ACCEPTED: a path on this Desk, under `/desk` or `/app` (the two spellings of a Desk
+ * address), with an optional query and fragment. That is any Desk page, workspace segment
+ * included (`/desk/stock/item/ITEM-0001`): the frame has a URL and nothing else, and does not
+ * know DocType names. It is also exactly what the classic widget has always done, where a
+ * `/app/...` link in a reply is followed in place by the Desk's own router. Following one moves
+ * the Desk and writes nothing; what the person may see there is still the server's decision.
  *
- * "Is a DocType" means: it is in the list of DocTypes this person may read, which the Desk already
- * has in `frappe.boot.user.can_read`. That one check does three jobs. It refuses anything that is
- * not a DocType at all, it refuses a path whose slug is a page or a workspace, and it means the
- * frame cannot use the Desk to find out which DocTypes exist beyond what the person can open
- * anyway. The server still decides whether the record itself may be read.
+ * WHAT IS REFUSED, and each is refused twice, once by the pattern and once by the parser:
+ *   - anything that is not a string, or is longer than a Desk address could be;
+ *   - a full URL, or anything with a scheme (`https://…`, `javascript:…`, `data:…`);
+ *   - a protocol-relative value (`//host/desk/x`), and the backslash spelling browsers read the
+ *     same way (`/\host`);
+ *   - a path outside `/desk` and `/app` (`/api/method/logout`, `/files/x`), including one that
+ *     only gets outside after `..` is resolved (`/desk/../api/method/logout`);
+ *   - control characters, and characters a path does not carry unencoded.
+ *
+ * The parser check resolves the path against a made-up base and requires the result to still be
+ * on that base's origin and still under `/desk` or `/app`. It is the half that catches what a
+ * pattern reads differently from a browser.
  */
 
-const MAX_NAME = 140; // Frappe's own limit on a document name
-// DocType names: letters, digits, spaces, hyphens, underscores (frappe's validate_name), plus the
-// "&" and brackets a few shipped ones carry.
-const DOCTYPE_RE = /^[A-Za-z0-9][A-Za-z0-9 _&()\-]{0,139}$/;
+const MAX_PATH = 2000;
+// The characters RFC 3986 lets a path segment carry, plus the space Frappe names often have.
+const PATH_RE = /^\/(?:desk|app)(?:\/[A-Za-z0-9 ._~%!$&'()*+,;=:@-]+)*\/?(?:\?[^#]*)?(?:#.*)?$/;
 // eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f]/;
-const PATH_RE = /^\/(?:app|desk)\/([a-z0-9][a-z0-9-]*)(?:\/([^?#]+))?$/;
-
-/** The Desk's slug for a DocType: "Sales Order" -> "sales-order" (frappe.router.slug). */
-function slug(doctype) {
-	return String(doctype).toLowerCase().replace(/ /g, "-");
-}
-
-function cleanName(value) {
-	if (value === undefined || value === null || value === "") return "";
-	if (typeof value !== "string" || value.length > MAX_NAME || CONTROL_RE.test(value)) return null;
-	return value;
-}
+const UNSAFE_RE = /[\u0000-\u001f\u007f\\]/;
+const BASE = "https://desk.invalid";
 
 /**
- * @param {object}   target   what the frame sent
- * @param {string[]} readable DocTypes this person may read (frappe.boot.user.can_read)
- * @returns {string[]|null}   ["Form", doctype, name], ["List", doctype], or null to refuse
+ * @param {*} path  what the frame sent as `open-record.path`
+ * @returns {{route: string, hash: string}|null}
+ *   `route` is the path and query for `frappe.set_route`; `hash` is the fragment ("" or "#…"),
+ *   which the Desk's router takes separately (`frappe.route_hash`). Null to refuse.
  */
-export function recordRoute(target, readable) {
-	if (!target || typeof target !== "object" || !Array.isArray(readable)) return null;
+export function deskRoute(path) {
+	if (typeof path !== "string" || !path || path.length > MAX_PATH) return null;
+	if (UNSAFE_RE.test(path) || path.indexOf("//") === 0 || !PATH_RE.test(path)) return null;
+	// A `//` inside the path part is never a Desk address, and is how a second host is smuggled.
+	if (path.split(/[?#]/)[0].indexOf("//") !== -1) return null;
 
-	let doctype = null;
-	let name = "";
-
-	if (typeof target.doctype === "string") {
-		if (!DOCTYPE_RE.test(target.doctype) || !readable.includes(target.doctype)) return null;
-		doctype = target.doctype;
-		name = cleanName(target.name);
-	} else if (typeof target.path === "string") {
-		const match = PATH_RE.exec(target.path);
-		if (!match) return null;
-		doctype = readable.find((d) => slug(d) === match[1]) || null;
-		if (!doctype) return null;
-		if (match[2] !== undefined) {
-			try {
-				name = cleanName(decodeURIComponent(match[2]));
-			} catch (e) {
-				return null; // a malformed % escape
-			}
-		}
-	} else {
+	let url;
+	try {
+		url = new URL(path, BASE);
+	} catch (e) {
 		return null;
 	}
-
-	if (name === null) return null;
-	return name ? ["Form", doctype, name] : ["List", doctype];
+	if (url.origin !== BASE || url.username || url.password) return null;
+	const inside = /^\/(?:desk|app)(?:\/|$)/.test(url.pathname);
+	if (!inside) return null;
+	return { route: url.pathname + url.search, hash: url.hash };
 }

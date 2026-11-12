@@ -155,7 +155,7 @@
    "options": "Triton Allowed User"
   },
   {
-   "description": "The framed widget shows Triton's own chat page inside the panel, so the Desk and the Triton site are one chat program. Leave this on Classic until Triton serves that page. If the framed page does not answer within a few seconds, the person gets the classic widget in its place.",
+   "description": "The framed widget shows Triton's own chat page inside the panel, so the Desk and the Triton site are one chat program. Leave this on Classic until Triton serves that page. If the framed page does not load or cannot sign a person in, that person gets the classic widget in its place.",
    "fieldname": "framed_section",
    "fieldtype": "Section Break",
    "label": "Framed Widget (pilot)"

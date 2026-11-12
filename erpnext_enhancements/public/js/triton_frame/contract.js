@@ -1,22 +1,25 @@
 /**
  * The bridge contract between the Desk and the framed Triton chat page, as this loader speaks it.
  *
+ * THE AGREEMENT IS NOT THIS FILE. It is `docs/embed-bridge.md` in the Triton repository
+ * (sapphirefountains/triton), written by the Triton side; this file is the loader's copy of the
+ * words in it, and `docs/triton-framed-widget.md` in this repository is the Desk's own account of
+ * what the loader does with each one. Contract version 1, read at Triton pull request 379.
+ *
  * ONE FILE ON PURPOSE. Everything that depends on the contract's exact words (the version, the
  * envelope, the message names) is here and nowhere else, so that when the contract changes this
  * file changes and the loader, the bridge and the tests follow from it.
- *
- * PROVISIONAL (v1.802.0, stage 1). The contract is written by the Triton side (its `docs/`), and
- * that document did not exist when this file was written. The names below are the proof's
- * (`frontend/spike-embed/desk-stub/desk.js` on Triton branch
- * `claude/spike-embed-proof-do-not-merge`), plus the handful the audit named and the proof did
- * not build. Stage 2 replaces them with the document's, and adds a test that fails when this
- * version and the document's disagree.
+ * `tests/test_triton_frame.py` fails when the version or a message name here disagrees with
+ * `docs/triton-framed-widget.md`, and, where a Triton checkout is beside this repository, with
+ * Triton's own document.
  *
  * Shape of every message, both ways:   { triton: <version>, type: "<name>", ...fields }
  *
- * A message from the frame whose version is not CONTRACT_VERSION is dropped, with one exception
- * the loader handles itself: a "ready" with another version means the page in the frame speaks a
- * contract this loader does not know, and the loader hands the panel back to the classic widget.
+ * Both sides ignore a message type or a field they do not know; that is what lets either side
+ * ship first. A message whose `triton` number is not CONTRACT_VERSION is ignored too, with one
+ * exception the loader handles itself: a `ready` in any other version means the page in the frame
+ * speaks a contract this loader does not know, and the loader hands the panel back to the classic
+ * widget at once instead of waiting out a timer.
  */
 
 export const CONTRACT_VERSION = 1;
@@ -24,33 +27,42 @@ export const CONTRACT_VERSION = 1;
 /** The key that marks an object as a bridge message and carries the version. */
 export const ENVELOPE_KEY = "triton";
 
-/** Desk to frame. */
+/** Desk to frame. Nothing is sent before the frame has said `ready`: it is not listening. */
 export const TO_FRAME = Object.freeze({
-	// { ticket }           a one-time sign-in ticket from api.triton_frame.get_ticket
+	// { ticket }        a one-time sign-in ticket, in answer to `ready` or `need-ticket`
 	TICKET: "ticket",
-	// { reason, message }  the Desk could not get a ticket; the frame says so in its own words
+	// { message }       the Desk cannot give a ticket: one plain sentence, shown as written
 	TICKET_ERROR: "ticket-error",
-	// { page }             the record, list or report the person is looking at, or null
+	// { page }          a page reference (capture/page_context.js), or null
 	PAGE: "page",
-	// { prompt, context }  SapphireTriton.ask(): put this in the message box, do not send it
+	// { prompt, page? } SapphireTriton.ask(): put this in the message box; never sent for them
 	ASK: "ask",
-	// {}                   the panel was opened / closed
-	OPENED: "opened",
-	CLOSED: "closed",
+	// { open }          the panel was opened or closed
+	VISIBILITY: "visibility",
 });
 
 /** Frame to Desk. */
 export const FROM_FRAME = Object.freeze({
-	// the page has loaded and is listening; the Desk answers with a ticket and the page
+	// { version }       the page has loaded and wants to be signed in
 	READY: "ready",
-	// the token ran out (or never arrived); the Desk answers with a new ticket
+	// { reason }        the token ran out ("expired") or the person pressed Try again ("retry")
 	NEED_TICKET: "need-ticket",
-	// { doctype, name } or { path }   open this ERPNext record in the Desk the person is in
+	// {}                a ticket was traded for a token: the framed chat works for this person
+	SIGNED_IN: "signed-in",
+	// { reason }        "no-answer" | "refused" | "bad-ticket" | "no-config"
+	SIGN_IN_FAILED: "sign-in-failed",
+	// { path }          a link to a page of this Desk; the Desk checks it and routes it
 	OPEN_RECORD: "open-record",
-	// the person pressed the frame's own Close, or Escape inside it
+	// { mode }          "wide" when a document opens beside the chat, "panel" when it closes
+	RESIZE: "resize",
+	// {}                the person pressed Close in the chat's own header
 	CLOSE: "close",
-	// Alt+T pressed while typing in the frame: keys typed there never reach the Desk
-	TOGGLE: "toggle",
+	// { key }           "alt+t" | "escape", pressed while the cursor was in the chat
+	KEY: "key",
+	// { chat_id, title } a reply finished; a framed page may not notify, the Desk may
+	REPLY_FINISHED: "reply-finished",
+	// { params }        the assistant was asked to clock the person in; the card is the Desk's
+	CLOCK_IN: "clock-in",
 });
 
 /** A message ready to post. Fields never override the envelope or the type. */

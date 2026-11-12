@@ -8,7 +8,8 @@
  * open animation, phone sheet, reduced-motion handling and the two lifts (above the quick bar on
  * phones, above the Guided Entry footer) all come from global_enhancements/triton_widget.css and
  * the two bundles that already target .triton-fab. What follows is only what a frame needs: the
- * frame filling the panel, the waiting state, and the phone sheet's height.
+ * frame filling the panel, the wait before the frame says "ready", the wide size a document asks
+ * for, the phone sheet's height, the dot for an unread reply, and where the clock-in card sits.
  */
 
 .triton-frame-panel .triton-frame {
@@ -20,8 +21,9 @@
 	background: var(--card-bg, #fff);
 }
 
-/* The waiting state: the classic header with a working Close, and one line of plain words.
-   While it shows, the frame is loading behind it and takes no room. */
+/* Until the frame says "ready": the classic header with a working Close, and one line of plain
+   words. While it shows, the frame is loading behind it and takes no room. After "ready" it is
+   gone for good: the header, the sign-in messages and "Try again" are all the frame's own. */
 .triton-frame-shell {
 	display: flex;
 	flex-direction: column;
@@ -42,7 +44,6 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 12px;
 	padding: 24px;
 	text-align: center;
 	color: var(--text-muted, #6c7680);
@@ -52,8 +53,68 @@
 	margin: 0;
 	max-width: 30ch;
 }
-.triton-frame-retry[hidden] {
-	display: none;
+
+/* The chat asked for room (a document opened beside the conversation). From 1024px the document
+   sits beside the chat; narrower than that it covers it as a sheet, which still works. On a phone
+   the panel is already the whole screen, so this changes nothing there. */
+@media (min-width: 481px) {
+	.triton-frame-panel.triton-frame-wide {
+		top: 20px;
+		right: 20px;
+		bottom: 20px;
+		width: min(1120px, calc(100vw - 40px));
+		max-width: none;
+		height: auto;
+		max-height: none;
+	}
+}
+
+/* A reply finished while the panel was closed, or the tab was in the background. */
+.triton-fab.triton-fab-unread::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	width: 13px;
+	height: 13px;
+	border-radius: 50%;
+	background: #e24c4c;
+	border: 2px solid var(--card-bg, #fff);
+}
+
+/* The clock-in confirm card. The Desk's own, drawn on the Desk page above the panel: clocking in
+   needs this page's session and a location fix, and the frame is allowed neither. It reuses the
+   classic action-card classes, so it is the card people already know. Under frappe's dialogs
+   (z-index 1050), so the time kiosk's own messages show above it. */
+.triton-frame-clockin {
+	position: fixed;
+	right: 24px;
+	bottom: 88px;
+	z-index: 1046;
+	width: min(340px, calc(100vw - 32px));
+	border-radius: 8px;
+	box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+	background: var(--card-bg, #fff);
+	color: var(--text-color, #1f272e);
+}
+.triton-frame-clockin .triton-action-card {
+	width: 100%;
+	padding: 14px;
+	font-size: 13px;
+}
+.triton-frame-clockin .triton-action-slot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+.triton-frame-clockin .triton-action-card button {
+	min-height: 36px;
+	padding: 6px 14px;
+	font-size: 13px;
+	border-radius: 6px;
+	border: 1px solid var(--border-color, #d1d8dd);
+	cursor: pointer;
 }
 
 /* Phones. triton_widget.css already makes the panel a sheet inset 8px from each edge. The framed
@@ -76,5 +137,19 @@
 	}
 	.triton-frame-shell .triton-header .triton-title {
 		display: block;
+	}
+	/* The frame has its own Close in its header. When the keyboard shrinks the sheet the round
+	   button would show beneath it, on top of whatever the Desk has there. */
+	.triton-fab.triton-fab-open {
+		visibility: hidden;
+	}
+	.triton-frame-clockin {
+		left: 16px;
+		right: 16px;
+		bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+		width: auto;
+	}
+	.triton-frame-clockin .triton-action-card button {
+		min-height: 44px;
 	}
 }
