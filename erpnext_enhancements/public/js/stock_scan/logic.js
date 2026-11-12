@@ -410,6 +410,20 @@ export function splitPlaces(places) {
 }
 
 /**
+ * "Show on map" (v1.815.0): the Warehouse Map page's address for a location (`w`) or an item
+ * (`item`). The map is a Desk page; its own server call decides which map and box to show.
+ * Nothing to point at is no link ("").
+ */
+export function mapUrl(target) {
+	const t = target || {};
+	const w = typeof t.w === "string" ? t.w.trim() : "";
+	const item = typeof t.item === "string" ? t.item.trim() : "";
+	if (w) return `/desk/warehouse-map?w=${encodeURIComponent(w)}`;
+	if (item) return `/desk/warehouse-map?item=${encodeURIComponent(item)}`;
+	return "";
+}
+
+/**
  * The job a take is charged to. At a job site it is that site's own job, whatever job the
  * chip at the top remembers from earlier in the shift; the server applies the same rule
  * (`job_site_rules.site_take_project`), so this only keeps the page from asking for a job

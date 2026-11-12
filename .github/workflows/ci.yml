@@ -4139,6 +4139,21 @@ jobs:
       # the existing move_to) is scripts/test_bin_manager.mjs, run by the step above.
       - name: Bin Manager views (by project, job sites, problems, filters) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_bin_views -v
+      # The Warehouse Map (v1.815.0, api/warehouse_map.py, inventory_enhancements/warehouse_map_rules.py
+      # and the Warehouse Map DocType): a drawn floor plan with a box for each bay and room. Its own
+      # frappe stub (whose Document.save asks the write permission and runs the real validate) with
+      # stand-ins for api.stock_scan, bin_assignments, bin_views and job_sites, so its own step. Fails
+      # the build if a read happens before the role gate, if a half-drawn (disabled) map is shown to
+      # anyone but its editors, if a save goes past the DocType's own permission or writes a key the
+      # payload merely carries, if a stale editor can overwrite a newer map, if one warehouse can sit on
+      # two boxes or two maps, if the floor plan picture can be a public file or a web address (it is a
+      # real building's layout and this repo is public), if a bay's front view is in creation order
+      # (bin 10 before bin 9), or if the endpoint file writes anything but the map's own record. Runs
+      # scripts/test_warehouse_map.mjs under node: every screen its own address, the front view's order,
+      # a box moved or sized stays inside the drawing, Save sends the stored fields only. unittest
+      # classes; node is on PATH here.
+      - name: Warehouse Map (rules, endpoints, permissions, page logic) (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_warehouse_map -v
       # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
       # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
       # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write

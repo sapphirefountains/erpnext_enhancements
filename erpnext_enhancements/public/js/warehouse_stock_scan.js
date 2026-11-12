@@ -11,12 +11,22 @@
  *
  * window.open rather than frappe.set_route: both are website routes (www/), not Desk
  * pages, and they print or run full-screen on their own.
+ *
+ * "Show on Map" (v1.815.0), on a location and on a group alike, opens the Warehouse Map page
+ * on the box that shows this warehouse. That one is a Desk page, so it is a frappe.set_route
+ * and Back returns to this form. Shown to the roles that may open the page
+ * (stock_scan_rules.SCAN_ROLES); the page is gated on the server too.
  */
+const WAREHOUSE_MAP_ROLES = ["Stock User", "Stock Manager", "Inventory Clerk", "System Manager"];
+
 frappe.ui.form.on("Warehouse", {
 	refresh(frm) {
 		if (frm.is_new() || frm.doc.disabled) return;
 		const group = __("Stock Scan");
 		const name = encodeURIComponent(frm.doc.name);
+		if (WAREHOUSE_MAP_ROLES.some((role) => frappe.user.has_role(role))) {
+			frm.add_custom_button(__("Show on Map"), () => frappe.set_route("warehouse-map", { w: frm.doc.name }), group);
+		}
 		if (frm.doc.is_group) {
 			frm.add_custom_button(
 				__("Print QR Labels"),

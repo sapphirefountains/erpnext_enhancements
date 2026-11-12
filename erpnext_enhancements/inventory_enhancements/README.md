@@ -28,6 +28,9 @@ model, the pure rules and the label reads.
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
+| `doctype/warehouse_map/`, `doctype/warehouse_map_shape/` | The **Warehouse Map** (v1.815.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
+| `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, in shelf-number order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
+| `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.815.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
@@ -1086,6 +1089,120 @@ Inventory Enhancements workspace (a shortcut beside Stock Scan, and first in its
 linked by `patches/count_desk_hub_links`, and an *Open in the Count Desk* button on the Inventory
 Count Session form.
 
+## The Warehouse Map (v1.815.0)
+
+Nik, 2026-11-12: "we need a map for the location bins and a way to edit and create the map for
+our warehouse locations at our office. I'll provide the floor plan layout and you help me create
+the map from that." `/desk/warehouse-map`, drawn with the Bin Manager's tabs so it reads as one
+more of its views (the Bin Manager has a **Map** tab that opens it).
+
+**A map is a floor plan picture with boxes over it, and what is inside a box is never drawn by
+hand.** A box stands for a Warehouse: a bay, a row of alcoves, a room. Tapping a bay opens its
+**front view**, the shelves and bins a person sees standing in front of it, built from the
+Warehouse tree (`warehouse_map_rules.levels`). So a person places about thirty boxes and the map
+shows more than two hundred bins, and a bin made in ERPNext later appears inside its bay with
+nobody touching the map. The decisions that shaped it (Nik's answers the same day):
+
+| Asked | Decided |
+|---|---|
+| What it covers | The shop rows and rooms, upstairs, the other rooms; vehicles and job sites as a list beside the map, because they are not in the building |
+| Shelf levels on a flat plan | Tap a bay, see its front. Shelf 1 is at the **top** and bin 1 at the **left**; a box can say otherwise (`shelves_from`, `bins_from`) |
+| Who edits | A new role, **Warehouse Map Editor** (and System Manager). Everyone with a Stock Scan role looks |
+| Where it opens | The Bin Manager's Map tab, a bin's *Show on map*, the Item and Warehouse forms, the Where Is This Item and Location Contents reports, Stock Scan on the phone, and a printed sheet |
+| The floor plan file | On the site only. It is a real building's layout and this repository is public |
+| Creating bins from the map | Wanted, and **not in this release**: the map only places warehouses that exist. See *Not built yet* |
+
+### Routes
+
+| Route | What it shows |
+|---|---|
+| `/desk/warehouse-map` | The first map (replaced by its own address) |
+| `/desk/warehouse-map/<map>` | One floor |
+| `/desk/warehouse-map/<map>/<warehouse>` | That floor with one box open: its front view, and a picked bin's items |
+| `/desk/warehouse-map/<map>/edit` | The editor |
+
+Each is its own history entry. What is being looked for rides in the address's query and is
+carried from screen to screen: `?item=<code>` lights up where an item is, `?bin=<warehouse>` is
+the bin picked in the open box. Picking a bin or an item rewrites the query in place
+(`history.replaceState`): it is not a screen. `?w=<warehouse>` is the *Show on map* link from
+everywhere else; the server answers which map and box show it (`locate`) and that screen
+**replaces** the link's entry, so Back from the map returns to where the link was pressed.
+
+### What the colors mean
+
+A bin is **has stock**, **empty** or **has a problem**, from the same counts the Bin Manager
+shows (`api/warehouse_map._bin_rows` calls `bin_assignments._bin_rows` and `bin_views.decorate`,
+never a query of its own, so the two pages cannot disagree). A problem is what the Bin Manager's
+Problems view lists for a bin: an assigned item with none on hand, or stock on hand that nobody
+assigned there. A box takes the worst color inside it, so a problem can be seen from the floor
+view. An item being looked for is outlined on top of that, on every floor it is on.
+
+### The stored map
+
+| | |
+|---|---|
+| `doctype/warehouse_map/` | One floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (hidden from everyone but editors while it is being drawn), `background` (the floor plan picture), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
+| `doctype/warehouse_map_shape/` | One box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from` |
+| `warehouse_map_rules.py` | Every judgement, no Frappe: what a box may be, the front view, the boxes worth placing, which box shows a warehouse, the colors |
+| `api/warehouse_map.py` | The endpoints (see [`api/README.md`](../api/README.md)) |
+| `page/warehouse_map/` | The page script (draws and wires) and its CSS, every selector under `.wm-` |
+| `public/js/warehouse_map/logic.js` | The page's pure decisions, in `warehouse_map.bundle.js` (`window.sf_warehouse_map`) |
+
+- **The rules run in the DocType's `validate`**, not in the endpoint, so the Desk form (the plain
+  way in) is held to them too: a box is the named fields only, finite and inside the drawing; a
+  rack is tied to a warehouse and a label has words; **one warehouse is on one box and one map**,
+  so "show this bin on the map" has one answer.
+- **The floor plan picture is a private file or nothing** (`background_problem`): never a public
+  file, never a web address. It is attached to the map's own record, so Frappe serves it to
+  exactly the people who can read the map (`File.has_permission`, read at v16.56.0). The editor
+  uploads with `make_attachments_public: false` and refuses a file that came back public.
+- **A map reads warehouses and never writes one.** `Warehouse Map` and `Warehouse Map Shape` are
+  in `ignore_links_on_delete` (`hooks.py`), so a map is never the reason an empty bin cannot be
+  deleted. The box left behind is drawn dashed in red ("no longer a warehouse") and the next save
+  is refused until it is removed or tied to another warehouse.
+- **A disabled or Transit warehouse is never drawn**, as on the labels page.
+- **Shelf order is the names', not the tree's.** The tree's own order is creation order
+  (production reads `Bin C2-3-6` before `Bin C2-3-5`); every row is sorted with
+  `stock_scan_rules.natural_key`.
+
+### The editor
+
+*Edit map* is shown to people who may write and create a Warehouse Map. *Not on a map yet* lists
+the boxes worth placing (`warehouse_map_rules.units`: the highest group at most two steps above
+its bins, and every bin that hangs higher than that; vehicles and job sites left out), each one
+click to add. A box is dragged to move it, dragged by its corner square to size it, nudged with
+the arrow keys, turned 90° by swapping its sides (a rack is a rectangle; `rotation` is for a box
+that really sits at an angle), and tied to any warehouse through the picker.
+
+- **Save sends the whole list of boxes** with the `modified` stamp the editor opened with; a map
+  changed since is refused rather than overwritten.
+- **Leaving with unsaved boxes is not blocked**, because blocking a route change breaks Back. The
+  boxes are kept while the Desk stays open, the page says so when you leave, and the browser asks
+  before the tab is closed.
+- **A new picture of another size** makes the drawing take the picture's size and scales every
+  box with it, so the boxes stay over the same spots.
+- **Who.** The role is created by `patches/seed_warehouse_map_editor_role` (pre-model-sync, so it
+  exists before the DocType names it) with a one-role Role Profile, and is granted to nobody: who
+  holds it is decided in the Desk. The role adds editing to someone who already works the
+  inventory; by itself it does not open the page.
+
+### Print
+
+*Print* opens one sheet per floor in a new window: the drawing with every box's name, then what
+is in each rack as a list of shelves and bin positions.
+
+### Not built yet
+
+Agreed with Nik as later slices: **creating a bay, shelf or bin from the editor** (the real
+Warehouse records, with the standard names); a **free-space view** for deciding where new stock
+goes; and a **walk order for counts**. Also not here: a shortcut in the Operations Hub (the Bin
+Manager's Map tab is the door), a real scale (feet), and which side of a rack is its front.
+
+### Loading a site's real map
+
+A map is site data. On a new site it is drawn in the editor; nothing ships in fixtures, and the
+floor plan file is never committed here.
+
 ## Warehouse Transactions (v1.797.0)
 
 A report of every Stock Ledger Entry: item, Qty Change (positive added, negative taken out),
@@ -1721,6 +1838,7 @@ python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
+python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints and the DocType on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
 

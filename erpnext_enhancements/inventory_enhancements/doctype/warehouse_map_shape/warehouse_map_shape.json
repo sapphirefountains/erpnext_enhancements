@@ -1,0 +1,113 @@
+{
+ "actions": [],
+ "creation": "2026-11-12 16:00:00.000000",
+ "description": "One box on a Warehouse Map: a rack, a room or a plain label, where it sits on the drawing, and the Warehouse it stands for.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "shape_type",
+  "warehouse",
+  "label",
+  "column_break_place",
+  "x",
+  "y",
+  "w",
+  "h",
+  "rotation",
+  "column_break_front",
+  "shelves_from",
+  "bins_from"
+ ],
+ "fields": [
+  {
+   "default": "Rack",
+   "fieldname": "shape_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Kind",
+   "options": "Rack\nRoom\nLabel",
+   "reqd": 1
+  },
+  {
+   "description": "The row, bay, shelf, room or bin this box stands for. A group shows everything under it.",
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Warehouse",
+   "options": "Warehouse",
+   "search_index": 1
+  },
+  {
+   "description": "What the box says. Blank shows the warehouse's own name.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "length": 60
+  },
+  {
+   "fieldname": "column_break_place",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "x",
+   "fieldtype": "Float",
+   "label": "Left"
+  },
+  {
+   "fieldname": "y",
+   "fieldtype": "Float",
+   "label": "Top"
+  },
+  {
+   "fieldname": "w",
+   "fieldtype": "Float",
+   "label": "Width"
+  },
+  {
+   "fieldname": "h",
+   "fieldtype": "Float",
+   "label": "Height"
+  },
+  {
+   "default": "0",
+   "description": "Degrees, clockwise.",
+   "fieldname": "rotation",
+   "fieldtype": "Float",
+   "label": "Turned"
+  },
+  {
+   "fieldname": "column_break_front",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Top",
+   "description": "Where shelf 1 is when you face the rack.",
+   "fieldname": "shelves_from",
+   "fieldtype": "Select",
+   "label": "Shelf 1 Is At The",
+   "options": "Top\nBottom"
+  },
+  {
+   "default": "Left",
+   "description": "Where bin 1 is when you face the rack.",
+   "fieldname": "bins_from",
+   "fieldtype": "Select",
+   "label": "Bin 1 Is At The",
+   "options": "Left\nRight"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-12 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Warehouse Map Shape",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

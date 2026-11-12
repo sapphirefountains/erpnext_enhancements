@@ -79,6 +79,8 @@ const BM_PAGE = "bin-manager";
 // page is gated on the server too: this only keeps a link that ends in "no permission" off the screen. The check is
 // the Desk's own (frappe.user), never a read of a Settings Single.
 const BM_BOARD_ROUTE = "reorder-board";
+// The Warehouse Map (v1.815.0): the same roles as this page, so the link is shown to everyone here.
+const BM_MAP_ROUTE = "warehouse-map";
 const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
 const BM_SEARCH_DELAY_MS = 250;
 
@@ -370,6 +372,9 @@ class BinManagerPage {
 			else if (act === "retry") this.ctl.refresh();
 			else if (act === "reorder-toggle") this.toggle_reorder();
 			else if (act === "reorder-board") frappe.set_route(BM_BOARD_ROUTE);
+			else if (act === "open-map") frappe.set_route(BM_MAP_ROUTE);
+			// "Show on map" on a bin: the map page asks the server which map and box show it.
+			else if (act === "show-on-map") frappe.set_route(BM_MAP_ROUTE, { w: this.ctl.state.target.warehouse });
 			else if (act === "add") this.add_dialog();
 			else if (act === "create") this.create_dialog();
 			else if (row && act === "count") this.count_dialog(row);
@@ -575,7 +580,10 @@ class BinManagerPage {
 							__(this.bm.ACTION_LABELS[a])
 						)}</button>`
 				)
-				.join(" ") + toggle + (this.board_link() ? ` ${this.board_link()}` : "")
+				.join(" ") +
+				toggle +
+				(this.board_link() ? ` ${this.board_link()}` : "") +
+				` <button type="button" class="btn btn-sm btn-default bm-map-link" data-act="show-on-map">${this.esc(__("Show on map"))}</button>`
 		);
 		this.draw_notice();
 		this.draw_items(loc);
@@ -720,7 +728,11 @@ class BinManagerPage {
 			return `<button type="button" class="bm-tab ${t.screen === on ? "is-on" : ""}" role="tab" aria-selected="${t.screen === on}"
 				data-act="tab" data-tab="${this.esc(t.screen)}">${this.esc(__(t.label))}${count}</button>`;
 		}).join("");
-		return `<div class="bm-tabs" role="tablist" aria-label="${this.esc(__("Bin Manager views"))}">${tabs}</div>`;
+		// The Warehouse Map (v1.815.0) is its own page (inventory_enhancements/page/warehouse_map), drawn
+		// with these same tabs, so from here it reads as one more view. One frappe.set_route: its own
+		// history entry, and Back lands here again.
+		const map = `<button type="button" class="bm-tab" role="tab" aria-selected="false" data-act="open-map">${this.esc(__("Map"))}</button>`;
+		return `<div class="bm-tabs" role="tablist" aria-label="${this.esc(__("Bin Manager views"))}">${tabs}${map}</div>`;
 	}
 
 	// How many problems the last read found, once the Problems view has been opened this visit.

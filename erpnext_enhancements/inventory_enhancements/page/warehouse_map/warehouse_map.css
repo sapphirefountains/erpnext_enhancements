@@ -1,0 +1,699 @@
+/* Warehouse Map (v1.815.0). A Desk Page's stylesheet is appended to <head> once and stays for the
+   whole Desk session, so every selector here starts with .wm- (tests/test_warehouse_map.py holds
+   it). Colors are the app tokens (sf_tokens.bundle.css, global) with the Desk's own as fallback,
+   so the page follows light and dark with the rest of the Desk. The three status colors are the
+   page's own, set once here as variables and overridden for the dark theme. */
+
+.wm-app {
+	--wm-stock: #cfe8b9;
+	--wm-stock-line: #4f8a1d;
+	--wm-empty: #e6e4dc;
+	--wm-empty-line: #8a887f;
+	--wm-problem: #f9d08a;
+	--wm-problem-line: #a8650d;
+	--wm-ink: #1f2a1a;
+	--wm-hit: #1565c0;
+	--wm-paper: var(--sf-surface, var(--card-bg, #fff));
+	padding: var(--sf-space-20, 16px) 0 var(--sf-space-40, 32px);
+	color: var(--sf-text, var(--text-color));
+}
+
+[data-theme="dark"] .wm-app {
+	--wm-stock: #2f5a1c;
+	--wm-stock-line: #9fd06a;
+	--wm-empty: #3a3a37;
+	--wm-empty-line: #9c9a91;
+	--wm-problem: #6b4708;
+	--wm-problem-line: #f3b75a;
+	--wm-ink: #f3f3ee;
+	--wm-hit: #6cb6ff;
+}
+
+.wm-muted {
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.wm-error {
+	color: var(--sf-danger, var(--red-600, #c0392b));
+}
+
+.wm-fatal,
+.wm-stage-msg {
+	padding: var(--sf-space-40, 32px) 0;
+	text-align: center;
+}
+
+.wm-notice {
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	border-left: 3px solid var(--wm-problem-line);
+	background: var(--sf-surface-sunken, var(--control-bg));
+}
+
+/* ---- the Bin Manager's tabs, repeated so the map reads as one of its views ---- */
+
+.wm-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-05, 4px);
+	margin-bottom: var(--sf-space-20, 16px);
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.wm-tab {
+	min-height: var(--sf-touch-min, 44px);
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	border: 0;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+	background: transparent;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-weight: var(--sf-weight-bold, 600);
+	cursor: pointer;
+}
+
+.wm-tab:hover,
+.wm-tab.is-on {
+	color: var(--sf-text, var(--text-color));
+}
+
+.wm-tab.is-on {
+	border-bottom-color: var(--sf-primary, var(--primary));
+}
+
+.wm-tab:focus-visible,
+.wm-floor:focus-visible,
+.wm-linkbtn:focus-visible,
+.wm-bin:focus-visible,
+.wm-result:focus-visible,
+.wm-pick:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+}
+
+/* ---- the bar above the map ---- */
+
+.wm-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: var(--sf-space-10, 8px) var(--sf-space-20, 16px);
+	margin-bottom: var(--sf-space-15, 12px);
+}
+
+.wm-floors {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-05, 4px);
+}
+
+.wm-floor {
+	min-height: 36px;
+	padding: 6px 14px;
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: 999px;
+	background: transparent;
+	color: var(--sf-text, var(--text-color));
+	cursor: pointer;
+}
+
+.wm-floor.is-on {
+	border-color: var(--sf-primary, var(--primary));
+	background: var(--sf-primary, var(--primary));
+	color: var(--sf-on-primary, #fff);
+}
+
+.wm-floor.is-on .wm-muted {
+	color: inherit;
+}
+
+.wm-search {
+	position: relative;
+	flex: 1 1 240px;
+	max-width: 420px;
+}
+
+.wm-results {
+	position: absolute;
+	z-index: 5;
+	top: 100%;
+	left: 0;
+	right: 0;
+	max-height: 320px;
+	overflow-y: auto;
+	padding: 4px;
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--border-radius, 8px);
+	background: var(--sf-surface, var(--card-bg, #fff));
+	box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.15));
+}
+
+.wm-results p {
+	margin: 0;
+	padding: 8px;
+}
+
+.wm-result,
+.wm-pick {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 8px;
+	width: 100%;
+	min-height: 40px;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.wm-result:hover,
+.wm-pick:not(.is-taken):hover {
+	background: var(--sf-surface-sunken, var(--control-bg));
+}
+
+.wm-pick.is-taken {
+	cursor: default;
+}
+
+.wm-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-05, 4px);
+	margin-left: auto;
+}
+
+.wm-item {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-15, 12px);
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	border: 1px solid var(--wm-hit);
+	border-radius: var(--border-radius, 8px);
+}
+
+.wm-item-body {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.wm-places {
+	margin: 6px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wm-place {
+	padding: 2px 0;
+}
+
+.wm-linkbtn {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-link, var(--primary));
+	text-align: left;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+/* ---- the drawing ---- */
+
+.wm-stage {
+	position: relative;
+}
+
+/* Above the drawing, not over it: on a phone the buttons would cover a bay. */
+.wm-zoom {
+	display: flex;
+	justify-content: flex-end;
+	gap: 4px;
+	margin-bottom: 4px;
+}
+
+.wm-zoom .btn {
+	min-width: 32px;
+	min-height: 32px;
+}
+
+.wm-svg {
+	display: block;
+	width: 100%;
+	max-height: 72vh;
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--border-radius, 8px);
+	background: var(--sf-surface-sunken, var(--control-bg));
+	/* A finger moving up or down scrolls the page until the map is zoomed in; then it moves the map. */
+	touch-action: pan-y pinch-zoom;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.wm-stage.is-zoomed .wm-svg,
+.wm-svg.is-edit {
+	touch-action: none;
+}
+
+.wm-stage.is-zoomed .wm-svg {
+	cursor: grab;
+}
+
+.wm-paper {
+	fill: var(--wm-paper);
+}
+
+.wm-box {
+	fill: var(--wm-empty);
+	stroke: var(--wm-empty-line);
+	stroke-width: 1.5;
+	vector-effect: non-scaling-stroke;
+}
+
+.wm-text {
+	fill: var(--wm-ink);
+	font-weight: 600;
+	pointer-events: none;
+}
+
+.wm-s-stock .wm-box {
+	fill: var(--wm-stock);
+	stroke: var(--wm-stock-line);
+}
+
+.wm-s-problem .wm-box {
+	fill: var(--wm-problem);
+	stroke: var(--wm-problem-line);
+}
+
+.wm-s-none .wm-box {
+	fill: var(--sf-surface, var(--card-bg, #fff));
+	stroke: var(--sf-text-muted, var(--text-muted));
+}
+
+.wm-s-missing .wm-box {
+	fill: transparent;
+	stroke: var(--sf-danger, var(--red-600, #c0392b));
+	stroke-dasharray: 6 4;
+}
+
+/* A room is an outline around what stands in it, so the boxes inside stay readable. */
+.wm-room .wm-box {
+	fill-opacity: 0.35;
+}
+
+.wm-label .wm-box {
+	fill: transparent;
+	stroke: transparent;
+}
+
+.wm-svg.is-edit .wm-label .wm-box {
+	stroke: var(--sf-text-muted, var(--text-muted));
+	stroke-dasharray: 3 3;
+}
+
+.wm-shape.is-live {
+	cursor: pointer;
+}
+
+.wm-svg.is-edit .wm-shape.is-live {
+	cursor: move;
+}
+
+.wm-shape:focus {
+	outline: none;
+}
+
+.wm-shape.is-open .wm-box,
+.wm-shape:focus-visible .wm-box,
+.wm-shape.is-picked .wm-box {
+	stroke: var(--sf-primary, var(--primary));
+	stroke-width: 3;
+}
+
+.wm-shape.is-hit .wm-box {
+	stroke: var(--wm-hit);
+	stroke-width: 4;
+	animation: wm-pulse 1.4s ease-in-out 3;
+}
+
+@keyframes wm-pulse {
+	50% {
+		stroke-width: 8;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wm-shape.is-hit .wm-box {
+		animation: none;
+	}
+}
+
+.wm-handle {
+	fill: var(--sf-primary, var(--primary));
+	stroke: #fff;
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+	cursor: nwse-resize;
+}
+
+.wm-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	margin-top: var(--sf-space-10, 8px);
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.wm-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.wm-swatch {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 1.5px solid var(--wm-empty-line);
+	border-radius: 3px;
+	background: var(--wm-empty);
+}
+
+.wm-swatch.wm-s-stock {
+	border-color: var(--wm-stock-line);
+	background: var(--wm-stock);
+}
+
+.wm-swatch.wm-s-problem {
+	border-color: var(--wm-problem-line);
+	background: var(--wm-problem);
+}
+
+.wm-swatch.wm-hit-swatch {
+	border: 3px solid var(--wm-hit);
+	background: transparent;
+}
+
+.wm-stage-note {
+	margin: var(--sf-space-10, 8px) 0 0;
+}
+
+/* ---- the open box: its front view ---- */
+
+.wm-detail {
+	margin-top: var(--sf-space-20, 16px);
+	padding: var(--sf-space-15, 12px) var(--sf-space-20, 16px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--border-radius, 8px);
+	background: var(--sf-surface, var(--card-bg, #fff));
+}
+
+.wm-detail-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sf-space-15, 12px);
+}
+
+.wm-detail-head h3 {
+	margin: 0 0 2px;
+	font-size: var(--sf-text-lg, 18px);
+}
+
+.wm-detail-head p,
+.wm-facing {
+	margin: 0;
+}
+
+.wm-facing {
+	margin-top: var(--sf-space-10, 8px);
+	font-size: var(--sf-text-xs, 12px);
+}
+
+.wm-levels {
+	margin: 4px 0 var(--sf-space-15, 12px);
+}
+
+.wm-level {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	padding: 4px 0;
+	border-bottom: 3px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.wm-level-name {
+	flex: 0 0 96px;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.wm-bins {
+	display: flex;
+	flex: 1 1 auto;
+	flex-wrap: wrap;
+	gap: 4px;
+	min-height: 36px;
+	align-items: center;
+}
+
+.wm-bin {
+	min-width: 44px;
+	min-height: 36px;
+	padding: 4px 8px;
+	border: 1.5px solid var(--wm-empty-line);
+	border-radius: 4px;
+	background: var(--wm-empty);
+	color: var(--wm-ink);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.wm-bin.wm-s-stock {
+	border-color: var(--wm-stock-line);
+	background: var(--wm-stock);
+}
+
+.wm-bin.wm-s-problem {
+	border-color: var(--wm-problem-line);
+	background: var(--wm-problem);
+}
+
+.wm-bin.is-hit {
+	box-shadow: 0 0 0 3px var(--wm-hit);
+}
+
+.wm-bin.is-on {
+	outline: 3px solid var(--sf-primary, var(--primary));
+	outline-offset: 1px;
+}
+
+.wm-bininfo {
+	padding-top: var(--sf-space-10, 8px);
+}
+
+.wm-bininfo-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10, 8px);
+}
+
+.wm-bininfo-head strong {
+	margin-right: 8px;
+}
+
+.wm-bininfo-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.wm-items {
+	margin: var(--sf-space-10, 8px) 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wm-items li {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--sf-space-15, 12px);
+	padding: 6px 0;
+	border-top: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.wm-items li.is-hit {
+	padding-left: 8px;
+	border-left: 4px solid var(--wm-hit);
+	font-weight: 600;
+}
+
+/* ---- not in the building ---- */
+
+.wm-off {
+	margin-top: var(--sf-space-30, 24px);
+}
+
+.wm-off h3 {
+	margin: 0 0 var(--sf-space-10, 8px);
+	font-size: var(--sf-text-md, 15px);
+}
+
+.wm-off h4 {
+	margin: 0 0 4px;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.wm-off-groups {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-20, 16px) var(--sf-space-40, 32px);
+}
+
+.wm-off ul,
+.wm-units {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wm-off li,
+.wm-units li {
+	padding: 3px 0;
+}
+
+.wm-none {
+	max-width: 520px;
+	padding: var(--sf-space-30, 24px) 0;
+}
+
+/* ---- the editor ---- */
+
+.wm-editbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-05, 4px);
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.wm-editbar-gap {
+	flex: 1 1 12px;
+}
+
+.wm-dirty {
+	margin-right: 8px;
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.wm-edit-error:empty {
+	display: none;
+}
+
+.wm-edit {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 300px;
+	gap: var(--sf-space-20, 16px);
+	align-items: start;
+}
+
+.wm-panel {
+	padding: var(--sf-space-15, 12px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--border-radius, 8px);
+	background: var(--sf-surface, var(--card-bg, #fff));
+}
+
+.wm-panel h4 {
+	margin: var(--sf-space-15, 12px) 0 6px;
+	font-size: var(--sf-text-md, 15px);
+}
+
+.wm-panel h4:first-child {
+	margin-top: 0;
+}
+
+.wm-panel label,
+.wm-field {
+	display: block;
+	margin: 0 0 8px;
+	font-size: var(--sf-text-sm, 13px);
+	font-weight: normal;
+}
+
+.wm-panel label.wm-check {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.wm-grid4 {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 6px;
+}
+
+.wm-tied {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 4px 0;
+	font-weight: 600;
+}
+
+.wm-boxacts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	padding-bottom: var(--sf-space-10, 8px);
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.wm-mapfields,
+.wm-elsewhere {
+	margin-top: var(--sf-space-15, 12px);
+}
+
+.wm-mapfields summary,
+.wm-elsewhere summary {
+	margin-bottom: 8px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+@media (max-width: 900px) {
+	.wm-edit {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 600px) {
+	.wm-tab {
+		flex: 1 1 auto;
+		padding: var(--sf-space-10, 8px);
+	}
+
+	.wm-search {
+		flex: 1 1 100%;
+		max-width: none;
+	}
+
+	.wm-actions {
+		margin-left: 0;
+	}
+
+	.wm-level-name {
+		flex-basis: 72px;
+	}
+
+	.wm-svg {
+		max-height: 60vh;
+	}
+}

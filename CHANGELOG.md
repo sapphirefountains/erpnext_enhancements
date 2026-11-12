@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.815.0] - 2026-11-12
+
+### Added
+- **A map of the warehouse.** Nikolas, 2026-11-12: "we need a map for the location bins and a way to
+  edit and create the map for our warehouse locations at our office. I'll provide the floor plan
+  layout and you help me create the map from that." A new page, **Warehouse Map**
+  (`/desk/warehouse-map`), and a **Map** tab on the Bin Manager that opens it.
+  - **What you see.** One floor at a time: the floor plan picture with a box for each bay and room,
+    colored by what it holds (has stock, empty, or has a problem, which is an assigned item with none
+    on hand or stock nobody assigned there). Tap a bay and its **front view** opens underneath: the
+    shelves and bins as you face the rack, shelf 1 at the top and bin 1 at the left. Tap a bin to see
+    what is in it, with *Open in Bin Manager* and *Open in Stock Scan*. Vehicles and job sites are a
+    list beside the map, because they are not in the building.
+  - **Find an item.** Type an item's name in *Find an item on the map*: the boxes and bins that hold
+    it, or are its bin, are outlined, with a list of every place it is, on every floor.
+  - **Show on map** from a bin in the Bin Manager, the Item form, the Warehouse form, the *Where Is
+    This Item* and *Location Contents* reports, and a location or an item in Stock Scan on the phone
+    (shown there only once a map exists; it opens in a new tab so the scan run is not lost).
+  - **Print**: one sheet per floor with every box named, then what is in each rack.
+  - **The editor** (*Edit map*): upload the floor plan picture, add a box from the *Not on a map yet*
+    list or tie one to any warehouse, drag it into place, drag its corner to size it, turn it, name
+    it, and say where shelf 1 and bin 1 are when a rack is numbered the other way. *New map* starts
+    another floor.
+  - **Who.** Everyone who uses Stock Scan and the Bin Manager can look. Editing needs the new role
+    **Warehouse Map Editor** (or System Manager). The role is created by this release and given to
+    nobody: grant it in the Desk (a one-role Role Profile of the same name is there for people whose
+    roles come from profiles).
+- **Why the bins are not drawn by hand.** A box stands for a Warehouse, and what is inside it comes
+  from the Warehouse tree. Production has 5 rows, 10 bays, 50 shelves and 166 bins in the shop alone,
+  and the tree already says which bin is on which shelf of which bay. So about thirty boxes are
+  placed, and a bin made in ERPNext later shows up inside its bay with nobody touching the map.
+  Shelves and bins are listed in shelf-number order, not the tree's own (creation) order, which on
+  production reads `Bin C2-3-6` before `Bin C2-3-5`.
+- **The floor plan stays on the site.** It is a real building's layout and this repository is public,
+  so nothing of it ships here: the picture is a **private file** attached to the map's own record,
+  served by Frappe to exactly the people who can read the map. A public file or a web address is
+  refused, by the DocType itself.
+- New DocTypes **Warehouse Map** and **Warehouse Map Shape** (Inventory Enhancements), the
+  endpoints in `api/warehouse_map.py`, and the rules in
+  `inventory_enhancements/warehouse_map_rules.py`.
+
+### Notes
+- **Nothing here writes a Warehouse, a Putaway Rule or stock.** The map only points at warehouses.
+  Renaming one carries into the map by itself (the box holds a Link). Deleting one is never blocked
+  by a map (`ignore_links_on_delete`); the box left behind is drawn as "no longer a warehouse" and
+  the map's next save asks for it to be removed or tied to another.
+- **One warehouse is on one box and one map**, so "show this bin on the map" always has one answer.
+- **A map being drawn can be hidden** (*Hide this map from everyone but editors*) until it is ready.
+- **Two people editing.** A save is refused when someone else changed the map after the editor was
+  opened, rather than overwriting their work.
+- **No map ships with this release.** A site's map is drawn in the editor. Until one exists the page
+  says so, and Stock Scan shows no link.
+- **Not built yet**, agreed as later steps: creating a bay, shelf or bin from the editor; a
+  free-space view for deciding where new stock goes; a walk order for counts.
+- Tested bench-free (`tests/test_warehouse_map.py`, 65 tests on its own frappe stub, and
+  `scripts/test_warehouse_map.mjs` under node), both in CI. Not run on a bench.
+
 ## [1.814.0] - 2026-11-12
 
 ### Added
