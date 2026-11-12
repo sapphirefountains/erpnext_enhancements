@@ -49,10 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     document-intake receipt drafts. A scan at a bin in Stock Scan still means "put it here" and
     still wins; each open order line there now says which job it is for.
   - **An Overhead line never sits on the shelf, and the server holds that, not the form.** After
-    the rename the Company's default warehouse and 774 Item Defaults name the shelf, so ERPNext
-    itself fills the shelf into every new line, Overhead ones included. The form's script corrects
-    that when it runs in time; a duplicated order, one mapped from a Supplier Quotation or a
-    Material Request, and a REST save that sends a warehouse never run it. Shop supplies received
+    the rename the Company's default warehouse and the stock items' Item Defaults name the shelf,
+    so ERPNext itself fills the shelf into every new line, Overhead ones included. The form's
+    script corrects that when it runs in time; a duplicated order, one mapped from a Supplier
+    Quotation or a Material Request, and a REST save that sends a warehouse never run it. Shop
+    supplies received
     onto the shelf would leave the shop's stock under a project that is not a job, and a take
     there would then demand one. So an Overhead line that names the shelf is moved to the item's
     own bin on every save of a draft order (`default_line_warehouses`), on a row added to a
@@ -119,12 +120,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shelf still tags 13 to that job. The function reports them as `tagged` 13, `qty` 0,
     `over_tagged` 13, and that job is never offered as holding anything.
   - **The shelf is never an item's bin.** The 774 Item Defaults and 54 enabled Putaway Rules that
-    named `Stores` name the shelf after the rename. They are not deleted and not rewritten. The
-    shelf's list (`api.stock_scan._items_at`) shows what is there or on its way and nothing else,
-    `procurement_project.item_own_bin` skips the shelf, and *Put on this bin* and *Make … this
-    item's bin* are refused there. A leftover rule or default goes away when its stock is moved
+    named `Stores` name the shelf after the rename. The rules, and the defaults of items that
+    maintain stock, are not deleted and not rewritten (the defaults of items that do not are
+    blanked, next point). The shelf's list (`api.stock_scan._items_at`) shows what is there or
+    on its way and nothing else, `procurement_project.item_own_bin` skips the shelf, and *Put on
+    this bin* and *Make … this item's bin* are refused there. A leftover rule or default goes away
+    when its stock is moved
     off the shelf with *Make … this item's bin* ticked. A new item's bin is never the shelf or a
     job site (`_quick_item`).
+  - **Items that do not maintain stock lose the shelf as their default warehouse.** Nikolas,
+    2026-11-12: "Blank the 705". ERPNext gave every new item an Item Default naming `Stores`,
+    so after the rename about 700 items that are bought and never stocked would say their
+    default warehouse is the Project Shelf. The patch's sixth step blanks `default_warehouse`
+    on every Item Default row that names the shelf **where the item has Maintain Stock off**,
+    a disabled item included, and on nothing else. Why this and not all 774: the code already
+    skips the shelf wherever it reads an item's bin, but the review found one reader that did
+    not (the first count, next point), and a default that is simply gone cannot be misread by
+    the next one. Why not the stock items: 26 of the 68 have a real bin and 42 have none, and
+    some are physically on the shelf, so which of them belongs where is a person's call.
+    - **The rule is read when the step runs**, never from a list or a count. The bulk Maintain
+      Stock switch (v1.809.0) may be applied before or after this deploys: an item switched
+      before is a stock item by then and keeps its row. No number is expected and none is a
+      warning; the step prints how many rows it blanked, how many of those are on disabled
+      items, and how many rows on stock items it left. It never names an item.
+    - **Only the one field.** The row and its other defaults (supplier, price list, accounts)
+      stay, so ERPNext adds no new default row at the item's next save
+      (`Item.update_defaults_from_item_group` adds one only where there is none). NULL is
+      written, not an empty text. The item's `modified` does not move and its cached copy is
+      dropped. It is the same write the Bin Manager's *Remove from this bin* has made since
+      v1.692.0.
+    - **A blank is legal and nothing here expects a value.** At ERPNext 16.54.0
+      `Item Default.default_warehouse` is not required, `validate_item_default_company_links`
+      checks a warehouse only when one is there, and with none `get_item_warehouse_` falls back
+      to the Company's default warehouse, which is the shelf: so ERPNext's own forms offer the
+      same warehouse for these items after the step as before it. In this app every reader
+      asks either for a set value or for an exact warehouse (`item_own_bin`, Stock Scan's
+      location list, bin assignments, Location Contents, the other reports, Maintain Stock);
+      the Reorder Board reads the default supplier from that table and never the warehouse. A
+      purchase line for one of these items defaults exactly as it did, because the shelf was
+      already skipped as an item's bin. `TestAnItemWithNoDefaultWarehouse` pins each.
+    - **One thing changes at the Maintain Stock switch.** When an item is switched and has an
+      open order or request line with no warehouse, the switch gives the line the item's
+      default, else Stock Settings' (which is not set here). With the default blanked there is
+      none to give, and that item answers "can't switch yet: set a default warehouse" until
+      somebody does. Production has no open line without a warehouse today.
+    - **Undoing it.** On the day it was decided no non-stock item had a blank default
+      warehouse, so afterwards "blank, on an item that does not maintain stock" is the list of
+      what the step changed.
   - **An item's first count never opens on the shelf.** Maintain Stock's switch (v1.809.0) ends
     on *Open a Stock Reconciliation*, with the item and a warehouse already on the row. The
     warehouse was the item's Item Default (`maintain_stock._default_warehouse`), and the switch
@@ -156,16 +198,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     replaces the quoted old name with the new one in those rows and drops their cached copies.
     Its report gives the number of rows and of people, never who they are: the migrate output
     lands in the build log, and a user id is a sign-in address.
-  - **The patch cannot raise and says what it did.** Five steps (the rename, the search index,
-    the saved filters, the two settings), each in its own savepoint, each answering done, already,
-    skipped or failed, followed by counts of what now points at the shelf. A clean run writes no
+  - **The patch cannot raise and says what it did.** Six steps (the rename, the search index,
+    the saved filters, the two settings, the non-stock items' defaults), each in its own
+    savepoint, each answering done, already, skipped or failed, followed by counts of what now
+    points at the shelf. A clean run writes no
     Error Log row; a run with a skipped or failed step writes one, "Project Shelf patch
     (rename_stores_to_project_shelf): finish these steps by hand". **A site that never had the
     warehouse is not a failure:** with no shop group `Inventory - SF`, or no `Stores` and no
     `Project Shelf`, every step answers "not needed here" and no Error Log row is written. It
-    merges nothing where both names exist, moves no stock, and never writes over a stored
-    setting. On a never-saved Single it writes every declared default before the field, so the
-    others keep reading as they did.
+    merges nothing where both names exist, moves no stock, disables no Putaway Rule, changes
+    no stock item's default, and never writes over a stored setting. On a never-saved Single it
+    writes every declared default before the field, so the others keep reading as they did.
   - **With the releases that merged first.** The Procurement Tracker (v1.811.0), the Bin
     Manager's views (v1.812.0) and the inventory reports (v1.805.0) each read the shelf through
     this module, behind an import that was guarded until it existed. It exists from this release,

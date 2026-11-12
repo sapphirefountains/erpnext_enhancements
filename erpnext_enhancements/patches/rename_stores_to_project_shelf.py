@@ -1,4 +1,5 @@
-"""Rename the ``Stores`` warehouse to ``Project Shelf`` and name it in the settings (v1.815.0).
+"""Rename the ``Stores`` warehouse to ``Project Shelf``, name it in the settings, and take it
+off the items that never go into stock (v1.815.0).
 
 The owner's decision of 2026-11-12: everything ordered for a project is received onto one
 shared Project Shelf, and stock there is not stock the shop has
@@ -39,6 +40,21 @@ In this order, each in its own step:
 5. **The fallback.** ``overhead_receiving_warehouse`` is filled with ``Inventory Room`` under
    the same rule, where that warehouse exists as an enabled leaf: it is where an Overhead
    purchase lands when its item has no bin yet.
+6. **The default warehouse of items that do not maintain stock.** The owner, 2026-11-12:
+   "Blank the 705". ERPNext gave every new item an Item Default naming ``Stores``, so after the
+   rename hundreds of items that are bought and never stocked say their default warehouse is
+   the Project Shelf. This step blanks ``default_warehouse`` on each Item Default row that
+   names the shelf **where the item has Maintain Stock off**, and on nothing else. The rule is
+   read when the step runs, never from a list or a number: an item switched to Maintain Stock
+   before this runs is a stock item by then, and keeps its row. A disabled item is included (it
+   would carry the shelf back the day it is enabled again). The rows on items that maintain
+   stock are left for the owner to sort by hand, and counted in the output. Only that one field
+   is written: the row and its other defaults (supplier, price list, accounts) stay, so
+   ERPNext does not add a new default row to the item at its next save
+   (``Item.update_defaults_from_item_group`` adds one only where there is none). A blank
+   default warehouse is legal on ERPNext 16.54.0 (the field is not required) and is what the
+   Bin Manager's *Remove from this bin* already writes. The item's ``modified`` is not moved: a
+   migration is not somebody's edit.
 
 **Where the shelf sits, and why it is not moved.** It stays directly under the company's root
 group, beside ``Inventory - SF`` and ``Job Sites - SF``. Not under ``Job Sites``: that group
@@ -47,9 +63,9 @@ reports and 23 of production's reorder rules read that group as the shop's stock
 of ours runs inside them, so a shelf placed there would count as shop stock in exactly the
 places this app cannot correct. Outside it, those are right with no code at all.
 
-**What it does not do.** It moves no stock, rewrites no order line, and clears no Item
-Default or Putaway Rule. After it runs, the output lists how many of each now point at the
-shelf, so the owner can decide what to do with them.
+**What it does not do.** It moves no stock, rewrites no order line, disables no Putaway Rule
+and changes no Item Default of an item that maintains stock. After it runs, the output lists
+how many of each still point at the shelf, so the owner can decide what to do with them.
 
 **It cannot raise, so it must say what it did.** A patch that raises aborts ``bench migrate``,
 which on this repo is the deploy. A step that fails is caught, rolled back to its own
@@ -65,9 +81,9 @@ bench, a test site, any other company's site), every step answers :data:`ABSENT`
 says so in one line each, and **no Error Log row is written**: that log alerts people, and
 "this site never had the warehouse" is not something anyone has to finish by hand.
 
-Safe twice: the second run finds the shelf, an indexed name, no saved filter left to rewrite
-and both settings' rows, and answers "already" (the index step answers "done" again; it is a
-rebuild).
+Safe twice: the second run finds the shelf, an indexed name, no saved filter left to rewrite,
+both settings' rows and no non-stock item's default left on the shelf, and answers "already"
+(the index step answers "done" again; it is a rebuild).
 """
 
 import frappe
@@ -116,6 +132,11 @@ RECOVERY = {
 		"Overhead Receiving Warehouse. Until it is set, an Overhead line whose item has no bin "
 		"keeps the location the order gave it."
 	),
+	"defaults": (
+		f"Run the patch again: {RERUN}. Nothing waits on it: no page reads the shelf as an item's "
+		"bin. It only blanks Default Warehouse on the Item Defaults that name the Project Shelf, "
+		"on items with Maintain Stock off."
+	),
 }
 
 STEPS = (
@@ -124,6 +145,7 @@ STEPS = (
 	("filters", "People's saved list filters"),
 	("setting", "The Project Shelf setting"),
 	("fallback", "The Overhead receiving setting"),
+	("defaults", "The default warehouse of items that do not maintain stock"),
 )
 
 
@@ -285,6 +307,67 @@ def fallback_warehouse(shelf):
 	return row.name
 
 
+def _maintains_stock(value):
+	try:
+		return bool(int(value or 0))
+	except (TypeError, ValueError):
+		return bool(value)
+
+
+def _plural(count, one, many):
+	return f"{count} {one if count == 1 else many}"
+
+
+def defaults_at(shelf):
+	"""The Item Default rows of Items that name ``shelf``, split by the one rule this step has:
+	``(blank, keep)``, each a list of ``(row name, item, item is disabled)``. ``blank`` is the
+	rows of items with Maintain Stock off; ``keep`` is the rest. Read fresh each time."""
+	blank, keep = [], []
+	rows = frappe.db.sql(
+		"""select d.name, d.parent, i.is_stock_item, i.disabled
+		from `tabItem Default` d
+		inner join `tabItem` i on i.name = d.parent
+		where d.parenttype = 'Item' and d.default_warehouse = %(shelf)s""",
+		{"shelf": shelf},
+	)
+	for name, item, is_stock_item, disabled in rows:
+		(keep if _maintains_stock(is_stock_item) else blank).append((name, item, _maintains_stock(disabled)))
+	return blank, keep
+
+
+def blank_item_defaults(shelf):
+	"""Blank ``default_warehouse`` on the Item Defaults that name the shelf, on items that do not
+	maintain stock. ``(status, detail)``. The detail gives counts and never an item."""
+	if not shelf:
+		return SKIPPED, "there is no Project Shelf, so no Item Default was looked at"
+	blank, keep = defaults_at(shelf)
+	kept = (
+		f"{_plural(len(keep), 'row', 'rows')} on items that maintain stock "
+		f"{'was' if len(keep) == 1 else 'were'} left as {'it is' if len(keep) == 1 else 'they are'}"
+	)
+	if not blank:
+		return ALREADY, f"no item that does not maintain stock names {shelf} as its default warehouse; {kept}"
+	for name, _item, _disabled in blank:
+		frappe.db.set_value("Item Default", name, "default_warehouse", None, update_modified=False)
+	# ERPNext reads an item's defaults from the cached Item (``get_item_defaults``).
+	for item in sorted({item for _name, item, _disabled in blank}):
+		try:
+			frappe.clear_document_cache("Item", item)
+		except Exception:
+			pass
+	left, _keep = defaults_at(shelf)
+	if left:
+		raise RuntimeError(
+			f"{_plural(len(left), 'Item Default row', 'Item Default rows')} of items that do not maintain "
+			f"stock still name {shelf}"
+		)
+	disabled = sum(1 for _name, _item, off in blank if off)
+	return DONE, (
+		f"{_plural(len(blank), 'Item Default row', 'Item Default rows')} on items that do not maintain "
+		f"stock no longer {'names' if len(blank) == 1 else 'name'} {shelf} ({disabled} on disabled items); {kept}"
+	)
+
+
 def _count(query, values):
 	try:
 		rows = frappe.db.sql(query, values)
@@ -314,8 +397,9 @@ def counts(shelf):
 	)
 	if row:
 		lines.append(
-			f"- Item Defaults that name it: {int(row[0])} ({int(row[1])} on enabled stock items). "
-			"None was changed; the pages no longer read them as the item's bin."
+			f"- Item Defaults that still name it: {int(row[0])} ({int(row[1])} on enabled stock items). "
+			"Those on items that maintain stock were left for the owner to sort by hand; the pages "
+			"do not read them as the item's bin."
 		)
 	row = _count("select count(*) from `tabPutaway Rule` where warehouse = %(shelf)s and disable = 0", values)
 	if row:
@@ -413,6 +497,9 @@ def execute():
 			FALLBACK_SETTING,
 			fallback,
 			f'there is no enabled warehouse called "{FALLBACK_NAME}" to point it at',
+		)
+		outcomes["defaults"] = _step(
+			"blanking the default warehouse of items that do not maintain stock", blank_item_defaults, shelf
 		)
 
 	try:

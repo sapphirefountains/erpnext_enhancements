@@ -102,7 +102,8 @@ def own_bin(putaway_bins, default_warehouse=None, reorder_warehouses=(), not_bin
 	reorder rule asks for. ``not_bins`` are places that are never an item's bin and are skipped
 	wherever they appear: the Project Shelf, every job site, the boneyard. On the day the shelf
 	was renamed 774 Item Defaults pointed at it, left there by ERPNext's company default, and
-	none of them means "this item is kept on the Project Shelf".
+	none of them means "this item is kept on the Project Shelf". (The patch blanks the ones on
+	items that do not maintain stock; the rest are skipped here.)
 	"""
 	skip = {_name(name) for name in not_bins or ()}
 	candidates = [*(putaway_bins or ()), default_warehouse, *(reorder_warehouses or ())]

@@ -162,6 +162,18 @@ def setUpModule():
 				for b in base._table("Bin").values()
 				if b["warehouse"] == values["shelf"] and (not values.get("items") or b["item_code"] in values["items"])
 			]
+		if text.startswith("select d.name, d.parent, i.is_stock_item, i.disabled from `tabItem Default` d"):
+			# The patch's sixth step: every Item Default of an Item that names the shelf.
+			if STATE.get("defaults_fail"):
+				raise RuntimeError("the item defaults could not be read")
+			items = base._table("Item")
+			return [
+				(d["name"], d["parent"], items[d["parent"]].get("is_stock_item"), items[d["parent"]].get("disabled"))
+				for d in base._table("Item Default").values()
+				if d.get("parenttype") == "Item"
+				and d.get("default_warehouse") == values["shelf"]
+				and d["parent"] in items
+			]
 		if text.startswith("select count(*)") or "from `tabPurchase Order Item` poi" in text:
 			return [STATE.get("count_row", (0, 0, 0))]
 		if "`__UserSettings`" in text:
@@ -2339,11 +2351,253 @@ class TestThePatch(_Base):
 		self.assertEqual(len(lines), 5)
 		self.assertTrue(all(line.startswith("- ") for line in lines))
 		self.assertIn("No stock was moved", lines[0])
-		self.assertIn("None was changed", lines[1])
+		self.assertIn("Item Defaults that still name it: 3 (2 on enabled stock items)", lines[1])
+		self.assertIn("left for the owner to sort by hand", lines[1])
+		self.assertIn("None was changed", lines[2])
 		self.assertEqual(patch.counts(None), [])
 		text = patch.report({"rename": (patch.DONE, "x")}, lines)
 		self.assertIn("What points at the Project Shelf now:", text)
 		self.assertIn("2. The search index: skipped. not reached", text)
+
+	# --- step 6: the default warehouse of items that do not maintain stock ------------------
+
+	SUPPLY, RETIRED, SWITCHED = "SUPPLY-0001", "SUPPLY-0002", "SUPPLY-0003"
+	STEP_6 = "6. The default warehouse of items that do not maintain stock"
+
+	def _supplies(self):
+		"""Two items that are bought and never stocked (one of them disabled), both with the
+		default ERPNext handed out. The shared stock item has the same default."""
+		base._item(self.SUPPLY, is_stock_item=0)
+		base._item(self.RETIRED, is_stock_item=0, disabled=1)
+		return base._default(self.SUPPLY, STORES), base._default(self.RETIRED, STORES)
+
+	def _step_6(self, text):
+		return next(line for line in text.splitlines() if line.startswith(self.STEP_6))
+
+	def _printed(self):
+		import contextlib
+		import io
+
+		printed = io.StringIO()
+		with contextlib.redirect_stdout(printed):
+			reports = self._run()
+		return printed.getvalue(), reports
+
+	def test_items_that_do_not_maintain_stock_lose_the_shelf_as_their_default(self):
+		supply, retired = self._supplies()
+		printed, reports = self._printed()
+		self.assertEqual(reports, [], "a clean run writes no Error Log row")
+		defaults = base._table("Item Default")
+		self.assertIsNone(defaults[supply]["default_warehouse"])
+		self.assertIsNone(defaults[retired]["default_warehouse"], "a disabled item is included")
+		# NULL, not an empty text: Location Contents reads `default_warehouse is not null`.
+		blanked = [v for v in STATE["set_values"] if v[0] == "Item Default"]
+		self.assertEqual(sorted(blanked), sorted(("Item Default", n, {"default_warehouse": None}) for n in (supply, retired)))
+		# Only that one field: the row and its other defaults stay.
+		self.assertEqual(
+			(defaults[supply]["parent"], defaults[supply]["company"], defaults[supply]["default_supplier"]),
+			(self.SUPPLY, COMPANY, "Some Supplier"),
+		)
+		self.assertEqual(
+			self._step_6(printed),
+			f"{self.STEP_6}: done. 2 Item Default rows on items that do not maintain stock no longer name "
+			f"{SHELF} (1 on disabled items); 1 row on items that maintain stock was left as it is",
+		)
+
+	def test_a_stock_items_default_a_rule_and_the_item_itself_are_not_touched(self):
+		self._supplies()
+		self._run()
+		self.assertEqual(base._table("Item Default")[f"ID-{ITEM}-1"]["default_warehouse"], SHELF)
+		self.assertEqual([(r["warehouse"], r["disable"]) for r in base._table("Putaway Rule").values()], [(SHELF, 0)])
+		self.assertEqual(base._bin_qty(ITEM, SHELF), 7.0)
+		# No Item row is written (its `modified` does not move) and none is deleted.
+		self.assertEqual([v for v in STATE["set_values"] if v[0] == "Item"], [])
+		self.assertEqual(
+			{name: (row["is_stock_item"], row["disabled"]) for name, row in base._table("Item").items() if name in (self.SUPPLY, self.RETIRED)},
+			{self.SUPPLY: (0, 0), self.RETIRED: (0, 1)},
+		)
+		# ERPNext reads an item's defaults from the cached Item: the changed ones are dropped.
+		self.assertIn(("Item", self.SUPPLY), STATE["cache_cleared"])
+		self.assertIn(("Item", self.RETIRED), STATE["cache_cleared"])
+		self.assertNotIn(("Item", ITEM), STATE["cache_cleared"])
+
+	def test_only_a_row_that_names_the_shelf_is_blanked(self):
+		supply, _retired = self._supplies()
+		base._item("SUPPLY-0004", is_stock_item=0)
+		elsewhere = base._default("SUPPLY-0004", BIN_A)
+		base._item("SUPPLY-0005", is_stock_item=0)
+		blank = base._default("SUPPLY-0005", None)
+		# A second company's row on the same item, naming some other warehouse.
+		other = base._default(self.SUPPLY, BIN_B, company="Other Co", idx=2)
+		# An Item Group's defaults live in the same table and are not an item's.
+		group = base._default("Supplies", STORES)
+		base._table("Item Default")[group]["parenttype"] = "Item Group"
+		# A row whose item is gone.
+		orphan = base._default("GONE-0001", STORES)
+		self._run()
+		defaults = base._table("Item Default")
+		self.assertIsNone(defaults[supply]["default_warehouse"])
+		self.assertEqual(defaults[elsewhere]["default_warehouse"], BIN_A)
+		self.assertIsNone(defaults[blank]["default_warehouse"])
+		self.assertEqual(defaults[other]["default_warehouse"], BIN_B)
+		self.assertEqual(defaults[group]["default_warehouse"], SHELF, "renamed with the rest, and left")
+		self.assertEqual(defaults[orphan]["default_warehouse"], SHELF)
+		self.assertNotIn(("Item Default", blank, {"default_warehouse": None}), STATE["set_values"])
+
+	def test_the_rule_is_read_when_it_runs(self):
+		"""An item switched to Maintain Stock before the deploy is a stock item by then."""
+		supply, retired = self._supplies()
+		base._item(self.SWITCHED, is_stock_item=0)
+		switched = base._default(self.SWITCHED, STORES)
+		base._table("Item")[self.SWITCHED]["is_stock_item"] = 1  # the switch, before the patch
+		printed, reports = self._printed()
+		self.assertEqual(reports, [])
+		defaults = base._table("Item Default")
+		self.assertEqual(defaults[switched]["default_warehouse"], SHELF)
+		self.assertIsNone(defaults[supply]["default_warehouse"])
+		self.assertIn("2 Item Default rows on items that do not maintain stock no longer name", self._step_6(printed))
+		self.assertIn("2 rows on items that maintain stock were left as they are", self._step_6(printed))
+
+	def test_any_number_is_fine_and_none_is_a_warning(self):
+		"""705 on the day it was decided. The bulk switch may change that before this runs."""
+		for count in (0, 1, 37):
+			with self.subTest(count=count):
+				self.setUp()
+				for n in range(count):
+					base._item(f"SUPPLY-{n:04d}", is_stock_item=0)
+					base._default(f"SUPPLY-{n:04d}", STORES)
+				printed, reports = self._printed()
+				self.assertEqual(reports, [])
+				self.assertEqual(STATE["errors"], [])
+				line = self._step_6(printed)
+				if not count:
+					self.assertEqual(
+						line,
+						f"{self.STEP_6}: already. no item that does not maintain stock names {SHELF} as its "
+						"default warehouse; 1 row on items that maintain stock was left as it is",
+					)
+				elif count == 1:
+					self.assertIn("done. 1 Item Default row on items that do not maintain stock no longer names", line)
+				else:
+					self.assertIn("done. 37 Item Default rows on items that do not maintain stock no longer name", line)
+				self.assertNotIn("By hand", printed)
+
+	def test_blanking_twice_is_once(self):
+		self._supplies()
+		self._run()
+		writes = len(STATE["set_values"])
+		before = json.dumps(STATE["db"], sort_keys=True, default=str)
+		printed, reports = self._printed()
+		self.assertEqual(reports, [])
+		self.assertIn(f"{self.STEP_6}: already.", printed)
+		self.assertEqual(len(STATE["set_values"]), writes)
+		self.assertEqual(json.dumps(STATE["db"], sort_keys=True, default=str), before)
+
+	def test_it_runs_on_a_site_renamed_before_this_step_existed(self):
+		"""The rehearsal site: the shelf is there, the defaults still name it."""
+		self._run()
+		supply, _retired = self._supplies()
+		base._table("Item Default")[supply]["default_warehouse"] = SHELF
+		printed, reports = self._printed()
+		self.assertEqual(reports, [])
+		self.assertEqual(len(STATE["renames"]), 1)
+		self.assertIn("1. The warehouse: already.", printed)
+		self.assertIsNone(base._table("Item Default")[supply]["default_warehouse"])
+
+	def test_with_no_shelf_no_default_is_looked_at(self):
+		supply, _retired = self._supplies()
+		STATE["rename_fails"] = True
+		reports = self._run()
+		self.assertEqual(base._table("Item Default")[supply]["default_warehouse"], STORES)
+		self.assertIn(f"{self.STEP_6}: skipped. there is no Project Shelf", reports[0][1])
+		self.assertIn("on items with Maintain Stock off", reports[0][1])
+		self.assertEqual(patch.blank_item_defaults(None)[0], patch.SKIPPED)
+
+	def test_a_site_that_never_had_the_warehouse_is_not_asked_about_its_items(self):
+		self._supplies()
+		del base._table("Warehouse")["Inventory - SF"]
+		printed, reports = self._printed()
+		self.assertEqual(reports, [])
+		self.assertEqual(STATE["errors"], [])
+		self.assertIn(f"{self.STEP_6}: not needed here.", printed)
+		self.assertEqual([v for v in STATE["set_values"] if v[0] == "Item Default"], [])
+
+	def test_a_failed_read_blanks_nothing_and_undoes_nothing_else(self):
+		supply, _retired = self._supplies()
+		STATE["defaults_fail"] = True
+		reports = self._run()
+		self.assertEqual(len(reports), 1)
+		self.assertEqual(reports[0][0], patch.REPORT_TITLE)
+		self.assertIn(f"{self.STEP_6}: failed. RuntimeError: the item defaults could not be read", reports[0][1])
+		self.assertIn(SHELF, base._table("Warehouse"))
+		self.assertEqual(STATE["singles"][(SETTINGS, "project_shelf_warehouse")], SHELF)
+		self.assertEqual(base._table("Item Default")[supply]["default_warehouse"], SHELF)
+
+	def test_a_write_that_fails_part_way_is_rolled_back_whole(self):
+		supply, retired = self._supplies()
+		original = FRAPPE.db.set_value
+		seen = []
+
+		def set_value(doctype, name, field, value=None, update_modified=True):
+			if doctype == "Item Default":
+				seen.append(name)
+				if len(seen) == 2:
+					raise RuntimeError("the row is locked")
+			return original(doctype, name, field, value, update_modified=update_modified)
+
+		FRAPPE.db.set_value = set_value
+		try:
+			reports = self._run()
+		finally:
+			FRAPPE.db.set_value = original
+		defaults = base._table("Item Default")
+		self.assertEqual((defaults[supply]["default_warehouse"], defaults[retired]["default_warehouse"]), (SHELF, SHELF))
+		self.assertIn(f"{self.STEP_6}: failed. RuntimeError: the row is locked", reports[0][1])
+		# The steps before it are kept, and running it again finishes the one that failed.
+		self.assertEqual(STATE["singles"][(SETTINGS, "project_shelf_warehouse")], SHELF)
+		STATE["errors"].clear()
+		self.assertEqual(self._run(), [])
+		self.assertIsNone(base._table("Item Default")[supply]["default_warehouse"])
+
+	def test_a_row_that_still_names_the_shelf_afterwards_is_a_failure(self):
+		supply, _retired = self._supplies()
+		original = FRAPPE.db.set_value
+		FRAPPE.db.set_value = lambda *a, **k: None  # the write that does nothing
+		try:
+			status, detail = patch._step("blanking", patch.blank_item_defaults, self._shelf_now())
+		finally:
+			FRAPPE.db.set_value = original
+		self.assertEqual(status, patch.FAILED)
+		self.assertIn("2 Item Default rows of items that do not maintain stock still name", detail)
+
+	def _shelf_now(self):
+		return patch.rename_warehouse()[2]
+
+	def test_no_item_is_named_in_what_it_prints_or_logs(self):
+		"""The repo and the build log are public. Counts only."""
+		self._supplies()
+		del base._table("Warehouse")[ROOM]  # one skipped step, so the Error Log row is written too
+		printed, reports = self._printed()
+		self.assertEqual(len(reports), 1)
+		for text in (printed, *(f"{title} {message}" for title, message in STATE["errors"])):
+			for code in (self.SUPPLY, self.RETIRED, ITEM):
+				self.assertNotIn(code, text)
+
+	def test_the_step_holds_no_list_and_no_number(self):
+		tree = ast.parse((APP / "patches" / "rename_stores_to_project_shelf.py").read_text(encoding="utf-8"))
+		functions = {n.name: ast.unparse(n) for n in tree.body if isinstance(n, ast.FunctionDef)}
+		step = functions["blank_item_defaults"] + functions["defaults_at"]
+		for number in ("705", "706", "774", "68"):
+			self.assertNotIn(number, step)
+		self.assertIn("is_stock_item", functions["defaults_at"])
+		self.assertIn("d.default_warehouse = %(shelf)s", functions["defaults_at"])
+		# One field of one doctype, and no delete.
+		self.assertEqual(step.count("set_value("), 1)
+		self.assertIn("frappe.db.set_value('Item Default', name, 'default_warehouse', None, update_modified=False)", step)
+		self.assertNotIn("Putaway Rule", step)
+		self.assertNotIn("delete", step)
+		self.assertEqual(patch.STEPS[-1][0], "defaults")
+		self.assertIn("defaults", patch.RECOVERY)
 
 	def test_it_reads_singles_with_sql_never_through_get_value(self):
 		source = (APP / "patches" / "rename_stores_to_project_shelf.py").read_text(encoding="utf-8")
@@ -2356,6 +2610,80 @@ class TestThePatch(_Base):
 		mine = "erpnext_enhancements.patches.rename_stores_to_project_shelf"
 		self.assertEqual(lines.count(mine), 1)
 		self.assertLess(lines.index("erpnext_enhancements.patches.add_job_sites_warehouse"), lines.index(mine))
+
+
+# --------------------------------------------------------------------------- an item with no default warehouse
+
+
+class TestAnItemWithNoDefaultWarehouse(_Base):
+	"""What the patch's sixth step leaves behind: an Item Default row whose warehouse is blank.
+	Nothing in this app reads that field expecting a value. The Bin Manager's *Remove from this
+	bin* has written the same blank since v1.692.0."""
+
+	SUPPLY = "SUPPLY-0001"
+
+	def setUp(self):
+		super().setUp()
+		base._item(self.SUPPLY, is_stock_item=0)
+		base._default(self.SUPPLY, None)
+		self._default = switch._default_warehouse
+		switch._default_warehouse = lambda item_code, company: None
+
+	def tearDown(self):
+		switch._default_warehouse = self._default
+
+	def test_it_has_no_bin_of_its_own(self):
+		self.assertIsNone(procurement.item_own_bin(self.SUPPLY, COMPANY))
+		self.assertIsNone(procurement._item_default_warehouse(self.SUPPLY, COMPANY))
+
+	def test_a_line_for_it_defaults_as_it_did_while_its_default_was_the_shelf(self):
+		"""The shelf was already skipped as an item's bin, so blanking it changes no default."""
+		blank = (
+			procurement.default_line_warehouse(self.SUPPLY, OVERHEAD, COMPANY),
+			procurement.default_line_warehouse(self.SUPPLY, JOB_A, COMPANY),
+		)
+		self.assertEqual(blank, ({"warehouse": ROOM, "reason": "fallback"}, {"warehouse": SHELF, "reason": "shelf"}))
+		base._table("Item Default")[f"ID-{self.SUPPLY}-1"]["default_warehouse"] = SHELF
+		named = (
+			procurement.default_line_warehouse(self.SUPPLY, OVERHEAD, COMPANY),
+			procurement.default_line_warehouse(self.SUPPLY, JOB_A, COMPANY),
+		)
+		self.assertEqual(named, blank)
+
+	def test_its_first_count_opens_where_it_did(self):
+		self.assertEqual(switch.first_count_warehouse(self.SUPPLY, COMPANY), ROOM)
+		_reset(fallback=False)
+		base._item(self.SUPPLY, is_stock_item=0)
+		base._default(self.SUPPLY, None)
+		self.assertIsNone(switch.first_count_warehouse(self.SUPPLY, COMPANY))
+
+	def test_the_reports_and_the_bin_manager_find_no_place_for_it(self):
+		from erpnext_enhancements.inventory_enhancements import inventory_report_rules as report_rules
+
+		self.assertEqual(report_rules.other_bins(self.SUPPLY, BIN_A, {}, {}, not_bins={SHELF}), [])
+		self.assertEqual(report_rules.other_bins(self.SUPPLY, BIN_A, {}, {self.SUPPLY: {None, ""}}, not_bins={SHELF}), [])
+		self.assertEqual(bins._defaults_at(self.SUPPLY, SHELF, COMPANY), [])
+
+	def test_every_reader_of_the_field_asks_for_a_value_or_an_exact_warehouse(self):
+		"""Each place that reads ``default_warehouse`` from Item Default, and how a blank passes it."""
+		reads = {
+			# The reports: only rows where it is set.
+			APP / "inventory_enhancements" / "inventory_report_data.py": '"default_warehouse": ["is", "set"]',
+			# Location Contents: only rows where it is not null. The patch writes NULL, not "".
+			APP / "inventory_enhancements" / "report" / "location_contents" / "location_contents.py": "default_warehouse is not null",
+			# Stock Scan's list for a location: the row names that location.
+			APP / "api" / "stock_scan.py": "idf.default_warehouse = %(warehouse)s",
+			# Bin assignments: the row names that warehouse.
+			APP / "inventory_enhancements" / "bin_assignments.py": "and default_warehouse = %(warehouse)s",
+			# The purchase-line rule: empty names are dropped before anything is looked up.
+			APP / "procurement_project.py": "names = [name for name in names if name]",
+			# Maintain Stock: nothing is nothing.
+			APP / "inventory_enhancements" / "maintain_stock.py": '.get("default_warehouse") or None',
+		}
+		for file, text in reads.items():
+			self.assertIn(text, file.read_text(encoding="utf-8"), file.name)
+		# The Reorder Board reads an item's default supplier from that table, never its warehouse.
+		self.assertNotIn("default_warehouse", REORDER.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- the wiring

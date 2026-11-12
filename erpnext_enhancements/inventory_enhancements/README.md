@@ -836,11 +836,26 @@ are not corrected: no code of ours runs inside them.
 **It is never an item's bin** (`project_shelf.refuse_as_bin`), as the Boneyard and a job site are
 not: *Put on this bin*, *New item here* and *Make … this item's bin* are refused there. On the day
 of the rename 774 Item Defaults and 54 enabled Putaway Rules named it, left by ERPNext's company
-default and by the v1.689.0 backfill. They are not deleted and not rewritten: the listing
+default and by the v1.689.0 backfill. The rules, and the defaults of items that maintain stock, are
+not deleted and not rewritten (the next paragraph has the rest): the listing
 (`api.stock_scan._items_at`) lists the shelf by what is there or on its way and nothing else, and
 `item_own_bin` skips the shelf wherever it appears. A leftover rule or default goes away by itself
 when its stock is moved off the shelf with *Make … this item's bin* ticked, the same release a
 move out of any bin does.
+
+**Items that do not maintain stock no longer name it** (Nikolas, 2026-11-12: "Blank the 705"). The
+patch's sixth step blanks `default_warehouse` on each Item Default row that names the shelf where
+the item has Maintain Stock off, a disabled item included. The rule is read when the step runs, so
+an item switched to Maintain Stock before the deploy keeps its row, and no count is expected. Only
+that field is written: the row and its other defaults stay, so ERPNext adds no new row at the next
+save. The rows on items that maintain stock are left for the owner to sort by hand, and the patch
+prints how many. Nothing reads a blank as a place: ERPNext 16.54.0 does not require the field and
+falls back to the Company's default warehouse (the shelf, so its own forms offer what they did),
+and every reader in this app asks for a set value or an exact warehouse
+(`tests/test_project_shelf.py`, `TestAnItemWithNoDefaultWarehouse`). One effect to know: an item
+switched to Maintain Stock that has an open order line with no warehouse now has no default to give
+that line, and answers "can't switch yet" until a default is set (no such line on production on
+2026-11-12).
 
 **An item's first count never opens there** (`maintain_stock.first_count_warehouse`, rule in
 `project_shelf_rules.first_count_warehouse`). After Maintain Stock is switched on for one item,
@@ -863,12 +878,12 @@ name in `__UserSettings` and drops the cached copies. Its report says how many r
 people, never who: the migrate output lands in the build log.
 
 **If the patch did not finish.** `patches/rename_stores_to_project_shelf` cannot raise (that would
-abort the deploy), so it is recorded as run whatever happened. Each of its five steps answers done,
-already, skipped or failed; the list and the counts of what now points at the shelf are in the
+abort the deploy), so it is recorded as run whatever happened. Each of its six steps answers done,
+already, skipped or failed; the list and the counts of what still points at the shelf are in the
 migrate output, and when any step did not finish, one Error Log row, "Project Shelf patch
 (rename_stores_to_project_shelf): finish these steps by hand", lists them with what to do. It is
-safe to run again. It moves no stock, rewrites no order line and clears no Item Default or Putaway
-Rule. On a site that never had the warehouse (no `Inventory - SF`, or no `Stores` and no `Project
+safe to run again. It moves no stock, rewrites no order line, disables no Putaway Rule and changes
+no Item Default of an item that maintains stock. On a site that never had the warehouse (no `Inventory - SF`, or no `Stores` and no `Project
 Shelf`) every step answers "not needed here" and no Error Log row is written.
 
 **The stock KPIs** (`kpi_dashboards/snapshots.py`): *Stocked Items Below Reorder*, *Stocked Items

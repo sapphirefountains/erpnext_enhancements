@@ -1655,7 +1655,7 @@ erpnext_enhancements.patches.supplier_returns_hub_links
 # (a `warranty` template already there is left as it is), only that key, prints what it did. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_warranty_certificate_template
 # The Project Shelf (v1.815.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
-# and stock there is not shop stock). Five steps, each logged and none able to stop the next: rename the warehouse
+# and stock there is not shop stock). Six steps, each logged and none able to stop the next: rename the warehouse
 # "Stores" to "Project Shelf" with Frappe's own rename_doc (force, because ERPNext 16.54.0's Warehouse is not
 # renameable from the Desk; every Link follows: Item Defaults, Putaway Rules, on-hand and ledger rows, order and
 # request lines, the Company's default warehouse) and set warehouse_name, which that ERPNext version has no rename
@@ -1663,10 +1663,13 @@ erpnext_enhancements.patches.seed_warranty_certificate_template
 # list filters (__UserSettings; Frappe 16.56.0's rename looks for them with LIKE and no wildcards, so it rewrites
 # none) and drop their cached copies, reporting how many rows and people but never who; fill Inventory Scanner Settings
 # .project_shelf_warehouse and .overhead_receiving_warehouse ("Inventory Room") ONLY where tabSingles has no row
-# for the field (on a never-saved Single every declared default is written first). On a site with no shop group
+# for the field (on a never-saved Single every declared default is written first); blank default_warehouse on the
+# Item Default rows that name the shelf WHERE THE ITEM HAS MAINTAIN STOCK OFF (Nik 2026-11-12: "Blank the 705"; the
+# rule is read at run time, never a list or a count, so an item switched to Maintain Stock first keeps its row; a
+# disabled item is included; only that field, the row stays; counts printed, never an item). On a site with no shop group
 # "Inventory - SF", or with no Stores and no Project Shelf, every step answers "not needed here" and NO Error Log
-# row is written. Nothing is merged where both names exist. Moves no stock, rewrites no order line, clears
-# no Item Default or Putaway Rule; prints how many of each now point at the shelf. Cannot raise, safe twice. Each
+# row is written. Nothing is merged where both names exist. Moves no stock, rewrites no order line, disables no
+# Putaway Rule, changes no stock item's default; prints how many of each still point at the shelf. Cannot raise, safe twice. Each
 # step answers done / already / skipped / failed; when any did not finish, ONE Error Log row "Project Shelf patch
 # (rename_stores_to_project_shelf): finish these steps by hand" lists them with the by-hand fix.
 erpnext_enhancements.patches.rename_stores_to_project_shelf
