@@ -248,6 +248,16 @@ def _can_manage():
 	return bool(rules.SCAN_ROLES.intersection(frappe.get_roles()) and frappe.has_permission("Item", "read"))
 
 
+def _can_return():
+	"""Whether the caller may start a Supplier Return (v1.807.0): create on that DocType. The item
+	sheet hides "Return to supplier" without it; ``api.supplier_returns`` checks again on every
+	call. False, never an exception, on a site where the DocType is not installed yet."""
+	try:
+		return bool(frappe.db.exists("DocType", "Supplier Return") and frappe.has_permission("Supplier Return", "create"))
+	except Exception:
+		return False
+
+
 def _location_payload(row):
 	items, truncated = _items_at(row)
 	return {
@@ -2579,6 +2589,8 @@ def boot_payload(args=None):
 		"is_supervisor": _is_supervisor(),
 		# May put items on bins and take them off (v1.689.0, ``bin_assignments``).
 		"can_manage": _can_manage(),
+		# May start a Supplier Return from an item (v1.807.0, ``api/supplier_returns``).
+		"can_return": _can_return(),
 		"settings": {
 			"require_project_for_take": cint(settings.get("require_project_for_take")),
 			"undo_window_minutes": cint(settings.get("undo_window_minutes")),

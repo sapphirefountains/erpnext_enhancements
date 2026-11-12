@@ -1635,3 +1635,12 @@ erpnext_enhancements.patches.add_job_sites_warehouse
 # form would open with an empty Widget box on the page where the pilot is switched on. Writes "Classic" ONLY where
 # tabSingles has no row for the field, never over a stored value. Reads tabSingles with db.sql. Safe twice.
 erpnext_enhancements.patches.backfill_triton_widget_mode
+# Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
+# return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
+# back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a
+# person's click in the Supplier Return form. (2) Force-imports the Inventory Enhancements workspace, whose Purchasing
+# card gains Supplier Returns and its Money Outstanding report and a shortcut counting returns waiting on money
+# (timestamp-bumped too; this is the belt), in a savepoint so a failed import keeps the old workspace. Both insert-only
+# or idempotent, cannot raise, safe twice, and each prints what it did.
+erpnext_enhancements.patches.seed_supplier_return_request_template
+erpnext_enhancements.patches.supplier_returns_hub_links

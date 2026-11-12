@@ -1,0 +1,580 @@
+{
+ "actions": [],
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "format:SRET-{YYYY}-{#####}",
+ "creation": "2026-11-12 12:00:00.000000",
+ "default_print_format": "Supplier Return - Sapphire",
+ "description": "Something we bought going back to the supplier: the request we emailed, the supplier's return number, how it went back, and whether the money came back. ERPNext's own Purchase Return, Debit Note and Payment Entry move the stock and the money; this record links them.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "supplier",
+  "supplier_name",
+  "purchase_receipt",
+  "purchase_order",
+  "column_break_main",
+  "posting_date",
+  "status",
+  "requested_resolution",
+  "company",
+  "project",
+  "items_section",
+  "items",
+  "amounts_section",
+  "total_amount",
+  "tax_amount",
+  "column_break_amounts",
+  "restocking_fee",
+  "return_shipping_cost",
+  "shipping_deducted",
+  "column_break_expected",
+  "expected_amount",
+  "request_section",
+  "contact_email",
+  "request_notes",
+  "column_break_request",
+  "requested_on",
+  "requested_how",
+  "requested_by",
+  "answer_section",
+  "supplier_return_number",
+  "column_break_answer",
+  "responded_on",
+  "supplier_response_notes",
+  "going_back_section",
+  "return_method",
+  "carrier",
+  "tracking_number",
+  "column_break_going_back",
+  "sent_back_on",
+  "stock_section",
+  "stock_state",
+  "record_only_note",
+  "column_break_stock",
+  "purchase_return",
+  "replacement_receipt",
+  "outcome_section",
+  "amount_received",
+  "money_received_on",
+  "money_reference",
+  "money_source",
+  "column_break_outcome",
+  "debit_note",
+  "payment_entry",
+  "amount_difference",
+  "closed_on",
+  "money_recorded_by",
+  "outcome_notes",
+  "status_changed_on",
+  "waiting_on_money"
+ ],
+ "fields": [
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Supplier",
+   "options": "Supplier",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "supplier.supplier_name",
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "label": "Supplier Name",
+   "read_only": 1
+  },
+  {
+   "description": "The receipt the items came in on. A second return against the same receipt is a second Supplier Return.",
+   "fieldname": "purchase_receipt",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Purchase Receipt",
+   "options": "Purchase Receipt",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Filled when every line comes from one order.",
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Purchase Order",
+   "options": "Purchase Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Today",
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "description": "Set by the actions at the top of the form, never by hand.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nRequested\nApproved by Supplier\nDenied\nSent Back\nRefund Received\nCredit Received\nReplacement Received\nClosed Without Credit\nCanceled",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Refund",
+   "fieldname": "requested_resolution",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "What We Are Asking For",
+   "options": "Refund\nCredit on Account\nReplacement",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Filled when every line is for one project.",
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Supplier Return Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amounts_section",
+   "fieldtype": "Section Break",
+   "label": "Amounts"
+  },
+  {
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Items Total",
+   "read_only": 1
+  },
+  {
+   "description": "Starts as the receipt's tax in proportion to what is going back. Change it if the supplier refunds a different amount.",
+   "fieldname": "tax_amount",
+   "fieldtype": "Currency",
+   "label": "Tax to Be Refunded"
+  },
+  {
+   "fieldname": "column_break_amounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What the supplier keeps.",
+   "fieldname": "restocking_fee",
+   "fieldtype": "Currency",
+   "label": "Restocking Fee"
+  },
+  {
+   "fieldname": "return_shipping_cost",
+   "fieldtype": "Currency",
+   "label": "Return Shipping Cost"
+  },
+  {
+   "default": "0",
+   "description": "Leave off when we pay the carrier ourselves: that is our cost, not money the supplier keeps.",
+   "fieldname": "shipping_deducted",
+   "fieldtype": "Check",
+   "label": "Supplier Takes Return Shipping out of the Refund"
+  },
+  {
+   "fieldname": "column_break_expected",
+   "fieldtype": "Column Break"
+  },
+  {
+   "bold": 1,
+   "description": "Items + tax - restocking fee, and - return shipping when the supplier deducts it.",
+   "fieldname": "expected_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Expected Amount Back",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": "The Request"
+  },
+  {
+   "description": "Where the return request goes. You choose the recipient again before it is sent.",
+   "fieldname": "contact_email",
+   "fieldtype": "Data",
+   "label": "Supplier's Email",
+   "options": "Email"
+  },
+  {
+   "description": "Added to the email and the PDF.",
+   "fieldname": "request_notes",
+   "fieldtype": "Small Text",
+   "label": "Note to the Supplier"
+  },
+  {
+   "fieldname": "column_break_request",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "requested_on",
+   "fieldtype": "Datetime",
+   "label": "Requested On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "requested_how",
+   "fieldtype": "Select",
+   "label": "Requested By",
+   "no_copy": 1,
+   "options": "\nEmail\nPhone\nIn person\nSupplier's website",
+   "read_only": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By (Person)",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "answer_section",
+   "fieldtype": "Section Break",
+   "label": "The Supplier's Answer"
+  },
+  {
+   "description": "The RMA or return authorization number the supplier gave. Leave blank if they gave none.",
+   "fieldname": "supplier_return_number",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Supplier's Return Number",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_answer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "responded_on",
+   "fieldtype": "Datetime",
+   "label": "Answered On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "supplier_response_notes",
+   "fieldtype": "Small Text",
+   "label": "What the Supplier Said",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "going_back_section",
+   "fieldtype": "Section Break",
+   "label": "Going Back"
+  },
+  {
+   "fieldname": "return_method",
+   "fieldtype": "Select",
+   "label": "How It Goes Back",
+   "no_copy": 1,
+   "options": "\nCarrier\nDropped off\nSupplier pickup"
+  },
+  {
+   "depends_on": "eval:doc.return_method=='Carrier'",
+   "fieldname": "carrier",
+   "fieldtype": "Data",
+   "label": "Carrier",
+   "no_copy": 1
+  },
+  {
+   "depends_on": "eval:doc.return_method=='Carrier'",
+   "fieldname": "tracking_number",
+   "fieldtype": "Data",
+   "label": "Tracking Number",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_going_back",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_back_on",
+   "fieldtype": "Date",
+   "label": "Sent Back On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_section",
+   "fieldtype": "Section Break",
+   "label": "Stock"
+  },
+  {
+   "fieldname": "stock_state",
+   "fieldtype": "Small Text",
+   "label": "Stock",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "depends_on": "record_only_note",
+   "fieldname": "record_only_note",
+   "fieldtype": "Small Text",
+   "label": "Why No Stock Document",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_stock",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "ERPNext's own return document. It moves the stock and posts the ledger.",
+   "fieldname": "purchase_return",
+   "fieldtype": "Link",
+   "label": "Purchase Return",
+   "no_copy": 1,
+   "options": "Purchase Receipt",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "replacement_receipt",
+   "fieldtype": "Link",
+   "label": "Replacement Receipt",
+   "no_copy": 1,
+   "options": "Purchase Receipt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "The Outcome"
+  },
+  {
+   "fieldname": "amount_received",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount Received",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "money_received_on",
+   "fieldtype": "Date",
+   "label": "Received On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "money_reference",
+   "fieldtype": "Data",
+   "label": "Reference",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Typed by hand means nobody has linked an ERPNext Debit Note or Payment Entry: the amount is somebody's word.",
+   "fieldname": "money_source",
+   "fieldtype": "Select",
+   "label": "Where the Amount Comes From",
+   "no_copy": 1,
+   "options": "\nTyped by hand\nDebit Note\nPayment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_outcome",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "debit_note",
+   "fieldtype": "Link",
+   "label": "Debit Note",
+   "no_copy": 1,
+   "options": "Purchase Invoice",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "label": "Refund Payment",
+   "no_copy": 1,
+   "options": "Payment Entry",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "amount_difference",
+   "fieldtype": "Currency",
+   "label": "Expected Less Received",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "closed_on",
+   "fieldtype": "Date",
+   "label": "Finished On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "money_recorded_by",
+   "fieldtype": "Link",
+   "label": "Outcome Recorded By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome_notes",
+   "fieldtype": "Small Text",
+   "label": "Outcome Notes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_changed_on",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Status Changed On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "waiting_on_money",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "in_standard_filter": 1,
+   "label": "Waiting on Money",
+   "no_copy": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Supplier Return",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "supplier_name,purchase_receipt,supplier_return_number,status",
+ "show_title_field_in_link": 0,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "supplier_name",
+ "track_changes": 1
+}

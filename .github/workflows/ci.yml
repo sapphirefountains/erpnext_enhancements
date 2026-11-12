@@ -4151,6 +4151,31 @@ jobs:
       # step; unittest classes.
       - name: Turn on Maintain Stock (checks, switch, endpoints, receipt guards; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
+      # Supplier Returns (v1.807.0): the rules of sending something back to a supplier. Fails the
+      # build if an outcome (refund, credit, replacement, closed) can be recorded before the items
+      # were marked Sent Back, if a Stock User can mark money received or an Accounts User can ship,
+      # if a line can return more than its receipt line received less what other returns hold, if a
+      # receipt line of an item switched to a stock item later (no stock ledger entry) is put on the
+      # standard Purchase Return (ERPNext would take out stock that was never put in), if the
+      # standard return is cut to the wrong lines or a shortfall is trimmed in silence, if a typed
+      # refund is accepted once a Debit Note or Payment Entry is linked, if a debit note the
+      # supplier still owes on counts as money received, or if the keys the Project Materials
+      # report reads (returned_line) are renamed. Pure: no frappe, no stub. unittest classes.
+      - name: Supplier Returns rules (steps, quantities, which document, the money rule; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v
+      # Supplier Returns, the module and its endpoints, with the module's own queries run for real
+      # on SQLite. Fails the build if a second return against a receipt can take what the first
+      # holds; if a record-only line reaches ERPNext's mapper or the Maintain Stock guard's
+      # ignore flag is ever set; if the drafted Purchase Return or Debit Note carries lines or
+      # quantities that are not this return's, is submitted, or (the debit note) moves stock a
+      # second time; if a status or an amount typed into a save sticks; if a payment TO a supplier
+      # is taken for a refund; if anything but the Send button's endpoint can send the return
+      # request (a save, a step, a doc_event, the daily job) or that endpoint accepts an API key;
+      # if a doc_event can raise into a Purchase Receipt's or a payment's submit; or if hooks, the
+      # DocType's options, the scripts' lists, Stock Scan's endpoint map, the print format, the
+      # workspace or the patches drift from the code. Own frappe stub, so its own step; unittest.
+      - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the
