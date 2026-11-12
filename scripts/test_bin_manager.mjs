@@ -2179,17 +2179,21 @@ test("the real page: on a site without the Project Shelf's release, moves are wh
 	check("the old boot: the make-home box is offered as before", p.props["make_home.hidden"], 0);
 });
 
-test("by project: the job on screen is named on the way to the site, and left out on the way back", async () => {
+test("by project: no job is sent on a move to or from the job's site", async () => {
+	// One end of the move is always the job's site, and the site names its job. The server checks
+	// a job it is sent before the site's own job wins, so the job on screen is never sent: it
+	// could only add a refusal the site alone would not give.
 	const { server, world, ctl } = makeViewController({ boot: SHELF_BOOT });
 	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
 	await settle();
+	check("the page may send a job elsewhere (the Project Shelf's release is installed)", ctl.perms().shelf, SHELF);
 	const sections = views.project_sections(ctl.state.project.data, ctl.perms());
 	await ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 1 }, "bm-proj-0000011");
-	check("to the site: the view's job", server.writes().pop().args.project, "PRJ-90001");
+	const out = server.writes().pop();
+	check("to the site: it is the ordinary move", out.method.endsWith("bin_assignments.move_to"), true);
+	check("to the site: no job, the site names it", "project" in out.args, false);
 	await ctl.project_submit("to_shelf", sections.site.rows[0], { qty: 1 }, "bm-proj-0000012");
-	// The site names the job; a job named for stock going onto the shelf must still be in progress,
-	// which would refuse bringing back a finished job's leftovers.
-	check("back to the shelf: nothing, the site names it", "project" in server.writes().pop().args, false);
+	check("back to the shelf: no job, the site names it", "project" in server.writes().pop().args, false);
 	const plain = makeViewController();
 	plain.world.go_to("/desk/bin-manager/by-project/PRJ-90001");
 	await settle();

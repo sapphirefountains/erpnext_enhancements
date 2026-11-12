@@ -60,9 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - *Onto the shelf from a bin:* "Which job are these being set aside for?", found by name.
     - *Between the shelf and a job site:* nothing is asked and nothing is sent; the site names
       its job. The make-it-this-item's-bin box is not offered for the shelf or a job site.
-    - *In By project:* the job on screen is sent on the way to the site. On the way back it is
-      left out, because the site names it and the server holds a job named for stock going onto
-      the shelf to one still in progress, which would refuse a finished job's leftovers.
+    - *In By project:* nothing is sent either way, for the same reason: one end of every move
+      there is the job's site. The server checks a job it is sent before the site's own job
+      wins, so sending the job on screen could only add a refusal the site alone would not give.
     The job goes to `bin_assignments.move_to` / `send_to_boneyard` as `project`, and a missing
     one is refused in the dialog before anything is sent. **On a site without that release the
     page asks nothing and sends nothing extra**: the server says whether it can take a job
@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no writes, the kinds, the counts, the customer and value gates, a project's details only for
   someone who may read it, By project and Problems, with and without the Project Shelf module,
   and when the page may ask for a job.
-  `scripts/test_bin_manager.mjs` grew from 342 to 553 checks, among them a move off the shelf
+  `scripts/test_bin_manager.mjs` grew from 342 to 555 checks, among them a move off the shelf
   with one exact job, with several, with none, a move onto the shelf, and a site without the
   Project Shelf's release: the new routes, the filters through
   the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,

@@ -487,7 +487,8 @@ export class Controller {
 	 * By project: move a row between the Project Shelf and the job's site. `direction` is
 	 * "to_site" or "to_shelf" (views.project_move). The transfer is the page's ordinary Move
 	 * (bin_assignments.move_to), so it is logged, carries the job, and can be undone; nothing is
-	 * ever made an item's bin from here.
+	 * ever made an item's bin from here. The page sends no `project` either way: one end of the
+	 * move is always the job's site, and the site names its job.
 	 *
 	 * A job with no site yet has it opened first (api.stock_scan.job_site, which refuses what
 	 * the move itself would refuse). Opening a site posts no stock, so a failure there saved
@@ -497,16 +498,16 @@ export class Controller {
 		const held = this.state.project;
 		const move = views.project_move(direction, held && held.data);
 		if (!move) return Promise.reject({ message: "That move cannot be made from here.", keep_ref: false });
-		// The job is the one on screen. It is named on the way to the site, on a site that takes
-		// it (the server uses the site's own job there either way). On the way back it is left
-		// out: the site names the job, and a job named for stock going ONTO the shelf must be one
-		// still in progress, which would refuse bringing back a finished job's leftovers.
-		const project = direction === "to_site" && this.perms().shelf ? held.project : "";
+		// No job is sent, in either direction: a move to or from a job site takes its job from
+		// the site, as the one-bin view's Move already does. The server checks a job it is SENT
+		// before the site's own job wins, so sending the one on screen could only add a refusal
+		// the site alone would not give (a finished job's leftovers on the way back, a job the
+		// caller may not name on the way out).
 		const send = (to_warehouse) =>
 			this.submit(
 				"move",
 				row,
-				{ qty: (values || {}).qty, to_warehouse, from_warehouse: move.from_warehouse, make_home: false, project },
+				{ qty: (values || {}).qty, to_warehouse, from_warehouse: move.from_warehouse, make_home: false },
 				ref
 			);
 		if (!move.needs_site) return send(move.to_warehouse);
