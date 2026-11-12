@@ -7,116 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.811.0] - 2026-11-12
-
-### Added
-- **The Procurement Tracker says where each item is now, filters by place, status and supplier,
-  and can be read by item.** Nikolas, 2026-11-12: "In the Procurement Tracker it'd be nice to
-  see what's where for items. So enhanced filtering and formatting of data." The tracker is the
-  procurement tree on the Project form's Budget tab.
-  - **Where it is now.** The Warehouse column showed where a line was *received*. A part
-    received onto the shelf and carried to the job a week later still read "Stores". Each line
-    now lists the places its item is for this job, with a quantity each: on the Project Shelf,
-    at the job's site, in a named bin, taken to the job, returned to the supplier. "Received at"
-    is still shown, under the places. A non-stock line says "Location not tracked (not a stock
-    item)" instead of showing a blank.
-  - **How it is worked out.** ERPNext keeps on-hand by item and warehouse and has no project on
-    that table. The stock ledger does carry the project, so the answer is the ledger rows that
-    name the job, added up by item and warehouse, and never more than the Bin row holds now: a
-    move or a count made with no job on it takes stock away without the ledger saying whose it
-    was. At the job's own site everything on hand is the job's. What the purchasing documents say
-    arrived and nothing accounts for reads "place not recorded" rather than being left out. The
-    rule is `inventory_enhancements/project_stock_rules.py`; the reads are
-    `inventory_enhancements/project_stock.py`.
-  - **It is per item for the job, not per line.** ERPNext keeps stock by item, so two lines of
-    one item share one answer, and the cell says so.
-  - **Parts brought back are counted once, where they are.** A job that took 3 and put 3 back
-    with a Material Receipt has them at the place they came back to and has taken none. They
-    used to read as on the shelf and taken to the job at once.
-  - **The shelf number is the Bin Manager's number.** Once the Project Shelf's module is
-    installed, a job's share of the shelf comes from `project_shelf.shelf_stock`, which shares a
-    short shelf out between the jobs that claim it, through the same adapter the Bin Manager
-    uses. The tracker's own ledger sum would have given each job its full claim, so two jobs
-    could read 6 and 6 here and 4 and 2 there.
-  - **One lookup for the whole project.** The ledger grouped once, the Bin rows at the warehouses
-    involved, their names, the items and the job sites: the same handful of queries for 3 lines
-    or 300. If the lookup fails, the tracker still shows quantities and statuses and says the
-    locations could not be read; the failure goes to the Error Log.
-  - **The Project Shelf.** The shelf is the Project Shelf module's own answer
-    (`inventory_enhancements/project_shelf.py`, `warehouse()`), which another release adds. That
-    module is imported where it is used, so either release can merge first: without it the
-    setting `Inventory Scanner Settings.project_shelf_warehouse` is read directly, and a site
-    without that field has no shelf, so stock in `Stores` shows as a named shop location.
-  - **Returned to the supplier.** Read from the stock ledger's purchase-return rows and, once the
-    Supplier Return record is installed, from `supplier_returns.returned_lines(project=...)`. The
-    purchase return behind a Supplier Return is the same goods the ledger counts, so the two are
-    never added: the larger figure is shown. Each Supplier Return that names the item is listed
-    under its places with its status, and says whether the goods have left ("sent back") or are
-    still here ("to go back"). A non-stock item's return is listed too. That module is also
-    imported where it is used; without it only the ledger is read.
-  - **A plain status on every line.** To order, Ordered, Partly received, Received, Late or
-    Closed, from the line's own quantities (`procurement_overview.py`). An order that was closed
-    with goods outstanding, or a stopped request, is Closed and never Late: 148 order lines on
-    production sit on orders closed with nothing received, and "late" has to mean the few that
-    somebody should chase. A line that sits only on a draft order is To order. A request line
-    split across two orders is late only on the order that is still short.
-  - **Filters.** Where (Project Shelf, Job site, Shop bins, Taken to the job, Returned to
-    supplier, Not received yet, Location not tracked), Status, Supplier, and "Needs action only",
-    beside the search box. Only choices that match at least one line are offered, and a filter
-    opens the groups and documents that hold a match.
-  - **By item.** A second grouping beside By document: one row per item for the job, with
-    requested, ordered and received across every document, its status, where it is now, the due
-    date, its suppliers and its documents. Quotes and bills are in its Documents column and out
-    of its quantities. **Print list** prints the items on screen with where each is now. The
-    document PDFs (Print on a group or a document) are unchanged: those go to suppliers.
-  - **The view is in the address.** The grouping and every filter are written into the address
-    (`?pt_view=items&pt_where=project_shelf`) with `history.replaceState`, so they survive a
-    reload, come back with Back and Forward, and travel in a shared link. A filter is never a
-    history entry of its own. frappe copies an address's query into `frappe.route_options`; the
-    widget takes its own keys back out.
-  - **Easier to read.** Statuses are the Desk's own badges. Quantities line up. An item is its
-    code and then its name on at most two lines, so one long description no longer sets the width
-    of the table. The three levels are indented with a rule down the side. On a phone each line
-    is a card with its columns named, and nothing scrolls sideways.
-  - **Return is still there.** Supplier Returns (v1.807.0) added a Return button to a receipt's
-    header in the tracker and a Return link on a line's receipt step. Both were carried into the
-    rewritten widget unchanged: the same rules for when they show, and the same launcher, which
-    opens an unsaved Supplier Return.
-  - **The assistant tool** `project_procurement_status` gained `view="items"`, and every item row
-    in every view carries the new keys (`line_state`, `needs_action`, `expected_date`,
-    `supplier`, `where_now`, `where_now_text`, `location_tracked`, `received_at`). No key was
-    renamed or removed.
-
-### Fixed
-- **A receipt with no purchase order read "Not Received" on the receipt that received it.** A
-  submitted Purchase Receipt that never joined a chain (a store run) was listed with 0 received.
-  It now reads as received.
-- **A draft order that never joined a chain read as Ordered.** Only a submitted order is ordered,
-  and one path still counted a draft: a draft Purchase Order found only by the per-doctype sweep
-  was given its full quantity as ordered. Its quantity is now reported as draft, the line reads
-  To order, and it is left out of the item's ordered total. A draft receipt found the same way
-  has received nothing.
-- **The tracker no longer leaves an old copy of itself running.** Every refresh of the Project
-  form mounted a new Vue app over the last one and left the old one alive. The last one is now
-  unmounted first, and what was expanded and how each table was sorted survives the refresh.
-- **Names are never read as HTML.** Item codes, item names, suppliers and document names reached
-  the page through `v-html` unescaped. Every one now goes through a highlighter that escapes each
-  piece.
-
-### Tests
-- `tests/test_procurement_overview.py` (pytest, 40 tests): the where-now rule, the states and the
-  by-item sums. `tests/test_project_stock.py` (37 tests, own frappe stub): the lookup's queries,
-  the Project Shelf and Supplier Return modules present, absent and failing, the feed's new
-  functions, a draft document that never joined a chain, and the two `SELECT`s of the feed's
-  `UNION` held to the same columns in the same order, which otherwise fails only on MariaDB.
-  `scripts/test_procurement_tracker.mjs` (node, 112 checks): the address, the filters, sorting,
-  labels and escaping. `tests/test_tracker_supplier_returns.py` (6 tests) runs the tracker's
-  reading of Supplier Returns against the real `supplier_returns.returned_lines`, on that
-  module's own test stub, rather than a stand-in. Each has its own CI step.
-- **Not run:** nothing here ran on a bench. `tests/test_procurement_status.py` needs one and is
-  not in CI. The widget was checked in a browser against a stand-in Desk with made-up data, not
-  against a real Project form.
-## [1.810.0] - 2026-11-12
+## [1.813.0] - 2026-11-12
 
 ### Added
 - **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
@@ -256,16 +147,227 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     merges nothing where both names exist, moves no stock, and never writes over a stored
     setting. On a never-saved Single it writes every declared default before the field, so the
     others keep reading as they did.
-  - **Not built:** the Bin Manager page does not ask for the job yet (`move_to` and
-    `send_to_boneyard` take `project`, and without one the server uses the only job that holds
-    the item when its tags are exact); moving a part on the shelf from one job to another without
-    it leaving the shelf; and non-stock items, which never reach stock.
+  - **With the releases that merged first.** The Procurement Tracker (v1.811.0), the Bin
+    Manager's views (v1.812.0) and the inventory reports (v1.805.0) each read the shelf through
+    this module, behind an import that was guarded until it existed. It exists from this release,
+    so the Bin Manager now asks which job a move onto or off the shelf is for
+    (`bin_views.shelf_job_moves`), and all three show a job's capped figure. Their suites stood
+    in for "the module is not installed" by removing a stand-in from `sys.modules`; with the real
+    file on disk that import succeeds, so `tests/test_project_stock.py` and
+    `tests/test_bin_views.py` now block the import instead. No assertion in either changed.
+    `tests/test_project_shelf.py` runs each of the three against the real module.
+  - **Not built:** moving a part on the shelf from one job to another without it leaving the
+    shelf; and non-stock items, which never reach stock.
 
 ### Changed
 - `tests/test_job_sites`, `tests/test_bin_assignments`, `tests/test_stock_scan_surface` and
   `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
   shared set, and the one more branch `receive_items` writes a warehouse in.
   `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
+## [1.812.0] - 2026-11-12
+
+### Added
+- **The Bin Manager has filters on its picker and three more views: By project, Job sites and
+  Problems.** Nikolas, 2026-11-12: "In the Bin Manager page, having more filters and different
+  views would be good. So for example I want to be able to see by Project which items are at the
+  Job Site, etc."
+  - **Filters on the picker.** The kind of place (shop bins, Project Shelf, job sites, Boneyard,
+    vehicles, each with its count), a job (shown with its customer), an item (the places that
+    hold it or have it assigned, with how much is there), and one quick filter: has stock, empty,
+    assigned items missing, unassigned stock. They combine with the box for typing a name.
+  - **By project** (`/desk/bin-manager/by-project`). The jobs that have material on the Project
+    Shelf or at a job site. Pick one to see both lists side by side. Each shelf row has **Send to
+    job site** and each site row has **Bring back to the shelf**.
+  - **Job sites** (`/desk/bin-manager/job-sites`). Every job site with its job, customer, item
+    count and value, with a total. A finished job whose site still holds stock is flagged.
+  - **Problems** (`/desk/bin-manager/problems`). Four lists, each row linked to the bin or job
+    that fixes it: assigned but empty, stock with no assignment, stock on the Project Shelf for a
+    finished job, and stock still at a finished job's site. On production today that is 108
+    assigned-but-empty rows and 30 with no assignment.
+  - **Back and Forward.** The four tabs are routes, so each is one history entry. The picker's
+    filters are written into the picker's own address in place
+    (`?kind=job_site&project=PRJ-00597`), so a filter is never a history entry, Back from a bin
+    lands on the picker as it was left, and a link carries the filters. The old
+    `/desk/bin-manager/<warehouse>` and `?warehouse=` links work as before.
+  - **The moves are the page's ordinary Move.** Send and Bring back call the existing
+    `bin_assignments.move_to`: a logged Material Transfer that carries the job and can be undone.
+    Nothing is made an item's bin from here. A job with no site has it opened first, through the
+    existing `api.stock_scan.job_site`. Only the job's own share of the shelf can be sent.
+  - **What "on the Project Shelf for this job" means.** The job's share of the shelf from the
+    Project Shelf's own function, `project_shelf.shelf_stock`: its `qty`, which that function
+    holds to what is physically on the shelf and shares out between the jobs that claim it. The
+    job's ledger balance is beside it as `tagged`, and can be more, after a count or a move made
+    with no job on it. So a row shows what the shelf can hand over, says "of N on record" when
+    `tagged` is more, and a line above the list says to count the shelf. The Procurement Tracker
+    shows the same number. It all comes through
+    `project_stock.shelf_stock` and `shelf_by_project`; there is no shelf query in the Bin
+    Manager's own module. `project_shelf` arrives with another release and is imported where it
+    is used, so either can merge first: until it is there the same rule is applied to the ledger
+    directly.
+  - **A move onto or off the Project Shelf names its job.** Whose stock is on the shelf is read
+    from the job on each stock ledger row, so a move with no job on it makes the shelf's
+    by-project numbers drift. On a site with the Project Shelf's release (v1.804.0), the Move
+    and Send to boneyard dialogs ask:
+    - *Off the shelf, to a bin or the boneyard:* "Which job were these bought for?", listing the
+      jobs that hold the item there with what each holds (`api.stock_scan.get_item`'s
+      `shelf_jobs`). The only job is chosen for the person only when the server says those jobs
+      account for every unit of it (`shelf_jobs_exact`). With several, with none, or when the
+      tags do not add up, the person picks, by name if the job is not listed. A finished job may
+      be named.
+    - *Onto the shelf from a bin:* "Which job are these being set aside for?", found by name.
+    - *Between the shelf and a job site:* nothing is asked and nothing is sent; the site names
+      its job. The make-it-this-item's-bin box is not offered for the shelf or a job site.
+    - *In By project:* nothing is sent either way, for the same reason: one end of every move
+      there is the job's site. The server checks a job it is sent before the site's own job
+      wins, so sending the job on screen could only add a refusal the site alone would not give.
+    The job goes to `bin_assignments.move_to` / `send_to_boneyard` as `project`, and a missing
+    one is refused in the dialog before anything is sent. **On a site without that release the
+    page asks nothing and sends nothing extra**: the server says whether it can take a job
+    (`shelf_job_moves`, read from the installed `move_to`'s own signature), so the two releases
+    can merge in either order.
+  - **Leftover rules at the shelf are not assignments.** Nothing is kept at the Project Shelf, a
+    job site or the boneyard as an item's bin, so those places show 0 assigned and 0 missing
+    whatever Putaway Rules remain from before (production's shelf was `Stores`, with 54), and
+    Problems does not list them as assigned but empty.
+  - **Kinds of place are decided on the server** (`inventory_enhancements/bin_views.py`): the
+    Project Shelf from `Inventory Scanner Settings.project_shelf_warehouse`, the sites from the
+    job-site field, vehicles from `Employee.custom_default_vehicle_warehouse`. A site without one
+    of those simply has none of that kind. If that data cannot be read at all, the page is the
+    one it was before this release.
+  - **Stock at a job site, the boneyard or the Project Shelf is never "unassigned".** Nothing is
+    assigned to those places by design.
+  - **Who sees what.** Every new read is behind the same role gate as the rest of the page. A
+    job's customer is shown only to someone who can read Projects, and stock value only to
+    someone who can read the Stock Ledger. The By project view of one job takes the job's id
+    from the address, so it is stricter: the job's status, type and customer go only to someone
+    who may read that Project (the role and any User Permission). Anyone else gets the id, the
+    name the job's site already shows them, and the stock, is not told ahead of time that the
+    job is finished, and gets the same answer for a job they may not read as for one that does
+    not exist.
+
+### Tests
+- `tests/test_bin_views.py` (33 tests, own frappe stub, own CI step): the gate before every read,
+  no writes, the kinds, the counts, the customer and value gates, a project's details only for
+  someone who may read it, By project and Problems, with and without the Project Shelf module,
+  and when the page may ask for a job.
+  `scripts/test_bin_manager.mjs` grew from 342 to 555 checks, among them a move off the shelf
+  with one exact job, with several, with none, a move onto the shelf, and a site without the
+  Project Shelf's release: the new routes, the filters through
+  the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,
+  and the real page script drawing each view. `tests/test_bin_manager.py` holds the boot's new
+  keys, the new endpoints as whitelisted, and the page to `replaceState` only.
+- **Not run:** nothing here ran on a bench or against production. The page was checked in a
+  browser against a stand-in Desk with made-up data.
+
+## [1.811.0] - 2026-11-12
+
+### Added
+- **The Procurement Tracker says where each item is now, filters by place, status and supplier,
+  and can be read by item.** Nikolas, 2026-11-12: "In the Procurement Tracker it'd be nice to
+  see what's where for items. So enhanced filtering and formatting of data." The tracker is the
+  procurement tree on the Project form's Budget tab.
+  - **Where it is now.** The Warehouse column showed where a line was *received*. A part
+    received onto the shelf and carried to the job a week later still read "Stores". Each line
+    now lists the places its item is for this job, with a quantity each: on the Project Shelf,
+    at the job's site, in a named bin, taken to the job, returned to the supplier. "Received at"
+    is still shown, under the places. A non-stock line says "Location not tracked (not a stock
+    item)" instead of showing a blank.
+  - **How it is worked out.** ERPNext keeps on-hand by item and warehouse and has no project on
+    that table. The stock ledger does carry the project, so the answer is the ledger rows that
+    name the job, added up by item and warehouse, and never more than the Bin row holds now: a
+    move or a count made with no job on it takes stock away without the ledger saying whose it
+    was. At the job's own site everything on hand is the job's. What the purchasing documents say
+    arrived and nothing accounts for reads "place not recorded" rather than being left out. The
+    rule is `inventory_enhancements/project_stock_rules.py`; the reads are
+    `inventory_enhancements/project_stock.py`.
+  - **It is per item for the job, not per line.** ERPNext keeps stock by item, so two lines of
+    one item share one answer, and the cell says so.
+  - **Parts brought back are counted once, where they are.** A job that took 3 and put 3 back
+    with a Material Receipt has them at the place they came back to and has taken none. They
+    used to read as on the shelf and taken to the job at once.
+  - **The shelf number is the Bin Manager's number.** Once the Project Shelf's module is
+    installed, a job's share of the shelf comes from `project_shelf.shelf_stock`, which shares a
+    short shelf out between the jobs that claim it, through the same adapter the Bin Manager
+    uses. The tracker's own ledger sum would have given each job its full claim, so two jobs
+    could read 6 and 6 here and 4 and 2 there.
+  - **One lookup for the whole project.** The ledger grouped once, the Bin rows at the warehouses
+    involved, their names, the items and the job sites: the same handful of queries for 3 lines
+    or 300. If the lookup fails, the tracker still shows quantities and statuses and says the
+    locations could not be read; the failure goes to the Error Log.
+  - **The Project Shelf.** The shelf is the Project Shelf module's own answer
+    (`inventory_enhancements/project_shelf.py`, `warehouse()`), which another release adds. That
+    module is imported where it is used, so either release can merge first: without it the
+    setting `Inventory Scanner Settings.project_shelf_warehouse` is read directly, and a site
+    without that field has no shelf, so stock in `Stores` shows as a named shop location.
+  - **Returned to the supplier.** Read from the stock ledger's purchase-return rows and, once the
+    Supplier Return record is installed, from `supplier_returns.returned_lines(project=...)`. The
+    purchase return behind a Supplier Return is the same goods the ledger counts, so the two are
+    never added: the larger figure is shown. Each Supplier Return that names the item is listed
+    under its places with its status, and says whether the goods have left ("sent back") or are
+    still here ("to go back"). A non-stock item's return is listed too. That module is also
+    imported where it is used; without it only the ledger is read.
+  - **A plain status on every line.** To order, Ordered, Partly received, Received, Late or
+    Closed, from the line's own quantities (`procurement_overview.py`). An order that was closed
+    with goods outstanding, or a stopped request, is Closed and never Late: 148 order lines on
+    production sit on orders closed with nothing received, and "late" has to mean the few that
+    somebody should chase. A line that sits only on a draft order is To order. A request line
+    split across two orders is late only on the order that is still short.
+  - **Filters.** Where (Project Shelf, Job site, Shop bins, Taken to the job, Returned to
+    supplier, Not received yet, Location not tracked), Status, Supplier, and "Needs action only",
+    beside the search box. Only choices that match at least one line are offered, and a filter
+    opens the groups and documents that hold a match.
+  - **By item.** A second grouping beside By document: one row per item for the job, with
+    requested, ordered and received across every document, its status, where it is now, the due
+    date, its suppliers and its documents. Quotes and bills are in its Documents column and out
+    of its quantities. **Print list** prints the items on screen with where each is now. The
+    document PDFs (Print on a group or a document) are unchanged: those go to suppliers.
+  - **The view is in the address.** The grouping and every filter are written into the address
+    (`?pt_view=items&pt_where=project_shelf`) with `history.replaceState`, so they survive a
+    reload, come back with Back and Forward, and travel in a shared link. A filter is never a
+    history entry of its own. frappe copies an address's query into `frappe.route_options`; the
+    widget takes its own keys back out.
+  - **Easier to read.** Statuses are the Desk's own badges. Quantities line up. An item is its
+    code and then its name on at most two lines, so one long description no longer sets the width
+    of the table. The three levels are indented with a rule down the side. On a phone each line
+    is a card with its columns named, and nothing scrolls sideways.
+  - **Return is still there.** Supplier Returns (v1.807.0) added a Return button to a receipt's
+    header in the tracker and a Return link on a line's receipt step. Both were carried into the
+    rewritten widget unchanged: the same rules for when they show, and the same launcher, which
+    opens an unsaved Supplier Return.
+  - **The assistant tool** `project_procurement_status` gained `view="items"`, and every item row
+    in every view carries the new keys (`line_state`, `needs_action`, `expected_date`,
+    `supplier`, `where_now`, `where_now_text`, `location_tracked`, `received_at`). No key was
+    renamed or removed.
+
+### Fixed
+- **A receipt with no purchase order read "Not Received" on the receipt that received it.** A
+  submitted Purchase Receipt that never joined a chain (a store run) was listed with 0 received.
+  It now reads as received.
+- **A draft order that never joined a chain read as Ordered.** Only a submitted order is ordered,
+  and one path still counted a draft: a draft Purchase Order found only by the per-doctype sweep
+  was given its full quantity as ordered. Its quantity is now reported as draft, the line reads
+  To order, and it is left out of the item's ordered total. A draft receipt found the same way
+  has received nothing.
+- **The tracker no longer leaves an old copy of itself running.** Every refresh of the Project
+  form mounted a new Vue app over the last one and left the old one alive. The last one is now
+  unmounted first, and what was expanded and how each table was sorted survives the refresh.
+- **Names are never read as HTML.** Item codes, item names, suppliers and document names reached
+  the page through `v-html` unescaped. Every one now goes through a highlighter that escapes each
+  piece.
+
+### Tests
+- `tests/test_procurement_overview.py` (pytest, 40 tests): the where-now rule, the states and the
+  by-item sums. `tests/test_project_stock.py` (37 tests, own frappe stub): the lookup's queries,
+  the Project Shelf and Supplier Return modules present, absent and failing, the feed's new
+  functions, a draft document that never joined a chain, and the two `SELECT`s of the feed's
+  `UNION` held to the same columns in the same order, which otherwise fails only on MariaDB.
+  `scripts/test_procurement_tracker.mjs` (node, 112 checks): the address, the filters, sorting,
+  labels and escaping. `tests/test_tracker_supplier_returns.py` (6 tests) runs the tracker's
+  reading of Supplier Returns against the real `supplier_returns.returned_lines`, on that
+  module's own test stub, rather than a stand-in. Each has its own CI step.
+- **Not run:** nothing here ran on a bench. `tests/test_procurement_status.py` needs one and is
+  not in CI. The widget was checked in a browser against a stand-in Desk with made-up data, not
+  against a real Project form.
 ## [1.809.0] - 2026-11-12
 
 ### Added

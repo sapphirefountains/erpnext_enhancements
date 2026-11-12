@@ -183,7 +183,7 @@ def _install_module(name, **functions):
 
 
 #: Modules that are in the app now, and that this suite still has to see as "not installed yet".
-#: The Project Shelf's own module shipped in v1.810.0. Before that, taking the stand-in out of
+#: The Project Shelf's own module shipped in v1.813.0. Before that, taking the stand-in out of
 #: ``sys.modules`` was enough to make ``import`` fail; now the real file is on disk and would be
 #: imported onto this suite's small stub. A ``None`` entry in ``sys.modules`` makes ``import``
 #: raise ImportError, which is exactly the site the fallback path is for.

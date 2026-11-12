@@ -27,10 +27,11 @@ model, the pure rules and the label reads.
 | `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
+| `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
-| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.810.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.813.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
 | `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
 | `project_stock_rules.py` | Where a project's material is now (v1.811.0), worked out from the stock ledger rows that name the job: the kinds of place (Project Shelf, the job's site, a shop bin, a vehicle, taken to the job, returned to the supplier, place not recorded), `item_places` (never more at a place than its Bin row holds; everything at the job's own site is the job's; a Supplier Return and the ledger's return rows never added together), `capped_shelf_rows`, `return_summary`, `shelf_rows`. No Frappe, no I/O |
 | `project_stock.py` | The reads behind it: `places_for(project, item_codes)` for the Procurement Tracker (one ledger query and three reads whatever the number of lines), `shelf_stock(project)` and `shelf_by_project()` (the one door for "what is on the Project Shelf for this job": `project_shelf.shelf_stock`, cut to what the shelf holds, with a ledger fallback until that module is installed), `shelf_warehouse()` (`project_shelf.warehouse()`, else the setting read with `Document.get`, so a site without the field has no shelf). The job's Supplier Returns come from `supplier_returns.returned_lines`. Both sibling modules are imported where they are used, so the releases can merge in any order. Writes nothing |
@@ -350,7 +351,7 @@ The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR
 
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.810.0) and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.813.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -689,7 +690,7 @@ all five with what to do. By hand: create a group Warehouse "Job Sites" under th
 choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
 safe twice.
 
-### The Project Shelf (v1.810.0)
+### The Project Shelf (v1.813.0)
 
 The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
 Parker can then change what location the item is going to", "everything but overhead items should
@@ -701,7 +702,7 @@ inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested be
 warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
 is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
 not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
-did before v1.810.0. It is an ordinary location in every other way: it has a QR label, it can be
+did before v1.813.0. It is an ordinary location in every other way: it has a QR label, it can be
 received to, counted and moved from.
 
 **Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
@@ -828,7 +829,7 @@ job-site work left them, and the shelf is taken out of their reading the same wa
 That is the right outcome for them: an order for a job no longer makes the board think the shop is
 covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
 replenishment order placed on an Overhead project now defaults to the item's own bin, inside
-`Inventory - SF`, so both kinds of rule count it; before v1.810.0 it defaulted to `Stores` and the
+`Inventory - SF`, so both kinds of rule count it; before v1.813.0 it defaulted to `Stores` and the
 23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
 are not corrected: no code of ours runs inside them.
 
@@ -869,8 +870,9 @@ may be assumed come from `api.stock_scan.get_item(item_code, warehouse=<the shel
 `shelf_jobs` (`[{project, project_name, qty}]`) and `shelf_jobs_exact`. With `project` left out,
 the server uses the only job that holds the item when the tags are exact, and otherwise refuses
 with a sentence that says to name one. A move onto the shelf sends the job it is set aside for
-(any open job from `api.stock_scan.search_projects`). The Bin Manager page itself does not ask
-yet.
+(any open job from `api.stock_scan.search_projects`). The Bin Manager page asks for the job on
+those moves since its views of v1.812.0 (`bin_views.shelf_job_moves`), which switch the question
+on when this module is installed and `move_to` takes `project`: both are true from this release.
 
 **Not built:** a way to move a part on the shelf from one job to another without it leaving the
 shelf; and non-stock items, which never enter stock and so never reach the shelf.
@@ -884,6 +886,67 @@ grouped under its parent, with how many items are on hand and assigned there, an
 `set_route`, Back returns to the picker, Forward to the bin, and dialogs push nothing (the router
 closes an open one on Back). `?warehouse=<name>` is read from `frappe.route_options` and opens that
 bin in place of the picker; `?q=` fills the filter.
+
+**Filters and views (v1.812.0).** Nik, 2026-11-12: "having more filters and different views
+would be good. So for example I want to be able to see by Project which items are at the Job
+Site."
+
+| Route | What it shows |
+|---|---|
+| `/desk/bin-manager` | The picker, now with filters: what is typed, the kind of place (shop bins, Project Shelf, job sites, Boneyard, vehicles), a job, an item (the places that hold it or have it assigned), and one quick filter (has stock, empty, assigned items missing, unassigned stock) |
+| `/desk/bin-manager/by-project` | The jobs with material on the Project Shelf or at a job site |
+| `/desk/bin-manager/by-project/<project>` | One job: what is on the Project Shelf for it and what is at its site, with **Send to job site** and **Bring back to the shelf** on each row |
+| `/desk/bin-manager/job-sites` | Every job site with its job, customer, item count and value |
+| `/desk/bin-manager/problems` | Assigned but empty; stock with no assignment; stock on the Project Shelf for a finished job; stock still at a finished job's site |
+
+- **The four tabs are routes**, so each is one history entry. **The picker's filters are not**:
+  they are written into the picker's own address in place (`?kind=job_site&project=PRJ-00597`,
+  `history.replaceState`), so a filter never adds an entry, Back from a bin lands on the picker as
+  it was left, and a link carries the filters. They come back in through `frappe.route_options`,
+  like the old `?warehouse=` link, which still opens its bin.
+- **A warehouse cannot be named like a view.** `by-project`, `job-sites` and `problems` are the
+  only reserved second segments; a warehouse's docname ends in its company's abbreviation.
+- **Kinds are the server's** (`bin_views.decorate`, called by `manager_boot`):
+  `project_stock_rules.warehouse_kind` with the Project Shelf from
+  `Inventory Scanner Settings.project_shelf_warehouse`, the sites from `job_sites`, the boneyard
+  the boot already chose, and vehicles from `Employee.custom_default_vehicle_warehouse` (anything
+  under a warehouse named there, or whose name reads as a truck or van). A site without the
+  Project Shelf field or the job-site field simply has none of that kind. If the extras cannot be
+  read at all, the page is the one it was before v1.812.0.
+- **"Unassigned stock" is only ever a shop bin's or a vehicle's.** Nothing is assigned to a job
+  site, the boneyard or the Project Shelf by design, so stock there is never counted or listed as
+  unassigned.
+- **The moves are the page's ordinary Move** (`bin_assignments.move_to`, never `make_home`): a
+  logged Material Transfer that carries the job and can be undone. A job with no site has it
+  opened first by `api.stock_scan.job_site`, which refuses what the move itself would refuse. The
+  page asks why nothing can be sent before it offers the button (`project_view.send_refusal`).
+  Only the job's own share of the shelf can be sent from this view.
+- **The Project Shelf's numbers come through `project_stock.shelf_stock` and
+  `shelf_by_project`**, the one door, which answer from `project_shelf.shelf_stock` once that
+  module is installed (and from the ledger by the same rule until then). A job's balance there is
+  by the job on each ledger row and can exceed what the shelf holds; a row is cut to what the
+  shelf can hand over and shows "of N on record" when the two differ. `bin_views.py` has no shelf
+  query of its own.
+- **A move onto or off the Project Shelf names its job** (with the Project Shelf's v1.804.0).
+  `logic.shelf_move` says when: off the shelf to a bin or the boneyard ("Which job were these
+  bought for?"), or onto it from a bin ("Which job are these being set aside for?"); never
+  between the shelf and a job site, whose job the site names. The Move and Send to boneyard
+  dialogs list the jobs that hold the item (`api.stock_scan.get_item`: `shelf_jobs`), start on the
+  only one only when `shelf_jobs_exact` is true, and otherwise make the person choose, by name
+  through `search_projects` if need be. The job is sent as `project` to `move_to` /
+  `send_to_boneyard`. The page asks only when the boot says `shelf_job_moves`
+  (`bin_views.shelf_job_moves`: the Project Shelf module is installed and the installed `move_to`
+  takes a `project`); otherwise it moves stock exactly as before.
+- **Nothing is assigned at the shelf, a job site or the boneyard**, so `assigned_items` and
+  `missing_items` are 0 there and Problems leaves their leftover Putaway Rules out.
+- **Who sees what.** Every read is behind the Stock Scan role gate. A job's customer is added only
+  for a caller who can read Projects; stock value only for one who can read the Stock Ledger.
+  `project_view` takes a project's name from the caller, so it checks that one Project
+  (`frappe.has_permission("Project", "read", doc=...)`): without it the answer carries the id,
+  the name the job's site already shows, and the stock, with no status, type, customer or
+  "finished" sentence, and reads the same for an unreadable job as for one that does not exist.
+- The pure decisions are `public/js/bin_manager/views.js`; the routes and saves stay in
+  `logic.js`. Tested by `scripts/test_bin_manager.mjs` and `tests/test_bin_views.py`.
 
 A bin shows the rows `api/stock_scan.get_location` returns, each with why it is listed, and these
 actions, shown only to people who can do them (from `bin_assignments.manager_boot`, never a role

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Every judgement about the Project Shelf (v1.810.0). No Frappe: tested bench-free.
+"""Every judgement about the Project Shelf (v1.813.0). No Frappe: tested bench-free.
 
 **What the Project Shelf is.** One shared warehouse where parts bought for a job wait until
 the job uses them. The owner's decision of 2026-11-12: everything ordered for a project is

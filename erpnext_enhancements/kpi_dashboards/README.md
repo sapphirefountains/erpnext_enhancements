@@ -100,7 +100,7 @@ that only a level above 0 did, which dropped every item reordered "when it runs 
 `snapshots.STOCKED_RULE_SQL` is the one definition the three stock KPIs share (four queries).
 
 **"On hand" means the shop's, for the three KPIs that ask whether the shop has a part**
-(v1.810.0): *Stocked Items Below Reorder*, *Stocked Items Out of Stock* and *Out-of-Stock Sellable
+(v1.813.0): *Stocked Items Below Reorder*, *Stocked Items Out of Stock* and *Out-of-Stock Sellable
 Items* sum actual qty over every bin **except job sites and the Project Shelf**
 (`snapshots._shop_on_hand_sql`, the set from `project_shelf.not_shop_warehouses()`). Parts across
 town, or bought for a job and waiting for it, do not stock the shop's shelf, and the Reorder Board

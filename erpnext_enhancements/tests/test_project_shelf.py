@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for the Project Shelf (v1.810.0).
+"""Bench-free tests for the Project Shelf (v1.813.0).
 
 The owner's decision of 2026-11-12: everything ordered for a project is received onto one
 shared Project Shelf by default, the person receiving can still put it somewhere else, stock
@@ -75,6 +75,8 @@ _OWN_MODULES = (
 	"erpnext_enhancements.api.procurement",
 	"erpnext_enhancements.inventory_enhancements.receipt_price",
 	"erpnext_enhancements.inventory_enhancements.project_stock",
+	"erpnext_enhancements.inventory_enhancements.bin_views",
+	"erpnext_enhancements.inventory_enhancements.inventory_report_data",
 	"erpnext",
 	"erpnext.buying",
 	"erpnext.buying.doctype",
@@ -136,6 +138,28 @@ def setUpModule():
 				key=lambda r: (r.get("priority") or 1, -base._bin_qty(r["item_code"], r["warehouse"]), r["warehouse"])
 			)
 			return [(r["warehouse"],) for r in rows]
+		if "from `tabWarehouse` w left join ( select warehouse, count(*) as items from `tabBin`" in text:
+			# bin_assignments._bin_rows: every usable leaf, with its two counts.
+			rows = []
+			for w in base._table("Warehouse").values():
+				if w.get("is_group") or w.get("disabled") or (w.get("warehouse_type") or "") == "Transit":
+					continue
+				held = [b for b in base._table("Bin").values() if b["warehouse"] == w["name"] and (b.get("actual_qty") or 0) > 0]
+				kept = {r["item_code"] for r in base._table("Putaway Rule").values() if r["warehouse"] == w["name"] and not r.get("disable")}
+				rows.append(
+					base._dict(
+						name=w["name"], warehouse_name=w["warehouse_name"], company=w["company"],
+						lft=w.get("lft"), rgt=w.get("rgt"), on_hand_items=len(held), assigned_items=len(kept),
+					)
+				)
+			return rows
+		if text.startswith("select item_code, actual_qty, valuation_rate from `tabBin` where warehouse = %(shelf)s"):
+			# inventory_report_data._shelf_bins: what is on the shelf, and at what rate.
+			return [
+				base._dict(item_code=b["item_code"], actual_qty=b.get("actual_qty"), valuation_rate=b.get("valuation_rate") or 2.0)
+				for b in base._table("Bin").values()
+				if b["warehouse"] == values["shelf"] and (not values.get("items") or b["item_code"] in values["items"])
+			]
 		if text.startswith("select count(*)") or "from `tabPurchase Order Item` poi" in text:
 			return [STATE.get("count_row", (0, 0, 0))]
 		if "`__UserSettings`" in text:
@@ -1818,6 +1842,102 @@ class TestTheProcurementTrackerReadsTheRealModule(_Base):
 		_reset(shelf_on=False)
 		_held(ITEM, (JOB_A, 3))
 		self.assertEqual(self.tracker.shelf_stock(JOB_A), [])
+
+
+# --------------------------------------------------------------------------- the reports' reading
+
+
+class TestTheReportsReadTheRealModule(_Base):
+	"""The inventory reports (v1.805.0, ``inventory_enhancements/inventory_report_data.py``) ask
+	this module whose stock is on the shelf. Their own suite uses a stand-in; this is the real
+	code together."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.reports = importlib.import_module("erpnext_enhancements.inventory_enhancements.inventory_report_data")
+
+	def _shares(self, **kwargs):
+		return sorted(
+			(row["project"], row["item_code"], row["qty"]) for row in self.reports.shelf_stock_by_project(SHELF, **kwargs)
+		)
+
+	def test_they_find_this_module_and_its_shelf(self):
+		self.assertEqual(self.reports.project_shelf(), SHELF)
+
+	def test_each_jobs_share_is_this_modules_figure_and_they_add_up_to_the_shelf(self):
+		_held(ITEM, (JOB_A, 3), (JOB_B, 2))
+		self.assertEqual(self._shares(), [(JOB_A, ITEM, 3.0), (JOB_B, ITEM, 2.0)])
+		self.assertEqual(self._shares(projects=[JOB_B]), [(JOB_B, ITEM, 2.0)])
+
+	def test_stock_no_job_has_a_claim_on_is_the_no_job_share(self):
+		_held(ITEM, (JOB_A, 3))
+		base._table("Bin")[f"{ITEM}@{SHELF}"]["actual_qty"] = 5.0
+		self.assertEqual(self._shares(), [("", ITEM, 2.0), (JOB_A, ITEM, 3.0)])
+
+	def test_a_job_is_never_shown_more_than_the_shelf_holds_and_no_share_is_negative(self):
+		"""Seven tagged, four there. The reports read the capped figure, so the job shows four
+		and there is no negative "no job" row. What the tags over-claim is this module's
+		``over_tagged``; the reports do not show it."""
+		_held(ITEM, (JOB_A, 7))
+		base._table("Bin")[f"{ITEM}@{SHELF}"]["actual_qty"] = 4.0
+		self.assertEqual(self._shares(), [(JOB_A, ITEM, 4.0)])
+		self.assertEqual(shelf.shelf_stock()["rows"][0]["over_tagged"], 3.0)
+
+
+# --------------------------------------------------------------------------- the Bin Manager's reading
+
+
+class TestTheBinManagerReadsTheRealModule(_Base):
+	"""The Bin Manager's views (v1.812.0, ``inventory_enhancements/bin_views.py``) decide what the
+	shelf is, whether a move there asks for its job, and what each job has on it, from this
+	module and from ``bin_assignments.move_to``. Their own suite uses stand-ins for both; this is
+	the real code together."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.views = importlib.import_module("erpnext_enhancements.inventory_enhancements.bin_views")
+		_held(ITEM, (JOB_A, 3), (JOB_B, 2))
+		# Left over from when the shelf was Stores: a rule there, and a real one on a bin.
+		base._rule(ITEM, SHELF)
+		base._rule(ITEM, BIN_A)
+
+	def test_the_page_asks_for_the_job_because_the_real_move_takes_one(self):
+		self.assertTrue(self.views.shelf_job_moves())
+
+	def test_the_boot_names_the_shelf_and_keeps_nothing_assigned_there(self):
+		boot = bins.manager_boot()
+		self.assertEqual((boot["shelf_warehouse"], boot["shelf_name"], boot["shelf_job_moves"]), (SHELF, "Project Shelf", True))
+		by_bin = {row["warehouse"]: row for row in boot["bins"]}
+		self.assertEqual(by_bin[SHELF]["kind"], "project_shelf")
+		self.assertEqual((by_bin[SHELF]["on_hand_items"], by_bin[SHELF]["assigned_items"]), (1, 0))
+		self.assertEqual((by_bin[BIN_A]["kind"], by_bin[BIN_A]["assigned_items"]), ("shop_bin", 1))
+
+	def test_a_jobs_view_shows_this_modules_figure_for_the_shelf(self):
+		out = self.views.project_view(JOB_A)
+		self.assertEqual(out["shelf"]["warehouse"], SHELF)
+		self.assertEqual([(row["item_code"], row["qty"], row["recorded"]) for row in out["shelf"]["items"]], [(ITEM, 3.0, 3.0)])
+		index = {row["project"]: row["shelf_items"] for row in self.views.project_index()}
+		self.assertEqual((index[JOB_A], index[JOB_B]), (1, 1))
+
+	def test_the_choices_the_page_offers_for_a_move_are_this_modules_jobs(self):
+		original = scan._open_order_lines
+		scan._open_order_lines = lambda item_code, company: []
+		try:
+			item = scan._item_payload(ITEM, scan._warehouse(SHELF))
+		finally:
+			scan._open_order_lines = original
+		self.assertEqual([(job["project"], job["qty"]) for job in item["shelf_jobs"]], [(JOB_A, 3.0), (JOB_B, 2.0)])
+		self.assertTrue(item["shelf_jobs_exact"])
+		# Two jobs hold it, so a move with no job named is refused, and one that names a job posts.
+		self.assertRefused(
+			bins.move_to, "which job these were bought for", item_code=ITEM, from_warehouse=SHELF, to_warehouse=BIN_B, qty=1, client_ref=base._ref(60)
+		)
+		bins.move_to(ITEM, SHELF, BIN_B, 1, base._ref(61), project=JOB_B)
+		self.assertEqual(base._vouchers("Stock Entry")[-1]["project"], JOB_B)
 
 
 # --------------------------------------------------------------------------- the patch

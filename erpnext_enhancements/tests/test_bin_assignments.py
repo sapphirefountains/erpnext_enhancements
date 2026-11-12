@@ -1605,7 +1605,7 @@ def _calls(fn):
 ENDPOINTS = {
 	"assign": ["item_code", "warehouse", "client_ref"],
 	"unassign": ["item_code", "warehouse", "client_ref"],
-	# ``project`` (v1.810.0): the job a move onto or off the Project Shelf carries
+	# ``project`` (v1.813.0): the job a move onto or off the Project Shelf carries
 	# (tests/test_project_shelf.py has its behaviour).
 	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home", "project"],
 	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref", "project"],
