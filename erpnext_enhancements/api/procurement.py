@@ -403,6 +403,9 @@ def receive_items(
             item.allow_zero_valuation_rate = 1
     if remarks:
         receipt.remarks = remarks
+    if settled["remark"]:
+        # Why a line came in free, on the receipt itself: its submit refusal looks for it there.
+        receipt.remarks = "\n".join(part for part in (receipt.get("remarks"), settled["remark"]) if part)
     if posting_date:
         receipt.set_posting_time = 1
         receipt.posting_date = getdate(posting_date)

@@ -1164,6 +1164,10 @@ doc_events = {
 	# sheet, the intake's drafts -- because each ends in this submit. validate only WARNS, on a
 	# draft, in a web request, and never raises: the intake creates drafts for a person to finish.
 	# Returns and internal transfers are left alone; nothing changes a rate on an existing document.
+	# The same before_submit also judges a row a PERSON ticked free: whoever submits must be
+	# allowed to price that order, and Remarks must say "No charge: ...". Without it the form's
+	# tick was a way around what the two receiving screens ask. Rows ERPNext frees itself (a
+	# customer-provided item, a pricing rule's free item) pass untouched.
 	"Purchase Receipt": {
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",

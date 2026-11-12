@@ -25,8 +25,32 @@ A Stock Reconciliation is not judged: it states a count, and refusing it would s
 an item that is valued at nothing today.
 
 **Free on purpose** is ERPNext's own tick, ``allow_zero_valuation_rate`` ("Allow Zero Valuation
-Rate") on the line: a free sample, a warranty replacement. ERPNext sets it itself for a
-customer-provided item. A pricing rule's free item (``is_free_item``) counts too. No new field.
+Rate") on the line: a free sample, a warranty replacement. No new field.
+
+**A tick a person made is judged at the submit, whoever made it and wherever** (round 2 of the
+v1.803.0 review). The first draft held "no charge" to the right people only on the two receiving
+screens, and said the form's tick "is not touched". So a receiver whose line the dialog had just
+held could open the order in the Desk, make a Purchase Receipt, tick the box and submit: stock at
+$0, no reason, no Comment. The intake's drafts worked the same way. Now the refusal itself asks,
+for a stock row at $0 with the box ticked (:func:`ticked_lines`):
+
+* **who is submitting.** With an order on the row: the person must be allowed to price *that*
+  order (``receipt_price.price_block``), exactly what the screens ask. With no order (a receipt
+  made by hand, a Material Receipt): write permission on Purchase Orders in general.
+  :data:`NO_CHARGE_NEEDS_ORDER_WRITE`.
+* **why.** A line in the document's own Remarks that starts ``No charge:`` and says something
+  (:func:`reason_in`). The two screens write that line themselves from the reason the person
+  gave. :data:`NO_CHARGE_NEEDS_REASON`.
+
+**The rows ERPNext ticks or frees itself are left alone**, told apart by what ERPNext v16.54.0
+itself writes, not by guessing (:func:`erpnext_free`):
+
+* a *customer-provided item*: ``StockController.validate_customer_provided_item`` ticks the box
+  on every save for an Item whose ``is_customer_provided_item`` is set. The Item's flag is the
+  test.
+* a *pricing rule's free item*: ``pricing_rule.utils.get_product_discount_rule`` adds the row
+  with ``is_free_item = 1`` **and** ``pricing_rules`` naming the rule. Both must be there: a row
+  that only claims ``is_free_item`` was not made by a rule, and is judged like any other.
 
 **What is left alone.** A return (its rate comes from the receipt it returns), an internal
 transfer between companies (its rate is the sender's valuation), a non-stock line, and every
@@ -58,6 +82,8 @@ The reads and the hooks are ``receipt_price.py``. Tabs, per ``CLAUDE.md`` (new f
 
 from __future__ import annotations
 
+import re
+
 #: A rate below half a cent rounds to $0.00 on the receipt. The same line as ``po_price_check``.
 ZERO_RATE_BELOW = 0.005
 
@@ -69,12 +95,16 @@ MAX_UNIT_PRICE = 100000.0
 FREE_FIELD = "allow_zero_valuation_rate"
 FREE_LABEL = "Allow Zero Valuation Rate"
 
-#: PENDING NIK (2026-11-12), the manager's recommended defaults. On the two receiving screens,
-#: only a person who may price the order may mark a line "no charge", and must say why. Set the
-#: first to False and any receiver may mark a line free again; set the second to False and the
-#: reason becomes optional. The Purchase Receipt form's own tick is ERPNext's and is not touched.
+#: PENDING NIK (2026-11-12), the manager's recommended defaults. Only a person who may price the
+#: order may receive a line as "no charge", and must say why. Enforced on the server at submit,
+#: so it holds on the two receiving screens, on the Purchase Receipt form, on an intake draft and
+#: on a Material Receipt alike. Set the first to False and any receiver may mark a line free
+#: again; set the second to False and the reason becomes optional.
 NO_CHARGE_NEEDS_ORDER_WRITE = True
 NO_CHARGE_NEEDS_REASON = True
+
+#: How the reason is written in a document's Remarks: a line starting with this.
+NO_CHARGE_MARK = "No charge:"
 
 #: Why a person may not price an order, as ``receipt_price.price_block`` names it.
 BLOCK_NO_WRITE = "no_write"
@@ -111,14 +141,41 @@ def _truthy(value):
 		return bool(value)
 
 
-def is_unpriced(row, stock_items, rate_field="rate"):
-	"""Whether one line is a stock item's line with no price and no "free on purpose" mark."""
+def erpnext_free(row, customer_provided=()):
+	"""Whether ERPNext itself made this row free, as opposed to a person ticking a box.
+
+	A customer-provided item (the Item's own flag; ERPNext ticks the box for it on every save), or
+	a pricing rule's free item (``is_free_item`` together with the rule's name in
+	``pricing_rules``, which is how ERPNext adds one).
+	"""
+	if _get(row, "item_code") in (customer_provided or ()):
+		return True
+	return _truthy(_get(row, "is_free_item")) and bool(str(_get(row, "pricing_rules") or "").strip())
+
+
+def _zero_stock_row(row, stock_items, rate_field):
 	code = _get(row, "item_code")
-	if not code or code not in stock_items:
+	return bool(code) and code in stock_items and abs(number(_get(row, rate_field))) < ZERO_RATE_BELOW
+
+
+def is_unpriced(row, stock_items, rate_field="rate", customer_provided=()):
+	"""Whether one line is a stock item's line with no price and no "free on purpose" mark.
+
+	A ticked row is not unpriced; it is a person's "no charge", judged by :func:`is_ticked`.
+	"""
+	if not _zero_stock_row(row, stock_items, rate_field):
 		return False
-	if _truthy(_get(row, FREE_FIELD)) or _truthy(_get(row, "is_free_item")):
+	if erpnext_free(row, customer_provided) or _truthy(_get(row, FREE_FIELD)):
 		return False
-	return abs(number(_get(row, rate_field))) < ZERO_RATE_BELOW
+	return True
+
+
+def is_ticked(row, stock_items, rate_field="rate", customer_provided=()):
+	"""Whether one line is a stock item's line at $0 that a *person* ticked free: the box is
+	ticked, and ERPNext did not tick or free it itself."""
+	if not _zero_stock_row(row, stock_items, rate_field):
+		return False
+	return _truthy(_get(row, FREE_FIELD)) and not erpnext_free(row, customer_provided)
 
 
 def applies(doctype, is_return=False, is_internal=False, update_stock=True, purpose=None):
@@ -145,16 +202,20 @@ def incoming_rows(doctype, rows):
 	return [row for row in rows or () if _get(row, "t_warehouse") and not _get(row, "s_warehouse")]
 
 
-def unpriced_lines(rows, stock_items, order_field="purchase_order", rate_field="rate"):
+def unpriced_lines(
+	rows, stock_items, order_field="purchase_order", rate_field="rate", customer_provided=(), judge=None
+):
 	"""The unpriced lines, as ``[{"idx", "item_code", "name", "order"}]``.
 
 	``order_field`` is where the row names its Purchase Order (``purchase_order`` on both a
-	receipt and an invoice line). ``idx`` falls back to the row's position.
+	receipt and an invoice line). ``idx`` falls back to the row's position. ``judge`` is
+	:func:`is_unpriced` unless :func:`ticked_lines` passes :func:`is_ticked`.
 	"""
 	stock_items = set(stock_items or ())
+	judge = judge or is_unpriced
 	out = []
 	for position, row in enumerate(rows or (), start=1):
-		if not is_unpriced(row, stock_items, rate_field=rate_field):
+		if not judge(row, stock_items, rate_field=rate_field, customer_provided=customer_provided):
 			continue
 		out.append(
 			{
@@ -165,6 +226,81 @@ def unpriced_lines(rows, stock_items, order_field="purchase_order", rate_field="
 			}
 		)
 	return out
+
+
+def ticked_lines(rows, stock_items, order_field="purchase_order", rate_field="rate", customer_provided=()):
+	"""The stock rows at $0 that a person ticked free, in the shape of :func:`unpriced_lines`."""
+	return unpriced_lines(
+		rows,
+		stock_items,
+		order_field=order_field,
+		rate_field=rate_field,
+		customer_provided=customer_provided,
+		judge=is_ticked,
+	)
+
+
+_REASON = re.compile(r"no charge\s*:[ \t]*(\S[^\r\n]*)", re.IGNORECASE)
+
+
+def reason_in(remarks):
+	"""The reason a document's Remarks give for a free line: what follows ``No charge:`` on that
+	line, or ``""`` when there is no such line or nothing after it."""
+	found = _REASON.search(str(remarks or ""))
+	return found.group(1).strip() if found else ""
+
+
+def no_charge_remark(reason, rows):
+	"""The line the receiving screens add to a receipt's Remarks for the rows marked free."""
+	return f"{NO_CHARGE_MARK} {reason} (row {rows})"
+
+
+def _what(doctype):
+	return {"Purchase Receipt": "This receipt", "Purchase Invoice": "This invoice"}.get(
+		doctype, "This stock entry"
+	)
+
+
+def no_order_block_sentence():
+	"""Why a person may not tick a row free when no order stands behind it."""
+	return "Only someone who can edit purchase orders can bring stock in at no charge. Purchasing can."
+
+
+def tick_refusal(doctype, blocked):
+	"""Why the document can't be submitted: rows ticked free by a person who may not say so.
+
+	``blocked`` is ``[(lines, sentence)]``: the rows, and why this person can't (who can).
+	"""
+	parts = []
+	for lines, sentence in blocked:
+		is_ = "is" if len(lines) == 1 else "are"
+		parts.append(
+			f"{_first_upper(_rows(lines))} {is_} ticked {FREE_LABEL}, so it would come into stock at "
+			f"$0. {sentence}"
+		)
+	return (
+		f"{_what(doctype)} can't be submitted. {' '.join(parts)} Untick the box and leave the line "
+		"until the order has a price, or ask them to receive it."
+	)
+
+
+def tick_reason_refusal(doctype, lines):
+	"""Why the document can't be submitted: a free row with no reason written down."""
+	is_ = "is" if len(lines) == 1 else "are"
+	return (
+		f"{_what(doctype)} can't be submitted. {_first_upper(_rows(lines))} {is_} ticked "
+		f"{FREE_LABEL}, so it comes into stock at $0. Say why in Remarks, on a line that starts with "
+		f'"{NO_CHARGE_MARK}" (for example, {NO_CHARGE_MARK} warranty replacement).'
+	)
+
+
+#: How a ToDo names a row, so an open one can be read back: ``row 2 (``.
+_TODO_ROW = re.compile(r"row (\d+) \(")
+
+
+def todo_rows(description):
+	"""The order rows an open ToDo already names."""
+	return {int(n) for n in _TODO_ROW.findall(str(description or ""))}
 
 
 def _rows(lines):

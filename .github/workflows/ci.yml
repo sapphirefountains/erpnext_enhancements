@@ -4174,8 +4174,11 @@ jobs:
       # receipt. Also: "no charge" open to a person who may not price the order or given without
       # a reason, a line such a person cannot settle coming in at $0 or blocking the rest of the
       # delivery instead of being left for purchasing with a ToDo, a screen telling them to tick
-      # anything, and a Material Receipt bringing a stock item in at $0. Own frappe stub, so its
-      # own step; unittest classes.
+      # anything, and a Material Receipt bringing a stock item in at $0. And the Desk form and
+      # an intake draft as a way around it: a row ticked Allow Zero Valuation Rate by a person
+      # who may not price the order, or with no "No charge:" reason in Remarks, must refuse at
+      # submit, while a customer-provided item and a pricing rule's free item still pass. Own
+      # frappe stub, so its own step; unittest classes.
       - name: A price at receipt (rule, hooks, every receiving path; bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_receipt_price -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the

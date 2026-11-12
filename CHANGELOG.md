@@ -150,12 +150,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`NO_CHARGE_NEEDS_ORDER_WRITE`, `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules`; each is
     one constant). The first draft let any receiver mark a line free, and its dialog told the
     people who could not price to do just that, which made the refusal one tap to get past.
+  - **And it is enforced where the document is submitted, not only on the two screens.** The
+    second draft still left the Purchase Receipt form's own tick open: a receiver whose line the
+    dialog had just held could make a receipt from the order in the Desk, tick *Allow Zero
+    Valuation Rate* and submit, and an intake draft worked the same way. The submit refusal now
+    judges a stock row at $0 with the box ticked. The person submitting must be allowed to price
+    that order (or, with no order on the row, to edit purchase orders at all), and the
+    document's Remarks must carry a line starting `No charge:` that says why. The two screens
+    write that line themselves from the reason given. A Stock Entry Material Receipt is held to
+    the same.
+  - **What ERPNext frees by itself is left alone**, told apart by what v16.54.0 writes: a
+    customer-provided item (the Item's own flag; ERPNext ticks the box for it on every save) and
+    a pricing rule's free item (`is_free_item` together with the rule's name in `pricing_rules`).
+    A row that only claims `is_free_item`, with no rule behind it, is judged like any other.
   - **A receiver who can do neither is not stuck and does not get a $0 receipt.** The line is
     left unreceived, the rest of the delivery is received as usual, and purchasing gets a ToDo on
     the order naming the rows that need a price: the order's author when they can still price
-    it, otherwise the people who hold PO Creator. The same order is not asked about twice. The
-    dialog and the phone say who was asked, and neither offers that person a price box or a
-    "free" button.
+    it, otherwise the people the Reorder Board already alerts (`reorder_alert_role` in Inventory
+    Scanner Settings, Purchase Manager by default), read with the Board's own function. One open
+    ToDo a person for an order, with every held line named in it exactly once: a line held later
+    is added to the open one, and a row priced since drops out. The dialog and the phone say who
+    was asked, and neither offers that person a price box or a "free" button.
   - **The person who raised the Material Request cannot price the order it fills**, because
     *Update Items* re-runs the separation-of-duties gate, which refuses them. They are told that
     in their own words, and that someone else in purchasing can, and their line is held the same

@@ -6,6 +6,11 @@
 Every judgement and every sentence is ``receipt_price_rules``; this module finds which items keep
 stock, and talks to ERPNext.
 
+* **A row ticked free by a person is judged in the same refusal** (:func:`_refuse_ticks`): the
+  person submitting must be allowed to price that order, and the document's Remarks must say why.
+  So the Desk form, an intake draft and a Material Receipt are not a way around what the two
+  receiving screens ask. Rows ERPNext frees itself (a customer-provided item, a pricing rule's
+  free item) pass untouched.
 * :func:`refuse_unpriced_stock_lines` -- ``Purchase Receipt`` and ``Purchase Invoice``
   ``before_submit``. The one refusal, and it covers every way a receipt gets made, because each of
   them ends in the same submit: the Purchase Receipt form, the order's Receive Items dialog, the
@@ -42,12 +47,9 @@ from frappe.utils import cint, get_fullname
 from erpnext_enhancements.inventory_enhancements import receipt_price_rules as rules
 from erpnext_enhancements.inventory_enhancements.maintain_stock_rules import NOT_A_PERSON
 
-#: The role that may write a Purchase Order on this site (``po_segregation.CREATOR_ROLE``): who
-#: is asked for a price when the order's own author can't be.
+#: The role that may write a Purchase Order on this site (``po_segregation.CREATOR_ROLE``). The
+#: order's own author is asked for a price when they hold it.
 PRICING_ROLE = "PO Creator"
-
-#: The most people one ToDo round asks.
-MAX_ASKED = 5
 
 #: ``frappe.flags`` under which the refusal and the warning stand aside.
 SKIP_FLAGS = ("in_install", "in_migrate", "in_patch", "in_test", "in_import")
@@ -69,8 +71,19 @@ def _stock_items(codes):
 	return set(frappe.get_all("Item", filters={"name": ("in", codes), "is_stock_item": 1}, pluck="name"))
 
 
-def _unpriced(doc):
-	"""The document's unpriced lines, or ``[]`` when the rule does not judge it."""
+def _customer_provided(codes):
+	"""The items ERPNext ticks Allow Zero Valuation Rate for by itself (the Item's own flag)."""
+	codes = sorted({code for code in codes if code})
+	if not codes:
+		return set()
+	return set(
+		frappe.get_all("Item", filters={"name": ("in", codes), "is_customer_provided_item": 1}, pluck="name")
+	)
+
+
+def _judged(doc):
+	"""``(unpriced, ticked)`` for the document: the stock rows at $0 with no "free" mark, and the
+	ones a person ticked free. Both empty when the rule does not judge the document."""
 	if not rules.applies(
 		doc.doctype,
 		is_return=cint(doc.get("is_return")),
@@ -78,25 +91,83 @@ def _unpriced(doc):
 		update_stock=cint(doc.get("update_stock")),
 		purpose=doc.get("purpose"),
 	):
-		return []
+		return [], []
 	rows = [row for row in doc.get("items") or [] if row.get("item_code")]
 	rows = rules.incoming_rows(doc.doctype, rows)
-	return rules.unpriced_lines(
-		rows,
-		_stock_items(row.get("item_code") for row in rows),
-		rate_field=rules.rate_field(doc.doctype),
-	)
+	field = rules.rate_field(doc.doctype)
+	stock = _stock_items(row.get("item_code") for row in rows)
+	# Only rows at $0 can be either; ask about customer-provided items only when one is ticked.
+	zero = [row for row in rows if rules._zero_stock_row(row, stock, field)]
+	if not zero:
+		return [], []
+	provided = _customer_provided(row.get("item_code") for row in zero if cint(row.get(rules.FREE_FIELD)))
+	kwargs = {"rate_field": field, "customer_provided": provided}
+	return rules.unpriced_lines(zero, stock, **kwargs), rules.ticked_lines(zero, stock, **kwargs)
+
+
+def _unpriced(doc):
+	"""The document's unpriced lines, or ``[]`` when the rule does not judge it."""
+	return _judged(doc)[0]
+
+
+def _refuse_ticks(doc, ticked):
+	"""Refuse a row a person ticked free unless they may say so, and said why.
+
+	The same two questions the receiving screens ask, asked here of whoever is submitting, so
+	that the Purchase Receipt form, an intake draft and a Material Receipt cannot be the way
+	around them. ``rules.NO_CHARGE_NEEDS_ORDER_WRITE`` and ``NO_CHARGE_NEEDS_REASON`` switch each.
+	"""
+	if rules.NO_CHARGE_NEEDS_ORDER_WRITE:
+		by_order = {}
+		for line in ticked:
+			by_order.setdefault(line.get("order") or "", []).append(line)
+		blocked = []
+		for order, lines in by_order.items():
+			po = None
+			if order:
+				try:
+					po = frappe.get_doc("Purchase Order", order)
+				except Exception:
+					po = None
+			if po is not None:
+				block = price_block(po)
+				if block:
+					blocked.append((lines, rules.block_sentence(block, order)))
+			elif not _may_write_orders():
+				blocked.append((lines, rules.no_order_block_sentence()))
+		if blocked:
+			frappe.throw(
+				html.escape(rules.tick_refusal(doc.doctype, blocked), quote=False),
+				title=_("A line is marked free"),
+			)
+	if rules.NO_CHARGE_NEEDS_REASON and not rules.reason_in(doc.get("remarks")):
+		frappe.throw(
+			html.escape(rules.tick_reason_refusal(doc.doctype, ticked), quote=False),
+			title=_("Say why it was free"),
+		)
+
+
+def _may_write_orders():
+	"""Whether the caller may edit Purchase Orders at all: what a "no charge" with no order
+	behind it is held to."""
+	try:
+		return bool(frappe.has_permission("Purchase Order", "write"))
+	except Exception:
+		return False
 
 
 def refuse_unpriced_stock_lines(doc, method=None):
-	"""``before_submit``: refuse a stock item's line with no price, naming it and what to do."""
+	"""``before_submit``: refuse a stock item's line with no price, naming it and what to do; and
+	refuse one ticked free by a person who may not say so, or without a reason."""
 	if _stands_aside(doc):
 		return
-	lines = _unpriced(doc)
+	lines, ticked = _judged(doc)
 	if lines:
 		frappe.throw(
 			html.escape(rules.submit_refusal(doc.doctype, lines), quote=False), title=_("A line has no price")
 		)
+	if ticked:
+		_refuse_ticks(doc, ticked)
 
 
 def warn_unpriced_stock_lines(doc, method=None):
@@ -204,23 +275,41 @@ def _people(users):
 
 def _who_to_ask(po):
 	"""Who is asked for the price: the person who wrote the order, when they can still price it;
-	otherwise everyone who holds :data:`PRICING_ROLE`."""
+	otherwise the people the Reorder Board already alerts (``Inventory Scanner Settings``'
+	``reorder_alert_role``, Purchase Manager by default), read with the Board's own function so
+	the two can't disagree about who purchasing is. Never the caller, never a service account,
+	and nobody is left out by the alphabet."""
 	holders = frappe.get_all("Has Role", filters={"role": PRICING_ROLE, "parenttype": "User"}, pluck="parent")
 	owner = po.get("owner")
 	if owner in holders and _people([owner]):
 		return [owner]
-	return _people(sorted(holders))[:MAX_ASKED]
+	from erpnext_enhancements.inventory_enhancements import reorder_board
+
+	return _people(reorder_board.recipients())
+
+
+def _open_lines_needing_price(po):
+	"""The order's lines that still have something to receive and no price."""
+	open_names = {
+		row.name
+		for row in po.get("items") or []
+		if (row.get("qty") or 0) > (row.get("received_qty") or 0)
+		and not cint(row.get("delivered_by_supplier"))
+	}
+	return needing_price(po, wanted=open_names)
 
 
 def ask_purchasing(po, lines):
 	"""Leave purchasing a ToDo on the order naming the lines that need a price.
 
-	Returns the full names of the people who now have one, whether it was made just now or was
-	already open (an order is not asked about twice). Never raises: a ToDo that can't be made must
-	not be the reason a delivery can't be received.
+	One open ToDo a person for an order, and **every held line named in it exactly once**: a
+	line held later, while the ToDo is still open, is added to it (and a row priced since then
+	drops out). Returns the full names of the people who now have one. Never raises: a ToDo that
+	can't be made must not be the reason a delivery can't be received.
 	"""
 	try:
-		text = rules.price_todo(po.name, lines, get_fullname(frappe.session.user))
+		asker = get_fullname(frappe.session.user)
+		held = {line["idx"] for line in lines}
 		asked = []
 		for user in _who_to_ask(po):
 			open_already = frappe.get_all(
@@ -232,10 +321,22 @@ def ask_purchasing(po, lines):
 					"status": "Open",
 					"description": ("like", f"%{rules.TODO_MARKER}%"),
 				},
-				pluck="name",
+				fields=["name", "description"],
 				limit=1,
 			)
-			if not open_already:
+			if open_already:
+				todo = open_already[0]
+				named = rules.todo_rows(todo.get("description"))
+				if not held <= named:
+					# Rebuilt from the order as it is now: the rows asked about before that still
+					# need a price, and the new ones.
+					wanted = named | held
+					listed = [line for line in _open_lines_needing_price(po) if line["idx"] in wanted]
+					text = rules.price_todo(po.name, listed or lines, asker)
+					frappe.db.set_value(
+						"ToDo", todo.get("name"), "description", html.escape(text, quote=False)
+					)
+			else:
 				frappe.get_doc(
 					{
 						"doctype": "ToDo",
@@ -243,7 +344,7 @@ def ask_purchasing(po, lines):
 						"assigned_by": frappe.session.user,
 						"reference_type": "Purchase Order",
 						"reference_name": po.name,
-						"description": html.escape(text, quote=False),
+						"description": html.escape(rules.price_todo(po.name, lines, asker), quote=False),
 						"priority": "High",
 						"status": "Open",
 					}
@@ -286,7 +387,8 @@ def settle_before_receipt(po, wanted, typed, hold=True):
 
 	* a price a person may set goes on the order (:func:`price_order_lines`);
 	* ``free`` are the lines marked free by a person who may, for the caller to tick
-	  ``allow_zero_valuation_rate`` on; each leaves a Comment on the order with the reason;
+	  ``allow_zero_valuation_rate`` on; each leaves a Comment on the order with the reason, and
+	  ``remark`` is the line for the receipt's Remarks that the submit refusal will look for;
 	* ``held`` are the lines this person can neither price nor mark free. They are left out of the
 	  receipt, and purchasing is asked for the price (:func:`ask_purchasing`). ``message`` says so.
 
@@ -294,7 +396,7 @@ def settle_before_receipt(po, wanted, typed, hold=True):
 	With ``hold=False`` (the Stock Scan page, which receives one line and asks first) a line that
 	would be held refuses instead, and no ToDo is made here: the page made it when it asked.
 	"""
-	out = {"free": [], "held": [], "held_lines": [], "block": None, "asked": [], "message": ""}
+	out = {"free": [], "held": [], "held_lines": [], "block": None, "asked": [], "message": "", "remark": ""}
 	needing = needing_price(po, wanted=wanted)
 	if not needing:
 		return out
@@ -326,10 +428,15 @@ def settle_before_receipt(po, wanted, typed, hold=True):
 		for name, reason in settled["free"]:
 			by_reason.setdefault(reason, []).append(str(idx[name]))
 		order = frappe.get_doc("Purchase Order", po.name)
+		remarks = []
 		for reason, rows in by_reason.items():
 			comment = rules.free_comment(get_fullname(frappe.session.user), ", ".join(rows), reason)
 			order.add_comment("Comment", html.escape(comment, quote=False))
+			if reason:
+				remarks.append(rules.no_charge_remark(reason, ", ".join(rows)))
 		out["free"] = [name for name, _reason in settled["free"]]
+		# For the receipt's own Remarks: the submit refusal reads the reason there.
+		out["remark"] = "\n".join(remarks)
 	if held:
 		out["held"] = [line["purchase_order_item"] for line in held]
 		out["held_lines"] = held

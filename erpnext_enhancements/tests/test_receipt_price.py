@@ -48,7 +48,9 @@ FEE = "TST-FREIGHT"
 ORDER = "PO-TEST-1"
 BUYER = "buyer@example.com"
 OTHER_BUYER = "second.buyer@example.com"
-FULL_NAMES = {BUYER: "Test Buyer", OTHER_BUYER: "Second Buyer"}
+FULL_NAMES = {BUYER: "Test Buyer", OTHER_BUYER: "Second Buyer", "manager@example.com": "Test Manager"}
+BOARD = "erpnext_enhancements.inventory_enhancements.reorder_board"
+_REAL_BOARD = None
 
 rules = None
 price = None
@@ -117,6 +119,9 @@ def build_frappe():
 		filters = filters or {}
 		if doctype == "Item":
 			wanted = set(filters["name"][1])
+			if "is_customer_provided_item" in filters:
+				return [code for code in STATE["customer_provided"] if code in wanted]
+			assert filters.get("is_stock_item") == 1, filters
 			return [code for code in STATE["stock_items"] if code in wanted]
 		if doctype == "Has Role":
 			assert filters["role"] == "PO Creator", filters
@@ -133,7 +138,7 @@ def build_frappe():
 			if STATE.get("todo_raises"):
 				raise RuntimeError("the database is away")
 			return [
-				todo["name"]
+				_dict(name=todo["name"], description=todo["description"])
 				for todo in STATE["todos"]
 				if todo["reference_name"] == filters["reference_name"]
 				and todo["allocated_to"] == filters["allocated_to"]
@@ -173,8 +178,14 @@ def build_frappe():
 		return STATE["orders"].get(name) or Doc(doctype, name)
 
 	frappe.get_doc = get_doc
+
+	def set_value(doctype, name, field, value, **kwargs):
+		assert doctype == "ToDo" and field == "description", (doctype, field)
+		next(todo for todo in STATE["todos"] if todo["name"] == name)["description"] = value
+
 	frappe.db = types.SimpleNamespace(
-		get_single_value=lambda doctype, field: STATE["singles"].get((doctype, field))
+		get_single_value=lambda doctype, field: STATE["singles"].get((doctype, field)),
+		set_value=set_value,
 	)
 
 	utils = types.ModuleType("frappe.utils")
@@ -198,8 +209,11 @@ def reset_state(**overrides):
 		"orders": {},
 		"todos": [],
 		"po_creators": [BUYER, OTHER_BUYER],
-		"enabled_users": [BUYER, OTHER_BUYER, "receiver@example.com"],
+		"enabled_users": [BUYER, OTHER_BUYER, "manager@example.com", "receiver@example.com"],
 		"my_requests": [],
+		"customer_provided": [],
+		# Who the Reorder Board alerts (its own recipients(): the alert role's people).
+		"alert_people": [OTHER_BUYER, "manager@example.com", "Administrator", "receiver@example.com"],
 		"singles": {("ERPNext Enhancements Settings", "po_sod_enforcement_enabled"): 1},
 	}
 	STATE.update(overrides)
@@ -224,6 +238,13 @@ def setUpModule():
 
 	sys.modules["erpnext.controllers.accounts_controller"].update_child_qty_rate = update_child_qty_rate
 	reset_state()
+	# The Reorder Board's own "who is purchasing" (recipients()), which the ToDo borrows. The real
+	# module needs a bench's worth of imports; the one function is stood in for, and put back after.
+	global _REAL_BOARD
+	_REAL_BOARD = sys.modules.get(BOARD)
+	board = types.ModuleType(BOARD)
+	board.recipients = lambda: list(STATE["alert_people"])
+	sys.modules[BOARD] = board
 	for name in (
 		"erpnext_enhancements.po_segregation",
 		"erpnext_enhancements.inventory_enhancements.maintain_stock_rules",
@@ -235,6 +256,13 @@ def setUpModule():
 	from erpnext_enhancements.inventory_enhancements import receipt_price_rules as rules_module
 
 	rules, price = rules_module, price_module
+
+
+def tearDownModule():
+	if _REAL_BOARD is None:
+		sys.modules.pop(BOARD, None)
+	else:
+		sys.modules[BOARD] = _REAL_BOARD
 
 
 def line(idx=1, item_code=PART, rate=0, **extra):
@@ -305,8 +333,74 @@ class RuleTest(unittest.TestCase):
 		self.assertFalse(rules.is_unpriced(line(rate=0.01), self.STOCK))
 		self.assertFalse(rules.is_unpriced(line(item_code=FEE), self.STOCK), "a non-stock line")
 		self.assertFalse(rules.is_unpriced(line(allow_zero_valuation_rate=1), self.STOCK), "free on purpose")
-		self.assertFalse(rules.is_unpriced(line(is_free_item=1), self.STOCK), "a pricing rule's free item")
+		self.assertFalse(
+			rules.is_unpriced(line(is_free_item=1, pricing_rules="PRLE-0001"), self.STOCK),
+			"a pricing rule's free item",
+		)
 		self.assertFalse(rules.is_unpriced(line(item_code=None), self.STOCK))
+		# A row that only claims to be a free item, with no rule behind it, was not made by ERPNext.
+		self.assertTrue(rules.is_unpriced(line(is_free_item=1), self.STOCK))
+
+	def test_what_erpnext_frees_itself_is_told_from_a_persons_tick(self):
+		"""Read from ERPNext v16.54.0: a pricing rule's free row carries ``is_free_item`` and the
+		rule's name in ``pricing_rules``; a customer-provided item is ticked for the Item's flag."""
+		by_rule = line(is_free_item=1, pricing_rules="PRLE-0001")
+		self.assertTrue(rules.erpnext_free(by_rule))
+		self.assertFalse(rules.erpnext_free(line(is_free_item=1)))
+		self.assertFalse(rules.erpnext_free(line(is_free_item=1, pricing_rules="  ")))
+		provided = line(allow_zero_valuation_rate=1)
+		self.assertTrue(rules.erpnext_free(provided, customer_provided={PART}))
+		self.assertFalse(rules.erpnext_free(provided))
+		# A person's tick: the box, a stock item, $0, and not ERPNext's own doing.
+		self.assertTrue(rules.is_ticked(provided, self.STOCK))
+		self.assertFalse(rules.is_ticked(provided, self.STOCK, customer_provided={PART}))
+		self.assertFalse(rules.is_ticked(line(allow_zero_valuation_rate=1, rate=5), self.STOCK), "priced")
+		self.assertFalse(rules.is_ticked(line(item_code=FEE, allow_zero_valuation_rate=1), self.STOCK))
+		self.assertFalse(rules.is_ticked(line(), self.STOCK), "not ticked: that is unpriced")
+		both = line(is_free_item=1, pricing_rules="PRLE-0001", allow_zero_valuation_rate=1)
+		self.assertFalse(rules.is_ticked(both, self.STOCK), "a rule's free row stays the rule's")
+		found = rules.ticked_lines([line(1, rate=5), line(2, allow_zero_valuation_rate=1)], self.STOCK)
+		self.assertEqual([(l["idx"], l["order"]) for l in found], [(2, ORDER)])
+
+	def test_the_reason_is_a_line_in_remarks(self):
+		self.assertEqual(rules.reason_in("No charge: warranty replacement"), "warranty replacement")
+		self.assertEqual(
+			rules.reason_in("Scanned in by Test.\nno charge:   free sample \nmore"), "free sample"
+		)
+		for empty in (
+			None,
+			"",
+			"No Remarks",
+			"Created from Document Intake DI-0001",
+			"No charge:",
+			"No charge:   \nx",
+		):
+			self.assertEqual(rules.reason_in(empty), "", empty)
+		remark = rules.no_charge_remark("warranty replacement", "2, 3")
+		self.assertEqual(remark, "No charge: warranty replacement (row 2, 3)")
+		self.assertTrue(rules.reason_in(remark))
+
+	def test_the_tick_refusals_say_who_can_and_where_to_say_why(self):
+		lines = rules.ticked_lines([line(2, allow_zero_valuation_rate=1)], self.STOCK)
+		who = rules.tick_refusal(
+			"Purchase Receipt", [(lines, rules.block_sentence(rules.BLOCK_NO_WRITE, ORDER))]
+		)
+		self.assertTrue(
+			who.startswith("This receipt can't be submitted. Row 2 (TST-PUMP-100) is ticked Allow Zero")
+		)
+		self.assertIn("Purchasing can.", who)
+		self.assertIn("Untick the box", who)
+		why = rules.tick_reason_refusal("Purchase Receipt", lines)
+		self.assertIn('Say why in Remarks, on a line that starts with "No charge:"', why)
+		self.assertIn("for example, No charge: warranty replacement", why)
+		self.assertIn("purchase orders", rules.no_order_block_sentence())
+
+	def test_a_todos_rows_can_be_read_back(self):
+		text = rules.price_todo(
+			ORDER, [{"idx": 2, "item_code": PART}, {"idx": 11, "item_code": "A (B)"}], "x"
+		)
+		self.assertEqual(rules.todo_rows(text), {2, 11})
+		self.assertEqual(rules.todo_rows(None), set())
 
 	def test_the_free_mark_is_erpnexts_own_field(self):
 		self.assertEqual(rules.FREE_FIELD, "allow_zero_valuation_rate")
@@ -518,7 +612,10 @@ class SubmitRefusalTest(unittest.TestCase):
 
 	def test_priced_free_and_non_stock_lines_pass(self):
 		price.refuse_unpriced_stock_lines(
-			self.receipt([line(1, rate=5), line(2, allow_zero_valuation_rate=1), line(3, FEE)])
+			self.receipt(
+				[line(1, rate=5), line(2, allow_zero_valuation_rate=1), line(3, FEE)],
+				remarks="No charge: warranty replacement",
+			)
 		)
 
 	def test_a_return_and_an_internal_transfer_pass(self):
@@ -563,8 +660,24 @@ class MaterialReceiptTest(unittest.TestCase):
 
 	def test_a_cost_the_free_tick_and_a_non_stock_item_pass(self):
 		price.refuse_unpriced_stock_lines(self.entry(basic_rate=12.5))
-		price.refuse_unpriced_stock_lines(self.entry(allow_zero_valuation_rate=1))
 		price.refuse_unpriced_stock_lines(self.entry(item_code=FEE))
+		ticked = self.entry(allow_zero_valuation_rate=1)
+		ticked._fields["remarks"] = "No charge: found on the shelf, never bought"
+		price.refuse_unpriced_stock_lines(ticked)
+
+	def test_the_free_tick_is_held_to_the_same_people_and_needs_a_reason(self):
+		"""No order stands behind a Material Receipt, so the person must be able to edit purchase
+		orders at all."""
+		ticked = self.entry(allow_zero_valuation_rate=1)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(ticked)
+		self.assertIn("This stock entry can't be submitted.", str(caught.exception))
+		self.assertIn('"No charge:"', str(caught.exception))
+		ticked._fields["remarks"] = "No charge: sample"
+		STATE["denied"].add(("Purchase Order", "write"))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(ticked)
+		self.assertIn("Only someone who can edit purchase orders", str(caught.exception))
 
 	def test_other_purposes_and_outgoing_rows_are_left_alone(self):
 		for purpose in ("Material Issue", "Material Transfer", "Manufacture"):
@@ -576,6 +689,141 @@ class MaterialReceiptTest(unittest.TestCase):
 		doc._fields["docstatus"] = 0
 		price.warn_unpriced_stock_lines(doc)
 		self.assertIn("is saved, but it can't be submitted yet", STATE["messages"][0]["message"])
+
+
+class TickedOnTheFormTest(unittest.TestCase):
+	"""The hole round 2 of the review found: "no charge" was held to the right people only on the
+	two receiving screens. A receiver whose line had just been held could make a Purchase Receipt
+	from the order in the Desk, tick Allow Zero Valuation Rate and submit. The same on an intake
+	draft. The submit itself asks now, whoever built the document and however."""
+
+	def setUp(self):
+		reset_state()
+		self.po = order()
+
+	def desk_receipt(self, remarks=None, **row):
+		"""Create > Purchase Receipt on the order, with row 1 ticked free by hand."""
+		values = line(1, allow_zero_valuation_rate=1, purchase_order_item="poi-1")
+		values.update(row)
+		return Doc(
+			"Purchase Receipt", "PR-TEST-1", items=[values, line(2, OTHER_PART, rate=4.5)], remarks=remarks
+		)
+
+	def test_a_receiver_who_cannot_price_the_order_cannot_tick_their_way_past(self):
+		STATE["denied"].add(("Purchase Order", "write"))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(self.desk_receipt(remarks="No charge: sample"))
+		text = str(caught.exception)
+		self.assertIn("Row 1 (TST-PUMP-100) is ticked Allow Zero Valuation Rate", text)
+		self.assertIn(
+			f"You can receive against {ORDER}, but you can't set prices on it. Purchasing can.", text
+		)
+		self.assertIn(("Purchase Order", "write", ORDER), STATE["permission_checks"], "asked of THIS order")
+		self.assertEqual(STATE["thrown"][0]["title"], "A line is marked free")
+
+	def test_the_person_who_raised_the_request_cannot_either(self):
+		self.po.items[0]["material_request"] = "MR-TEST-1"
+		STATE["my_requests"] = ["MR-TEST-1"]
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(self.desk_receipt(remarks="No charge: sample"))
+		self.assertIn("You raised the request", str(caught.exception))
+
+	def test_a_permitted_person_must_still_say_why(self):
+		for remarks in (None, "", "Thanks!", "No charge:"):
+			with self.subTest(remarks=remarks):
+				with self.assertRaises(FRAPPE.ValidationError) as caught:
+					price.refuse_unpriced_stock_lines(self.desk_receipt(remarks=remarks))
+				self.assertIn("Say why in Remarks", str(caught.exception))
+
+	def test_a_permitted_persons_tick_with_a_reason_passes(self):
+		price.refuse_unpriced_stock_lines(self.desk_receipt(remarks="No charge: warranty replacement"))
+		self.assertEqual(STATE["thrown"], [])
+
+	def test_an_intake_draft_is_judged_by_who_submits_it(self):
+		"""The packing-slip intake builds the draft as the system and leaves its own remark. Who
+		submits it is who is asked, and that remark is not a reason."""
+		draft = self.desk_receipt(remarks="Created from Document Intake DI-TEST-1")
+		STATE["denied"].add(("Purchase Order", "write"))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(draft)
+		self.assertIn("Purchasing can.", str(caught.exception))
+		reset_state()
+		order()
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(draft)
+		self.assertIn("Say why in Remarks", str(caught.exception), "the intake's own remark is no reason")
+		draft._fields["remarks"] = "Created from Document Intake DI-TEST-1\nNo charge: free sample"
+		price.refuse_unpriced_stock_lines(draft)
+
+	def test_what_erpnext_ticks_or_frees_itself_still_passes_for_anyone(self):
+		STATE["denied"].add(("Purchase Order", "write"))
+		# A customer-provided item: ERPNext ticks the box on every save.
+		STATE["customer_provided"] = [PART]
+		price.refuse_unpriced_stock_lines(self.desk_receipt())
+		# A pricing rule's free item: is_free_item with the rule's name, and no tick at all.
+		STATE["customer_provided"] = []
+		by_rule = Doc(
+			"Purchase Receipt",
+			"PR-TEST-2",
+			items=[line(1, is_free_item=1, pricing_rules="PRLE-0001")],
+		)
+		price.refuse_unpriced_stock_lines(by_rule)
+		self.assertEqual(STATE["thrown"], [])
+
+	def test_a_row_with_no_order_needs_write_on_purchase_orders(self):
+		loose = Doc(
+			"Purchase Receipt",
+			"PR-TEST-3",
+			items=[{"idx": 1, "name": "row-1", "item_code": PART, "rate": 0, "allow_zero_valuation_rate": 1}],
+			remarks="No charge: sample",
+		)
+		price.refuse_unpriced_stock_lines(loose)
+		self.assertIn(("Purchase Order", "write", None), STATE["permission_checks"])
+		STATE["denied"].add(("Purchase Order", "write"))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(loose)
+		self.assertIn("Only someone who can edit purchase orders", str(caught.exception))
+
+	def test_a_receiving_invoice_is_held_to_it_too(self):
+		STATE["denied"].add(("Purchase Order", "write"))
+		bill = Doc(
+			"Purchase Invoice",
+			"PI-TEST-1",
+			items=[line(1, allow_zero_valuation_rate=1)],
+			update_stock=1,
+			remarks="No charge: sample",
+		)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(bill)
+		self.assertIn("This invoice can't be submitted.", str(caught.exception))
+
+	def test_an_unpriced_line_is_still_said_first(self):
+		doc = Doc(
+			"Purchase Receipt",
+			"PR-TEST-4",
+			items=[line(1, allow_zero_valuation_rate=1), line(2)],
+		)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(doc)
+		self.assertIn("Row 2 (TST-PUMP-100) has no price", str(caught.exception))
+
+	def test_each_default_is_one_constant(self):
+		STATE["denied"].add(("Purchase Order", "write"))
+		kept = (rules.NO_CHARGE_NEEDS_ORDER_WRITE, rules.NO_CHARGE_NEEDS_REASON)
+		try:
+			rules.NO_CHARGE_NEEDS_ORDER_WRITE = False
+			price.refuse_unpriced_stock_lines(self.desk_receipt(remarks="No charge: sample"))
+			with self.assertRaises(FRAPPE.ValidationError):
+				price.refuse_unpriced_stock_lines(self.desk_receipt())
+			rules.NO_CHARGE_NEEDS_REASON = False
+			price.refuse_unpriced_stock_lines(self.desk_receipt())
+		finally:
+			rules.NO_CHARGE_NEEDS_ORDER_WRITE, rules.NO_CHARGE_NEEDS_REASON = kept
+
+	def test_it_stands_aside_like_the_rest(self):
+		STATE["denied"].add(("Purchase Order", "write"))
+		FRAPPE.flags["in_migrate"] = True
+		price.refuse_unpriced_stock_lines(self.desk_receipt())
 
 
 class DraftWarningTest(unittest.TestCase):
@@ -702,6 +950,9 @@ class PricingTheOrderTest(unittest.TestCase):
 		self.assertEqual(STATE["comments"][0][:3], ("Purchase Order", ORDER, "Comment"))
 		self.assertIn("Test Receiver received row 1 at no charge", STATE["comments"][0][3])
 		self.assertIn("Reason given: warranty", STATE["comments"][0][3])
+		# And the line for the receipt's own Remarks, which the submit refusal reads.
+		self.assertEqual(out["remark"], "No charge: warranty (row 1)")
+		self.assertEqual(rules.reason_in(out["remark"]), "warranty (row 1)")
 		STATE["comments"].clear()
 		self.assertEqual(price.settle_before_receipt(po, {"poi-1"}, {"poi-1": {"rate": "8"}})["free"], [])
 		self.assertEqual(STATE["updates"][0][1][0]["rate"], 8.0)
@@ -756,26 +1007,80 @@ class HeldLinesTest(unittest.TestCase):
 		out = price.settle_before_receipt(order(), {"poi-1"}, {})
 		self.assertTrue(out["message"].startswith("Nothing was received."))
 
-	def test_the_same_order_is_not_asked_about_twice(self):
+	def test_the_same_line_is_not_asked_about_twice(self):
 		po = order()
 		price.settle_before_receipt(po, {"poi-1"}, {})
+		before = STATE["todos"][0]["description"]
 		out = price.settle_before_receipt(po, {"poi-1"}, {})
 		self.assertEqual(len(STATE["todos"]), 1)
+		self.assertEqual(STATE["todos"][0]["description"], before, "nothing new to say")
 		self.assertEqual(out["asked"], ["Test Buyer"], "the person already asked is still named")
+
+	def two_unpriced(self):
+		po = order()
+		po.items.append(
+			_dict(
+				name="poi-5",
+				idx=5,
+				item_code=OTHER_PART,
+				item_name="Test tee",
+				rate=0,
+				qty=3,
+				uom="Nos",
+				conversion_factor=1,
+			)
+		)
+		for row in po.items:
+			row.setdefault("received_qty", 0)
+		return po
+
+	def test_a_line_held_later_is_added_to_the_open_todo(self):
+		"""Row 1 is held on Monday, row 5 on Tuesday while that ToDo is still open: one ToDo, and
+		it names both rows, each once."""
+		po = self.two_unpriced()
+		price.settle_before_receipt(po, {"poi-1"}, {})
+		self.assertEqual(rules.todo_rows(STATE["todos"][0]["description"]), {1})
+		price.settle_before_receipt(po, {"poi-5"}, {})
+		self.assertEqual(len(STATE["todos"]), 1)
+		text = STATE["todos"][0]["description"]
+		self.assertEqual(rules.todo_rows(text), {1, 5})
+		self.assertEqual(text.count("row 1 ("), 1)
+		self.assertEqual(text.count("row 5 ("), 1)
+		self.assertTrue(
+			text.startswith(f"{rules.TODO_MARKER} on {ORDER}: row 1 (TST-PUMP-100), row 5 (TST-TEE-200) have")
+		)
+
+	def test_a_row_priced_since_drops_out_of_the_todo(self):
+		po = self.two_unpriced()
+		price.settle_before_receipt(po, {"poi-1"}, {})
+		po.items[0]["rate"] = 12.5  # purchasing priced row 1 but did not close the ToDo
+		price.settle_before_receipt(po, {"poi-5"}, {})
+		self.assertEqual(rules.todo_rows(STATE["todos"][0]["description"]), {5})
+
+	def test_two_lines_held_at_once_are_both_named(self):
+		po = self.two_unpriced()
+		price.settle_before_receipt(po, {"poi-1", "poi-5"}, {})
+		self.assertEqual(rules.todo_rows(STATE["todos"][0]["description"]), {1, 5})
 
 	def test_who_is_asked(self):
 		po = order()
-		# The order's own author first.
+		# The order's own author first, when they can still price it.
 		self.assertEqual(price._who_to_ask(po), [BUYER])
-		# When they can't be (disabled, or not purchasing any more), everyone who can price.
-		STATE["enabled_users"] = [OTHER_BUYER]
-		self.assertEqual(price._who_to_ask(po), [OTHER_BUYER])
-		reset_state(
-			denied={("Purchase Order", "write")},
-			po_creators=[OTHER_BUYER, "Administrator", "receiver@example.com"],
-		)
-		STATE["orders"][ORDER] = po
-		self.assertEqual(price._who_to_ask(po), [OTHER_BUYER], "never a service account, never the asker")
+		# When they can't be (disabled, or not a PO Creator any more): the people the Reorder Board
+		# alerts, every one of them, read with the Board's own function.
+		STATE["po_creators"] = [OTHER_BUYER]
+		self.assertEqual(price._who_to_ask(po), [OTHER_BUYER, "manager@example.com"])
+		# Never a service account, never the asker, never somebody disabled.
+		self.assertNotIn("Administrator", price._who_to_ask(po))
+		self.assertNotIn("receiver@example.com", price._who_to_ask(po))
+		STATE["enabled_users"] = ["manager@example.com"]
+		self.assertEqual(price._who_to_ask(po), ["manager@example.com"])
+
+	def test_everyone_asked_gets_a_todo_of_their_own(self):
+		STATE["po_creators"] = []
+		out = price.settle_before_receipt(order(), {"poi-1"}, {})
+		self.assertEqual(out["asked"], ["Second Buyer", "Test Manager"])
+		self.assertEqual([t["allocated_to"] for t in STATE["todos"]], [OTHER_BUYER, "manager@example.com"])
 
 	def test_a_todo_that_cannot_be_made_does_not_stop_the_delivery(self):
 		STATE["todo_raises"] = True
@@ -883,6 +1188,19 @@ class PathsTest(unittest.TestCase):
 		# It still goes through the framework's own insert and submit, where the backstop is.
 		self.assertIn("receipt.insert()", source)
 		self.assertIn("receipt.submit()", source)
+		# The reason goes onto the receipt's Remarks, where its own submit refusal looks for it.
+		self.assertIn('if settled["remark"]:', source)
+		self.assertLess(source.index('if settled["remark"]:'), source.index("receipt.insert()"))
+
+	def test_who_is_purchasing_is_the_reorder_boards_answer(self):
+		source = (APP / "inventory_enhancements" / "receipt_price.py").read_text(encoding="utf-8")
+		ask = source[
+			source.index("def _who_to_ask(po):") : source.index("def _open_lines_needing_price(po):")
+		]
+		self.assertIn("return _people(reorder_board.recipients())", ask)
+		board = (APP / "inventory_enhancements" / "reorder_board.py").read_text(encoding="utf-8")
+		self.assertIn("def recipients():", board)
+		self.assertIn('ROLE_FIELD = "reorder_alert_role"', board)
 
 	def test_a_held_line_is_dropped_from_the_receipt_and_never_raises(self):
 		source = _function_source(PROCUREMENT, "receive_items")

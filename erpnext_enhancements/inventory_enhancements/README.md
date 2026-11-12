@@ -1296,11 +1296,21 @@ in the 180 days before 2026-11-12 had a rate of 0.
 
   "No charge only for a person who may price, and with a reason" is the manager's recommended
   default, **pending Nik's answer**: `NO_CHARGE_NEEDS_ORDER_WRITE` and `NO_CHARGE_NEEDS_REASON` in
-  `receipt_price_rules.py`. The Purchase Receipt form's own tick is ERPNext's and stays as open
-  as ERPNext makes it.
+  `receipt_price_rules.py`.
+* **The same two questions are asked at the submit, on the server, however the document was
+  made** (`receipt_price._refuse_ticks`). A stock row at $0 with *Allow Zero Valuation Rate*
+  ticked by a person needs: the person submitting to be allowed to price that row's order (with
+  no order on the row, a receipt made by hand or a Material Receipt, to edit purchase orders at
+  all); and a line in the document's Remarks starting `No charge:` that says why. So the
+  Purchase Receipt form and an intake draft are not a way around the two screens, which write
+  that Remarks line themselves. Left alone, because ERPNext frees them itself: a
+  customer-provided item (the Item's flag) and a pricing rule's free item (`is_free_item` with
+  the rule's name in `pricing_rules`).
 * **The ToDo** goes to the order's author when they can still price it, otherwise to the people
-  who hold PO Creator (five at most), on the order, starting "Price needed". An order with one
-  open is not asked about again.
+  the Reorder Board alerts (`Inventory Scanner Settings.reorder_alert_role`, Purchase Manager by
+  default; `reorder_board.recipients()`), never the asker or a service account. It sits on the
+  order and starts "Price needed". There is one open ToDo a person for an order, and every held
+  line is named in it exactly once: a line held later is added, a row priced since drops out.
 * **A Stock Entry of type Material Receipt** is judged on its Basic Rate. ERPNext swaps a typed $0
   for the item's last valuation and refuses when there is none, but takes a last valuation of
   exactly 0 in silence; that row is refused at submit. A Stock Reconciliation is not judged.
@@ -1308,11 +1318,11 @@ in the 180 days before 2026-11-12 had a rate of 0.
 
 | Path | What a person sees |
 |---|---|
-| Purchase Receipt form | The submit is refused; the draft is kept |
+| Purchase Receipt form | The submit is refused; the draft is kept. Ticking *Allow Zero Valuation Rate* is refused too, unless the person may price the order and Remarks says `No charge: ...` |
 | Purchase Order > Receive Items | For a person who may price: *Price each*, *No charge* and *Why no charge*, and the price is put on the order before it receives. For anyone else: no extra column; the note says those rows will be left for purchasing, and the answer names who was asked |
 | Stock Scan, and the store-run sheet's *Receive on PO* | Nothing is posted. A person who may price gets "What did one cost?" with *Receive at this price*, *It was free* (with a reason) and *Stop*. Anyone else gets "This one can't be received yet", why, who was asked, and *OK* |
 | Stock Entry > Material Receipt | The submit is refused for a row that would come in at $0 |
-| Packing-slip and vendor-bill intake | They make drafts, so the warning speaks when the draft is saved and the refusal when a person submits it |
+| Packing-slip and vendor-bill intake | They make drafts, so the warning speaks when the draft is saved and the refusal when a person submits it. Who submits is who is judged, and the intake's own remark is not a reason |
 | The order itself | Still only warns at submit (`po_price_check`), now saying the receipt will ask |
 
 Left alone: returns, internal transfers, non-stock lines, and every document already submitted.
