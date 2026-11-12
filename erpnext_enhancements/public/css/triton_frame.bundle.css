@@ -69,8 +69,10 @@
 	}
 }
 
-/* A reply finished while the panel was closed, or the tab was in the background. */
-.triton-fab.triton-fab-unread::after {
+/* A reply finished while the panel was closed, or the tab was in the background.
+   Scoped to .triton-framed (on <html> while the loader owns the button): this stylesheet stays
+   loaded after a hand-back to the classic widget, whose button wears the same classes. */
+.triton-framed .triton-fab.triton-fab-unread::after {
 	content: "";
 	position: absolute;
 	top: 2px;
@@ -101,6 +103,9 @@
 	width: 100%;
 	padding: 14px;
 	font-size: 13px;
+}
+.triton-frame-clockin .triton-frame-clockin-name[hidden] {
+	display: none;
 }
 .triton-frame-clockin .triton-action-slot {
 	display: flex;
@@ -139,8 +144,9 @@
 		display: block;
 	}
 	/* The frame has its own Close in its header. When the keyboard shrinks the sheet the round
-	   button would show beneath it, on top of whatever the Desk has there. */
-	.triton-fab.triton-fab-open {
+	   button would show beneath it, on top of whatever the Desk has there. Scoped to
+	   .triton-framed, so that after a hand-back the classic widget's button is left alone. */
+	.triton-framed .triton-fab.triton-fab-open {
 		visibility: hidden;
 	}
 	.triton-frame-clockin {

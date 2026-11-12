@@ -23,6 +23,15 @@
  *    no geolocation in this browser) means no clock-in, and the card says so.
  * 5. No coordinate is kept: not on the card, not in browser storage.
  *
+ * And one rule the classic card does not have:
+ *
+ * 6. The card says WHICH project by its id, always. The id is what the time kiosk is sent, and
+ *    the title in the message is text a model wrote: a wrong or misleading title must not be able
+ *    to dress up the project Confirm will clock into. The headline is the id. The project's name
+ *    is then looked up on the Desk, from that id, with the person's own permissions, and shown
+ *    beside it; the frame's title is shown only until that answer arrives, and stays only if the
+ *    Desk could not give one.
+ *
  * The card reuses the classic action-card classes, so it looks like the card people know.
  * It is placed by `triton_frame.bundle.css` (`.triton-frame-clockin`), above the panel.
  */
@@ -95,8 +104,34 @@ export function createClockIn({ win }) {
 		slot.appendChild(dismiss);
 	}
 
+	// Rule 6. The project's own name, from the Desk, for the id the card is about. A plain GET
+	// with the person's session: what they may not read they are not told, and a failure of any
+	// kind (no permission, no such project, offline) is silence, not a Desk dialog. It reads one
+	// field of one record and writes nothing.
+	function lookUpName(project, apply) {
+		if (typeof win.fetch !== "function") return;
+		const query =
+			"doctype=Project&fieldname=project_name&filters=" + encodeURIComponent(JSON.stringify({ name: project }));
+		Promise.resolve()
+			.then(() =>
+				win.fetch("/api/method/frappe.client.get_value?" + query, {
+					method: "GET",
+					headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+					credentials: "same-origin",
+					cache: "no-store",
+					redirect: "error",
+				})
+			)
+			.then((response) => (response && response.ok ? response.json() : null))
+			.then((body) => {
+				const name = text(body && body.message && body.message.project_name);
+				if (name) apply(name);
+			})
+			.catch(() => {});
+	}
+
 	// Rule 2: this runs only from the Confirm click below.
-	function confirm(params, slot) {
+	function confirm(params, slot, shown) {
 		const noFix = t("Clocking in needs location and nothing was shared.");
 		const geo = win.navigator && win.navigator.geolocation;
 		if (!geo || typeof geo.getCurrentPosition !== "function") {
@@ -124,7 +159,8 @@ export function createClockIn({ win }) {
 						})
 					)
 					.then((result) => {
-						let words = t("Clocked in to {0}.", [params.project_title || params.project]);
+						const label = shown.name ? params.project + " (" + shown.name + ")" : params.project;
+						let words = t("Clocked in to {0}.", [label]);
 						const offsite = result && result.offsite;
 						if (offsite && offsite.flagged && offsite.distance_m) {
 							words += " " + t("{0} m from the site.", [Math.round(offsite.distance_m)]);
@@ -149,11 +185,18 @@ export function createClockIn({ win }) {
 		// With no project there is nothing to clock in to; the time kiosk would refuse it anyway.
 		if (!params.project) return false;
 
-		host = el("div", "triton-frame-clockin");
+		const mine = el("div", "triton-frame-clockin");
+		host = mine;
 		host.setAttribute("role", "alertdialog");
 		host.setAttribute("aria-label", t("Clock in"));
 		const card = el("div", "triton-action-card");
-		card.appendChild(el("div", "triton-action-summary", t("Clock in to {0}?", [params.project_title || params.project])));
+		// Rule 6: the id, always, and first.
+		card.appendChild(el("div", "triton-action-summary", t("Clock in to {0}?", [params.project])));
+		// The name beside it: the frame's until the Desk's own arrives, then the Desk's.
+		const shown = { name: params.project_title, fromDesk: false };
+		const name = el("div", "triton-action-desc triton-frame-clockin-name", shown.name || "");
+		name.hidden = !shown.name;
+		card.appendChild(name);
 		const detail = [params.task, params.time_category, params.description].filter(Boolean).join(" · ");
 		if (detail) card.appendChild(el("div", "triton-action-desc", detail));
 		const slot = el("div", "triton-action-slot");
@@ -162,7 +205,7 @@ export function createClockIn({ win }) {
 		yes.type = "button";
 		const no = el("button", "triton-decline", t("Cancel"));
 		no.type = "button";
-		yes.addEventListener("click", () => confirm(params, slot));
+		yes.addEventListener("click", () => confirm(params, slot, shown));
 		no.addEventListener("click", close);
 		buttons.appendChild(yes);
 		buttons.appendChild(no);
@@ -171,6 +214,14 @@ export function createClockIn({ win }) {
 		host.appendChild(card);
 		doc.body.appendChild(host);
 		if (typeof yes.focus === "function") yes.focus();
+
+		lookUpName(params.project, (deskName) => {
+			if (host !== mine) return; // this card is gone, or another request replaced it
+			shown.name = deskName;
+			shown.fromDesk = true;
+			name.textContent = deskName;
+			name.hidden = false;
+		});
 		return true;
 	}
 

@@ -40,7 +40,9 @@ one in `contract.js`.
 | **Framed Site Address** | Leave blank. The frame loads from the Gateway URL in *Triton Settings*, which on production is the Triton site itself. Set it only for a site whose Gateway URL is an internal address a browser cannot open. |
 
 The master switch and the allow-list at the top of the same page still decide who sees the
-assistant at all. A change takes effect the next time a person loads the Desk.
+assistant at all. A change takes effect the next time a person loads the Desk: saving the
+settings clears every person's cached boot payload (`TritonAssistantSettings.on_update`), which
+Frappe otherwise keeps until something else clears it.
 
 The answer reaches the page as `frappe.boot.triton_frame` (`{origin, url, page_context}`), and
 only for a person on the framed widget. The browser never reads the settings.
@@ -50,10 +52,10 @@ no shared secret, a person outside the allow-list.
 
 ## Running a pilot
 
-Triton must serve the framed page first. The classic widget does not need it, so this app can be
-deployed before Triton; the pilot cannot start before Triton.
+Triton must serve the framed page, and it does: Triton 0.88.0 has been live since 2026-11-12
+with `/embed.html` and the ticket route.
 
-1. Check Triton serves the page, and lets only this Desk frame it:
+1. Check Triton still serves the page, and lets only this Desk frame it:
 
    ```bash
    curl -sI https://triton.sapphirefountains.com/embed.html | grep -i -E "content-security-policy|x-frame-options"
@@ -178,13 +180,19 @@ link in a reply.
 
 **`clock-in`.** Clocking in needs the ERPNext session and a location fix from the device, and the
 frame is allowed neither. So the message only asks. The Desk draws a card on its own page
-("Clock in to Plaza fountain?", Confirm, Cancel) and expects nothing more from the frame.
+("Clock in to PROJ-0002?", the project's name, Confirm, Cancel) and expects nothing more from the
+frame.
 
 - The message never clocks anyone in. Only the person pressing Confirm does.
 - Location is asked for inside the Confirm click, fresh and precise, and goes with the call to
   the time kiosk (`api.time_kiosk.log_time`). No fix means no clock-in, and the card says so.
 - Only five keys are read from `params`: `project`, `project_title`, `task`, `time_category`,
   `description`. A location in the message is ignored. With no `project` no card is drawn.
+- The card names the project by its **id**, which is what the time kiosk is sent, and takes the
+  project's name from the Desk (one read of `Project.project_name`, with the person's own
+  permissions). The title in the message is shown only until that answer arrives, and stays only
+  when the Desk cannot give one. A title a model wrote cannot dress up which project Confirm
+  clocks into.
 
 ### Desk to frame
 
@@ -226,6 +234,14 @@ Triton's server and comes back after a successful retry.
 
 The classic widget needed two small edits for this, both in its bootstrap: it stays asleep while
 boot carries `triton_frame`, and it exports `SapphireTriton.startClassic()` for the hand-back.
+
+A first sign-in that fails for a passing reason (Triton briefly unreachable, the per-minute limit)
+also ends on the classic widget for that page load, although Triton's contract would let the
+frame show "Try again". That is deliberate: the classic widget is the one that is known to work.
+
+The frame's stylesheet stays loaded after a hand-back. Whatever it says about the button's own
+classes is scoped to a class on `<html>` (`triton-framed`) that the loader removes as it goes, so
+the classic widget is not restyled by it.
 
 ## What the framed widget does not do yet
 

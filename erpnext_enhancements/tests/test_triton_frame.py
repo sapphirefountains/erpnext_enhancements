@@ -48,6 +48,7 @@ class _Doc:
 		return self.__dict__.get(key, default)
 
 	def get_password(self, key, raise_exception=True):
+		self.__dict__["decrypted"] = self.__dict__.get("decrypted", 0) + 1
 		return self.__dict__.get(key)
 
 
@@ -98,6 +99,7 @@ def _load(monkeypatch, *, user=USER, behavior=None, conn=None):
 	connection = dict(gateway_url="https://triton.example.com", admin_webhook_secret=SECRET)
 	connection.update(conn or {})
 	docs = {"Triton Assistant Settings": _Doc(**fields), "Triton Settings": _Doc(**connection)}
+	state.connection = docs["Triton Settings"]
 
 	frappe.session.user = user
 	frappe.get_cached_doc = lambda doctype, *a, **k: docs[doctype]
@@ -204,6 +206,59 @@ def test_the_allow_list_wins(monkeypatch):
 
 	frappe.session.user = "nik@example.com"
 	assert triton_frame.frame_config() is not None
+
+
+@pytest.mark.parametrize(
+	"behavior",
+	[
+		{"widget_mode": None},
+		{"widget_mode": "Classic"},
+		{"widget_mode": "Framed for pilot users", "framed_pilot_users": _rows("nik@example.com")},
+		{"enabled": 0},
+		{"restrict_to_whitelist": 1, "allowed_users": _rows("nik@example.com")},
+	],
+)
+def test_the_shared_secret_is_not_decrypted_for_anyone_off_the_framed_widget(monkeypatch, behavior):
+	"""``triton_chat.get_settings`` decrypts the Admin Webhook Secret on every call. A person on the
+	classic widget (everyone, until the setting is changed) must not cause that: not when their
+	boot payload is built, and not by calling the ticket method to see what happens."""
+	triton_frame, frappe, state = _load(monkeypatch, behavior=behavior)
+
+	assert triton_frame.frame_config() is None
+	assert triton_frame.boot_payload() is None
+	with pytest.raises(frappe.PermissionError):
+		triton_frame.get_ticket()
+
+	assert (
+		state.connection.get("decrypted", 0) == 0
+	), "the shared secret was decrypted for a classic-widget person"
+	assert state.posts == []
+
+
+def test_the_early_answer_and_the_deciding_one_use_the_same_allow_list_rule(monkeypatch):
+	"""The cheap check may only say "classic" sooner. Whoever it lets through is still asked the
+	classic widget's own question, with the classic widget's own settings."""
+	behavior = {"restrict_to_whitelist": 1, "allowed_users": _rows("nik@example.com", " ", None)}
+	triton_frame, frappe, state = _load(monkeypatch, behavior=behavior)
+
+	frappe.session.user = "nik@example.com"
+	assert triton_frame.frame_config() is not None
+	assert state.connection.get("decrypted", 0) >= 1
+
+	frappe.session.user = "Administrator"  # the allow-list's built-in exception, kept
+	assert triton_frame.frame_config() is not None
+
+	seen = []
+	real = triton_frame.triton_chat.user_has_widget_access
+	monkeypatch.setattr(
+		triton_frame.triton_chat,
+		"user_has_widget_access",
+		lambda settings=None: seen.append(sorted(settings)) or real(settings),
+	)
+	triton_frame.frame_config()
+	assert len(seen) == 2, "the allow-list must be asked twice: early from the row, then from get_settings"
+	assert seen[0] == ["allowed_users", "restrict_to_whitelist"]
+	assert "gateway_secret" in seen[1]
 
 
 def test_a_guest_is_never_framed(monkeypatch):
@@ -640,6 +695,21 @@ def test_the_backfill_never_writes_over_a_stored_value_and_is_safe_twice():
 	assert patch.backfill_triton_widget_mode() == 0
 
 
+def test_the_backfill_writes_nothing_to_a_single_that_was_never_saved():
+	"""The inverse trap. A Single with no rows loads every JSON default from ``new_doc()``, Classic
+	included. One row written here would make ``load_from_db`` read ``tabSingles`` from then on,
+	and every other field without a row would load blank: the master switch off, attachments off,
+	a 0 MB cap. Production's row exists; a staging site or a restored copy may not have one."""
+	patch, frappe, cleared = _load_patch(set())
+
+	assert patch.backfill_triton_widget_mode() == 0
+	assert (
+		frappe.db.written == []
+	), "one row was written to a never-saved Single, which blanks all its other defaults"
+	assert cleared == []
+	assert len(frappe.db.queries) == 1, "the table was not even looked at"
+
+
 def test_the_backfill_does_nothing_without_the_doctype_or_the_field():
 	patch, frappe, _ = _load_patch(set(), exists=False)
 	assert patch.backfill_triton_widget_mode() == 0
@@ -662,3 +732,80 @@ def test_the_backfill_default_is_the_declared_default_and_the_patch_is_registere
 		if line.strip() and not line.startswith("#")
 	]
 	assert registered.count("erpnext_enhancements.patches.backfill_triton_widget_mode") == 1
+
+
+# ---------------------------------------------------------------------------
+# A saved change reaches people on their next Desk load
+# ---------------------------------------------------------------------------
+class _Callbacks:
+	"""``frappe.db.after_commit``: collects what to run once the transaction has committed."""
+
+	def __init__(self):
+		self.pending = []
+
+	def add(self, fn):
+		self.pending.append(fn)
+
+	def run(self):
+		for fn in self.pending:
+			fn()
+		self.pending = []
+
+
+def _load_controller(*, after_commit=True):
+	frappe = install_stubs()
+	model = sys.modules.get("frappe.model") or types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+	document.Document = type("Document", (), {})
+	model.document = document
+	frappe.model = model
+	sys.modules["frappe.model"] = model
+	sys.modules["frappe.model.document"] = document
+
+	deleted = []
+	frappe.cache = types.SimpleNamespace(delete_key=lambda key: deleted.append(key))
+	frappe.db = types.SimpleNamespace()
+	if after_commit:
+		frappe.db.after_commit = _Callbacks()
+
+	name = "erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings"
+	sys.modules.pop(name, None)
+	import importlib
+
+	return importlib.import_module(name), frappe, deleted
+
+
+def test_saving_the_settings_clears_every_persons_cached_boot_payload_after_the_commit():
+	"""Frappe keeps each person's boot payload in Redis and rebuilds it only on a miss
+	(``sessions.get`` at v16.56.0), and a Single's save clears none of it. Without this a switch to
+	Framed reaches a person only when something unrelated next clears their cache, and the first
+	minute of a pilot looks like it did not work."""
+	controller, frappe, deleted = _load_controller()
+
+	controller.TritonAssistantSettings().on_update()
+
+	assert deleted == [], "cleared before the commit: a Desk loading now would re-cache the old answer"
+	frappe.db.after_commit.run()
+	assert deleted == ["bootinfo"]
+
+
+def test_the_boot_cache_is_still_cleared_where_there_are_no_commit_callbacks():
+	controller, _, deleted = _load_controller(after_commit=False)
+
+	controller.TritonAssistantSettings().on_update()
+
+	assert deleted == ["bootinfo"]
+
+
+def test_the_settings_controller_still_has_no_validate():
+	"""The backfill's safety argument and the page's saveability both rest on this: with no
+	``validate`` nothing can refuse a field that reads blank on an old row."""
+	path = APP / "ai_governance" / "doctype" / "triton_assistant_settings" / "triton_assistant_settings.py"
+	tree = ast.parse(path.read_text(encoding="utf-8"))
+	cls = next(
+		node
+		for node in tree.body
+		if isinstance(node, ast.ClassDef) and node.name == "TritonAssistantSettings"
+	)
+	methods = [node.name for node in cls.body if isinstance(node, ast.FunctionDef)]
+	assert methods == ["on_update"]

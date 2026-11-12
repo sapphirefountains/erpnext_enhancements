@@ -30,9 +30,11 @@ What this module is careful about
   ``triton_chat.get_settings`` and ``triton_chat.user_has_widget_access``, the same two functions
   the classic widget's ``get_config`` uses. A person who cannot see the classic button cannot get
   a ticket.
-* **The shared secret is read in one place.** ``triton_chat.get_settings`` is the only code that
-  takes the Admin Webhook Secret out of *Triton Settings*. This module uses the value it returns
-  and never reads the Password field itself.
+* **The shared secret is read in one place, and only for someone on the framed widget.**
+  ``triton_chat.get_settings`` is the only code that takes the Admin Webhook Secret out of *Triton
+  Settings*. This module uses the value it returns and never reads the Password field itself, and
+  it does not call that function at all until the mode, the master switch and the allow-list have
+  each said "framed" for this person.
 * **Neither the secret nor a ticket is ever logged.** A failed call logs the HTTP status and
   nothing else, and only when *Debug Logging* is on. Triton's reply body is never written
   anywhere: on a success it *is* the ticket. Nothing is raised from inside the ``except`` around
@@ -130,6 +132,19 @@ def _pilot_users(behavior):
 	}
 
 
+def _access_settings(behavior):
+	"""The two keys ``triton_chat.user_has_widget_access`` reads, taken from the settings row
+	without going through ``triton_chat.get_settings`` (which also decrypts the shared secret)."""
+	return {
+		"restrict_to_whitelist": bool(behavior.get("restrict_to_whitelist")),
+		"allowed_users": {
+			(row.get("user") or "").strip()
+			for row in (behavior.get("allowed_users") or [])
+			if (row.get("user") or "").strip()
+		},
+	}
+
+
 def frame_config():
 	"""The framed widget's settings for the signed-in person, or ``None`` for the classic widget.
 
@@ -140,16 +155,24 @@ def frame_config():
 	if not user or user == "Guest":
 		return None
 
-	settings = triton_chat.get_settings()
-	if not settings.get("enabled") or not triton_chat.user_has_widget_access(settings):
-		return None
-
+	# The cheap questions first, from the settings row alone. ``triton_chat.get_settings`` below
+	# decrypts the shared secret every time it is called, and for a person on the classic widget
+	# (everyone, until the setting is changed) there is no reason to touch it: not when their
+	# boot payload is built, and not when somebody calls ``get_ticket`` to see what happens.
 	behavior = frappe.get_cached_doc(SETTINGS_DOCTYPE)
 	mode = (behavior.get("widget_mode") or "").strip()
 	if mode == MODE_PILOT:
 		if user not in _pilot_users(behavior):
 			return None
 	elif mode != MODE_EVERYONE:
+		return None
+	if not behavior.get("enabled") or not triton_chat.user_has_widget_access(_access_settings(behavior)):
+		return None
+
+	# The same two questions again, asked of the same code the classic widget asks. The lines
+	# above can only answer "classic" sooner; these are what decides.
+	settings = triton_chat.get_settings()
+	if not settings.get("enabled") or not triton_chat.user_has_widget_access(settings):
 		return None
 
 	# No secret, no ticket; and a frame that cannot sign in is a dead panel.

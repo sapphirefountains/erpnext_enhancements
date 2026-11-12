@@ -17,7 +17,15 @@ default (blank means "use the Gateway URL"), and *Pilot Users* is a table.
 
 Fills the field **only when it has no row in ``tabSingles``**, never over a stored value. A row
 that says ``Framed for pilot users`` is somebody's decision; a missing row is a fact about the
-schema migration. ``tabSingles`` is read with ``frappe.db.sql`` because it is not a doctype table
+schema migration.
+
+**And it writes nothing at all to a Single that was never saved.** That is the inverse of the trap
+above, and it bites harder. A Single with no rows loads from ``new_doc()`` and shows every JSON
+default, ``Classic`` included, so there is nothing to fill. Writing the one row would make
+``load_from_db`` read ``tabSingles`` from then on, and every *other* field without a row would
+load blank: the master switch off, attachments off, a 0 MB upload cap, a 0 second timeout.
+Production's row has been saved many times; a staging site or a freshly restored copy may not
+have been. ``tabSingles`` is read with ``frappe.db.sql`` because it is not a doctype table
 (three columns, no ``creation``), so ``frappe.db.get_value`` on it cannot work. Safe to run twice:
 the second pass finds the row and writes nothing.
 """
@@ -50,6 +58,9 @@ def backfill_triton_widget_mode() -> int:
 			(SETTINGS_DOCTYPE,),
 		)
 	}
+	if not stored:
+		# Never saved: every default already applies. One row here would blank all the others.
+		return 0
 	declared = {
 		df.fieldname for df in frappe.get_meta(SETTINGS_DOCTYPE).fields if df.fieldtype not in no_value_fields
 	}

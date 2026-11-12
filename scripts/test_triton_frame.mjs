@@ -45,6 +45,7 @@ import {
 	FRAME_ALLOW,
 	MAX_MESSAGE,
 	MAX_PROMPT,
+	OWNER_CLASS,
 	PAGE_POLL_MS,
 	READY_TIMEOUT_MS,
 	SIGN_IN_TIMEOUT_MS,
@@ -197,6 +198,7 @@ function makeWindow(extra) {
 	let nextId = 1;
 
 	const doc = new Emitter();
+	doc.documentElement = new Node("html");
 	doc.body = new Node("body");
 	doc.head = new Node("head");
 	doc.activeElement = null;
@@ -237,7 +239,16 @@ function makeWindow(extra) {
 
 	win.fetchCalls = [];
 	win.ticketReply = { ok: true, ticket: "one-time-ticket", expires_in: 60 };
+	// The Desk's own answer to "what is this project called": a test decides it.
+	win.lookups = [];
+	win.projectReply = { project_name: "Plaza fountain" };
 	win.fetch = async (url, options) => {
+		if (String(url).includes("frappe.client.get_value")) {
+			win.lookups.push({ url, options });
+			if (win.projectReply === "network") throw new Error("offline");
+			if (typeof win.projectReply === "number") return { ok: false, status: win.projectReply, json: async () => ({}) };
+			return { ok: true, status: 200, json: async () => ({ message: win.projectReply }) };
+		}
 		win.fetchCalls.push({ url, options });
 		if (win.ticketReply === "network") throw new Error("offline");
 		if (typeof win.ticketReply === "number") return { ok: false, status: win.ticketReply, json: async () => ({}) };
@@ -449,6 +460,31 @@ ok("giving up removes the button, the panel, the frame, the clock-in card and ev
 	assert.equal(t.win.visualViewport.count("resize"), 0);
 	assert.equal(t.win.frappe.router.count("change"), 0);
 	assert.equal(t.win.pendingTimers(), 0, "a timer of the dead widget is still running");
+});
+
+ok("the frame's rules about the classic widget's own classes stop applying after a hand-back", () => {
+	const t = makeLoader();
+	const html = t.win.document.documentElement;
+	assert.ok(html.classList.contains(OWNER_CLASS), "the loader does not mark the page as its own");
+	t.loader.toggle(true);
+	t.win.advance(READY_TIMEOUT_MS);
+	assert.equal(t.gaveUp.length, 1);
+	assert.ok(!html.classList.contains(OWNER_CLASS), "the mark stayed after the classic widget took over");
+
+	// The stylesheet stays loaded after a hand-back. Every rule in it that names one of the
+	// classic widget's own button classes must sit under that mark, or it would restyle the
+	// classic button (hide it, on a phone, while the classic panel is open).
+	const css = read("erpnext_enhancements/public/css/triton_frame.bundle.css").replace(/\/\*[\s\S]*?\*\//g, "");
+	const selectors = [...css.matchAll(/([^{}]+)\{/g)].map((m) => m[1].trim()).filter((s) => !s.startsWith("@"));
+	const onClassic = selectors.filter((s) => /\.triton-fab\b/.test(s));
+	assert.ok(onClassic.length >= 2, "the unread dot and the phone rule are gone");
+	for (const selector of onClassic) {
+		assert.ok(selector.startsWith("." + OWNER_CLASS + " "), "not scoped to the loader: " + selector);
+	}
+	// Everything else in the sheet is about elements only the framed widget creates.
+	for (const selector of selectors.filter((s) => !/\.triton-fab\b/.test(s))) {
+		assert.ok(/\.triton-frame/.test(selector), "a rule that can reach the classic widget: " + selector);
+	}
 });
 
 ok("giving up happens once, and the dead loader does nothing afterwards", () => {
@@ -1041,7 +1077,8 @@ ok("a clock-in message draws the Desk's card and clocks nobody in", async () => 
 	await settle();
 	const card = t.card();
 	assert.ok(card, "no card was drawn");
-	assert.ok(card.words().includes("Clock in to Plaza fountain?"));
+	assert.ok(card.words().includes("Clock in to PROJ-0002?"), "the card does not say which project by its id: " + card.words());
+	assert.ok(card.words().includes("Plaza fountain"));
 	assert.ok(card.find("triton-approve") && card.find("triton-decline"));
 	assert.deepEqual(t.win.calls, [], "the time kiosk was called before anyone pressed Confirm");
 	assert.deepEqual(t.win.geo.asked, [], "location was asked for before anyone pressed Confirm");
@@ -1068,7 +1105,7 @@ ok("Confirm takes a fresh, precise location inside the click and sends it with t
 			args: { action: "Start", project: "PROJ-0002", task: null, time_category: "Field", description: "Pump install", lat: 40.5, lng: -111.9, accuracy: 9 },
 		},
 	]);
-	assert.ok(t.card().words().includes("Clocked in to Plaza fountain"));
+	assert.ok(t.card().words().includes("Clocked in to PROJ-0002 (Plaza fountain)."), t.card().words());
 	// The card says it and leaves; no coordinate is on it.
 	assert.ok(!/40\.5|111\.9/.test(t.card().words()));
 	t.win.advance(60 * 1000);
@@ -1095,6 +1132,75 @@ ok("no location means no clock-in, and the card says so", async () => {
 	assert.ok(none.card().words().includes("Clocking in needs location"));
 	none.card().find("triton-frame-clockin-dismiss").emit("click");
 	assert.equal(none.card(), null);
+});
+
+ok("the card names the project by its id, and takes its name from the Desk, not from the frame", async () => {
+	// The frame says one thing; the Desk knows the project by another name.
+	const t = makeLoader();
+	t.win.projectReply = { project_name: "Riverside pump house" };
+	await t.openAndSignIn();
+	t.fromFrame(FROM_FRAME.CLOCK_IN, { params: Object.assign({}, CLOCK, { project_title: "Plaza fountain" }) });
+	const name = () => t.card().find("triton-frame-clockin-name");
+	assert.ok(t.card().words().includes("Clock in to PROJ-0002?"));
+	assert.equal(name().textContent, "Plaza fountain", "until the Desk answers, the frame's title is all there is");
+	await settle();
+	assert.equal(name().textContent, "Riverside pump house", "the frame's title was kept over the Desk's own name");
+	assert.ok(t.card().words().includes("Clock in to PROJ-0002?"));
+
+	// One read of one field of that one record, with the person's own session. Nothing written.
+	assert.equal(t.win.lookups.length, 1);
+	const call = t.win.lookups[0];
+	assert.ok(call.url.startsWith("/api/method/frappe.client.get_value?doctype=Project&fieldname=project_name&filters="));
+	assert.deepEqual(JSON.parse(decodeURIComponent(call.url.split("filters=")[1])), { name: "PROJ-0002" });
+	assert.equal(call.options.method, "GET");
+	assert.equal(call.options.credentials, "same-origin");
+
+	t.card().find("triton-approve").emit("click");
+	await settle();
+	assert.ok(t.card().words().includes("Clocked in to PROJ-0002 (Riverside pump house)."), t.card().words());
+	assert.equal(t.win.calls[0].args.project, "PROJ-0002");
+});
+
+ok("when the Desk cannot name the project, the id still leads and nothing pops up", async () => {
+	for (const reply of [403, 404, 500, "network", null, {}, { project_name: "" }, { project_name: 7 }, "PROJ-0002"]) {
+		const t = makeLoader();
+		t.win.projectReply = reply;
+		await t.openAndSignIn();
+		t.fromFrame(FROM_FRAME.CLOCK_IN, { params: CLOCK });
+		await settle();
+		assert.ok(t.card().words().includes("Clock in to PROJ-0002?"), "no id on the card for " + JSON.stringify(reply));
+		assert.equal(t.card().find("triton-frame-clockin-name").textContent, "Plaza fountain");
+		assert.deepEqual(t.win.alerts, []);
+		assert.equal(t.gaveUp.length, 0);
+	}
+
+	// No title from the frame and none from the Desk: the id alone, and no empty line.
+	const bare = makeLoader();
+	bare.win.projectReply = 403;
+	await bare.openAndSignIn();
+	bare.fromFrame(FROM_FRAME.CLOCK_IN, { params: { project: "PROJ-0002" } });
+	await settle();
+	assert.equal(bare.card().find("triton-frame-clockin-name").hidden, true);
+	bare.card().find("triton-approve").emit("click");
+	await settle();
+	assert.ok(bare.card().words().includes("Clocked in to PROJ-0002."), bare.card().words());
+});
+
+ok("a name that arrives for a card that has been replaced is not written onto the new one", async () => {
+	const t = makeLoader();
+	await t.openAndSignIn();
+	const answers = [];
+	t.win.fetch = (url) => new Promise((resolve) => answers.push([url, resolve]));
+	t.fromFrame(FROM_FRAME.CLOCK_IN, { params: { project: "PROJ-0002", project_title: "Plaza fountain" } });
+	await settle();
+	t.fromFrame(FROM_FRAME.CLOCK_IN, { params: { project: "PROJ-0009", project_title: "North gate" } });
+	await settle();
+	assert.equal(answers.length, 2);
+	// The first card's answer comes back late.
+	answers[0][1]({ ok: true, json: async () => ({ message: { project_name: "Riverside pump house" } }) });
+	await settle();
+	assert.ok(t.card().words().includes("Clock in to PROJ-0009?"));
+	assert.equal(t.card().find("triton-frame-clockin-name").textContent, "North gate", "another project's name was written onto this card");
 });
 
 ok("Cancel does nothing but remove the card", async () => {
@@ -1169,8 +1275,12 @@ ok("the clock-in card's code asks for location in one place, inside the Confirm 
 	const confirm = src.slice(src.indexOf("function confirm("), src.indexOf("function show("));
 	assert.ok(confirm.includes("getCurrentPosition("), "location is not asked for inside confirm()");
 	const show = src.slice(src.indexOf("function show("));
-	assert.ok(/yes\.addEventListener\("click", \(\) => confirm\(params, slot\)\)/.test(show), "confirm() is not reached from the Confirm click alone");
-	assert.equal((src.match(/(?<!function )confirm\(params, slot\)/g) || []).length, 1, "confirm() is called from somewhere other than the click");
+	assert.ok(/yes\.addEventListener\("click", \(\) => confirm\(params, slot, shown\)\)/.test(show), "confirm() is not reached from the Confirm click alone");
+	assert.equal((src.match(/(?<!function )confirm\(params, slot, shown\)/g) || []).length, 1, "confirm() is called from somewhere other than the click");
+	// The name lookup reads; it must not be a second way to reach the time kiosk or the device.
+	const lookUp = src.slice(src.indexOf("function lookUpName("), src.indexOf("function confirm("));
+	assert.ok(lookUp.includes("frappe.client.get_value") && /method:\s*"GET"/.test(lookUp));
+	assert.ok(!/xcall|geolocation|LOG_TIME/.test(lookUp));
 	assert.ok(/maximumAge:\s*0/.test(src) && /enableHighAccuracy:\s*true/.test(src));
 	// A stand-alone card can be made and thrown away without a loader.
 	const win = makeWindow();

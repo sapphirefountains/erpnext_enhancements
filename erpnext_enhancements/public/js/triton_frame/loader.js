@@ -81,6 +81,10 @@ export const FRAME_ALLOW = "clipboard-write; microphone";
 export const TICKETS_PER_MINUTE = 6;
 export const MAX_PROMPT = 8000;
 export const MAX_MESSAGE = 300;
+/** On <html> while this loader owns the button. triton_frame.bundle.css scopes to it whatever it
+ *  says about the classic widget's own classes, because that stylesheet stays loaded after a
+ *  hand-back and the classic widget then wears the same classes. */
+export const OWNER_CLASS = "triton-framed";
 const PHONE_QUERY = "(max-width: 480px)";
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 const SIGN_IN_REASONS = ["no-answer", "refused", "bad-ticket", "no-config"];
@@ -205,6 +209,7 @@ export function createLoader({ win, config, giveUp, detect }) {
 		els.fab = fab;
 		els.panel = panel;
 		els.shell = shell;
+		if (doc.documentElement) doc.documentElement.classList.add(OWNER_CLASS);
 		doc.body.appendChild(fab);
 		doc.body.appendChild(panel);
 
@@ -544,6 +549,8 @@ export function createLoader({ win, config, giveUp, detect }) {
 		pages.stop();
 		clockIn.destroy();
 		listeners.splice(0).forEach(([target, type, fn]) => target.removeEventListener(type, fn));
+		// The stylesheet stays; what it says about the button's own classes must stop applying.
+		if (doc.documentElement) doc.documentElement.classList.remove(OWNER_CLASS);
 		// The frame leaves with the panel. Removing a frame adds nothing to the history list.
 		[els.panel, els.fab].forEach((node) => {
 			if (node && node.parentNode) node.parentNode.removeChild(node);

@@ -22,9 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Triton feature built twice. Nik's decision is to keep in the Desk only what the Desk alone can
     do (the button, the panel, the open record, the sign-in, the clock-in card) and show Triton's
     own compact chat page (`/embed.html`, served by Triton) in a frame where the transcript used
-    to be. This release is the ERPNext loader. The page it frames is Triton pull request 379,
-    which is **not live yet**: Classic stays the default, so shipping this first is harmless, and
-    a pilot needs Triton deployed first.
+    to be. This release is the ERPNext loader. The page it frames shipped as Triton 0.88.0
+    (pull request 379), live since 2026-11-12, so a pilot can start as soon as this is deployed
+    and the setting is changed.
   - **The contract** is Triton's document, `docs/embed-bridge.md` in the Triton repository,
     version 1. That repository is private, so the document is not copied here;
     `public/js/triton_frame/contract.js` holds its version and its fifteen message names, and
@@ -37,18 +37,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the allow-list above it still decide who sees the assistant at all. The answer reaches
     the page as `frappe.boot.triton_frame` (`{origin, url, page_context}`), present **only** for a
     person on the framed widget; the browser never reads the settings, which would show everyone
-    but a System Manager a "No permission" dialog. A change takes effect on the next Desk load.
+    but a System Manager a "No permission" dialog.
+  - **A change takes effect on the next Desk load, because saving the settings now clears the
+    boot cache.** Frappe keeps each person's boot payload in Redis and rebuilds it only on a miss
+    (`sessions.get`, `hget`/`hset` on `"bootinfo"`, read at v16.56.0), and nothing in a Single's
+    save clears it. Without `TritonAssistantSettings.on_update`, switching *Widget* to Framed
+    would have reached each person only when something unrelated next cleared their cache, and
+    the first minute of a pilot would have looked like it had not worked. The whole hash is
+    dropped (`frappe.cache.delete_key("bootinfo")`, the call this app already makes after
+    changing desktop icons), after the commit, so a Desk loading in the same moment cannot
+    re-cache the old answer. The controller still has no `validate`.
   - **Classic whenever anything is unclear** (`api/triton_frame.py` `frame_config`): a missing
     mode, a value the code does not know, no usable Triton address (it must be `https`; plain
     `http` only on a developer's own machine), no shared secret, a person outside the allow-list.
     A wrong "framed" would take a working assistant away, so every failure to decide lands on the
-    widget that works today.
+    widget that works today. The mode, the master switch and the allow-list are read from the
+    settings row first, and `triton_chat.get_settings` (which decrypts the shared secret on every
+    call) is not called at all unless all three say "framed": a person on the classic widget
+    never causes the secret to be read, not at boot and not by calling the ticket method.
   - **`patches/backfill_triton_widget_mode.py`.** A `default` on a new field of a Single never
     reaches the row that already exists, so on every live site `widget_mode` reads `None` while
     the JSON says Classic. Behaviour does not depend on the patch (a missing mode is Classic);
     without it the settings form would open with an empty *Widget* box on the page where the
     pilot is switched on. It writes Classic only where `tabSingles` has no row for the field,
-    reads that table with `frappe.db.sql`, and is safe twice.
+    reads that table with `frappe.db.sql`, and is safe twice. **It writes nothing to a Single that
+    was never saved** (no rows at all: a staging site, a restored copy). That Single already
+    shows every JSON default, Classic included, and one row written there would make every other
+    field load blank from then on: the master switch off, attachments off, a 0 MB cap.
   - **The loader is its own bundle** (`triton_frame.bundle.js` + `triton_frame.bundle.css`,
     code in `public/js/triton_frame/`, 14 kB minified), never in `app_include_js`. The main
     bundle gains only `global_enhancements/triton_frame_gate.js` (1.9 kB minified), which reads
@@ -125,7 +140,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     expects nothing more from the frame. The message never clocks anyone in; location is asked
     for only inside the Confirm click, fresh (`maximumAge: 0`) and precise, and goes with the
     call to `api.time_kiosk.log_time`; no fix means no clock-in; only five keys are read from the
-    message and a coordinate in it is ignored. These are the classic card's rules, which
+    message and a coordinate in it is ignored. The card names the project by its id (what the
+    time kiosk is sent) and takes the project's name from the Desk, with the person's own
+    permissions, so a title a model wrote cannot dress up which project Confirm clocks into;
+    the frame's title shows only until the Desk answers. These are the classic card's rules, which
     `tests/test_triton_widget_location.py` pins for the classic widget; the classic card itself
     lives inside that widget's closure and draws into its transcript, so this is a second, small
     card rather than a lift that would have rewritten a file this release leaves alone.
@@ -146,7 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Phones.** The classic sheet, with its height set from `visualViewport`. A framed page
     cannot see the on-screen keyboard (inside a frame `visualViewport` is the frame's own box),
     so the Desk shrinks the sheet. The round button is hidden while the sheet is open; the frame
-    has its own Close.
+    has its own Close. That rule, and the unread dot, are scoped to a class on `<html>` that the
+    loader removes when it hands back: the stylesheet stays loaded after a hand-back, and the
+    classic button wears the same classes.
   - **Not a second skin.** The button and panel carry the classic classes, so position, the phone
     sheet, the lift above the quick bar and above the Guided Entry footer, the open animation and
     reduced-motion handling all come from the classic stylesheet and cannot drift from it.
@@ -166,9 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     clock-in card. **Not checked:** a real bench (`bench build`, `bench migrate`, the settings
     form), a real phone, dictation and copying through the frame, and anything that needs a
     model's reply through the real frame.
-  - **Tests**, both bench-free and both wired into `ci.yml`: `scripts/test_triton_frame.mjs` (104
+  - **Tests**, both bench-free and both wired into `ci.yml`: `scripts/test_triton_frame.mjs` (108
     checks, the real modules under node against a stand-in window) and
-    `tests/test_triton_frame.py` (79, pytest). Each was run against deliberately broken code to
+    `tests/test_triton_frame.py` (89, pytest). Each was run against deliberately broken code to
     confirm it fails.
   - **Not in this release:** the framed chat has no morning briefing on first open and does not
     follow the Desk's light or dark theme (both Triton's, both named in its contract as not in
