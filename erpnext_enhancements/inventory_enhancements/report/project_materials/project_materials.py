@@ -15,13 +15,14 @@ for them." Two views in one report, chosen by the Project filter.
 | On Project Shelf | ``inventory_report_data.shelf_stock_by_project`` for this job |
 | At Job Site | ``tabBin`` at the job's own site warehouse |
 | Used on Job | the job's stock ledger: Material Issues, Delivery Notes and Sales Invoices, less parts brought back |
-| Returned to Supplier | ERPNext's return receipts, plus the Supplier Return seam |
+| Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
+| Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
 | Still to Come | what open order lines are short |
 | Order Closed, Not Received | what lines on Closed or Delivered orders were short |
 | Not Located | received and kept, but not on the shelf, at the site or used |
 
-*Purchase Orders* and *Receipts* name the documents behind the row, and each name opens its
-document. It works the same for a finished job: nothing here reads the job's status.
+*Purchase Orders*, *Receipts* and *Supplier Returns* name the documents behind the row, and each
+name opens its document. It works the same for a finished job: nothing here reads the job's status.
 
 **Which lines are the job's.** A Purchase Order line's own Project, else its order's. The line's
 is mandatory now, but older lines carry only the header's (Pending Items by Project found 32 of
@@ -117,12 +118,14 @@ def order_lines(project):
 
 def receipt_lines(project):
 	"""The job's submitted Purchase Receipt lines, returns included (``is_return``, negative
-	quantities). The line's own Project, else its receipt's, else the order line's it was
-	received against, else that order's."""
+	quantities, ``returns_line`` naming the receipt line a return sends back). The line's own
+	Project, else its receipt's, else the order line's it was received against, else that
+	order's."""
 	return frappe.db.sql(
 		"""
 		select pri.item_code, pri.item_name, pri.parent as purchase_receipt, pr.is_return,
-			pr.posting_date, pri.qty, pri.stock_qty, pri.conversion_factor, pri.stock_uom
+			pr.posting_date, pri.qty, pri.stock_qty, pri.conversion_factor, pri.stock_uom,
+			pri.purchase_receipt_item as returns_line
 		from `tabPurchase Receipt Item` pri
 		join `tabPurchase Receipt` pr on pr.name = pri.parent
 		left join `tabPurchase Order Item` poi on poi.name = pri.purchase_order_item
@@ -177,9 +180,10 @@ def project_rows(project, where, shelf_rows=()):
 		code: [where.names.get(name) or name for name in names]
 		for code, names in rules.received_into(ledger, holding=holding).items()
 	}
-	returns = data.supplier_returns_by_item(project)
+	returns = data.supplier_return_lines(project)
 	codes = {line.get("item_code") for line in orders} | {line.get("item_code") for line in receipts}
-	codes.update(shelf, site, used, returns)
+	codes.update(shelf, site, used)
+	codes.update(line.get("item_code") for line in returns)
 	rows = rules.project_item_rows(
 		orders,
 		receipts,
@@ -213,6 +217,7 @@ def item_columns():
 		{"label": _("At Job Site"), "fieldname": "at_site", "fieldtype": "Float", "width": 100},
 		{"label": _("Used on Job"), "fieldname": "used", "fieldtype": "Float", "width": 100},
 		{"label": _("Returned to Supplier"), "fieldname": "returned", "fieldtype": "Float", "width": 140},
+		{"label": _("Return Requested"), "fieldname": "return_pending", "fieldtype": "Float", "width": 125},
 		{"label": _("Still to Come"), "fieldname": "still_to_come", "fieldtype": "Float", "width": 110},
 		{
 			"label": _("Order Closed, Not Received"),
@@ -229,6 +234,7 @@ def item_columns():
 		{"label": _("Last Received"), "fieldname": "last_received", "fieldtype": "Date", "width": 105},
 		{"label": _("Purchase Orders"), "fieldname": "purchase_orders", "fieldtype": "Data", "width": 220},
 		{"label": _("Receipts"), "fieldname": "receipts", "fieldtype": "Data", "width": 220},
+		{"label": _("Supplier Returns"), "fieldname": "supplier_returns", "fieldtype": "Data", "width": 200},
 	]
 
 

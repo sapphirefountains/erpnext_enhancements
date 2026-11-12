@@ -55,7 +55,7 @@ model, the pure rules and the label reads.
 | `report/project_materials/` | Project Materials (v1.805.0): what was ordered and received for a job and where each item stands; with no Project, what each job holds now |
 | `report/job_site_contents/` | Job Site Contents (v1.805.0): what is at each job site, by job, with value, when it arrived and how long it has been there |
 | `inventory_report_rules.py` | Every judgement the four reports make: a location's status for an item, the kind of place a warehouse is, the Project Shelf's shares by job, one project's item roll-up, how long stock has been at a site. No Frappe |
-| `inventory_report_data.py` | What the four reports read in common: the Project Shelf (read so a missing field never raises), the Boneyard, vehicles, job sites, the by-project shelf adapter, the Supplier Return seam |
+| `inventory_report_data.py` | What the four reports read in common: the Project Shelf (read so a missing field never raises), the Boneyard, vehicles, job sites, the by-project shelf adapter, the Supplier Return lines |
 
 ## The count flow
 
@@ -1132,10 +1132,11 @@ rows, and the note says when either cut something.
 | Received | the job's submitted Purchase Receipt lines, so a store run with no order counts |
 | On Project Shelf, At Job Site | the shelf adapter, and `tabBin` at the job's site |
 | Used on Job | the job's ledger: Material Issues, Delivery Notes, Sales Invoices, less parts brought back |
-| Returned to Supplier | ERPNext's return receipts, plus the Supplier Return seam |
+| Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
+| Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
 | Still to Come / Order Closed, Not Received | what order lines are short, on open orders and on Closed or Delivered ones |
 | Not Located | received and kept, but not on the shelf, at the site or used |
-| Purchase Orders, Receipts | the documents behind the row; each name opens its document |
+| Purchase Orders, Receipts, Supplier Returns | the documents behind the row; each name opens its document |
 
 **Not Located is the honest column.** Most of what was bought for past jobs never entered stock,
 so ordered and received are the whole record and the note says "Not a stock item: where it is was
@@ -1190,9 +1191,19 @@ Item shows that row and says what it means, and Project Materials says for how m
 Project Shelf* can be more than is there. On production's would-be shelf on 2026-11-12 the two
 agreed item for item (one item: four jobs' 10, 18, 31 and 12 against 71 on hand).
 
-`inventory_report_data.supplier_returns_by_item(project)` is the same kind of seam for the Supplier
-Return record, and answers nothing until that doctype exists. If a Supplier Return posts its stock
-through a return receipt, the seam stays empty: the column already counts those.
+**Returns to a supplier** come through the same kind of seam,
+`inventory_report_data.supplier_return_lines(project)`. The Supplier Return change ships
+`inventory_enhancements/supplier_returns.py` and settles `returned_lines(purchase_order_items=None,
+project=None)` for other modules; the seam imports it inside a guard, so either change can merge
+first, and answers nothing before it is installed.
+
+A Supplier Return moves its stock through ERPNext's own return receipt (a Purchase Receipt with
+*Is Return*), which Project Materials already reads. So the same goods can show twice: as a return
+receipt's line, and as a Supplier Return line whose goods have left. Both name the receipt line the
+goods came in on, and `inventory_report_rules.returned_by_item` takes the larger of the two per
+receipt line. A record-only return (no return receipt) counts, a return made by hand in the Desk
+counts, and one that is both is not doubled. A Supplier Return that was asked for and has not been
+sent back is *Return Requested*: those goods are still here.
 
 ### Who, where, print
 

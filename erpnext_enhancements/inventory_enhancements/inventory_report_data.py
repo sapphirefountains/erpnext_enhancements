@@ -26,9 +26,11 @@ installed the adapter asks it (``project_shelf.warehouse`` for which warehouse i
 screens read one answer. Before it is installed the adapter reads the same ledger rows itself
 (:func:`_own_shelf_claims`). Both paths do the same arithmetic, so the swap changes no number.
 
-**Returns to a supplier: one seam.** :func:`supplier_returns_by_item` is where the Supplier
-Return record will be read once it exists. Until then it answers nothing, and Project Materials
-shows the returns ERPNext already knows: its own return receipts.
+**Returns to a supplier: one seam.** :func:`supplier_return_lines` reads the Supplier Return
+record through the function that change settles, ``supplier_returns.returned_lines``, imported
+inside a guard so either change can merge first. Project Materials also counts ERPNext's own
+return receipts, which is how a Supplier Return moves its stock, so the two are merged per
+original receipt line and no return is counted twice.
 
 **Permissions.** These reads are plain SQL and ``get_all``: each report is gated by its roles and
 by report permission on its reference doctype, as ``api.stock_scan._items_at`` is gated by the
@@ -404,13 +406,53 @@ def _own_shelf_claims(shelf, codes):
 # --- Returns to a supplier ------------------------------------------------------------------
 
 
-def supplier_returns_by_item(project):
-	"""THE SEAM for the Supplier Return record: ``{item_code: qty returned}`` for one project.
+def _returns_module():
+	"""The Supplier Return change's module (``inventory_enhancements/supplier_returns.py``), or
+	``None`` on a site where it is not installed yet."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import supplier_returns as module
+	except ImportError:
+		return None
+	return module
 
-	The Supplier Return doctype is built by a separate change and does not exist yet, so this
-	answers nothing. Project Materials already counts ERPNext's own return receipts (a Purchase
-	Receipt with *Is Return*), so when this is filled in it must add only what those receipts do
-	not show. If a Supplier Return posts its stock through a return receipt, leave this empty:
-	the column is already right, and reading both would count each return twice.
+
+def supplier_return_lines(project):
+	"""THE SEAM for the Supplier Return record: one project's return lines, in the few keys the
+	reports use. ``[{item_code, receipt_line, qty, gone, supplier_return}, ...]``.
+
+	Asked of ``supplier_returns.returned_lines(project=...)``, the function that change settles
+	for other modules. It leaves out Canceled and Denied returns and answers ``[]`` before its
+	DocType exists. Before the module itself is installed this answers ``[]`` too, and so it does
+	if the call raises or a line is not in the agreed shape. Never raises.
+
+	* ``qty`` is in the item's stock unit (the line's ``stock_qty``, else its ``qty``), never
+	  negative.
+	* ``receipt_line`` is the Purchase Receipt Item the goods came in on. A Supplier Return sends
+	  stock back through ERPNext's own return receipt, whose line names the same receipt line, so
+	  ``inventory_report_rules.returned_by_item`` can count the two as one return.
+	* ``gone`` is the change's own flag: true from *Sent Back* on.
 	"""
-	return {}
+	module = _returns_module()
+	if module is None:
+		return []
+	try:
+		lines = module.returned_lines(project=project) or []
+	except Exception:
+		return []
+	out = []
+	for line in lines:
+		if not isinstance(line, dict) or not line.get("item_code"):
+			continue
+		qty = line.get("stock_qty")
+		if qty is None:
+			qty = line.get("qty")
+		out.append(
+			{
+				"item_code": line.get("item_code"),
+				"receipt_line": line.get("purchase_receipt_item") or None,
+				"qty": abs(rules._num(qty)),
+				"gone": bool(line.get("gone")),
+				"supplier_return": line.get("supplier_return") or None,
+			}
+		)
+	return out

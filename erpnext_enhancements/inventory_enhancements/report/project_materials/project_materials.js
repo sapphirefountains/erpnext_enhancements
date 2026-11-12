@@ -11,12 +11,13 @@
  * Customer and "Include finished jobs" to the second.
  */
 
-// The two columns that hold document names ("PUR-ORD-0001, PUR-ORD-0002"), and
+// The three columns that hold document names ("PUR-ORD-0001, PUR-ORD-0002"), and
 // the doctype each names. The cell's value stays the plain names, so export and
 // the column search read them as written; only the screen turns them into links.
 const SF_PROJECT_MATERIALS_DOCS = {
 	purchase_orders: "Purchase Order",
 	receipts: "Purchase Receipt",
+	supplier_returns: "Supplier Return",
 };
 
 frappe.query_reports["Project Materials"] = {

@@ -47,8 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Project Materials.** With a Project: one row per item ordered or received for it, with
     Ordered (its submitted Purchase Order lines), Received (its submitted Purchase Receipt lines, so
     a store run with no order counts), On Project Shelf, At Job Site, Used on Job, Returned to
-    Supplier, Still to Come, Order Closed Not Received, Not Located, and the Purchase Orders and
-    Receipts behind the row, each name opening its document. Nothing in it reads the job's status,
+    Supplier, Return Requested, Still to Come, Order Closed Not Received, Not Located, and the
+    Purchase Orders, Receipts and Supplier Returns behind the row, each name opening its document. Nothing in it reads the job's status,
     so a finished job reads the same: it is the record of what was bought for it. Without a
     Project: one row per job that holds stock now, on the shelf and at its site, with quantity and
     value.
@@ -96,10 +96,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       moves. An answer that is not for this shelf or not in the agreed shape falls back to the
       adapter's own reading. The real module was not on `main` when this was written, so that path
       is tested against a stand-in in the agreed shape, not against the module.
-  - **Returns to a supplier: one seam.** The column counts ERPNext's own return receipts now.
-    `inventory_report_data.supplier_returns_by_item` is where the Supplier Return record will be
-    read once that doctype exists; it answers nothing today. If a Supplier Return posts its stock
-    through a return receipt, the seam stays empty, or each return would count twice.
+  - **Returns to a supplier are counted once.** The Supplier Return change ships
+    `inventory_enhancements/supplier_returns.py` and settles
+    `returned_lines(purchase_order_items=None, project=None)` for other modules.
+    `inventory_report_data.supplier_return_lines` imports it inside a guard, so either change can
+    merge first, and answers nothing before it is installed. A Supplier Return moves its stock
+    through ERPNext's own return receipt (a Purchase Receipt with *Is Return*), which Project
+    Materials also reads, so the same goods can show twice. Both records name the receipt line the
+    goods came in on, and per receipt line the larger of the two is what went back
+    (`inventory_report_rules.returned_by_item`): a record-only return counts, a return made by hand
+    in the Desk counts, and one that is both is not doubled. A return that was asked for and has
+    not been sent back is its own column, *Return Requested*, because those goods are still here.
+    The real module was not on `main` when this was written, so the seam is tested against a
+    stand-in in the settled shape.
   - **Who.** Location Contents and Where Is This Item: Stock User, Stock Manager, Inventory Clerk,
     Item Manager, System Manager. Project Materials and Job Site Contents add Projects User,
     Projects Manager, Purchase User and Purchase Manager. Frappe also requires report permission
@@ -126,10 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     whose job shelf stock is for, or where one job's items stand from order to use.
   - **What the reports cannot show yet.** Where a non-stock item is (it never enters stock, so
     it is never at a location, on the shelf or at a site: only ordered and received). Stock by job
-    in a shop bin. Anything on the Project Shelf until the shelf is set. Supplier Returns made
-    through the new record until its seam is filled. A disabled item, which the Bin Manager's
+    in a shop bin. Anything on the Project Shelf until the shelf is set. A disabled item, which the Bin Manager's
     listing rule leaves out of Location Contents (Where Is This Item does find it).
-  - **Tests:** `tests/test_inventory_reports.py` (152 tests, bench-free, its own CI step): the
+  - **Tests:** `tests/test_inventory_reports.py` (160 tests, bench-free, its own CI step): the
     status rules, the shelf and site split, the project roll-up, the stay at a site, the reports
     themselves on a `frappe` stub, the shape of every query, the exported rows and the hub links.
     Each query shape was also run read-only against production. Not run: the reports in a browser

@@ -428,6 +428,7 @@ class _Case(unittest.TestCase):
 		STATE["get_all"]["Item"] = list(ITEMS.values())
 		STATE["get_all"]["Project"] = list(PROJECTS.values())
 		self.patched.set(data, "_shelf_module", lambda: None)
+		self.patched.set(data, "_returns_module", lambda: None)
 
 	def places(self, **kwargs):
 		where = _where(**kwargs)
@@ -892,10 +893,78 @@ class TestProjectRollup(unittest.TestCase):
 		# The day it was last received is not moved by the return.
 		self.assertEqual(row["last_received"], dt.date(2026, 9, 20))
 
-	def test_the_supplier_return_seam_adds_to_the_same_column(self):
-		rows = self.rows([], [_receipt("A", "PR-1", 10)], supplier_returns={"A": 2})
+	def _sr(self, item, qty, gone=True, receipt_line=None, name="SR-1"):
+		"""One of ``inventory_report_data.supplier_return_lines``' rows."""
+		return {
+			"item_code": item,
+			"receipt_line": receipt_line,
+			"qty": qty,
+			"gone": gone,
+			"supplier_return": name,
+		}
+
+	def test_a_record_only_supplier_return_counts_as_returned(self):
+		# No return receipt exists for it: the Supplier Return is the only record the goods left.
+		rows = self.rows(
+			[], [_receipt("A", "PR-1", 10)], supplier_returns=[self._sr("A", 2, receipt_line="L1")]
+		)
 		self.assertEqual(rows["A"]["returned"], 2)
+		self.assertEqual(rows["A"]["return_pending"], 0)
 		self.assertEqual(rows["A"]["not_located"], 8)
+		self.assertEqual(rows["A"]["supplier_returns"], "SR-1")
+
+	def test_a_supplier_return_and_its_own_return_receipt_are_one_return(self):
+		# A Supplier Return sends stock back through ERPNext's return receipt, and both name the
+		# receipt line the goods came in on. Counted twice, four returned would read as eight.
+		rows = self.rows(
+			[],
+			[_receipt("A", "PR-1", 10), _receipt("A", "PR-2", -4, is_return=1, returns_line="L1")],
+			supplier_returns=[self._sr("A", 4, receipt_line="L1")],
+		)
+		self.assertEqual(rows["A"]["returned"], 4)
+		self.assertEqual(rows["A"]["not_located"], 6)
+		self.assertEqual(rows["A"]["receipts"], "PR-1, PR-2")
+
+	def test_per_receipt_line_the_larger_of_the_two_is_what_went_back(self):
+		rows = self.rows(
+			[],
+			[
+				_receipt("A", "PR-1", 20),
+				# Two went back by hand in the Desk and three more on a Supplier Return's receipt.
+				_receipt("A", "PR-2", -2, is_return=1, returns_line="L1"),
+				_receipt("A", "PR-3", -3, is_return=1, returns_line="L1"),
+				# Another line, returned by hand only.
+				_receipt("A", "PR-4", -1, is_return=1, returns_line="L2"),
+			],
+			supplier_returns=[
+				self._sr("A", 3, receipt_line="L1"),
+				# A third line, on a Supplier Return whose return receipt is not submitted yet.
+				self._sr("A", 6, receipt_line="L3", name="SR-2"),
+			],
+		)
+		self.assertEqual(rows["A"]["returned"], 5 + 1 + 6)
+		self.assertEqual(rows["A"]["supplier_returns"], "SR-1, SR-2")
+
+	def test_a_return_that_names_no_receipt_line_stands_alone(self):
+		got = rules.returned_by_item(
+			[_receipt("A", "PR-2", -2, is_return=1), _receipt("A", "PR-3", -1, is_return=1)],
+			[self._sr("A", 4), self._sr("B", 1)],
+		)
+		self.assertEqual(got, {"A": 7, "B": 1})
+		self.assertEqual(rules.returned_by_item([_receipt("A", "PR-1", 5)], []), {})
+		self.assertEqual(rules.returned_by_item(None, None), {})
+
+	def test_a_return_asked_for_and_not_sent_back_is_still_here(self):
+		rows = self.rows(
+			[],
+			[_receipt("A", "PR-1", 10)],
+			supplier_returns=[self._sr("A", 3, gone=False, receipt_line="L1")],
+			shelf={"A": 10},
+		)
+		row = rows["A"]
+		self.assertEqual((row["returned"], row["return_pending"]), (0, 3))
+		self.assertEqual((row["on_shelf"], row["not_located"]), (10, 0))
+		self.assertEqual(row["supplier_returns"], "SR-1")
 
 	def test_parts_taken_from_shop_stock_list_with_no_order(self):
 		rows = self.rows(used={"C": 4})
@@ -1299,6 +1368,8 @@ class TestSharedReads(_Case):
 		for path in sorted(REPORTS.glob("*/*.py")):
 			source = _strip_py(path.read_text(encoding="utf-8"))
 			for word in (
+				"_returns_module",
+				"returned_lines(",
 				"_shelf_claims",
 				"_own_shelf_claims",
 				"_shelf_module",
@@ -1307,8 +1378,89 @@ class TestSharedReads(_Case):
 			):
 				self.assertNotIn(word, source, f"{path.name}: {word}")
 
-	def test_the_supplier_return_seam_answers_nothing_yet(self):
-		self.assertEqual(data.supplier_returns_by_item("JOB-1"), {})
+	def test_before_the_supplier_return_module_is_installed_there_are_no_returns(self):
+		self.assertEqual(data.supplier_return_lines("JOB-1"), [])
+
+	def _returns(self, lines=None, raises=False):
+		"""A stand-in for the Supplier Return change's module, in the shape it settles."""
+		calls = []
+
+		def returned_lines(purchase_order_items=None, project=None):
+			calls.append((purchase_order_items, project))
+			if raises:
+				raise RuntimeError("boom")
+			return lines
+
+		module = types.SimpleNamespace(returned_lines=returned_lines, calls=calls)
+		self.patched.set(data, "_returns_module", lambda: module)
+		return module
+
+	def test_the_seam_asks_the_supplier_return_module_for_the_projects_lines(self):
+		module = self._returns(
+			[
+				{
+					"supplier_return": "SR-1",
+					"status": "Sent Back",
+					"purchase_receipt": "PR-1",
+					"purchase_receipt_item": "L1",
+					"item_code": "A",
+					"project": "JOB-1",
+					"qty": 1,
+					"uom": "Box",
+					"stock_qty": 12,
+					"gone": True,
+					"open": True,
+				},
+				# A record-only line with no stock quantity of its own, asked for and not sent yet.
+				{"supplier_return": "SR-2", "item_code": "N", "qty": -2, "stock_qty": None, "gone": False},
+			]
+		)
+		self.assertEqual(
+			data.supplier_return_lines("JOB-1"),
+			[
+				{
+					"item_code": "A",
+					"receipt_line": "L1",
+					"qty": 12.0,
+					"gone": True,
+					"supplier_return": "SR-1",
+				},
+				{
+					"item_code": "N",
+					"receipt_line": None,
+					"qty": 2.0,
+					"gone": False,
+					"supplier_return": "SR-2",
+				},
+			],
+		)
+		self.assertEqual(module.calls, [(None, "JOB-1")])
+
+	def test_an_answer_the_seam_cannot_use_is_no_returns_and_never_an_error(self):
+		self._returns(raises=True)
+		self.assertEqual(data.supplier_return_lines("JOB-1"), [])
+		self._returns(None)
+		self.assertEqual(data.supplier_return_lines("JOB-1"), [])
+		self._returns(["junk", {"supplier_return": "SR-1"}, {"item_code": "A", "stock_qty": 1, "gone": 1}])
+		self.assertEqual([line["item_code"] for line in data.supplier_return_lines("JOB-1")], ["A"])
+
+	def test_the_supplier_return_module_is_found_by_import_and_its_absence_is_not_an_error(self):
+		self.patched.restore()
+		name = "erpnext_enhancements.inventory_enhancements.supplier_returns"
+		had = name in sys.modules
+		saved = sys.modules.get(name)
+		try:
+			sys.modules[name] = None  # what a failed import looks like to the import system
+			self.assertIsNone(data._returns_module())
+			self.assertEqual(data.supplier_return_lines("JOB-1"), [])
+			fake = types.ModuleType(name)
+			sys.modules[name] = fake
+			self.assertIs(data._returns_module(), fake)
+		finally:
+			if had:
+				sys.modules[name] = saved
+			else:
+				sys.modules.pop(name, None)
 
 	def test_site_bins_carry_each_sites_job(self):
 		_answer_sql(
@@ -1947,6 +2099,33 @@ class TestProjectMaterials(_Case):
 		)
 		self.assertEqual(len(every), 3)
 
+	def test_supplier_returns_reach_the_rows_and_are_not_counted_twice(self):
+		asked = []
+		self.receipts.append(_receipt("A", "PR-9", -2, is_return=1, returns_line="L1"))
+
+		def lines(project):
+			asked.append(project)
+			return [
+				{"item_code": "A", "receipt_line": "L1", "qty": 2.0, "gone": True, "supplier_return": "SR-1"},
+				{
+					"item_code": "B",
+					"receipt_line": "L2",
+					"qty": 1.0,
+					"gone": False,
+					"supplier_return": "SR-2",
+				},
+				{"item_code": "C", "receipt_line": "L3", "qty": 5.0, "gone": True, "supplier_return": "SR-3"},
+			]
+
+		self.patched.set(data, "supplier_return_lines", lines)
+		rows = {r["item_code"]: r for r in self.run_report(project="JOB-1")[1]}
+		self.assertEqual(asked, ["JOB-1"])
+		# A: the Supplier Return and its own return receipt are one return of two.
+		self.assertEqual((rows["A"]["returned"], rows["A"]["supplier_returns"]), (2, "SR-1"))
+		self.assertEqual((rows["B"]["returned"], rows["B"]["return_pending"]), (0, 1))
+		# C is on the job's list only because of its return, and still gets its name.
+		self.assertEqual((rows["C"]["returned"], rows["C"]["item_name"]), (5, "Charlie"))
+
 	def test_the_shelf_is_asked_for_the_job_and_for_the_no_job_shares(self):
 		asked = []
 
@@ -2229,6 +2408,8 @@ class TestQueries(unittest.TestCase):
 		source = (REPORTS / "project_materials" / "project_materials.py").read_text(encoding="utf-8")
 		self.assertIn("where po.docstatus = 1", source)
 		self.assertIn("where pr.docstatus = 1", source)
+		# What lets a Supplier Return and its own return receipt be counted as one return.
+		self.assertIn("pri.purchase_receipt_item as returns_line", source)
 
 	def test_the_order_lines_project_is_the_lines_own_else_its_orders(self):
 		source = (REPORTS / "project_materials" / "project_materials.py").read_text(encoding="utf-8")

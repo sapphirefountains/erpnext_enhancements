@@ -342,6 +342,7 @@ def _blank_item():
 		"ordered_amount": 0.0,
 		"received": 0.0,
 		"returned": 0.0,
+		"return_pending": 0.0,
 		"still_to_come": 0.0,
 		"closed_short": 0.0,
 		"on_shelf": 0.0,
@@ -350,6 +351,7 @@ def _blank_item():
 		"held_value": 0.0,
 		"purchase_orders": set(),
 		"receipts": set(),
+		"supplier_returns": set(),
 		"first_ordered": None,
 		"last_received": None,
 	}
@@ -373,12 +375,13 @@ def project_item_rows(
 	* ``receipt_lines``: submitted Purchase Receipt lines for the project (``item_code``,
 	  ``item_name``, ``purchase_receipt``, ``is_return``, ``posting_date``, ``stock_qty``,
 	  ``qty``, ``conversion_factor``, ``stock_uom``). A return receipt's quantities are negative,
-	  as ERPNext stores them.
+	  as ERPNext stores them, and its ``returns_line`` names the receipt line it sends back.
 	* ``shelf`` / ``site``: ``{item_code: qty}`` on the Project Shelf for this job and at its job
 	  site; ``site`` may instead map to ``(qty, value)``.
 	* ``used``: ``{item_code: qty}`` taken out of stock for the job, less what came back.
-	* ``supplier_returns``: ``{item_code: qty}`` from the Supplier Return record (the seam; the
-	  doctype is built by another change). Added to the returns ERPNext's own return receipts show.
+	* ``supplier_returns``: the job's Supplier Return lines, ``[{item_code, receipt_line, qty,
+	  gone, supplier_return}, ...]`` (``inventory_report_data.supplier_return_lines``). ``gone``
+	  says the goods have left; a line that is not gone yet is a return that was asked for.
 	* ``items``: ``{item_code: {item_name, stock_uom, is_stock_item, item_group}}``.
 	* ``received_into``: ``{item_code: [warehouse, ...]}``, where the job's receipts actually put
 	  stock (:func:`received_into`), already in the words to show.
@@ -394,6 +397,14 @@ def project_item_rows(
 	since a receipt of one writes no stock ledger row. For a stock item it is stock received into
 	a shop bin (where stock is not kept by job; *Received Into* names the bin), or received before
 	Maintain Stock was switched on. It is never less than nothing.
+
+	**A return is counted once.** A Supplier Return sends stock back through ERPNext's own return
+	receipt, so the same goods can show in both: as a return receipt's line, and as a Supplier
+	Return line that is gone. Each names the original receipt line. Per original line the larger
+	of the two is what went back (:func:`returned_by_item`): a record-only return (no return
+	receipt) still counts, a return made by hand in the Desk still counts, and one that is both
+	is not doubled. A Supplier Return that was asked for and has not left is *Return Requested*,
+	and those goods are still here.
 	"""
 	items = items or {}
 	received_into = received_into or {}
@@ -433,9 +444,7 @@ def project_item_rows(
 		row["item_name"] = row["item_name"] or (line.get("item_name") or "")
 		row["stock_uom"] = row["stock_uom"] or (line.get("stock_uom") or "")
 		qty = _stock_qty(line)
-		if _on(line.get("is_return")):
-			row["returned"] += abs(qty)
-		else:
+		if not _on(line.get("is_return")):
 			row["received"] += qty
 			received_on = _date(line.get("posting_date"))
 			if received_on and (row["last_received"] is None or received_on > row["last_received"]):
@@ -454,9 +463,16 @@ def project_item_rows(
 	for code, qty in (used or {}).items():
 		if abs(_num(qty)) > TOLERANCE:
 			entry(code)["used"] += _num(qty)
-	for code, qty in (supplier_returns or {}).items():
-		if _num(qty) > TOLERANCE:
-			entry(code)["returned"] += _num(qty)
+	for code, qty in returned_by_item(receipt_lines, supplier_returns).items():
+		entry(code)["returned"] += qty
+	for line in supplier_returns or ():
+		code = line.get("item_code")
+		if not code:
+			continue
+		if line.get("supplier_return"):
+			entry(code)["supplier_returns"].add(line.get("supplier_return"))
+		if not line.get("gone") and abs(_num(line.get("qty"))) > TOLERANCE:
+			entry(code)["return_pending"] += abs(_num(line.get("qty")))
 
 	rows = []
 	for code in sorted(out):
@@ -480,6 +496,7 @@ def project_item_rows(
 				"at_site": row["at_site"],
 				"used": row["used"],
 				"returned": row["returned"],
+				"return_pending": row["return_pending"],
 				"still_to_come": row["still_to_come"],
 				"closed_short": row["closed_short"],
 				"not_located": not_located,
@@ -491,9 +508,39 @@ def project_item_rows(
 				"last_received": row["last_received"],
 				"purchase_orders": ", ".join(sorted(row["purchase_orders"])),
 				"receipts": ", ".join(sorted(row["receipts"])),
+				"supplier_returns": ", ".join(sorted(row["supplier_returns"])),
 			}
 		)
 	return rows
+
+
+def returned_by_item(receipt_lines, supplier_returns):
+	"""``{item_code: qty that went back to the supplier}``, each return counted once.
+
+	Two records can show the same goods leaving: a return receipt's line (``is_return``, its
+	``returns_line`` naming the receipt line it sends back) and a Supplier Return line that is
+	``gone`` (its ``receipt_line`` naming the same). For each original receipt line the answer is
+	the larger of the two totals. A line that names no original stands alone and is added whole.
+	"""
+	native, recorded = {}, {}
+	for index, line in enumerate(receipt_lines or ()):
+		code = line.get("item_code")
+		if not code or not _on(line.get("is_return")):
+			continue
+		key = (code, line.get("returns_line") or ("receipt", index))
+		native[key] = native.get(key, 0.0) + abs(_stock_qty(line))
+	for index, line in enumerate(supplier_returns or ()):
+		code = line.get("item_code")
+		if not code or not line.get("gone"):
+			continue
+		key = (code, line.get("receipt_line") or ("return", index))
+		recorded[key] = recorded.get(key, 0.0) + abs(_num(line.get("qty")))
+	out = {}
+	for key in set(native) | set(recorded):
+		qty = max(native.get(key, 0.0), recorded.get(key, 0.0))
+		if qty > TOLERANCE:
+			out[key[0]] = out.get(key[0], 0.0) + qty
+	return out
 
 
 def standing(row):
