@@ -717,7 +717,9 @@ class ContractBuilder {
 				description: __("The client, site and description come from the project."),
 			},
 		];
-		if (!supplier && !any_party) {
+		// A Certificate of Warranty is about finished work: it starts from a project, never an
+		// opportunity (contract_builder.py's one_sided; warranty_certificate.py).
+		if (!supplier && !any_party && type.template_key !== "warranty") {
 			fields.push({
 				fieldname: "opportunity",
 				fieldtype: "Link",
@@ -1694,16 +1696,29 @@ class ContractBuilder {
 			<div class="cb-panel-body"><div class="cb-checks"></div><div class="cb-review-main"></div></div>
 		</section>`);
 		$panel.find(".cb-eyebrow").text(signed ? __("Complete") : __("Last step"));
-		$panel.find("h2").text(signed ? __("Signed") : __("Review and sign"));
-		$panel
-			.find(".cb-lede")
-			.text(
-				signed
-					? __("The agreement is executed. The signed copy is on the right, and the {0} has been emailed theirs.", [this.noun()])
-					: this.live()
-					? __("Read it through together on the right. When every clause is initialed, the {0} signs below.", [this.noun()])
-					: __("Read it through on the right, then sign it with the {0} here or send it to them.", [this.noun()])
-			);
+		if (data.one_sided) {
+			// A Certificate of Warranty: only Sapphire signs it, so the last step is Issue, and
+			// nothing here goes to the customer for a signature (warranty_certificate.py).
+			$panel.find("h2").text(signed ? __("Issued and signed") : __("Review and issue"));
+			$panel
+				.find(".cb-lede")
+				.text(
+					signed
+						? __("The certificate is issued and signed for Sapphire. The copy on the right is the one on file. Nothing is emailed unless you send it below.")
+						: __("Read it through on the right, then issue it. Only Sapphire signs a certificate, so nothing goes to the customer to sign.")
+				);
+		} else {
+			$panel.find("h2").text(signed ? __("Signed") : __("Review and sign"));
+			$panel
+				.find(".cb-lede")
+				.text(
+					signed
+						? __("The agreement is executed. The signed copy is on the right, and the {0} has been emailed theirs.", [this.noun()])
+						: this.live()
+						? __("Read it through together on the right. When every clause is initialed, the {0} signs below.", [this.noun()])
+						: __("Read it through on the right, then sign it with the {0} here or send it to them.", [this.noun()])
+				);
+		}
 		this.swap_stage($panel, dir);
 		this.render_review_checks();
 		const $main = $panel.find(".cb-review-main");
@@ -1714,7 +1729,8 @@ class ContractBuilder {
 					__("This contract was cancelled. Amend it from the full form to make a new revision.")
 				)
 			);
-		} else if (this.live()) this.render_signbox($main);
+		} else if (data.one_sided) this.render_certificate_options($main);
+		else if (this.live()) this.render_signbox($main);
 		else this.render_send_options($main);
 		this.update_chrome();
 		this.refresh_preview({ now: true });
@@ -1765,7 +1781,11 @@ class ContractBuilder {
 					false,
 					__("{0} will print as blank lines", [blanks.length]),
 					$("<div></div>")
-						.text(__("Fine for anything the {0} fills in by hand; otherwise go back and fill them in.", [this.noun()]))
+						.text(
+							data.one_sided
+								? __("Fine for anything completed by hand on the printed certificate; otherwise go back and fill them in.")
+								: __("Fine for anything the {0} fills in by hand; otherwise go back and fill them in.", [this.noun()])
+						)
 						.append($ul)
 				);
 			} else {
@@ -2018,6 +2038,34 @@ class ContractBuilder {
 	render_signed($main) {
 		const data = this.data;
 		const $done = $(`<div class="cb-done"><span class="cb-done-mark">${CB_CHECK_SVG}</span><h2></h2><p></p><div class="cb-actions"></div></div>`);
+		const $actions = $done.find(".cb-actions");
+		if (data.one_sided) {
+			// Signed by Sapphire alone. Nothing was emailed by issuing it: the customer gets it
+			// only when a Contract Manager presses the button below and confirms the address.
+			$done.find("h2").text(__("Issued and signed"));
+			$done.find("p").text(
+				__("{0} is signed for Sapphire Fountains by {1}. It has not been emailed to anyone.", [
+					data.name,
+					this.values.signed_by || __("Sapphire"),
+				])
+			);
+			$('<button class="btn btn-primary"></button>')
+				.text(__("Print / PDF"))
+				.on("click", () => frappe.set_route("print", "Project Contract", data.name))
+				.appendTo($actions);
+			if (data.can_email) {
+				$('<button class="btn btn-default"></button>')
+					.text(__("Email it to the customer"))
+					.on("click", () => this.email_certificate_dialog())
+					.appendTo($actions);
+			}
+			$('<button class="btn btn-default"></button>')
+				.text(__("Open the certificate"))
+				.on("click", () => frappe.set_route("Form", "Project Contract", data.name))
+				.appendTo($actions);
+			$main.append($done);
+			return;
+		}
 		$done.find("h2").text(__("Signed and executed"));
 		$done.find("p").text(
 			__("{0} signed {1}. Their copy is on its way to them by email.", [
@@ -2025,7 +2073,6 @@ class ContractBuilder {
 				data.name,
 			])
 		);
-		const $actions = $done.find(".cb-actions");
 		if (this.autopay && this.autopay.offer) {
 			$('<button class="btn btn-primary"></button>')
 				.text(__("Save a card on file now"))
@@ -2082,6 +2129,108 @@ class ContractBuilder {
 				);
 			})
 			.catch(() => tab && tab.close());
+	}
+
+	// A Certificate of Warranty's last step. Only Sapphire signs it, so there is no "sign it here"
+	// and no "send it to them": a Contract Manager issues it, and issuing it with a signer named
+	// is the signature (ProjectContract._sign_for_sapphire). With no signer it is issued for ink.
+	render_certificate_options($main) {
+		const data = this.data;
+		const signer = cb_norm(this.values.warranty_signer);
+		const title = cb_norm(this.values.warranty_signer_title);
+		const $actions = $('<div class="cb-actions"></div>').appendTo($main);
+		const button = (label, cls, handler) =>
+			$(`<button class="btn ${cls}"></button>`).text(label).on("click", handler).appendTo($actions);
+		const notice = (text, cls) => $actions.before($(`<div class="cb-notice ${cls || "is-info"}"></div>`).text(text));
+
+		if (data.docstatus === 0) {
+			notice(
+				signer
+					? __("Issuing it signs it for Sapphire Fountains as {0}. From then on it is final: a change means a new revision.", [
+							title ? `${signer}, ${title}` : signer,
+					  ])
+					: __("No signer is named, so By and Its print as blank lines to sign in ink. To sign it here instead, go back and fill in Signed for Sapphire by.")
+			);
+			if (data.can_issue) {
+				button(signer ? __("Sign and issue") : __("Issue for an ink signature"), "btn-primary cb-big", () =>
+					this.issue_certificate(signer, title)
+				);
+			}
+			if (data.can_ask) {
+				notice(__("A Contract Manager issues the certificate. When it reads right, let one know it is ready."));
+				button(__("Let a Contract Manager know"), "btn-primary", () => this.ask_contract_manager());
+			}
+			if (data.editable) {
+				button(__("Save draft"), "btn-default", () => this.flush(true).catch(() => {}));
+			}
+			return;
+		}
+		// Issued with no signer named: it is waiting for ink, as a paper contract does.
+		notice(__("Issued for an ink signature. Print it and sign it, then record that with Mark as Signed on the full form."));
+		button(__("Print / PDF"), "btn-primary", () => frappe.set_route("print", "Project Contract", data.name));
+		button(__("Open the full form"), "btn-default", () => frappe.set_route("Form", "Project Contract", data.name));
+	}
+
+	issue_certificate(signer, title) {
+		const name = this.data.name;
+		const message = signer
+			? __("This issues {0} and signs it for Sapphire Fountains as {1}. Its wording locks from here. Nothing is emailed.", [
+					name,
+					cb_esc(title ? `${signer}, ${title}` : signer),
+			  ])
+			: __("This issues {0} with blank signature lines, to be signed in ink. Its wording locks from here. Nothing is emailed.", [name]);
+		frappe.confirm(message, () =>
+			this.issue().then(() => {
+				frappe.show_alert({ message: signer ? __("Issued and signed") : __("Issued"), indicator: "green" });
+				this.preview_key = null;
+				this.render_review("fade");
+			})
+		);
+	}
+
+	// The only way a certificate reaches a customer by email: this dialog, opened by a person,
+	// with the address in front of them, sent on their press of Send. One email per press.
+	email_certificate_dialog() {
+		const data = this.data;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Email the certificate"),
+			fields: [
+				{
+					fieldname: "recipient_email",
+					fieldtype: "Data",
+					options: "Email",
+					label: __("Send to"),
+					default: this.values.contact_email,
+					reqd: 1,
+					description: __("One email goes to this address, with {0} attached as a PDF.", [data.name]),
+				},
+				{
+					fieldname: "note",
+					fieldtype: "Small Text",
+					label: __("Note (optional)"),
+					description: __("Shown in the email above the closing line."),
+				},
+			],
+			primary_action_label: __("Send"),
+			primary_action: (values) => {
+				dialog.disable_primary_action();
+				frappe
+					.xcall(`${CB_API}email_certificate`, {
+						name: data.name,
+						recipient_email: values.recipient_email,
+						note: values.note,
+					})
+					.then((result) => {
+						dialog.hide();
+						frappe.show_alert(
+							{ message: __("Emailed to {0}", [cb_esc((result && result.to) || values.recipient_email)]), indicator: "green" },
+							7
+						);
+					})
+					.catch(() => dialog.enable_primary_action());
+			},
+		});
+		dialog.show();
 	}
 
 	render_send_options($main) {

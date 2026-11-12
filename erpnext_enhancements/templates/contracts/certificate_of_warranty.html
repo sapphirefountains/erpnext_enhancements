@@ -1,0 +1,21 @@
+<div class="ct-warranty">
+<div class="ct-warranty-project">
+<p class="ct-warranty-project-name">{{ fill(doc.project_title, 30) }}</p>
+<p>{{ multiline(doc.site_address, 34, 2) }}</p>
+<p class="ct-warranty-company">Sapphire Fountains, LLC</p>
+<p>801-837-2199</p>
+</div>
+<h3 class="ct-warranty-title"><b>ONE YEAR<br>CERTIFICATE OF WARRANTY</b></h3>
+<p>The undersigned, <b>Sapphire Fountains, LLC (Sapphire)</b>, warrants that workmanship, materials and equipment furnished under the Contract will be of good quality and new unless otherwise required or permitted by the Contract Documents, that the Work will be free from defects not inherent in the quality required or permitted, and that the Work will conform to the requirements of the Contract Documents.  The Warranty refers to the above-referenced project.  Work not conforming to these requirements, including substitutions not properly approved and authorized, may be considered non-conforming.  The warranty is for a period of one (1) year from the date of execution of the Certificate of Substantial Completion or Occupancy, as required by the Contract Documents for the project.   Specific manufacturer’s warranties may extend beyond that one-year period from initial installation, repair, or replacement date.</p>
+<p>Repair or replacement of work by Sapphire during the warranty period will only carry an extended warranty beyond the initial one year from the date of repair or replacement if it is provided by the manufacturer and/or Sapphire.</p>
+<p>Sapphire’s warranty excludes remedy for damage or defect caused by abuse, modifications not executed by Sapphire, improper or insufficient maintenance, improper operation, or normal wear and tear and normal usage.</p>
+<p>Owner or General Contractor should notify Sapphire in writing of any warranty issues and Subcontractor/Supplier shall have five (5) working days to initiate a remedy.</p>
+<div class="ct-warranty-sign">
+<p><b>Sapphire Fountains, LLC:</b></p>
+<p><span class="ct-warranty-label">By:</span><span class="ct-warranty-line">{{ sapphire_sig() }}</span></p>
+<p><span class="ct-warranty-label">Its:</span><span class="ct-warranty-line">{% if doc.warranty_signer_title %}{{ fill(doc.warranty_signer_title) }}{% else %}&nbsp;{% endif %}</span></p>
+<p><span class="ct-warranty-label">Date:</span><span class="ct-warranty-line">{{ long_date(doc.contract_date) }}</span></p>
+<p class="ct-warranty-gap">Work Completed or Material Supplied by Sapphire on: <span class="ct-warranty-line ct-warranty-short">{{ long_date(doc.warranty_start_date) }}</span></p>
+<p class="ct-warranty-gap">Sapphire Project/Number: {% if doc.project_title or doc.project %}<b>{% if doc.project_title %}{{ fill(doc.project_title) }}{% endif %}{% if doc.project_title and doc.project %} — {% endif %}{% if doc.project %}<span class="ct-warranty-number">{{ fill(doc.project) }}</span>{% endif %}</b>{% else %}{{ blank(44) }}{% endif %}</p>
+</div>
+</div>

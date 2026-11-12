@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.808.0] - 2026-11-12
+
+### Added
+- **The one-year Certificate of Warranty is in the Contract Builder.** Nikolas, 2026-11-12: "I need
+  this added to the Contract Builder", attaching Sapphire's Word certificate. It is a ninth Contract
+  Template (`warranty`, "Certificate of Warranty (One Year)", series `SF-WAR-YYYY-####`), added the
+  way the other eight were: a template record, a section of fields on Project Contract, a step in
+  the builder's walk, the same print format. Its own rules are in
+  `project_enhancements/warranty_certificate.py`.
+  - **The wording is the Word document's, paragraph for paragraph.** Nothing in the four paragraphs
+    was changed. What does differ from the Word copy:
+    - *Sapphire Project/Number* prints the project's name and its ERPNext number ("Name — PRJ-00999").
+      The Word blank still held the last job it was filled in for; that text is not in the template.
+    - Dates print written out ("November 12, 2026"), so nobody outside the company has to guess
+      whether 03-04 is March or April.
+    - The address in the project block prints as the record holds it, on two lines when it can
+      be split before "City, ST ZIP".
+    - The app's print style: the Sapphire letterhead with "BUILD · WARRANTY" under the wordmark,
+      the display face for the title, and a footer with the certificate's number and the page
+      count. The footer leaves out "Confidential" for this type, because a certificate is made to
+      be handed to an owner and their contractor.
+  - **Each blank is a field.** Project name, site address, the certificate's date, *Work Completed
+    or Material Supplied by Sapphire on*, the project's number, and who signs for Sapphire (*By*)
+    with their title (*Its*). An empty one prints a line to fill in by hand. Started from a project,
+    the draft takes the customer, contact, project name and number, the site address (the project's
+    address line, else its Primary Address record) and the signer and title kept in ERPNext
+    Enhancements Settings for countersigning. The completion date comes from *Production Completed*
+    or the actual end date when the project records one, and never from the expected end date, which
+    is a plan. Most projects record no completion date today, so the builder usually asks for it.
+  - **The term is one year, so the end date is worked out and never typed.** *Warranty Ends* is the
+    same day a year after the work was completed (a February 29 start ends on February 28). It is
+    read-only, it follows the start date on every save, and it is kept on the record. The
+    certificate does not print it: the Word document has no end date, and its wording counts the
+    year from the Certificate of Substantial Completion or Occupancy.
+  - **Only Sapphire signs it.** The Word document has one signature block. So the builder's last
+    step is *Review and issue*: no signing with the customer, no signing link, and the server
+    refuses both for this type.
+    - With a name in *Signed for Sapphire by*, **issuing it signs it**: it goes straight to Signed,
+      the By line prints that name in the signature face, the copy is frozen so a later change to
+      the template cannot change what was issued, and the timeline records who pressed the button.
+      Only a Contract Manager (or System Manager) can issue. A draft never shows the name on the By
+      line.
+    - With no name, it is issued with blank By and Its lines to sign in ink, waits at Out for
+      Signature, and is recorded with *Mark as Signed* on the form, as a paper contract is.
+  - **Emailing it is one explicit press, and nothing else sends it.** On a Signed certificate the
+    builder offers *Email it to the customer* to a Contract Manager. The dialog shows the address
+    (the contract's Contact Email, editable); **Send** sends one email with the PDF attached and
+    writes the send to the timeline. An ink-signed certificate goes out as its filed scan, and is
+    refused until the scan is filed, because the copy in the system has no signature on it. Issuing
+    a certificate emails nobody.
+  - **Where it starts.** The Contract Builder's start screen; the Contract button on a Project,
+    which opens that screen with the project filled in; and *Generate Contract* on a Project. Not
+    from an Opportunity: a certificate is about finished work.
+  - **Who.** As for every contract: Projects Manager, Sales Manager and Sales User build the draft
+    and can let a Contract Manager know; a Contract Manager issues it and emails it.
+  - **On production at deploy.** One new record: Contract Template `warranty`, inserted by
+    `patches/seed_warranty_certificate_template` from `templates/contracts/certificate_of_warranty.html`.
+    The patch is insert-only (a `warranty` template already there is left as it is), touches no
+    other template, prints what it did and cannot raise. `seed_contract_templates` lists the
+    certificate too, for a fresh site; it has already run everywhere else. Project Contract gains
+    five fields and one section, shown for this type only, and the `SF-WAR-` series; no existing
+    contract changes. The `Project Contract Print` format gains CSS scoped under `.ct-warranty`.
+    No certificate is created and no email is sent by the deploy.
+  - `tests/test_warranty_certificate` (bench-free, its own CI step) pins the wording against the
+    Word document's paragraphs, every merge field, the date rule, the signing rules, the email
+    rules and the patch. The PDF was checked by rendering the real template, print CSS and
+    letterhead through headless Chrome, which is the generator production uses for this format:
+    one Letter page, with a long project name and address too. Not run on a bench.
+
 ## [1.802.2] - 2026-11-12
 
 ### Changed

@@ -44,6 +44,12 @@
   "sow_project_type_other",
   "sow_feature_type",
   "sow_feature_type_other",
+  "warranty_section",
+  "warranty_start_date",
+  "warranty_end_date",
+  "column_break_warranty",
+  "warranty_signer",
+  "warranty_signer_title",
   "architect_section",
   "architect_notice_attention",
   "sapphire_contact",
@@ -217,7 +223,7 @@
    "hidden": 1,
    "label": "Series",
    "no_copy": 1,
-   "options": "SF-MSA-.YYYY.-.####\nSF-SOW-.YYYY.-.####\nSF-OC-.YYYY.-.####\nSF-RA-.YYYY.-.####\nSF-MAINT-.YYYY.-.####\nSF-NDA-.YYYY.-.####\nSF-ARCH-.YYYY.-.####\nSF-EC-.YYYY.-.####"
+   "options": "SF-MSA-.YYYY.-.####\nSF-SOW-.YYYY.-.####\nSF-OC-.YYYY.-.####\nSF-RA-.YYYY.-.####\nSF-MAINT-.YYYY.-.####\nSF-NDA-.YYYY.-.####\nSF-ARCH-.YYYY.-.####\nSF-EC-.YYYY.-.####\nSF-WAR-.YYYY.-.####"
   },
   {
    "fieldname": "contract_template",
@@ -463,6 +469,47 @@
    "fieldname": "sow_feature_type_other",
    "fieldtype": "Data",
    "label": "Other Feature Type"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "fieldname": "warranty_section",
+   "fieldtype": "Section Break",
+   "label": "Certificate of Warranty"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "description": "Prints on the certificate. The one-year warranty is counted from this date.",
+   "fieldname": "warranty_start_date",
+   "fieldtype": "Date",
+   "label": "Work Completed or Material Supplied On"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "description": "One year after the date above, worked out for you. Kept on the record; the certificate does not print it.",
+   "fieldname": "warranty_end_date",
+   "fieldtype": "Date",
+   "label": "Warranty Ends",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "fieldname": "column_break_warranty",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "description": "Who signs the certificate for Sapphire Fountains. Issuing the certificate signs it in this name. Leave empty to print a blank line and sign in ink.",
+   "fieldname": "warranty_signer",
+   "fieldtype": "Data",
+   "label": "Signed for Sapphire by"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"warranty\"",
+   "description": "The signer's title, for the certificate's Its line.",
+   "fieldname": "warranty_signer_title",
+   "fieldtype": "Data",
+   "label": "Its (title)"
   },
   {
    "depends_on": "eval:doc.template_key==\"architect\"",
@@ -1531,7 +1578,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-13 21:00:00.000000",
+ "modified": "2026-11-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Contract",
