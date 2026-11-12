@@ -10,6 +10,10 @@ Template record (or write a deliberate patch). v1.783.0 (Nikolas, 2026-11-03) is
 Agreement became **Design Agreement**, Rental Agreement **Events Agreement**, and the
 Employee-Contractor Agreement and the NDA are hidden (``enabled = 0``, here for a fresh site and
 in ``rename_agreement_templates`` for an existing one). Keys, names and series are unchanged.
+
+v1.808.0 adds a ninth, the one-year **Certificate of Warranty** (``warranty``). This patch has
+already run on every existing site, so ``seed_warranty_certificate_template`` inserts that one
+record there through :func:`seed`; a fresh site gets all nine from here.
 """
 
 import os
@@ -87,12 +91,36 @@ TEMPLATES = [
 		"file": "employee_contractor_agreement.html",
 		"description": "Expectations / confidentiality / IP assignment / non-compete for employees and individual contractors (DOC-0137, retained; comparison report recommends a legal review pass).",
 	},
+	# Nikolas, 2026-11-12: "I need this added to the Contract Builder". Sapphire's one-year
+	# Certificate of Warranty, word for word from the Word document. Only Sapphire signs it
+	# (project_enhancements/warranty_certificate.py), so it never goes out for a signature.
+	{
+		"template_key": "warranty",
+		"title": "Certificate of Warranty (One Year)",
+		"party_type": "Customer",
+		"requires_msa": 0,
+		"file": "certificate_of_warranty.html",
+		"description": "One-year warranty certificate for a finished project: workmanship, materials and equipment. Signed by Sapphire only; the customer does not sign it.",
+	},
 ]
 
 
 def execute():
+	seed()
+
+
+def seed(only=None):
+	"""Insert the templates that are missing; returns the keys inserted.
+
+	``only`` narrows it to those template keys, for a later patch that adds one template to
+	a site this patch has already run on (``seed_warranty_certificate_template``): it must
+	not bring back a template someone deleted on purpose.
+	"""
 	source_dir = frappe.get_app_path("erpnext_enhancements", "templates", "contracts")
+	inserted = []
 	for spec in TEMPLATES:
+		if only is not None and spec["template_key"] not in only:
+			continue
 		if frappe.db.exists("Contract Template", spec["template_key"]):
 			continue
 		path = os.path.join(source_dir, spec["file"])
@@ -114,3 +142,5 @@ def execute():
 		doc.body = body
 		doc.enabled = spec.get("enabled", 1)
 		doc.insert(ignore_permissions=True)
+		inserted.append(spec["template_key"])
+	return inserted

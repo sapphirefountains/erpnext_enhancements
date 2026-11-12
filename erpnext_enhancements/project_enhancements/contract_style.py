@@ -50,7 +50,31 @@ PILLAR_BY_TEMPLATE = {
 	"msa": "build",
 	"maintenance": "service",
 	"rental": "rent",
+	# The Certificate of Warranty covers finished construction ("the Certificate of Substantial
+	# Completion"), so it sits under Build.
+	"warranty": "build",
 }
+
+# What the eyebrow under the wordmark calls the document: "BUILD · AGREEMENT" for every
+# agreement. A certificate is not an agreement (only Sapphire signs it), so it says what it is.
+EYEBROW_BY_TEMPLATE = {"warranty": "WARRANTY"}
+DEFAULT_EYEBROW = "AGREEMENT"
+
+# Documents whose footer does not say "Confidential": a Certificate of Warranty is made to be
+# handed to an owner and their general contractor.
+NOT_CONFIDENTIAL = frozenset({"warranty"})
+
+
+def _template_key(doc):
+	if doc is None:
+		return ""
+	key = doc.get("template_key") if hasattr(doc, "get") else getattr(doc, "template_key", None)
+	return (key or "").strip().lower()
+
+
+def eyebrow_for(doc):
+	"""The word after the pillar in the letterhead's eyebrow, by ``doc``'s template."""
+	return EYEBROW_BY_TEMPLATE.get(_template_key(doc), DEFAULT_EYEBROW)
 
 
 def pillar_for(doc):
@@ -105,7 +129,7 @@ def logo_svg():
 	return f'{head} width="{LOGO_WIDTH}" height="{LOGO_HEIGHT}">{tail}'
 
 
-def letterhead_html(pillar=None):
+def letterhead_html(pillar=None, label=DEFAULT_EYEBROW):
 	"""The branded header block that opens every agreement.
 
 	The print design system's letterhead, minus the address: the pillar stripe,
@@ -131,7 +155,7 @@ def letterhead_html(pillar=None):
 		logo = '<div class="ct-letterhead-name">Sapphire Fountains, LLC</div>'
 	record = print_style.pillar(pillar)
 	eyebrow = (
-		f'<div class="ct-eyebrow" style="color:{record["deep"]};">{record["name"]} &middot; AGREEMENT</div>'
+		f'<div class="ct-eyebrow" style="color:{record["deep"]};">{record["name"]} &middot; {label}</div>'
 		if record["name"]
 		else ""
 	)
@@ -172,7 +196,10 @@ def footer_html(doc):
 	# "Sapphire Fountains, LLC | <number> | Confidential", as the Word agreements' footer reads
 	# (v1.611.1), with the contract number in the middle where the Word copy has nothing to name.
 	number = frappe.utils.escape_html(frappe.utils.cstr(_footer_label(doc)))
-	label = "  |  ".join(part for part in ("Sapphire Fountains, LLC", number, "Confidential") if part)
+	parts = ("Sapphire Fountains, LLC", number, "Confidential")
+	if _template_key(doc) in NOT_CONFIDENTIAL:
+		parts = parts[:2]
+	label = "  |  ".join(part for part in parts if part)
 	base = "font-family:Lato,'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8pt;color:#363636;"
 	return (
 		f'<div id="footer-html" style="{base}border-top:1px solid #00263E;'
@@ -204,4 +231,4 @@ def wrap(body_html, doc=None):
 	snapshot. ``doc`` names the agreement in the footer and, through its
 	``template_key``, picks the pillar the letterhead is coloured for.
 	"""
-	return f"{letterhead_html(pillar_for(doc))}{body_html or ''}{footer_html(doc)}"
+	return f"{letterhead_html(pillar_for(doc), eyebrow_for(doc))}{body_html or ''}{footer_html(doc)}"

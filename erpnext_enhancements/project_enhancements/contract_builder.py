@@ -50,6 +50,7 @@ from erpnext_enhancements.feature_flags import (
 	contract_esign_public_page_enabled,
 	throw_if_contract_esign_disabled,
 )
+from erpnext_enhancements.project_enhancements.warranty_certificate import is_one_sided
 
 DOCTYPE = "Project Contract"
 
@@ -155,7 +156,21 @@ STEP_COPY = {
 		"Work, and any terms that change the master agreement for this job.",
 	),
 	"supervisor_section": ("Site supervisor", ""),
+	"warranty_section": (
+		"Dates and who signs",
+		"The date the one-year warranty is counted from: the date of the Certificate of Substantial Completion "
+		"or Occupancy when the project has one, otherwise the day Sapphire completed the work or supplied the "
+		"material. The end date works itself out. Then who signs for Sapphire and their title. Issuing the "
+		"certificate signs it in that name and dates it that day; leave the name empty to print blank lines and "
+		"sign and date it in ink.",
+	),
 }
+
+#: The email a Certificate of Warranty goes out in (:func:`email_certificate`): a fragment, wrapped by
+#: ``email_style``.
+CERTIFICATE_EMAIL_TEMPLATE = (
+	"erpnext_enhancements/templates/emails/project_enhancements/warranty_certificate_customer.html"
+)
 
 _TEMPLATE_KEY_EQ = re.compile(r"""doc\.template_key\s*==\s*["']([a-z_]+)["']""")
 _H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
@@ -447,7 +462,10 @@ def blanks(doc, steps):
 		out.append(
 			{
 				"fieldname": "contact_email",
-				"label": _("Contact Email (needed to sign online; the signed copy is sent there)"),
+				# Nobody signs a certificate online; the address is only where it is emailed.
+				"label": _("Contact Email (where the certificate is emailed, if you email it)")
+				if is_one_sided(doc.get("template_key"))
+				else _("Contact Email (needed to sign online; the signed copy is sent there)"),
 				"step": _step_index(steps, "contact_email"),
 			}
 		)
@@ -677,6 +695,7 @@ def sign_here(
 	doc.check_permission("submit")
 	if doc.docstatus == 2:
 		frappe.throw(_("{0} was cancelled. Amend it to make a new revision.").format(name), title=_("Cancelled"))
+	_refuse_customer_signature(doc)
 
 	# The signer's own inputs, checked before anything is issued.
 	if not cint(agree):
@@ -728,6 +747,121 @@ def sign_here(
 		"autopay": portal._autopay_offer(request),
 		"payload": _payload(frappe.get_doc(DOCTYPE, name)),
 	}
+
+
+def _refuse_customer_signature(doc):
+	"""A document only Sapphire signs (a Certificate of Warranty) is never signed by a customer."""
+	if is_one_sided(doc.get("template_key")):
+		frappe.throw(
+			_("Only Sapphire signs this document, so there is no customer signature to take. Issue it instead."),
+			title=_("Signed by Sapphire Only"),
+		)
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=30, seconds=3600, methods=["POST"])
+def email_certificate(name, recipient_email=None, note=None):
+	"""Email an issued, signed Certificate of Warranty to the customer, as a PDF. One email, on this call only.
+
+	Nothing else in the app sends a certificate: not issuing it, not a hook, not a scheduler. A person
+	presses *Email it to the customer* in the builder, checks the address in the dialog and presses Send.
+
+	* Contract Manager or System Manager only (``SIGN_ROLES``), the roles that issue and send contracts,
+	  with the document's own ``email`` permission.
+	* Only a document Sapphire alone signs, issued and Signed. A draft, or one still waiting for an ink
+	  signature, is not something to send a customer.
+	* The attachment is the signed copy on file when there is one (the scan of an ink-signed
+	  certificate, filed with *Signed copy*). Otherwise it is the PDF that *Print / PDF* gives: the
+	  same print format, which prints the copy frozen when the certificate was issued, so the
+	  customer gets exactly what was issued whatever the template says today. An ink-signed
+	  certificate with no scan on file is refused: the copy in the system has no signature on it.
+
+	Raises on a failed send: it must not look like a success to the person who pressed the button.
+	The send is recorded on the certificate's timeline. Returns ``{"to": address}``.
+	"""
+	from erpnext_enhancements import email_style
+	from erpnext_enhancements.project_enhancements.esign import api as esign_api
+
+	frappe.only_for(list(SIGN_ROLES))
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("read")
+	doc.check_permission("email")
+	if not is_one_sided(doc.get("template_key")):
+		frappe.throw(_("Only a Certificate of Warranty is emailed from here. Send an agreement for signature instead."))
+	if doc.docstatus != 1 or doc.get("status") != "Signed":
+		frappe.throw(
+			_("Issue and sign {0} first. Only a signed certificate is emailed to a customer.").format(name),
+			title=_("Not Signed Yet"),
+		)
+	recipient = esign_api._valid_single_email(recipient_email or doc.get("contact_email"))
+	fname, content = _certificate_attachment(doc)
+	label = frappe.db.get_value("Contract Template", doc.contract_template, "title") or _("Certificate of Warranty")
+	project = doc.get("project_title") or doc.get("project") or ""
+	subject = _("{0}: {1}").format(label, project) if project else label
+	frappe.sendmail(
+		recipients=[recipient],
+		subject=subject,
+		message=email_style.render(
+			CERTIFICATE_EMAIL_TEMPLATE,
+			{
+				"recipient_name": doc.get("contact_person"),
+				"certificate": label,
+				"number": doc.name,
+				"project": project,
+				"work_completed": frappe.utils.formatdate(doc.get("warranty_start_date"), "MMMM d, yyyy")
+				if doc.get("warranty_start_date")
+				else "",
+				"note": (note or "").strip()[:2000],
+			},
+			title=label,
+			eyebrow=doc.name,
+			preheader=_("Your certificate of warranty is attached."),
+			tagline=True,
+			pillar="build",
+		),
+		attachments=[{"fname": fname, "fcontent": content}],
+		reference_doctype=DOCTYPE,
+		reference_name=doc.name,
+	)
+	doc.add_comment(
+		"Info",
+		_("Emailed to {0} by {1}, with {2} attached.").format(
+			frappe.utils.escape_html(recipient),
+			frappe.utils.escape_html(frappe.utils.get_fullname(frappe.session.user)),
+			frappe.utils.escape_html(fname),
+		),
+	)
+	return {"to": recipient}
+
+
+def _certificate_attachment(doc):
+	"""``(file name, bytes)`` of what the customer is sent: the signed copy on file, else the printed PDF.
+
+	The PDF comes from ``frappe.get_print`` with the contract print format, not from
+	``frappe.utils.pdf.get_pdf``: that way it is made by the generator the format is set to (Chrome
+	on production, where ``get_pdf`` alone is wkhtmltopdf) and is the very document the person saw
+	under *Print / PDF*. The format prints ``executed_body()``, the copy frozen at issue.
+	"""
+	from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import PRINT_FORMAT
+	from erpnext_enhancements.project_enhancements.signed_copy import file_stem, signed_copy
+
+	filed = signed_copy(doc)
+	if filed.get("file_url"):
+		from frappe.utils.file_manager import get_file
+
+		_name, content = get_file(filed["file_url"])
+		if isinstance(content, str):
+			content = content.encode("utf-8")
+		return filed.get("file_name") or f"{file_stem(doc.name)}.pdf", content
+	if not (doc.get("warranty_signer") or "").strip():
+		frappe.throw(
+			_(
+				"{0} was signed on paper and no scan of the signed copy is on file, so the copy here has no "
+				"signature on it. Open Signed copy on the certificate, attach the scan, then email it."
+			).format(doc.name),
+			title=_("No Signed Copy on File"),
+		)
+	return f"{file_stem(doc.name)}.pdf", frappe.get_print(DOCTYPE, doc.name, print_format=PRINT_FORMAT, as_pdf=True)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -836,11 +970,15 @@ def _payload(doc):
 	body = frappe.db.get_value("Contract Template", doc.get("contract_template"), "body") or ""
 	headings, field_sections = agreement_sections(body)
 	esign_on = contract_esign_enabled()
+	# Only Sapphire signs a Certificate of Warranty: nothing to sign with a customer, no link to send.
+	one_sided = is_one_sided(doc.get("template_key"))
+	manages = bool(set(frappe.get_roles()) & SIGN_ROLES)
 	# Signing here needs only e-signing switched on; handing the client another device or
 	# emailing them a link also needs the public signing page.
 	can_sign_here = bool(
-		esign_on
-		and set(frappe.get_roles()) & SIGN_ROLES
+		not one_sided
+		and esign_on
+		and manages
 		and frappe.has_permission(DOCTYPE, "submit", doc=doc)
 	)
 	can_send = bool(can_sign_here and contract_esign_public_page_enabled())
@@ -899,4 +1037,14 @@ def _payload(doc):
 		"signing": signing,
 		"esign_enabled": 1 if esign_on else 0,
 		"maintenance_contract": maintenance_contract,
+		# A Certificate of Warranty: the page offers Issue (which signs it for Sapphire when a
+		# signer is named) and, once it is Signed, Email it to the customer.
+		"one_sided": 1 if one_sided else 0,
+		"can_email": 1
+		if one_sided
+		and doc.docstatus == 1
+		and doc.get("status") == "Signed"
+		and manages
+		and frappe.has_permission(DOCTYPE, "email", doc=doc)
+		else 0,
 	}

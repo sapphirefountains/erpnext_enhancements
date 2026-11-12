@@ -1649,3 +1649,8 @@ erpnext_enhancements.patches.inventory_reports_hub_links
 # or idempotent, cannot raise, safe twice, and each prints what it did.
 erpnext_enhancements.patches.seed_supplier_return_request_template
 erpnext_enhancements.patches.supplier_returns_hub_links
+# Certificate of Warranty (v1.808.0, Nik 2026-11-12: "I need this added to the Contract Builder"). Inserts ONE
+# Contract Template, `warranty`, from templates/contracts/certificate_of_warranty.html. seed_contract_templates has
+# already run on every existing site, so the ninth template it now lists never reaches one without this. Insert-only
+# (a `warranty` template already there is left as it is), only that key, prints what it did. Cannot raise, safe twice.
+erpnext_enhancements.patches.seed_warranty_certificate_template

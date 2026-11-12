@@ -1,7 +1,8 @@
 """Project Contract — a generated, revision-tracked agreement (Phase 4).
 
 One document per issued agreement, typed by its **Contract Template**
-(``template_key``: msa / sow / owner / rental / maintenance). The printed
+(``template_key``: msa / sow / owner / rental / maintenance, the retained originals, and
+since v1.808.0 the one-year Certificate of Warranty, ``warranty``). The printed
 output is the template's Jinja HTML rendered over this document at print
 time (``render_body()``, used by the "Project Contract" print format), so a
 legal-text edit on the template flows into every not-yet-signed contract.
@@ -44,7 +45,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt, today
 
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
-from erpnext_enhancements.project_enhancements import contract_style
+from erpnext_enhancements.project_enhancements import contract_style, warranty_certificate
 from erpnext_enhancements.utils.value_display import shown_if_stored_phone
 
 # Series include the generation year (SF-OC-2026-0001); frappe keys the
@@ -60,6 +61,9 @@ SERIES_BY_KEY = {
 	"nda": "SF-NDA-.YYYY.-.####",
 	"architect": "SF-ARCH-.YYYY.-.####",
 	"employee_contractor": "SF-EC-.YYYY.-.####",
+	# The one-year Certificate of Warranty (v1.808.0). Signed by Sapphire only; see
+	# project_enhancements/warranty_certificate.py.
+	"warranty": "SF-WAR-.YYYY.-.####",
 }
 
 # Templates whose party type is fixed get it stamped from the template; "Any
@@ -154,6 +158,8 @@ class ProjectContract(Document):
 		self._stamp_revision()
 		self.validate_msa_gate()
 		self._compute_totals()
+		self._compute_warranty_term()
+		self._date_certificate_signed_here()
 		template_title = (
 			frappe.db.get_value("Contract Template", self.get("contract_template"), "title")
 			or self.get("template_key")
@@ -255,6 +261,39 @@ class ProjectContract(Document):
 			self.total_due_at_signing = flt(self.get("maintenance_deposit"))
 			self._compute_maintenance_annual_fee()
 
+	def _compute_warranty_term(self):
+		"""A Certificate of Warranty ends one year after its start date; nobody types the end.
+
+		The start is the certificate's "Work Completed or Material Supplied by Sapphire on"
+		date. With no start there is no end, so a cleared date clears it too. Other contract
+		types are left alone.
+		"""
+		if self.get("template_key") != warranty_certificate.TEMPLATE_KEY:
+			return
+		self.warranty_end_date = warranty_certificate.warranty_end_date(self.get("warranty_start_date"))
+
+	def _date_certificate_signed_here(self):
+		"""A certificate signed by issuing it is dated the day it is issued. Never earlier, never later.
+
+		The certificate's *Date* line sits beside *By* and *Its*: it says when Sapphire signed.
+		When the signature is a typed name set by pressing a button, the only honest date is the
+		day the button was pressed, and an editable one could put a signature on a day nobody
+		signed. So while a signer is named, every save of the draft and the issue itself set
+		``contract_date`` to today, the field is read-only on the form and in the builder
+		(``read_only_depends_on``), and ``_sign_for_sapphire`` records the same day as
+		``signed_on``. A certificate for work finished earlier needs no back-dating: the earlier
+		date is the *Work Completed* date, which stays editable.
+
+		With no signer named the certificate is signed in ink, and its date is typed as on any
+		paper contract: left alone here. ``validate`` runs on a draft's save and on submit, never
+		after, so an issued certificate's date does not move.
+		"""
+		if not warranty_certificate.is_one_sided(self.get("template_key")):
+			return
+		if not (self.get("warranty_signer") or "").strip():
+			return
+		self.contract_date = today()
+
 	def _compute_maintenance_annual_fee(self):
 		"""Auto-fill Annual Maintenance Fee from the included, priced options.
 
@@ -282,8 +321,45 @@ class ProjectContract(Document):
 		# database. Every issued contract sat at "Draft" until a link was sent, which kept
 		# it out of the builder's "Waiting for a signature" list and made the builder's
 		# own Sign & execute (issue, then sign, in one request) refuse it as unsignable.
-		if self.get("status") == "Draft":
-			self.db_set("status", "Out for Signature", update_modified=False)
+		if self.get("status") != "Draft":
+			return
+		if self._sign_for_sapphire():
+			return
+		self.db_set("status", "Out for Signature", update_modified=False)
+
+	def _sign_for_sapphire(self):
+		"""Issuing a Certificate of Warranty with a signer named is Sapphire signing it.
+
+		Only Sapphire signs a certificate (``warranty_certificate.ONE_SIDED_KEYS``), so there is
+		nobody to send it to: with a name in *Signed for Sapphire by*, the issue itself moves it
+		to Signed, records that name and today as who signed and when, and freezes the copy as
+		issued, so a later edit to the template cannot change what was given to a customer. With no name it prints blank By and Its lines for ink and waits at Out for
+		Signature for Mark as Signed, exactly as a paper contract does. Returns whether it signed.
+
+		Only a Contract Manager or System Manager can submit, so only they can sign this way; the
+		timeline says who pressed the button, because the name on the By line is typed.
+		"""
+		if not warranty_certificate.is_one_sided(self.get("template_key")):
+			return False
+		signer = (self.get("warranty_signer") or "").strip()
+		if not signer:
+			return False
+		# Today, not a typed date: _date_certificate_signed_here has just set contract_date to
+		# the same day, so the Date line and signed_on agree and neither can be back-dated.
+		self.db_set({"status": "Signed", "signed_by": signer, "signed_on": today()}, update_modified=False)
+		self.freeze_executed_copy()
+		try:
+			title = (self.get("warranty_signer_title") or "").strip()
+			self.add_comment(
+				"Info",
+				_("Issued by {0}. Signed for Sapphire Fountains, LLC as {1}.").format(
+					frappe.utils.escape_html(frappe.utils.get_fullname(frappe.session.user)),
+					frappe.utils.escape_html(f"{signer}, {title}" if title else signer),
+				),
+			)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Project Contract: certificate issue comment failed")
+		return True
 
 	def on_cancel(self):
 		self.status = "Void"
@@ -413,7 +489,7 @@ class ProjectContract(Document):
 	def letterhead_html(self):
 		"""The stripe-and-wordmark header that opens the printed agreement, coloured
 		for this contract's pillar (by its template)."""
-		return contract_style.letterhead_html(contract_style.pillar_for(self))
+		return contract_style.letterhead_html(contract_style.pillar_for(self), contract_style.eyebrow_for(self))
 
 	def footer_html(self):
 		"""The running footer (contract number, page numbers). PDF only."""
@@ -502,6 +578,22 @@ def _dt(value, width=18):
 	return _val(frappe.utils.formatdate(value))
 
 
+def _long_date(value):
+	"""A date written out ("November 12, 2026") for a line that is already ruled, or a space.
+
+	The Certificate of Warranty rules its own lines (``ct-warranty-line``), so an empty date is
+	an empty line rather than ``blank()``'s second rule under it. Written out in full
+	because a certificate goes to people outside the company, who cannot know whether
+	03-04-2027 is March or April.
+	"""
+	if not value:
+		return "&nbsp;"
+	try:
+		return _val(frappe.utils.escape_html(frappe.utils.formatdate(value, "MMMM d, yyyy")))
+	except Exception:
+		return _val(frappe.utils.escape_html(str(value)))
+
+
 def _multiline(value, width=80, lines=3):
 	"""Long-text value, or several blank writing lines."""
 	if value:
@@ -534,6 +626,7 @@ def _render_context(doc, body=None):
 	from erpnext_enhancements.project_enhancements.esign.render import (
 		signature_markup,
 		signed_signature_for,
+		typed_signature,
 	)
 	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for, template_prints_fee
 
@@ -573,6 +666,17 @@ def _render_context(doc, body=None):
 			initials, key, label, caption=INITIALS_CAPTIONS.get(doc.get("template_key") or "")
 		)
 
+	def _sapphire_sig():
+		# The Certificate of Warranty's By line. Only Sapphire signs a certificate, and issuing
+		# it with a signer named is the signature (ProjectContract._sign_for_sapphire), so the
+		# name is set in the signature face only once it is issued. A draft, a cancelled
+		# certificate and one left for ink print an empty line. Deliberately not sig(): a
+		# template with sig( in it can be sent to a customer to sign.
+		signer = (doc.get("warranty_signer") or "").strip()
+		if signer and cint(doc.get("docstatus")) == 1:
+			return typed_signature(signer)
+		return "&nbsp;"
+
 	def _summary():
 		# "What you are agreeing to, in short": this contract's own terms in plain words,
 		# placed by the template after its title. See contract_summary.py.
@@ -586,6 +690,11 @@ def _render_context(doc, body=None):
 		"money": _money,
 		"dt": _dt,
 		"multiline": _multiline,
+		"long_date": _long_date,
+		"sapphire_sig": _sapphire_sig,
+		# The Certificate of Warranty holds to one page: a long project name or address picks a
+		# tighter layout step (warranty_certificate.fit_level). "" for anything of ordinary length.
+		"warranty_fit": warranty_certificate.fit_class(doc.get("project_title"), doc.get("site_address")),
 		"qty": _qty,
 		"pct": _pct,
 		"sig": _sig,
@@ -1163,8 +1272,41 @@ def _prefill_from_project(doc, project):
 	# below only fills scope if the project had none.
 	if doc.template_key == "sow" and not doc.scope_of_work:
 		doc.scope_of_work = _compose_scope(proj) or None
+	if doc.template_key == warranty_certificate.TEMPLATE_KEY:
+		_prefill_warranty_from_project(doc, proj)
 	if proj.get("custom_opportunity"):
 		_prefill_from_opportunity(doc, proj.custom_opportunity)
+
+
+def _prefill_warranty_from_project(doc, proj):
+	"""What a Certificate of Warranty takes from its project beyond the common fields.
+
+	* The site address on two lines, as the certificate's project block prints it: the
+	  project's own address line split before "City, ST ZIP", else its Primary Address
+	  record. Left empty when the project has neither, for the builder to ask.
+	* The date the work was completed, when the project records one (Production Completed,
+	  else the actual end date). Never the expected end date: that is a plan, and the
+	  one-year term is counted from this date. Most projects record neither today, so the
+	  builder usually asks.
+
+	Never raises: this runs inside "create the draft", and a certificate with a blank to
+	fill in is better than no draft.
+	"""
+	try:
+		if doc.get("site_address"):
+			doc.site_address = warranty_certificate.site_address_lines(doc.site_address)
+		elif proj.get("primary_address"):
+			address = frappe.db.get_value(
+				"Address",
+				proj.get("primary_address"),
+				["address_line1", "address_line2", "city", "state", "pincode"],
+				as_dict=True,
+			)
+			doc.site_address = warranty_certificate.address_from_record(address) or None
+		if not doc.get("warranty_start_date"):
+			doc.warranty_start_date = proj.get("custom_production_completed") or proj.get("actual_end_date") or None
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: certificate prefill failed")
 
 
 def _prefill_from_supplier(doc, supplier):
@@ -1192,6 +1334,17 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	template_doc = frappe.get_doc("Contract Template", template)
 	if not cint(template_doc.enabled):
 		frappe.throw(_("Contract Template {0} is disabled.").format(template))
+	# The builder and the Generate Contract dialog offer a Certificate of Warranty from a
+	# Project only (or with just a client picked). Enforced here too: this endpoint is
+	# whitelisted, and a certificate started from an Opportunity would be one for work that
+	# has not been done.
+	if template_doc.template_key == warranty_certificate.TEMPLATE_KEY and not warranty_certificate.source_allowed(
+		source_doctype
+	):
+		frappe.throw(
+			_("A Certificate of Warranty starts from a Project, not from a {0}.").format(_(source_doctype)),
+			title=_("Start From a Project"),
+		)
 
 	doc = frappe.new_doc("Project Contract")
 	doc.contract_template = template_doc.name
@@ -1203,6 +1356,16 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 		# Default the agreement start to today so the term/End Date and the
 		# printed §9.1 clause populate without a manual entry (editable after).
 		doc.agreement_start_date = today()
+	if template_doc.template_key == warranty_certificate.TEMPLATE_KEY:
+		# Who signs for Sapphire starts from the name and title already kept for the
+		# countersignature on e-signed contracts; both are editable on the draft, and an
+		# empty name means the certificate is signed in ink.
+		doc.warranty_signer = frappe.db.get_single_value(
+			"ERPNext Enhancements Settings", "contract_esign_countersigner_name"
+		)
+		doc.warranty_signer_title = frappe.db.get_single_value(
+			"ERPNext Enhancements Settings", "contract_esign_countersigner_title"
+		)
 	if party:
 		doc.party = party
 
