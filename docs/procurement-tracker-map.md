@@ -34,6 +34,18 @@ stand. A Material Issue or delivery with the job on it is *taken to the job*; a 
 *place not recorded*, said in those words. A non-stock item reads *Location not tracked (not a
 stock item)*.
 
+Two refinements, both from the review of the first version:
+
+- **Parts brought back are counted once.** A Material Receipt with the job on it is parts coming
+  back from the job (`ledger_kind` → `LEDGER_BROUGHT_BACK`): they are at the place they came back
+  to, and what came back is taken off "taken to the job", never below zero.
+- **The Project Shelf's number is one number.** With the Project Shelf's module installed,
+  `places_for` takes the job's share of the shelf from `project_shelf.shelf_stock` (through
+  `project_stock._shelf_rows`, the adapter the Bin Manager also uses) and hands it to
+  `item_places` as `held`, instead of its own ledger sum. That function shares a short shelf out
+  between the jobs that claim it, so the tracker and the Bin Manager's By project view cannot
+  disagree. Without the module the ledger rule is already the answer on both screens.
+
 It is **per item for the project, not per line**: two lines of one item share one answer, and the
 cell says so (`where_now_lines`). The old Warehouse column, where the line was *received*, is
 still there as "Received at …" under the places, and still on the row as `warehouse` /
@@ -66,7 +78,9 @@ and the document rollup. Three decisions worth knowing:
 - **Closed is not late.** An order that was closed (or delivered straight to the customer) with
   goods outstanding, or a stopped request, is *Closed*: nobody is chasing it. 148 order lines on
   production sat on orders closed with nothing received.
-- **A draft order is not an order**, so a line that sits only on a draft is *To order*.
+- **A draft order is not an order**, so a line that sits only on a draft is *To order*. That
+  holds for a draft the per-doctype sweep finds too (`_minimal_item_row` reports its quantity as
+  `draft_ordered_qty`, as a chain row does).
 - **A split line is late per order.** One request line across two orders arrives as two rows,
   each with the request's totals and its own order's date. The order that delivered its share is
   not late because the other one is.
@@ -89,6 +103,10 @@ own keys back out so the next list view is not asked to filter on them.
 
 **Status labels** are the Desk's own badge (`.es-badge` with `data-theme`), with fallback colours
 for a Desk that predates it. `.status-badge` is no longer used here (the Tasks tree still uses it).
+
+**The address write waits a quarter of a second** (typing must not write it per key), and a write
+still waiting when the form refreshes is cancelled with its app (`beforeUnmount`), so the old view
+is never put back over the new one.
 
 **Three old gotchas are closed** (see *Gotchas*): the Vue app is unmounted before the next one is
 mounted, nothing reaches `v-html` unescaped, and the mount target is no longer a document-global

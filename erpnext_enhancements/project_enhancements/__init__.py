@@ -444,7 +444,15 @@ def _minimal_item_row(doctype, docname, status, item, supplier=None, docstatus=N
 	# code put it in `ordered_qty` for every doctype, so an untouched request rendered
 	# as fully ordered here too.
 	qty = item.get("qty") or 0
-	if doctype == "Purchase Receipt" and docstatus == 1:
+	if doctype in _ORDER_STAGE_DOCTYPES and docstatus == 0:
+		# A draft is an intention. Only a submitted order is ordered (procurement_quantities), and
+		# this was the one path where a draft still counted: a draft Purchase Order that never
+		# joined a chain read "Ordered" and was added to the item's ordered total. Its quantity is
+		# reported as draft, the way a chain row reports it, and the line reads To order.
+		progress = procurement_quantities.quantity_progress(
+			requested=None, ordered=0, received=0, draft_ordered=qty
+		)
+	elif doctype == "Purchase Receipt" and docstatus == 1:
 		# A submitted receipt with no order behind it (a store run): the goods are here. It used
 		# to read "Not Received" on the receipt that received it (v1.806.0).
 		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=qty)

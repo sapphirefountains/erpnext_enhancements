@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `inventory_enhancements/project_stock.py`.
   - **It is per item for the job, not per line.** ERPNext keeps stock by item, so two lines of
     one item share one answer, and the cell says so.
+  - **Parts brought back are counted once, where they are.** A job that took 3 and put 3 back
+    with a Material Receipt has them at the place they came back to and has taken none. They
+    used to read as on the shelf and taken to the job at once.
+  - **The shelf number is the Bin Manager's number.** Once the Project Shelf's module is
+    installed, a job's share of the shelf comes from `project_shelf.shelf_stock`, which shares a
+    short shelf out between the jobs that claim it, through the same adapter the Bin Manager
+    uses. The tracker's own ledger sum would have given each job its full claim, so two jobs
+    could read 6 and 6 here and 4 and 2 there.
   - **One lookup for the whole project.** The ledger grouped once, the Bin rows at the warehouses
     involved, their names, the items and the job sites: the same handful of queries for 3 lines
     or 300. If the lookup fails, the tracker still shows quantities and statuses and says the
@@ -79,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A receipt with no purchase order read "Not Received" on the receipt that received it.** A
   submitted Purchase Receipt that never joined a chain (a store run) was listed with 0 received.
   It now reads as received.
+- **A draft order that never joined a chain read as Ordered.** Only a submitted order is ordered,
+  and one path still counted a draft: a draft Purchase Order found only by the per-doctype sweep
+  was given its full quantity as ordered. Its quantity is now reported as draft, the line reads
+  To order, and it is left out of the item's ordered total. A draft receipt found the same way
+  has received nothing.
 - **The tracker no longer leaves an old copy of itself running.** Every refresh of the Project
   form mounted a new Vue app over the last one and left the old one alive. The last one is now
   unmounted first, and what was expanded and how each table was sorted survives the refresh.
@@ -87,12 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   piece.
 
 ### Tests
-- `tests/test_procurement_overview.py` (pytest, 37 tests): the where-now rule, the states and the
-  by-item sums. `tests/test_project_stock.py` (32 tests, own frappe stub): the lookup's queries,
+- `tests/test_procurement_overview.py` (pytest, 40 tests): the where-now rule, the states and the
+  by-item sums. `tests/test_project_stock.py` (37 tests, own frappe stub): the lookup's queries,
   the Project Shelf and Supplier Return modules present, absent and failing, the feed's new
-  functions, and the two `SELECT`s of the feed's `UNION` held to the same columns in the same
-  order, which otherwise fails only on MariaDB. `scripts/test_procurement_tracker.mjs` (node, 105
-  checks): the address, the filters, sorting, labels and escaping. Each has its own CI step.
+  functions, a draft document that never joined a chain, and the two `SELECT`s of the feed's
+  `UNION` held to the same columns in the same order, which otherwise fails only on MariaDB.
+  `scripts/test_procurement_tracker.mjs` (node, 108 checks): the address, the filters, sorting,
+  labels and escaping. Each has its own CI step.
 - **Not run:** nothing here ran on a bench. `tests/test_procurement_status.py` needs one and is
   not in CI. The widget was checked in a browser against a stand-in Desk with made-up data, not
   against a real Project form.
