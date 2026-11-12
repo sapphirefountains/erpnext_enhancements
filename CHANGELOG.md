@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.802.1] - 2026-11-12
+
+### Fixed
+- **A knowledge base test that failed wherever there is a current frappe checkout, when the rule
+  it guards had not changed.** Nothing a person uses changes: this is one test and two comments.
+  - **What failed.** `test_knowledge_base_rules`,
+    `TestKeptElements.test_sanitize_html_tags_and_removed_content_are_v16s`, with
+    `'\t"+",' != 'REMOVE_CONTENT_TAGS = {"script", "style"}'`. The test reads frappe's
+    `utils/html_utils.py` from the `origin/version-16` ref of a frappe clone beside this repo and
+    compares the sanitizer's rules with what `knowledge_base/content.py` holds. Its last line
+    asserted that **line 21** of that file was the `REMOVE_CONTENT_TAGS` assignment.
+  - **Why.** frappe 16.53.0 (commit `a6ede81d0e`, "perf: lazy-import bs4, markdownify, and
+    template helpers") added a five-line `HTML_TAG_PATTERN` block above it, so the assignment is
+    on line 26 from v16.53.0 on. The same commit added `has_html_tags()` and made
+    `sanitize_html` use it in place of a BeautifulSoup parse to decide whether a string holds
+    any tag at all. That is the whole difference in the file between v16.52.0 and v16.56.0. No
+    rule changed.
+  - **Whether it matters: no.** Checked against the `v16.56.0` tag, which is what production runs
+    (`tabInstalled Application`, 2026-11-12) and is also the head of `version-16`: the tags
+    `sanitize_html` allows are still the 168 the test holds, `REMOVE_CONTENT_TAGS` is still
+    `script` and `style`, and `font`, `bgcolor`, `color`, `face`, `hidden` and `size` are all
+    still kept. Every assertion about a rule in that test passed throughout; only the line
+    number failed. The strip (`content.strip_presentation`) is an allowlist narrower than
+    frappe's and runs before it, so it never depended on those lines.
+  - **Why nobody saw it.** CI has no frappe checkout, so the test is skipped there and the build
+    stayed green. v16.53.0 was tagged on 2026-10-22 and production moved to it on 2026-10-23; from
+    then on the test failed on any machine whose frappe clone had fetched `version-16`. It
+    turned up on 2026-11-11, when every CI command was run by hand on one.
+  - **The fix.** The line assertion is gone. The test already finds each set by its name with
+    `ast`; it now also checks, by name, the two claims `content.py` used to cite by line:
+    `font` is in `acceptable_elements`, and every one of `PRESENTATION_ATTRIBUTES` is in
+    `acceptable_attributes`. Those citations had drifted as well (each was 8 lines out) and no
+    test read them. `content.py` now names the sets and gives no line number for
+    `html_utils.py`. It is still skipped where there is no frappe checkout.
+  - **Not changed.** `test_the_cited_frappe_lines_are_v16s` still checks `text_editor.js` and
+    `mention.js` line by line. That one is meant to: those lines are quoted verbatim as the
+    source of `KEPT_CLASSES` and `KEPT_ELEMENTS`, its docstring says a failure means "re-cite",
+    and it passes against v16.56.0. The line numbers in older entries of this file are history
+    and stay as written.
+
 ## [1.802.0] - 2026-11-12
 
 ### Added
