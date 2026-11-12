@@ -253,6 +253,15 @@ export function highlight_html(value, term, esc) {
 
 // ------------------------------------------------------------------ sorting
 
+// What Spent is and is not, in the words of the column's tooltip (the same as the CHANGELOG and the
+// tracker map). It is the sum of the order lines' own amounts: a discount applied to the whole order,
+// taxes and freight are not in it, and an order closed short counts in full. Example: 10 units at
+// $10 with a 10% discount on the whole order is $100 here, where the order's net is $90.
+export const SPENT_NOTE =
+	"What was ordered for this job: the sum of the order lines' own amounts. It leaves out a discount on the whole order, taxes and freight, and counts an order closed short in full. ERPNext holds no bills, so it is not billed or paid.";
+export const AMOUNT_NOTE =
+	"The line's own amount. It leaves out a discount on the whole order, taxes and freight.";
+
 // Most urgent first: one click on Status puts what somebody has to chase at the top. The same
 // order as procurement_overview.STATE_RANK, which decides the one state a line is shown as.
 export const STATE_RANK = ["late", "to_order", "ordered", "partly_received", "received", "closed", "quote_only", "invoice_only"];
@@ -277,7 +286,7 @@ export const LINE_COLUMNS = {
 	// receipt's value, a quote), so the comparator gets that document's type as its second argument.
 	// A line with no price has no rate to order by: it is blank, and blanks sort last in both directions.
 	rate: { label: "Rate", cls: "money-col", type: "number", price: true, value: (r, doctype) => price_value(r, doctype, "rate") },
-	amount: { label: "Amount", cls: "money-col", type: "number", price: true, value: (r, doctype) => price_value(r, doctype, "amount") },
+	amount: { label: "Amount", cls: "money-col", type: "number", price: true, hint: AMOUNT_NOTE, value: (r, doctype) => price_value(r, doctype, "amount") },
 	status: { label: "Status", type: "rank", value: (r) => r.line_state, ranks: STATE_RANK },
 };
 
@@ -290,7 +299,7 @@ export const ITEM_COLUMNS = {
 	// Sorted by what was paid per unit over the lines that have a price (their average), and by what
 	// was spent. An item with no priced line is blank: last in both directions.
 	unit_price: { label: "Unit price", cls: "money-col", type: "number", price: true, value: (r) => r.unit_price_avg },
-	spent: { label: "Spent", cls: "money-col", type: "number", price: true, value: (r) => r.spent },
+	spent: { label: "Spent", cls: "money-col", type: "number", price: true, hint: SPENT_NOTE, value: (r) => r.spent },
 	status: { label: "Status", type: "rank", value: (r) => r.state, ranks: STATE_RANK },
 	where: LINE_COLUMNS.where,
 	due: { label: "Due", type: "text", value: (r) => r.expected_date },
@@ -350,7 +359,7 @@ export function sort_rows(rows, columns, sort, context) {
 export function visible_columns(registry, prices) {
 	return Object.keys(registry)
 		.filter((key) => prices || !registry[key].price)
-		.map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "" }));
+		.map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "", hint: registry[key].hint || "" }));
 }
 
 // The sort a click on a header leads to: ascending, descending, then none. Without the third
@@ -527,13 +536,13 @@ function plural(n, one, many) {
 export function price_cells(row, doctype) {
 	const r = row || {};
 	if (doctype === "Purchase Order" && r.price_state) {
-		return { kind: "order", state: r.price_state, rate: r.po_rate, amount: r.po_amount, uom: r.po_rate_uom, received: r.received_value };
+		return { kind: "order", state: r.price_state, rate: r.po_rate, amount: r.po_amount, uom: r.po_rate_uom, received: r.received_value, draft: false };
 	}
 	if (doctype === "Purchase Receipt" && r.receipt_state) {
-		return { kind: "receipt", state: r.receipt_state, rate: r.receipt_rate, amount: r.receipt_value, uom: r.po_rate_uom, received: null };
+		return { kind: "receipt", state: r.receipt_state, rate: r.receipt_rate, amount: r.receipt_value, uom: r.po_rate_uom, received: null, draft: r.receipt_docstatus === 0 };
 	}
 	if (doctype === "Supplier Quotation" && r.sq_item) {
-		return { kind: "quote", state: "priced", rate: r.quote_rate, amount: r.quote_amount, uom: null, received: null };
+		return { kind: "quote", state: "priced", rate: r.quote_rate, amount: r.quote_amount, uom: null, received: null, draft: r.quote_docstatus === 0 };
 	}
 	return null;
 }
@@ -559,8 +568,11 @@ export function price_text(cells, field, currency) {
 // The tooltip of a line's amount cell: what it is the amount of, and what has arrived at that rate.
 export function price_title(cells, currency) {
 	if (!cells) return "";
-	if (cells.kind === "quote") return "A quote. It is not added into what was spent.";
+	if (cells.kind === "quote") {
+		return (cells.draft ? "A quote on a draft quotation. " : "A quote. ") + "It is not added into what was spent.";
+	}
 	if (cells.kind === "receipt") {
+		if (cells.draft) return "A draft receipt: nothing has been received on it yet. Valued at the order line's rate.";
 		return "What this receipt brought in, at the order line's rate. ERPNext holds no bills, so this is not what was billed or paid.";
 	}
 	if (cells.state === "no_price") return "The order line has no rate. It is left out of every total.";
@@ -570,6 +582,7 @@ export function price_title(cells, currency) {
 	if (cells.received !== null && cells.received !== undefined && Number(cells.received) > 0) {
 		parts.push(`received so far: ${fmt_money(cells.received, currency)} at that rate`);
 	}
+	parts.push(AMOUNT_NOTE);
 	parts.push("ERPNext holds no bills, so this is what was ordered, not what was billed or paid");
 	return parts.join(" · ");
 }
@@ -579,7 +592,13 @@ export function price_title(cells, currency) {
 // it is this job's lines only. `title` spells it out, including the whole document's own total.
 export function doc_price_text(total, doctype, currency) {
 	if (!total) return { text: "", title: "" };
-	const suffix = doctype === "Purchase Receipt" ? " received" : doctype === "Supplier Quotation" ? " quoted" : "";
+	const draft = total.docstatus === 0;
+	const suffix =
+		doctype === "Purchase Receipt"
+			? draft ? " on a draft receipt" : " received"
+			: doctype === "Supplier Quotation"
+				? draft ? " quoted (draft)" : " quoted"
+				: "";
 	const parts = [];
 	if (total.lines > 0) parts.push(fmt_money(total.amount, currency) + suffix);
 	else if (total.no_price_lines > 0) parts.push(NO_PRICE_TEXT);
@@ -641,7 +660,9 @@ export function item_price_view(row, currency) {
 		const low = r.quote_low;
 		const high = r.quote_high;
 		const range = low === high ? fmt_money(low, currency) : `${fmt_money(low, currency)} – ${fmt_money(high, currency)}`;
-		out.unit_notes.push(`Quoted ${range}`);
+		const drafts = Number(r.quote_draft_count) || 0;
+		const label = drafts === 0 ? "" : drafts >= Number(r.quote_count) ? " (draft)" : ` (${drafts} draft)`;
+		out.unit_notes.push(`Quoted ${range}${label}`);
 	}
 	return out;
 }

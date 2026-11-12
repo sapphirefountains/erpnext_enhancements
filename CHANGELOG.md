@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     says **"this job's lines"** where the document has other lines, with the whole document's total
     in the tooltip. Material Requests, Requests for Quotation and bills have no price: their cells
     stay empty.
+  - **What Spent is, and is not.** It is the sum of the order lines' own amounts. It leaves out
+    a discount applied to the whole order, taxes and freight, and it counts an order closed short in
+    full. A discount on the line itself is in the line's rate, so it is in the amount. Example: 10
+    units at $10 with a 10% discount on the whole order shows $100, where the order's net is $90.
+    The column's tooltip says the same.
+  - **Which documents are priced.** The feed's quotation and receipt joins list canceled documents
+    (they always did, and that is unchanged). A canceled quotation has no quote, a draft one is
+    shown as a quote labeled "draft", a canceled receipt has no value, and a draft receipt is
+    labeled a draft ("$X on a draft receipt", never "received").
   - **A missing price is not a zero.** A line whose rate is 0 reads **No price**, is left out of
     every sum, and a sum that leaves lines out says how many ("1 line with no price"). A line ERPNext
     itself marks free reads **No charge**. A new **No price only** checkbox next to "Needs action
@@ -60,10 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A real wrinkle, said in the tracker.** On production an item can have one line priced per FT
     and another per Unit, and ERPNext's conversion factor is 1 on both. The range is then two prices
     for two things, so the cell adds "Priced per FT and per Unit".
-  - **Tests:** `test_procurement_prices.py` (47, pytest, own CI step: the sums, a zero-rate line, a
-    free line, an order spanning two jobs, a partial receipt, a split request, a quote, a draft, and
-    that the price keys are absent without Purchase Order read while every existing key is still
-    there), and 100 more node checks in `scripts/test_procurement_tracker.mjs` (the columns, the range,
+  - **Tests:** `test_procurement_prices.py` (57, pytest, own CI step: the sums, a zero-rate line, a
+    free line, an order spanning two jobs, a partial receipt, a return receipt, a foreign-currency
+    order, a conversion factor, a whole-order discount, an order closed short, a split request, a
+    quote, a draft, canceled and draft quotes and receipts, and that the price keys are absent
+    without Purchase Order read while every existing key is still there), and 123 more node checks in `scripts/test_procurement_tracker.mjs` (the columns, the range,
     "No price", sorting with blanks last, the total following the filters, the print).
   - No patch, no fixture, no doctype or custom field, nothing written to the site. Nothing here
     reads prices for anyone who could not already read them on the Purchase Order itself.

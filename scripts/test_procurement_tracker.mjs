@@ -447,7 +447,7 @@ test("a line's price cells depend on the document it is shown in; a request has 
 		po: "PO-1", pr: "PR-1", sq: "SQ-1", price_state: "priced", po_rate: 3, po_amount: 30, po_rate_uom: "Unit", received_value: 12,
 		receipt_state: "priced", receipt_rate: 3, receipt_value: 12, sq_item: "SQI-1", quote_rate: 2.5, quote_amount: 25,
 	};
-	check("an order's own line", pt.price_cells(row, "Purchase Order"), { kind: "order", state: "priced", rate: 3, amount: 30, uom: "Unit", received: 12 });
+	check("an order's own line", pt.price_cells(row, "Purchase Order"), { kind: "order", state: "priced", rate: 3, amount: 30, uom: "Unit", received: 12, draft: false });
 	check("a receipt at the order's rate", pt.price_cells(row, "Purchase Receipt").amount, 12);
 	check("a quote", [pt.price_cells(row, "Supplier Quotation").kind, pt.price_cells(row, "Supplier Quotation").amount], ["quote", 25]);
 	for (const doctype of ["Material Request", "Request for Quotation", "Purchase Invoice"]) {
@@ -562,6 +562,39 @@ test("the printed list gains the price columns only for someone who was sent pri
 	check("ten columns want a landscape page", priced.includes("@page{size:landscape}"), true);
 	const hostile = pt.print_html([Object.assign({}, items[0], { item_name: "<img src=x onerror=alert(1)>" })], { prices: true, currency: "USD" }, esc);
 	check("still escaped", hostile.includes("<img src=x") , false);
+});
+
+test("what Spent is and is not is said on the column, in the cell and in the order's tooltip", () => {
+	const spent = pt.visible_columns(pt.ITEM_COLUMNS, true).find((c) => c.key === "spent");
+	check("the column's hint is the note", spent.hint, pt.SPENT_NOTE);
+	for (const words of ["sum of the order lines' own amounts", "discount on the whole order", "taxes and freight", "closed short in full", "not billed or paid"]) {
+		check("the note says: " + words, pt.SPENT_NOTE.includes(words), true);
+	}
+	check("the amount column says it too", pt.visible_columns(pt.LINE_COLUMNS, true).find((c) => c.key === "amount").hint.includes("discount on the whole order"), true);
+	check("the order line's tooltip carries it", pt.price_title(pt.price_cells({ price_state: "priced", po_amount: 100, po_rate: 10 }, "Purchase Order"), "USD").includes("taxes and freight"), true);
+	check("no other column carries a hint", pt.visible_columns(pt.ITEM_COLUMNS, true).filter((c) => c.hint).map((c) => c.key), ["spent"]);
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	check("the headers show the hint", (code.match(/\(col\.hint \? '\. ' \+ col\.hint : ''\)/g) || []).length, 2);
+	check("the Spent cell shows the note", code.includes(':title="spentNote"') && code.includes("spentNote() {"), true);
+});
+
+test("a draft quotation or receipt is labeled a draft, and a canceled one never reaches the widget priced", () => {
+	const row = { po: "PO-1", pr: "PR-1", sq: "SQ-1", receipt_state: "priced", receipt_rate: 3, receipt_value: 12, receipt_docstatus: 0, sq_item: "SQI-1", quote_rate: 2.5, quote_amount: 25, quote_docstatus: 0 };
+	check("a draft quote", pt.price_cells(row, "Supplier Quotation").draft, true);
+	check("its tooltip", pt.price_title(pt.price_cells(row, "Supplier Quotation"), "USD").includes("draft quotation"), true);
+	check("a draft receipt", pt.price_cells(row, "Purchase Receipt").draft, true);
+	check("its tooltip says nothing has arrived", pt.price_title(pt.price_cells(row, "Purchase Receipt"), "USD").includes("nothing has been received"), true);
+	const live = Object.assign({}, row, { receipt_docstatus: 1, quote_docstatus: 1 });
+	check("a submitted one is not", [pt.price_cells(live, "Supplier Quotation").draft, pt.price_cells(live, "Purchase Receipt").draft], [false, false]);
+	const total = { amount: 80, lines: 1, no_price_lines: 0, no_charge_lines: 0, job_lines: 1, partial: false };
+	check("a draft quotation's total", pt.doc_price_text(Object.assign({ docstatus: 0 }, total), "Supplier Quotation", "USD").text, "$80.00 quoted (draft)");
+	check("a draft receipt's total is not 'received'", pt.doc_price_text(Object.assign({ docstatus: 0 }, total), "Purchase Receipt", "USD").text, "$80.00 on a draft receipt");
+	check("a submitted receipt's is", pt.doc_price_text(Object.assign({ docstatus: 1 }, total), "Purchase Receipt", "USD").text, "$80.00 received");
+	const item = { spent_lines: 0, quote_count: 2, quote_low: 8, quote_high: 9, quote_draft_count: 1 };
+	check("some drafts", pt.item_price_view(item, "USD").unit_notes, ["Quoted $8.00 – $9.00 (1 draft)"]);
+	check("all drafts", pt.item_price_view(Object.assign({}, item, { quote_draft_count: 2 }), "USD").unit_notes, ["Quoted $8.00 – $9.00 (draft)"]);
+	check("no drafts", pt.item_price_view(Object.assign({}, item, { quote_draft_count: 0 }), "USD").unit_notes, ["Quoted $8.00 – $9.00"]);
+	check("a canceled one has no keys, so no cells", [pt.price_cells({ sq: "SQ-1" }, "Supplier Quotation"), pt.price_cells({ pr: "PR-1" }, "Purchase Receipt")], [null, null]);
 });
 
 test("the form script draws the price columns from the registries, behind the server's say-so", () => {

@@ -164,6 +164,12 @@ def _chain_rows(project_name, prices=None):
                 sq_item.base_rate as sq_line_base_rate,
                 sq_item.base_amount as sq_line_base_amount,
                 sq_item.conversion_factor as sq_line_conversion_factor,
+                /* The receipt's and the quotation's own docstatus: these two joins carry no docstatus
+                   filter (they never did), so a canceled document's line is in the rows. The listing
+                   is unchanged; only what is PRICED looks at these (a canceled quote or receipt has
+                   no price, a draft one is labeled a draft). */
+                pr.docstatus as pr_docstatus,
+                sq.docstatus as sq_docstatus,
                 /* The old `po_item.qty as ordered_qty` and
                    `COALESCE(pr_item.qty, sed.qty) as received_qty` are gone: both were
                    *one chain row's* quantities being read as the line's totals, so an
@@ -276,6 +282,8 @@ def _chain_rows(project_name, prices=None):
                 NULL as sq_line_base_rate,
                 NULL as sq_line_base_amount,
                 NULL as sq_line_conversion_factor,
+                pr.docstatus as pr_docstatus,
+                NULL as sq_docstatus,
                 pr.is_subcontracted as is_subcontracted
             FROM
                 `tabPurchase Order Item` po_item

@@ -661,6 +661,10 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			money(value) {
 				return pt.fmt_money(value, this.currency);
 			},
+			// The tooltip on a Spent cell: what Spent is and is not.
+			spentNote() {
+				return pt.SPENT_NOTE;
+			},
 			priceCells(row, doctype) {
 				return pt.price_cells(row, doctype);
 			},
@@ -806,7 +810,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 								<tr>
 									<th v-for="col in itemColumns" :key="col.key"
 										class="sortable" :class="[col.cls, { sorted: !!(itemSort && itemSort.key === col.key) }]"
-										role="button" tabindex="0" :aria-sort="sortAria(itemSort, col.key)" :title="'Sort by ' + col.label"
+										role="button" tabindex="0" :aria-sort="sortAria(itemSort, col.key)" :title="'Sort by ' + col.label + (col.hint ? '. ' + col.hint : '')"
 										@click="toggleItemSort(col.key)"
 										@keydown.enter.prevent="toggleItemSort(col.key)"
 										@keydown.space.prevent="toggleItemSort(col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(itemSort, col.key) }}</span></th>
@@ -832,7 +836,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).unit }">{{ itemPrice(row).unit }}</span>
 											<small v-for="n in itemPrice(row).unit_notes" :key="n" class="pt-where-note">{{ n }}</small>
 										</div></td>
-										<td data-label="Spent" class="money-col" title="What was ordered for this job: the submitted order lines' amounts. ERPNext holds no bills, so this is not billed or paid."><div class="pt-money-cell">
+										<td data-label="Spent" class="money-col" :title="spentNote"><div class="pt-money-cell">
 											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).spent }">{{ itemPrice(row).spent }}</span>
 											<small v-for="n in itemPrice(row).spent_notes" :key="n" class="pt-where-note">{{ n }}</small>
 										</div></td>
@@ -936,7 +940,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 														:class="[col.cls, { sorted: !!(sortFor(group.doctype, doc.name) && sortFor(group.doctype, doc.name).key === col.key) }]"
 														role="button" tabindex="0"
 														:aria-sort="sortAria(sortFor(group.doctype, doc.name), col.key)"
-														:title="'Sort by ' + col.label"
+														:title="'Sort by ' + col.label + (col.hint ? '. ' + col.hint : '')"
 														@click="toggleSort(group.doctype, doc.name, col.key)"
 														@keydown.enter.prevent="toggleSort(group.doctype, doc.name, col.key)"
 														@keydown.space.prevent="toggleSort(group.doctype, doc.name, col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(sortFor(group.doctype, doc.name), col.key) }}</span></th>
@@ -970,12 +974,13 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 														     quote on its own. A request has no price: its cells stay empty. -->
 														<td data-label="Rate" class="money-col"><div class="pt-money-cell">
 															<span :class="{ 'pt-no-price': priceCells(row, group.doctype) && priceCells(row, group.doctype).state !== 'priced' }">{{ priceText(priceCells(row, group.doctype), 'rate') }}</span>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">quote</small>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote' : 'quote' }}</small>
+<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'receipt' && priceCells(row, group.doctype).draft" class="pt-where-note">draft receipt</small>
 														</div></td>
 														<td data-label="Amount" class="money-col" :title="priceTitle(priceCells(row, group.doctype))"><div class="pt-money-cell">
 															<span v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).state === 'priced'">{{ priceText(priceCells(row, group.doctype), 'amount') }}</span>
 															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'order' && priceCells(row, group.doctype).received > 0 && priceCells(row, group.doctype).received !== priceCells(row, group.doctype).amount" class="pt-where-note">received {{ money(priceCells(row, group.doctype).received) }}</small>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">quoted, not spent</small>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote, not spent' : 'quoted, not spent' }}</small>
 														</div></td>
 													</template>
 													<td data-label="Status" class="pt-status">

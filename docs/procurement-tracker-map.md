@@ -145,8 +145,18 @@ item we spent."* A reading of it, built and open to correction; read it after th
   `no_charge` (rate 0 and `is_free_item`). A `no_price` line carries no `po_rate` / `po_amount`, is
   left out of every sum, and is counted (`no_price_lines`). Purchase Order Item has no
   `allow_zero_valuation_rate` (Purchase Receipt Item has, and the receipt-only path reads it).
+- **What Spent is not.** It is the sum of the order lines' own `base_amount`. It leaves out a
+  discount applied to the whole order, taxes and freight, and it counts an order closed short in
+  full; a discount on the line itself is in the rate, so it is in the amount. Example: 10 units at
+  $10 with a 10% discount on the whole order shows $100, where the order's net is $90. The column's
+  tooltip (`SPENT_NOTE` in `logic.js`) says so.
 - **A quote is not a spend.** `quote_*` keys, shown on the line as "quote" and "quoted, not
   spent", never in `spent`. A request or an RFQ has no price.
+- **Only a document that exists is priced.** The chain query's quotation and receipt joins have no
+  docstatus filter (they never did), so a canceled document's line is in the rows. The query selects
+  `pr.docstatus` and `sq.docstatus`, and `price_keys` skips a canceled quote or receipt (no quote, no
+  value total) and carries a draft one with `quote_docstatus` / `receipt_docstatus` 0, which the
+  tracker labels "draft". Which documents are listed is unchanged.
 - **A draft is not an order**, as for quantities: `draft_spent`, not `spent`. A cancelled order's
   line (its join comes back empty) has none.
 - **Money is keyed on the order line.** One request line split across two orders is one request
@@ -158,10 +168,13 @@ item we spent."* A reading of it, built and open to correction; read it after th
 - **An order can span jobs.** `price_total` is this job's lines (`job_lines`), with `doc_lines` from
   one `count(*) group by parent` per doctype, `partial` when they differ and `doc_total` (the
   order's own `base_total`) then. The sweep skips a line that names another job.
-- **Who sees it.** The endpoints and the Project form ask only for Project read. `_price_access()`
-  returns `None` unless the person may read Purchase Orders (quotes: Supplier Quotation too), and then
+- **Who sees it, and the known limit.** The endpoints and the Project form ask only for Project read.
+  `_price_access()` returns `None` unless the person may read Purchase Orders (quotes: Supplier Quotation too), and then
   no price key is on any row, item or document, `prices` is absent from the overview and the widget
   draws no price column. `test_procurement_prices.py` holds this, and holds every pre-existing key.
+  **Known limit:** the feed applies no User Permissions (it reads with `get_all`), so if someone is
+  ever restricted by supplier or by order, the tracker would have to apply that too. On production no
+  User Permission restricts Purchase Order or Supplier today.
 - **Units.** `po_unit_rate` is per stock unit (`base_rate / conversion_factor`). On production an
   FT line and a Unit line of one item can both have factor 1, so a range can be two prices for two
   things: `price_uoms` lists the units and the cell says "Priced per FT and per Unit".

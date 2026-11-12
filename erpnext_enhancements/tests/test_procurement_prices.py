@@ -94,9 +94,16 @@ def chain(**kw):
 		"sq_line_base_rate": None,
 		"sq_line_base_amount": None,
 		"sq_line_conversion_factor": None,
+		"pr_docstatus": None,
+		"sq_docstatus": None,
 		"is_subcontracted": 0,
 	}
 	row.update(kw)
+	# A receipt or a quotation that is named is submitted unless the test says it is not.
+	if row["pr_name"] and "pr_docstatus" not in kw:
+		row["pr_docstatus"] = 1
+	if row["sq_name"] and "sq_docstatus" not in kw:
+		row["sq_docstatus"] = 1
 	return row
 
 
@@ -663,3 +670,138 @@ def test_lines_priced_in_different_units_say_so():
 	item = procurement_overview.by_item(flat(Feed(rows).chain(ACCESS)), prices=True)[0]
 	assert item["price_uoms"] == ["FT", "Unit"]
 	assert (item["unit_price_low"], item["unit_price_high"]) == (4.5, 90)
+
+
+# ---------------------------------------------------------------------------
+# What Spent is and is not, and which documents are priced (review of v1.814.0)
+# ---------------------------------------------------------------------------
+
+
+def _item(rows):
+	return procurement_overview.by_item(flat(Feed(rows).chain(ACCESS)), prices=True)[0]
+
+
+def test_a_return_receipt_leaves_spent_and_reduces_what_was_received():
+	"""A 5-unit order at 10, a receipt of 5, then a return of 2. ERPNext's own received quantity on
+	the order line is net of the return (3), so received value is 30; Spent is what was ordered, 50.
+	The return keeps its link to the order line, so it is a row with a negative quantity."""
+	base = dict(po_line_qty=5, po_line_received_qty=3, po_line_rate=10, po_line_base_rate=10, po_line_base_amount=50)
+	rows = [
+		chain(pr_name="PR-1", pr_item_name="PRI-1", pr_line_qty=5, **base),
+		chain(pr_name="PR-2", pr_item_name="PRI-2", pr_line_qty=-2, **base),
+	]
+	item = _item(rows)
+	assert item["spent"] == 50 and item["spent_lines"] == 1
+	assert item["received_value"] == 30
+	cards = {r["pr"]: r["receipt_value"] for r in flat(Feed(rows).chain(ACCESS))}
+	assert cards == {"PR-1": 50, "PR-2": -20}
+
+
+def test_a_foreign_currency_order_is_spent_in_the_companys_currency():
+	"""The line is 5.00 in the supplier's currency and 5.50 in the company's: only the base figures
+	are read."""
+	item = _item([chain(po_line_qty=10, po_line_rate=5, po_line_base_rate=5.5, po_line_base_amount=55)])
+	assert item["spent"] == 55
+	assert (item["unit_price_low"], item["unit_price_high"]) == (5.5, 5.5)
+
+
+def test_a_line_with_a_conversion_factor_is_spent_at_its_amount_not_rate_times_stock_quantity():
+	"""3 boxes of 12 at 24 a box: the amount is 72. Rate times the stock quantity (36) would be 864."""
+	row = chain(
+		po_line_uom="Box", po_conversion_factor=12, po_line_qty=3, po_line_received_qty=1,
+		po_line_rate=24, po_line_base_rate=24, po_line_base_amount=72,
+	)
+	item = _item([row])
+	assert item["spent"] == 72
+	assert item["unit_price_low"] == 2  # per stock unit
+	assert item["received_value"] == 24  # one box at 24 a box
+	assert item["price_uoms"] == ["Box"]
+
+
+def test_a_discount_on_the_whole_order_is_not_in_spent():
+	"""10 units at 10.00 with a 10% discount on the whole order: the order's net is 90.00. Spent is
+	the line's own amount, 100.00, and so is the order's total for the job's lines; the documents say
+	so (CHANGELOG, tracker map, the column's tooltip)."""
+	feed = Feed(
+		[chain(po_line_qty=10, po_line_rate=10, po_line_base_rate=10, po_line_base_amount=100)],
+		docs={"Purchase Order": [{"name": "PO-1", "status": "To Receive and Bill", "docstatus": 1, "doc_date": "2026-11-01", "supplier": "Supplier A", "per_received": 0, "base_total": 100}]},
+		lines={"PO-1": 1},
+	)
+	groups, _rows, items, _located = feed.groups()
+	assert items[0]["spent"] == 100
+	assert groups[0]["documents"][0]["price_total"]["amount"] == 100
+
+
+def test_an_order_closed_short_counts_in_full():
+	item = _item([chain(po_status="Closed", po_line_qty=10, po_line_received_qty=2, po_line_rate=10, po_line_base_rate=10, po_line_base_amount=100)])
+	assert item["spent"] == 100
+	assert item["received_value"] == 20
+
+
+def test_a_canceled_quotation_has_no_quote():
+	"""The feed's quotation join lists a canceled quotation (it always did); it gets no price."""
+	row = request_line(
+		po_name=None, po_item_name=None, mr_ordered_qty=0, sq_name="SQ-1", sq_item_name="SQI-1", sq_docstatus=2,
+		sq_line_rate=8, sq_line_base_rate=8, sq_line_base_amount=80, sq_line_conversion_factor=1,
+	)
+	keys = prices.price_keys(row)
+	assert keys["sq_item"] is None and keys["quote_rate"] is None and keys["quote_docstatus"] is None
+	item = _item([row])
+	assert item["quote_count"] == 0 and item["quote_low"] is None and item["spent"] is None
+	# It is still listed: only the price is gone.
+	feed = Feed([row], docs={"Supplier Quotation": [{"name": "SQ-1", "status": "Cancelled", "docstatus": 2, "doc_date": "2026-11-01", "supplier": "S"}]}, lines={"SQ-1": 1})
+	groups = {g["doctype"]: g for g in feed.groups()[0]}
+	assert groups["Supplier Quotation"]["documents"][0]["name"] == "SQ-1"
+	assert groups["Supplier Quotation"]["documents"][0]["price_total"] is None
+
+
+def test_a_draft_quotation_is_a_quote_labeled_as_a_draft():
+	row = request_line(
+		po_name=None, po_item_name=None, mr_ordered_qty=0, sq_name="SQ-1", sq_item_name="SQI-1", sq_docstatus=0,
+		sq_line_rate=8, sq_line_base_rate=8, sq_line_base_amount=80, sq_line_conversion_factor=1,
+	)
+	keys = prices.price_keys(row)
+	assert keys["quote_rate"] == 8 and keys["quote_docstatus"] == 0
+	item = _item([row, request_line(mr_item_name="MRI-2", po_name="PO-1", po_item_name="POI-1")])
+	assert (item["quote_count"], item["quote_draft_count"]) == (1, 1)
+	assert item["spent"] == 50, "a quote is never a spend"
+	total = prices.document_total("Supplier Quotation", [keys])
+	assert total["docstatus"] == 0 and total["amount"] == 80
+
+
+def test_a_canceled_receipt_has_no_value():
+	"""A canceled receipt (5 units, order rate 10) is still listed with its own Cancelled badge, and
+	has no value total. The order's Spent and Received are the order line's own and do not change."""
+	row = chain(po_line_qty=5, po_line_received_qty=0, pr_name="PR-1", pr_item_name="PRI-1", pr_line_qty=5, pr_docstatus=2, pr_status="Cancelled")
+	keys = prices.price_keys(row)
+	assert keys["receipt_item"] is None and keys["receipt_value"] is None and keys["receipt_state"] is None
+	assert keys["po_amount"] == 50
+	feed = Feed(
+		[row],
+		docs={
+			"Purchase Order": [{"name": "PO-1", "status": "To Receive and Bill", "docstatus": 1, "doc_date": "2026-11-01", "supplier": "S", "per_received": 0, "base_total": 50}],
+			"Purchase Receipt": [{"name": "PR-1", "status": "Cancelled", "docstatus": 2, "doc_date": "2026-11-05", "supplier": "S"}],
+		},
+		lines={"PO-1": 1, "PR-1": 1},
+	)
+	groups, _rows, items, _located = feed.groups()
+	by_type = {g["doctype"]: g for g in groups}
+	assert by_type["Purchase Receipt"]["documents"][0]["name"] == "PR-1"
+	assert by_type["Purchase Receipt"]["documents"][0]["price_total"] is None
+	assert by_type["Purchase Order"]["documents"][0]["price_total"]["amount"] == 50
+	assert items[0]["spent"] == 50 and items[0]["received_value"] == 0
+
+
+def test_a_draft_receipt_is_a_draft_value_not_a_received_one():
+	row = chain(po_line_qty=5, pr_name="PR-1", pr_item_name="PRI-1", pr_line_qty=5, pr_docstatus=0)
+	keys = prices.price_keys(row)
+	assert keys["receipt_value"] == 50 and keys["receipt_docstatus"] == 0
+	assert prices.document_total("Purchase Receipt", [dict(keys, po_item="POI-1")])["docstatus"] == 0
+
+
+def test_the_sweep_prices_a_live_quotation_or_receipt_and_never_a_canceled_one():
+	line = {"name": "L-1", "rate": 8, "base_rate": 8, "base_amount": 80, "conversion_factor": 1}
+	assert prices.minimal_price_keys("Supplier Quotation", 2, line)["sq_item"] is None
+	assert prices.minimal_price_keys("Supplier Quotation", 0, line)["quote_docstatus"] == 0
+	assert prices.minimal_price_keys("Purchase Receipt", 2, line)["receipt_item"] is None
+	assert prices.minimal_price_keys("Purchase Receipt", 1, line)["receipt_value"] == 80

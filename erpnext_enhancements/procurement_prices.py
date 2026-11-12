@@ -23,6 +23,15 @@ purchase order lines had a rate of 0, because prices were often left off orders.
 
 **A quote is not a spend.** A Supplier Quotation line's rate is carried as a quote, on its own
 keys, and is never added into Spent. A Material Request or a Request for Quotation has no price.
+A canceled quotation has no quote at all, and a draft one is carried as a draft (``quote_docstatus``).
+A receipt is only priced if it exists: a canceled receipt has no value, and a draft one is a draft
+(``receipt_docstatus``). The feed's joins to both still list canceled documents (they always did);
+this changes only what gets a price, never which documents are listed.
+
+**What Spent is not.** It is the sum of the order lines' own ``base_amount``. It leaves out a
+discount applied to the whole order (10 units at 10.00 with a 10% discount on the whole order is
+100.00 here, where the order's net is 90.00), taxes and freight, and it counts an order closed short
+in full. A discount on the line itself is in the line's rate, so it is in the amount.
 
 **A draft is not an order**, the rule ``procurement_quantities`` already holds for quantities. A
 draft order's amount is carried as ``draft_spent`` and left out of ``spent``.
@@ -58,8 +67,10 @@ PRICE_KEYS = (
 	"receipt_state",
 	"receipt_rate",
 	"receipt_value",
+	"receipt_docstatus",
 	# The quotation line behind the row: a quote, never a spend.
 	"sq_item",
+	"quote_docstatus",
 	"quote_rate",
 	"quote_unit_rate",
 	"quote_amount",
@@ -140,20 +151,22 @@ def price_keys(row, orders=True, quotes=True):
 		received = _num(row.get("po_line_received_qty"))
 		if out["po_rate"] is not None and received is not None:
 			out["received_value"] = _money(received * out["po_rate"])
-		if row.get("pr_name") and row.get("pr_item_name"):
+		if row.get("pr_name") and row.get("pr_item_name") and row.get("pr_docstatus") in _LIVE:
 			# What this receipt brought in, valued at the ORDER line's rate. The receipt line's own
 			# rate is the one copied at the time, which is 0 exactly where the price was left off
 			# the order and added later (update_child_qty_rate changes the order, not the receipt).
 			out["receipt_item"] = row.get("pr_item_name")
 			out["receipt_state"] = out["price_state"]
+			out["receipt_docstatus"] = row.get("pr_docstatus")
 			out["receipt_rate"] = out["po_rate"]
 			qty = _num(row.get("pr_line_qty"))
 			if out["po_rate"] is not None and qty is not None:
 				out["receipt_value"] = _money(qty * out["po_rate"])
-	if quotes and row.get("sq_name") and row.get("sq_item_name"):
+	if quotes and row.get("sq_name") and row.get("sq_item_name") and row.get("sq_docstatus") in _LIVE:
 		quoted = _num(row.get("sq_line_rate"))
 		if quoted is not None and quoted > 0:
 			out["sq_item"] = row.get("sq_item_name")
+			out["quote_docstatus"] = row.get("sq_docstatus")
 			out["quote_rate"] = _num(row.get("sq_line_base_rate"))
 			out["quote_amount"] = _num(row.get("sq_line_base_amount"))
 			out["quote_unit_rate"] = _per_stock_unit(row.get("sq_line_base_rate"), row.get("sq_line_conversion_factor"))
@@ -183,19 +196,21 @@ def minimal_price_keys(doctype, docstatus, item, project=None, orders=True, quot
 				docstatus,
 			)
 		)
-	elif doctype == "Purchase Receipt" and orders:
+	elif doctype == "Purchase Receipt" and orders and docstatus in _LIVE:
 		# No order behind it (a store run): the receipt's own line is all there is to read.
 		free = item.get("is_free_item") or item.get("allow_zero_valuation_rate")
 		state = line_price_state(item.get("rate"), free)
 		out["receipt_item"] = item.get("name")
+		out["receipt_docstatus"] = docstatus
 		out["receipt_state"] = state
 		if state == PRICED:
 			out["receipt_rate"] = _num(item.get("base_rate"))
 			out["receipt_value"] = _num(item.get("base_amount"))
-	elif doctype == "Supplier Quotation" and quotes:
+	elif doctype == "Supplier Quotation" and quotes and docstatus in _LIVE:
 		quoted = _num(item.get("rate"))
 		if quoted is not None and quoted > 0:
 			out["sq_item"] = item.get("name")
+			out["quote_docstatus"] = docstatus
 			out["quote_rate"] = _num(item.get("base_rate"))
 			out["quote_amount"] = _num(item.get("base_amount"))
 			out["quote_unit_rate"] = _per_stock_unit(item.get("base_rate"), item.get("conversion_factor"))
@@ -223,7 +238,12 @@ ITEM_PRICE_KEYS = (
 	"quote_low",
 	"quote_high",
 	"quote_count",
+	"quote_draft_count",
 )
+
+#: The docstatuses of a document that exists: a draft or a submitted one. A canceled document is
+#: not priced, and a row that does not say (``None``) is not guessed at.
+_LIVE = (0, 1)
 
 
 def _distinct(rows, key_names):
@@ -293,6 +313,8 @@ def item_spending(rows):
 		"quote_low": min(quote_prices) if quote_prices else None,
 		"quote_high": max(quote_prices) if quote_prices else None,
 		"quote_count": len(quotes),
+		# How many of those quotes are on a draft quotation (the tracker labels them).
+		"quote_draft_count": sum(1 for q in quotes if q.get("quote_docstatus") == 0),
 	}
 
 
@@ -349,10 +371,16 @@ def document_total(doctype, rows):
 			priced += 1
 		else:
 			no_price += 1
+	state_of_document = {
+		"Purchase Receipt": "receipt_docstatus",
+		"Supplier Quotation": "quote_docstatus",
+	}.get(doctype)
 	return {
 		"amount": _money(amount),
 		"lines": priced,
 		"no_price_lines": no_price,
 		"no_charge_lines": no_charge,
 		"job_lines": len(lines),
+		# 0 for a draft receipt or quotation, so the header can say so; None where it does not matter.
+		"docstatus": lines[0].get(state_of_document) if state_of_document else None,
 	}
