@@ -160,8 +160,12 @@ const switched = {
 // 1. Button: shown once for a role holder on a non-stock item; not for others / stock items / assets.
 let frm = makeFrm({});
 handlers.refresh(frm);
-assert.equal(frm.buttons.length, 1);
+// Two since v1.803.0: the single switch first, then the way to the bulk page.
+assert.equal(frm.buttons.length, 2);
+assert.equal(frm.buttons[0].label, "Turn on Maintain Stock");
 assert.equal(frm.buttons[0].group, "Actions");
+assert.equal(frm.buttons[1].label, "Switch Many Items to Maintain Stock");
+assert.equal(frm.buttons[1].group, "Actions");
 assert.equal(frm.__sf_saved_stock, 0);
 roles = ["Purchase User"];
 let other = makeFrm({});
@@ -171,7 +175,8 @@ roles = ["Item Manager"];
 for (const d of [{ is_stock_item: 1 }, { is_fixed_asset: 1 }]) {
 	const f = makeFrm(d);
 	handlers.refresh(f);
-	assert.equal(f.buttons.length, 0);
+	// No single switch for a stock item or an asset; the bulk page's link stays.
+	assert.deepEqual(f.buttons.map((b) => b.label), ["Switch Many Items to Maintain Stock"]);
 }
 // A service account, whatever it holds, and a person who can't write the Item see no button.
 roles = ["Stock Manager", "Item Manager"];

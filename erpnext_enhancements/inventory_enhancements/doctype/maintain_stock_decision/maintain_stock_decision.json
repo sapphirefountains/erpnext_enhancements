@@ -1,0 +1,182 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:item_code",
+ "creation": "2026-11-12 12:00:00.000000",
+ "description": "One row for an item the Switch Items to Maintain Stock page has a choice or a result for: a person's choice that beats the name rule, and what happened when the item was queued to switch. Written by the page and its background job, never by hand.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_name",
+  "column_break_main",
+  "decision",
+  "decided_by",
+  "decided_on",
+  "switch_section",
+  "status",
+  "queued_by",
+  "queued_on",
+  "relax_sales_invoices",
+  "column_break_switch",
+  "switched_on",
+  "invoices_before_switch",
+  "rule",
+  "result"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fetch_from": "item_code.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "A person's choice for this item on the Switch Items to Maintain Stock page. It beats the name rule. Blank: follow the rule.",
+   "fieldname": "decision",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Your Choice",
+   "options": "\nSwitch\nStay non-stock",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Chosen By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_on",
+   "fieldtype": "Datetime",
+   "label": "Chosen On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "switch_section",
+   "fieldtype": "Section Break",
+   "label": "Switch"
+  },
+  {
+   "description": "Queued: waiting for the background job. Switched: Maintain Stock is on. Refused: a safety check failed when the job reached it; Result says which.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "\nQueued\nSwitched\nRefused",
+   "read_only": 1
+  },
+  {
+   "fieldname": "queued_by",
+   "fieldtype": "Link",
+   "label": "Queued By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "queued_on",
+   "fieldtype": "Datetime",
+   "label": "Queued On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The page's box was ticked when this item was queued: its Sales Invoices never updated stock, so they do not block the switch.",
+   "fieldname": "relax_sales_invoices",
+   "fieldtype": "Check",
+   "label": "Sales Invoices That Moved No Stock Allowed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_switch",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "switched_on",
+   "fieldtype": "Datetime",
+   "label": "Switched On",
+   "read_only": 1
+  },
+  {
+   "description": "How many submitted Sales Invoices used the item when it was switched. Above zero, a Delivery Note made from an invoice posted on or before that day is refused.",
+   "fieldname": "invoices_before_switch",
+   "fieldtype": "Int",
+   "label": "Sales Invoices Before The Switch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rule",
+   "fieldtype": "Small Text",
+   "label": "What The Rule Said",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Small Text",
+   "label": "Result",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Maintain Stock Decision",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Item Manager"
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_code",
+ "track_changes": 1
+}

@@ -822,6 +822,58 @@ export function isCostPrompt(result) {
 }
 
 /**
+ * Whether a save's answer is the question "what did one cost?" for an order line with no price
+ * (v1.803.0): `add` answers `{needs_order_price: true, ...}` when the line being received is a stock
+ * item's and its order has no price on it. Nothing was posted.
+ */
+export function isOrderPricePrompt(result) {
+	return !!(result && typeof result === "object" && result.needs_order_price === true);
+}
+
+/**
+ * What the person typed as the price of one unit on the order: `{rate}` or `{problem}`. The same
+ * reading of a number as `unitCostProblem`, without the cap on a without-order add: this is the
+ * order's own price. At most MAX_UNIT_PRICE (above), which `receipt_price_rules.MAX_UNIT_PRICE`
+ * equals; the server checks it again (`receipt_price_rules.checked_price`).
+ */
+export function orderPriceProblem(text, uom) {
+	const per = uom ? ` per ${uom}` : "";
+	const raw = String(text === null || text === undefined ? "" : text).trim();
+	if (!raw) return { problem: `Enter the price${per}.` };
+	if (raw.includes(",") && !/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(raw)) {
+		return { problem: `Enter the price${per} as a number, like 12.50.` };
+	}
+	const plainText = raw.replace(/,/g, "");
+	if (!/^(\d+\.?\d*|\.\d+)$/.test(plainText)) return { problem: `Enter the price${per} as a number, like 12.50.` };
+	const rate = Number(plainText);
+	if (!Number.isFinite(rate) || rate < 0.005) return { problem: `The price${per} must be more than 0.` };
+	if (rate > MAX_UNIT_PRICE) {
+		return { problem: `A price${per} above ${MAX_UNIT_PRICE.toLocaleString("en-US")} is not right. Check the number.` };
+	}
+	return { rate: Math.round(rate * 1e6) / 1e6 };
+}
+
+/** The words of that question, from the server's payload. */
+export function orderPriceText(prompt, qty) {
+	const p = prompt || {};
+	const uom = p.uom || "unit";
+	const name = p.item_name || p.item_code || "this item";
+	const order = p.purchase_order || "the purchase order";
+	return {
+		title: "What did one cost?",
+		lead: `${order} has no price for ${name}. Stock comes in at the price on the order, so it can't be received without one.`,
+		label: `Price per ${uom}`,
+		per: `Enter what ONE ${uom} cost, not the total. It is on the packing slip or the invoice.`,
+		cannot: `You can't set prices on ${order}. Ask purchasing to put the price on it, then receive this again.`,
+		note: p.can_price
+			? `The price is put on ${order}, and the ${qty === undefined || qty === "" ? "goods are" : `${plain(qty)} you counted are`} received at it.`
+			: "If it was free (a sample or a warranty replacement), you can still receive it as no charge.",
+		button: "Receive at this price",
+		free: "It was free",
+	};
+}
+
+/**
  * What the person typed as a unit cost: `{rate}` or `{problem}`. A positive number, at most
  * MAX_UNIT_COST; the server checks it again (`check_unit_cost`). Thousands commas are allowed
  * ("1,250.50"), and a comma used as a decimal ("2,5") is refused rather than read as 25. With the

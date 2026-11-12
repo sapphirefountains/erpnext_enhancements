@@ -18,9 +18,15 @@ Three parts, each with its reasons:
   ``frappe.db.set_value``, which writes the column without loading the document, so
   ``Item.cant_change`` never runs. That is the bypass, and the checks are why it is safe.
   ``set_value`` moves ``modified``, so a form left open from before refuses its next save rather
-  than writing Maintain Stock back off. Then a Comment that says who, when and how, the document
-  cache cleared (``get_cached_value`` readers such as ``get_stock_items`` would otherwise see the
-  old flag), and what to do next.
+  than writing Maintain Stock back off. Then the document cache cleared (``get_cached_value``
+  readers such as ``get_stock_items`` would otherwise see the old flag), the open orders counted
+  (below), a Comment that says who, when and how, and what to do next.
+
+  **Open Purchase Orders and Material Requests** (v1.803.0) no longer refuse. After the flag is
+  written, a line with no warehouse gets one (:func:`_fill_order_warehouses`, with a Comment on
+  its order), and each warehouse an open line names has its Bin recounted by ERPNext's own
+  ``stock_balance`` functions (:func:`_recount_bins`), never by a copy of their arithmetic.
+  ``maintain_stock_rules`` says what goes wrong otherwise, case by case.
 
   **The race left over.** A Delivery Note or Stock Entry being submitted at the same moment does
   not lock the Item row; it reads the flag through ``get_cached_value``. One that commits between
@@ -57,6 +63,11 @@ Three parts, each with its reasons:
   console on 2026-10-27, before this existed, and is covered the same way). These are the paths
   found in v16.52.1; another way to rebuild a receipt's ledger, in a later ERPNext or another app,
   would not be guarded.
+
+  - **Deliver against an old invoice** (``refuse_delivering_old_invoices``, ``Delivery Note``
+    ``validate``, v1.803.0). Only for an item switched under the relaxed Sales Invoice rule, which
+    leaves a ``Maintain Stock Decision`` row saying so and when. *Create > Delivery Note* on an
+    invoice posted on or before that day would take out of stock goods that left long ago.
 
 The guards are data-integrity guards, not nudges, so unlike ``item_naming_guard`` they also run
 outside a web request: a bulk cancel runs as a background job. They stand aside during install,
@@ -191,6 +202,69 @@ def _packed(item_code):
 	return groups
 
 
+def _open_lines(child, item_code):
+	"""The open lines of ``child`` for the item, one dict a line (``rules.plan_open_orders``)."""
+	rule = rules.OPEN_RULES[child]
+	outstanding, done = rule["outstanding"]
+	statuses = ", ".join(f"%(status{i})s" for i in range(len(rule["closed_statuses"])))
+	values = {"item": item_code}
+	values.update({f"status{i}": s for i, s in enumerate(rule["closed_statuses"])})
+	query = (
+		f"select c.name, c.parent, c.idx, c.warehouse, p.company, c.{done} "
+		f"from `tab{child}` c join `tab{rule['parent']}` p on p.name = c.parent "
+		f"where c.item_code = %(item)s and p.docstatus = 1 and c.{outstanding} > c.{done} "
+		f"and p.status not in ({statuses})"
+	)
+	if rule["skip_drop_ship"]:
+		query += " and coalesce(c.delivered_by_supplier, 0) = 0"
+	query += " order by c.parent, c.idx"
+	return [
+		{
+			"doctype": child,
+			"name": row[0],
+			"parent": row[1],
+			"idx": row[2],
+			"warehouse": row[3] or "",
+			"company": row[4] or "",
+			# Only a Purchase Order line can be partly *received*; a request's is partly ordered.
+			"received": (row[5] or 0) if child == "Purchase Order Item" else 0,
+		}
+		for row in frappe.db.sql(query, values)
+	]
+
+
+def _usable_warehouse(warehouse, company):
+	"""``warehouse`` when it is a real, enabled, non-group warehouse of ``company``; else ``None``."""
+	if not warehouse:
+		return None
+	row = frappe.db.get_value(
+		"Warehouse", warehouse, ["name", "company", "is_group", "disabled"], as_dict=True
+	)
+	if not row or cint(row.is_group) or cint(row.disabled) or row.company != company:
+		return None
+	return row.name
+
+
+def _fill_warehouses(item_code, lines):
+	"""``{company: warehouse}`` for the companies whose open lines lack a warehouse.
+
+	The item's own default for that company, else Stock Settings' default: the order ERPNext's
+	``get_item_warehouse`` falls back in. A company with neither is left out, and the check fails.
+	"""
+	out = {}
+	for company in sorted({line["company"] for line in lines if not line["warehouse"] and line["company"]}):
+		warehouse = _usable_warehouse(_default_warehouse(item_code, company), company)
+		if not warehouse:
+			try:
+				fallback = frappe.db.get_single_value("Stock Settings", "default_warehouse")
+			except Exception:
+				fallback = None
+			warehouse = _usable_warehouse(fallback, company)
+		if warehouse:
+			out[company] = warehouse
+	return out
+
+
 def _item_row(item_code):
 	return frappe.db.get_value("Item", item_code, ITEM_FIELDS, as_dict=True)
 
@@ -202,6 +276,7 @@ def gather_facts(item_code, item=None):
 	if not item:
 		return None
 	values = {"item": item_code}
+	open_lines = [line for child in rules.RECOUNT_DOCTYPES for line in _open_lines(child, item_code)]
 	return {
 		"item_code": item.name,
 		"item_name": item.item_name,
@@ -223,8 +298,26 @@ def gather_facts(item_code, item=None):
 			values,
 		),
 		"packed": _packed(item_code),
-		"submitted": {child: _submitted(child, item_code) for child in rules.SUBMITTED_DOCTYPES},
-		"open": {child: _open(child, item_code) for child in rules.OPEN_DOCTYPES},
+		# Sales Invoice has a check of its own (the relaxed rule), and is counted the same way.
+		"submitted": {
+			child: _submitted(child, item_code) for child in (*rules.SUBMITTED_DOCTYPES, rules.SALES_INVOICE)
+		},
+		"open": {child: _open(child, item_code) for child in rules.OPEN_RULES},
+		# The open Purchase Order and Material Request lines, which the switch recounts, and the
+		# warehouse a line without one would get.
+		"open_lines": open_lines,
+		"fill_warehouses": _fill_warehouses(item_code, open_lines),
+		# The relaxed Sales Invoice rule passes only when this is empty.
+		"sales_invoices_with_stock": _group(
+			"select count(distinct c.parent) from `tabSales Invoice Item` c "
+			"join `tabSales Invoice` p on p.name = c.parent "
+			"where c.item_code = %(item)s and c.docstatus = 1 and p.update_stock = 1",
+			"select 'Sales Invoice', c.parent from `tabSales Invoice Item` c "
+			"join `tabSales Invoice` p on p.name = c.parent "
+			"where c.item_code = %(item)s and c.docstatus = 1 and p.update_stock = 1 "
+			"group by c.parent order by max(p.creation) desc",
+			values,
+		),
 		"receipts": _submitted("Purchase Receipt Item", item_code),
 		# A submitted return refuses (maintain_stock_rules explains: an ordinary repost re-books it).
 		"receipt_returns": _group(
@@ -254,16 +347,17 @@ def _readable(examples):
 	return shown, len(examples or ()) - len(shown)
 
 
-def run_checks(item_code, item=None):
+def run_checks(item_code, item=None, relax_sales_invoices=False, facts=None):
 	"""The dialog's answer: every check, whether all passed, and what ERPNext's form would say.
 
 	Documents are named only where the caller may read them; the rest are counted
-	(``hidden_examples``). The checks themselves always count everything.
+	(``hidden_examples``). The checks themselves always count everything. ``facts`` is
+	:func:`gather_facts`' answer when the caller already has it.
 	"""
-	facts = gather_facts(item_code, item=item)
+	facts = facts or gather_facts(item_code, item=item)
 	if facts is None:
 		frappe.throw(_("Item {0} doesn't exist.").format(item_code), frappe.DoesNotExistError)
-	checks = rules.evaluate(facts)
+	checks = rules.evaluate(facts, relax_sales_invoices=relax_sales_invoices)
 	shown_checks = []
 	for check in checks:
 		shown, hidden = _readable(check["examples"])
@@ -326,22 +420,75 @@ def _default_warehouse(item_code, company):
 		return None
 
 
-def turn_on(item_code):
-	"""Switch Maintain Stock on after every check passes again. Refuses, in words, when one fails."""
+def _fill_order_warehouses(item_code, plan, full_name):
+	"""Give each open order line that has no warehouse the one the plan chose, and say so on the
+	order. A direct column write, like the flag: the line is submitted, and ERPNext offers no way
+	to set a warehouse on one. ``update_modified=False`` leaves the order's own timestamp alone, so
+	a form open on it still saves."""
+	by_order = {}
+	for line in plan["fill"]:
+		frappe.db.set_value(
+			line["doctype"], line["name"], "warehouse", line["warehouse"], update_modified=False
+		)
+		parent = rules.OPEN_RULES[line["doctype"]]["parent"]
+		by_order.setdefault((parent, line["parent"], line["warehouse"]), []).append(str(line["idx"]))
+	for (parent, name, warehouse), rows in by_order.items():
+		comment = rules.order_comment(item_code, full_name, ", ".join(rows), warehouse)
+		frappe.get_doc(parent, name).add_comment("Comment", html.escape(comment, quote=False))
+
+
+def _recount_bins(item_code, plan):
+	"""Recount what is on order and requested, with ERPNext's own functions.
+
+	``get_ordered_qty`` and ``get_indented_qty`` are what a Purchase Order and a Material Request
+	call for a stock item; ``update_bin_qty`` writes the Bin (making it when there is none) and
+	recomputes its projected quantity. Called after the flag is written and the cache cleared.
+	"""
+	if not plan["recount"]:
+		return
+	from erpnext.stock import stock_balance
+
+	readers = {"ordered_qty": stock_balance.get_ordered_qty, "indented_qty": stock_balance.get_indented_qty}
+	for field, warehouse in plan["recount"]:
+		stock_balance.update_bin_qty(item_code, warehouse, {field: readers[field](item_code, warehouse)})
+
+
+def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
+	"""Switch Maintain Stock on after every check passes again. Refuses, in words, when one fails.
+
+	``relax_sales_invoices`` asks for the relaxed Sales Invoice rule (``maintain_stock_rules``);
+	only the bulk page passes it, and it records the switch so the Delivery Note guard knows.
+	``user`` is the person the switch is for when it runs in a background job, and ``via`` how
+	they asked (``rules.VIA_BULK``); both go into the Comment.
+	"""
 	# The locking read is also where the item's own flags come from (see the module docstring).
 	item = frappe.db.get_value("Item", item_code, ITEM_FIELDS, as_dict=True, for_update=True)
 	if not item:
 		frappe.throw(_("Item {0} doesn't exist.").format(item_code), frappe.DoesNotExistError)
-	result = run_checks(item_code, item=item)
+	facts = gather_facts(item_code, item=item)
+	result = run_checks(item_code, relax_sales_invoices=relax_sales_invoices, facts=facts)
 	if not result["can_switch"]:
 		frappe.throw(
 			rules.refusal_message(item_code, result["checks"]), title=_("Maintain Stock not turned on")
 		)
+	plan = rules.plan_open_orders(facts["open_lines"], facts["fill_warehouses"])
+	open_groups = {d: g for d, g in facts["open"].items() if d in rules.RECOUNT_DOCTYPES and g.get("count")}
+	invoices = cint((facts["submitted"].get(rules.SALES_INVOICE) or {}).get("count"))
 
 	frappe.db.set_value("Item", item_code, "is_stock_item", 1)
-	user = frappe.session.user
+	# Before the recount: ERPNext reads the flag through get_cached_value.
+	frappe.clear_document_cache("Item", item_code)
+	user = user or frappe.session.user
+	full_name = get_fullname(user)
+	_fill_order_warehouses(item_code, plan, full_name)
+	_recount_bins(item_code, plan)
 	comment = rules.switch_comment(
-		get_fullname(user), format_datetime(now_datetime()), result["receipts"]["count"]
+		full_name,
+		format_datetime(now_datetime()),
+		result["receipts"]["count"],
+		via=via,
+		open_orders=rules.open_orders_detail(open_groups, plan),
+		invoices=invoices,
 	)
 	frappe.get_doc("Item", item_code).add_comment("Comment", html.escape(comment, quote=False))
 	frappe.clear_document_cache("Item", item_code)
@@ -359,6 +506,9 @@ def turn_on(item_code):
 		"account_is_company_default": is_default,
 		"warehouse": _default_warehouse(item_code, company),
 		"next_steps": rules.next_steps(item_code, account, is_default),
+		# What the bulk page records: the invoices the relaxed rule let through.
+		"invoices_before_switch": invoices,
+		"open_orders_recounted": sum(cint(g.get("count")) for g in open_groups.values()),
 	}
 
 
@@ -572,3 +722,65 @@ def refuse_rebuilding_unstocked_receipts(doc, method=None):
 			rules.rebuild_refusal(doc.doctype, unstocked, canceling=canceling),
 			title=_("This would rebuild a receipt's ledger"),
 		)
+
+
+#: Where a switch under the relaxed Sales Invoice rule is recorded (``maintain_stock_bulk``).
+DECISION = "Maintain Stock Decision"
+
+
+def _relaxed_switches(item_codes):
+	"""``{item_code: date}`` for the items switched under the relaxed Sales Invoice rule.
+
+	Empty when the doctype is not installed yet: this guard is hooked on a standard doctype, and
+	``doc_events`` fire before this app's own tables exist.
+	"""
+	item_codes = sorted({code for code in item_codes if code})
+	if not item_codes:
+		return {}
+	try:
+		if not frappe.db.table_exists(DECISION):
+			return {}
+		rows = frappe.get_all(
+			DECISION,
+			filters={
+				"item_code": ("in", item_codes),
+				"invoices_before_switch": (">", 0),
+				"status": "Switched",
+			},
+			fields=["item_code", "switched_on"],
+		)
+	except Exception:
+		return {}
+	return {row.item_code: str(row.switched_on or "")[:10] for row in rows if row.switched_on}
+
+
+def refuse_delivering_old_invoices(doc, method=None):
+	"""``Delivery Note`` → ``validate``: refuse a line that delivers a Sales Invoice posted on or
+	before the day its item was switched under the relaxed rule. Those goods left while the item
+	kept no stock; this would take them out again."""
+	if _stands_aside(doc) or cint(doc.get("is_return")):
+		return
+	rows = [
+		row for row in doc.get("items") or [] if row.get("item_code") and row.get("against_sales_invoice")
+	]
+	if not rows:
+		return
+	switched = _relaxed_switches(row.get("item_code") for row in rows)
+	rows = [row for row in rows if row.get("item_code") in switched]
+	if not rows:
+		return
+	invoices = sorted({row.get("against_sales_invoice") for row in rows})
+	posted = {
+		row.name: str(row.posting_date or "")[:10]
+		for row in frappe.get_all(
+			"Sales Invoice", filters={"name": ("in", invoices)}, fields=["name", "posting_date"]
+		)
+	}
+	offenders = [
+		_line(row)
+		for row in rows
+		if posted.get(row.get("against_sales_invoice"))
+		and posted[row.get("against_sales_invoice")] <= switched[row.get("item_code")]
+	]
+	if offenders:
+		frappe.throw(rules.delivery_refusal(offenders), title=_("These goods already left"))

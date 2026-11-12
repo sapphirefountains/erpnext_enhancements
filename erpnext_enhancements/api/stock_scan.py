@@ -861,6 +861,37 @@ def _receipt_cost(item, location, entered, qty):
 	)
 
 
+def _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge):
+	"""The question the page asks when the order line being received has no price, or ``None``.
+
+	``None`` when an answer came with the save (a price or "no charge"), when the line needs no
+	price, and when the caller can't read the order: ``receive_items`` refuses that in its own
+	words, and a person who can't see the order is not asked to price it.
+	"""
+	if not purchase_order or cint(no_charge) or order_rate not in (None, ""):
+		return None
+	from erpnext_enhancements.inventory_enhancements import receipt_price, receipt_price_rules
+
+	if not frappe.has_permission("Purchase Order", "read", doc=purchase_order):
+		return None
+	po = frappe.get_doc("Purchase Order", purchase_order)
+	needing = receipt_price.needing_price(po, wanted={line})
+	if not needing:
+		return None
+	row = needing[0]
+	return {
+		"needs_order_price": True,
+		"item_code": item.name,
+		"item_name": item.item_name or item.name,
+		"uom": row.get("uom") or item.stock_uom,
+		"purchase_order": po.name,
+		"row": row.get("idx"),
+		"can_price": receipt_price.may_price(po),
+		"qty": qty,
+		"max_rate": receipt_price_rules.MAX_UNIT_PRICE,
+	}
+
+
 def _project(project, company, required=False):
 	"""The job a take is charged to, checked; ``None`` when none was picked."""
 	project = cstr(project).strip()
@@ -1035,6 +1066,8 @@ def add(
 	project=None,
 	scanned_code=None,
 	rate=None,
+	order_rate=None,
+	no_charge=0,
 ):
 	"""Add stock to a location: received against an open order line, or added without one.
 
@@ -1061,6 +1094,15 @@ def add(
 	own mapper (``procurement.receive_order_line``) builds the receipt, and ERPNext posts no
 	stock and no GL for a non-stock line (84 of 103 submitted receipts on production are
 	non-stock only). Every other path keeps ``_stock_item``'s refusal.
+
+	**A stock item's order line with no price** (v1.803.0; ``receipt_price_rules`` has the rule):
+	the receipt would be refused, so nothing is posted and the answer is a payload,
+	``{needs_order_price: True, item_code, item_name, uom, purchase_order, row, can_price, qty,
+	max_rate}``. The page asks what one cost and sends the same save again with ``order_rate``
+	(per unit of the **order line's** UOM, the unit the order is priced in), or with
+	``no_charge=1`` for a free sample or a warranty replacement, or the person stops. The price
+	goes on the order line through ERPNext's Update Items, for a person who may edit the order
+	(``can_price``); anyone else is told to ask purchasing. No log row is written for the question.
 	"""
 	_check_access()
 	ref = _client_ref(client_ref)
@@ -1079,6 +1121,9 @@ def add(
 
 		line = cstr(purchase_order_item).strip()
 		purchase_order = frappe.db.get_value("Purchase Order Item", line, "parent")
+		prompt = _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge)
+		if prompt:
+			return prompt
 		log = _begin_log(
 			ref,
 			rules.ACTION_RECEIVE,
@@ -1097,6 +1142,8 @@ def add(
 			remarks=rules.remark(
 				rules.ACTION_RECEIVE, who, location.name, qty, item.stock_uom, purchase_order=purchase_order
 			),
+			rate=order_rate,
+			no_charge=cint(no_charge),
 		)
 		_finish_log(log, "Purchase Receipt", result.get("purchase_receipt"))
 		return _result(log.name)
@@ -1516,7 +1563,8 @@ def _quick_item(spec, location):
 	the Desk (from 2026-10-01 it refuses a duplicate code or a name that is just the code). If
 	the receipt then fails, the request rolls back and the Item goes with it.
 
-	``is_stock_item`` is set because the site's Property Setter defaults it to 0. The Item
+	``is_stock_item`` is set here whatever the site's default is (a Property Setter kept it at 0
+	until v1.803.0, and 1 since): a part bought on a store run always keeps stock. The Item
 	Default is the bin it was bought into, for this company: without one, ERPNext copies the
 	Item Group's defaults or the global default warehouse (``Stores - SF``), and the item would
 	list at Stores with nothing there. No leaf group carries defaults on production.

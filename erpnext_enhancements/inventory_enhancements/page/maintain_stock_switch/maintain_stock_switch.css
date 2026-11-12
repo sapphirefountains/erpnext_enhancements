@@ -1,0 +1,19 @@
+/* Switch Items to Maintain Stock (v1.803.0). Every selector under .mss-: a Desk Page's stylesheet
+   is global once loaded. Colors are Frappe's own variables, so light and dark both work. */
+.mss-page { padding: var(--padding-md) 0; }
+.mss-intro { max-width: 60rem; color: var(--text-muted); margin-bottom: var(--margin-md); }
+.mss-tabs { display: flex; flex-wrap: wrap; gap: var(--margin-sm); margin-bottom: var(--margin-md); }
+.mss-tab { border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 6px 12px; background: var(--card-bg); color: var(--text-color); cursor: pointer; }
+.mss-tab[aria-current="page"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); font-weight: 600; }
+.mss-tools { display: flex; flex-wrap: wrap; gap: var(--margin-md); align-items: center; margin-bottom: var(--margin-md); }
+.mss-search { max-width: 22rem; }
+.mss-relax { display: flex; gap: 8px; align-items: flex-start; max-width: 44rem; margin: 0; font-weight: normal; }
+.mss-banner { border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: var(--padding-sm) var(--padding-md); margin-bottom: var(--margin-md); background: var(--subtle-fg); }
+.mss-table-wrap { overflow-x: auto; }
+.mss-table { width: 100%; border-collapse: collapse; }
+.mss-table th, .mss-table td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
+.mss-table th { position: sticky; top: 0; background: var(--card-bg); font-weight: 600; white-space: nowrap; }
+.mss-why { min-width: 18rem; }
+.mss-rule { color: var(--text-muted); font-size: var(--text-sm); }
+.mss-choice { min-width: 10rem; }
+.mss-empty { color: var(--text-muted); padding: var(--padding-lg) 0; }

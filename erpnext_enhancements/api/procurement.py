@@ -156,6 +156,22 @@ def _typed_quantities(rows):
     return typed
 
 
+def _typed_prices(rows):
+    """``rows`` as the dialog posts them -> ``{row name: {"rate", "no_charge"}}`` for the rows
+    that carry either. Only an unpriced stock line's answer is ever read
+    (``receipt_price.settle_before_receipt``); a price sent for any other row is ignored."""
+    if isinstance(rows, str):
+        rows = frappe.parse_json(rows)
+    typed = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        name = (raw.get("purchase_order_item") or "").strip()
+        if name and (raw.get("rate") not in (None, "") or cint(raw.get("no_charge"))):
+            typed[name] = {"rate": raw.get("rate"), "no_charge": cint(raw.get("no_charge"))}
+    return typed
+
+
 def _over_receipt_allowance(item_code):
     """The over-receipt allowance ERPNext applies to this item, in percent.
 
@@ -196,6 +212,30 @@ def _receiving_warehouse(warehouse, company):
     if row.company != company:
         frappe.throw(_("{0} belongs to {1}, not {2}.").format(row.name, row.company, company))
     return row.name
+
+
+@frappe.whitelist(methods=["GET", "POST"])
+def lines_needing_price(purchase_order):
+    """The open lines of one order that need a price before they can be received (v1.803.0).
+
+    The Receive Items dialog asks when it opens, so it can show a price box on those rows.
+    ``{"lines": [{"purchase_order_item", "idx", "item_code", "item_name", "uom"}], "can_price":
+    bool}``: ``can_price`` is whether this person may put a price on the order. Read on the
+    order is required; nothing is written.
+    """
+    from erpnext_enhancements.inventory_enhancements import receipt_price
+
+    po = frappe.get_doc("Purchase Order", purchase_order)
+    po.check_permission("read")
+    open_lines = {
+        row.name
+        for row in po.items
+        if flt(row.qty) > flt(row.received_qty) and not cint(row.get("delivered_by_supplier"))
+    }
+    return {
+        "lines": receipt_price.needing_price(po, wanted=open_lines),
+        "can_price": receipt_price.may_price(po),
+    }
 
 
 @frappe.whitelist(methods=["POST"])
@@ -250,6 +290,14 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
       was put, which is right.
     * **``remarks``** replaces the receipt's remarks, so the page can say on the voucher that
       it came from a scan and who did it.
+    * **A stock item's line with no price is settled before a receipt exists** (v1.803.0;
+      ``inventory_enhancements/receipt_price_rules.py`` has the rule and why). A row may carry
+      ``rate`` (what each one cost) or ``no_charge: 1`` (free on purpose). A price goes on the
+      order line through ERPNext's own Update Items, because the receipt's rate must match the
+      order's, and only for a caller who may edit the order. A free line gets ERPNext's
+      ``allow_zero_valuation_rate`` tick on its receipt row. With neither, nothing is received
+      and the message names the lines. The receipt's own ``before_submit`` refusal is the
+      backstop; this is the message.
     """
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
@@ -289,6 +337,9 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         frappe.throw(_("Nothing to receive: every line is at 0."))
 
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
+    from erpnext_enhancements.inventory_enhancements import receipt_price
+
+    free = receipt_price.settle_before_receipt(po, set(wanted), _typed_prices(rows))
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
     if target:
         receipt.set_warehouse = target
@@ -300,6 +351,8 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         item.rejected_qty = 0
         if target:
             item.warehouse = target
+        if item.purchase_order_item in free:
+            item.allow_zero_valuation_rate = 1
     if remarks:
         receipt.remarks = remarks
     if posting_date:
@@ -325,7 +378,9 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
     }
 
 
-def receive_order_line(purchase_order_item, stock_qty, warehouse, item_code=None, remarks=None):
+def receive_order_line(
+    purchase_order_item, stock_qty, warehouse, item_code=None, remarks=None, rate=None, no_charge=None
+):
     """Receive ONE Purchase Order line, counted in the item's STOCK UOM, into ``warehouse``.
 
     The Stock Scan page's "+" when the scanned item has an open order line
@@ -340,6 +395,9 @@ def receive_order_line(purchase_order_item, stock_qty, warehouse, item_code=None
     receipt row's UOM must equal the order line's. ``stock_scan_rules.to_order_uom`` converts
     and refuses a result that is not whole in a whole-number UOM rather than rounding it --
     rounding would receive goods that did not arrive.
+
+    ``rate`` and ``no_charge`` are the receiver's answer for a stock item's line with no price
+    (v1.803.0). ``rate`` is per unit of the **order line's** UOM, the unit the order is priced in.
     """
     from erpnext_enhancements.inventory_enhancements.stock_scan_rules import to_order_uom
 
@@ -359,7 +417,7 @@ def receive_order_line(purchase_order_item, stock_qty, warehouse, item_code=None
         frappe.throw(problem, title=_("Nothing was received"))
     return receive_items(
         line.parent,
-        [{"purchase_order_item": purchase_order_item, "qty": qty}],
+        [{"purchase_order_item": purchase_order_item, "qty": qty, "rate": rate, "no_charge": no_charge}],
         warehouse=warehouse,
         remarks=remarks,
     )

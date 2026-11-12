@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.803.0] - 2026-11-12
+
+### Added
+- **Maintain Stock is on for new items, can be turned on for an item on an open purchase order,
+  and can be turned on for the existing physical items from a list a person approves. A stock
+  item can no longer be received without a price.** Nik's decisions of 2026-11-12, so that stock
+  shows what is at each location and what belongs to each project. On that day 1,102 of 1,586
+  enabled items kept no stock, so most purchase receipts added nothing to it, and 373 of the 543
+  Purchase Order lines of the last 180 days had a rate of 0.
+  - **On migrate, exactly one thing changes on a site: the default of the Maintain Stock box on a
+    new Item, from off to on** (the `Item-is_stock_item-default` Property Setter, and the words
+    under the box). No existing Item, order, receipt or rate is changed by the deploy. A new
+    doctype (`Maintain Stock Decision`, empty) and a new Desk page are added.
+  - **Every place that creates an Item in code was checked and none changes.** Store-run and Bin
+    Manager items (`stock_scan._quick_item`) and the configurator's parts already say stock. The
+    QuickBooks import (`_map_item`), the water catalog loaders (`catalog_seed`, the pump and
+    equipment seeds) and the Serial No patch already say non-stock, so services and fees from
+    QuickBooks stay non-stock. The document intake copies the reviewer's tick, which starts
+    unticked. Only a new Item form, the guided Item flow's first step and an assistant's
+    `create_document` take the new default.
+- **Switch Items to Maintain Stock** (`/desk/maintain-stock-switch`, for Item Managers). Nik: "Go
+  in and check every Maintain Stock for every item to Yes or Checked"; decided scope, physical
+  items only, with a list he approves. It is a page, not a migrate patch: nothing switches until a
+  person presses *Switch N items* and confirms.
+  - Every enabled non-stock item is listed as *Will switch*, *Stays non-stock* or *Can't switch
+    yet*, with the reason in words. *Stays*: a fixed asset; a name ending in `(deleted)` (an old
+    QuickBooks line); the Service item group; a code starting `SRV-`; a name starting with a value
+    stream and a dash (`BUILD - Consulting`, `Rent - Insurance`); a whole word such as labor, fee,
+    rent, travel, mileage, freight, delivery, deposit, consulting, service, tax or expense. The
+    rule is `maintain_stock_bulk_rules.name_rule`, in that order.
+  - **The rule is a guess from the name, so any line can be changed before applying** (*Your
+    choice*: switch it, or keep it non-stock). Production keeps real products in the catch-all
+    group the QuickBooks import filed everything under, next to labor lines and "Late fee". The
+    rule leans toward *stays*, because a part left non-stock is where it is today and can be
+    switched any day. A choice is kept on a `Maintain Stock Decision` row, so a list reviewed over
+    several sittings keeps its edits. Only a fixed asset cannot be chosen: ERPNext refuses one
+    that keeps stock.
+  - **Applying uses the single-item switch for each item**: the row lock, every check again, the
+    flag, the Comment on the item naming who asked. A background job does it, one commit an item,
+    so an item that fails a check when the job reaches it is marked Refused with the reason and
+    the rest go on.
+  - **A run outlives a deploy.** A deploy flushes the job queue. The work list is the `Queued`
+    rows, not the job's arguments, and the scheduler starts the job again every ten minutes while
+    any row is Queued. An item the killed job had not committed is still non-stock and still
+    queued; nothing is switched twice.
+  - *Download this list* is the before-and-after list to approve; *Download results* is what a
+    run switched or refused. Cells that could run as a spreadsheet formula are written as text.
+  - **Sales Invoices, behind a tick box.** About 90 physical items are held back only by
+    submitted Sales Invoices, and every submitted Sales Invoice on production has Update Stock
+    off. Read from ERPNext v16.54.0, such an invoice moves no stock whatever the item's flag: a
+    cancel touches the stock ledger only when Update Stock is on, and a credit note against it
+    may not turn Update Stock on (`validate_return_against`). So the block can be relaxed, and the
+    page's box does it for an item none of whose invoices updated stock. One thing is left and is
+    guarded: *Create > Delivery Note* on such an invoice would take the goods out of stock a
+    second time, so a Delivery Note line against an invoice posted on or before the day its item
+    was switched this way is refused. The single-item action stays strict.
+
+### Changed
+- **"Turn on Maintain Stock" now works for an item on an open Purchase Order or Material
+  Request.** Nik: "I can't change Maintain Stock to yes or checked, when the item is in an active
+  PO. I'd like to be able to do that". 13 items on production were stopped by this on the day.
+  Read from ERPNext v16.54.0, three things go wrong when a non-stock item with an open order line
+  starts keeping stock, and the switch now handles each instead of refusing:
+  - *What is on order was never counted.* `PurchaseOrder.update_ordered_qty` and
+    `MaterialRequest.update_requested_qty` skip a non-stock item. After the flag is written and
+    the item's cache cleared, the switch calls ERPNext's own `stock_balance.get_ordered_qty`,
+    `get_indented_qty` and `update_bin_qty` for each warehouse an open line names. Those are the
+    functions the order itself calls, and they recompute the projected quantity. The Reorder
+    Board reads that quantity and the order lines themselves, so it needed no change.
+  - *A line with no warehouse.* A stock item's order line must have one
+    (`validate_stock_item_warehouse`) and is counted only at it. Such a line gets the item's
+    default warehouse, else Stock Settings', with a Comment on the order. With neither, the check
+    refuses and says what to set. All 15 open lines on production named a warehouse.
+  - *A partly received line.* What already came in stays out of stock, on receipt lines guarded
+    as before (no cancel, return, bill or re-cost in ERPNext). What is left counts as on order and
+    goes into stock when received. A bill made from the new receipt passes the bill guard; a bill
+    made straight from the order line still cannot say which goods it means, and is refused.
+  - An open Sales Order still refuses (production has none, and reserved stock was not studied).
+  - The Sales Invoice check is its own line in the dialog now, and says the bulk page can let it
+    through when no invoice updated stock.
+- **A stock item's line with no price can't be received.** A Purchase Receipt line, or a Purchase
+  Invoice line when the invoice updates stock, for an item that keeps stock and with a rate under
+  half a cent refuses the submit, naming the row and what to do. ERPNext itself only shows an
+  orange toast (`StockController.check_zero_rate`).
+  - **One refusal behind every way a receipt is made**, because each ends in the same submit: the
+    Purchase Receipt form; the order's Receive Items dialog; Stock Scan and the store-run sheet's
+    *Receive on PO*; and the drafts the packing-slip and vendor-bill intake create. A draft still
+    saves, with a warning, so the intake keeps working.
+  - **Free on purpose is ERPNext's own tick, *Allow Zero Valuation Rate***, on the row: a free
+    sample, a warranty replacement. No new field.
+  - **The price goes on the order line.** Buying Settings keeps *Maintain Same Rate* on with the
+    action Stop, so a receipt's rate must equal its order's and cannot be typed on the receipt.
+    The Receive Items dialog shows *Price each* and *No charge* on the rows that need one; the
+    Stock Scan page asks "What did one cost?" with *Receive at this price*, *It was free* and
+    *Stop*, and posts nothing until answered. Both put the price on the order through ERPNext's
+    *Update Items* (`update_child_qty_rate`), which checks write permission on the order and
+    re-runs this app's approval-threshold and requester gates. A person who may not edit the
+    order is told to ask purchasing, and can still mark a line free or receive the rest.
+  - **The order still only warns** at submit, as decided on 2026-09-24; its words now say the
+    receipt will ask. Returns, internal transfers, non-stock lines and every document already
+    submitted are left alone. No rate on an existing receipt is changed.
+- **What only a bench or production can show.** The tests run the checks, the queue and the job on
+  SQLite and on stand-ins for ERPNext, and the screens' decisions under node. Not run anywhere
+  before the deploy: ERPNext's real `update_bin_qty` and `update_child_qty_rate`, the job under a
+  real worker, and the three screens in a browser.
+
 ## [1.802.2] - 2026-11-12
 
 ### Changed

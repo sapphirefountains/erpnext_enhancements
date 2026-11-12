@@ -1150,8 +1150,21 @@ doc_events = {
 	# cancel is one). They stand aside during install/migrate/patch/test and for a document
 	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
 	# the ledger; validate catches a return at its first save, before it can be submitted.
+	#
+	# v1.803.0 -- a price is required when a stock item is received (Nik, 2026-11-12;
+	# inventory_enhancements/receipt_price_rules.py has the rule and why). before_submit REFUSES a
+	# stock item's line whose rate is $0 and that is not ticked Allow Zero Valuation Rate (ERPNext's
+	# own field: a free sample, a warranty replacement). It is the one refusal behind every way a
+	# receipt is made -- the form, the order's Receive Items dialog, Stock Scan, the store-run
+	# sheet, the intake's drafts -- because each ends in this submit. validate only WARNS, on a
+	# draft, in a web request, and never raises: the intake creates drafts for a person to finish.
+	# Returns and internal transfers are left alone; nothing changes a rate on an existing document.
 	"Purchase Receipt": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
 		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",
 		"on_cancel": "erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
@@ -1161,8 +1174,23 @@ doc_events = {
 	# line of its receipt credited that account, or when it names no receipt, so billing an old
 	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
 	# Purchase Invoice had no doc_events block before this one.
+	# v1.803.0 -- and the price rule above, for an invoice that receives stock itself (Update
+	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+	},
+	# v1.803.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
+	# Invoices never updated stock (the relaxed rule, behind a tick box). Canceling or crediting
+	# such an invoice moves no stock, but Create > Delivery Note on one would take out of stock
+	# goods that left long ago. Refused, for an item switched that way, against an invoice posted
+	# on or before the day of the switch. Reads the Maintain Stock Decision row the switch left;
+	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
+	"Delivery Note": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
 	},
 	# v1.754.0 -- and the third half: anything that rebuilds such a receipt's ledger from today's
 	# Maintain Stock flag. A Landed Cost Voucher cancels and re-posts its receipts' stock ledger and
@@ -1709,6 +1737,13 @@ scheduler_events = {
 			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
 			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
+			# v1.803.0 -- the Switch Items to Maintain Stock page's background job, started again
+			# while any Maintain Stock Decision row is still Queued. The rows are the work list, so
+			# a deploy that flushes the job queue loses nothing: this picks the run back up within
+			# ten minutes. With nothing Queued (the usual state) it is one count and nothing else.
+			# It never queues an item itself -- only a person pressing Switch on the page does --
+			# and it never raises. See inventory_enhancements/maintain_stock_bulk.py.
+			"erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.resume_queue",
 			# Lead triage (TASK-2026-01473): speed-to-lead SLA. Reminds a Lead's owner once
 			# its first-response deadline passes, escalates once the escalation time does,
 			# each at most once per Lead (Lead.custom_sla_alert). Deadlines are in working
