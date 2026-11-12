@@ -30,7 +30,7 @@ model, the pure rules and the label reads.
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
-| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.809.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.810.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
 | `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
@@ -342,7 +342,7 @@ The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR
 
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.809.0) and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.810.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -681,7 +681,7 @@ all five with what to do. By hand: create a group Warehouse "Job Sites" under th
 choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
 safe twice.
 
-### The Project Shelf (v1.809.0)
+### The Project Shelf (v1.810.0)
 
 The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
 Parker can then change what location the item is going to", "everything but overhead items should
@@ -693,7 +693,7 @@ inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested be
 warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
 is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
 not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
-did before v1.809.0. It is an ordinary location in every other way: it has a QR label, it can be
+did before v1.810.0. It is an ordinary location in every other way: it has a QR label, it can be
 received to, counted and moved from.
 
 **Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
@@ -820,7 +820,7 @@ job-site work left them, and the shelf is taken out of their reading the same wa
 That is the right outcome for them: an order for a job no longer makes the board think the shop is
 covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
 replenishment order placed on an Overhead project now defaults to the item's own bin, inside
-`Inventory - SF`, so both kinds of rule count it; before v1.809.0 it defaulted to `Stores` and the
+`Inventory - SF`, so both kinds of rule count it; before v1.810.0 it defaulted to `Stores` and the
 23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
 are not corrected: no code of ours runs inside them.
 

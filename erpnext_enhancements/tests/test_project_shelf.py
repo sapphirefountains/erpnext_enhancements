@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for the Project Shelf (v1.809.0).
+"""Bench-free tests for the Project Shelf (v1.810.0).
 
 The owner's decision of 2026-11-12: everything ordered for a project is received onto one
 shared Project Shelf by default, the person receiving can still put it somewhere else, stock

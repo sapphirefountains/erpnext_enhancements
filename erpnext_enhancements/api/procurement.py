@@ -158,7 +158,7 @@ def _typed_quantities(rows):
 
 def _typed_warehouses(rows):
     """``rows`` as the dialog posts them -> ``{row name: warehouse}`` for the lines that say
-    where they were put (v1.809.0). A line that names no place is left out and keeps the order
+    where they were put (v1.810.0). A line that names no place is left out and keeps the order
     line's own."""
     if isinstance(rows, str):
         rows = frappe.parse_json(rows)
@@ -267,7 +267,7 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
       was put, which is right.
     * **``remarks``** replaces the receipt's remarks, so the page can say on the voucher that
       it came from a scan and who did it.
-    * **A row may name its own ``warehouse``** (v1.809.0): the Receive Items dialog shows where
+    * **A row may name its own ``warehouse``** (v1.810.0): the Receive Items dialog shows where
       each line goes (the Project Shelf for a job's line, the item's bin for an Overhead one,
       ``procurement_project.receiving_defaults``) and the person receiving can change it per
       line. It is checked like the single ``warehouse`` above and grants nothing more. The
@@ -311,7 +311,7 @@ def receive_items(purchase_order, rows, posting_date=None, warehouse=None, remar
         frappe.throw(_("Nothing to receive: every line is at 0."))
 
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
-    # Where each line was put, when the dialog said (v1.809.0). Checked before a document exists.
+    # Where each line was put, when the dialog said (v1.810.0). Checked before a document exists.
     places = (
         {}
         if target

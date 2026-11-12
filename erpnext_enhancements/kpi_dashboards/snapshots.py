@@ -508,7 +508,7 @@ STOCKED_RULE_SQL = "(coalesce(r.warehouse_reorder_level,0) > 0 or coalesce(r.war
 #: ``<=`` against this figure 30 more prod items counted as below, nearly all with orders already open.
 #:
 #: Kept as the every-bin figure. The three KPIs that ask "does the SHOP have it" no longer use it
-#: (v1.809.0): they use :func:`_shop_on_hand_sql`, which leaves out stock on a job site and on the
+#: (v1.810.0): they use :func:`_shop_on_hand_sql`, which leaves out stock on a job site and on the
 #: Project Shelf.
 ON_HAND_SQL = "coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0)"
 
@@ -516,7 +516,7 @@ ON_HAND_SQL = "coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_c
 def _not_shop_warehouses():
 	"""The warehouses whose stock is not the shop's (every job site, and the Project Shelf), as
 	a sorted list. Empty when neither is set up, or when it cannot be read: the KPIs then count
-	every bin, as they did before v1.809.0. Never raises."""
+	every bin, as they did before v1.810.0. Never raises."""
 	try:
 		from erpnext_enhancements.inventory_enhancements import project_shelf
 
@@ -531,7 +531,7 @@ def _shop_on_hand_sql(item_column, names):
 	Shelf): parts that are across town, or bought for a job and waiting for it, do not stock the
 	shop's shelf. With no ``names`` it is the every-bin figure.
 
-	Which stock KPI means what, since v1.809.0:
+	Which stock KPI means what, since v1.810.0:
 
 	* *Stocked Items Below Reorder*, *Stocked Items Out of Stock*, *Out-of-Stock Sellable
 	  Items*: **shop stock**. They ask whether the shop can supply the part; a reorder rule is
@@ -585,7 +585,7 @@ def _operations_metrics():
 
 	# --- stock levels (moved from Product; "stocked" is any reorder rule since v1.732.0, and a rule
 	#     at level 0 counts as below when the item is out). Quantities are actual qty summed over
-	#     the SHOP's bins (v1.809.0: job sites and the Project Shelf are left out, see
+	#     the SHOP's bins (v1.810.0: job sites and the Project Shelf are left out, see
 	#     _shop_on_hand_sql), not the Reorder Board's projected qty per warehouse or group. ---
 	not_shop = _not_shop_warehouses()
 	shop_on_hand, shop_params = _shop_on_hand_sql("r.parent", not_shop)

@@ -19,7 +19,7 @@ What a Save posts, by what the person did:
   item's current cost, and the log row is flagged ``needs_review`` for a Stock Manager.
 * **Move** (put-away) → a submitted **Stock Entry, Material Transfer** from wherever the
   stock is recorded into the scanned location. On the day this shipped every bin on
-  production was empty and all stock sat in ``Stores - SF`` (since v1.809.0 the Project
+  production was empty and all stock sat in ``Stores - SF`` (since v1.810.0 the Project
   Shelf), so this is how the bins fill.
 * **Store Run** (+, "Bought on a store run", v1.536.0) → a submitted **Purchase Receipt**
   with no purchase order, one per line, from a Supplier ticked *Store-Run Vendor*, at the
@@ -31,7 +31,7 @@ What a Save posts, by what the person did:
 Each save also writes a ``Stock Scan Log`` row: the page's history, its Undo, and the
 review queue.
 
-**The Project Shelf** (v1.809.0, ``inventory_enhancements/project_shelf.py``) is the one
+**The Project Shelf** (v1.810.0, ``inventory_enhancements/project_shelf.py``) is the one
 warehouse where parts bought for a job wait. Here it is an ordinary location that can be
 received to, counted and moved from, with four differences: its stock is left out of what
 the shop has and named apart (:func:`search_items`, :func:`_elsewhere`); it is never an
@@ -203,7 +203,7 @@ def _warehouse(name):
 		return None
 	row = frappe.db.get_value("Warehouse", name, _WAREHOUSE_FIELDS, as_dict=True)
 	if not row and name == project_shelf.former_name():
-		# A label printed while the Project Shelf was still called Stores (v1.809.0) carries the
+		# A label printed while the Project Shelf was still called Stores (v1.810.0) carries the
 		# old name. It opens the shelf instead of "there is no location called Stores".
 		row = frappe.db.get_value("Warehouse", project_shelf.warehouse(), _WAREHOUSE_FIELDS, as_dict=True)
 	return row
@@ -287,7 +287,7 @@ def _location_payload(row):
 		# A job's site (v1.801.0): ``{project, project_name}``, else None. The page says whose
 		# site it is, and that parts taken here are charged to that job.
 		"job_site": job_sites.site_info(row.name),
-		# The Project Shelf (v1.809.0): parts here wait for a job. The page says so, asks for
+		# The Project Shelf (v1.810.0): parts here wait for a job. The page says so, asks for
 		# the job on a take, and shows each item's jobs (``jobs`` on its row).
 		"project_shelf": project_shelf.is_shelf(row.name),
 	}
@@ -332,7 +332,7 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	was taken off.
 
 	One query, filtered to stock items in SQL: the warehouse ERPNext installed as ``Stores``
-	(the Project Shelf since v1.809.0) is the default warehouse of 774 Items on production,
+	(the Project Shelf since v1.810.0) is the default warehouse of 774 Items on production,
 	almost all of them non-stock, so capping the defaults before filtering them would drop
 	real stock items off the end. The rules and the defaults are
 	joined as small derived tables (one location's worth each) rather than as a correlated
@@ -343,7 +343,7 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	(v1.737.0): a count sheet that silently stopped at 150 items would leave the rest of
 	a large location uncounted with nothing on screen to say so.
 
-	**The Project Shelf** (v1.809.0) is nobody's bin, like a job site: it lists what is there
+	**The Project Shelf** (v1.810.0) is nobody's bin, like a job site: it lists what is there
 	now or on its way, and nothing else. The Item Defaults and Putaway Rules that name it are
 	left over from when it was ``Stores``, the warehouse every item defaulted to; read as
 	"kept here" they would list hundreds of items that have never been on it. Each row there
@@ -405,7 +405,7 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 		# A job site (v1.801.0) is nobody's bin: it lists what is there now, or on its way. The
 		# "nobody has decided yet" clause above would keep every item ever sent to the job on its
 		# list for good, since nothing is ever assigned to a site or taken off one. The Project
-		# Shelf (v1.809.0) is the same, and its leftover defaults and rules are not assignments.
+		# Shelf (v1.810.0) is the same, and its leftover defaults and rules are not assignments.
 		rows = [r for r in rows if r["on_hand"] > 0 or r["on_order"] > 0]
 	if shelf:
 		stock = project_shelf.shelf_stock()
@@ -481,7 +481,7 @@ def _elsewhere(item_code, company, exclude=None):
 	there can be brought back, so it is a source, but it is not stock the shop has. The page
 	names it apart ("On job sites") and never counts it as somewhere to look before buying.
 
-	The Project Shelf (v1.809.0) is marked ``project_shelf`` and listed between the two, with
+	The Project Shelf (v1.810.0) is marked ``project_shelf`` and listed between the two, with
 	``jobs``, the jobs that hold the item there: it is in the building, and it is spoken for.
 	"""
 	bins = frappe.get_all(
@@ -604,7 +604,7 @@ def _open_order_lines(item_code, company):
 		lines.append(
 			{
 				# The job the line was ordered for, and whether it was ordered for the Project
-				# Shelf (v1.809.0). The page says both, so the receiver knows where it belongs;
+				# Shelf (v1.810.0). The page says both, so the receiver knows where it belongs;
 				# the bin that was scanned still decides where this receipt goes.
 				"project": row.project or None,
 				"project_name": job_names.get(row.project) if row.project else None,
@@ -703,7 +703,7 @@ def _item_payload(item_code, location=None):
 		"undecided": None,
 		# The job whose site this location is (v1.801.0), or None for an ordinary location.
 		"job_site": None,
-		# Whether this location is the Project Shelf (v1.809.0), the jobs that hold the item
+		# Whether this location is the Project Shelf (v1.810.0), the jobs that hold the item
 		# there, most first (``[{project, project_name, qty}]``, each no more than is there),
 		# and whether those jobs account for every unit of it.
 		"project_shelf": False,
@@ -754,7 +754,7 @@ def _item_payload(item_code, location=None):
 			}
 		)
 		if project_shelf.is_shelf(location.name):
-			# Nothing is kept on the Project Shelf as its bin (v1.809.0): the Item Defaults and
+			# Nothing is kept on the Project Shelf as its bin (v1.810.0): the Item Defaults and
 			# Putaway Rules that name it are left over from when it was Stores.
 			held = project_shelf.holding(item.name)
 			payload.update(
@@ -1083,7 +1083,7 @@ def take(item_code, warehouse, qty, client_ref, project=None, scanned_code=None)
 	At a job site (v1.801.0) the take is charged to that site's job whatever job the page sent
 	(``job_site_rules.site_take_project``): this is where the material's cost reaches the job.
 
-	At the Project Shelf (v1.809.0) a take must name a job, whatever the setting says: every
+	At the Project Shelf (v1.810.0) a take must name a job, whatever the setting says: every
 	unit there belongs to one, and the job on this entry is what takes it off that job's count.
 	"""
 	_check_access()
@@ -1224,7 +1224,7 @@ def add(
 
 	settings = get_settings()
 	if project_shelf.is_shelf(location.name) and not cstr(project).strip():
-		# Everything on the Project Shelf belongs to a job (v1.809.0), so stock added there with
+		# Everything on the Project Shelf belongs to a job (v1.810.0), so stock added there with
 		# no order says which.
 		frappe.throw(
 			_("Pick the job these are for. Everything on {0} belongs to a job.").format(
@@ -1240,7 +1240,7 @@ def add(
 	# not reduced by a receipt; that figure is hidden on this site's Project form and read by
 	# nothing here, and the ledger by project is right.
 	#
-	# At the Project Shelf (v1.809.0) the job is not where the parts came back FROM: it is the
+	# At the Project Shelf (v1.810.0) the job is not where the parts came back FROM: it is the
 	# job they are being set aside FOR, and the page requires one. Crediting the job's Parts
 	# Taken account there would net that job's later take to nothing, so the job would carry no
 	# cost for parts it used, and the Added Without PO account a stock manager reviews would
@@ -1293,7 +1293,7 @@ def add(
 def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_code=None, project=None):
 	"""Put stock away: a submitted Material Transfer from where it is recorded into this location.
 
-	``project`` (v1.809.0) is the job the stock belongs to when one end of the move is the
+	``project`` (v1.810.0) is the job the stock belongs to when one end of the move is the
 	Project Shelf and the other is not a job site (:func:`_transfer_project`). It is ignored
 	for every other move.
 	"""
@@ -1384,7 +1384,7 @@ def _transfer_project(source, location, item=None, given=None):
 	move between two shop locations. On the stock entry it puts the Project on both ledger
 	rows, so the ledger can be read by job; the log row carries the same job.
 
-	**With the Project Shelf at either end** (v1.809.0) the transfer always carries a job,
+	**With the Project Shelf at either end** (v1.810.0) the transfer always carries a job,
 	because whose stock is on the shelf is read from these rows
 	(``project_shelf_rules.move_project``): to a job site it is that site's job; released to
 	a bin or the boneyard it is the job the page named (``given``), or the one job that holds
@@ -1714,7 +1714,7 @@ def _quick_item(spec, location):
 	``is_stock_item`` is set because the site's Property Setter defaults it to 0. The Item
 	Default is the bin it was bought into, for this company: without one, ERPNext copies the
 	Item Group's defaults or the Company's default warehouse (``Stores - SF`` then; the Project
-	Shelf since v1.809.0), and the item would be on record as kept in a place it has never
+	Shelf since v1.810.0), and the item would be on record as kept in a place it has never
 	been. No leaf group carries defaults on production.
 	"""
 	item = frappe.new_doc("Item")
@@ -1724,7 +1724,7 @@ def _quick_item(spec, location):
 	item.stock_uom = spec["stock_uom"]
 	item.is_stock_item = 1
 	item.is_purchase_item = 1
-	# Never the Project Shelf or a job site (v1.809.0): neither is anybody's bin. Both callers
+	# Never the Project Shelf or a job site (v1.810.0): neither is anybody's bin. Both callers
 	# refuse those locations before they get here; this keeps a third caller from making the
 	# shelf a new item's home. The row is still added, with the company and no warehouse, so
 	# ERPNext does not copy a default of its own into it.
@@ -1911,7 +1911,7 @@ def store_run(
 	project = _project(project, location.company)
 	if project_shelf.is_shelf(location.name):
 		# A store run's receipt carries no project on purpose (``_store_run_receipt``), and
-		# everything on the Project Shelf belongs to a job (v1.809.0).
+		# everything on the Project Shelf belongs to a job (v1.810.0).
 		frappe.throw(
 			_(
 				"A store run is not recorded on {0}: its receipt names no job, and everything there belongs to one. Record it at the item's bin, then move it to {0} for its job."
@@ -2581,7 +2581,7 @@ def search_items(query, warehouse=None):
 	``on_job_sites`` (``job_site_rules.shop_and_site_totals``). A person looking for a part
 	must not be told the shop has four when all four are across town.
 
-	Stock on the Project Shelf (v1.809.0) is left out the same way and given as
+	Stock on the Project Shelf (v1.810.0) is left out the same way and given as
 	``on_project_shelf`` (``project_shelf_rules.split_totals``): it is in the building, and it
 	was bought for a job.
 	"""
@@ -2670,7 +2670,7 @@ def search_locations(query):
 			"warehouse_name": row.warehouse_name or row.name,
 			"trail": rules.location_trail(_ancestor_names(row)),
 			"job_site": row.name in sites,
-			# Nor the Project Shelf (v1.809.0): it is never an item's bin either.
+			# Nor the Project Shelf (v1.810.0): it is never an item's bin either.
 			"project_shelf": bool(shelf) and row.name == shelf,
 		}
 		for row in rows[:SEARCH_LIMIT]
@@ -2810,7 +2810,7 @@ def boot_payload(args=None):
 			# Whether Move to… offers "A job site" (v1.801.0): the group is chosen and the
 			# Warehouse field exists. 0 hides it, and the page is as it was.
 			"job_sites": 1 if job_sites.enabled() else 0,
-			# The Project Shelf (v1.809.0): its warehouse and what to call it, or None when
+			# The Project Shelf (v1.810.0): its warehouse and what to call it, or None when
 			# there is none and the page is as it was.
 			"project_shelf_warehouse": project_shelf.warehouse(),
 			"project_shelf_name": project_shelf.label(),

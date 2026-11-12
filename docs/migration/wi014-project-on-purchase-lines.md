@@ -40,7 +40,7 @@ ERPNext does not push `Purchase Order.project` down to `Purchase Order Item.proj
 
 Net effect: the purchaser states the project **once**, on the header.
 
-### 3. The same project decides where the line is received (v1.809.0)
+### 3. The same project decides where the line is received (v1.810.0)
 
 Nik, 2026-11-12: everything ordered for a project is received onto the **Project Shelf** (the warehouse that was `Stores`), and everything on an Overhead bucket goes to the item's own bin. `procurement_project.default_line_warehouse` answers it for one line; the form applies it as the line is filled in, the server applies it to a line with no warehouse, and the Receive Items dialog shows it per line and lets the receiver change it. It is a default, never a lock. The whole rule, where it is applied and what it leaves alone is in [`inventory_enhancements/README.md`](../../erpnext_enhancements/inventory_enhancements/README.md), *The Project Shelf*.
 

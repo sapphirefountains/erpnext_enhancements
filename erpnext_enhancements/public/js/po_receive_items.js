@@ -27,7 +27,7 @@
  * "Arriving now" defaults to what is still pending, so the common case of "the whole rest
  * turned up" is one click, and a partial delivery is typing the smaller numbers.
  *
- * "Put in" (v1.809.0, Nik 2026-11-12) is where each line goes. It opens on the line's default
+ * "Put in" (v1.810.0, Nik 2026-11-12) is where each line goes. It opens on the line's default
  * place -- the Project Shelf for a job's line, the item's own bin for an Overhead one
  * (`procurement_project.receiving_defaults`) -- and the person receiving can pick any other
  * location per line. The dialog still opens if that lookup fails: each line then shows the

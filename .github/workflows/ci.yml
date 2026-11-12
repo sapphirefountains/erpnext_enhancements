@@ -4061,7 +4061,7 @@ jobs:
       # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
       - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
-      # The Project Shelf (v1.809.0, the owner's 2026-11-12 decision: everything ordered for a project is received
+      # The Project Shelf (v1.810.0, the owner's 2026-11-12 decision: everything ordered for a project is received
       # onto one shared shelf, and stock there is not shop stock). If this fails, a purchase line for a job could
       # default somewhere other than the shelf (or an Overhead line onto it), parts bought for a job could read as
       # stock the shop has (the search total, "Also at", a reorder rule that rolls up at the company's root), a

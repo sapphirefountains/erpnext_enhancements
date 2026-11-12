@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.809.0] - 2026-11-12
+## [1.810.0] - 2026-11-12
 
 ### Added
 - **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
