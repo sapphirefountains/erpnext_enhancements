@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.802.2] - 2026-11-12
+
+### Changed
+- **The Triton widget's model picker opens the way the Triton site's does: on Auto, with the
+  site's names for the models.** Nikolas, 2026-11-12: "On the Triton widget of ERPNext I'm still
+  not seeing Argon and the default model is 3.8 Flash. It should match the Triton site". This is
+  the classic widget; the framed widget shows the site's own picker and needed nothing.
+  - **What he saw.** The widget opened on "Flash 3.8". The server was not the cause: *Default
+    Model* in Triton Assistant Settings is blank, which is Auto, and `get_config` and
+    `list_models` both served Auto, Argon, Flash and Flash Lite. His browser held
+    `localStorage["triton_model"] = "gemini-3.8-flash"`, a pick made in the picker at some
+    earlier time, and the widget kept a pick for good. So one choice of "Flash" stayed the model
+    of every later chat in that browser after Triton's default moved to Argon (Triton 0.83.0,
+    2026-11-11), and nothing on screen said the model was a remembered choice.
+  - **What the site does.** It does not keep the pick. Its `stores/models.ts` says why: an
+    explicit model on a turn is what moves it off its deployed agent, the spend Auto exists to
+    avoid. A new chat opens on Auto on every visit (reopening an earlier chat puts the picker
+    back on that chat's own model). Under Auto, Triton answers with its default model
+    (`gemini-4-argon` at medium reasoning today).
+  - **The pick is no longer stored.** `applyModels` chooses: this page's pick if the list still
+    has it, then the pinned *Default Model*, then Auto. A pick lasts until the page is reloaded.
+    `setModel` no longer writes `localStorage`, and the widget removes the old `triton_model`
+    value as it builds, so nothing stale is left in anyone's browser. The persona, the web-search
+    switch and the open chat are still remembered; only the model is not.
+  - **A deliberate Auto still holds.** Auto is the empty string, and the stored value used to be
+    what told "chose Auto" from "has not chosen". That is now `state.picked`. Without it, on a
+    site with a pinned *Default Model*, choosing Auto would be undone when the live list arrived
+    a moment later.
+  - **The names.** The picker said "Argon 4", "Flash 3.8" and "Flash Lite 3.5"; the site says
+    "4 Argon", "3.8 Flash" and "3.5 Flash Lite". `_pretty_model_label` now puts the version
+    first, which gives the site's name for all three. The site's own labels are served only by
+    `/assistant/models/catalog`, which the widget still does not read, so
+    `tests/test_triton_widget_defaults.py` holds a copy of them (from Triton 0.88.1) and fails
+    when the rule and the copy disagree.
+  - **Tests.** `scripts/test_triton_widget_guards.js` now runs `applyModels`, `setModel` and
+    `forgetStoredModel` against a stand-in select and storage: an old stored pick is not read and
+    the widget opens on Auto; the old value is removed; a pick survives the live list arriving
+    and is not written; a pinned default is what the widget opens on and a deliberate Auto holds;
+    a pick Triton stops offering falls back to Auto; and no code reads or writes the key.
+  - **Not changed.** *Default Model* still pins the picker for everyone when it is set. Opening
+    an earlier chat does not switch the picker to that chat's model, as the site does; that was
+    true before and is a separate change. ADR 0009's appendix, which lists `triton_model` among
+    the widget's storage keys, is a record of the widget as it was and stays as written.
+
 ## [1.802.1] - 2026-11-12
 
 ### Fixed

@@ -42,6 +42,8 @@ import { detectPageContext } from "../capture/page_context.js";
 (function () {
 	const METHOD = "erpnext_enhancements.triton_chat";
 	const LS_SESSION = "triton_session_id";
+	// The model pick is NOT kept across page loads (v1.802.2). This key is where
+	// it used to be kept; it is only named so the old value can be removed.
 	const LS_MODEL = "triton_model";
 	// Selected persona key ("" = Triton's default voice). Personas live in
 	// Triton and are keyed on the same user the identity bridge resolves to, so
@@ -51,15 +53,21 @@ import { detectPageContext } from "../capture/page_context.js";
 	// once on the first chat of each day.
 	const LS_BRIEF = "triton_briefing_date";
 	// The web-search toggle ("1"/"0"). Persisted so a person who turned it on
-	// keeps it across reloads, like the model pick — a fifth key alongside the
-	// four ADR 0009 row G-10 pins.
+	// keeps it across reloads — a fifth key alongside the four ADR 0009 row G-10
+	// pins. (The model pick was kept the same way until v1.802.2.)
 	const LS_SEARCH = "triton_web_search";
 
 	const state = {
 		config: null,
 		sessionId: null,
-		// Selected model id ("" = let Triton auto-route). Persisted in LS_MODEL.
+		// Selected model id ("" = let Triton auto-route). Lasts until the page
+		// is reloaded and is not stored: see applyModels.
 		model: "",
+		// True once the person has used the picker on this page. Auto is the
+		// empty string, so `model` alone cannot tell "chose Auto" from "has not
+		// chosen": with a pinned Default Model, a deliberate Auto would be put
+		// back on the pin when the live list arrives a moment later.
+		picked: false,
 		// Selected persona key ("" = default voice). Persisted in LS_PERSONA.
 		persona: "",
 		// Google Search grounding for outgoing turns. Persisted in LS_SEARCH.
@@ -404,6 +412,7 @@ import { detectPageContext } from "../capture/page_context.js";
 		state.els.location.addEventListener("click", onLocationClick);
 		state.els.search.addEventListener("click", () => setSearch(!state.search));
 		setSearch(localStorage.getItem(LS_SEARCH) === "1");
+		forgetStoredModel();
 		bindDropTarget();
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
@@ -509,12 +518,22 @@ import { detectPageContext } from "../capture/page_context.js";
 			o.textContent = m.label;
 			sel.appendChild(o);
 		});
-		// Selection priority: current pick (if still listed) > saved choice >
-		// configured default > first option (Auto).
+		// Selection priority: this page's pick (if still listed) > configured
+		// default > first option (Auto).
 		//
-		// `saved !== null` rather than a truthiness check, because Auto is the
-		// empty string: a user who deliberately chose Auto must not be treated
-		// as having chosen nothing and pushed back onto the configured default.
+		// There is no saved choice in that list, on purpose (v1.802.2). The
+		// pick used to be kept in localStorage for good, so a model chosen once
+		// was the model of every later chat in that browser: Nikolas's widget
+		// went on opening on Flash 3.8 after Argon became Triton's default
+		// (2026-11-11), and nothing on screen said why. The Triton site does not keep the
+		// pick either (its `stores/models.ts`: an explicit model on every turn
+		// is the spend Auto exists to avoid), and the two must open the same
+		// way. A pick now lasts until the page is reloaded.
+		//
+		// `state.picked`, not a truthiness check on `state.model`, because Auto
+		// is the empty string: a person who deliberately chose Auto must not be
+		// treated as having chosen nothing and pushed back onto the configured
+		// default. (The saved value used to carry that distinction.)
 		//
 		// The last resort used to be a hardcoded "gemini-3.5-flash". Auto is
 		// always first in both the live list and the fallback, so `models[0]`
@@ -524,12 +543,9 @@ import { detectPageContext } from "../capture/page_context.js";
 		// list lands here too; `start_session` on the server applies the same
 		// rule to what is actually sent (`_listed_model_or_auto`).
 		const values = models.map((m) => m.value);
-		const saved = localStorage.getItem(LS_MODEL);
 		let initial;
-		if (state.model && values.includes(state.model)) {
+		if (state.picked && values.includes(state.model)) {
 			initial = state.model;
-		} else if (saved !== null && values.includes(saved)) {
-			initial = saved;
 		} else if (values.includes(state.config.default_model)) {
 			initial = state.config.default_model;
 		} else {
@@ -559,7 +575,19 @@ import { detectPageContext } from "../capture/page_context.js";
 
 	function setModel(v) {
 		state.model = v || "";
-		localStorage.setItem(LS_MODEL, state.model);
+		// The person chose this, Auto included, so a live refresh of the list
+		// keeps it. Not written to localStorage: see applyModels.
+		state.picked = true;
+	}
+
+	// Remove the pick an earlier release stored, so it cannot come back if the
+	// key is ever read again and does not sit in the browser for good.
+	function forgetStoredModel() {
+		try {
+			localStorage.removeItem(LS_MODEL);
+		} catch (e) {
+			/* storage blocked: there is nothing to remove */
+		}
 	}
 
 	// ---- web search toggle -------------------------------------------------

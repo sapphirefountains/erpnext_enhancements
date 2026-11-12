@@ -50,6 +50,17 @@ TRITON_GEMINI_CATALOG = (
 	"gemini-3.5-flash-lite",
 )
 
+# What the Triton site calls each of those models in its own picker: the
+# `short_label` of the same catalog entries. Copied 2026-11-12 from Triton
+# 0.88.1. The widget does not read these (they are served only by
+# `/assistant/models/catalog`); it derives a label from the id, and the test
+# below fails when the two disagree, so one model cannot have two names.
+TRITON_SHORT_LABELS = {
+	"gemini-4-argon": "4 Argon",
+	"gemini-3.8-flash": "3.8 Flash",
+	"gemini-3.5-flash-lite": "3.5 Flash Lite",
+}
+
 # Triton's realtime voice model: `LIVE_MODEL` and `VOICE_LIVE_MODEL` in its
 # `backend/app/core/config.py`. Same date, same rule.
 TRITON_LIVE_MODEL = "gemini-3.8-live"
@@ -232,12 +243,24 @@ def test_the_fallback_carries_no_dropped_id(monkeypatch):
 
 def test_fallback_labels_are_the_live_list_s_labels(monkeypatch):
 	"""One labeling rule, not two. The fallback used to say "Flash" where the
-	live list says "Flash 3.8", so the label changed under the user's eyes."""
+	live list said "Flash 3.8", so the label changed under the user's eyes."""
 	triton_chat = _load(monkeypatch)
 
 	live = triton_chat._models_from_ids(list(TRITON_GEMINI_CATALOG))
 	assert triton_chat.TRITON_MODELS == live
-	assert [m["label"] for m in live] == ["Auto", "Argon 4", "Flash 3.8", "Flash Lite 3.5"]
+	assert [m["label"] for m in live] == ["Auto", "4 Argon", "3.8 Flash", "3.5 Flash Lite"]
+
+
+def test_each_model_has_the_name_the_triton_site_gives_it(monkeypatch):
+	"""Until v1.802.2 the widget said "Argon 4" and the site said "4 Argon".
+	Nikolas, 2026-11-12, looking for Argon in the widget: "It should match the
+	Triton site". Every catalog model is checked, so a new one whose id does not
+	fit the rule fails here and gets looked at."""
+	triton_chat = _load(monkeypatch)
+
+	assert set(TRITON_SHORT_LABELS) == set(TRITON_GEMINI_CATALOG)
+	for model_id, site_label in TRITON_SHORT_LABELS.items():
+		assert triton_chat._pretty_model_label(model_id) == site_label, model_id
 
 
 def test_list_models_serves_the_fallback_when_triton_is_unreachable(monkeypatch):
