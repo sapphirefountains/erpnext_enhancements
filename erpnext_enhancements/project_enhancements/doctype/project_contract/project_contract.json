@@ -262,7 +262,8 @@
    "fieldname": "contract_date",
    "fieldtype": "Date",
    "label": "Contract Date",
-   "reqd": 1
+   "reqd": 1,
+   "read_only_depends_on": "eval:doc.template_key==\"warranty\" && doc.warranty_signer"
   },
   {
    "description": "0 = original; increments on each amendment (submit, cancel, amend), preserving full lineage via Amended From.",
@@ -478,14 +479,14 @@
   },
   {
    "depends_on": "eval:doc.template_key==\"warranty\"",
-   "description": "Prints on the certificate. The one-year warranty is counted from this date.",
+   "description": "The certificate counts its one year \"from the date of execution of the Certificate of Substantial Completion or Occupancy, as required by the Contract Documents\". When the project has that certificate, enter its date. When it has none, enter the day Sapphire completed the work or supplied the material. Prints on the certificate's line of the same name.",
    "fieldname": "warranty_start_date",
    "fieldtype": "Date",
-   "label": "Work Completed or Material Supplied On"
+   "label": "Work Completed or Material Supplied by Sapphire On"
   },
   {
    "depends_on": "eval:doc.template_key==\"warranty\"",
-   "description": "One year after the date above, worked out for you. Kept on the record; the certificate does not print it.",
+   "description": "One year after the date above, worked out for you. A record for Sapphire only: the certificate does not print it, and the certificate's own wording decides the term.",
    "fieldname": "warranty_end_date",
    "fieldtype": "Date",
    "label": "Warranty Ends",
@@ -499,7 +500,7 @@
   },
   {
    "depends_on": "eval:doc.template_key==\"warranty\"",
-   "description": "Who signs the certificate for Sapphire Fountains. Issuing the certificate signs it in this name. Leave empty to print a blank line and sign in ink.",
+   "description": "Who signs the certificate for Sapphire Fountains. Issuing the certificate signs it in this name and dates it the day it is issued. Leave empty to print blank lines and sign in ink.",
    "fieldname": "warranty_signer",
    "fieldtype": "Data",
    "label": "Signed for Sapphire by"
@@ -1578,7 +1579,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-12 12:00:00.000000",
+ "modified": "2026-11-12 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Contract",

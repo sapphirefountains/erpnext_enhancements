@@ -30,7 +30,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
 | `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement beside the form lighting up the part being filled in (v1.612.0); "With the client" mode has the client initial each clause in the agreement as it is filled in and sign at the end, executed in the builder (`sign_here`); or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `agreement_sections`, `progress`, `get_builder`, `save_builder`, `issue_contract`, `sign_here`, `start_card_on_file`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
-| `warranty_certificate.py` | **Certificate of Warranty** (v1.808.0): the rules of the one contract type only Sapphire signs. Which template keys are one-sided, the one-year end date, and the two-line site address. No `frappe` import, so it is tested without a bench. See [Certificate of Warranty](#certificate-of-warranty-v18080) | `ONE_SIDED_KEYS`, `is_one_sided`, `warranty_end_date`, `site_address_lines`, `address_from_record` | `ProjectContract.validate` / `on_submit`, `create_contract`, `contract_builder._payload` / `email_certificate`, `esign.api._assert_sendable` |
+| `warranty_certificate.py` | **Certificate of Warranty** (v1.808.0): the rules of the one contract type only Sapphire signs. Which template keys are one-sided, what it may start from, the one-year end date, the two-line site address, and the layout step that keeps it on one page. No `frappe` import, so it is tested without a bench. See [Certificate of Warranty](#certificate-of-warranty-v18080) | `ONE_SIDED_KEYS`, `is_one_sided`, `source_allowed`, `warranty_end_date`, `site_address_lines`, `address_from_record`, `fit_level`, `fit_class` | `ProjectContract.validate` / `on_submit`, `create_contract`, `contract_builder._payload` / `email_certificate`, `esign.api._assert_sendable` |
 | `signed_copy.py` | **Signed copy** (v1.744.0): what the button opens for a Signed contract (the e-signed PDF, a filed scan, else the executed copy) and filing a paper scan. A file is offered only when frappe's own download check would serve it. See [Signed copy](#signed-copy-v17440) | `signed_copy`, `signed_copy_for`, `get_signed_copy`, `record_signed_scan`; pure `pick_signed_file`, `is_signed_copy_name` | `ProjectContract.onload` and `SapphireMaintenanceContract.onload`; `contract_viewer.open_signed_copy`; `doctype/project_contract/project_contract_list.js`; `get_contracts` (the Contract button's picker, v1.783.0; the Contracts tab until then) |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
@@ -887,6 +887,12 @@ other eight were, with the differences below held in `warranty_certificate.py`.
   document has no end date and its own wording counts the year from the Certificate of
   Substantial Completion or Occupancy. It is on the record so "is this still under warranty?"
   has an answer.
+- **Which date to enter.** The certificate has one date line, *Work Completed or Material
+  Supplied by Sapphire on*, and its wording counts the year "from the date of execution of the
+  Certificate of Substantial Completion or Occupancy, as required by the Contract Documents".
+  So the field carries the line's own words as its label, and its help text quotes that sentence
+  and says: enter the certificate of completion's date when the project has one, otherwise the
+  day the work was completed or the material supplied. The certificate's wording is untouched.
 - **Only Sapphire signs it** (`warranty_certificate.ONE_SIDED_KEYS`). The Word document has one
   signature block. So the builder's last step is *Review and issue*, with no "sign it here" and
   no "send it to them"; `contract_builder._payload` reports `one_sided` with `can_sign_here` and
@@ -899,6 +905,12 @@ other eight were, with the differences below held in `warranty_certificate.py`.
     records who pressed the button. Only a Contract Manager or System Manager can submit, so
     only they can sign this way. The By line prints the name in the signature face **only once
     issued**: a draft and a cancelled certificate print an empty line.
+  - **Signed here, it is dated the day it is issued** (`_date_certificate_signed_here`, from
+    `validate`). The *Date* line sits beside the signature, and a typed signature's only
+    evidence of when is the system, so while a signer is named `contract_date` is set to today
+    on every save of the draft and at issue, is read-only on the form and in the builder, and
+    `signed_on` is the same day. It cannot be back-dated or post-dated. A certificate for a job
+    finished earlier carries that in the work-completed date, which stays editable.
   - **With no name it is issued for ink**: By and Its print blank, the status is Out for
     Signature, and *Mark as Signed* on the form records it, as for any paper contract.
     *Signed copy* then takes the scan.
@@ -911,13 +923,25 @@ other eight were, with the differences below held in `warranty_certificate.py`.
   written to the timeline.
 - **Where it starts.** The Builder's start screen (Project, or just a client); the Project's
   Contract button, which opens that screen with the project filled in; and *Generate Contract*
-  on a Project. Not from an Opportunity: a certificate is about finished work.
+  on a Project. Not from an Opportunity: a certificate is about finished work. `create_contract`
+  enforces the same on the server (`warranty_certificate.source_allowed`): any other source is
+  refused before a draft is made.
 - **How it looks.** The print design system's letterhead with the eyebrow reading
   "BUILD · WARRANTY" (`contract_style.EYEBROW_BY_TEMPLATE`), the project block boxed to the right
   of the wordmark, the title centered, the four paragraphs, then Sapphire's lines indented, on one
   Letter page. The footer leaves out "Confidential" for this type: a certificate is made to be
   handed to an owner and their contractor. The CSS is in the `Project Contract Print` record,
   scoped under `.ct-warranty`.
+- **One page, always.** A long project name or address makes the project block taller and wraps
+  the Project/Number line; left alone, a name of about ninety characters pushed the whole
+  signature block to a second page. `warranty_certificate.fit_level` estimates the growth from
+  the lengths and the template adds `ct-warranty-fit-1` to `-3` to its wrapper: each step sets the
+  type a little smaller (10.5pt down to 9pt), closes the spacing and widens the project block.
+  Nothing is ever cut: the name and every address line print in full, and an unbroken word wraps.
+  The steps were set from prints through headless Chrome in a deliberately wide face, with a step
+  to spare, because the server may not have the faces the stylesheet asks for. Measured to hold
+  for a 140-character name (the field's limit) over a four-line address. The test suite prints
+  those cases through Chrome where one is installed and counts the pages.
 
 ## Project Brief sections (v1.444.0)
 

@@ -16,6 +16,11 @@ suite pins the ones that would otherwise fail without anyone seeing:
   send it to a customer for a signature;
 * **email is one explicit call**: Contract Manager only, a signed certificate only, one message
   with the PDF, and nothing else in the feature sends mail;
+* **one page, always**: a long project name or address picks a tighter layout step and is never
+  cut, and where a Chrome is installed (CI's runner has one) the long cases are printed and the
+  pages counted;
+* **the date beside the signature** is the day it is issued, never a typed one, when it is signed
+  by issuing; and a certificate starts from a Project or a client, enforced on the server;
 * the seed and the patch (insert-only, one key, never raises, says what it did), the letterhead's
   eyebrow and footer, the print CSS, and the wiring.
 
@@ -30,8 +35,12 @@ import contextlib
 import datetime
 import io
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -76,6 +85,8 @@ WORDING = [
 ]
 
 CERT = "SF-WAR-2026-0001"
+#: The day the stubbed site thinks it is. Deliberately not the date typed on the test certificates.
+TODAY = "2026-11-20"
 
 warranty = None
 project_contract = None
@@ -348,7 +359,7 @@ def _install_frappe_stub():
     utils.cint = lambda value: int(float(value or 0))
     utils.fmt_money = lambda value, currency=None: f"${flt(value):,.2f}"
     utils.formatdate = _formatdate
-    utils.today = lambda: "2026-11-12"
+    utils.today = lambda: TODAY
     utils.get_fullname = lambda user=None: "Morgan Manager"
     for name in ("add_days", "add_months", "add_years", "getdate", "nowdate"):
         setattr(utils, name, lambda *a, **k: None)
@@ -466,6 +477,16 @@ def _contract(**fields):
     return project_contract.ProjectContract(**row)
 
 
+def _issue(**fields):
+    """Issue a certificate the way a submit does: validate's own rules, then ``on_submit``."""
+    doc = _contract(docstatus=1, **fields)
+    doc._compute_warranty_term()
+    doc._date_certificate_signed_here()
+    SITE.contracts[doc.name].update(contract_date=doc.contract_date, warranty_end_date=doc.warranty_end_date)
+    doc.on_submit()
+    return doc
+
+
 def _site_with_template():
     SITE.reset()
     SITE.templates["warranty"] = {
@@ -534,6 +555,27 @@ class TestDateRule(unittest.TestCase):
         )
         doc._compute_warranty_term()
         self.assertEqual(doc.warranty_end_date, "kept")
+
+    def test_the_start_dates_label_and_help_say_what_the_certificate_says(self):
+        fields = {f["fieldname"]: f for f in json.loads(PC_JSON.read_text(encoding="utf-8"))["fields"]}
+        start = fields["warranty_start_date"]
+        body = _body()
+        # The label is the certificate's own line, so the person sees which blank it fills.
+        self.assertEqual(start["label"], "Work Completed or Material Supplied by Sapphire On")
+        self.assertIn("Work Completed or Material Supplied by Sapphire on:", body)
+        # The help quotes the sentence the term is counted by, word for word from the certificate.
+        quoted = re.search(r'"([^"]+)"', start["description"]).group(1)
+        self.assertEqual(
+            quoted,
+            "from the date of execution of the Certificate of Substantial Completion or Occupancy, "
+            "as required by the Contract Documents",
+        )
+        self.assertIn(quoted, " ".join(_text(body).split()))
+        self.assertIn("enter its date", start["description"])
+        self.assertIn("When it has none", start["description"])
+        # The end date says it is a record, not the term.
+        self.assertIn("certificate's own wording decides the term", fields["warranty_end_date"]["description"])
+        self.assertIn("Certificate of Substantial Completion or Occupancy", builder.STEP_COPY["warranty_section"][1])
 
     def test_validate_runs_it_and_the_end_is_never_typed(self):
         source = PC_PY.read_text(encoding="utf-8")
@@ -800,12 +842,15 @@ class TestIssuingSignsIt(unittest.TestCase):
 
     @unittest.skipUnless(jinja2, "jinja2 is not installed")
     def test_issuing_with_a_signer_named_signs_it_and_freezes_the_copy(self):
-        doc = _contract(docstatus=1)
-        doc.on_submit()
+        _issue()
         row = SITE.contracts[CERT]
         self.assertEqual(row["status"], "Signed")
         self.assertEqual(row["signed_by"], "Jordan Example")
-        self.assertEqual(row["signed_on"], "2026-11-12")
+        # Signed the day it is issued, whatever date the draft carried (2026-11-12).
+        self.assertEqual(row["signed_on"], TODAY)
+        self.assertEqual(row["contract_date"], TODAY)
+        self.assertIn("November 20, 2026", row["executed_html"])
+        self.assertNotIn("November 12, 2026", row["executed_html"])
         # The copy as issued, signature in place: a later template edit cannot change it.
         self.assertIn("Jordan Example", row["executed_html"])
         self.assertIn("ct-sig-typed", row["executed_html"])
@@ -829,6 +874,49 @@ class TestIssuingSignsIt(unittest.TestCase):
             self.assertIsNone(row.get("signed_by"))
             self.assertIsNone(row.get("executed_html"))
             self.assertEqual(SITE.comments, [])
+
+    def test_a_certificate_signed_here_is_dated_the_day_it_is_issued(self):
+        # A back-dated draft, a post-dated one and an empty one all become today.
+        for typed in ("2026-01-05", "2027-03-01", None, TODAY):
+            doc = _contract(contract_date=typed)
+            doc._date_certificate_signed_here()
+            self.assertEqual(doc.contract_date, TODAY, typed)
+        # The work-completed date is what carries an earlier job, and it is left alone.
+        doc = _contract(contract_date="2026-01-05", warranty_start_date="2025-06-30")
+        doc._date_certificate_signed_here()
+        self.assertEqual(doc.warranty_start_date, "2025-06-30")
+
+    def test_an_ink_signed_certificate_keeps_its_typed_date(self):
+        for empty in ("", "   ", None):
+            doc = _contract(contract_date="2026-01-05", warranty_signer=empty)
+            doc._date_certificate_signed_here()
+            self.assertEqual(doc.contract_date, "2026-01-05", repr(empty))
+
+    def test_no_other_contract_is_re_dated(self):
+        doc = _contract(contract_date="2026-01-05", template_key="maintenance", contract_template="maintenance")
+        doc._date_certificate_signed_here()
+        self.assertEqual(doc.contract_date, "2026-01-05")
+
+    def test_the_date_rule_runs_in_validate_and_the_field_is_read_only_while_a_signer_is_named(self):
+        source = PC_PY.read_text(encoding="utf-8")
+        validate = source[source.index("\tdef validate(self):") : source.index("\tdef _fetch_template_props(self):")]
+        self.assertIn("self._date_certificate_signed_here()", validate)
+        signing = source[source.index("\tdef _sign_for_sapphire(self):") : source.index("\tdef on_cancel(self):")]
+        self.assertIn('"signed_on": today()', signing)
+        self.assertNotIn('self.get("contract_date")', signing)
+        fields = {f["fieldname"]: f for f in json.loads(PC_JSON.read_text(encoding="utf-8"))["fields"]}
+        condition = fields["contract_date"]["read_only_depends_on"]
+        self.assertEqual(condition, 'eval:doc.template_key=="warranty" && doc.warranty_signer')
+        # Editable for every other contract, and for a certificate left for ink.
+        for doc, read_only in (
+            ({"template_key": "warranty", "warranty_signer": "Jordan Example"}, True),
+            ({"template_key": "warranty", "warranty_signer": ""}, False),
+            ({"template_key": "maintenance", "warranty_signer": "Jordan Example"}, False),
+        ):
+            self.assertEqual(bool(builder.shown(condition, doc)), read_only, doc)
+        # The builder page evaluates the condition, as the form does.
+        page = (APP / "project_enhancements" / "page" / "contract_builder" / "contract_builder.js").read_text(encoding="utf-8")
+        self.assertIn('["depends_on", "mandatory_depends_on", "read_only_depends_on"]', page)
 
     def test_no_other_contract_is_signed_by_issuing_it(self):
         doc = _contract(docstatus=1, template_key="maintenance", contract_template="maintenance")
@@ -1093,9 +1181,40 @@ class TestPrefill(unittest.TestCase):
         # On two lines, as the certificate's project block prints it.
         self.assertEqual(doc.site_address, "12 Example Way\nSpringfield, UT 84000")
         self.assertEqual(doc.contact_email, "riley@example.test")
-        self.assertEqual(doc.contract_date, "2026-11-12")
+        self.assertEqual(doc.contract_date, TODAY)
         self.assertEqual(doc.warranty_signer, "Jordan Example")
         self.assertEqual(doc.warranty_signer_title, "Operations Manager")
+
+    def test_the_server_refuses_any_source_but_a_project(self):
+        frappe = project_contract.frappe
+        self.assertTrue(warranty.source_allowed("Project"))
+        for nothing in (None, ""):
+            self.assertTrue(warranty.source_allowed(nothing))
+        for other in ("Opportunity", "Supplier", "Customer", "Sales Invoice", "Lead"):
+            self.assertFalse(warranty.source_allowed(other), other)
+            with self.assertRaises(frappe.ValidationError):
+                project_contract.create_contract("warranty", other, "ANY-0001")
+        # Refused before a draft is made or the source is even read.
+        self.assertNotIn(CERT, SITE.contracts)
+        source = PC_PY.read_text(encoding="utf-8")
+        create = source[source.index("def create_contract(") : source.index("def get_signed_msa(")]
+        self.assertLess(create.index("source_allowed("), create.index('frappe.new_doc("Project Contract")'))
+
+    def test_a_certificate_can_start_from_a_client_alone(self):
+        original = project_contract.ProjectContract.insert
+        made = {}
+        project_contract.ProjectContract.insert = lambda self, ignore_permissions=False: made.setdefault("doc", self)
+        self.addCleanup(setattr, project_contract.ProjectContract, "insert", original)
+        project_contract.create_contract("warranty", None, None, party="Example Plaza LLC")
+        self.assertEqual(made["doc"].party, "Example Plaza LLC")
+        self.assertIsNone(made["doc"].project)
+
+    def test_the_other_types_still_start_from_an_opportunity(self):
+        source = PC_PY.read_text(encoding="utf-8")
+        create = source[source.index("def create_contract(") : source.index("def get_signed_msa(")]
+        guard = create[create.index("if template_doc.template_key == warranty_certificate.TEMPLATE_KEY and not") :]
+        self.assertTrue(guard.startswith("if template_doc.template_key == warranty_certificate.TEMPLATE_KEY and not warranty_certificate.source_allowed("))
+        self.assertIn('if source_doctype == "Opportunity" and source_name:', create)
 
     def test_the_completion_date_is_never_a_plan(self):
         # Only an expected end date on the project: the builder asks rather than guess.
@@ -1237,10 +1356,11 @@ class TestLook(unittest.TestCase):
         css = next(
             row for row in json.loads(PRINT_FORMATS.read_text(encoding="utf-8")) if row["name"] == "Project Contract Print"
         )["css"]
-        used = set(re.findall(r'class="([^"]+)"', _body()))
+        static = re.sub(r"\{%.*?%\}|\{\{.*?\}\}", "", _body())
+        used = set(re.findall(r'class="([^"]+)"', static))
         classes = {name for value in used for name in value.split()}
         self.assertEqual({name for name in classes if not name.startswith("ct-warranty")}, set())
-        rules = [line for line in css.splitlines() if line.startswith(".contract-doc .ct-warranty ")]
+        rules = [line for line in css.splitlines() if line.startswith(".contract-doc .ct-warranty")]
         for name in classes - {"ct-warranty"}:
             self.assertTrue(
                 any(re.search(rf"\.{re.escape(name)}(?![\w-])", rule.split("{")[0]) for rule in rules), name
@@ -1248,8 +1368,10 @@ class TestLook(unittest.TestCase):
         # Every rule is under the certificate's own wrapper, so no agreement is restyled.
         for line in css.splitlines():
             if "ct-warranty" in line and "{" in line:
-                self.assertTrue(line.startswith(".contract-doc .ct-warranty "), line)
-        self.assertTrue(_body().startswith('<div class="ct-warranty">'))
+                self.assertRegex(line, r"^\.contract-doc \.ct-warranty(\.ct-warranty-fit-[123])? ", line)
+        self.assertTrue(
+            _body().startswith('<div class="ct-warranty{% if warranty_fit %} {{ warranty_fit }}{% endif %}">')
+        )
         # The title clears the floated project block, so a long address cannot run under it.
         self.assertRegex(css, r"h3\.ct-warranty-title \{ clear: both;")
 
@@ -1270,6 +1392,212 @@ class TestLook(unittest.TestCase):
         self.assertEqual(ink["can_attach"], 1)
         viewer = (APP / "public" / "js" / "project_enhancements" / "contract_viewer.js").read_text(encoding="utf-8")
         self.assertIn('info.route === "issued"', viewer)
+
+
+# --------------------------------------------------------------------------- one page, always
+
+#: Made-up long cases. 140 characters is the longest a project's name can be (a Data field).
+LONG_WORDS = (
+    "Example Plaza Phase Two Interactive Fountain and Water Wall Renovation at the North Courtyard "
+    "of the Springfield Civic Center Annex Building"
+)
+ADDRESS_2 = "12 Example Way\nSpringfield, UT 84000"
+ADDRESS_3 = "1200 North Example Parkway, Building C\nSuite 410, North Courtyard Entrance\nSouth Springfield Heights, UT 84000-1234"
+ADDRESS_4 = "Springfield Civic Center Annex\n" + ADDRESS_3
+
+
+class TestFitsOnePage(unittest.TestCase):
+    def setUp(self):
+        _site_with_template()
+
+    def test_an_ordinary_certificate_keeps_the_ordinary_layout(self):
+        for name, address in (
+            ("Example Plaza Water Wall", ADDRESS_2),
+            (LONG_WORDS[:40].strip(), ADDRESS_2),
+            ("", ""),
+            (None, None),
+        ):
+            self.assertEqual(warranty.fit_level(name, address), 0, name)
+            self.assertEqual(warranty.fit_class(name, address), "", name)
+
+    def test_longer_names_and_addresses_take_tighter_steps(self):
+        levels = [
+            warranty.fit_level(LONG_WORDS[:length].strip(), address)
+            for length, address in ((25, ADDRESS_2), (60, ADDRESS_2), (90, ADDRESS_3), (120, ADDRESS_3), (140, ADDRESS_4))
+        ]
+        self.assertEqual(levels, sorted(levels))
+        self.assertEqual(levels[0], 0)
+        self.assertEqual(levels[-1], warranty.MAX_FIT)
+        # The reviewer's case: about ninety characters of name over a three-line address.
+        self.assertGreaterEqual(warranty.fit_level(LONG_WORDS[:90].strip(), ADDRESS_3), 2)
+        # Never past the steps the stylesheet has, however long.
+        self.assertEqual(warranty.fit_level("W" * 2000, "\n".join(["x" * 200] * 12)), warranty.MAX_FIT)
+        self.assertEqual(warranty.fit_class("W" * 2000, ""), f"ct-warranty-fit-{warranty.MAX_FIT}")
+        # A longer name never gets a looser step.
+        previous = 0
+        for length in range(0, 141, 5):
+            level = warranty.fit_level(LONG_WORDS[:length], ADDRESS_3)
+            self.assertGreaterEqual(level, previous, length)
+            previous = level
+
+    def test_the_stylesheet_has_every_step_and_only_those(self):
+        css = next(
+            row for row in json.loads(PRINT_FORMATS.read_text(encoding="utf-8")) if row["name"] == "Project Contract Print"
+        )["css"]
+        steps = sorted(set(re.findall(r"\.ct-warranty-fit-(\d+)", css)))
+        self.assertEqual(steps, [str(n) for n in range(1, warranty.MAX_FIT + 1)])
+        sizes = [float(re.search(rf"\.ct-warranty\.ct-warranty-fit-{n} p \{{ font-size: ([\d.]+)pt", css).group(1)) for n in steps]
+        base = float(re.search(r"\.contract-doc \.ct-warranty p \{ font-size: ([\d.]+)pt", css).group(1))
+        # Each step is smaller than the one before, and none is too small to read.
+        self.assertEqual([base, *sizes], sorted([base, *sizes], reverse=True))
+        self.assertGreaterEqual(sizes[-1], 9)
+        # A word with no space in it wraps inside the project block instead of running out of it.
+        self.assertRegex(css, r"\.ct-warranty-project \{[^}]*overflow-wrap: break-word")
+
+    @unittest.skipUnless(jinja2, "jinja2 is not installed")
+    def test_the_step_is_on_the_wrapper_and_nothing_is_cut(self):
+        ordinary = _render(_contract())
+        self.assertTrue(ordinary.startswith('<div class="ct-warranty">'))
+        name = LONG_WORDS[:140].strip()
+        html = _render(_contract(project_title=name, site_address=ADDRESS_4))
+        self.assertTrue(html.startswith(f'<div class="ct-warranty ct-warranty-fit-{warranty.MAX_FIT}">'))
+        # In full, both places it prints, and every line of the address.
+        self.assertEqual(html.count(name), 2)
+        for line in ADDRESS_4.splitlines():
+            self.assertIn(line, html)
+        self.assertNotIn("\u2026", html)
+        self.assertNotIn("...", _text(html))
+
+
+def _find_chrome():
+    """A Chrome or Chromium that can print to PDF, or None. CI's ubuntu runner ships google-chrome."""
+    for candidate in (
+        os.environ.get("CHROME_BIN"),
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("chrome"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+#: A deliberately wide face for the second pass: the server that prints the PDF may have neither
+#: Lato nor Helvetica, and a fallback such as DejaVu Sans or Verdana sets about a tenth wider.
+WIDE_FACE = '"DejaVu Sans", Verdana, sans-serif'
+
+
+def _page_html(doc, face=None):
+    """The certificate as the print format lays it out: the real body, letterhead and print CSS.
+
+    The page box is Letter with 15mm on every side. Production gives the body the same 15mm at
+    the top and the sides and, at the foot, the height of the running footer (one 8pt line, about
+    5mm), so this box is the tighter of the two: a certificate that fits here fits there.
+    """
+    css = next(
+        row for row in json.loads(PRINT_FORMATS.read_text(encoding="utf-8")) if row["name"] == "Project Contract Print"
+    )["css"]
+    wide = f".contract-doc, .contract-doc * {{ font-family: {face} !important; }}" if face else ""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><style>@page { size: Letter; margin: 15mm; } "
+        f"body {{ margin: 0; }}{css}{wide}</style></head><body>"
+        f'<div class="contract-doc contract-warranty">{contract_style.wrap(_render(doc), doc)}</div></body></html>'
+    )
+
+
+def _pdf_pages(chrome, html, folder, stem):
+    """Print ``html`` with headless Chrome and count the pages, or None when Chrome did not print."""
+    source = Path(folder) / f"{stem}.html"
+    target = Path(folder) / f"{stem}.pdf"
+    source.write_text(html, encoding="utf-8")
+    try:
+        subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--no-pdf-header-footer",
+                f"--user-data-dir={Path(folder) / 'profile'}",
+                f"--print-to-pdf={target}",
+                source.as_uri(),
+            ],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not target.exists() or not target.stat().st_size:
+        return None
+    return len(re.findall(rb"/Type\s*/Page(?![s\w])", target.read_bytes()))
+
+
+@unittest.skipUnless(jinja2, "jinja2 is not installed")
+class TestPrintsOnOnePage(unittest.TestCase):
+    """The long cases printed for real. Skipped where no Chrome is installed; CI's runner has one."""
+
+    CASES = {
+        "ordinary": ("Example Plaza Water Wall", ADDRESS_2),
+        "name_90_address_3": (LONG_WORDS[:90].strip(), ADDRESS_3),
+        "name_120_address_3": (LONG_WORDS[:120].strip(), ADDRESS_3),
+        "name_140_address_4": (LONG_WORDS[:140].strip(), ADDRESS_4),
+        "one_unbroken_word": ("X" * 70 + " " + "W" * 69, ADDRESS_4),
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chrome = _find_chrome()
+        if not cls.chrome:
+            raise unittest.SkipTest("no Chrome or Chromium is installed")
+        cls.folder = tempfile.mkdtemp(prefix="warranty-certificate-")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(getattr(cls, "folder", ""), ignore_errors=True)
+
+    def setUp(self):
+        _site_with_template()
+
+    def _pages(self, key, face=None):
+        name, address = self.CASES[key]
+        doc = _contract(
+            docstatus=1,
+            status="Signed",
+            project_title=name,
+            site_address=address,
+            warranty_signer="Jordan Alexander Example-Longname",
+            warranty_signer_title="Director of Operations and Field Services",
+        )
+        pages = _pdf_pages(self.chrome, _page_html(doc, face), self.folder, f"{key}-{'wide' if face else 'plain'}")
+        if pages is None:
+            self.skipTest("Chrome is installed but did not print a PDF here")
+        return pages
+
+    def test_every_case_is_one_page(self):
+        for key in self.CASES:
+            with self.subTest(case=key):
+                self.assertEqual(self._pages(key), 1)
+
+    def test_every_case_is_one_page_in_a_wide_face(self):
+        for key in self.CASES:
+            with self.subTest(case=key):
+                self.assertEqual(self._pages(key, WIDE_FACE), 1)
+
+    def test_the_test_can_see_a_second_page(self):
+        # The counter is not blind: the same certificate with its body tripled runs over.
+        name, address = self.CASES["ordinary"]
+        doc = _contract(docstatus=1, status="Signed", project_title=name, site_address=address)
+        html = _page_html(doc)
+        body = contract_style.wrap(_render(doc), doc)
+        pages = _pdf_pages(self.chrome, html.replace(body, body * 3), self.folder, "three-bodies")
+        if pages is None:
+            self.skipTest("Chrome is installed but did not print a PDF here")
+        self.assertGreater(pages, 1)
 
 
 # --------------------------------------------------------------------------- wiring

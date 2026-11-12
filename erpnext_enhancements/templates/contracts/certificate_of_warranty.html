@@ -1,4 +1,4 @@
-<div class="ct-warranty">
+<div class="ct-warranty{% if warranty_fit %} {{ warranty_fit }}{% endif %}">
 <div class="ct-warranty-project">
 <p class="ct-warranty-project-name">{{ fill(doc.project_title, 30) }}</p>
 <p>{{ multiline(doc.site_address, 34, 2) }}</p>

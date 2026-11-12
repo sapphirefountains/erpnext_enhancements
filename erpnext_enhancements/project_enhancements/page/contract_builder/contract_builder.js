@@ -2146,7 +2146,7 @@ class ContractBuilder {
 		if (data.docstatus === 0) {
 			notice(
 				signer
-					? __("Issuing it signs it for Sapphire Fountains as {0}. From then on it is final: a change means a new revision.", [
+					? __("Issuing it signs it for Sapphire Fountains as {0} and dates it today. From then on it is final: a change means a new revision.", [
 							title ? `${signer}, ${title}` : signer,
 					  ])
 					: __("No signer is named, so By and Its print as blank lines to sign in ink. To sign it here instead, go back and fill in Signed for Sapphire by.")
@@ -2174,7 +2174,7 @@ class ContractBuilder {
 	issue_certificate(signer, title) {
 		const name = this.data.name;
 		const message = signer
-			? __("This issues {0} and signs it for Sapphire Fountains as {1}. Its wording locks from here. Nothing is emailed.", [
+			? __("This issues {0} and signs it for Sapphire Fountains as {1}, dated today. Its wording locks from here. Nothing is emailed.", [
 					name,
 					cb_esc(title ? `${signer}, ${title}` : signer),
 			  ])

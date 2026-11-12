@@ -41,6 +41,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     read-only, it follows the start date on every save, and it is kept on the record. The
     certificate does not print it: the Word document has no end date, and its wording counts the
     year from the Certificate of Substantial Completion or Occupancy.
+  - **The date field says what the certificate says.** The certificate has one date line, *Work
+    Completed or Material Supplied by Sapphire on*, while its wording counts the year from the
+    Certificate of Substantial Completion or Occupancy. The field's label is that line's own
+    words, and its help text quotes the sentence and asks for the completion certificate's date
+    when the project has one, otherwise the day the work was completed or the material supplied.
+    The certificate's wording is unchanged.
+  - **It holds to one page, however long the name and address.** In review, a project name of
+    about ninety characters pushed the whole signature block to a second page. The certificate
+    now picks one of four layout steps from the length of the project name and the address
+    (`warranty_certificate.fit_level`): each step sets the type a little smaller (10.5pt down to
+    9pt), closes the spacing and widens the project block. Nothing is cut: the name and every
+    address line print in full, and a word with no space in it wraps. The steps were set from
+    prints through headless Chrome in a deliberately wide face with a step to spare, because the
+    server that prints the PDF may not have the faces the stylesheet asks for, and on a page box
+    tighter than production's (15mm at the foot, where production leaves only the footer's
+    height). Measured to hold for a 140-character name, the field's limit, over a four-line
+    address. An address much longer than that is outside what was measured.
   - **Only Sapphire signs it.** The Word document has one signature block. So the builder's last
     step is *Review and issue*: no signing with the customer, no signing link, and the server
     refuses both for this type.
@@ -49,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       the template cannot change what was issued, and the timeline records who pressed the button.
       Only a Contract Manager (or System Manager) can issue. A draft never shows the name on the By
       line.
+    - **Signed that way, it is dated the day it is issued.** The *Date* line sits beside the
+      signature, and for a typed signature the system is the only evidence of when. So while a
+      signer is named, the date is set to today on every save and at issue, is read-only, and is
+      what `signed_on` records. It cannot be back-dated or post-dated. A certificate for a job
+      finished earlier carries that in the work-completed date, which stays editable.
     - With no name, it is issued with blank By and Its lines to sign in ink, waits at Out for
       Signature, and is recorded with *Mark as Signed* on the form, as a paper contract is.
   - **Emailing it is one explicit press, and nothing else sends it.** On a Signed certificate the
@@ -59,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a certificate emails nobody.
   - **Where it starts.** The Contract Builder's start screen; the Contract button on a Project,
     which opens that screen with the project filled in; and *Generate Contract* on a Project. Not
-    from an Opportunity: a certificate is about finished work.
+    from an Opportunity: a certificate is about finished work. The server refuses any other source
+    too (`create_contract`), not only the screens.
   - **Who.** As for every contract: Projects Manager, Sales Manager and Sales User build the draft
     and can let a Contract Manager know; a Contract Manager issues it and emails it.
   - **On production at deploy.** One new record: Contract Template `warranty`, inserted by
@@ -72,9 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     No certificate is created and no email is sent by the deploy.
   - `tests/test_warranty_certificate` (bench-free, its own CI step) pins the wording against the
     Word document's paragraphs, every merge field, the date rule, the signing rules, the email
-    rules and the patch. The PDF was checked by rendering the real template, print CSS and
-    letterhead through headless Chrome, which is the generator production uses for this format:
-    one Letter page, with a long project name and address too. Not run on a bench.
+    rules, the date beside the signature, the allowed sources, the layout steps and the patch.
+    Where a Chrome is installed, which CI's runner has, it also prints the real template, print
+    CSS and letterhead for the long cases, in the stylesheet's faces and in a wide one, and
+    counts the pages. Chrome is the generator production uses for this format. Not run on a
+    bench.
 
 ## [1.802.2] - 2026-11-12
 

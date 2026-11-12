@@ -2457,7 +2457,10 @@ jobs:
       # signer named signs it and freezes the copy, the By line shows the name only once issued,
       # no path sends it to a customer to sign); that email is one explicit Contract Manager call
       # with the PDF and nothing else in the feature sends mail; and the seed patch (insert-only,
-      # one key, never raises, says what it did). Needs jinja2.
+      # one key, never raises, says what it did). Needs jinja2. It also prints the long cases (a
+      # 140-character project name, a four-line address, one unbroken word) through the runner's
+      # own headless Chrome and counts the pages: one, always. Those cases skip where no Chrome
+      # is installed, and never fail for Chrome not starting; they fail only on a second page.
       - name: Certificate of Warranty (wording, merge fields, date rule, signing, email)
         run: python -m unittest erpnext_enhancements.tests.test_warranty_certificate -v
       # Own step for the same reason as the suites above: its frappe stub points

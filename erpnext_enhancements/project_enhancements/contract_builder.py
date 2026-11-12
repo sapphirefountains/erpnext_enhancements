@@ -158,9 +158,11 @@ STEP_COPY = {
 	"supervisor_section": ("Site supervisor", ""),
 	"warranty_section": (
 		"Dates and who signs",
-		"The day the work was completed or the material supplied: the one-year warranty is counted from it, and "
-		"the end date works itself out. Then who signs for Sapphire and their title. Issuing the certificate "
-		"signs it in that name; leave the name empty to print a blank line and sign in ink.",
+		"The date the one-year warranty is counted from: the date of the Certificate of Substantial Completion "
+		"or Occupancy when the project has one, otherwise the day Sapphire completed the work or supplied the "
+		"material. The end date works itself out. Then who signs for Sapphire and their title. Issuing the "
+		"certificate signs it in that name and dates it that day; leave the name empty to print blank lines and "
+		"sign and date it in ink.",
 	),
 }
 
