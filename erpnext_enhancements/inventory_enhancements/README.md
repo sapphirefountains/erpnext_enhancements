@@ -735,6 +735,10 @@ Site."
   `missing_items` are 0 there and Problems leaves their leftover Putaway Rules out.
 - **Who sees what.** Every read is behind the Stock Scan role gate. A job's customer is added only
   for a caller who can read Projects; stock value only for one who can read the Stock Ledger.
+  `project_view` takes a project's name from the caller, so it checks that one Project
+  (`frappe.has_permission("Project", "read", doc=...)`): without it the answer carries the id,
+  the name the job's site already shows, and the stock, with no status, type, customer or
+  "finished" sentence, and reads the same for an unreadable job as for one that does not exist.
 - The pure decisions are `public/js/bin_manager/views.js`; the routes and saves stay in
   `logic.js`. Tested by `scripts/test_bin_manager.mjs` and `tests/test_bin_views.py`.
 

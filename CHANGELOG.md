@@ -36,11 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `bin_assignments.move_to`: a logged Material Transfer that carries the job and can be undone.
     Nothing is made an item's bin from here. A job with no site has it opened first, through the
     existing `api.stock_scan.job_site`. Only the job's own share of the shelf can be sent.
-  - **What "on the Project Shelf for this job" means.** The job's balance at the shelf from the
-    Project Shelf's own function, `project_shelf.shelf_stock` (the stock ledger rows that name the
-    job). That balance can be more than the shelf holds, after a count or a move made with no job
-    on it. So a row shows what the shelf can hand over, says "of N on record" when the records
-    say more, and a line above the list says to count the shelf. It all comes through
+  - **What "on the Project Shelf for this job" means.** The job's share of the shelf from the
+    Project Shelf's own function, `project_shelf.shelf_stock`: its `qty`, which that function
+    holds to what is physically on the shelf and shares out between the jobs that claim it. The
+    job's ledger balance is beside it as `tagged`, and can be more, after a count or a move made
+    with no job on it. So a row shows what the shelf can hand over, says "of N on record" when
+    `tagged` is more, and a line above the list says to count the shelf. The Procurement Tracker
+    shows the same number. It all comes through
     `project_stock.shelf_stock` and `shelf_by_project`; there is no shelf query in the Bin
     Manager's own module. `project_shelf` arrives with another release and is imported where it
     is used, so either can merge first: until it is there the same rule is applied to the ledger
@@ -79,13 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     assigned to those places by design.
   - **Who sees what.** Every new read is behind the same role gate as the rest of the page. A
     job's customer is shown only to someone who can read Projects, and stock value only to
-    someone who can read the Stock Ledger.
+    someone who can read the Stock Ledger. The By project view of one job takes the job's id
+    from the address, so it is stricter: the job's status, type and customer go only to someone
+    who may read that Project (the role and any User Permission). Anyone else gets the id, the
+    name the job's site already shows them, and the stock, is not told ahead of time that the
+    job is finished, and gets the same answer for a job they may not read as for one that does
+    not exist.
 
 ### Tests
-- `tests/test_bin_views.py` (31 tests, own frappe stub, own CI step): the gate before every read,
-  no writes, the kinds, the counts, the customer and value gates, By project and Problems, with
-  and without the Project Shelf module, and when the page may ask for a job.
-  `scripts/test_bin_manager.mjs` grew from 342 to 552 checks, among them a move off the shelf
+- `tests/test_bin_views.py` (33 tests, own frappe stub, own CI step): the gate before every read,
+  no writes, the kinds, the counts, the customer and value gates, a project's details only for
+  someone who may read it, By project and Problems, with and without the Project Shelf module,
+  and when the page may ask for a job.
+  `scripts/test_bin_manager.mjs` grew from 342 to 553 checks, among them a move off the shelf
   with one exact job, with several, with none, a move onto the shelf, and a site without the
   Project Shelf's release: the new routes, the filters through
   the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,

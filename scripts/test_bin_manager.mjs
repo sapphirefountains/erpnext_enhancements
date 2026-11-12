@@ -1666,6 +1666,8 @@ test("problems: four lists in a fixed order, counted", () => {
 	check("total", views.problem_total(PROBLEMS), 3);
 	check("nothing read is nothing found", views.problem_total(null), 0);
 	check("each says what to do", sections.every((s) => s.hint.length > 20), true);
+	// Leftovers of a finished job leave the shelf by a move that names the job, which the page can now make.
+	check("the finished-job hint points at the move that works", /Open the Project Shelf and move it to a shop bin \(the move asks which job/.test(sections[2].hint), true);
 });
 
 test("a tab is one history entry each; Back and Forward walk them", async () => {

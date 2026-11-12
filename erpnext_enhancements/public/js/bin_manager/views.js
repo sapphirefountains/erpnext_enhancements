@@ -361,7 +361,7 @@ export const PROBLEM_SECTIONS = [
 	{
 		key: "finished_shelf",
 		title: "On the Project Shelf for a finished job",
-		hint: "The job is finished and this is still held for it. Move it to a shop bin, or send it back.",
+		hint: "The job is finished and this is still held for it. Open the Project Shelf and move it to a shop bin (the move asks which job it was bought for), or return it to the supplier.",
 		by: "job",
 	},
 	{

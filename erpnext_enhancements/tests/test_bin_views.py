@@ -113,6 +113,8 @@ def _reset():
 			"sites_group": True,
 			"settings": {"project_shelf_warehouse": SHELF, "boneyard_warehouse": BONEYARD},
 			"perms": {("Project", "read"), ("Stock Ledger Entry", "read")},
+			# Projects a User Permission keeps from the caller, whatever their role.
+			"unreadable": set(),
 			"access": True,
 			"calls": [],
 			"writes": [],
@@ -258,7 +260,9 @@ def _install():
 	frappe.db = types.SimpleNamespace(sql=_sql, get_value=get_value, has_column=lambda doctype, column: True)
 	frappe.get_all = _get_all
 	frappe.get_cached_doc = lambda doctype: _Settings()
-	frappe.has_permission = lambda doctype, ptype="read": (doctype, ptype) in STATE["perms"]
+	frappe.has_permission = lambda doctype, ptype="read", doc=None: (doctype, ptype) in STATE["perms"] and (
+		doc is None or doc not in STATE["unreadable"]
+	)
 	frappe.throw = throw
 	frappe._ = lambda text: text
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
@@ -658,8 +662,45 @@ class TestProjectView(_Base):
 		self.assertIsNone(out["project"]["customer"])
 		self.assertTrue(all("value" not in r for r in out["site"]["items"]))
 
-	def test_an_unknown_job_is_refused(self):
+	def test_a_projects_details_go_only_to_someone_who_may_read_that_project(self):
+		"""A Stock Scan role is not Project read, and the endpoint takes a name from the caller."""
+		bare = {"project": DONE, "project_name": "Old Lobby", "customer": None, "status": None, "closed": False}
+		# The role, but a User Permission keeps this one job from them.
+		STATE["unreadable"] = {DONE}
+		out = views.project_view(DONE)
+		self.assertEqual(out["project"], bare, "the id, and the name its site already shows; nothing else")
+		self.assertNotIn("project_type", out["project"])
+		self.assertIsNone(out["send_refusal"], "not told ahead of time that the job is finished")
+		self.assertEqual(out["site"]["warehouse"], OLD_SITE, "the stock is still theirs to see")
+		# A job they may read is unaffected.
+		self.assertEqual(views.project_view(BUILD)["project"]["status"], "Active")
+		# No Project role at all: the same.
+		STATE["unreadable"] = set()
+		STATE["perms"].discard(("Project", "read"))
+		self.assertEqual(views.project_view(DONE)["project"], bare)
+		# A job with no site has shown them nothing, so not even its name.
+		STATE["projects"]["PRJ-70000"] = ("Secret Garden", "Active", "Service", "Acme Hotels")
+		hidden = views.project_view("PRJ-70000")
+		self.assertEqual(hidden["project"]["project_name"], "PRJ-70000")
+		self.assertIsNone(hidden["send_refusal"])
+		# What cannot be read and what does not exist look the same: no way to learn which ids are real.
+		self.assertEqual(views.project_view("PRJ-NOPE"), {**hidden, "project": {**hidden["project"], "project": "PRJ-NOPE", "project_name": "PRJ-NOPE"}})
+
+	def test_without_project_read_only_what_is_not_about_the_project_is_said_ahead_of_time(self):
+		STATE["perms"].discard(("Project", "read"))
+		STATE["site_map"] = {}
+		STATE["sites_group"] = False
+		self.assertIn("not set up yet", views.project_view(BUILD)["send_refusal"])
+		STATE["sites_ready"] = False
+		self.assertIn("being set up", views.project_view(BUILD)["send_refusal"])
+
+	def test_an_unknown_job_is_refused_for_someone_who_can_list_projects(self):
 		for name in ("PRJ-NOPE", "", None):
+			with self.assertRaises(_Throw):
+				views.project_view(name)
+		# With no name there is nothing to look up, whoever asks.
+		STATE["perms"].discard(("Project", "read"))
+		for name in ("", None):
 			with self.assertRaises(_Throw):
 				views.project_view(name)
 

@@ -26,6 +26,9 @@ so every move made from the new views is logged and can be undone exactly as bef
 **Who may ask.** Every endpoint is behind ``api.stock_scan._check_access`` (the Stock Scan
 roles), like every endpoint the page already calls. A project's *customer* is added only for a
 caller who can read Projects; a job's name was already shown to these roles on a site's screen.
+:func:`project_view` takes a project by name, so it is stricter: a project's status, type and
+customer go only to a caller who may read *that* Project, and anyone else gets what the
+warehouses already show (the id, and the name on the job's site).
 Stock *value* is added only for a caller who can read the Stock Ledger, the permission ERPNext's
 own stock reports ask for.
 
@@ -96,6 +99,12 @@ def shelf_job_moves():
 
 def _can_read_projects():
 	return bool(_quietly(lambda: frappe.has_permission("Project", "read"), False))
+
+
+def _may_read_project(name):
+	"""Whether the caller may read this one Project: the role, and any User Permission that
+	narrows it. Anything that cannot be answered is a no."""
+	return bool(_quietly(lambda: frappe.has_permission("Project", "read", doc=name), False))
 
 
 def _projects(names):
@@ -352,6 +361,15 @@ def _send_refusal(project, has_site, site_closed):
 		return _("Job sites are being set up.")
 	if site_closed:
 		return _("This job's site was closed. Ask a Stock Manager to open it again.")
+	if project is None:
+		# The caller may not read this Project, so nothing about it (that it is finished, what
+		# type it is) is said ahead of time. The move itself still refuses what it must, in the
+		# sentence the server has always given these roles when they try.
+		if not has_site and not _quietly(job_sites.group, None):
+			return _(
+				"Job sites are not set up yet. A Stock Manager needs to choose the Job Sites warehouse in Inventory Scanner Settings."
+			)
+		return None
 	if has_site:
 		return site_rules.send_refusal(
 			project.name, project.get("project_name"), project.get("status"), rules.CLOSED_JOB_STATUSES
@@ -383,21 +401,36 @@ def project_view(project):
 	Shelf items are this job's share (``project_stock.shelf_stock``: ``qty`` is what the shelf
 	can hand over, ``recorded`` the job's ledger balance, higher when the shelf holds less than
 	the records say); site items are everything on hand at the site.
+
+	**The project's own details go only to someone who may read that Project** (the role and
+	any User Permission: ``frappe.has_permission`` with the document). The endpoint takes a name
+	from the caller, and a Stock Scan role is not Project read. Anyone else gets what the
+	warehouses already show them: the id they asked for, the name the job's site carries when
+	it has one, and the stock. No status, type or customer, no "this job is finished" ahead of
+	time, and the same answer for a job they may not read and one that does not exist, so the
+	endpoint cannot be used to learn which project ids are real.
 	"""
 	scan._check_access()
 	name = cstr(project).strip()
-	row = (
-		frappe.db.get_value(
-			"Project", name, ["name", "project_name", "status", "project_type", "customer"], as_dict=True
-		)
-		if name
-		else None
+	if not name:
+		frappe.throw(_("There is no job {0}.").format(_("with that name")))
+	row = frappe.db.get_value(
+		"Project", name, ["name", "project_name", "status", "project_type", "customer"], as_dict=True
 	)
-	if not row:
-		frappe.throw(_("There is no job {0}.").format(name or _("with that name")))
-	info = _project_payload(row)
-	if not _can_read_projects():
-		info["customer"] = None
+	readable = bool(row) and _may_read_project(row.name)
+	if not row and _can_read_projects():
+		# Someone who can list Projects anyway is told plainly.
+		frappe.throw(_("There is no job {0}.").format(name))
+	sites = _own_sites(name)
+	if readable:
+		info = _project_payload(row)
+		row_for_rules = row
+	else:
+		info = _project_payload(None, name)
+		if row and sites:
+			# A job's site shows these roles the job's name on its own screen (job_sites.site_info).
+			info["project_name"] = row.get("project_name") or name
+		row_for_rules = None
 
 	shelf = project_stock.shelf_warehouse()
 	shelf_row = scan._warehouse(shelf) if shelf else None
@@ -406,10 +439,9 @@ def project_view(project):
 		shelf_out = {
 			"warehouse": shelf_row.name,
 			"warehouse_name": shelf_row.warehouse_name or shelf_row.name,
-			"items": project_stock.shelf_stock(row.name),
+			"items": project_stock.shelf_stock(name),
 		}
 
-	sites = _own_sites(row.name)
 	site_out = None
 	if sites:
 		site = sites[0]
@@ -423,7 +455,7 @@ def project_view(project):
 		"project": info,
 		"shelf": shelf_out,
 		"site": site_out,
-		"send_refusal": _send_refusal(row, bool(site_out), bool(site_out and site_out["disabled"])),
+		"send_refusal": _send_refusal(row_for_rules, bool(site_out), bool(site_out and site_out["disabled"])),
 	}
 
 
