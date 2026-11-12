@@ -183,6 +183,121 @@ item we spent."* A reading of it, built and open to correction; read it after th
 - **The address** carries the new filter as `pt_noprice=1` beside the others, written with
   `history.replaceState`; a person who is sent no prices has it switched off on load.
 
+## v1.816.0: saved views, the column picker and filters on columns
+
+Nik, 2026-11-12: *"for the Procurement Tracker, allow users to create special views and columns they
+see. That would let them create a view for auditing location of bins, or seeing financial information.
+These views should have some default presets, but everyone should be able to make custom views just for
+them and the browser remembers the last used layout. Column picking and filtering should be a thing."*
+Read it after the two sections above.
+
+| Layer | Where |
+|---|---|
+| What a view may hold, repair of a stored one, owner / quota / name rules | [`procurement_view_rules.py`](../erpnext_enhancements/procurement_view_rules.py) — app root, pure |
+| The columns, tests, limits and the shipped presets (one file, read by both sides) | [`data/procurement_tracker_views.json`](../erpnext_enhancements/data/procurement_tracker_views.json) |
+| The endpoints | [`procurement_views.py`](../erpnext_enhancements/procurement_views.py) — `get_views`, `save_view`, `rename_view`, `delete_view` |
+| The record | `Procurement Tracker View` — [`project_enhancements/doctype/procurement_tracker_view/`](../erpnext_enhancements/project_enhancements/doctype/procurement_tracker_view/) |
+| The widget's decisions | `logic.js`, section *saved views*: `clean_layout`, `resolve_start`, `shown_columns`, `rule_matches`, `write_view_query`, `remember` / `parse_remembered` |
+| The widget | `mountProcurementTracker`: the View / Columns / Column filters panels and the filter bar |
+
+**A view** is `{columns, sort, filters}` for one grouping. `filters` is the five that were always on
+the toolbar (Where, Status, Supplier, Needs action, No price only) plus `rules`: filters on a column,
+each `{column, op, ...}` with *contains* (text), *is any of* (a status, a place or a supplier),
+*is between* (a number or a date, either end optional) or *is blank / not blank*. Several rules all
+have to hold. A view never holds the search box. Every column of the two tables is in the picker;
+**the fields added to the picker are ones the feed already returned**, so there is no new query:
+
+| Column | Grouping | Field |
+|---|---|---|
+| Still to order, Still to arrive | both | `to_order_qty`, `waiting_qty` |
+| Due | by document (by item had it) | `expected_date` |
+| Supplier | by document (by item had it) | `supplier` |
+| Received at, Unit | both | `warehouse` / `received_at`, `stock_uom` |
+| Lines on this job | by item | `line_count` |
+| Received value, Lines with no price | by item (prices) | `received_value`, `no_price_lines` + `draft_no_price_lines` |
+
+*Not added, for a later change* (each would need a new query or a new field): the supplier's contact,
+what the item cost last time, the bin's own label (the where-now cell names the warehouse, not the
+shelf position), the receipt's date, who made the request, the project's cost code.
+
+**The presets** (`presets` in the JSON file; their columns and filters are in the pull request that
+added them, and a test holds each one to a layout the server accepts):
+
+| Preset | Grouping | Shows | Filters |
+|---|---|---|---|
+| Standard | document | the tracker as it was: Item, Where it is now, Requested, Ordered, Received, Rate, Amount, Status, Doc Chain | none |
+| Standard | item | Item, Requested, Ordered, Received, Unit price, Spent, Status, Where it is now, Due, Supplier, Documents | none |
+| Location audit | item | Item, Unit, Received, Still to arrive, Where it is now, Received at, Status, Due | none; sorted by Status, most urgent first |
+| Items with no place recorded | item | Item, Unit, Received, Where it is now, Received at, Status | Where it is now contains "no place recorded" |
+| Money (by item) | item | Item, Ordered, Received, Unit price, Spent, Received value, Lines with no price, Supplier, Status | none |
+| Money (by document) | document | Item, Ordered, Received, Rate, Amount, Supplier, Status | none |
+| Missing prices | item | Item, Ordered, Received, Unit price, Lines with no price, Supplier, Documents | No price only |
+| To chase | item | Item, Ordered, Received, Still to arrive, Status, Due, Supplier, Documents | Needs action only; sorted by Status |
+
+Two money views because Rate and Amount exist only by document and Unit price and Spent only by item.
+The "no place recorded" preset depends on the words `project_stock_rules.place_text` writes for
+`KIND_UNRECORDED` (a test holds the phrase to it).
+
+**Where views live, and why.** `Procurement Tracker View`, owned by whoever made it (Frappe's own
+`owner`), not per project. **Not `frappe.model.user_settings`:** on this site user settings are served
+from Redis and every deploy `FLUSHDB`s it (see the gotcha in `CLAUDE.md`). The DocType gives **no
+role but System Manager any permission**, so `/api/resource` and reports reach none of them; people use
+the four endpoints in `procurement_views.py`, which gate on Project read, check the owner before every
+read of a record, change and delete (a stranger's view reads as "not found", exactly like one that does
+not exist), hold the layout to the strict validator, and write only the caller's own records.
+`validate` on the controller is the backstop for the Desk form. A person keeps 50 views, with distinct
+names (ignoring case and spacing); a view keeps its grouping, and Save a copy is how a built-in one is
+changed. Reading never writes: `get_views` repairs a stored layout on the way out (an unknown column
+dropped, a filter that no longer fits dropped, nothing usable becomes the standard layout) and says
+`repaired`, so one bad record cannot break the tracker.
+
+**Who sees what is unchanged.** A layout is names, not data. The price keys are not in the response
+for a person who may not read Purchase Orders (`_price_access`, v1.814.0), so a view that names a price
+column has nothing to draw for them; `shown_columns` leaves it out and the tracker says which columns
+of the view are missing and why ("... not shown to you: prices are for people who may read Purchase
+Orders"), and a filter on a price column is set aside the same way. The picker lists the price columns
+for them as not available. A person without price access saving a copy of the Money view keeps its price
+column names; they simply do not draw for them.
+
+**Where a layout comes from when the tracker opens** (`resolve_start`, tested in the node suite):
+
+1. The **address** wins when it names a view or a filter (any `pt_*` key). `pt_layout` is the view's id
+   (absent for the two standard views, as a plain address already means them); `pt_view` is the
+   grouping. A view in the link that is not the person's (a stranger's id, a deleted one) opens the
+   standard view and says so.
+2. What the person changed **on top of that same view** (columns, sort, filters on columns, which the
+   address does not carry) comes back from what the form kept across a refresh, then from the browser's
+   memory, but only when that memory is of the same view. A link to another view does not take them.
+3. With **no address at all**, the browser's last layout is used, else Standard by document.
+
+The address also says when a filter the view has on has been turned **off** (`pt_action=0`,
+`pt_status=`), otherwise a reload would bring a cleared filter back from the saved view. It is written
+with `history.replaceState`, like every other key: **never a history entry, so Back and Forward are
+untouched**. Opening a view, changing a column or a filter writes nothing to the Project form
+(`frm.doc` is never touched), so the form is not marked changed.
+
+**What the browser remembers** is `localStorage["sf_pt_layout_v1:<user>"]`: per person (a shared
+browser does not leak one person's view names to another) and per grouping (going to By item and back
+brings By document back as it was), `{id, layout}` each, the search left out. Every access is in
+`try`/`catch`; without storage the tracker works and the layout is kept only for the life of the form
+(`frm.__pt_keep.layout`). What is read back is cleaned like any stored view, so a layout written by an
+older release is mended and an unreadable one is ignored. A write still waiting when the form refreshes
+is made, not dropped.
+
+**Switching grouping** takes the layout last used in that grouping (or its Standard view) and carries the
+toolbar filters and the search across, as it always has; the filters on columns stay with their view.
+
+**A sort.** A click on a header in By item changes the view's sort (a change to the view). A click on a
+document's table is that document's own, as before; the view's sort is the starting point of every
+document's table. "Not sorted" in the Columns panel clears it.
+
+**Known limits.** Filters on columns are not in the address (they are in the view and the browser's
+memory), so a shared link carries the view's id and the toolbar filters but not a person's unsaved
+column filters. A view shared by link opens for somebody else only if it is a built-in one; there is no
+sharing of personal views (not asked for). The picker reorders with up and down buttons, not by dragging.
+The by-item **Print list** still prints its own fixed columns, not the view's. Not run on a bench: see the
+pull request.
+
 ## First, the name collision
 
 ERPNext ships a **standard Script Report called "Procurement Tracker"** (module Buying,

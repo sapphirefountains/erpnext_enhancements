@@ -287,7 +287,7 @@ function openProcurementPrintDialog(project, group) {
  * `keep` holds what is expanded and how each table is sorted, on the form object, so a refresh
  * of the form (a save, a reload of the document) does not fold the tree shut again.
  */
-function mountProcurementTracker(frm, el, pt, data, keep) {
+function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 	const project = frm.doc.name;
 	const groups = data.groups || [];
 	// DocType groups collapsed by default: every group the first time, and on a later refresh any
@@ -302,6 +302,44 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 	const prices = data.prices || null;
 	const esc = frappe.utils.escape_html;
 	let address_timer = null;
+	let memory_timer = null;
+	// SAVED VIEWS (v1.815.0). `saved` is get_views' answer ({ catalog, mine, user }), or null when it could not
+	// be fetched: the tracker then draws from the two standard views and offers no saving.
+	const savedOk = !!(saved && saved.catalog);
+	const viewList = savedOk ? pt.merge_views(saved.catalog, saved.mine) : pt.fallback_views();
+	// What this browser remembers of the last layouts, per person. Storage can be missing or refuse
+	// (a private window, blocked site data): everything works without it, only the memory is lost.
+	const memoryKey = pt.storage_key(frappe.session.user);
+	let memory = null;
+	try {
+		memory = pt.parse_remembered(window.localStorage.getItem(memoryKey));
+	} catch (e) {
+		memory = null;
+	}
+	const start = pt.resolve_start({
+		search: window.location.search,
+		views: viewList,
+		kept: keep.layout || null,
+		memory: memory,
+		prices: !!prices,
+	});
+	// The view, column and filter panels close on a click elsewhere and on Escape.
+	let vm = null;
+	const closeMenus = () => {
+		if (vm && vm.menu) vm.menu = "";
+	};
+	const closeMenusOnEscape = (e) => {
+		if (e.key === "Escape") closeMenus();
+	};
+	const flushMemory = () => {
+		clearTimeout(memory_timer);
+		memory_timer = null;
+		try {
+			window.localStorage.setItem(memoryKey, pt.remembered_text(memory));
+		} catch (e) {
+			// No storage: the layout just is not remembered.
+		}
+	};
 
 	// The where-now cell, shared by both tables. Plain interpolation, so every value is escaped.
 	const WHERE_CELL = `
@@ -327,8 +365,16 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				located: data.located !== false,
 				// { currency, spent, ... } for a person who may see prices, else null.
 				prices: prices,
-				// { view, location, status, supplier, action, q }: what the address says.
-				view: pt.read_query(window.location.search),
+				// { view, location, status, supplier, action, noprice, q }: the grouping, the toolbar filters and the
+				// search, from the address when it names them, else from the layout the browser remembered.
+				view: start.view,
+				// { id, columns, sort, rules }: the saved view in use and what has been changed on top of it.
+				layout: start.layout,
+				views: viewList,
+				viewsOk: savedOk,
+				notes: start.notes.slice(),
+				menu: "",
+				busy: false,
 				collapsedGroups: keep.collapsedGroups,
 				// Individual documents collapsed by default (keyed "DocType::name").
 				collapsedDocs: keep.collapsedDocs,
@@ -337,30 +383,46 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				// different sorts, and a global sort would silently reorder collapsed tables
 				// nobody asked about.
 				sortByDoc: keep.sortByDoc,
-				itemSort: keep.itemSort,
 			};
 		},
 		// A write to the address that is still waiting belongs to this app. Once the app is gone
 		// (the form refreshed and mounted a new one) it must not fire: it would put the OLD view
-		// back into the address a quarter of a second after the new app read it.
+		// back into the address a quarter of a second after the new app read it. The browser's memory
+		// is the opposite: it is what the person last did, so a write still waiting is made now.
 		beforeUnmount() {
 			clearTimeout(address_timer);
 			address_timer = null;
+			if (memory_timer) flushMemory();
+			document.removeEventListener("click", closeMenus);
+			document.removeEventListener("keydown", closeMenusOnEscape);
+		},
+		mounted() {
+			vm = this;
+			document.addEventListener("click", closeMenus);
+			document.addEventListener("keydown", closeMenusOnEscape);
 		},
 		created() {
 			// frappe copied the address's query into route_options; ours come back out.
 			frappe.route_options = pt.without_own_keys(frappe.route_options);
-			// A shared link may carry "no price only" to someone who is shown no prices: there is no
-			// checkbox for it, so it must not be left switched on.
-			if (!prices) this.view.noprice = false;
-			if (pt.is_narrowed(this.view)) this.expandMatches();
+			// A layout the browser remembered is not in the address yet: write it, so a copied link names it.
+			this.writeAddress();
+			if (this.narrowed) this.expandMatches();
 		},
 		watch: {
 			view: {
 				deep: true,
 				handler() {
 					this.writeAddress();
-					if (pt.is_narrowed(this.view)) this.expandMatches();
+					this.persist();
+					if (this.narrowed) this.expandMatches();
+				},
+			},
+			layout: {
+				deep: true,
+				handler() {
+					this.writeAddress();
+					this.persist();
+					if (this.narrowed) this.expandMatches();
 				},
 			},
 		},
@@ -373,32 +435,72 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			currency() {
 				return (this.prices && this.prices.currency) || "";
 			},
-			lineColumns() {
-				return pt.visible_columns(pt.LINE_COLUMNS, this.hasPrices);
+			mode() {
+				return this.view.view;
 			},
-			itemColumns() {
-				return pt.visible_columns(pt.ITEM_COLUMNS, this.hasPrices);
+			// The saved view in use, whether it is the person's own or one of the built-in ones.
+			currentView() {
+				return this.views.find((v) => v.id === this.layout.id) || pt.standard_view(this.mode);
+			},
+			isOwn() {
+				return this.viewsOk && !this.currentView.preset;
+			},
+			changed() {
+				return pt.view_changed(this.view, this.layout, this.currentView.layout, this.mode, this.hasPrices);
+			},
+			listedViews() {
+				return pt.views_for(this.views);
+			},
+			// The columns on screen, in the view's order, and the ones the person may not see.
+			shown() {
+				return pt.shown_columns(this.layout.columns, this.mode, this.hasPrices);
+			},
+			cols() {
+				return this.shown.columns;
+			},
+			withheldText() {
+				return pt.withheld_text(this.shown.withheld.concat(this.ruleSet.withheld));
+			},
+			// The column filters that apply to this person.
+			ruleSet() {
+				return pt.usable_rules(this.layout.rules, this.mode, this.hasPrices);
+			},
+			filterCtx() {
+				return { rules: this.ruleSet.active, mode: this.mode, prices: this.hasPrices };
+			},
+			showDocPrice() {
+				return this.hasPrices && this.cols.some((c) => c.key === "rate" || c.key === "amount");
 			},
 			// The total under the by-item table, over the items it is showing: it follows every filter.
+			// Only when the Spent column is on screen.
 			spentSummary() {
-				return this.hasPrices ? pt.spent_summary(this.filteredItems, this.currency) : null;
+				return this.hasPrices && this.spentIndex >= 0 ? pt.spent_summary(this.filteredItems, this.currency) : null;
 			},
 			// The Spent column is not the first money column: the total sits under it.
 			spentIndex() {
-				return this.itemColumns.findIndex((c) => c.key === "spent");
+				return this.cols.findIndex((c) => c.key === "spent");
 			},
 			filteredGroups() {
-				return pt.filter_groups(this.groups, this.view);
+				return pt.filter_groups(this.groups, this.view, this.filterCtx);
 			},
 			// Filters first, then the sort: the order a person expects.
 			filteredItems() {
-				return pt.sort_rows(pt.filter_items(this.items, this.view), pt.ITEM_COLUMNS, this.itemSort);
+				return pt.sort_rows(pt.filter_items(this.items, this.view, this.filterCtx), pt.ITEM_COLUMNS, this.layout.sort);
 			},
 			narrowed() {
-				return pt.is_narrowed(this.view);
+				return pt.is_narrowed(this.view) || this.filterCtx.rules.length > 0;
 			},
 			byItem() {
 				return this.view.view === pt.VIEW_ITEMS;
+			},
+			totalLines() {
+				return pt.count_lines(this.groups);
+			},
+			// "Late · Received is at least 2 (hiding 12 of 40 items)": what is filtering and what it hides.
+			filterBar() {
+				const shown = this.byItem ? this.filteredItems.length : pt.count_lines(this.filteredGroups);
+				const total = this.byItem ? this.items.length : this.totalLines;
+				return pt.filter_bar_text(this.view, this.filterCtx.rules, this.mode, this.options, shown, total, this.byItem ? "items" : "lines");
 			},
 			summaryText() {
 				if (this.byItem) {
@@ -407,7 +509,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 						: `${this.items.length} items`;
 					return this.spentSummary ? `${base} · spent ${this.spentSummary.text}` : base;
 				}
-				const total = pt.count_lines(this.groups);
+				const total = this.totalLines;
 				return this.narrowed ? `${pt.count_lines(this.filteredGroups)} of ${total} lines` : `${total} lines`;
 			},
 			// A filter the address names stays in its list even when this job has no line for it,
@@ -423,6 +525,33 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				if (this.view.supplier && !list.includes(this.view.supplier)) list.push(this.view.supplier);
 				return list;
 			},
+			// The column picker: the columns on screen first, in order, then the rest.
+			pickerRows() {
+				const registry = pt.registry_for(this.mode);
+				const on = this.layout.columns.filter((k) => registry[k]);
+				const rows = on.concat(Object.keys(registry).filter((k) => !on.includes(k)));
+				return rows.map((key) => ({
+					key: key,
+					label: registry[key].label,
+					shown: on.includes(key),
+					locked: !!registry[key].price && !this.hasPrices,
+					first: on.indexOf(key) === 0,
+					last: on.indexOf(key) === on.length - 1,
+				}));
+			},
+			sortableShown() {
+				return this.cols.filter((c) => c.sortable);
+			},
+			// The columns a column filter can be put on: the ones on screen that can be filtered, and any
+			// column an existing filter already names.
+			ruleColumns() {
+				const registry = pt.registry_for(this.mode);
+				const keys = this.cols.map((c) => c.key).filter((k) => registry[k] && registry[k].filter);
+				this.layout.rules.forEach((r) => {
+					if (registry[r.column] && !keys.includes(r.column)) keys.push(r.column);
+				});
+				return keys.map((k) => ({ key: k, label: registry[k].label }));
+			},
 		},
 		methods: {
 			withCurrent(list, value) {
@@ -431,10 +560,207 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				return out;
 			},
 			setView(name) {
-				this.view.view = name;
+				if (name === this.view.view) return;
+				// To the other grouping: the layout last used there (or its standard view). The toolbar filters and
+				// the search come along, as they always have.
+				const kept = memory && memory.modes && memory.modes[name];
+				const known = kept && this.views.find((v) => v.id === kept.id && v.mode === name);
+				const id = known ? kept.id : pt.STANDARD_VIEW_IDS[name];
+				const layout = kept ? kept.layout : (this.views.find((v) => v.id === id) || pt.standard_view(name)).layout;
+				const next = pt.state_from_layout(layout, name, { id: id, q: this.view.q, prices: this.hasPrices });
+				const carry = ["location", "status", "supplier", "action", "noprice"];
+				carry.forEach((key) => {
+					if (this.view[key]) next.view[key] = this.view[key];
+				});
+				this.notes = [];
+				this.menu = "";
+				this.view = next.view;
+				this.layout = next.layout;
 			},
+			// Every filter and the search, on the toolbar and on columns. The columns stay as they are.
 			clearFilters() {
 				this.view = pt.cleared(this.view);
+				this.layout.rules = [];
+			},
+			findView(id) {
+				return this.views.find((v) => v.id === id) || null;
+			},
+			toggleMenu(name) {
+				this.menu = this.menu === name ? "" : name;
+			},
+			// Open one of the saved views: its columns, sort and filters, replacing whatever was on screen.
+			pickView(id) {
+				const v = this.findView(id);
+				if (!v) return;
+				const next = pt.state_from_layout(v.layout, v.mode, { id: v.id, q: this.view.q, prices: this.hasPrices });
+				this.notes = v.repaired ? [`"${v.name}" was out of date and has been reset where it no longer fit.`] : [];
+				// A sort a person chose on one document's table belongs to that screen, not to the next view.
+				Object.keys(this.sortByDoc).forEach((key) => delete this.sortByDoc[key]);
+				this.menu = "";
+				this.view = next.view;
+				this.layout = next.layout;
+			},
+			// What the person has on screen, as a view's layout.
+			currentLayout() {
+				return pt.layout_of(this.view, this.layout);
+			},
+			askName(title, initial, then) {
+				frappe.prompt(
+					[{ fieldname: "view_name", label: __("Name"), fieldtype: "Data", reqd: 1, default: initial }],
+					(values) => then(values.view_name),
+					title,
+					__("Save")
+				);
+			},
+			// One call to the saved-views endpoints; the person's message from the server is shown by frappe.
+			callViews(method, args, done) {
+				this.busy = true;
+				frappe.call({
+					method: "erpnext_enhancements.procurement_views." + method,
+					type: "POST",
+					args: args,
+					callback: (r) => {
+						this.busy = false;
+						if (r && r.message) done(r.message);
+					},
+					error: () => {
+						this.busy = false;
+					},
+				});
+			},
+			// A view the server returned goes into the list (replacing the one it changed) and is the one in use.
+			takeView(saved_view) {
+				const view = Object.assign({}, saved_view, { preset: false });
+				const at = this.views.findIndex((v) => v.id === view.id);
+				if (at >= 0) this.views.splice(at, 1, view);
+				else this.views.push(view);
+				this.layout.id = view.id;
+				this.menu = "";
+			},
+			saveChanges() {
+				const v = this.currentView;
+				if (!this.isOwn || this.busy) return;
+				this.callViews(
+					"save_view",
+					{ view_name: v.name, mode: v.mode, layout: JSON.stringify(this.currentLayout()), name: v.id },
+					(saved_view) => {
+						this.takeView(saved_view);
+						frappe.show_alert({ message: __("View saved"), indicator: "green" });
+					}
+				);
+			},
+			// A copy under a new name: how a built-in view is changed, and a way to branch one of your own.
+			saveAsNew() {
+				if (!this.viewsOk || this.busy) return;
+				const v = this.currentView;
+				this.askName(__("Save as a new view"), v.preset ? "" : v.name + " copy", (name) => {
+					this.callViews(
+						"save_view",
+						{ view_name: name, mode: this.mode, layout: JSON.stringify(this.currentLayout()) },
+						(saved_view) => {
+							this.takeView(saved_view);
+							frappe.show_alert({ message: __("View saved"), indicator: "green" });
+						}
+					);
+				});
+			},
+			renameView() {
+				const v = this.currentView;
+				if (!this.isOwn || this.busy) return;
+				this.askName(__("Rename view"), v.name, (name) => {
+					this.callViews("rename_view", { name: v.id, view_name: name }, (saved_view) => {
+						// The layout on screen is not touched: only the name.
+						const at = this.views.findIndex((x) => x.id === v.id);
+						if (at >= 0) this.views.splice(at, 1, Object.assign({}, this.views[at], { name: saved_view.name }));
+						this.menu = "";
+					});
+				});
+			},
+			deleteView() {
+				const v = this.currentView;
+				if (!this.isOwn || this.busy) return;
+				// frappe.confirm shows its message as HTML, and a view's name is whatever its owner typed.
+				frappe.confirm(__("Delete the view {0}? This cannot be undone.", [esc(v.name)]), () => {
+					this.callViews("delete_view", { name: v.id }, () => {
+						const at = this.views.findIndex((x) => x.id === v.id);
+						if (at >= 0) this.views.splice(at, 1);
+						this.pickView(pt.STANDARD_VIEW_IDS[this.mode]);
+					});
+				});
+			},
+			// Back to the view as it is saved: the changes made on top of it are dropped.
+			resetView() {
+				this.pickView(this.currentView.id);
+			},
+			toggleColumn(key, show) {
+				this.layout.columns = pt.with_column(this.layout.columns, key, show, this.mode);
+				this.layout.sort = pt.fix_sort(this.layout.sort, this.layout.columns, this.mode);
+			},
+			moveColumn(key, delta) {
+				this.layout.columns = pt.move_column(this.layout.columns, key, delta);
+			},
+			setSortKey(key) {
+				this.layout.sort = key ? { key: key, dir: (this.layout.sort && this.layout.sort.dir) || "asc" } : null;
+			},
+			setSortDir(dir) {
+				if (this.layout.sort) this.layout.sort = { key: this.layout.sort.key, dir: dir };
+			},
+			// Column filters. A half-made one filters nothing and is not saved.
+			addRule() {
+				if (this.layout.rules.length >= pt.LIMITS.max_rules) return;
+				const first = this.ruleColumns[0];
+				const rule = first && pt.new_rule(first.key, this.mode);
+				if (rule) this.layout.rules.push(rule);
+			},
+			removeRule(i) {
+				this.layout.rules.splice(i, 1);
+			},
+			ruleColumnChanged(i) {
+				const rule = pt.new_rule(this.layout.rules[i].column, this.mode);
+				if (rule) this.layout.rules.splice(i, 1, rule);
+			},
+			ruleOpChanged(i) {
+				const rule = this.layout.rules[i];
+				this.layout.rules.splice(i, 1, pt.rule_with_op(rule, rule.op));
+			},
+			ruleKind(rule) {
+				const col = pt.registry_for(this.mode)[rule.column];
+				return col ? col.filter : "text";
+			},
+			ruleOps(rule) {
+				return pt.OPERATORS[this.ruleKind(rule)] || [];
+			},
+			opLabel(op) {
+				return pt.OPERATOR_LABELS[op] || op;
+			},
+			ruleChoices(rule) {
+				const col = pt.registry_for(this.mode)[rule.column];
+				return col ? pt.choice_options(col, this.options) : [];
+			},
+			ruleHasChoice(rule, value) {
+				return (rule.values || []).includes(value);
+			},
+			toggleRuleChoice(rule, value, on) {
+				const values = (rule.values || []).filter((v) => v !== value);
+				if (on) values.push(value);
+				rule.values = values;
+			},
+			columnLabel(key) {
+				const col = pt.registry_for(this.mode)[key];
+				return col ? col.label : key;
+			},
+			modeLabel(mode) {
+				return mode === pt.VIEW_ITEMS ? "By item" : "By document";
+			},
+			noPriceCount(row) {
+				return (Number(row.no_price_lines) || 0) + (Number(row.draft_no_price_lines) || 0);
+			},
+			// The browser's memory of the layout in use (and, with it, what is kept across a refresh of the form).
+			persist() {
+				keep.layout = { mode: this.view.view, id: this.layout.id, layout: pt.layout_of(this.view, this.layout) };
+				memory = pt.remember(memory, this.view, this.layout);
+				clearTimeout(memory_timer);
+				memory_timer = setTimeout(flushMemory, 300);
 			},
 			// The address follows the view, a moment later: typing in the search box must not
 			// write the address on every key (Safari refuses more than 100 history writes in
@@ -447,7 +773,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 					if (frm.__pt_app && frm.__pt_app !== app) return;
 					const route = frappe.get_route() || [];
 					if (route[0] !== "Form" || route[1] !== "Project" || route[2] !== project) return;
-					const next = pt.write_query(window.location.search, this.view);
+					// The view the layout started as: what it says is filtering, and what a cleared filter must say is OFF.
+					const base = this.currentView.layout.filters;
+					const next = pt.write_view_query(window.location.search, this.view, this.layout.id, base);
 					if (next === window.location.search) return;
 					try {
 						window.history.replaceState(
@@ -634,15 +962,19 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				w.focus();
 				setTimeout(() => w.print(), 250);
 			},
+			// A document's table is sorted as the person last clicked it (and "no sort" is a choice they can make),
+			// else by the view's own sort.
 			sortFor(doctype, name) {
-				return this.sortByDoc[this.docKey(doctype, name)] || null;
+				const dk = this.docKey(doctype, name);
+				return dk in this.sortByDoc ? this.sortByDoc[dk] : this.layout.sort;
 			},
 			toggleSort(doctype, name, key) {
 				const dk = this.docKey(doctype, name);
-				this.sortByDoc[dk] = pt.next_sort(this.sortByDoc[dk], key, pt.LINE_COLUMNS);
+				this.sortByDoc[dk] = pt.next_sort(this.sortFor(doctype, name), key, pt.LINE_COLUMNS);
 			},
+			// The by-item table's sort is the view's: changing it is a change to the view.
 			toggleItemSort(key) {
-				this.itemSort = keep.itemSort = pt.next_sort(this.itemSort, key, pt.ITEM_COLUMNS);
+				this.layout.sort = pt.next_sort(this.layout.sort, key, pt.ITEM_COLUMNS);
 			},
 			sortIndicator(sort, key) {
 				if (!sort || sort.key !== key) return "⇅";
@@ -767,6 +1099,103 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 							<button type="button" class="btn btn-default btn-sm" :class="{ active: !byItem }" :aria-pressed="String(!byItem)" @click="setView('documents')">By document</button>
 							<button type="button" class="btn btn-default btn-sm" :class="{ active: byItem }" :aria-pressed="String(byItem)" @click="setView('items')">By item</button>
 						</div>
+
+						<!-- SAVED VIEWS (v1.815.0): the layout in use, a menu of the built-in views and the person's own,
+						     a column picker and the column filters. Each opens a panel under its button; Escape or a click
+						     elsewhere closes it. -->
+						<div class="pt-menu-wrap">
+							<button type="button" class="btn btn-default btn-sm pt-view-btn" aria-haspopup="true" :aria-expanded="String(menu === 'views')" @click.stop="toggleMenu('views')">
+								View: <b>{{ currentView.name }}</b><span v-if="changed" class="pt-changed"> · changed</span> <span aria-hidden="true">&#9662;</span>
+							</button>
+							<div v-if="menu === 'views'" class="pt-menu" role="menu" aria-label="Views" @click.stop>
+								<div class="pt-menu-head">Built-in views</div>
+								<button v-for="v in listedViews.presets" :key="v.id" type="button" role="menuitemradio" :aria-checked="String(v.id === layout.id)"
+									class="pt-menu-item" :class="{ current: v.id === layout.id }" :title="v.description || ''" @click="pickView(v.id)">
+									<span>{{ v.name }}</span><small>{{ modeLabel(v.mode) }}</small>
+								</button>
+								<div class="pt-menu-head">My views</div>
+								<p v-if="!viewsOk" class="pt-menu-note">Your saved views could not be loaded just now. Reload the page to try again.</p>
+								<p v-else-if="!listedViews.mine.length" class="pt-menu-note">You have none yet. Change the columns or filters, then choose Save as a new view. Only you can see your views.</p>
+								<button v-for="v in listedViews.mine" :key="v.id" type="button" role="menuitemradio" :aria-checked="String(v.id === layout.id)"
+									class="pt-menu-item" :class="{ current: v.id === layout.id }" @click="pickView(v.id)">
+									<span>{{ v.name }}</span><small>{{ modeLabel(v.mode) }}</small>
+								</button>
+								<div class="pt-menu-actions">
+									<button v-if="isOwn && changed" type="button" class="btn btn-primary btn-xs" :disabled="busy" @click="saveChanges">Save changes</button>
+									<button v-if="viewsOk" type="button" class="btn btn-default btn-xs" :disabled="busy" @click="saveAsNew">Save as a new view</button>
+									<button v-if="changed" type="button" class="btn btn-default btn-xs" @click="resetView">Undo changes</button>
+									<button v-if="isOwn" type="button" class="btn btn-default btn-xs" :disabled="busy" @click="renameView">Rename</button>
+									<button v-if="isOwn" type="button" class="btn btn-default btn-xs" :disabled="busy" @click="deleteView">Delete</button>
+								</div>
+								<p v-if="currentView.preset" class="pt-menu-note">A built-in view cannot be changed. Choose Save as a new view to keep your own version.</p>
+							</div>
+						</div>
+
+						<div class="pt-menu-wrap">
+							<button type="button" class="btn btn-default btn-sm" aria-haspopup="true" :aria-expanded="String(menu === 'columns')" @click.stop="toggleMenu('columns')">
+								Columns <span class="pt-count">{{ cols.length }}</span>
+							</button>
+							<div v-if="menu === 'columns'" class="pt-menu pt-menu--wide" role="dialog" aria-label="Choose columns" @click.stop>
+								<div class="pt-menu-head">Columns</div>
+								<ul class="pt-colist">
+									<li v-for="c in pickerRows" :key="c.key" :class="{ off: !c.shown }">
+										<label :title="c.locked ? 'Prices are for people who may read Purchase Orders' : ''">
+											<input type="checkbox" :checked="c.shown" :disabled="c.locked || (c.shown && cols.length <= 1 && !shown.withheld.length)" @change="toggleColumn(c.key, $event.target.checked)">
+											{{ c.label }}<small v-if="c.locked" class="pt-where-note"> not shown to you</small>
+										</label>
+										<span v-if="c.shown" class="pt-colmove">
+											<button type="button" class="btn btn-default btn-xs" :disabled="c.first" :aria-label="'Move ' + c.label + ' earlier'" @click="moveColumn(c.key, -1)">&uarr;</button>
+											<button type="button" class="btn btn-default btn-xs" :disabled="c.last" :aria-label="'Move ' + c.label + ' later'" @click="moveColumn(c.key, 1)">&darr;</button>
+										</span>
+									</li>
+								</ul>
+								<div class="pt-sortrow">
+									<label>Sort by
+										<select class="form-control input-xs" :value="layout.sort ? layout.sort.key : ''" @change="setSortKey($event.target.value)">
+											<option value="">Not sorted</option>
+											<option v-for="c in sortableShown" :key="c.key" :value="c.key">{{ c.label }}</option>
+										</select>
+									</label>
+									<select v-if="layout.sort" class="form-control input-xs" :value="layout.sort.dir" aria-label="Sort direction" @change="setSortDir($event.target.value)">
+										<option value="asc">Lowest first</option>
+										<option value="desc">Highest first</option>
+									</select>
+								</div>
+							</div>
+						</div>
+
+						<div class="pt-menu-wrap">
+							<button type="button" class="btn btn-default btn-sm" aria-haspopup="true" :aria-expanded="String(menu === 'rules')" @click.stop="toggleMenu('rules')">
+								Column filters <span v-if="layout.rules.length" class="pt-count">{{ layout.rules.length }}</span>
+							</button>
+							<div v-if="menu === 'rules'" class="pt-menu pt-menu--wide" role="dialog" aria-label="Filter on a column" @click.stop>
+								<div class="pt-menu-head">Show only rows that match all of these</div>
+								<p v-if="!layout.rules.length" class="pt-menu-note">No column filters. Add one to filter on any column that is shown.</p>
+								<div v-for="(rule, i) in layout.rules" :key="i" class="pt-rule">
+									<select class="form-control input-xs" v-model="rule.column" aria-label="Column" @change="ruleColumnChanged(i)">
+										<option v-for="c in ruleColumns" :key="c.key" :value="c.key">{{ c.label }}</option>
+									</select>
+									<select class="form-control input-xs" v-model="rule.op" aria-label="Test" @change="ruleOpChanged(i)">
+										<option v-for="op in ruleOps(rule)" :key="op" :value="op">{{ opLabel(op) }}</option>
+									</select>
+									<input v-if="rule.op === 'contains'" type="text" class="form-control input-xs" v-model="rule.value" maxlength="120" aria-label="Text to look for" placeholder="Text">
+									<span v-else-if="rule.op === 'between'" class="pt-rule-range">
+										<input :type="ruleKind(rule) === 'date' ? 'date' : 'number'" step="any" class="form-control input-xs" v-model="rule.min" :aria-label="ruleKind(rule) === 'date' ? 'From' : 'At least'" :placeholder="ruleKind(rule) === 'date' ? 'From' : 'At least'">
+										<span>to</span>
+										<input :type="ruleKind(rule) === 'date' ? 'date' : 'number'" step="any" class="form-control input-xs" v-model="rule.max" :aria-label="ruleKind(rule) === 'date' ? 'Until' : 'At most'" :placeholder="ruleKind(rule) === 'date' ? 'Until' : 'At most'">
+									</span>
+									<span v-else-if="rule.op === 'any_of'" class="pt-rule-choices">
+										<label v-for="o in ruleChoices(rule)" :key="o.value"><input type="checkbox" :checked="ruleHasChoice(rule, o.value)" @change="toggleRuleChoice(rule, o.value, $event.target.checked)"> {{ o.label }}</label>
+										<small v-if="!ruleChoices(rule).length" class="pt-where-note">Nothing on this job to choose from.</small>
+									</span>
+									<button type="button" class="btn btn-default btn-xs" :aria-label="'Remove the ' + columnLabel(rule.column) + ' filter'" @click="removeRule(i)">Remove</button>
+								</div>
+								<div class="pt-menu-actions">
+									<button type="button" class="btn btn-default btn-xs" :disabled="!ruleColumns.length || layout.rules.length >= 12" @click="addRule">Add a column filter</button>
+								</div>
+							</div>
+						</div>
+
 						<label class="pt-filter"><span>Where</span>
 							<select class="form-control input-xs" v-model="view.location">
 								<option value="">Anywhere</option>
@@ -788,18 +1217,26 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 						<label class="pt-check"><input type="checkbox" v-model="view.action"> Needs action only</label>
 						<!-- Only for a person who is shown prices: the lines purchasing has to put a price on. -->
 						<label v-if="hasPrices" class="pt-check" title="Order lines whose rate is 0 (not the free ones)"><input type="checkbox" v-model="view.noprice"> No price only</label>
-						<button v-if="narrowed" type="button" class="btn btn-default btn-xs pt-clear" @click="clearFilters">Clear</button>
 						<button v-if="byItem" type="button" class="btn-print pt-print-list" @click="printList"
 								title="Print the items on screen, with where each one is now">Print list</button>
 						<span class="pt-summary" aria-live="polite">{{ summaryText }}</span>
 					</div>
 				</div>
 
+				<!-- What is filtering and how many rows it hides, with the one control that clears them all. -->
+				<div v-if="filterBar" class="pt-filterbar" role="status">
+					<span class="pt-filterbar-text">Filtered: {{ filterBar }}</span>
+					<button type="button" class="btn btn-default btn-xs pt-clear" @click="clearFilters">Clear filters</button>
+				</div>
+				<!-- Why a column or a filter of the view is missing: the person may not see it. -->
+				<div v-if="withheldText" class="pt-note" role="status">{{ withheldText }}</div>
+				<div v-for="n in notes" :key="n" class="pt-note" role="status">{{ n }}</div>
+
 				<div v-if="!located" class="pt-warning" role="status">
 					The stock locations could not be read just now, so "Where it is now" is blank. Quantities and statuses are right. Reload the page to try again.
 				</div>
 
-				<!-- BY ITEM: one row per item for the job -->
+				<!-- BY ITEM: one row per item for the job. The columns are the view's, in its order. -->
 				<div v-if="byItem">
 					<div v-if="filteredItems.length === 0" class="text-center text-muted pt-empty">
 						{{ narrowed ? 'No item matches these filters.' : 'No procurement records found.' }}
@@ -808,64 +1245,72 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 						<table class="glass-table pt-table pt-items-table">
 							<thead>
 								<tr>
-									<th v-for="col in itemColumns" :key="col.key"
-										class="sortable" :class="[col.cls, { sorted: !!(itemSort && itemSort.key === col.key) }]"
-										role="button" tabindex="0" :aria-sort="sortAria(itemSort, col.key)" :title="'Sort by ' + col.label + (col.hint ? '. ' + col.hint : '')"
-										@click="toggleItemSort(col.key)"
-										@keydown.enter.prevent="toggleItemSort(col.key)"
-										@keydown.space.prevent="toggleItemSort(col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(itemSort, col.key) }}</span></th>
-									<th>Supplier</th>
-									<th>Documents</th>
+									<template v-for="col in cols" :key="col.key">
+										<th v-if="col.sortable"
+											class="sortable" :class="[col.cls, { sorted: !!(layout.sort && layout.sort.key === col.key) }]"
+											role="button" tabindex="0" :aria-sort="sortAria(layout.sort, col.key)" :title="'Sort by ' + col.label + (col.hint ? '. ' + col.hint : '')"
+											@click="toggleItemSort(col.key)"
+											@keydown.enter.prevent="toggleItemSort(col.key)"
+											@keydown.space.prevent="toggleItemSort(col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(layout.sort, col.key) }}</span></th>
+										<th v-else :class="col.cls">{{ col.label }}</th>
+									</template>
 								</tr>
 							</thead>
 							<tbody>
 								<tr v-for="row in filteredItems" :key="row.row_id" class="procurement-item-row">
-									<td data-label="Item" class="pt-item" :title="itemTitle(row)">
-										<span class="pt-item-code" v-html="hl(row.item_code)"></span>
-										<span class="pt-item-name" v-html="hl(row.item_name)"></span>
-									</td>
-									<td data-label="Requested" class="qty-col">{{ fmtQty(row.requested_qty) }}</td>
-									<td data-label="Ordered" class="qty-col">
-										{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
-									</td>
-									<td data-label="Received" class="qty-col">{{ fmtQty(row.received_qty) }}</td>
-									<template v-if="hasPrices">
-										<!-- One price when the lines agree, "low - high" when they differ. "No price" is a
-										     line with a rate of 0, never a $0.00. -->
-										<td data-label="Unit price" class="money-col" :title="'Per ' + (row.stock_uom || 'unit') + ', over the order lines that have a price'"><div class="pt-money-cell">
-											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).unit }">{{ itemPrice(row).unit }}</span>
-											<small v-for="n in itemPrice(row).unit_notes" :key="n" class="pt-where-note">{{ n }}</small>
-										</div></td>
-										<td data-label="Spent" class="money-col" :title="spentNote"><div class="pt-money-cell">
-											<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).spent }">{{ itemPrice(row).spent }}</span>
-											<small v-for="n in itemPrice(row).spent_notes" :key="n" class="pt-where-note">{{ n }}</small>
-										</div></td>
+									<template v-for="col in cols" :key="col.key">
+									<td v-if="col.key === 'item'" data-label="Item" class="pt-item" :title="itemTitle(row)">
+									<span class="pt-item-code" v-html="hl(row.item_code)"></span>
+									<span class="pt-item-name" v-html="hl(row.item_name)"></span>
+								</td>
+									<td v-else-if="col.key === 'requested'" data-label="Requested" class="qty-col">{{ fmtQty(row.requested_qty) }}</td>
+									<td v-else-if="col.key === 'ordered'" data-label="Ordered" class="qty-col">
+									{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
+								</td>
+									<td v-else-if="col.key === 'received'" data-label="Received" class="qty-col">{{ fmtQty(row.received_qty) }}</td>
+									<td v-else-if="col.key === 'to_order'" data-label="Still to order" class="qty-col">{{ fmtQty(row.to_order_qty) }}</td>
+									<td v-else-if="col.key === 'waiting'" data-label="Still to arrive" class="qty-col">{{ fmtQty(row.waiting_qty) }}</td>
+									<!-- One price when the lines agree, "low - high" when they differ. "No price" is a
+									     line with a rate of 0, never a $0.00. -->
+									<td v-else-if="col.key === 'unit_price'" data-label="Unit price" class="money-col" :title="'Per ' + (row.stock_uom || 'unit') + ', over the order lines that have a price'"><div class="pt-money-cell">
+										<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).unit }">{{ itemPrice(row).unit }}</span>
+										<small v-for="n in itemPrice(row).unit_notes" :key="n" class="pt-where-note">{{ n }}</small>
+									</div></td>
+									<td v-else-if="col.key === 'spent'" data-label="Spent" class="money-col" :title="spentNote"><div class="pt-money-cell">
+										<span :class="{ 'pt-no-price': !(row.spent_lines > 0) && itemPrice(row).spent }">{{ itemPrice(row).spent }}</span>
+										<small v-for="n in itemPrice(row).spent_notes" :key="n" class="pt-where-note">{{ n }}</small>
+									</div></td>
+									<td v-else-if="col.key === 'received_value'" data-label="Received value" class="money-col" title="What has arrived, at the order lines' rates. ERPNext holds no bills, so this is not what was billed or paid.">{{ row.received_value > 0 ? money(row.received_value) : '-' }}</td>
+									<td v-else-if="col.key === 'no_price'" data-label="Lines with no price" class="qty-col" title="Order lines of this item whose rate is 0 (not the free ones)"><span :class="{ 'pt-no-price': noPriceCount(row) > 0 }">{{ noPriceCount(row) || '-' }}</span></td>
+									<td v-else-if="col.key === 'status'" data-label="Status" class="pt-status">
+									<span v-for="s in row.states" :key="s" class="es-badge pt-pill" :data-theme="stateTheme(s)">{{ stateLabel(s) }}</span>
+								</td>
+									<template v-else-if="col.key === 'where'">${WHERE_CELL}</template>
+									<td v-else-if="col.key === 'due'" data-label="Due" class="pt-due">{{ row.expected_date ? formatDate(row.expected_date) : '-' }}</td>
+									<td v-else-if="col.key === 'supplier'" data-label="Supplier" class="pt-supplier">
+									<span v-for="s in row.suppliers" :key="s" class="pt-supplier-name" v-html="hl(s)"></span>
+									<span v-if="!(row.suppliers || []).length">-</span>
+								</td>
+									<td v-else-if="col.key === 'documents'" data-label="Documents" class="pt-docs">
+									<div v-for="(names, doctype) in row.documents" :key="doctype" class="doc-chain-step">
+										<span class="text-muted">{{ chainLabel(doctype) }}:</span>
+										<span v-for="name in names" :key="name" class="doc-link" @click="openDoc(doctype, name)" v-html="hl(name)"></span>
+									</div>
+								</td>
+									<td v-else-if="col.key === 'received_at'" data-label="Received at" class="pt-received-at">{{ receivedAt(row) || '-' }}</td>
+									<td v-else-if="col.key === 'unit'" data-label="Unit">{{ row.stock_uom || '-' }}</td>
+									<td v-else-if="col.key === 'lines'" data-label="Lines on this job" class="qty-col">{{ row.line_count }}</td>
 									</template>
-									<td data-label="Status" class="pt-status">
-										<span v-for="s in row.states" :key="s" class="es-badge pt-pill" :data-theme="stateTheme(s)">{{ stateLabel(s) }}</span>
-									</td>
-									${WHERE_CELL}
-									<td data-label="Due" class="pt-due">{{ row.expected_date ? formatDate(row.expected_date) : '-' }}</td>
-									<td data-label="Supplier" class="pt-supplier">
-										<span v-for="s in row.suppliers" :key="s" class="pt-supplier-name" v-html="hl(s)"></span>
-										<span v-if="!(row.suppliers || []).length">-</span>
-									</td>
-									<td data-label="Documents" class="pt-docs">
-										<div v-for="(names, doctype) in row.documents" :key="doctype" class="doc-chain-step">
-											<span class="text-muted">{{ chainLabel(doctype) }}:</span>
-											<span v-for="name in names" :key="name" class="doc-link" @click="openDoc(doctype, name)" v-html="hl(name)"></span>
-										</div>
-									</td>
 								</tr>
 							</tbody>
-							<!-- The total follows the filters: it is over the items shown. -->
+							<!-- The total follows the filters: it is over the items shown, and sits under the Spent column when that is on screen. -->
 							<tfoot v-if="spentSummary">
 								<tr class="pt-total">
 									<td v-if="spentIndex > 0" :colspan="spentIndex" data-label="Total">Total spent on these items <small class="pt-where-note">Ordered, not billed or paid</small></td>
 									<td class="money-col" data-label="Spent"><div class="pt-money-cell">{{ spentSummary.text }}
 										<small v-for="n in spentSummary.notes" :key="n" class="pt-where-note">{{ n }}</small>
 									</div></td>
-									<td :colspan="itemColumns.length - spentIndex + 1"></td>
+									<td v-if="cols.length - spentIndex - 1 > 0" :colspan="cols.length - spentIndex - 1"></td>
 								</tr>
 							</tfoot>
 						</table>
@@ -911,7 +1356,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 									     not gain a "0 req · 0 ord · 0 rec" that reads as an error. -->
 									<span v-if="hasRollup(doc)" class="doc-meta doc-qty-rollup" :title="rollupTitle(doc)">{{ rollupText(doc) }}</span>
 									<!-- This document's total for the job's lines. Only for a person who is shown prices. -->
-									<span v-if="hasPrices && docPrice(group.doctype, doc).text" class="doc-meta doc-price" :title="docPrice(group.doctype, doc).title">{{ docPrice(group.doctype, doc).text }}</span>
+									<span v-if="showDocPrice && docPrice(group.doctype, doc).text" class="doc-meta doc-price" :title="docPrice(group.doctype, doc).title">{{ docPrice(group.doctype, doc).text }}</span>
 									<span class="doc-meta doc-itemcount">{{ itemCountText(doc) }}</span>
 									<!-- @click.stop is load-bearing: .doc-header's own click toggles
 									     expansion, so without it every Receive click also collapses
@@ -935,7 +1380,8 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 										<table class="glass-table pt-table">
 											<thead>
 												<tr>
-													<th v-for="col in lineColumns" :key="col.key"
+												<template v-for="col in cols" :key="col.key">
+													<th v-if="col.sortable"
 														class="sortable"
 														:class="[col.cls, { sorted: !!(sortFor(group.doctype, doc.name) && sortFor(group.doctype, doc.name).key === col.key) }]"
 														role="button" tabindex="0"
@@ -944,100 +1390,103 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 														@click="toggleSort(group.doctype, doc.name, col.key)"
 														@keydown.enter.prevent="toggleSort(group.doctype, doc.name, col.key)"
 														@keydown.space.prevent="toggleSort(group.doctype, doc.name, col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(sortFor(group.doctype, doc.name), col.key) }}</span></th>
-													<!-- Not sortable: seven chain nodes in one cell, no single
-													     value to order by. No click handler, no cursor. -->
-													<th>Doc Chain</th>
+													<!-- Doc Chain is not sortable: seven chain nodes in one cell, no single value to order by. -->
+													<th v-else :class="col.cls">{{ col.label }}</th>
+												</template>
 												</tr>
 											</thead>
 											<tbody>
 												<tr v-if="(doc.items || []).length === 0">
-													<td :colspan="lineColumns.length + 1" class="text-center text-muted">No items.</td>
+													<td :colspan="cols.length" class="text-center text-muted">No items.</td>
 												</tr>
 												<tr v-for="row in displayItems(group.doctype, doc)" :key="row.row_id" class="procurement-item-row">
-													<td data-label="Item" class="pt-item"
-														@click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
-														:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }">
-														<span class="pt-item-code" v-html="hl(row.item_code)"></span>
-														<span class="pt-item-name" v-html="hl(row.item_name)"></span>
-													</td>
-													${WHERE_CELL}
-													<!-- "-", not 0, when nothing was requested: a direct Purchase
-													     Order line has no request behind it, and "nobody asked" is
-													     a different fact from "asked for none". -->
-													<td data-label="Requested" class="qty-col" :title="uomTitle(row)">{{ fmtQty(row.requested_qty) }}</td>
-													<td data-label="Ordered" class="qty-col" :title="lineOrderTitle(row)">
-														{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
-													</td>
-													<td data-label="Received" class="qty-col" :title="lineReceiveTitle(row)">{{ fmtQty(row.received_qty) }}</td>
-													<template v-if="hasPrices">
-														<!-- By the kind of document: an order's own line, a receipt at the ORDER's rate, a
-														     quote on its own. A request has no price: its cells stay empty. -->
-														<td data-label="Rate" class="money-col"><div class="pt-money-cell">
-															<span :class="{ 'pt-no-price': priceCells(row, group.doctype) && priceCells(row, group.doctype).state !== 'priced' }">{{ priceText(priceCells(row, group.doctype), 'rate') }}</span>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote' : 'quote' }}</small>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'receipt' && priceCells(row, group.doctype).draft" class="pt-where-note">draft receipt</small>
-														</div></td>
-														<td data-label="Amount" class="money-col" :title="priceTitle(priceCells(row, group.doctype))"><div class="pt-money-cell">
-															<span v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).state === 'priced'">{{ priceText(priceCells(row, group.doctype), 'amount') }}</span>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'order' && priceCells(row, group.doctype).received > 0 && priceCells(row, group.doctype).received !== priceCells(row, group.doctype).amount" class="pt-where-note">received {{ money(priceCells(row, group.doctype).received) }}</small>
-															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote, not spent' : 'quoted, not spent' }}</small>
-														</div></td>
-													</template>
-													<td data-label="Status" class="pt-status">
-														<!-- THIS line's own state, from its own quantities; never the
-														     document's label (the v1.194.0 defect). -->
-														<span v-for="s in row.line_states" :key="s" class="es-badge pt-pill" :data-theme="stateTheme(s)" :title="lineReceiveTitle(row)">{{ stateLabel(s) }}</span>
-														<small v-if="dueText(row)" class="pt-where-note">{{ dueText(row) }}</small>
-													</td>
-													<td data-label="Doc Chain">
-														<div class="doc-chain-container">
-															<div v-if="row.mr" class="doc-chain-step">
-																<span class="text-muted">MR:</span>
-																<span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="hl(row.mr)"></span>
-																<!-- THIS line's ordering status, not the request header's.
-																     The header status was painted here on every child row, so
-																     a fully ordered line inside a partially ordered request
-																     read "Partially Ordered". The request's own status is on
-																     the document header above, where it belongs. -->
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.order_status)" :title="lineOrderTitle(row)">{{ row.order_status }}</span>
-															</div>
-															<div v-if="row.rfq" class="doc-chain-step">
-																<span class="text-muted">RFQ:</span>
-																<span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="hl(row.rfq)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.rfq_status)">{{ row.rfq_status }}</span>
-															</div>
-															<div v-if="row.sq" class="doc-chain-step">
-																<span class="text-muted">SQ:</span>
-																<span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="hl(row.sq)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.sq_status)">{{ row.sq_status }}</span>
-															</div>
-															<div v-if="row.po" class="doc-chain-step">
-																<span class="text-muted">PO:</span>
-																<span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="hl(row.po)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.po_status)">{{ row.po_status }}</span>
-															</div>
-															<div v-if="row.pr" class="doc-chain-step">
-																<span class="text-muted">PR:</span>
-																<span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="hl(row.pr)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.pr_status)">{{ row.pr_status }}</span>
-																<!-- Supplier Returns (v1.807.0): this line's own Return, on the receipt it came in on. -->
-																<span v-if="canReturnLine(row)" class="doc-link" role="button" tabindex="0"
-																	:title="'Return ' + row.item_code + ' on ' + row.pr + ' to the supplier'"
-																	@click="returnToSupplier(row.pr, row.item_code)"
-																	@keydown.enter.prevent="returnToSupplier(row.pr, row.item_code)">Return</span>
-															</div>
-															<div v-if="row.pi" class="doc-chain-step">
-																<span class="text-muted">PI:</span>
-																<span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="hl(row.pi)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.pi_status)">{{ row.pi_status }}</span>
-															</div>
-															<div v-if="row.stock_entry" class="doc-chain-step">
-																<span class="text-muted">SE:</span>
-																<span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="hl(row.stock_entry)"></span>
-																<span class="es-badge pt-pill" :data-theme="statusTheme(row.stock_entry_status)">{{ row.stock_entry_status }}</span>
-															</div>
+													<template v-for="col in cols" :key="col.key">
+													<td v-if="col.key === 'item'" data-label="Item" class="pt-item"
+													@click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
+													:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }">
+													<span class="pt-item-code" v-html="hl(row.item_code)"></span>
+													<span class="pt-item-name" v-html="hl(row.item_name)"></span>
+												</td>
+													<template v-else-if="col.key === 'where'">${WHERE_CELL}</template>
+													<!-- "-", not 0, when nothing was requested: a direct Purchase Order line has no request behind it. -->
+													<td v-else-if="col.key === 'requested'" data-label="Requested" class="qty-col" :title="uomTitle(row)">{{ fmtQty(row.requested_qty) }}</td>
+													<td v-else-if="col.key === 'ordered'" data-label="Ordered" class="qty-col" :title="lineOrderTitle(row)">
+													{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
+												</td>
+													<td v-else-if="col.key === 'received'" data-label="Received" class="qty-col" :title="lineReceiveTitle(row)">{{ fmtQty(row.received_qty) }}</td>
+													<td v-else-if="col.key === 'to_order'" data-label="Still to order" class="qty-col">{{ fmtQty(row.to_order_qty) }}</td>
+													<td v-else-if="col.key === 'waiting'" data-label="Still to arrive" class="qty-col">{{ fmtQty(row.waiting_qty) }}</td>
+													<!-- Prices, by the kind of document: an order's own line, a receipt at the ORDER's rate, a quote on its own. A request has no price: its cells stay empty. -->
+													<td v-else-if="col.key === 'rate'" data-label="Rate" class="money-col"><div class="pt-money-cell">
+														<span :class="{ 'pt-no-price': priceCells(row, group.doctype) && priceCells(row, group.doctype).state !== 'priced' }">{{ priceText(priceCells(row, group.doctype), 'rate') }}</span>
+														<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote' : 'quote' }}</small>
+														<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'receipt' && priceCells(row, group.doctype).draft" class="pt-where-note">draft receipt</small>
+													</div></td>
+													<td v-else-if="col.key === 'amount'" data-label="Amount" class="money-col" :title="priceTitle(priceCells(row, group.doctype))"><div class="pt-money-cell">
+														<span v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).state === 'priced'">{{ priceText(priceCells(row, group.doctype), 'amount') }}</span>
+														<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'order' && priceCells(row, group.doctype).received > 0 && priceCells(row, group.doctype).received !== priceCells(row, group.doctype).amount" class="pt-where-note">received {{ money(priceCells(row, group.doctype).received) }}</small>
+														<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote, not spent' : 'quoted, not spent' }}</small>
+													</div></td>
+													<td v-else-if="col.key === 'status'" data-label="Status" class="pt-status">
+													<!-- THIS line's own state, from its own quantities; never the
+													     document's label (the v1.194.0 defect). -->
+													<span v-for="s in row.line_states" :key="s" class="es-badge pt-pill" :data-theme="stateTheme(s)" :title="lineReceiveTitle(row)">{{ stateLabel(s) }}</span>
+													<small v-if="dueText(row)" class="pt-where-note">{{ dueText(row) }}</small>
+												</td>
+													<td v-else-if="col.key === 'due'" data-label="Due" class="pt-due">{{ row.expected_date ? formatDate(row.expected_date) : '-' }}</td>
+													<td v-else-if="col.key === 'supplier'" data-label="Supplier" class="pt-supplier"><span v-if="row.supplier" class="pt-supplier-name" v-html="hl(row.supplier)"></span><span v-else>-</span></td>
+													<td v-else-if="col.key === 'received_at'" data-label="Received at" class="pt-received-at">{{ receivedAt(row) || '-' }}</td>
+													<td v-else-if="col.key === 'unit'" data-label="Unit">{{ row.stock_uom || '-' }}</td>
+													<td v-else-if="col.key === 'doc_chain'" data-label="Doc Chain">
+													<div class="doc-chain-container">
+														<div v-if="row.mr" class="doc-chain-step">
+															<span class="text-muted">MR:</span>
+															<span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="hl(row.mr)"></span>
+															<!-- THIS line's ordering status, not the request header's.
+															     The header status was painted here on every child row, so
+															     a fully ordered line inside a partially ordered request
+															     read "Partially Ordered". The request's own status is on
+															     the document header above, where it belongs. -->
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.order_status)" :title="lineOrderTitle(row)">{{ row.order_status }}</span>
 														</div>
-													</td>
+														<div v-if="row.rfq" class="doc-chain-step">
+															<span class="text-muted">RFQ:</span>
+															<span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="hl(row.rfq)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.rfq_status)">{{ row.rfq_status }}</span>
+														</div>
+														<div v-if="row.sq" class="doc-chain-step">
+															<span class="text-muted">SQ:</span>
+															<span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="hl(row.sq)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.sq_status)">{{ row.sq_status }}</span>
+														</div>
+														<div v-if="row.po" class="doc-chain-step">
+															<span class="text-muted">PO:</span>
+															<span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="hl(row.po)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.po_status)">{{ row.po_status }}</span>
+														</div>
+														<div v-if="row.pr" class="doc-chain-step">
+															<span class="text-muted">PR:</span>
+															<span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="hl(row.pr)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.pr_status)">{{ row.pr_status }}</span>
+															<!-- Supplier Returns (v1.807.0): this line's own Return, on the receipt it came in on. -->
+															<span v-if="canReturnLine(row)" class="doc-link" role="button" tabindex="0"
+																:title="'Return ' + row.item_code + ' on ' + row.pr + ' to the supplier'"
+																@click="returnToSupplier(row.pr, row.item_code)"
+																@keydown.enter.prevent="returnToSupplier(row.pr, row.item_code)">Return</span>
+														</div>
+														<div v-if="row.pi" class="doc-chain-step">
+															<span class="text-muted">PI:</span>
+															<span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="hl(row.pi)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.pi_status)">{{ row.pi_status }}</span>
+														</div>
+														<div v-if="row.stock_entry" class="doc-chain-step">
+															<span class="text-muted">SE:</span>
+															<span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="hl(row.stock_entry)"></span>
+															<span class="es-badge pt-pill" :data-theme="statusTheme(row.stock_entry_status)">{{ row.stock_entry_status }}</span>
+														</div>
+													</div>
+												</td>
+													</template>
 												</tr>
 											</tbody>
 										</table>
@@ -1102,7 +1551,7 @@ frappe.ui.form.on("Project", {
 			const seq = (frm.__pt_seq = (frm.__pt_seq || 0) + 1);
 			// What is expanded and how each table is sorted, kept across refreshes of one project.
 			if (!frm.__pt_keep || frm.__pt_keep.project !== project) {
-				frm.__pt_keep = { project: project, collapsedGroups: null, collapsedDocs: {}, sortByDoc: {}, itemSort: null };
+				frm.__pt_keep = { project: project, collapsedGroups: null, collapsedDocs: {}, sortByDoc: {}, layout: null };
 			}
 
 			$(wrapper).html('<div class="procurement-tracker-mount">Loading Procurement Tracker...</div>');
@@ -1122,8 +1571,19 @@ frappe.ui.form.on("Project", {
 				})
 			);
 
-			Promise.all([logic, feed]).then(
-				([, r]) => {
+			// The person's saved views (v1.815.0), fetched beside the feed. Never rejects: without them the tracker
+			// still draws, from the standard views, and says its saved views could not be loaded.
+			const saved = new Promise((resolve) =>
+				frappe.call({
+					method: "erpnext_enhancements.procurement_views.get_views",
+					callback: (r) => resolve((r && r.message) || null),
+					error: () => resolve(null),
+					silent: true,
+				})
+			);
+
+			Promise.all([logic, feed, saved]).then(
+				([, r, views]) => {
 					if (frm.__pt_seq !== seq || frm.doc.name !== project) return;
 					try {
 						const pt = window.sf_procurement_tracker;
@@ -1136,7 +1596,7 @@ frappe.ui.form.on("Project", {
 							$(wrapper).html('<div class="text-center text-muted">No procurement records found.</div>');
 							return;
 						}
-						frm.__pt_app = mountProcurementTracker(frm, mount, pt, data, frm.__pt_keep);
+						frm.__pt_app = mountProcurementTracker(frm, mount, pt, data, frm.__pt_keep, views);
 					} catch (e) {
 						console.error(e);
 						frappe.msgprint("Error inside procurement tracker callback: " + e.message);

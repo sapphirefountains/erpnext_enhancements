@@ -33,3 +33,13 @@ step the model cannot take, and will produce confident wrong answers about what 
 Add the markdown file under `skills/`, register it in `assistant_skills.json`, and add a row
 above. Keep each skill focused — they are loaded by name, so a broad skill costs context on
 every task that matches it loosely.
+
+## Not a skill: `procurement_tracker_views.json`
+
+The Procurement Tracker's saved views (v1.816.0): the columns each grouping can show, the
+filter tests each kind of column allows, the size limits a stored view is held to, and the eight
+views that ship with the app. It is read by `procurement_view_rules.py` (the server validates every
+stored view against it) and by `scripts/test_procurement_tracker.mjs`, which holds the browser's
+column registry (`public/js/procurement_tracker/logic.js`) to the same keys. Change a column here and
+in `logic.js` together; the node suite fails if they disagree. Nothing in it is read by Frappe
+Assistant Core.

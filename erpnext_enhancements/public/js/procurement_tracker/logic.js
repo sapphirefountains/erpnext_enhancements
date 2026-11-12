@@ -36,6 +36,8 @@ export const QUERY_KEYS = {
 	action: "pt_action",
 	noprice: "pt_noprice",
 	q: "pt_q",
+	// The saved view the layout started as (v1.815.0). Absent for the standard views.
+	layout: "pt_layout",
 };
 
 export function default_state() {
@@ -162,10 +164,13 @@ export function has_no_price(row) {
 	return (Number(r.no_price_lines) || 0) > 0 || (Number(r.draft_no_price_lines) || 0) > 0;
 }
 
-// Whether a line (or a by-item row: same keys, in the plural) passes the filters.
-export function row_matches_filters(row, state) {
+// Whether a line (or a by-item row: same keys, in the plural) passes the filters. `ctx` is optional:
+// { rules, mode, prices, doctype } adds the view's column filters (see rule_matches), which are
+// separate from the state because the address does not carry them.
+export function row_matches_filters(row, state, ctx) {
 	const r = row || {};
 	const s = state || {};
+	if (ctx && ctx.rules && ctx.rules.length && !rules_match(ctx.rules, r, ctx)) return false;
 	if (s.action && !r.needs_action) return false;
 	if (s.noprice && !has_no_price(r)) return false;
 	if (s.status && !(r.line_states || r.states || []).includes(s.status)) return false;
@@ -186,17 +191,19 @@ function doc_level_matches(doc, tokens) {
 // left is not shown. The search then works as it always has: a document whose own name, supplier
 // or status matches keeps all its (filtered) lines, otherwise only the lines that match.
 // Returns new group and document objects; the lines are the same objects, never copies.
-export function filter_groups(groups, state) {
+export function filter_groups(groups, state, ctx) {
 	const list = Array.isArray(groups) ? groups : [];
 	const tokens = tokenize(state && state.q);
-	const filtered = is_filtered(state);
+	const filtered = is_filtered(state) || !!(ctx && ctx.rules && ctx.rules.length);
 	if (!tokens.length && !filtered) return list;
 	const out = [];
 	list.forEach((group) => {
 		const docs = [];
 		(group.documents || []).forEach((doc) => {
 			const all = doc.items || [];
-			const base = filtered ? all.filter((row) => row_matches_filters(row, state)) : all;
+			// A line's price cells depend on the document it sits in, so the group's type goes along.
+			const line_ctx = ctx && ctx.rules && ctx.rules.length ? Object.assign({}, ctx, { doctype: group.doctype }) : ctx;
+			const base = filtered ? all.filter((row) => row_matches_filters(row, state, line_ctx)) : all;
 			if (filtered && !base.length) return;
 			let items = base;
 			if (tokens.length) {
@@ -211,11 +218,12 @@ export function filter_groups(groups, state) {
 	return out;
 }
 
-export function filter_items(items, state) {
+export function filter_items(items, state, ctx) {
 	const list = Array.isArray(items) ? items : [];
 	const tokens = tokenize(state && state.q);
-	if (!tokens.length && !is_filtered(state)) return list;
-	return list.filter((row) => row_matches_filters(row, state) && row_matches_search(row, tokens));
+	const ruled = !!(ctx && ctx.rules && ctx.rules.length);
+	if (!tokens.length && !is_filtered(state) && !ruled) return list;
+	return list.filter((row) => row_matches_filters(row, state, ctx) && row_matches_search(row, tokens));
 }
 
 // How many distinct lines a tree holds. The same line sits under every document its chain
@@ -266,44 +274,91 @@ export const AMOUNT_NOTE =
 // order as procurement_overview.STATE_RANK, which decides the one state a line is shown as.
 export const STATE_RANK = ["late", "to_order", "ordered", "partly_received", "received", "closed", "quote_only", "invoice_only"];
 
+// ------------------------------------------------------------------ the columns
+
 /**
- * Sortable columns of the item table inside a document. Declared once, outside the Vue options,
- * so the template and the comparator cannot drift apart: a header rendered against a key the
- * sorter does not know is a click that silently does nothing.
+ * Every column of the two tables, declared once, outside the Vue options, so the template, the
+ * comparator, the picker and the filters cannot drift apart: a header rendered against a key the
+ * sorter does not know is a click that silently does nothing. public/data (the server's catalog,
+ * data/procurement_tracker_views.json) lists the same keys, and scripts/test_procurement_tracker.mjs
+ * holds the two to each other.
  *
- * Doc Chain is deliberately absent. It is one cell holding up to seven chain nodes; there is no
- * single value to order by, and a click handler would mean inventing an ordering the column
+ * A column is:
+ *   label, cls, hint   what the header says, its CSS class, its tooltip
+ *   type               how a sort compares it: "text", "number" or "rank"
+ *   value(row, ctx)    what a sort orders by (ctx is the document's type, for a line's price)
+ *   sortable: false    a cell with no single value to order by (Doc Chain, Documents)
+ *   price: true        a price column: it exists only for a person who was sent prices
+ *   filter             what a filter on this column can be: "text", "choice", "number" or "date"
+ *   fv(row, ctx)       what a filter reads: the text, the choices (an array), the number, the date
+ *   ft(row)            (choice columns) the text a "contains" test reads, when it is not the choices
+ *   options            (choice columns) the filter list that names the choices: "locations", "states", "suppliers"
+ *
+ * Doc Chain is deliberately not sortable. It is one cell holding up to seven chain nodes; there
+ * is no single value to order by, and a click handler would mean inventing an ordering the column
  * does not show.
  */
+const joined = (list) => (Array.isArray(list) ? list.filter(Boolean).join(", ") : list || "");
+const document_names = (r) => {
+	const names = [];
+	Object.keys(r.documents || {}).forEach((dt) => (r.documents[dt] || []).forEach((n) => names.push(n)));
+	["mr", "rfq", "sq", "po", "pr", "pi", "stock_entry"].forEach((k) => r[k] && names.push(r[k]));
+	return names.join(" ");
+};
+const qty_column = (label, field) => ({ label, cls: "qty-col", type: "number", filter: "number", value: (r) => r[field], fv: (r) => r[field] });
+
 export const LINE_COLUMNS = {
-	item: { label: "Item", type: "text", value: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim() },
-	where: { label: "Where it is now", type: "text", value: (r) => r.where_now_text },
-	requested: { label: "Requested", cls: "qty-col", type: "number", value: (r) => r.requested_qty },
-	ordered: { label: "Ordered", cls: "qty-col", type: "number", value: (r) => r.ordered_qty },
-	received: { label: "Received", cls: "qty-col", type: "number", value: (r) => r.received_qty },
+	item: { label: "Item", type: "text", filter: "text", value: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim(), fv: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim() },
+	where: { label: "Where it is now", type: "text", filter: "choice", options: "locations", value: (r) => r.where_now_text, fv: (r) => r.location_kinds || [], ft: (r) => r.where_now_text || "" },
+	requested: qty_column("Requested", "requested_qty"),
+	ordered: qty_column("Ordered", "ordered_qty"),
+	received: qty_column("Received", "received_qty"),
+	to_order: qty_column("Still to order", "to_order_qty"),
+	waiting: qty_column("Still to arrive", "waiting_qty"),
 	// The price columns exist only for a person who was sent prices (`price: true`, see
-	// visible_columns). What a cell holds depends on the document it sits in (an order's rate, a
+	// shown_columns). What a cell holds depends on the document it sits in (an order's rate, a
 	// receipt's value, a quote), so the comparator gets that document's type as its second argument.
 	// A line with no price has no rate to order by: it is blank, and blanks sort last in both directions.
-	rate: { label: "Rate", cls: "money-col", type: "number", price: true, value: (r, doctype) => price_value(r, doctype, "rate") },
-	amount: { label: "Amount", cls: "money-col", type: "number", price: true, hint: AMOUNT_NOTE, value: (r, doctype) => price_value(r, doctype, "amount") },
-	status: { label: "Status", type: "rank", value: (r) => r.line_state, ranks: STATE_RANK },
+	rate: { label: "Rate", cls: "money-col", type: "number", filter: "number", price: true, value: (r, doctype) => price_value(r, doctype, "rate"), fv: (r, doctype) => price_value(r, doctype, "rate") },
+	amount: { label: "Amount", cls: "money-col", type: "number", filter: "number", price: true, hint: AMOUNT_NOTE, value: (r, doctype) => price_value(r, doctype, "amount"), fv: (r, doctype) => price_value(r, doctype, "amount") },
+	status: { label: "Status", type: "rank", filter: "choice", options: "states", value: (r) => r.line_state, ranks: STATE_RANK, fv: (r) => r.line_states || [], ft: (r) => r.line_state_label || "" },
+	due: { label: "Due", type: "text", filter: "date", value: (r) => r.expected_date, fv: (r) => r.expected_date },
+	supplier: { label: "Supplier", type: "text", filter: "choice", options: "suppliers", value: (r) => r.supplier, fv: (r) => (r.supplier ? [r.supplier] : []), ft: (r) => r.supplier || "" },
+	received_at: { label: "Received at", type: "text", filter: "text", value: (r) => r.received_at, fv: (r) => joined(r.received_at) },
+	unit: { label: "Unit", type: "text", filter: "text", value: (r) => r.stock_uom, fv: (r) => r.stock_uom || "" },
+	doc_chain: { label: "Doc Chain", type: "text", filter: "text", sortable: false, value: () => null, fv: (r) => document_names(r) },
 };
 
-// The by-item table. One more column than a document's table: the date the item is due.
+// The by-item table. More columns than a document's: the date the item is due, its suppliers and documents.
 export const ITEM_COLUMNS = {
 	item: LINE_COLUMNS.item,
 	requested: LINE_COLUMNS.requested,
 	ordered: LINE_COLUMNS.ordered,
 	received: LINE_COLUMNS.received,
+	to_order: LINE_COLUMNS.to_order,
+	waiting: LINE_COLUMNS.waiting,
 	// Sorted by what was paid per unit over the lines that have a price (their average), and by what
 	// was spent. An item with no priced line is blank: last in both directions.
-	unit_price: { label: "Unit price", cls: "money-col", type: "number", price: true, value: (r) => r.unit_price_avg },
-	spent: { label: "Spent", cls: "money-col", type: "number", price: true, hint: SPENT_NOTE, value: (r) => r.spent },
-	status: { label: "Status", type: "rank", value: (r) => r.state, ranks: STATE_RANK },
+	unit_price: { label: "Unit price", cls: "money-col", type: "number", filter: "number", price: true, value: (r) => r.unit_price_avg, fv: (r) => r.unit_price_avg },
+	spent: { label: "Spent", cls: "money-col", type: "number", filter: "number", price: true, hint: SPENT_NOTE, value: (r) => r.spent, fv: (r) => r.spent },
+	// What arrived, at the order lines' rates (the figure Spent's small print already carries).
+	received_value: { label: "Received value", cls: "money-col", type: "number", filter: "number", price: true, value: (r) => r.received_value, fv: (r) => r.received_value },
+	// How many of the item's order lines have no rate: what purchasing has to fix.
+	no_price: { label: "Lines with no price", cls: "qty-col", type: "number", filter: "number", price: true, value: (r) => no_price_count(r), fv: (r) => no_price_count(r) },
+	status: { label: "Status", type: "rank", filter: "choice", options: "states", value: (r) => r.state, ranks: STATE_RANK, fv: (r) => r.states || [], ft: (r) => r.state_label || "" },
 	where: LINE_COLUMNS.where,
-	due: { label: "Due", type: "text", value: (r) => r.expected_date },
+	due: LINE_COLUMNS.due,
+	supplier: { label: "Supplier", type: "text", filter: "choice", options: "suppliers", value: (r) => joined(r.suppliers), fv: (r) => r.suppliers || [], ft: (r) => joined(r.suppliers) },
+	documents: { label: "Documents", type: "text", filter: "text", sortable: false, value: () => null, fv: (r) => document_names(r) },
+	received_at: LINE_COLUMNS.received_at,
+	unit: LINE_COLUMNS.unit,
+	lines: { label: "Lines on this job", cls: "qty-col", type: "number", filter: "number", value: (r) => r.line_count, fv: (r) => r.line_count },
 };
+
+function no_price_count(r) {
+	if (r.no_price_lines === undefined && r.draft_no_price_lines === undefined) return null;
+	return (Number(r.no_price_lines) || 0) + (Number(r.draft_no_price_lines) || 0);
+}
 
 /**
  * Blanks sort last in BOTH directions, so the return value is never multiplied by the sort
@@ -343,7 +398,7 @@ export function compare(a, b, column) {
 export function sort_rows(rows, columns, sort, context) {
 	const list = rows || [];
 	const column = sort && columns[sort.key];
-	if (!column) return list;
+	if (!column || column.sortable === false) return list;
 	const dir = sort.dir === "desc" ? -1 : 1;
 	return list.slice().sort((a, b) => {
 		const av = column.value(a, context);
@@ -355,18 +410,55 @@ export function sort_rows(rows, columns, sort, context) {
 	});
 }
 
-// The columns a person sees: all of them, less the price columns when they were sent no prices.
+function column_view(registry, key) {
+	const c = registry[key];
+	return { key: key, label: c.label, cls: c.cls || "", hint: c.hint || "", sortable: c.sortable !== false };
+}
+
+// Every column of a registry, less the price columns when the person was sent no prices: the picker's
+// list, and what the tracker had before views.
 export function visible_columns(registry, prices) {
 	return Object.keys(registry)
 		.filter((key) => prices || !registry[key].price)
-		.map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "", hint: registry[key].hint || "" }));
+		.map((key) => column_view(registry, key));
+}
+
+// What a view puts on screen: its columns, in its order, less any the person may not see.
+//   { columns: [{ key, label, cls, hint, sortable }], withheld: ["Unit price", ...] }
+// A price column is withheld from a person who was sent no prices: the server leaves the prices out of
+// the response for them, so there is nothing to draw, and the view says so instead of showing an empty
+// column. Unknown keys (a column a later release removed) are skipped. A view left with nothing to show
+// falls back to every column the person may see in the standard order.
+export function shown_columns(keys, mode, prices) {
+	const registry = registry_for(mode);
+	const out = [];
+	const withheld = [];
+	const seen = new Set();
+	(Array.isArray(keys) ? keys : []).forEach((key) => {
+		if (typeof key !== "string" || !registry[key] || seen.has(key)) return;
+		seen.add(key);
+		if (registry[key].price && !prices) withheld.push(registry[key].label);
+		else out.push(column_view(registry, key));
+	});
+	if (!out.length) {
+		STANDARD_COLUMNS[mode === VIEW_ITEMS ? VIEW_ITEMS : VIEW_DOCUMENTS].forEach((key) => {
+			if (registry[key] && (prices || !registry[key].price)) out.push(column_view(registry, key));
+		});
+	}
+	return { columns: out, withheld: withheld };
+}
+
+// The sentence for a view whose price columns are not shown to this person.
+export function withheld_text(labels) {
+	if (!labels || !labels.length) return "";
+	return `${labels.join(", ")} ${labels.length === 1 ? "is" : "are"} not shown to you: prices are for people who may read Purchase Orders.`;
 }
 
 // The sort a click on a header leads to: ascending, descending, then none. Without the third
 // step line order is lost until the form is reloaded, and line order means something on a
 // request: it is how the job was grouped.
 export function next_sort(current, key, columns) {
-	if (!columns[key]) return current || null;
+	if (!columns[key] || columns[key].sortable === false) return current || null;
 	if (!current || current.key !== key) return { key, dir: "asc" };
 	if (current.dir === "asc") return { key, dir: "desc" };
 	return null;
@@ -483,7 +575,7 @@ export function return_words(entry) {
 
 // What the filters say is on screen, in words, for the line under the toolbar and the printed
 // list's heading: "Late · Project Shelf · needs action".
-export function describe_filters(state, options) {
+export function describe_filters(state, options, rules, mode) {
 	const s = state || {};
 	const o = options || {};
 	const label = (list, value) => {
@@ -496,6 +588,7 @@ export function describe_filters(state, options) {
 	if (s.supplier) parts.push(s.supplier);
 	if (s.action) parts.push("needs action");
 	if (s.noprice) parts.push("no price");
+	(rules || []).forEach((rule) => parts.push(describe_rule(rule, mode, o)));
 	if (tokenize(s.q).length) parts.push(`"${String(s.q).trim()}"`);
 	return parts.join(" · ");
 }
@@ -680,6 +773,568 @@ export function spent_summary(items, currency) {
 	if (out.no_price_lines > 0) out.notes.push(plural(out.no_price_lines, "line", "lines") + " with no price");
 	if (out.no_charge_lines > 0) out.notes.push(plural(out.no_charge_lines, "line", "lines") + " no charge");
 	return out;
+}
+
+// ------------------------------------------------------------------ saved views (v1.815.0)
+
+/*
+ * A VIEW is a named layout for one of the two groupings: which columns show and in what order, the
+ * sort, and the filters (the five of the toolbar, and any number of filters on a column). Three kinds
+ * of view reach the widget:
+ *
+ *   the standard views   the tracker as it was before views (data/procurement_tracker_views.json,
+ *                        ids std-documents and std-items; built in here as the fallback, so the tracker
+ *                        still draws when the views call fails)
+ *   the other presets    shipped with the app, read-only, from the same file
+ *   a person's own       stored on the server per user (Procurement Tracker View), never shared
+ *
+ * The widget keeps two objects: `view`, the flat state the address always carried (grouping and the
+ * five toolbar filters and the search), and `layout`, { id, columns, sort, rules }: the view the person
+ * picked, with any changes made on top of it. The two together are the unsaved layout; layout_of() writes
+ * them as a view's layout and view_changed() says whether they differ from the view's own.
+ *
+ * Where a layout comes from when the tracker opens (resolve_start): the ADDRESS wins when it names a view
+ * or a filter (a shared link, a reload, Back and Forward); changes made on top of that same view come
+ * back from what the browser remembered; with no address at all, the browser's last layout is used.
+ */
+
+export const STANDARD_VIEW_IDS = { documents: "std-documents", items: "std-items" };
+
+// The columns of the standard views, in order: the tracker as it has always been.
+export const STANDARD_COLUMNS = {
+	documents: ["item", "where", "requested", "ordered", "received", "rate", "amount", "status", "doc_chain"],
+	items: ["item", "requested", "ordered", "received", "unit_price", "spent", "status", "where", "due", "supplier", "documents"],
+};
+
+// The server's limits (data/procurement_tracker_views.json); the browser holds a layout to the same ones.
+export const LIMITS = { max_name_length: 60, max_rules: 12, max_text_length: 120, max_choices: 25, max_choice_length: 140 };
+
+export const OPERATORS = {
+	text: ["contains", "blank", "not_blank"],
+	choice: ["any_of", "contains", "blank", "not_blank"],
+	number: ["between", "blank", "not_blank"],
+	date: ["between", "blank", "not_blank"],
+};
+
+export const OPERATOR_LABELS = {
+	contains: "contains",
+	any_of: "is any of",
+	between: "is between",
+	blank: "is blank",
+	not_blank: "is not blank",
+};
+
+const FILTERS_OFF = { location: "", status: "", supplier: "", action: false, noprice: false };
+const BASIC_FILTERS = ["location", "status", "supplier", "action", "noprice"];
+const STORAGE_PREFIX = "sf_pt_layout_v1:";
+const STORAGE_LIMIT = 60000;
+
+export function mode_of(mode) {
+	return VIEWS.includes(mode) ? mode : VIEW_DOCUMENTS;
+}
+
+export function registry_for(mode) {
+	return mode_of(mode) === VIEW_ITEMS ? ITEM_COLUMNS : LINE_COLUMNS;
+}
+
+export function standard_layout(mode) {
+	const m = mode_of(mode);
+	return { columns: STANDARD_COLUMNS[m].slice(), sort: null, filters: Object.assign({}, FILTERS_OFF, { rules: [] }) };
+}
+
+export function standard_view(mode) {
+	const m = mode_of(mode);
+	return { id: STANDARD_VIEW_IDS[m], name: "Standard", mode: m, preset: true, description: "", layout: standard_layout(m) };
+}
+
+// What the tracker draws from when the views could not be fetched: the two standard views and none of
+// the person's own.
+export function fallback_views() {
+	return [standard_view(VIEW_DOCUMENTS), standard_view(VIEW_ITEMS)];
+}
+
+// The presets (from the catalog) and the person's own, as one list of views.
+export function merge_views(catalog, mine) {
+	const out = [];
+	((catalog && catalog.presets) || []).forEach((p) => out.push(Object.assign({}, p, { preset: true })));
+	(mine || []).forEach((v) => out.push(Object.assign({}, v, { preset: false })));
+	VIEWS.forEach((m) => {
+		if (!out.some((v) => v.id === STANDARD_VIEW_IDS[m])) out.push(standard_view(m));
+	});
+	return out;
+}
+
+// The views for the picker: the built-in ones in the order they ship, then the person's own by grouping and
+// name. With a grouping, only that grouping's.
+export function views_for(views, mode) {
+	const list = (views || []).filter((v) => !mode || v.mode === mode);
+	const by_name = (a, b) =>
+		String(a.mode).localeCompare(String(b.mode)) ||
+		String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
+	return { presets: list.filter((v) => v.preset), mine: list.filter((v) => !v.preset).sort(by_name) };
+}
+
+// ---- cleaning a layout
+
+function num_or_null(value) {
+	if (value === null || value === undefined || value === "") return null;
+	if (typeof value === "boolean") return NaN;
+	const n = Number(value);
+	return isFinite(n) && Math.abs(n) <= 1e12 ? n : NaN;
+}
+
+function date_or_null(value) {
+	if (value === null || value === undefined || value === "") return null;
+	return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !isNaN(Date.parse(value)) ? value : undefined;
+}
+
+// A column filter in its stored form, or null when it is not one the tracker can apply: an unknown
+// column, a column that cannot be filtered, a test that does not suit the column, or no value yet.
+// The same rule the server holds a saved view to (procurement_view_rules._rule).
+export function clean_rule(raw, mode) {
+	if (!raw || typeof raw !== "object") return null;
+	const col = registry_for(mode)[raw.column];
+	if (!col || !col.filter) return null;
+	if (!OPERATORS[col.filter].includes(raw.op)) return null;
+	const out = { column: raw.column, op: raw.op };
+	if (raw.op === "contains") {
+		const value = text(raw.value).slice(0, LIMITS.max_text_length);
+		if (!value) return null;
+		out.value = value;
+	} else if (raw.op === "any_of") {
+		const values = [];
+		(Array.isArray(raw.values) ? raw.values : []).forEach((v) => {
+			const t = text(v).slice(0, LIMITS.max_choice_length);
+			if (t && !values.includes(t) && values.length < LIMITS.max_choices) values.push(t);
+		});
+		if (!values.length) return null;
+		out.values = values;
+	} else if (raw.op === "between") {
+		const read = col.filter === "date" ? date_or_null : num_or_null;
+		const low = read(raw.min);
+		const high = read(raw.max);
+		if (low === undefined || high === undefined || Number.isNaN(low) || Number.isNaN(high)) return null;
+		if (low === null && high === null) return null;
+		if (low !== null && high !== null && low > high) return null;
+		out.min = low;
+		out.max = high;
+	}
+	return out;
+}
+
+// The column filters of a layout that are complete and valid. A half-made filter in the editor is not
+// one of them: it filters nothing and is not saved.
+export function ready_rules(rules, mode) {
+	return (Array.isArray(rules) ? rules : []).map((r) => clean_rule(r, mode)).filter(Boolean).slice(0, LIMITS.max_rules);
+}
+
+/**
+ * A layout the tracker can draw from whatever it was handed (a stored view, the browser's memory, a
+ * link): `{ layout, repaired }`. Unknown columns are dropped (a column a later release removed), so are
+ * column filters that no longer fit, and a sort on a column that is not shown; a layout left with no
+ * column becomes the standard one. `repaired` says it was not used as given. Never throws.
+ */
+export function clean_layout(raw, mode) {
+	const m = mode_of(mode);
+	const registry = registry_for(m);
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { layout: standard_layout(m), repaired: true };
+	let repaired = false;
+	const columns = [];
+	(Array.isArray(raw.columns) ? raw.columns : []).forEach((key) => {
+		if (typeof key === "string" && registry[key] && !columns.includes(key)) columns.push(key);
+		else repaired = true;
+	});
+	if (!columns.length) return { layout: standard_layout(m), repaired: true };
+	let sort = null;
+	if (raw.sort) {
+		const key = raw.sort.key;
+		if (columns.includes(key) && registry[key].sortable !== false && (raw.sort.dir === "asc" || raw.sort.dir === "desc")) sort = { key: key, dir: raw.sort.dir };
+		else repaired = true;
+	}
+	const f = raw.filters && typeof raw.filters === "object" ? raw.filters : {};
+	const filters = {
+		location: text(f.location).slice(0, LIMITS.max_choice_length),
+		status: text(f.status).slice(0, LIMITS.max_choice_length),
+		supplier: text(f.supplier).slice(0, LIMITS.max_choice_length),
+		action: f.action === true,
+		noprice: f.noprice === true,
+	};
+	const given = Array.isArray(f.rules) ? f.rules : [];
+	filters.rules = ready_rules(given, m);
+	if (filters.rules.length !== given.length) repaired = true;
+	return { layout: { columns: columns, sort: sort, filters: filters }, repaired: repaired };
+}
+
+// ---- layout <-> state
+
+/**
+ * The widget's two objects for a layout: `view` (grouping, the five toolbar filters, the search) and
+ * `layout` ({ id, columns, sort, rules }). `opts`: { id, q, prices }. For a person who is sent no prices
+ * the "no price only" filter is left off: there is no checkbox for it, and it would hide rows for a
+ * reason they cannot see.
+ */
+export function state_from_layout(layout, mode, opts) {
+	const o = opts || {};
+	const m = mode_of(mode);
+	const clean = clean_layout(layout, m).layout;
+	const f = clean.filters;
+	const view = Object.assign(default_state(), {
+		view: m,
+		location: f.location,
+		status: f.status,
+		supplier: f.supplier,
+		action: f.action,
+		noprice: o.prices === false ? false : f.noprice,
+		q: text(o.q),
+	});
+	return {
+		view: view,
+		layout: {
+			id: o.id || STANDARD_VIEW_IDS[m],
+			columns: clean.columns.slice(),
+			sort: clean.sort ? { key: clean.sort.key, dir: clean.sort.dir } : null,
+			rules: clean.filters.rules.map((r) => Object.assign({}, r)),
+		},
+	};
+}
+
+// The layout the current state is, in a view's stored form. The search box is not part of a view.
+export function layout_of(view, layout) {
+	const v = view || {};
+	const l = layout || {};
+	return clean_layout(
+		{
+			columns: l.columns,
+			sort: l.sort,
+			filters: {
+				location: v.location,
+				status: v.status,
+				supplier: v.supplier,
+				action: !!v.action,
+				noprice: !!v.noprice,
+				rules: l.rules,
+			},
+		},
+		v.view
+	).layout;
+}
+
+// Whether two layouts are the same view (the way they are stored: order and spelling settled).
+export function same_layout(a, b, mode) {
+	return JSON.stringify(clean_layout(a, mode).layout) === JSON.stringify(clean_layout(b, mode).layout);
+}
+
+// Whether the state differs from the saved view it started as. Without price access the "no price only"
+// filter is not the person's to set, so it does not count as a change.
+export function view_changed(view, layout, base, mode, prices) {
+	const strip = (l) => (prices ? l : Object.assign({}, l, { filters: Object.assign({}, l.filters, { noprice: false }) }));
+	const now = strip(layout_of(view, layout));
+	const was = strip(clean_layout(base, mode).layout);
+	return JSON.stringify(now) !== JSON.stringify(was);
+}
+
+// ---- columns
+
+// Show or hide a column. A new one goes at the end; the last one shown cannot be hidden.
+export function with_column(columns, key, show, mode) {
+	const list = Array.isArray(columns) ? columns.slice() : [];
+	if (!registry_for(mode)[key]) return list;
+	const has = list.includes(key);
+	if (show && !has) list.push(key);
+	if (!show && has && list.length > 1) return list.filter((k) => k !== key);
+	return list;
+}
+
+// Move a column one place (delta -1 earlier, +1 later). The ends stay where they are.
+export function move_column(columns, key, delta) {
+	const list = Array.isArray(columns) ? columns.slice() : [];
+	const from = list.indexOf(key);
+	const to = from + delta;
+	if (from < 0 || to < 0 || to >= list.length) return list;
+	list.splice(to, 0, list.splice(from, 1)[0]);
+	return list;
+}
+
+// A sort on a column that is no longer shown (or cannot be sorted) is no sort.
+export function fix_sort(sort, columns, mode) {
+	const registry = registry_for(mode);
+	if (!sort || !(columns || []).includes(sort.key) || !registry[sort.key] || registry[sort.key].sortable === false) return null;
+	return sort;
+}
+
+// ---- column filters
+
+function blank_value(value) {
+	return value === null || value === undefined || (typeof value === "string" && !value.trim()) || (Array.isArray(value) && !value.length);
+}
+
+export function rule_is_blank(col, row, doctype) {
+	if (col.ft) return !String(col.ft(row) || "").trim();
+	const raw = col.fv(row, doctype);
+	if (col.filter === "number") return blank_value(raw) || !isFinite(Number(raw));
+	return blank_value(raw);
+}
+
+/**
+ * Whether a line (or a by-item row) passes one column filter. `ctx`: { mode, prices, doctype }. A filter
+ * on a price column passes everything for a person who was sent no prices (there is nothing to filter
+ * on, and the filter bar says so); an unknown column, or a filter with no value yet, passes everything.
+ */
+export function rule_matches(rule, row, ctx) {
+	const c = ctx || {};
+	const r = clean_rule(rule, c.mode);
+	const col = registry_for(c.mode)[rule && rule.column];
+	if (!r || !col || (col.price && !c.prices)) return true;
+	const raw = col.fv(row || {}, c.doctype);
+	if (r.op === "blank") return rule_is_blank(col, row || {}, c.doctype);
+	if (r.op === "not_blank") return !rule_is_blank(col, row || {}, c.doctype);
+	if (r.op === "contains") {
+		const hay = col.ft ? col.ft(row || {}) : Array.isArray(raw) ? raw.join(" ") : raw;
+		return String(hay === null || hay === undefined ? "" : hay).toLowerCase().includes(r.value.toLowerCase());
+	}
+	if (r.op === "any_of") return (Array.isArray(raw) ? raw : [raw]).some((v) => r.values.includes(v));
+	// between
+	if (col.filter === "date") {
+		const d = blank_value(raw) ? "" : String(raw).slice(0, 10);
+		if (!d) return false;
+		return !((r.min && d < r.min) || (r.max && d > r.max));
+	}
+	if (blank_value(raw) || !isFinite(Number(raw))) return false;
+	const n = Number(raw);
+	return !((r.min !== null && n < r.min) || (r.max !== null && n > r.max));
+}
+
+export function rules_match(rules, row, ctx) {
+	return (rules || []).every((rule) => rule_matches(rule, row, ctx));
+}
+
+// The column filters that apply to this person, and the labels of those that do not (a filter on a
+// price column, for a person who was sent no prices).
+//   { active: [rule], withheld: ["Rate", ...] }
+export function usable_rules(rules, mode, prices) {
+	const registry = registry_for(mode);
+	const active = [];
+	const withheld = [];
+	ready_rules(rules, mode).forEach((rule) => {
+		if (registry[rule.column].price && !prices) withheld.push(registry[rule.column].label);
+		else active.push(rule);
+	});
+	return { active: active, withheld: withheld };
+}
+
+// The choices a "is any of" filter on a column offers: states and kinds of place come from the
+// server's filter lists ({value, label}), suppliers are names.
+export function choice_options(column, options) {
+	const o = options || {};
+	if (column.options === "suppliers") return (o.suppliers || []).map((s) => ({ value: s, label: s }));
+	return (o[column.options] || []).map((x) => ({ value: x.value, label: x.label }));
+}
+
+// A new, empty column filter for a column, for the editor to fill in. It filters nothing until it is
+// complete (ready_rules).
+export function new_rule(column, mode) {
+	const col = registry_for(mode)[column];
+	const kind = col && col.filter;
+	if (!kind) return null;
+	if (kind === "number" || kind === "date") return { column: column, op: "between", min: null, max: null };
+	if (kind === "choice") return { column: column, op: "any_of", values: [] };
+	return { column: column, op: "contains", value: "" };
+}
+
+// A rule moved to another test, with what no longer fits dropped.
+export function rule_with_op(rule, op) {
+	const out = { column: rule.column, op: op };
+	if (op === "contains") out.value = rule.value || "";
+	if (op === "any_of") out.values = Array.isArray(rule.values) ? rule.values.slice() : [];
+	if (op === "between") {
+		out.min = rule.min === undefined ? null : rule.min;
+		out.max = rule.max === undefined ? null : rule.max;
+	}
+	return out;
+}
+
+// One column filter in words: 'Received is between 1 and 5', 'Status is Late or To order'.
+export function describe_rule(rule, mode, options) {
+	const col = registry_for(mode)[rule && rule.column];
+	const label = col ? col.label : (rule && rule.column) || "";
+	const r = rule || {};
+	if (r.op === "blank") return `${label} is blank`;
+	if (r.op === "not_blank") return `${label} is not blank`;
+	if (r.op === "contains") return `${label} contains "${r.value}"`;
+	if (r.op === "any_of") {
+		const names = (r.values || []).map((v) => {
+			const hit = col && col.filter === "choice" ? choice_options(col, options).find((o) => o.value === v) : null;
+			return hit ? hit.label : v;
+		});
+		return `${label} is ${names.join(" or ")}`;
+	}
+	const date = col && col.filter === "date";
+	const low = r.min !== null && r.min !== undefined && r.min !== "";
+	const high = r.max !== null && r.max !== undefined && r.max !== "";
+	if (low && high) return `${label} is between ${r.min} and ${r.max}`;
+	if (low) return `${label} is ${date ? "on or after" : "at least"} ${r.min}`;
+	if (high) return `${label} is ${date ? "on or before" : "at most"} ${r.max}`;
+	return label;
+}
+
+// The line under the toolbar: what is filtering, and what it hides. `shown` and `total` count rows
+// (items, or lines). Empty when nothing narrows.
+export function filter_bar_text(state, rules, mode, options, shown, total, noun) {
+	const words = describe_filters(state, options, rules, mode);
+	if (!words) return "";
+	const hidden = Math.max(0, (Number(total) || 0) - (Number(shown) || 0));
+	const what = noun || "rows";
+	const hides = hidden === 0 ? "hiding nothing" : `hiding ${hidden} of ${total} ${what}`;
+	return `${words} (${hides})`;
+}
+
+// ---- the address
+
+/**
+ * Whether the address names a view or a filter: any key of the widget's own. A plain address names
+ * nothing, and the tracker opens on what the browser remembered.
+ */
+export function address_names_view(search) {
+	const params = new URLSearchParams(typeof search === "string" ? search : "");
+	return Object.values(QUERY_KEYS).some((key) => params.has(key));
+}
+
+/**
+ * The address's query for a layout: write_query's, plus the view's id (`pt_layout`, left out for the
+ * standard views, which a plain address already means) and a way to say "this filter is OFF" where the
+ * view itself has it on: without that, a reload would bring a cleared filter back from the saved view.
+ * `base` is the view's own filters ({ location, status, supplier, action, noprice }).
+ */
+export function write_view_query(search, state, layout_id, base) {
+	const params = new URLSearchParams(write_query(search, state));
+	const s = Object.assign(default_state(), state || {});
+	const b = base || {};
+	["location", "status", "supplier"].forEach((key) => {
+		if (!text(s[key]) && text(b[key])) params.set(QUERY_KEYS[key], "");
+	});
+	["action", "noprice"].forEach((key) => {
+		if (!s[key] && b[key]) params.set(QUERY_KEYS[key], "0");
+	});
+	const standard = Object.values(STANDARD_VIEW_IDS).includes(layout_id);
+	if (layout_id && !standard) params.set(QUERY_KEYS.layout, layout_id);
+	else params.delete(QUERY_KEYS.layout);
+	const out = params.toString();
+	return out ? `?${out}` : "";
+}
+
+// ---- what the browser remembers
+
+export function storage_key(user) {
+	return STORAGE_PREFIX + (user || "");
+}
+
+// The layout in use, added to what was stored: what was stored for the other grouping stays, so going to
+// By item and back brings By document back as it was.
+//   { v: 1, mode, modes: { documents: { id, layout }, items: { id, layout } } }
+export function remember(existing, view, layout) {
+	const v = view || {};
+	const mode = mode_of(v.view);
+	const out = { v: 1, mode: mode, modes: {} };
+	VIEWS.forEach((m) => {
+		const old = existing && existing.modes && existing.modes[m];
+		if (old) out.modes[m] = old;
+	});
+	out.modes[mode] = { id: (layout && layout.id) || STANDARD_VIEW_IDS[mode], layout: layout_of(v, layout) };
+	return out;
+}
+
+export function remembered_text(memory) {
+	try {
+		return JSON.stringify(memory);
+	} catch (e) {
+		return "";
+	}
+}
+
+// What was stored, if it can still be read: a layout per grouping, each cleaned (an outdated or
+// damaged one is mended or dropped). Anything unreadable is null: the tracker opens on the standard view.
+export function parse_remembered(textValue) {
+	if (typeof textValue !== "string" || !textValue || textValue.length > STORAGE_LIMIT) return null;
+	let data;
+	try {
+		data = JSON.parse(textValue);
+	} catch (e) {
+		return null;
+	}
+	if (!data || typeof data !== "object" || data.v !== 1 || !data.modes || typeof data.modes !== "object") return null;
+	const out = { v: 1, mode: mode_of(data.mode), modes: {} };
+	VIEWS.forEach((m) => {
+		const entry = data.modes[m];
+		if (!entry || typeof entry !== "object" || typeof entry.id !== "string") return;
+		out.modes[m] = { id: entry.id.slice(0, 80), layout: clean_layout(entry.layout, m).layout };
+	});
+	if (out.modes[out.mode]) return out;
+	const first = Object.keys(out.modes)[0];
+	return first ? Object.assign(out, { mode: first }) : null;
+}
+
+/**
+ * The layout the tracker opens with: `{ view, layout, notes }`.
+ *
+ *   opts.search    the address's query
+ *   opts.views     every view the person can use (merge_views)
+ *   opts.kept      the layout the form kept across a refresh, { mode, id, layout }, or null
+ *   opts.memory    what the browser remembered (parse_remembered), or null
+ *   opts.prices    whether the person was sent prices
+ *
+ * The address wins when it names a view or a filter; the changes the person made on top of the same view
+ * come back from `kept` or the browser's memory; an address that names a view the person does not have
+ * (somebody else's, or deleted) opens the standard view and says so. With no address, the last layout used
+ * is the one. Never throws and always returns something drawable.
+ */
+export function resolve_start(opts) {
+	const o = opts || {};
+	const views = o.views || [];
+	const find = (id) => views.find((v) => v.id === id) || null;
+	const prices = !!o.prices;
+	const notes = [];
+	const entry_for = (mode) => {
+		if (o.kept && o.kept.mode === mode) return o.kept;
+		const m = o.memory && o.memory.modes && o.memory.modes[mode];
+		return m ? { mode: mode, id: m.id, layout: m.layout } : null;
+	};
+	if (address_names_view(o.search)) {
+		const params = new URLSearchParams(typeof o.search === "string" ? o.search : "");
+		const address = read_query(o.search);
+		const wanted = text(params.get(QUERY_KEYS.layout));
+		let mode = address.view;
+		let id = STANDARD_VIEW_IDS[mode];
+		let base = (find(id) || standard_view(mode)).layout;
+		if (wanted) {
+			const hit = find(wanted);
+			if (hit) {
+				mode = hit.mode;
+				id = hit.id;
+				base = hit.layout;
+			} else {
+				notes.push("The view named in this link is not one of yours, so the standard view is shown.");
+			}
+		}
+		const kept = entry_for(mode);
+		const layout = kept && kept.id === id ? kept.layout : base;
+		const state = state_from_layout(layout, mode, { id: id, q: address.q, prices: prices });
+		BASIC_FILTERS.forEach((key) => {
+			if (params.has(QUERY_KEYS[key])) state.view[key] = address[key];
+		});
+		state.view.view = mode;
+		if (!prices) state.view.noprice = false;
+		return { view: state.view, layout: state.layout, notes: notes };
+	}
+	const entry = o.kept || (o.memory && entry_for(o.memory.mode));
+	if (entry) {
+		const mode = mode_of(entry.mode);
+		const known = find(entry.id);
+		const id = known && known.mode === mode ? entry.id : STANDARD_VIEW_IDS[mode];
+		const state = state_from_layout(entry.layout, mode, { id: id, q: "", prices: prices });
+		return { view: state.view, layout: state.layout, notes: notes };
+	}
+	const state = state_from_layout(standard_layout(VIEW_DOCUMENTS), VIEW_DOCUMENTS, { id: STANDARD_VIEW_IDS.documents, prices: prices });
+	return { view: state.view, layout: state.layout, notes: notes };
 }
 
 // ------------------------------------------------------------------ print
