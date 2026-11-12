@@ -7,6 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.805.0] - 2026-11-12
+
+### Added
+- **Four inventory reports: what is at each location and what should be, where an item is, what was
+  bought for a job, and what is at each job site.** Nikolas, 2026-11-12: "We need to create reports
+  for Inventory, where a user can query what's at each location and see what items should be in
+  there ... I want to keep a historical record of each projects items and what was ordered for
+  them. I want to be able to view what's at the Job Site, and have it be useful so it filters by
+  project as well." All four are Script Reports in Inventory Enhancements, with every filter
+  optional (a Query Report cannot have an optional filter on Frappe 16.53 and later, the reason
+  Warehouse Transactions is not one either). Each opens on a useful list with nothing chosen.
+  - **Location Contents** (`/desk/query-report/Location Contents`). Pick a bin, or a group (a
+    shelf, a bay, a row, the whole inventory): one row per item that is there or should be, with on
+    hand, on order, whether it is assigned there (Putaway Rule, Item Default or both) and a plain
+    status: *As expected*; *Assigned here, none on hand*; *Here, not assigned*; *Here, assigned to
+    another bin* (the bin is named); *On order to here*; *Empty, not decided*. Filters: Location,
+    Item, Item Group, Status, and "Only problems", which starts ticked. The cards over the table
+    count every row at the chosen locations whatever those two filters hide.
+    - **The list is the Bin Manager's list.** For each location the report calls
+      `api.stock_scan._items_at`, the function behind the Bin Manager and Stock Scan's location
+      screen, with no row cap. It carries no copy of the listing rule, so the two cannot disagree
+      about which items belong to a bin.
+    - **The Project Shelf, a job site and the Boneyard are never an item's bin.** Stock there
+      reads *Held here* and is never a problem, and none of the three is ever named as an item's
+      "other bin". That second half matters on production: Putaway Rules and Item Defaults there
+      name the warehouse that is becoming the Project Shelf.
+    - **Cost.** `_items_at` is one query per location. Locations with no Bin row, no enabled
+      Putaway Rule and no Item Default are skipped first, since none of that function's clauses can
+      list anything there: 141 of production's 222 locations were left on 2026-11-12, at about 6 ms
+      each. With an Item chosen only that item's locations are asked.
+  - **Where Is This Item.** Pick an item or type words from its code or name: one row per place,
+    in the order shop bins, the Project Shelf (one row per job), job sites (with the job), vehicles,
+    the Boneyard. Each row has on hand, on order, value, whether the place is one of the item's
+    bins, the item's bins by name, and the last movement there with its voucher. An item's assigned
+    bins list even when empty. With nothing chosen it is every item on hand or on order anywhere
+    (the first 5,000 places; a search is capped at 500 items; the note says when either cut
+    something).
+  - **Project Materials.** With a Project: one row per item ordered or received for it, with
+    Ordered (its submitted Purchase Order lines), Received (its submitted Purchase Receipt lines, so
+    a store run with no order counts), On Project Shelf, At Job Site, Used on Job, Returned to
+    Supplier, Still to Come, Order Closed Not Received, Not Located, and the Purchase Orders and
+    Receipts behind the row, each name opening its document. Nothing in it reads the job's status,
+    so a finished job reads the same: it is the record of what was bought for it. Without a
+    Project: one row per job that holds stock now, on the shelf and at its site, with quantity and
+    value.
+    - **Which lines are a job's.** An order line's own Project, else its order's (production
+      still has lines that carry only the header's). A receipt line's own, else its receipt's, else
+      the order line's it was received against, else that order's.
+    - **Not Located is the honest column.** Most of what was bought for past jobs never entered
+      stock, because most items had Maintain Stock off. For those, ordered and received are the
+      whole record and the row says "Not a stock item: where it is was never recorded". For a stock
+      item it is stock received into a shop bin, where stock is not kept by job (*Received Into*
+      names the bin, read from the stock ledger), or received before Maintain Stock was on.
+    - **Used on Job** is ERPNext's own "consumed" rule in quantities (Material Issues, Delivery
+      Notes and Sales Invoices carrying the job), less parts brought back with a Material Receipt
+      carrying the job. A transfer is not use. A Material Receipt straight onto the Project Shelf or
+      a job site is stock arriving, not parts coming back, and does not lower it.
+    - **Not read:** a Purchase Invoice that receives stock itself (none on production), rejected
+      quantities, drafts and canceled documents.
+  - **Job Site Contents.** One row per item at a job's site warehouse, filtered by Project,
+    Customer, Item and Item Group: on hand, on order, value, Arrived, Last Arrival and Days There.
+    What a job site is comes from `inventory_enhancements/job_sites.py`. A finished job's site
+    still lists, since stock left there is the stock most worth finding. *Arrived* is the day the
+    balance last rose from nothing, so parts all used and sent again are not counted from the first
+    delivery; a count is read from its balance, because ERPNext 16 stores a Stock Reconciliation
+    row with `actual_qty = 0`.
+  - **The Project Shelf before it is set up.** Nikolas decided on one shared shelf, named in
+    `Inventory Scanner Settings.project_shelf_warehouse`, a field a separate change adds. These
+    reports read it from the settings document with `.get`, so before the field exists (or while it
+    is blank, or names a group or a disabled warehouse) nothing is the Project Shelf: that
+    warehouse reads as an ordinary shop location, every "on the shelf" figure is 0, and each report
+    says "No Project Shelf is set" over its table. Nothing raises.
+  - **Whose stock is on the shelf: one adapter.** ERPNext keeps on-hand by item and warehouse and
+    has no job there, so `inventory_report_data.shelf_stock_by_project` is the only place the
+    reports ask. Today it answers from its own reading: the net of `actual_qty` at the shelf by the
+    Project each ledger row carries, fitted to what `tabBin` says is there (a job's share is its
+    net; the rest is under no job; when a count left less than the jobs claim, every share is
+    scaled by the same factor so they still add up). On production's would-be shelf on 2026-11-12
+    the two already agreed item for item. When the Project Shelf change provides its own function,
+    the adapter's one line calls it.
+  - **Returns to a supplier: one seam.** The column counts ERPNext's own return receipts now.
+    `inventory_report_data.supplier_returns_by_item` is where the Supplier Return record will be
+    read once that doctype exists; it answers nothing today. If a Supplier Return posts its stock
+    through a return receipt, the seam stays empty, or each return would count twice.
+  - **Who.** Location Contents and Where Is This Item: Stock User, Stock Manager, Inventory Clerk,
+    Item Manager, System Manager. Project Materials and Job Site Contents add Projects User,
+    Projects Manager, Purchase User and Purchase Manager. Frappe also requires report permission
+    on a report's reference doctype (`frappe.desk.query_report.get_report_doc`), so the reference
+    doctypes are ones Stock User can report on: Warehouse, and Purchase Order for Project
+    Materials. Every Inventory Clerk and every Projects or Purchase user on production also holds
+    Stock User (2026-11-12), so nobody the roles admit is then refused. No permission is changed.
+    The reads are SQL behind those gates, as `_items_at` is, and do not apply User Permissions.
+  - **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
+    hub's landing page). On the Operations Hub: Location Contents, Where Is This Item and Job Site
+    Contents in its Inventory card, Project Materials in its Reports card beside Pending Items by
+    Project. `patches/inventory_reports_hub_links` force-imports both workspaces, each in its own
+    savepoint (frappe's `import_doc` deletes the stored row before it inserts), logs a failure and
+    never raises. It writes no business data.
+  - **Print and export** are Frappe's own grid print, PDF, CSV and Excel. Each row holds plain
+    values under declared fieldnames; the status colors and the document links are added on screen
+    by the report's formatter, which the grid print also runs. No report has an `.html` template of
+    its own.
+  - **What ERPNext's own reports already cover** (read at v16.54.0, so none is rebuilt): Stock
+    Balance and Stock Projected Qty give quantities per item and warehouse; Stock Ledger gives
+    every movement; Warehouse Wise Item Balance Age and Value gives age by warehouse; Purchase
+    Order Analysis and Procurement Tracker give ordered against received per line; Project wise
+    Stock Tracking gives cost per project. None says whether an item belongs in the bin it is in,
+    whose job shelf stock is for, or where one job's items stand from order to use.
+  - **What the reports cannot show yet.** Where a non-stock item is (it never enters stock, so
+    it is never at a location, on the shelf or at a site: only ordered and received). Stock by job
+    in a shop bin. Anything on the Project Shelf until the shelf is set. Supplier Returns made
+    through the new record until its seam is filled. A disabled item, which the Bin Manager's
+    listing rule leaves out of Location Contents (Where Is This Item does find it).
+  - **Tests:** `tests/test_inventory_reports.py` (143 tests, bench-free, its own CI step): the
+    status rules, the shelf and site split, the project roll-up, the stay at a site, the reports
+    themselves on a `frappe` stub, the shape of every query, the exported rows and the hub links.
+    Each query shape was also run read-only against production. Not run: the reports in a browser
+    (no bench here), so the screen, the print dialog and the export buttons are unchecked.
+
 ## [1.802.2] - 2026-11-12
 
 ### Changed
