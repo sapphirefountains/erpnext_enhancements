@@ -1629,3 +1629,9 @@ erpnext_enhancements.patches.hide_audit_code_created_fields
 # skipped / failed; when any did not finish, ONE Error Log row "Job sites patch (add_job_sites_warehouse):
 # finish these steps by hand" lists all five with the by-hand fix.
 erpnext_enhancements.patches.add_job_sites_warehouse
+# Framed Triton widget (v1.802.0). Triton Assistant Settings gains `widget_mode` (Select, default "Classic"); a
+# default on a NEW field of a Single never reaches the row that already exists, so the field reads None on every
+# live site. Harmless to behaviour (api.triton_frame reads a missing or unknown mode as Classic) but the settings
+# form would open with an empty Widget box on the page where the pilot is switched on. Writes "Classic" ONLY where
+# tabSingles has no row for the field, never over a stored value. Reads tabSingles with db.sql. Safe twice.
+erpnext_enhancements.patches.backfill_triton_widget_mode

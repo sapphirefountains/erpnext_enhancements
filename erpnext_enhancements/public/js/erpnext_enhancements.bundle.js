@@ -162,6 +162,11 @@ import "./merge_tool/merge_tool.js";
 // (triton_widget.js here; process_document.js via doctype_js loads later).
 import "./global_enhancements/mermaid_theme.js";
 import "./global_enhancements/triton_widget.js";
+// The framed Triton widget's gate (v1.802.0): on the classic widget it reads one boot key and
+// returns. For a person on the framed widget it fetches triton_frame.bundle.js (never part of
+// this bundle) and hands the button back to triton_widget.js if the frame cannot work. After
+// triton_widget.js, because it wraps the SapphireTriton.ask that file defines.
+import "./global_enhancements/triton_frame_gate.js";
 // project_enhancements (task_tree_manager / column_selector / gantt_zoom are
 // preloaded globally so doctype scripts and lazy dashboard tabs can use their
 // erpnext_enhancements.* namespaces immediately)

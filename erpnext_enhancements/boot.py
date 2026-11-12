@@ -121,6 +121,9 @@ def boot_session(bootinfo):
 	CRM, Projects, Time Kiosk, Travel, Training and Stock Scan, the same as their Dock rail. Hiding
 	only; System Managers and Workspace Managers keep the whole grid. See
 	``setup.dock_profiles.trim_home_grid``.
+
+	``frappe.boot.triton_frame`` is there only for a person on the framed Triton widget (v1.802.0),
+	and its absence is what leaves the classic widget in charge. See :func:`_triton_frame`.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -147,6 +150,30 @@ def boot_session(bootinfo):
 	bootinfo.sf_guided = _guided_doctypes()
 	drop_unreadable_sidebar_links(bootinfo)
 	trim_home_grid(bootinfo)
+	triton_frame = _triton_frame()
+	if triton_frame:
+		bootinfo.triton_frame = triton_frame
+
+
+def _triton_frame():
+	"""``frappe.boot.triton_frame`` for a person on the framed Triton widget, else nothing (v1.802.0).
+
+	The key is absent for everyone on the classic widget, which is everyone until *Triton
+	Assistant Settings > Widget* is changed. Present, it is ``{"origin", "url", "page_context"}``:
+	where the frame loads from, and whether the Desk may tell it which record is open.
+	``public/js/global_enhancements/triton_frame_gate.js`` reads it to load the framed loader, and
+	the classic widget reads it to stay asleep. See ``api.triton_frame.frame_config``.
+
+	Never raises, and imported here rather than at the top: that module pulls in ``triton_chat``
+	and with it ``requests`` and ``werkzeug``, which the bench-free suites that import ``boot``
+	do not stub.
+	"""
+	try:
+		from erpnext_enhancements.api import triton_frame
+
+		return triton_frame.boot_payload()
+	except Exception:
+		return None
 
 
 def _field_help_doctypes():

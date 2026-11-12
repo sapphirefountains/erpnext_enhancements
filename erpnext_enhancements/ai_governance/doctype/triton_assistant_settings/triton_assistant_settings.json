@@ -23,7 +23,12 @@
   "triton_drive_picker_app_id",
   "access_section",
   "restrict_to_whitelist",
-  "allowed_users"
+  "allowed_users",
+  "framed_section",
+  "widget_mode",
+  "framed_site_url",
+  "column_break_framed",
+  "framed_pilot_users"
  ],
  "fields": [
   {
@@ -148,12 +153,44 @@
    "fieldtype": "Table",
    "label": "Allowed Users",
    "options": "Triton Allowed User"
+  },
+  {
+   "description": "The framed widget shows Triton's own chat page inside the panel, so the Desk and the Triton site are one chat program. Leave this on Classic until Triton serves that page. If the framed page does not load or cannot sign a person in, that person gets the classic widget in its place.",
+   "fieldname": "framed_section",
+   "fieldtype": "Section Break",
+   "label": "Framed Widget (pilot)"
+  },
+  {
+   "default": "Classic",
+   "description": "Classic: everyone gets today's widget. Framed for pilot users: only the people listed here get the framed widget, everyone else stays on Classic. Framed for everyone: everyone who can see the assistant gets the framed widget. The master switch and the allow-list above still decide who sees the assistant at all. A change takes effect the next time a person loads the Desk.",
+   "fieldname": "widget_mode",
+   "fieldtype": "Select",
+   "label": "Widget",
+   "options": "Classic\nFramed for pilot users\nFramed for everyone"
+  },
+  {
+   "description": "Leave blank to use the Gateway URL from Triton Settings, which is right when that is the Triton site's own address. Set it only when the Gateway URL is an internal address the browser cannot open. Must start with https://.",
+   "fieldname": "framed_site_url",
+   "fieldtype": "Data",
+   "label": "Framed Site Address"
+  },
+  {
+   "fieldname": "column_break_framed",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.widget_mode == 'Framed for pilot users'",
+   "description": "The people who get the framed widget while the pilot runs.",
+   "fieldname": "framed_pilot_users",
+   "fieldtype": "Table",
+   "label": "Pilot Users",
+   "options": "Triton Allowed User"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-07 00:00:00.000000",
+ "modified": "2026-11-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "AI Governance",
  "name": "Triton Assistant Settings",

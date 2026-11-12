@@ -2914,10 +2914,23 @@ import { detectPageContext } from "../capture/page_context.js";
 	}
 
 	// ---- bootstrap -------------------------------------------------------
+	// The framed widget (v1.802.0). For a person the server put on it, boot carries
+	// `triton_frame` and the loader (triton_frame.bundle.js, fetched by triton_frame_gate.js)
+	// owns the button and the panel, so this file stays asleep: no get_config call, nothing
+	// built, no second Alt+T listener. `_handedBack` is set by `startClassic()` below, which the
+	// gate calls when the framed widget cannot work, and from then on this file behaves as it
+	// always has. With no `triton_frame` in boot (everyone, until the setting is changed) the
+	// check is false and nothing here is different.
+	let _handedBack = false;
+	function framedWidgetOwnsTheButton() {
+		return !_handedBack && !!(frappe.boot && frappe.boot.triton_frame);
+	}
+
 	let _booted = false;
 	async function init() {
 		if (_booted) return; // Desk is a SPA; build the widget exactly once.
 		if (!window.frappe || !frappe.xcall || !frappe.session || frappe.session.user === "Guest") return;
+		if (framedWidgetOwnsTheButton()) return;
 		_booted = true;
 		let cfg;
 		try {
@@ -2968,6 +2981,14 @@ import { detectPageContext } from "../capture/page_context.js";
 			state.els.text.focus();
 		}
 		return true;
+	};
+
+	// The framed widget's way back (v1.802.0): build this widget after all, in place of a framed
+	// one that could not work. Called by triton_frame_gate.js, at most once. It builds and does
+	// not open; the gate opens it through `ask()` when the framed panel was open.
+	window.SapphireTriton.startClassic = function () {
+		_handedBack = true;
+		return init();
 	};
 
 	$(document).on("app_ready", init);
