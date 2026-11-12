@@ -3368,6 +3368,9 @@ def _currencies(monkeypatch, mapping, *, company="USD", price_lists=PRICE_LISTS)
 		("Canada Selling", "CAD", 0.73, ("CAD", 0.73)),
 		# A third currency: QuickBooks states no rate for it and none is invented.
 		("Euro Selling", "CAD", 0.73, ("EUR", None)),
+		# The same answer for a document in the company's own currency on a foreign list
+		# (review of #1440): the list's currency has no stated rate either.
+		("Canada Selling", "USD", 1, ("CAD", None)),
 		# No list, or one whose currency cannot be read: ERPNext leaves the pair as sent.
 		(None, "CAD", 0.73, ("CAD", 0.73)),
 		(None, "USD", 1, ("USD", 1)),
@@ -3445,6 +3448,36 @@ def test_a_third_currency_price_list_parks_a_create_and_leaves_a_refresh_alone(m
 	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00042", plc_conversion_rate=1.08)
 	mapping.apply_values(doc, {"plc_conversion_rate": None})
 	assert doc.plc_conversion_rate == 1.08 and doc.sets == []
+
+
+def test_a_company_currency_document_on_a_foreign_price_list_is_parked_on_create(monkeypatch):
+	"""The case the review of #1440 found undocumented. The document is in the company's
+	currency and the default selling list is not. No rate is known for the list's currency,
+	so none is sent and the create is parked for it. The old code sent the document's
+	currency and 1, which read as fine and left ERPNext to look a rate up for itself."""
+	mapping = _mappers(monkeypatch)
+	monkeypatch.setattr(mapping, "_default_price_list", lambda selling=True: "Canada Selling")
+	_currencies(monkeypatch, mapping)
+	payload = dict(_lines("SalesItemLineDetail"), Id="900", TxnDate="2026-11-02", CustomerRef={"value": "1"})
+
+	_doctype, values = mapping._map_sales_invoice(payload, SETTINGS)
+
+	assert (values["currency"], values["conversion_rate"]) == ("USD", 1)
+	assert (values["price_list_currency"], values["plc_conversion_rate"]) == ("CAD", None)
+	required = types.SimpleNamespace(
+		fieldname="plc_conversion_rate", fieldtype="Float", reqd=1, read_only=0, fetch_from=None, default=None
+	)
+	monkeypatch.setattr(
+		mapping.frappe, "get_meta", lambda doctype: types.SimpleNamespace(fields=[required]), raising=False
+	)
+	assert "Missing required field: plc_conversion_rate" in mapping.validate_mapped_values(
+		"Invoice", "Sales Invoice", values
+	)
+	# Said in the three places a reader would look.
+	wording = "neither the company's nor the document's"
+	assert wording in " ".join(_function_source(MAPPING_PY, "_price_list_pair").split())
+	assert wording in " ".join(_read(REPO / "CHANGELOG.md").split())
+	assert wording in " ".join(_read(APP / "quickbooks_online" / "README.md").split())
 
 
 def test_the_price_list_pair_is_never_compared_flagged_or_settled(monkeypatch):
@@ -3568,6 +3601,7 @@ def test_the_amount_rule_names_no_doctype_and_says_what_it_tolerates():
 	# The comment the review asked for: the tolerance, and why a rate change is not hidden.
 	assert "**What is tolerated, and how much.**" in written
 	assert "**Why a changed rate is never hidden by it.**" in written
+	assert "**The cent does not grow with the quantity**" in written
 
 	cent = {"erpnext": 99.99, "qbo": 100.0}
 	assert mapping._within_recomputed_amount(cent, 2)

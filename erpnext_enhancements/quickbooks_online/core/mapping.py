@@ -1579,7 +1579,8 @@ def _without_recomputed_amounts(differences: list, incoming_rows: list, precisio
 	0.6666999, stored as 0.667, moves a line by dollars and the rebuild still read Clean.
 	The bound now lives here, where every DocType meets it. A line that rounding moves by
 	more than a cent stays flagged after a write, and a person's *Keep ERPNext* is the
-	answer to it.
+	answer to it. **The cent does not grow with the quantity**, on purpose: a unit price
+	rounded by 0.0027 across 100 units is 27 cents out, and that line stays flagged.
 
 	**Why a changed rate is never hidden by it.** ``rate`` and ``qty`` get no tolerance at
 	all: each is compared at the precision its own field stores (``_same_for_review``),
@@ -4304,10 +4305,13 @@ def _price_list_pair(price_list, currency, rate, settings):
 	* The Price List is in the company's currency: that currency, 1.
 	* It is in the document's (foreign) currency: that currency, and the document's own
 	  exchange rate, which is what the Desk sets when the two currencies match.
-	* It is in a third currency: that currency and **no rate**. QuickBooks does not state
-	  one and this module does not guess one. On a create the preflight parks the document
-	  for a missing ``plc_conversion_rate``; on *Refresh draft* the draft keeps the rate it
-	  has.
+	* It is in any other currency, neither the company's nor the document's: that
+	  currency and **no rate**. A document in the company's own currency on a foreign Price
+	  List is this case too. QuickBooks states no rate for the list's currency and this
+	  module does not guess one. On a create the preflight parks the document for a missing
+	  ``plc_conversion_rate``, on purpose (the old code sent the document's currency and 1
+	  here, which made ERPNext look a rate up for itself); on *Refresh draft* the draft
+	  keeps the rate it has.
 
 	With no Price List, or one whose currency cannot be read, ERPNext leaves the pair as
 	sent, and the document's own currency is the only one there is to name.

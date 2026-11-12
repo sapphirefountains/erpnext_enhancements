@@ -222,8 +222,9 @@ decimals, so 3 at 33.33333 is 100.00 there and 99.99 here, and no rebuild can ch
 The cent is the allowance the Sales Invoice preflight gives a line. Until v1.801.2 the amount was
 dropped at any distance, which was only safe where a preflight had already bounded the total. A
 Quotation and a Purchase Order have none. A line that rounding moves by more than a cent now stays
-flagged after a write, and *Keep ERPNext* answers it. A sync's own comparison of a table still
-reports every cent.
+flagged after a write, and *Keep ERPNext* answers it. The cent does not grow with the quantity, on
+purpose: a unit price rounded by 0.0027 across 100 units is 27 cents out and stays flagged. A
+sync's own comparison of a table still reports every cent.
 
 **A later sync keeps the note a write left** (`_rejudge_what_a_write_left`, v1.801.2). The note
 names the fields the write left differing (`after_write_fields`). A sync that looks at the row
@@ -267,7 +268,7 @@ would set, and both header fields are build-only like the two above.
 |---|---|---|
 | the company's currency | that currency | 1 |
 | the document's currency, not the company's | that currency | the document's exchange rate |
-| a third currency | that currency | none: a create is parked for it, a *Refresh draft* keeps the draft's own |
+| any other currency, neither the company's nor the document's (a company-currency document on a foreign list included) | that currency | none: a create is parked for it on purpose, a *Refresh draft* keeps the draft's own |
 | unknown, or there is no Price List | the document's currency | as above for that currency |
 
 The buy-side mappers name no Price List; ERPNext takes the supplier's or the Buying Settings

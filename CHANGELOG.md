@@ -17,10 +17,12 @@ writes to a record by itself.
 - **A draft whose rebuilt line is more than one cent off QuickBooks' amount now stays flagged
   after *Refresh draft*.** It used to come back Clean at any distance (see Fixed). The answer to
   such a line is *Keep ERPNext*, once.
-- **A Sales Invoice or Quotation in a third currency is parked on create.** "Third" means the
-  document's currency is neither the company's nor the Price List's, and the Price List's is not
-  the company's. The reason given is the missing Price List exchange rate. Production has one
-  currency and three Price Lists, all in it, so no document there meets this today.
+- **A Sales Invoice or Quotation whose Price List is in a currency that is neither the company's
+  nor the document's is parked on create**, for the missing Price List exchange rate. A document
+  in the company's own currency on a foreign Price List is such a case. QuickBooks states no rate
+  for the list's currency and none is invented; parking is deliberate. (The old code sent the
+  document's currency and 1 there, which made ERPNext look a rate up for itself.) Production has
+  one currency and three Price Lists, all in it, so no document there meets this today.
 
 ### Fixed
 - **The Price List's currency on a document in another currency.** The Sales Invoice and Quotation
@@ -56,7 +58,9 @@ writes to a record by itself.
   `RECOMPUTED_AMOUNT_UNITS`): one unit of the last decimal the `amount` field stores, the same
   allowance the Sales Invoice preflight gives a line. It reads the row and names no DocType. A
   changed rate cannot hide behind it: `rate` and `qty` get no tolerance at all, and if either
-  differs the row is reported as found, amount included.
+  differs the row is reported as found, amount included. The cent does not grow with the
+  quantity, on purpose: a unit price rounded by 0.0027 across 100 units is 27 cents out, and that
+  line stays flagged until someone chooses *Keep ERPNext*.
 - **A sync no longer rewrites the note a person's own write left.** *Refresh draft* and *Use
   QuickBooks values* flag the mapping themselves when the saved record still differs, with a note
   marked `after_write`. The next sync that looked at the row replaced it with an ordinary one, and
@@ -82,7 +86,7 @@ writes to a record by itself.
   entry.
 
 ### Tests
-- `test_quickbooks_link_only.py`: 28 new cases (200 in the file). The Price List pair in each
+- `test_quickbooks_link_only.py`: 30 new cases (202 in the file). The Price List pair in each
   currency arrangement and through each mapper; a *Refresh draft* that comes back Clean whatever
   ERPNext makes of the pair; the amount rule on all four DocTypes; an ordinary sync pass, a newer
   payload, a mixed note, a hand correction and a clear that did not take, each against a note a
