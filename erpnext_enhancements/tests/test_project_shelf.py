@@ -74,6 +74,7 @@ _OWN_MODULES = (
 	"erpnext_enhancements.patches.rename_stores_to_project_shelf",
 	"erpnext_enhancements.api.procurement",
 	"erpnext_enhancements.inventory_enhancements.receipt_price",
+	"erpnext_enhancements.inventory_enhancements.project_stock",
 	"erpnext",
 	"erpnext.buying",
 	"erpnext.buying.doctype",
@@ -1766,6 +1767,57 @@ class TestWhereItMeetsThePriceRule(_Base):
 		)
 		self.assertEqual(item.item_defaults, [{"company": COMPANY, "default_warehouse": None}])
 		self.assertEqual(item.is_stock_item, 1)
+
+
+# --------------------------------------------------------------------------- the tracker's reading
+
+
+class TestTheProcurementTrackerReadsTheRealModule(_Base):
+	"""The Procurement Tracker (v1.811.0, ``inventory_enhancements/project_stock.py``) asks this
+	module what is on the shelf for a job. Its own suite uses a stand-in for this module; this is
+	the two real modules together."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.tracker = importlib.import_module("erpnext_enhancements.inventory_enhancements.project_stock")
+		base._item("PDT-0002", item_name="VALVE, BALL")
+
+	def test_it_finds_this_module_and_its_shelf(self):
+		self.assertIs(self.tracker._shelf_module(), shelf)
+		self.assertEqual(self.tracker.shelf_warehouse(), SHELF)
+
+	def test_a_jobs_shelf_stock_is_this_modules_answer(self):
+		_held(ITEM, (JOB_A, 3), (JOB_B, 2))
+		_held("PDT-0002", (JOB_A, 4))
+		rows = self.tracker.shelf_stock(JOB_A)
+		self.assertEqual(
+			sorted((row["item_code"], row["qty"], row["recorded"]) for row in rows),
+			[(ITEM, 3.0, 3.0), ("PDT-0002", 4.0, 4.0)],
+		)
+		self.assertEqual(self.tracker.shelf_by_project(), {JOB_A: {ITEM: 3.0, "PDT-0002": 4.0}, JOB_B: {ITEM: 2.0}})
+
+	def test_a_job_is_never_shown_more_than_the_shelf_holds(self):
+		"""Seven tagged, four there: the tracker offers four and says seven were recorded."""
+		_held(ITEM, (JOB_A, 7))
+		base._table("Bin")[f"{ITEM}@{SHELF}"]["actual_qty"] = 4.0
+		rows = self.tracker.shelf_stock(JOB_A)
+		self.assertEqual([(row["qty"], row["recorded"]) for row in rows], [(4.0, 7.0)])
+
+	def test_tagged_stock_that_has_all_left_is_not_on_the_tracker(self):
+		STATE["ledger"] = [
+			_row(ITEM, 7, DONE_JOB, after=7, day="2026-09-15"),
+			_row(ITEM, -7, None, "Stock Entry", "MAT-STE-0002", after=0, day="2026-09-23"),
+		]
+		base._bin(ITEM, SHELF, 0)
+		self.assertEqual(self.tracker.shelf_stock(DONE_JOB), [])
+		self.assertEqual(self.tracker.shelf_by_project(), {})
+
+	def test_with_no_shelf_set_up_the_tracker_shows_none(self):
+		_reset(shelf_on=False)
+		_held(ITEM, (JOB_A, 3))
+		self.assertEqual(self.tracker.shelf_stock(JOB_A), [])
 
 
 # --------------------------------------------------------------------------- the patch
