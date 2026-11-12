@@ -220,7 +220,7 @@ def _order(place):
 	return (PLACE_ORDER.index(place["kind"]), natural_key(place.get("label") or ""))
 
 
-def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None):
+def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returned=0.0):
 	"""The places one item is for one job, as a list of place dicts, in :data:`PLACE_ORDER`.
 
 	* ``ledger`` -- the job's ledger rows for this item, each ``{"warehouse", "kind", "qty"}``
@@ -229,6 +229,11 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None):
 	* ``own_sites`` -- the job's own site warehouses. Everything on hand there is the job's.
 	* ``kind_of`` -- ``warehouse -> kind`` (:func:`warehouse_kind`, already told the shelf and
 	  the sites); ``names`` -- ``{warehouse: warehouse_name}``.
+	* ``returned`` -- what the job's Supplier Returns say has left for the supplier
+	  (:func:`return_summary`). The purchase return behind a Supplier Return is the same goods the
+	  ledger's return rows count, so the two are never added: the larger one is shown. A return
+	  made in the Desk with no Supplier Return is only in the ledger; a return whose rows carry no
+	  job is only on the Supplier Return.
 
 	Each place is ``{"kind", "warehouse", "label", "qty", "text"}``. Nothing is listed at a
 	warehouse where the job's ledger sum is zero or negative (a take of shop stock for the job
@@ -239,14 +244,14 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None):
 	own = set(own_sites or ())
 	kind_of = kind_of or (lambda warehouse: KIND_SITE if warehouse in own else KIND_BIN)
 	net = defaultdict(float)
-	taken = returned = 0.0
+	taken = ledger_returned = 0.0
 	for row in ledger or ():
 		qty = _qty(row.get("qty"))
 		kind = row.get("kind")
 		if kind == LEDGER_ISSUE:
 			taken -= qty
 		elif kind == LEDGER_SUPPLIER_RETURN:
-			returned -= qty
+			ledger_returned -= qty
 		if row.get("warehouse"):
 			net[row["warehouse"]] += qty
 
@@ -263,8 +268,9 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None):
 			places.append(_place(kind_of(warehouse), here, warehouse, names.get(warehouse) or warehouse))
 	if taken > TOLERANCE:
 		places.append(_place(KIND_TAKEN, taken))
-	if returned > TOLERANCE:
-		places.append(_place(KIND_RETURNED, returned))
+	gone = max(ledger_returned, _qty(returned))
+	if gone > TOLERANCE:
+		places.append(_place(KIND_RETURNED, gone))
 	places.sort(key=_order)
 	return places
 
@@ -308,4 +314,81 @@ def shelf_rows(ledger, on_hand, shelf):
 		here = min(qty, _qty((on_hand or {}).get(item_code)))
 		if here > TOLERANCE:
 			out[item_code] = round(here, 6)
+	return out
+
+
+def capped_shelf_rows(rows, untagged):
+	"""The Project Shelf module's per-job rows (``project_shelf.shelf_stock()["rows"]``), held to
+	what the shelf can hand over.
+
+	That function reports each job's ledger balance as it stands: it can be negative, and the sum
+	over jobs can exceed what is on the shelf (a count or a move with no job on it makes the two
+	drift; it lists the drift as ``untagged``). A screen that offers "send this job's 6 to the
+	site" needs a number the shelf can honor, so a row is cut to the item's on-hand wherever the
+	module says the item's tagged total and its on-hand differ, and a row with nothing left is
+	dropped.
+
+	Returns ``[{"project", "item_code", "item_name", "stock_uom", "qty", "recorded"}]``:
+	``recorded`` is the job's ledger balance, and it is above ``qty`` exactly when the row was cut.
+	"""
+	on_hand = {
+		row.get("item_code"): _qty(row.get("on_hand")) for row in untagged or () if row.get("item_code")
+	}
+	out = []
+	for row in rows or ():
+		code = row.get("item_code")
+		recorded = _qty(row.get("qty"))
+		qty = recorded
+		if code in on_hand:
+			qty = min(recorded, max(on_hand[code], 0.0))
+		if not code or qty <= TOLERANCE:
+			continue
+		out.append(
+			{
+				"project": row.get("project"),
+				"item_code": code,
+				"item_name": row.get("item_name") or code,
+				"stock_uom": row.get("stock_uom"),
+				"qty": round(qty, 6),
+				"recorded": round(recorded, 6),
+			}
+		)
+	return out
+
+
+def return_summary(lines):
+	"""A job's Supplier Return lines (``supplier_returns.returned_lines(project=...)``) by item:
+	``{item_code: {"gone": qty, "returns": [{"supplier_return", "status", "qty", "gone", "open"}]}}``.
+
+	``gone`` adds up the stock-unit quantity of the lines whose goods have left (*Sent Back* and
+	after). ``returns`` is one entry per Supplier Return, in the order they came, its lines of the
+	item added together, so the tracker can name each return and say how far along it is. A line
+	with no item, or a return with no name, is skipped.
+	"""
+	out = {}
+	for line in lines or ():
+		code = line.get("item_code")
+		name = line.get("supplier_return")
+		if not code or not name:
+			continue
+		qty = _qty(line.get("stock_qty") if line.get("stock_qty") is not None else line.get("qty"))
+		entry = out.setdefault(code, {"gone": 0.0, "returns": []})
+		gone = bool(line.get("gone"))
+		if gone:
+			entry["gone"] += qty
+		held = next((r for r in entry["returns"] if r["supplier_return"] == name), None)
+		if held:
+			held["qty"] = round(held["qty"] + qty, 6)
+		else:
+			entry["returns"].append(
+				{
+					"supplier_return": name,
+					"status": line.get("status"),
+					"qty": round(qty, 6),
+					"gone": gone,
+					"open": bool(line.get("open")),
+				}
+			)
+	for entry in out.values():
+		entry["gone"] = round(entry["gone"], 6)
 	return out

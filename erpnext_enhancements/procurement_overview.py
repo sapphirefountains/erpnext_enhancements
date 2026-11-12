@@ -368,7 +368,8 @@ def where_now(found, received=None, waiting=False):
 
 	``location_kinds`` is what the location filter matches on: the kinds of place, with every
 	shop location other than the shelf folded into "shop bins", plus *not received yet* and
-	*not tracked*.
+	*not tracked*. ``supplier_returns`` is each Supplier Return that names the item for the job
+	(``project_stock_rules.return_summary``), which the tracker lists under the places.
 	"""
 	kinds = []
 	if found is None:
@@ -376,9 +377,21 @@ def where_now(found, received=None, waiting=False):
 		text = NOT_RECEIVED_TEXT if waiting and _qty(received) <= TOLERANCE else ""
 		if waiting:
 			kinds.append(NOT_RECEIVED)
-		return {"location_tracked": None, "where_now": [], "where_now_text": text, "location_kinds": kinds}
+		return {
+			"location_tracked": None,
+			"where_now": [],
+			"where_now_text": text,
+			"location_kinds": kinds,
+			"supplier_returns": [],
+		}
+	# The Supplier Returns that name the item for this job, each with its status: shown under the
+	# places, for a non-stock item too.
+	returns = list(found.get("supplier_returns") or ())
 	if not found.get("is_stock_item"):
 		kinds.append(NOT_TRACKED)
+		if any(r.get("gone") for r in returns):
+			# Its place is not tracked, but that it went back is on record.
+			kinds.append(stock_rules.KIND_RETURNED)
 		if waiting:
 			kinds.append(NOT_RECEIVED)
 		return {
@@ -386,6 +399,7 @@ def where_now(found, received=None, waiting=False):
 			"where_now": [],
 			"where_now_text": NOT_TRACKED_TEXT,
 			"location_kinds": kinds,
+			"supplier_returns": returns,
 		}
 	places = stock_rules.with_unrecorded(found.get("places"), received)
 	for place in places:
@@ -397,7 +411,13 @@ def where_now(found, received=None, waiting=False):
 	text = stock_rules.places_text(places)
 	if not text:
 		text = NOT_RECEIVED_TEXT if waiting else NEVER_RECEIVED_TEXT
-	return {"location_tracked": True, "where_now": places, "where_now_text": text, "location_kinds": kinds}
+	return {
+		"location_tracked": True,
+		"where_now": places,
+		"where_now_text": text,
+		"location_kinds": kinds,
+		"supplier_returns": returns,
+	}
 
 
 def attach(rows, found_items=None, today=None):
@@ -450,6 +470,7 @@ def attach(rows, found_items=None, today=None):
 				"where_now_text": block["where_now_text"],
 				"where_now_lines": line_count,
 				"location_kinds": kinds,
+				"supplier_returns": block["supplier_returns"],
 			}
 		)
 	return items

@@ -431,6 +431,15 @@ export function shared_where_note(row) {
 	return `For all ${lines} lines of this item on the job.`;
 }
 
+// A Supplier Return under an item's places, after its name and quantity: where it stands. The
+// goods of one that is still being arranged are still here, which the status alone does not say.
+export function return_words(entry) {
+	const e = entry || {};
+	const status = String(e.status || "").trim();
+	if (e.gone) return status ? `sent back (${status})` : "sent back";
+	return status ? `to go back (${status})` : "to go back";
+}
+
 // What the filters say is on screen, in words, for the line under the toolbar and the printed
 // list's heading: "Late · Project Shelf · needs action".
 export function describe_filters(state, options) {

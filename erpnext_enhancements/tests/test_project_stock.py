@@ -10,7 +10,9 @@ Three layers:
   of its own (so this suite has its own CI step): the lookup is a fixed handful of queries
   however many lines the project has, a site with no Project Shelf setting simply has no shelf,
   a failing settings read or job-site read never raises, and the Project Shelf adapter answers
-  with the same rule.
+  from the Project Shelf's own module when it is installed (``project_shelf.shelf_stock``, cut to
+  what the shelf holds) and by the same rule from the ledger when it is not. The job's Supplier
+  Returns are read the same way: a module that is not there yet means no returns on record.
 * ``project_enhancements/__init__.py`` cannot be imported without a bench (it pulls in the email
   and print modules), so its new functions are lifted out of the source and run against
   stand-ins: the overview is gated on Project read before anything is read, and a where-now
@@ -54,6 +56,8 @@ _MODULES = (
 	"frappe",
 	"erpnext_enhancements.inventory_enhancements.project_stock",
 	"erpnext_enhancements.inventory_enhancements.job_sites",
+	"erpnext_enhancements.inventory_enhancements.project_shelf",
+	"erpnext_enhancements.inventory_enhancements.supplier_returns",
 )
 
 STATE = {}
@@ -87,6 +91,15 @@ def _install_frappe_stub():
 
 	def sql(query, values=None, as_dict=False):
 		STATE["sql"].append((query, values))
+		if "group by sle.project, sle.item_code" in " ".join(query.split()):
+			# The shelf fallback: each job's balance at the shelf, by item. This suite's ledger rows
+			# are one job's unless a row says otherwise.
+			sums = {}
+			for r in STATE["ledger"]:
+				project = r.get("project") or PROJECT
+				if r["warehouse"] == values["shelf"] and values.get("project") in (None, project):
+					sums[(project, r["item_code"])] = sums.get((project, r["item_code"]), 0) + r["qty"]
+			return [_Row(project=p, item_code=i, qty=q) for (p, i), q in sums.items() if q > 0]
 		return [_Row(r) for r in STATE["ledger"]]
 
 	def get_all(doctype, filters=None, fields=None, **kwargs):
@@ -155,9 +168,31 @@ def setUpModule():
 	stock = importlib.import_module("erpnext_enhancements.inventory_enhancements.project_stock")
 
 
+def _install_module(name, **functions):
+	"""Stand in for a sibling release's module: importable from the package, with these functions."""
+	import erpnext_enhancements.inventory_enhancements as package
+
+	module = types.ModuleType(f"erpnext_enhancements.inventory_enhancements.{name}")
+	for key, fn in functions.items():
+		setattr(module, key, fn)
+	sys.modules[module.__name__] = module
+	setattr(package, name, module)
+	return module
+
+
+def _remove_module(name):
+	import erpnext_enhancements.inventory_enhancements as package
+
+	sys.modules.pop(f"erpnext_enhancements.inventory_enhancements.{name}", None)
+	if hasattr(package, name):
+		delattr(package, name)
+
+
 def tearDownModule():
 	import erpnext_enhancements.inventory_enhancements as package
 
+	_remove_module("project_shelf")
+	_remove_module("supplier_returns")
 	if _ORIGINAL.get("job_sites_attr") is None:
 		if hasattr(package, "job_sites"):
 			delattr(package, "job_sites")
@@ -210,6 +245,7 @@ class TestPlacesFor(unittest.TestCase):
 		# A non-stock item is known, and has no places: the caller says "not tracked".
 		self.assertEqual(out["items"]["LABOR"], {
 			"is_stock_item": False, "item_name": "Install labor", "stock_uom": "Hour", "places": [],
+			"supplier_returns": [],
 		})
 
 	def test_the_lookup_is_set_based_whatever_the_number_of_lines(self):
@@ -292,10 +328,12 @@ class TestShelfStock(unittest.TestCase):
 		self.assertEqual(
 			stock.shelf_stock(PROJECT),
 			[
-				{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6},
-				{"item_code": "PUMP", "item_name": "PUMP", "stock_uom": "Each", "qty": 1},
+				{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6, "recorded": 6},
+				# Two were received for the job and the shelf holds one: one can be handed over.
+				{"item_code": "PUMP", "item_name": "PUMP", "stock_uom": "Each", "qty": 1, "recorded": 2},
 			],
 		)
+		self.assertEqual(stock.shelf_by_project(), {PROJECT: {"ELBOW": 6, "PUMP": 1}})
 
 	def test_no_shelf_or_no_project_is_an_empty_shelf(self):
 		STATE["ledger"] = [_ledger("PUMP", SHELF, 2)]
@@ -306,6 +344,145 @@ class TestShelfStock(unittest.TestCase):
 
 	def test_vehicles_come_from_the_employee_field(self):
 		self.assertEqual(stock.vehicles(), {"Van 2 - SF"})
+
+
+class TestTheProjectShelfModule(unittest.TestCase):
+	"""The adapter, once ``inventory_enhancements/project_shelf.py`` is installed (settled
+	2026-11-12: ``warehouse()`` and ``shelf_stock(project=None, item_code=None)``)."""
+
+	def setUp(self):
+		_reset()
+		self.asked = []
+
+		def shelf_stock(project=None, item_code=None):
+			self.asked.append(project)
+			rows = [
+				{"project": PROJECT, "item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6.0, "qty_in": 10.0, "qty_out": 4.0},
+				{"project": PROJECT, "item_code": "PUMP", "item_name": "PUMP", "stock_uom": "Each", "qty": 2.0},
+				{"project": PROJECT, "item_code": "VALVE", "item_name": "VALVE", "stock_uom": "Unit", "qty": -1.0},
+				{"project": "PRJ-90002", "item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 3.0},
+			]
+			if project:
+				rows = [r for r in rows if r["project"] == project]
+			return {
+				"warehouse": "Shelf From The Module - SF",
+				"rows": rows,
+				# More pumps are tagged than the shelf holds; the shelf has none of one item at all.
+				"untagged": [{"item_code": "PUMP", "on_hand": 1.0, "tagged": 2.0, "qty": -1.0}],
+				"exact": False,
+			}
+
+		_install_module("project_shelf", warehouse=lambda: "Shelf From The Module - SF", shelf_stock=shelf_stock)
+
+	def tearDown(self):
+		_remove_module("project_shelf")
+
+	def test_the_shelf_is_the_modules_answer(self):
+		STATE["settings"] = {}  # the adapter does not read the setting itself once the module is here
+		self.assertEqual(stock.shelf_warehouse(), "Shelf From The Module - SF")
+
+	def test_a_jobs_share_comes_from_the_module_cut_to_what_the_shelf_holds(self):
+		self.assertEqual(
+			stock.shelf_stock(PROJECT),
+			[
+				{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6.0, "recorded": 6.0},
+				{"item_code": "PUMP", "item_name": "PUMP", "stock_uom": "Each", "qty": 1.0, "recorded": 2.0},
+			],
+		)
+		self.assertEqual(self.asked, [PROJECT], "asked for this job, once")
+		self.assertEqual(STATE["sql"], [], "and the ledger is not read a second way")
+
+	def test_every_jobs_share(self):
+		self.assertEqual(
+			stock.shelf_by_project(), {PROJECT: {"ELBOW": 6.0, "PUMP": 1.0}, "PRJ-90002": {"ELBOW": 3.0}}
+		)
+		self.assertEqual(self.asked, [None])
+
+	def test_a_module_that_fails_is_an_empty_shelf_not_an_error(self):
+		def broken(project=None, item_code=None):
+			raise RuntimeError("the shelf could not be read")
+
+		_install_module("project_shelf", warehouse=broken, shelf_stock=broken)
+		self.assertIsNone(stock.shelf_warehouse())
+		self.assertEqual(stock.shelf_stock(PROJECT), [])
+		self.assertEqual(stock.shelf_by_project(), {})
+
+
+class TestSupplierReturns(unittest.TestCase):
+	"""The tracker's "returned to the supplier", once ``supplier_returns.returned_lines`` is
+	installed (settled 2026-11-12)."""
+
+	def setUp(self):
+		_reset()
+		STATE["items"] = {"ELBOW": ("FITTING, ELBOW", "Unit", 1), "LABOR": ("Install labor", "Hour", 0)}
+		self.asked = []
+		self.lines = [
+			{"supplier_return": "SRET-0001", "status": "Sent Back", "item_code": "ELBOW", "qty": 1, "stock_qty": 4, "gone": True, "open": True},
+			{"supplier_return": "SRET-0002", "status": "Requested", "item_code": "ELBOW", "qty": 2, "stock_qty": 2, "gone": False, "open": True},
+			{"supplier_return": "SRET-0003", "status": "Credit Received", "item_code": "LABOR", "qty": 1, "stock_qty": 1, "gone": True, "open": False},
+		]
+
+		def returned_lines(purchase_order_items=None, project=None):
+			self.asked.append((purchase_order_items, project))
+			return list(self.lines)
+
+		_install_module("supplier_returns", returned_lines=returned_lines)
+
+	def tearDown(self):
+		_remove_module("supplier_returns")
+
+	def test_what_went_back_is_a_place_and_each_return_is_named(self):
+		STATE["ledger"] = [_ledger("ELBOW", SHELF, 10)]
+		STATE["bins"] = [("ELBOW", SHELF, 6)]
+		out = stock.places_for(PROJECT, ["ELBOW"])
+		self.assertEqual(self.asked, [(None, PROJECT)])
+		elbow = out["items"]["ELBOW"]
+		# Only the return whose goods have left is a place; the one being arranged is still here.
+		self.assertEqual([(p["kind"], p["qty"]) for p in elbow["places"]], [("project_shelf", 6), ("returned", 4)])
+		self.assertEqual(
+			elbow["supplier_returns"],
+			[
+				{"supplier_return": "SRET-0001", "status": "Sent Back", "qty": 4, "gone": True, "open": True},
+				{"supplier_return": "SRET-0002", "status": "Requested", "qty": 2, "gone": False, "open": True},
+			],
+		)
+
+	def test_the_ledgers_return_and_the_supplier_returns_are_the_same_goods_never_added(self):
+		STATE["ledger"] = [_ledger("ELBOW", SHELF, 10), _ledger("ELBOW", SHELF, -4, "Purchase Receipt", "", 1)]
+		STATE["bins"] = [("ELBOW", SHELF, 6)]
+		places = stock.places_for(PROJECT, ["ELBOW"])["items"]["ELBOW"]["places"]
+		self.assertEqual([(p["kind"], p["qty"]) for p in places], [("project_shelf", 6), ("returned", 4)])
+		# A return made in the Desk with no Supplier Return record is still in the ledger.
+		self.lines = []
+		places = stock.places_for(PROJECT, ["ELBOW"])["items"]["ELBOW"]["places"]
+		self.assertEqual([(p["kind"], p["qty"]) for p in places], [("project_shelf", 6), ("returned", 4)])
+
+	def test_a_non_stock_items_return_is_on_record_though_its_place_is_not(self):
+		out = stock.places_for(PROJECT, [])
+		labor = out["items"]["LABOR"]
+		self.assertEqual(labor["places"], [])
+		self.assertEqual(labor["supplier_returns"][0]["supplier_return"], "SRET-0003")
+
+	def test_no_module_or_a_failing_one_means_no_returns_on_record(self):
+		def broken(purchase_order_items=None, project=None):
+			raise RuntimeError("the returns could not be read")
+
+		_install_module("supplier_returns", returned_lines=broken)
+		STATE["ledger"] = [_ledger("ELBOW", SHELF, 5)]
+		STATE["bins"] = [("ELBOW", SHELF, 5)]
+		self.assertEqual(stock.places_for(PROJECT, ["ELBOW"])["items"]["ELBOW"]["supplier_returns"], [])
+		_remove_module("supplier_returns")
+		self.assertEqual(stock.places_for(PROJECT, ["ELBOW"])["items"]["ELBOW"]["supplier_returns"], [])
+
+	def test_both_modules_are_imported_where_they_are_used_never_at_the_top(self):
+		"""Either release can merge first: an import at module scope would take the tracker down
+		on a site that has one and not the other."""
+		source = (APP / "inventory_enhancements" / "project_stock.py").read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		top = [ast.unparse(n) for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+		self.assertFalse(any("project_shelf" in line or "supplier_returns" in line for line in top), top)
+		for name in ("project_shelf", "supplier_returns"):
+			self.assertRegex(source, rf"try:\n\t\tfrom erpnext_enhancements\.inventory_enhancements import {name}\n\texcept ImportError:")
 
 
 # ---------------------------------------------------------------------------

@@ -175,6 +175,59 @@ def test_with_unrecorded_adds_nothing_when_all_is_accounted_for_or_unknown():
 	assert stock.with_unrecorded(found, 4) == found
 
 
+def test_a_supplier_return_and_the_ledgers_return_rows_are_never_added_together():
+	ledger = [move(SHELF, 10), {"warehouse": SHELF, "kind": stock.LEDGER_SUPPLIER_RETURN, "qty": -2}]
+	kinds = lambda found: by_kind(found)  # noqa: E731
+	on_hand = {SHELF: 8}
+	assert kinds(stock.item_places(ledger, on_hand, {SITE}, kind_of, NAMES))[stock.KIND_RETURNED] == 2
+	# The Supplier Return says the same 2 left: still 2, not 4.
+	assert kinds(stock.item_places(ledger, on_hand, {SITE}, kind_of, NAMES, returned=2))[stock.KIND_RETURNED] == 2
+	# It knows of more than the ledger's rows carry the job for: the larger figure.
+	assert kinds(stock.item_places(ledger, on_hand, {SITE}, kind_of, NAMES, returned=5))[stock.KIND_RETURNED] == 5
+	# Nothing in the ledger at all (the return's rows carried no job).
+	assert kinds(stock.item_places([move(SHELF, 10)], on_hand, {SITE}, kind_of, NAMES, returned=3))[stock.KIND_RETURNED] == 3
+	assert stock.KIND_RETURNED not in kinds(stock.item_places([move(SHELF, 10)], on_hand, {SITE}, kind_of, NAMES, returned=None))
+
+
+def test_return_summary_adds_up_what_has_left_and_names_each_return_once():
+	lines = [
+		{"supplier_return": "SRET-1", "status": "Sent Back", "item_code": "A", "qty": 1, "stock_qty": 12, "gone": True, "open": True},
+		{"supplier_return": "SRET-1", "status": "Sent Back", "item_code": "A", "qty": 1, "stock_qty": 3, "gone": True, "open": True},
+		{"supplier_return": "SRET-2", "status": "Requested", "item_code": "A", "qty": 2, "stock_qty": 2, "gone": False, "open": True},
+		{"supplier_return": "SRET-2", "status": "Requested", "item_code": "B", "qty": 5, "stock_qty": None, "gone": False, "open": True},
+		{"supplier_return": None, "item_code": "A", "stock_qty": 99, "gone": True},
+		{"supplier_return": "SRET-3", "item_code": None, "stock_qty": 99, "gone": True},
+	]
+	out = stock.return_summary(lines)
+	assert out["A"]["gone"] == 15  # the stock unit, not the purchase unit
+	assert out["A"]["returns"] == [
+		{"supplier_return": "SRET-1", "status": "Sent Back", "qty": 15, "gone": True, "open": True},
+		{"supplier_return": "SRET-2", "status": "Requested", "qty": 2, "gone": False, "open": True},
+	]
+	# No stock quantity on the line: the purchase quantity is all there is.
+	assert out["B"] == {"gone": 0, "returns": [{"supplier_return": "SRET-2", "status": "Requested", "qty": 5, "gone": False, "open": True}]}
+	assert stock.return_summary(None) == {}
+
+
+def test_capped_shelf_rows_cuts_a_job_to_what_the_shelf_holds():
+	rows = [
+		{"project": "P1", "item_code": "A", "item_name": "Elbow", "stock_uom": "Unit", "qty": 6},
+		{"project": "P1", "item_code": "B", "qty": 2},
+		{"project": "P1", "item_code": "C", "qty": -1},  # more left under the job than came in
+		{"project": "P2", "item_code": "B", "qty": 4},
+		{"project": "P2", "item_code": "D", "qty": 3},
+	]
+	untagged = [{"item_code": "B", "on_hand": 1, "tagged": 6}, {"item_code": "D", "on_hand": -2, "tagged": 3}]
+	out = stock.capped_shelf_rows(rows, untagged)
+	assert [(r["project"], r["item_code"], r["qty"], r["recorded"]) for r in out] == [
+		("P1", "A", 6, 6),  # the item's tagged total and its on-hand agree: as recorded
+		("P1", "B", 1, 2),  # the shelf holds 1: nobody can be handed more
+		("P2", "B", 1, 4),
+	]
+	assert out[1]["item_name"] == "B"  # no name sent: the code stands in
+	assert stock.capped_shelf_rows(None, None) == []
+
+
 def test_shelf_rows_is_the_same_rule_per_item():
 	ledger = [
 		{"item_code": "A", "warehouse": SHELF, "qty": 10},
@@ -416,6 +469,26 @@ def test_attach_puts_state_and_where_now_on_every_line_and_item():
 	assert quote["needs_action"] is False
 
 
+def test_attach_lists_the_jobs_supplier_returns_under_the_places():
+	sent = {"supplier_return": "SRET-1", "status": "Sent Back", "qty": 2, "gone": True, "open": True}
+	asked = {"supplier_return": "SRET-2", "status": "Requested", "qty": 1, "gone": False, "open": True}
+	stocked = line(item_code="A", po_item="poi-a", ordered=10, received=10)
+	service = line(item_code="LABOR", po_item="poi-l", ordered=1, received=1)
+	items_found = found({"A": (True, places([move(SHELF, 8)], {SHELF: 8})), "LABOR": (False, [])})
+	items_found["A"]["supplier_returns"] = [sent, asked]
+	items_found["LABOR"]["supplier_returns"] = [sent]
+	items = overview.attach([stocked, service], items_found, TODAY)
+	assert stocked["supplier_returns"] == [sent, asked]
+	assert items[0]["supplier_returns"] == [sent, asked]
+	# A non-stock item's place is not tracked, but that it went back is on record and filterable.
+	assert service["where_now_text"] == overview.NOT_TRACKED_TEXT
+	assert service["location_kinds"] == [overview.NOT_TRACKED, stock.KIND_RETURNED]
+	# One only being arranged is not "returned" yet.
+	items_found["LABOR"]["supplier_returns"] = [asked]
+	overview.attach([service], items_found, TODAY)
+	assert service["location_kinds"] == [overview.NOT_TRACKED]
+
+
 def test_attach_names_what_was_received_and_is_nowhere():
 	row = line(item_code="A", po_item="poi-a", ordered=10, received=10)
 	items = overview.attach([row], found({"A": (True, places([move(SHELF, 10)], {SHELF: 4}))}), TODAY)
@@ -443,6 +516,7 @@ def test_attach_survives_a_failed_lookup():
 	assert row["line_state"] == overview.RECEIVED
 	assert row["location_tracked"] is None
 	assert row["where_now"] == [] and row["where_now_text"] == ""
+	assert row["supplier_returns"] == []
 	assert items[0]["where_now_text"] == ""
 
 

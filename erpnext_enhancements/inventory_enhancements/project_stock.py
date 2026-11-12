@@ -14,9 +14,16 @@ The rule, and why it is the stock ledger's rows that name the job and not the Bi
 * :func:`shelf_warehouse` -- the Project Shelf, read so that a site without the setting (the
   field is added by another release) simply has no shelf.
 
-**The Project Shelf answer has one door.** :func:`shelf_stock` is the adapter the Bin Manager's
-*By project* view calls. If the Project Shelf's own module grows a function that answers the
-same question, :func:`shelf_stock` is the one place to call it from.
+**The Project Shelf answer has one door.** :func:`shelf_stock` and :func:`shelf_by_project` are
+the adapter the Bin Manager's views call, and they answer from the Project Shelf's own module,
+``inventory_enhancements/project_shelf.py`` (``warehouse()`` and ``shelf_stock()``, settled
+2026-11-12). That module arrives with another release, so it is imported inside the functions
+that use it and its absence is not an error: until it is there, the same question is answered
+here from the stock ledger by the same rule.
+
+**Supplier Returns** (``inventory_enhancements/supplier_returns.returned_lines``, another
+release again) are read the same way for the tracker's "returned to the supplier": imported when
+asked, and no module means no returns on record.
 
 Nothing here writes, and nothing here checks who is asking: each caller has its own gate (the
 tracker's Project read, the Bin Manager's role check).
@@ -52,9 +59,40 @@ def _setting(fieldname):
 		return None
 
 
+def _shelf_module():
+	"""The Project Shelf's own module, or ``None`` on a site whose code does not have it yet."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+	except ImportError:
+		return None
+	return project_shelf
+
+
 def shelf_warehouse():
-	"""The Project Shelf warehouse, or ``None`` when the site has none set."""
+	"""The Project Shelf warehouse, or ``None`` when the site has none set. The Project Shelf
+	module's own answer (an enabled leaf named by the setting) when that module is here."""
+	module = _shelf_module()
+	if module is not None:
+		try:
+			return _name(module.warehouse()) or None
+		except Exception:
+			return None
 	return _setting(SHELF_FIELD)
+
+
+def _returns(project):
+	"""The project's Supplier Returns by item (``project_stock_rules.return_summary``), or
+	``{}``: no Supplier Return module on this site yet, or nothing returned."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import supplier_returns
+	except ImportError:
+		return {}
+	try:
+		return rules.return_summary(supplier_returns.returned_lines(project=project))
+	except Exception:
+		# The function is written never to raise. If it ever does, the tracker still has the
+		# ledger's own return rows.
+		return {}
 
 
 def boneyard_warehouse():
@@ -173,7 +211,8 @@ def places_for(project, item_codes=None):
 	that was never on a purchasing document) is included.
 
 	The queries, whatever the number of lines: the ledger (1), the sites (3, all small), the Bin
-	rows at the warehouses involved (1), their names (1), the items (1).
+	rows at the warehouses involved (1), their names (1), the items (1), and the job's Supplier
+	Returns (1, once that module is installed).
 	"""
 	project = _name(project)
 	if not project:
@@ -195,7 +234,13 @@ def places_for(project, item_codes=None):
 	by_item = {}
 	for row in ledger:
 		by_item.setdefault(row["item_code"], []).append(row)
-	codes = set(item_codes or ()) | set(by_item) | {code for code, _warehouse in on_hand if _warehouse in own}
+	returns = _returns(project)
+	codes = (
+		set(item_codes or ())
+		| set(by_item)
+		| set(returns)
+		| {code for code, _warehouse in on_hand if _warehouse in own}
+	)
 	items = _items(codes)
 	out = {}
 	for code in codes:
@@ -208,39 +253,108 @@ def places_for(project, item_codes=None):
 			"is_stock_item": stock,
 			"item_name": item.item_name or code,
 			"stock_uom": item.stock_uom,
-			"places": rules.item_places(by_item.get(code), here, own_sites=own, kind_of=kind_of, names=names)
+			"places": rules.item_places(
+				by_item.get(code),
+				here,
+				own_sites=own,
+				kind_of=kind_of,
+				names=names,
+				returned=(returns.get(code) or {}).get("gone"),
+			)
 			if stock
 			else [],
+			# Each Supplier Return that names the item for this job, a non-stock item's included:
+			# what was sent back is known even where the item's place is not.
+			"supplier_returns": (returns.get(code) or {}).get("returns") or [],
 		}
 	return {"items": out, "shelf": shelf, "sites": sorted(own)}
 
 
-def shelf_stock(project):
-	"""What is on the Project Shelf for ``project``: ``[{"item_code", "item_name", "stock_uom",
-	"qty"}]``, by item name. Empty when the site has no Project Shelf.
-
-	THE ADAPTER. The Bin Manager's *By project* view calls this and nothing else for its shelf
-	numbers, so the day the Project Shelf's own module answers the question, this body becomes
-	one call to it.
-	"""
-	project = _name(project)
-	shelf = shelf_warehouse()
-	if not project or not shelf:
+def _own_shelf_rows(project=None):
+	"""The fallback behind :func:`shelf_stock` and :func:`shelf_by_project` for a site whose code
+	has no Project Shelf module yet: every job's ledger balance at the shelf (or one job's), never
+	more than the shelf holds. Rows as ``project_stock_rules.capped_shelf_rows`` shapes them."""
+	shelf = _setting(SHELF_FIELD)
+	if not shelf:
 		return []
-	ledger = [row for row in ledger_rows(project) if row["warehouse"] == shelf]
-	if not ledger:
+	values = {"shelf": shelf}
+	only = ""
+	if project:
+		only = " and sle.project = %(project)s"
+		values["project"] = project
+	rows = frappe.db.sql(
+		f"""
+		select sle.project, sle.item_code, sum(sle.actual_qty) as qty
+		from `tabStock Ledger Entry` sle
+		where sle.warehouse = %(shelf)s and sle.is_cancelled = 0
+			and coalesce(sle.project, '') <> ''{only}
+		group by sle.project, sle.item_code
+		having sum(sle.actual_qty) > 0
+		""",
+		values,
+		as_dict=True,
+	)
+	if not rows:
 		return []
 	on_hand = {code: qty for (code, _warehouse), qty in _on_hand([shelf]).items()}
-	held = rules.shelf_rows(ledger, on_hand, shelf)
-	items = _items(held)
-	rows = [
+	items = _items({row.item_code for row in rows})
+	# Every item gets its on-hand as the ceiling: the same cut capped_shelf_rows makes from the
+	# Project Shelf module's "untagged" list.
+	ceilings = [{"item_code": row.item_code, "on_hand": on_hand.get(row.item_code, 0.0)} for row in rows]
+	shaped = [
 		{
-			"item_code": code,
-			"item_name": (items.get(code) or {}).get("item_name") or code,
-			"stock_uom": (items.get(code) or {}).get("stock_uom"),
-			"qty": qty,
+			"project": row.project,
+			"item_code": row.item_code,
+			"item_name": (items.get(row.item_code) or {}).get("item_name"),
+			"stock_uom": (items.get(row.item_code) or {}).get("stock_uom"),
+			"qty": float(row.qty or 0),
 		}
-		for code, qty in held.items()
+		for row in rows
 	]
-	rows.sort(key=lambda r: rules.natural_key(r["item_name"]))
+	return rules.capped_shelf_rows(shaped, ceilings)
+
+
+def _shelf_rows(project=None):
+	"""Each job's share of the Project Shelf, from the Project Shelf module when it is here.
+
+	THE ADAPTER. ``project_shelf.shelf_stock(project=...)`` reports each job's ledger balance at
+	the shelf and, as ``untagged``, the items whose on-hand and tagged totals differ.
+	``project_stock_rules.capped_shelf_rows`` cuts a row to what the shelf holds where they do.
+	"""
+	module = _shelf_module()
+	if module is None:
+		return _own_shelf_rows(project)
+	try:
+		answer = module.shelf_stock(project=project or None) or {}
+	except Exception:
+		return []
+	return rules.capped_shelf_rows(answer.get("rows"), answer.get("untagged"))
+
+
+def shelf_stock(project):
+	"""What is on the Project Shelf for ``project``: ``[{"item_code", "item_name", "stock_uom",
+	"qty", "recorded"}]``, by item name. Empty when the site has no Project Shelf.
+
+	``qty`` is what can be handed over; ``recorded`` is the job's ledger balance, above ``qty``
+	when the shelf holds less than the records say is the job's (:func:`_shelf_rows`).
+	"""
+	project = _name(project)
+	if not project:
+		return []
+	rows = [
+		{key: row[key] for key in ("item_code", "item_name", "stock_uom", "qty", "recorded")}
+		for row in _shelf_rows(project)
+		if row.get("project") in (project, None)
+	]
+	rows.sort(key=lambda r: rules.natural_key(r["item_name"] or ""))
 	return rows
+
+
+def shelf_by_project():
+	"""``{project: {item_code: qty}}``: every job's share of the Project Shelf, for the Bin
+	Manager's list of jobs and its Problems view. The same door as :func:`shelf_stock`."""
+	out = {}
+	for row in _shelf_rows():
+		if row.get("project"):
+			out.setdefault(row["project"], {})[row["item_code"]] = row["qty"]
+	return out
