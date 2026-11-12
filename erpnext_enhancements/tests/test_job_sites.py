@@ -787,7 +787,7 @@ class TestAvailability(_Base):
 		"""On the source: the board's own suite runs on another stub. The arithmetic is
 		``TestRules``'; this pins that the board calls it, on every warehouse that is a site.
 
-		Since v1.813.0 the set is ``project_shelf.not_shop_warehouses()``: every job site and
+		Since v1.815.0 the set is ``project_shelf.not_shop_warehouses()``: every job site and
 		the Project Shelf (``tests/test_project_shelf.py`` pins that it holds the sites)."""
 		tree = ast.parse(REORDER.read_text(encoding="utf-8"))
 		build = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "build_board")

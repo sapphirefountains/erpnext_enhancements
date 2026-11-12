@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Project Shelf: the one warehouse where parts bought for a job wait (v1.813.0).
+"""The Project Shelf: the one warehouse where parts bought for a job wait (v1.815.0).
 
 The owner's decision of 2026-11-12, and every reason, is in ``project_shelf_rules`` (no
 Frappe, tested bench-free). This module is the part that reads the database.

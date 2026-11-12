@@ -183,7 +183,7 @@ def _install_module(name, **functions):
 
 
 #: Modules that are in the app now, and that this suite still has to see as "not installed yet".
-#: The Project Shelf's own module shipped in v1.813.0. Before that, taking the stand-in out of
+#: The Project Shelf's own module shipped in v1.815.0. Before that, taking the stand-in out of
 #: ``sys.modules`` was enough to make ``import`` fail; now the real file is on disk and would be
 #: imported onto this suite's small stub. A ``None`` entry in ``sys.modules`` makes ``import``
 #: raise ImportError, which is exactly the site the fallback path is for.
@@ -564,7 +564,7 @@ class TestTheFeedsNewFunctions(unittest.TestCase):
 
 		class _Overview:
 			@staticmethod
-			def attach(rows, found, today):
+			def attach(rows, found, today, prices=False):
 				calls.append(("attach", found, today))
 				return [{"item_code": "A"}]
 
@@ -581,7 +581,9 @@ class TestTheFeedsNewFunctions(unittest.TestCase):
 					get_traceback=lambda: "traceback",
 				),
 				"require_project_read": lambda project: calls.append(("gate", project)),
-				"_documents_and_overview": lambda project: (
+				# Nobody may see prices in this class; test_procurement_prices_feed holds the rule.
+				"_price_access": lambda: None,
+				"_documents_and_overview": lambda project, prices=None: (
 					calls.append(("read", project)) or ([{"doctype": "Purchase Order"}], [{}], [{"item_code": "A"}], True)
 				),
 			}

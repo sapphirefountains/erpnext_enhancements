@@ -41,6 +41,15 @@ class ProjectProcurementStatus(BaseTool):
             "where_now is per item, not per line; a non-stock item's location is not "
             "tracked and location_tracked is false. received_at is where the line was "
             "received. "
+            "When the caller may read Purchase Orders, rows also carry what was spent: spent "
+            "(the submitted order lines' amounts for this project, company currency; a line with "
+            "no price is left out and counted in no_price_lines, a free line in no_charge_lines), "
+            "unit_price_low / unit_price_high / unit_price_avg, received_value (received quantity "
+            "at the order's rate), draft_spent (orders not yet submitted, not counted), and "
+            "quote_low / quote_high (Supplier Quotations: quotes, never added into spent). "
+            "Document rows carry price_total for their lines on this project. These are ORDERED "
+            "amounts: ERPNext holds no bills, so nothing is billed or paid here. Without Purchase "
+            "Order read none of these keys are present. "
             "Quantities are per line and never inherited from a parent document: "
             "order_status is that line's own ordered-vs-requested state (Not Ordered / "
             "Partially Ordered / Ordered / Over Ordered), so a fully ordered line inside "
@@ -86,6 +95,8 @@ class ProjectProcurementStatus(BaseTool):
                 "view": "items",
                 "items": overview["items"],
                 "located": overview["located"],
+                # Only present for a caller who may read Purchase Orders (the feed decides).
+                **({"prices": overview["prices"]} if overview.get("prices") else {}),
             }
 
         if (arguments.get("view") or "stage_summary") == "documents":

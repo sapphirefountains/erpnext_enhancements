@@ -399,7 +399,7 @@ export function makeHomeDefault(qty, onHand) {
  * can be brought back, but it is not stock the shop has, and "Also at: Job Site …" under an
  * empty shelf would send somebody to buy nothing while a job goes short.
  *
- * The Project Shelf (v1.813.0, `project_shelf`) is the third kind: in the building, and
+ * The Project Shelf (v1.815.0, `project_shelf`) is the third kind: in the building, and
  * bought for a job. It is never one of the shop's places either.
  */
 export function splitPlaces(places) {
@@ -426,7 +426,7 @@ export function takeProject(item, job) {
 }
 
 // ---------------------------------------------------------------------------
-// The Project Shelf (v1.813.0)
+// The Project Shelf (v1.815.0)
 // ---------------------------------------------------------------------------
 
 /**

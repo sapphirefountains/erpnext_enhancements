@@ -22,7 +22,7 @@ Desk, because the mandatory check runs in the browser before the request is ever
 sent. This server copy covers the paths no form script sees: the REST API, data
 import, and documents mapped in from a Material Request.
 
-**Where a line is received** (v1.813.0, the owner's decision of 2026-11-12) is decided
+**Where a line is received** (v1.815.0, the owner's decision of 2026-11-12) is decided
 from the same project. A line for a job defaults to the Project Shelf; a line for one of
 the overhead buckets defaults to the item's own bin, and to the shop's general receiving
 location when the item has no bin yet (:func:`default_line_warehouse`; the rule itself is
@@ -69,7 +69,7 @@ def cascade_project_to_items(doc, method=None):
 		if not (row.get("project") or "").strip():
 			row.project = project
 			# The line had no project until now, so nothing chose its location with one in
-			# mind: it gets the project's default place (v1.813.0), unless a person picked one.
+			# mind: it gets the project's default place (v1.815.0), unless a person picked one.
 			_default_row_warehouse(doc, row, filled_by_cascade=True)
 
 

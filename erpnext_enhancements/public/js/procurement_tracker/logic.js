@@ -12,6 +12,8 @@
  *   sorting      the column registries and the comparator (blanks last in both directions)
  *   labels       the Desk badge theme for a line's state, a document's status and a kind of place
  *   print        the by-item list as a plain page for the printer
+ *   prices       what things cost (v1.814.0): the price columns, "No price" / "No charge", a
+ *                document's total for the job's lines, the total under the by-item table
  *
  * The words a line is filtered by (line_states, location_kinds, where_now_text) are decided on
  * the server, once, by procurement_overview.py, so this file and the assistant tool cannot
@@ -32,11 +34,12 @@ export const QUERY_KEYS = {
 	status: "pt_status",
 	supplier: "pt_supplier",
 	action: "pt_action",
+	noprice: "pt_noprice",
 	q: "pt_q",
 };
 
 export function default_state() {
-	return { view: VIEW_DOCUMENTS, location: "", status: "", supplier: "", action: false, q: "" };
+	return { view: VIEW_DOCUMENTS, location: "", status: "", supplier: "", action: false, noprice: false, q: "" };
 }
 
 function text(value) {
@@ -55,6 +58,7 @@ export function read_query(search) {
 	state.status = text(params.get(QUERY_KEYS.status));
 	state.supplier = text(params.get(QUERY_KEYS.supplier));
 	state.action = text(params.get(QUERY_KEYS.action)) === "1";
+	state.noprice = text(params.get(QUERY_KEYS.noprice)) === "1";
 	state.q = text(params.get(QUERY_KEYS.q));
 	return state;
 }
@@ -74,6 +78,7 @@ export function write_query(search, state) {
 	set(QUERY_KEYS.status, text(s.status));
 	set(QUERY_KEYS.supplier, text(s.supplier));
 	set(QUERY_KEYS.action, s.action ? "1" : "");
+	set(QUERY_KEYS.noprice, s.noprice ? "1" : "");
 	set(QUERY_KEYS.q, text(s.q));
 	const out = params.toString();
 	return out ? `?${out}` : "";
@@ -94,7 +99,7 @@ export function without_own_keys(options) {
 
 export function is_filtered(state) {
 	const s = state || {};
-	return !!(s.location || s.status || s.supplier || s.action);
+	return !!(s.location || s.status || s.supplier || s.action || s.noprice);
 }
 
 export function is_narrowed(state) {
@@ -148,11 +153,21 @@ export function row_matches_search(row, tokens) {
 	return tokens.every((t) => hay.includes(t));
 }
 
-// Whether a line (or a by-item row: same keys, in the plural) passes the four filters.
+// Whether a line (or a by-item row) has an order line with no price on it: the lines purchasing has
+// to fix. A line says it with price_state; an item says how many of its lines (on a submitted order,
+// or on a draft one that will be). Nothing for a person who was sent no prices.
+export function has_no_price(row) {
+	const r = row || {};
+	if (r.price_state === "no_price") return true;
+	return (Number(r.no_price_lines) || 0) > 0 || (Number(r.draft_no_price_lines) || 0) > 0;
+}
+
+// Whether a line (or a by-item row: same keys, in the plural) passes the filters.
 export function row_matches_filters(row, state) {
 	const r = row || {};
 	const s = state || {};
 	if (s.action && !r.needs_action) return false;
+	if (s.noprice && !has_no_price(r)) return false;
 	if (s.status && !(r.line_states || r.states || []).includes(s.status)) return false;
 	if (s.location && !(r.location_kinds || []).includes(s.location)) return false;
 	if (s.supplier) {
@@ -238,6 +253,15 @@ export function highlight_html(value, term, esc) {
 
 // ------------------------------------------------------------------ sorting
 
+// What Spent is and is not, in the words of the column's tooltip (the same as the CHANGELOG and the
+// tracker map). It is the sum of the order lines' own amounts: a discount applied to the whole order,
+// taxes and freight are not in it, and an order closed short counts in full. Example: 10 units at
+// $10 with a 10% discount on the whole order is $100 here, where the order's net is $90.
+export const SPENT_NOTE =
+	"What was ordered for this job: the sum of the order lines' own amounts. It leaves out a discount on the whole order, taxes and freight, and counts an order closed short in full. ERPNext holds no bills, so it is not billed or paid.";
+export const AMOUNT_NOTE =
+	"The line's own amount. It leaves out a discount on the whole order, taxes and freight.";
+
 // Most urgent first: one click on Status puts what somebody has to chase at the top. The same
 // order as procurement_overview.STATE_RANK, which decides the one state a line is shown as.
 export const STATE_RANK = ["late", "to_order", "ordered", "partly_received", "received", "closed", "quote_only", "invoice_only"];
@@ -257,6 +281,12 @@ export const LINE_COLUMNS = {
 	requested: { label: "Requested", cls: "qty-col", type: "number", value: (r) => r.requested_qty },
 	ordered: { label: "Ordered", cls: "qty-col", type: "number", value: (r) => r.ordered_qty },
 	received: { label: "Received", cls: "qty-col", type: "number", value: (r) => r.received_qty },
+	// The price columns exist only for a person who was sent prices (`price: true`, see
+	// visible_columns). What a cell holds depends on the document it sits in (an order's rate, a
+	// receipt's value, a quote), so the comparator gets that document's type as its second argument.
+	// A line with no price has no rate to order by: it is blank, and blanks sort last in both directions.
+	rate: { label: "Rate", cls: "money-col", type: "number", price: true, value: (r, doctype) => price_value(r, doctype, "rate") },
+	amount: { label: "Amount", cls: "money-col", type: "number", price: true, hint: AMOUNT_NOTE, value: (r, doctype) => price_value(r, doctype, "amount") },
 	status: { label: "Status", type: "rank", value: (r) => r.line_state, ranks: STATE_RANK },
 };
 
@@ -266,6 +296,10 @@ export const ITEM_COLUMNS = {
 	requested: LINE_COLUMNS.requested,
 	ordered: LINE_COLUMNS.ordered,
 	received: LINE_COLUMNS.received,
+	// Sorted by what was paid per unit over the lines that have a price (their average), and by what
+	// was spent. An item with no priced line is blank: last in both directions.
+	unit_price: { label: "Unit price", cls: "money-col", type: "number", price: true, value: (r) => r.unit_price_avg },
+	spent: { label: "Spent", cls: "money-col", type: "number", price: true, hint: SPENT_NOTE, value: (r) => r.spent },
 	status: { label: "Status", type: "rank", value: (r) => r.state, ranks: STATE_RANK },
 	where: LINE_COLUMNS.where,
 	due: { label: "Due", type: "text", value: (r) => r.expected_date },
@@ -306,19 +340,26 @@ export function compare(a, b, column) {
 // The rows in the order a sort asks for, as a NEW array: Array.prototype.sort mutates, and
 // mutating a list Vue is rendering is an infinite reactivity loop. No sort, or a column the
 // registry does not know, returns the rows as they came.
-export function sort_rows(rows, columns, sort) {
+export function sort_rows(rows, columns, sort, context) {
 	const list = rows || [];
 	const column = sort && columns[sort.key];
 	if (!column) return list;
 	const dir = sort.dir === "desc" ? -1 : 1;
 	return list.slice().sort((a, b) => {
-		const av = column.value(a);
-		const bv = column.value(b);
+		const av = column.value(a, context);
+		const bv = column.value(b, context);
 		const blanks = blank_order(av, bv);
 		// Not multiplied by dir: see blank_order.
 		if (blanks !== null) return blanks;
 		return dir * compare(av, bv, column);
 	});
+}
+
+// The columns a person sees: all of them, less the price columns when they were sent no prices.
+export function visible_columns(registry, prices) {
+	return Object.keys(registry)
+		.filter((key) => prices || !registry[key].price)
+		.map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "", hint: registry[key].hint || "" }));
 }
 
 // The sort a click on a header leads to: ascending, descending, then none. Without the third
@@ -454,8 +495,191 @@ export function describe_filters(state, options) {
 	if (s.location) parts.push(label(o.locations, s.location));
 	if (s.supplier) parts.push(s.supplier);
 	if (s.action) parts.push("needs action");
+	if (s.noprice) parts.push("no price");
 	if (tokenize(s.q).length) parts.push(`"${String(s.q).trim()}"`);
 	return parts.join(" · ");
+}
+
+// ------------------------------------------------------------------ prices
+
+export const NO_PRICE_TEXT = "No price";
+export const NO_CHARGE_TEXT = "No charge";
+
+// An amount in the company's currency: "$1,234.50", and a rate to four places when it has them
+// ("$0.0125"). Always en-US, as the rest of this tracker's words are; "-" for a value that is not a
+// number. Money is never shown through fmt_qty: "4" is a quantity, "$4.00" is a price.
+export function fmt_money(value, currency) {
+	if (value === null || value === undefined || value === "") return "-";
+	const n = Number(value);
+	if (!isFinite(n)) return "-";
+	try {
+		return new Intl.NumberFormat("en-US", {
+			style: "currency",
+			currency: currency || "USD",
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 4,
+		}).format(n);
+	} catch (e) {
+		return (currency ? currency + " " : "") + n.toFixed(2);
+	}
+}
+
+function plural(n, one, many) {
+	return `${n} ${n === 1 ? one : many}`;
+}
+
+// What a line's price cells hold, by the kind of document it is shown in. `null` is "nothing to say":
+// a Material Request line, a Request for Quotation line and a bill line have no price, and their cells
+// stay empty. An order shows its own line; a receipt shows what arrived, at the ORDER's rate; a
+// quotation shows what it quoted (a quote, never a spend).
+//   { kind: "order"|"receipt"|"quote", state: "priced"|"no_price"|"no_charge", rate, amount, uom, received }
+export function price_cells(row, doctype) {
+	const r = row || {};
+	if (doctype === "Purchase Order" && r.price_state) {
+		return { kind: "order", state: r.price_state, rate: r.po_rate, amount: r.po_amount, uom: r.po_rate_uom, received: r.received_value, draft: false };
+	}
+	if (doctype === "Purchase Receipt" && r.receipt_state) {
+		return { kind: "receipt", state: r.receipt_state, rate: r.receipt_rate, amount: r.receipt_value, uom: r.po_rate_uom, received: null, draft: r.receipt_docstatus === 0 };
+	}
+	if (doctype === "Supplier Quotation" && r.sq_item) {
+		return { kind: "quote", state: "priced", rate: r.quote_rate, amount: r.quote_amount, uom: null, received: null, draft: r.quote_docstatus === 0 };
+	}
+	return null;
+}
+
+// The number a sort uses: only a priced line has one. "No price" is blank, not 0.
+function price_value(row, doctype, field) {
+	const cells = price_cells(row, doctype);
+	if (!cells || cells.state !== "priced") return null;
+	const value = cells[field];
+	return value === undefined ? null : value;
+}
+
+// The text of one price cell: the amount, "No price", "No charge", or "" for a line that has no price
+// to speak of.
+export function price_text(cells, field, currency) {
+	if (!cells) return "";
+	if (cells.state === "no_price") return NO_PRICE_TEXT;
+	if (cells.state === "no_charge") return NO_CHARGE_TEXT;
+	const value = field === "amount" ? cells.amount : cells.rate;
+	return value === null || value === undefined ? "" : fmt_money(value, currency);
+}
+
+// The tooltip of a line's amount cell: what it is the amount of, and what has arrived at that rate.
+export function price_title(cells, currency) {
+	if (!cells) return "";
+	if (cells.kind === "quote") {
+		return (cells.draft ? "A quote on a draft quotation. " : "A quote. ") + "It is not added into what was spent.";
+	}
+	if (cells.kind === "receipt") {
+		if (cells.draft) return "A draft receipt: nothing has been received on it yet. Valued at the order line's rate.";
+		return "What this receipt brought in, at the order line's rate. ERPNext holds no bills, so this is not what was billed or paid.";
+	}
+	if (cells.state === "no_price") return "The order line has no rate. It is left out of every total.";
+	if (cells.state === "no_charge") return "A free line. It is left out of every total.";
+	const parts = ["The order line's amount"];
+	if (cells.uom) parts[0] += `, rate per ${cells.uom}`;
+	if (cells.received !== null && cells.received !== undefined && Number(cells.received) > 0) {
+		parts.push(`received so far: ${fmt_money(cells.received, currency)} at that rate`);
+	}
+	parts.push(AMOUNT_NOTE);
+	parts.push("ERPNext holds no bills, so this is what was ordered, not what was billed or paid");
+	return parts.join(" · ");
+}
+
+// A document's total in its header: "$1,200.00", "$12.00 received", "$80.00 quoted", with what it
+// leaves out ("2 lines with no price") and, where the document has other lines than this job's, that
+// it is this job's lines only. `title` spells it out, including the whole document's own total.
+export function doc_price_text(total, doctype, currency) {
+	if (!total) return { text: "", title: "" };
+	const draft = total.docstatus === 0;
+	const suffix =
+		doctype === "Purchase Receipt"
+			? draft ? " on a draft receipt" : " received"
+			: doctype === "Supplier Quotation"
+				? draft ? " quoted (draft)" : " quoted"
+				: "";
+	const parts = [];
+	if (total.lines > 0) parts.push(fmt_money(total.amount, currency) + suffix);
+	else if (total.no_price_lines > 0) parts.push(NO_PRICE_TEXT);
+	else if (total.no_charge_lines > 0) parts.push(NO_CHARGE_TEXT);
+	if (total.lines > 0 && total.no_price_lines > 0) parts.push(plural(total.no_price_lines, "line", "lines") + " with no price");
+	if (total.partial) parts.push("this job's lines");
+	const title = [];
+	if (total.partial) {
+		title.push(`This job's ${total.job_lines} of the document's ${total.doc_lines} lines`);
+		if (total.doc_total !== null && total.doc_total !== undefined) {
+			title.push(`the whole document is ${fmt_money(total.doc_total, currency)}`);
+		}
+	}
+	if (total.no_price_lines > 0) title.push("a line with no price is left out of the total");
+	if (doctype === "Supplier Quotation") title.push("a quote, not a spend");
+	if (doctype === "Purchase Receipt") title.push("valued at the order line's rate");
+	return { text: parts.join(" · "), title: title.join(" · ") };
+}
+
+// The Unit price and Spent cells of a by-item row, and the lines of small print under them.
+//   { unit, unit_notes: [], spent, spent_notes: [] }
+// Unit price is the price per stock unit across the lines that have one: one price when they
+// agree, "low – high" when they differ. A missing price is never a zero: it reads "No price" and is
+// left out, and where a sum leaves lines out it says how many.
+export function item_price_view(row, currency) {
+	const r = row || {};
+	const priced = Number(r.spent_lines) || 0;
+	const none = (Number(r.no_price_lines) || 0) + (Number(r.draft_no_price_lines) || 0);
+	const free = Number(r.no_charge_lines) || 0;
+	const out = { unit: "", unit_notes: [], spent: "", spent_notes: [] };
+	if (priced > 0) {
+		const low = r.unit_price_low;
+		const high = r.unit_price_high;
+		out.unit = low === high ? fmt_money(low, currency) : `${fmt_money(low, currency)} – ${fmt_money(high, currency)}`;
+		out.spent = fmt_money(r.spent, currency);
+		if (low !== high) out.unit_notes.push(`${fmt_money(r.unit_price_avg, currency)} on average`);
+		// Lines written in different units: the range may be two prices for two things.
+		const uoms = Array.isArray(r.price_uoms) ? r.price_uoms : [];
+		if (uoms.length > 1) out.unit_notes.push(`Priced per ${uoms.join(" and per ")}`);
+		if ((Number(r.no_price_lines) || 0) > 0) {
+			out.spent_notes.push(plural(r.no_price_lines, "line", "lines") + " with no price");
+		}
+		if (free > 0) out.spent_notes.push(plural(free, "line", "lines") + " no charge");
+	} else if (none > 0) {
+		out.unit = NO_PRICE_TEXT;
+		out.spent = NO_PRICE_TEXT;
+		out.spent_notes.push(plural(none, "line", "lines") + " with no price");
+	} else if (free > 0) {
+		out.unit = NO_CHARGE_TEXT;
+		out.spent = NO_CHARGE_TEXT;
+	}
+	if (r.received_value !== null && r.received_value !== undefined && Number(r.received_value) > 0) {
+		out.spent_notes.push(`Received ${fmt_money(r.received_value, currency)}`);
+	}
+	if (r.draft_spent !== null && r.draft_spent !== undefined) {
+		out.spent_notes.push(`${fmt_money(r.draft_spent, currency)} on draft orders, not counted`);
+	}
+	if ((Number(r.quote_count) || 0) > 0) {
+		const low = r.quote_low;
+		const high = r.quote_high;
+		const range = low === high ? fmt_money(low, currency) : `${fmt_money(low, currency)} – ${fmt_money(high, currency)}`;
+		const drafts = Number(r.quote_draft_count) || 0;
+		const label = drafts === 0 ? "" : drafts >= Number(r.quote_count) ? " (draft)" : ` (${drafts} draft)`;
+		out.unit_notes.push(`Quoted ${range}${label}`);
+	}
+	return out;
+}
+
+// What the by-item view totals under its table, over the rows it is SHOWING (so it follows every
+// filter and the search): the amount spent, and how many lines the sum leaves out.
+//   { amount, lines, no_price_lines, no_charge_lines, text, notes: [] }
+export function spent_summary(items, currency) {
+	const rows = Array.isArray(items) ? items : [];
+	const sum = (key) => rows.reduce((total, r) => total + (Number(r[key]) || 0), 0);
+	const amount = Math.round(sum("spent") * 1e6) / 1e6;
+	const out = { amount: amount, lines: sum("spent_lines"), no_price_lines: sum("no_price_lines"), no_charge_lines: sum("no_charge_lines") };
+	out.text = fmt_money(amount, currency);
+	out.notes = [];
+	if (out.no_price_lines > 0) out.notes.push(plural(out.no_price_lines, "line", "lines") + " with no price");
+	if (out.no_charge_lines > 0) out.notes.push(plural(out.no_charge_lines, "line", "lines") + " no charge");
+	return out;
 }
 
 // ------------------------------------------------------------------ print
@@ -467,17 +691,27 @@ export function describe_filters(state, options) {
  */
 export function print_html(items, opts, esc) {
 	const o = opts || {};
+	// The two price columns, only when the person was sent prices (opts.prices). Ten columns do not
+	// fit a portrait page, so the page asks for landscape; the print dialog can still change it.
+	const money = !!o.prices;
 	const cell = (value) => esc(value === null || value === undefined ? "" : String(value));
 	const rows = (items || [])
 		.map((r) => {
 			const where = (r.where_now || []).length
 				? r.where_now.map((p) => cell(p.text)).join("<br>")
 				: cell(r.where_now_text || "");
+			const view = money ? item_price_view(r, o.currency) : null;
+			const small = (notes) => notes.map((n) => `<br><small>${cell(n)}</small>`).join("");
+			const priced = view
+				? `<td class="n">${cell(view.unit)}${small(view.unit_notes)}</td>
+				<td class="n">${cell(view.spent)}${small(view.spent_notes)}</td>`
+				: "";
 			return `<tr>
 				<td><b>${cell(r.item_code)}</b><br>${cell(r.item_name)}</td>
 				<td class="n">${cell(fmt_qty(r.requested_qty))}</td>
 				<td class="n">${cell(fmt_qty(r.ordered_qty))}</td>
 				<td class="n">${cell(fmt_qty(r.received_qty))}</td>
+				${priced}
 				<td>${cell(r.state_label)}</td>
 				<td>${where}</td>
 				<td>${cell(r.expected_date || "")}</td>
@@ -485,6 +719,12 @@ export function print_html(items, opts, esc) {
 			</tr>`;
 		})
 		.join("");
+	const total = money ? spent_summary(items, o.currency) : null;
+	const totalRow = total
+		? `<tfoot><tr><td colspan="4"><b>Total spent</b> (ordered, not billed or paid)</td>
+<td class="n"></td><td class="n"><b>${cell(total.text)}</b>${total.notes.map((n) => `<br><small>${cell(n)}</small>`).join("")}</td>
+<td colspan="4"></td></tr></tfoot>`
+		: "";
 	const sub = [o.subtitle, o.filters ? `Showing: ${o.filters}` : "", o.printed ? `Printed ${o.printed}` : ""]
 		.filter(Boolean)
 		.map(cell)
@@ -499,12 +739,15 @@ th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
 th{background:#eee}
 .n{text-align:right;white-space:nowrap}
 tr{page-break-inside:avoid}
+tfoot td{background:#eee}
+${money ? "@page{size:landscape}" : ""}
 </style></head><body>
 <h1>${cell(o.title || "Materials")}</h1>
 <p>${sub}</p>
 <table><thead><tr>
 <th>Item</th><th class="n">Requested</th><th class="n">Ordered</th><th class="n">Received</th>
+${money ? '<th class="n">Unit price</th><th class="n">Spent</th>' : ""}
 <th>Status</th><th>Where it is now</th><th>Due</th><th>Supplier</th>
-</tr></thead><tbody>${rows}</tbody></table>
+</tr></thead><tbody>${rows}</tbody>${totalRow}</table>
 </body></html>`;
 }

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.813.0] - 2026-11-12
+## [1.815.0] - 2026-11-12
 
 ### Added
 - **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
@@ -183,6 +183,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
   shared set, and the one more branch `receive_items` writes a warehouse in.
   `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
+
+## [1.814.0] - 2026-11-12
+
+### Added
+- **The Procurement Tracker shows what was spent.** Nikolas, 2026-11-12: "on the procurement
+  tracker, there should be another column for the price of the item we spent." This is one reading
+  of that, and it can be corrected. ERPNext holds no bills (they are entered in QuickBooks), so the
+  only price it has is the purchase order line's rate: **Spent is what was ordered**, and nothing on
+  screen says billed or paid.
+  - **By item:** two sortable columns, **Unit price** and **Spent**. Spent is the sum of the
+    submitted order lines' own `base_amount` for this job (company currency, never recomputed from a
+    rate and a quantity). Unit price is the price per stock unit across those lines: one price when
+    they agree, "low – high" with the average beneath when they differ. Under the table, a total over
+    the items showing, so it follows every filter and the search. "Received $X" sits under Spent: the
+    received quantity at the order line's rate, which is a second figure, not a replacement.
+  - **By document:** a **Rate** and an **Amount** on each line, by the document it sits in (an
+    order's own line; a receipt valued at the *order's* rate, because the rate copied onto a receipt
+    is 0 exactly where the price was left off and added later; a quote on its own, marked "quoted,
+    not spent"). Each purchase order, receipt and quotation shows its total for this job's lines, and
+    says **"this job's lines"** where the document has other lines, with the whole document's total
+    in the tooltip. Material Requests, Requests for Quotation and bills have no price: their cells
+    stay empty.
+  - **What Spent is, and is not.** It is the sum of the order lines' own amounts. It leaves out
+    a discount applied to the whole order, taxes and freight, and it counts an order closed short in
+    full. A discount on the line itself is in the line's rate, so it is in the amount. Example: 10
+    units at $10 with a 10% discount on the whole order shows $100, where the order's net is $90.
+    The column's tooltip says the same.
+  - **Which documents are priced.** The feed's quotation and receipt joins list canceled documents
+    (they always did, and that is unchanged). A canceled quotation has no quote, a draft one is
+    shown as a quote labeled "draft", a canceled receipt has no value, and a draft receipt is
+    labeled a draft ("$X on a draft receipt", never "received").
+  - **A missing price is not a zero.** A line whose rate is 0 reads **No price**, is left out of
+    every sum, and a sum that leaves lines out says how many ("1 line with no price"). A line ERPNext
+    itself marks free reads **No charge**. A new **No price only** checkbox next to "Needs action
+    only" finds the lines purchasing has to fix (373 of the last 543 submitted order lines had no
+    rate on 2026-11-12). A draft order's amount is shown and not counted, as its quantity is not.
+  - **Who sees prices.** The tracker's endpoints ask only for Project read, and so does the Project
+    form, so a person who can open a job can read its whole feed. Prices are the Purchase Orders', so
+    they are sent only to a person who may read Purchase Orders, decided on the server: for anyone
+    else the price keys are not in the response at all (`prices` is absent from the overview, and no
+    row, item or document carries a price key), the columns and the checkbox are not drawn, and a
+    shared link carrying `pt_noprice=1` is ignored. A quote's rate also needs Supplier Quotation
+    read. On production 17 of the 18 enabled people who can open a Project can also read Purchase
+    Orders (the other is an HR-only account), so in practice the people who use the tracker see
+    prices.
+  - **The assistant tool** (`project_procurement_status`) carries the same keys, only for a caller
+    who may read Purchase Orders. New keys only; nothing was renamed or removed.
+  - **The printed list** (the by-item **Print list**) gains the two columns and a total for someone
+    who may see prices, and asks for a landscape page, because ten columns do not fit a portrait one.
+    The document PDFs (`procurement_print.py`, Frappe's own print formats, which go to suppliers) are
+    unchanged.
+  - **Where it comes from.** One more set of columns on the query that already reads the order
+    lines (both halves of its `UNION`), and one `count(*) ... group by parent` per priced doctype to
+    know how many lines a document has in all: a fixed handful of queries per project, never one per
+    line. Money is keyed on the **order line**, not the request line: a request line split across two
+    orders is two prices, and the quantity de-duplication (which keys on the request line) is the
+    wrong grain for it. The new keys: `price_state`, `po_rate`, `po_amount`, `po_unit_rate`,
+    `received_value`, `receipt_*`, `quote_*` on a line; `spent`, `spent_lines`, `no_price_lines`,
+    `no_charge_lines`, `draft_spent`, `unit_price_low` / `_high` / `_avg`, `price_uoms`,
+    `received_value`, `quote_*` on an item; `price_total` on a document.
+  - **A real wrinkle, said in the tracker.** On production an item can have one line priced per FT
+    and another per Unit, and ERPNext's conversion factor is 1 on both. The range is then two prices
+    for two things, so the cell adds "Priced per FT and per Unit".
+  - **Tests:** `test_procurement_prices.py` (57, pytest, own CI step: the sums, a zero-rate line, a
+    free line, an order spanning two jobs, a partial receipt, a return receipt, a foreign-currency
+    order, a conversion factor, a whole-order discount, an order closed short, a split request, a
+    quote, a draft, canceled and draft quotes and receipts, and that the price keys are absent
+    without Purchase Order read while every existing key is still there), and 123 more node checks in `scripts/test_procurement_tracker.mjs` (the columns, the range,
+    "No price", sorting with blanks last, the total following the filters, the print).
+  - No patch, no fixture, no doctype or custom field, nothing written to the site. Nothing here
+    reads prices for anyone who could not already read them on the Purchase Order itself.
+
 ## [1.812.0] - 2026-11-12
 
 ### Added

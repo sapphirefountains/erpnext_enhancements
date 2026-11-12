@@ -632,7 +632,7 @@ def delivery_refusal(lines):
 def next_steps(item_code, account, account_is_company_default, count_at=None, not_at=None):
 	"""What to do after the switch, in words. ``account`` may be ``None``.
 
-	``not_at`` is what the Project Shelf is called on a site that has one (v1.813.0), and
+	``not_at`` is what the Project Shelf is called on a site that has one (v1.815.0), and
 	``count_at`` the location the first count will open on there, if the item has one. With a
 	shelf the text says where to count the item and where not to: the item's old default
 	warehouse is the shelf on most items this switch is for, and a count there would take the

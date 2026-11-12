@@ -1654,7 +1654,7 @@ erpnext_enhancements.patches.supplier_returns_hub_links
 # already run on every existing site, so the ninth template it now lists never reaches one without this. Insert-only
 # (a `warranty` template already there is left as it is), only that key, prints what it did. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_warranty_certificate_template
-# The Project Shelf (v1.813.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
+# The Project Shelf (v1.815.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
 # and stock there is not shop stock). Five steps, each logged and none able to stop the next: rename the warehouse
 # "Stores" to "Project Shelf" with Frappe's own rename_doc (force, because ERPNext 16.54.0's Warehouse is not
 # renameable from the Desk; every Link follows: Item Defaults, Putaway Rules, on-hand and ledger rows, order and

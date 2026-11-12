@@ -182,7 +182,7 @@
 			const row = (frm.doc.items || []).find((r) => !r.item_code) || frm.add_child("items");
 			const values = { item_code: out.item_code };
 			// The server's suggestion for where the first count goes: the item's own bin, never the
-			// Project Shelf or a job site (v1.813.0, maintain_stock.first_count_warehouse). With none,
+			// Project Shelf or a job site (v1.815.0, maintain_stock.first_count_warehouse). With none,
 			// the row's warehouse is left empty and the person chooses; ERPNext fills nothing there itself.
 			if (out.warehouse) values.warehouse = out.warehouse;
 			frappe.model.set_value(row.doctype, row.name, values);

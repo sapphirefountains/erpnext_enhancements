@@ -48,7 +48,7 @@ def _make_purchase_receipt(po):
 	from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
 	pr = make_purchase_receipt(po)
-	# The same default place a packing-slip draft gets (v1.813.0, procurement_project).
+	# The same default place a packing-slip draft gets (v1.815.0, procurement_project).
 	from erpnext_enhancements.procurement_project import apply_receiving_defaults
 
 	apply_receiving_defaults(pr)

@@ -1104,7 +1104,7 @@ doc_events = {
 		# the REST API, data import and Material-Request-mapped documents.
 		"before_validate": [
 			"erpnext_enhancements.procurement_project.cascade_project_to_items",
-			# The Project Shelf (v1.813.0, Nik 2026-11-12): a draft line with a project and no
+			# The Project Shelf (v1.815.0, Nik 2026-11-12): a draft line with a project and no
 			# location gets the project's default place -- the Project Shelf for a job, the
 			# item's own bin for an Overhead project. After the cascade (it needs the project)
 			# and before ERPNext's set_missing_values, which would fill the blank from the Item
@@ -1166,7 +1166,7 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
-	# The Project Shelf (v1.813.0): a row added to a SUBMITTED order with Update Items. ERPNext
+	# The Project Shelf (v1.815.0): a row added to a SUBMITTED order with Update Items. ERPNext
 	# inserts that row on its own (accounts_controller.update_child_qty_rate), so the order's
 	# before_validate hooks never see it, and it arrives with no project (mandatory here) and
 	# the Company's default warehouse, which is the shelf. This gives it the header's project
@@ -1216,7 +1216,7 @@ doc_events = {
 	# be the reason a receipt cannot be submitted. It reads by name and does nothing when no
 	# Supplier Return names this document, which is every receipt today.
 	"Purchase Receipt": {
-		# The Project Shelf (v1.813.0): a receipt saved for the first time puts each order line
+		# The Project Shelf (v1.815.0): a receipt saved for the first time puts each order line
 		# in its default receiving place. It is what covers the Desk's Create > Purchase Receipt,
 		# which copies the order line's warehouse: an Overhead line that names the Project Shelf
 		# goes to the item's own bin. First save only, never a return, and never when a person

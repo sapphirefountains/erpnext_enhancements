@@ -426,7 +426,7 @@ def first_count_warehouse(item_code, company):
 	*Open a Stock Reconciliation* puts on the new form's row. ``None`` leaves the row's
 	location empty, so the person has to choose it.
 
-	**Never the Project Shelf and never a job site** (v1.813.0;
+	**Never the Project Shelf and never a job site** (v1.815.0;
 	``project_shelf_rules.first_count_warehouse`` has the rule and why). On a site with a
 	Project Shelf it is the item's own bin (``procurement_project.item_own_bin``), else the
 	Overhead receiving warehouse, else nothing. On a site with no shelf set up it is the
@@ -589,7 +589,7 @@ def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 		"company": company,
 		"account": account,
 		"account_is_company_default": is_default,
-		# Where the first count opens (v1.813.0): never the Project Shelf or a job site. The
+		# Where the first count opens (v1.815.0): never the Project Shelf or a job site. The
 		# item's old default warehouse is the shelf on most items this switch is for.
 		"warehouse": (count_at := first_count_warehouse(item_code, company)),
 		"next_steps": rules.next_steps(
