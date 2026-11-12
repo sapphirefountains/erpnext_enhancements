@@ -2904,7 +2904,7 @@ def test_the_build_only_keys_are_never_compared_flagged_or_settled():
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core import mapping
 
-	assert mapping.BUILD_ONLY_ROW_FIELDS == ("price_list_rate",) and mapping.BUILD_ONLY_FIELDS == ("ignore_pricing_rule",)
+	assert mapping.BUILD_ONLY_ROW_FIELDS == ("price_list_rate",) and "ignore_pricing_rule" in mapping.BUILD_ONLY_FIELDS
 	held = [types.SimpleNamespace(item_code="SERVICE-CALL", qty=1.0, rate=400.0, price_list_rate=250.0)]
 	incoming = [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 400.0, "price_list_rate": 400.0}]
 	assert mapping._table_differences(held, incoming) == []
@@ -3316,6 +3316,499 @@ def test_the_changelog_and_readme_explain_the_repricing_and_the_check():
 	assert "price_list_rate" in changelog and "still differ" in changelog
 	readme = _read(APP / "quickbooks_online" / "README.md")
 	assert "price_list_rate" in readme and "_differences_after_write" in readme
+
+
+# ---------------------------------------------------------------------------
+# Third review of #1437 (v1.801.2): the Price List's currency, one amount rule, a kept note
+# ---------------------------------------------------------------------------
+#
+# Four things the third review left open. None of them can be watched on a bench from
+# here, so each is pinned on the shape ERPNext v16.54.0 gives it:
+#
+# * ``set_price_list_currency`` rewrites ``price_list_currency`` from the Price List on
+#   every save. The mapper sent the document's currency, so on a document in another
+#   currency the saved value never matched and *Refresh draft* could not come back Clean.
+# * The cent a rebuilt line's ``amount`` may differ by was unbounded, and only the two
+#   invoice DocTypes have a preflight that bounds it for them.
+# * A sync rewrote the note a person's own write had left, and judged it by other rules.
+# * ``_priced_line`` says what it does and why.
+
+MAPPING_PY = CORE / "mapping.py"
+ITEM_TABLES = [
+	("Sales Invoice", "Sales Invoice Item"),
+	("Quotation", "Quotation Item"),
+	("Purchase Invoice", "Purchase Invoice Item"),
+	("Purchase Order", "Purchase Order Item"),
+]
+PRICE_LISTS = {"Standard Selling": "USD", "Canada Selling": "CAD", "Euro Selling": "EUR"}
+
+
+def _currencies(monkeypatch, mapping, *, company="USD", price_lists=PRICE_LISTS):
+	"""A company currency, and each Price List's own, for ``_price_list_pair`` to read."""
+	monkeypatch.setattr(mapping, "_company_currency", lambda settings: company)
+	monkeypatch.setattr(
+		mapping.frappe.db,
+		"get_value",
+		lambda doctype, filters=None, fieldname=None, **kwargs: (
+			price_lists.get(filters) if doctype == "Price List" and fieldname == "currency" else None
+		),
+		raising=False,
+	)
+
+
+@pytest.mark.parametrize(
+	"price_list, currency, rate, expected",
+	[
+		# Every document on a one-currency site: unchanged from before.
+		("Standard Selling", "USD", 1, ("USD", 1)),
+		# The finding: a document in another currency on the company-currency list. ERPNext
+		# stores the list's currency whatever it is sent; the mapper used to send CAD.
+		("Standard Selling", "CAD", 0.73, ("USD", 1)),
+		# The list is in the document's currency: one unit of it is the document's rate.
+		("Canada Selling", "CAD", 0.73, ("CAD", 0.73)),
+		# A third currency: QuickBooks states no rate for it and none is invented.
+		("Euro Selling", "CAD", 0.73, ("EUR", None)),
+		# No list, or one whose currency cannot be read: ERPNext leaves the pair as sent.
+		(None, "CAD", 0.73, ("CAD", 0.73)),
+		(None, "USD", 1, ("USD", 1)),
+		("Unreadable", "CAD", 0.73, ("CAD", 0.73)),
+	],
+)
+def test_the_price_list_pair_is_what_erpnext_would_set(monkeypatch, price_list, currency, rate, expected):
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	_currencies(monkeypatch, mapping)
+
+	assert mapping._price_list_pair(price_list, currency, rate, SETTINGS) == expected
+
+
+@pytest.mark.parametrize("mapper", ["_map_sales_invoice", "_map_sales_receipt", "_map_quotation"])
+def test_a_document_in_another_currency_names_the_price_lists_own_currency(monkeypatch, mapper):
+	"""Through each mapper that names a Price List. The lines are in the document's
+	currency and neither rate touches them: the list price still equals the rate."""
+	mapping = _mappers(monkeypatch)
+	monkeypatch.setattr(mapping, "_txn_currency", lambda payload, settings: ("CAD", 0.73))
+	_currencies(monkeypatch, mapping)
+	payload = dict(_lines("SalesItemLineDetail"), Id="900", TxnDate="2026-11-02", CustomerRef={"value": "1"})
+
+	_doctype, values = getattr(mapping, mapper)(payload, SETTINGS)
+
+	assert (values["currency"], values["conversion_rate"]) == ("CAD", 0.73)
+	assert values["selling_price_list"] == "Standard Selling"
+	assert (values["price_list_currency"], values["plc_conversion_rate"]) == ("USD", 1)
+	assert [(item["rate"], item["price_list_rate"]) for item in values["items"]] == [
+		(0, 0),
+		(0, 0),
+		(185, 185),
+		(6.82, 6.82),
+	]
+
+
+@pytest.mark.parametrize("mapper", ["_map_purchase_invoice", "_map_purchase_order"])
+def test_the_buy_side_leaves_the_price_list_to_erpnext(monkeypatch, mapper):
+	"""No buying Price List is mapped, so ERPNext takes the supplier's or the Buying
+	Settings default and derives the pair from it. The lines still carry theirs."""
+	mapping = _mappers(monkeypatch)
+	monkeypatch.setattr(mapping, "_txn_currency", lambda payload, settings: ("CAD", 0.73))
+	payload = dict(_lines("ItemBasedExpenseLineDetail"), Id="900", TxnDate="2026-11-02", VendorRef={"value": "2"})
+
+	_doctype, values = getattr(mapping, mapper)(payload, SETTINGS)
+
+	assert not {"buying_price_list", "price_list_currency", "plc_conversion_rate"} & set(values)
+	assert len(values["items"]) == 4 and all(item["price_list_rate"] == item["rate"] for item in values["items"])
+
+
+def test_a_third_currency_price_list_parks_a_create_and_leaves_a_refresh_alone(monkeypatch):
+	"""The one case with no rate to send. A create is parked for the missing rate, which
+	is the honest reason; a *Refresh draft* checks only the entity's own fields and
+	``apply_values`` skips a None, so the draft keeps the rate it has."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	required = types.SimpleNamespace(
+		fieldname="plc_conversion_rate", fieldtype="Float", reqd=1, read_only=0, fetch_from=None, default=None
+	)
+	monkeypatch.setattr(frappe, "get_meta", lambda doctype: types.SimpleNamespace(fields=[required]), raising=False)
+	values = {
+		"company": "Main Co",
+		"customer": "Acme Supply",
+		"items": [{"item_code": "SERVICE-CALL", "qty": 1, "rate": 5.0}],
+		"price_list_currency": "EUR",
+		"plc_conversion_rate": None,
+	}
+
+	assert mapping.validate_mapped_values("Invoice", "Sales Invoice", values) == [
+		"Missing required field: plc_conversion_rate"
+	]
+	assert mapping.validate_mapped_values("Invoice", "Sales Invoice", values, include_doc_required=False) == []
+	doc = _doc(doctype="Sales Invoice", name="ACC-SINV-2026-00042", plc_conversion_rate=1.08)
+	mapping.apply_values(doc, {"plc_conversion_rate": None})
+	assert doc.plc_conversion_rate == 1.08 and doc.sets == []
+
+
+def test_the_price_list_pair_is_never_compared_flagged_or_settled(monkeypatch):
+	"""ERPNext derives both from the Price List on every save, so neither is QuickBooks
+	data and neither could be written away. A draft in CAD on a USD list holds USD / 1.0;
+	the mapper said CAD / 1 before v1.801.2 and says USD / 1 now. Neither reads as a
+	change, on a sync or on the check after a write."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	assert mapping.BUILD_ONLY_FIELDS == ("ignore_pricing_rule", "price_list_currency", "plc_conversion_rate")
+	doc = _doc(
+		doctype="Sales Invoice",
+		name="ACC-SINV-2026-00042",
+		currency="CAD",
+		price_list_currency="USD",
+		plc_conversion_rate=1.0,
+	)
+	before = {"currency": "CAD", "price_list_currency": "CAD", "plc_conversion_rate": 1}
+	now = {"currency": "CAD", "price_list_currency": "USD", "plc_conversion_rate": 1}
+	row = _mapping_row(
+		owned_fields=json.dumps({"currency": "CAD", "price_list_currency": "USD", "plc_conversion_rate": 1.0}),
+		settled_qbo_values=json.dumps(before),
+	)
+	for values in (before, now):
+		assert mapping._linked_differences(doc, values, row) == {"fields": {}, "tables": {}}
+		assert mapping._linked_differences(doc, values, _mapping_row(owned_fields="{}")) == {"fields": {}, "tables": {}}
+		assert mapping._settle_unflagged(row, "Sales Invoice", values) is None
+		assert mapping._settled_from("Sales Invoice", values) == {"currency": "CAD"}
+
+	# The check after a write: whatever ERPNext made of the pair is not "still differs".
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name=None: doc, raising=False)
+	doc.price_list_currency, doc.plc_conversion_rate = "EUR", 1.08
+	assert mapping._differences_after_write("Sales Invoice", doc.name, now) == {"fields": {}, "tables": {}}
+	# The document's own currency is QuickBooks data and still counts.
+	doc.currency = "USD"
+	assert sorted(mapping._differences_after_write("Sales Invoice", doc.name, now)["fields"]) == ["currency"]
+
+
+def test_refresh_draft_is_clean_whatever_erpnext_makes_of_the_price_list_pair(monkeypatch):
+	"""The defect as a person met it: *Refresh draft* on a draft in another currency. The
+	save puts the Price List's own currency on the header; the rebuild is Clean, and the
+	pair is not counted as applied or remembered as settled."""
+	mapping, writes, doc, row, values = _rebuilt_draft(monkeypatch, reprice=False)
+	values.update({"currency": "CAD", "conversion_rate": 0.73, "price_list_currency": "USD", "plc_conversion_rate": 1})
+	plain_save = doc.save
+
+	def save(**kwargs):
+		plain_save(**kwargs)
+		# set_price_list_currency: this customer's own list is in CAD.
+		doc.price_list_currency, doc.plc_conversion_rate = "CAD", 0.73
+
+	doc.save = save
+
+	result = mapping.refresh_linked_draft("Invoice", "900")
+
+	assert result["still_differs"] == [] and writes["set_value"] == []
+	assert result["applied"] == ["conversion_rate", "currency", "customer", "items", "posting_date"]
+	assert row.conflict_status == "Clean" and row.qbo_changes is None
+	assert not {"price_list_currency", "plc_conversion_rate"} & set(json.loads(row.settled_qbo_values))
+
+
+@pytest.mark.parametrize("doctype, child", ITEM_TABLES)
+def test_the_amount_rule_is_the_same_for_every_doctype_the_importer_writes(monkeypatch, doctype, child):
+	"""One cent on ``amount``, only where ``qty`` and ``rate`` both took. A Quotation and a
+	Purchase Order have no preflight to bound what is passed over, so the bound is in the
+	rule: the line whose quantity was rounded (0.6666999 stored as 0.667) is three cents
+	out and is reported on every DocType. A rate that moved is reported with its amount,
+	even though that amount is one cent out."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	metas = {
+		doctype: _typed_meta([_field("items", "Table", options=child)]),
+		child: _typed_meta([_field("qty", "Float"), _field("rate", "Currency", 2), _field("amount", "Currency", 2)]),
+	}
+	monkeypatch.setattr(frappe, "get_meta", lambda name: metas[name], raising=False)
+	doc = _doc(
+		doctype=doctype,
+		name="DRAFT-0001",
+		items=[
+			types.SimpleNamespace(qty=3.0, rate=33.33, amount=99.99),
+			types.SimpleNamespace(qty=0.667, rate=81.75, amount=54.53),
+			types.SimpleNamespace(qty=1.0, rate=10.0, amount=10.0),
+			types.SimpleNamespace(qty=3.0, rate=33.33, amount=99.99),
+		],
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda name, docname=None: doc, raising=False)
+	values = {
+		"items": [
+			{"qty": 3, "rate": 33.33333, "amount": 100.0},  # one cent: ERPNext's own arithmetic
+			{"qty": 0.6666999, "rate": 81.75, "amount": 54.5},  # three cents: a rounded quantity
+			{"qty": 1, "rate": 10.01, "amount": 10.01},  # one cent, and the rate moved
+			{"qty": 3, "rate": 33.334, "amount": 100.01},  # two cents
+		]
+	}
+
+	rows = mapping._differences_after_write(doctype, doc.name, values)["tables"]["items"]["rows"]
+
+	assert rows == [
+		{"row": 2, "fields": {"amount": {"erpnext": 54.53, "qbo": 54.5}}},
+		{"row": 3, "fields": {"rate": {"erpnext": 10.0, "qbo": 10.01}, "amount": {"erpnext": 10.0, "qbo": 10.01}}},
+		{"row": 4, "fields": {"amount": {"erpnext": 99.99, "qbo": 100.01}}},
+	]
+
+
+def test_the_amount_rule_names_no_doctype_and_says_what_it_tolerates():
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	assert mapping.RECOMPUTED_AMOUNT_UNITS == 1
+	written = _function_source(MAPPING_PY, "_without_recomputed_amounts")
+	code = _code_only(written) + _code_only(_function_source(MAPPING_PY, "_drop_recomputed_amounts"))
+	for doctype, child in ITEM_TABLES:
+		assert doctype not in code and child not in code
+	assert "shortfall" not in code and "imbalance" not in code, "it leans on no preflight"
+	# Both checks that judge a write reach the rule through the one helper.
+	for caller in ("_differences_after_write", "_rejudge_what_a_write_left"):
+		assert "_drop_recomputed_amounts(" in _code_only(_function_source(MAPPING_PY, caller))
+	assert _read(MAPPING_PY).count("_without_recomputed_amounts(") == 2, "its definition and one call"
+	# The comment the review asked for: the tolerance, and why a rate change is not hidden.
+	assert "**What is tolerated, and how much.**" in written
+	assert "**Why a changed rate is never hidden by it.**" in written
+
+	cent = {"erpnext": 99.99, "qbo": 100.0}
+	assert mapping._within_recomputed_amount(cent, 2)
+	assert not mapping._within_recomputed_amount({"erpnext": 99.99, "qbo": 100.01}, 2)
+	assert mapping._within_recomputed_amount({"erpnext": 100, "qbo": 101}, 0)
+	assert not mapping._within_recomputed_amount({"erpnext": 100, "qbo": 102}, 0)
+	for odd in ({"erpnext": None, "qbo": 1.0}, {"erpnext": "n/a", "qbo": 1.0}, None, 0.01):
+		assert not mapping._within_recomputed_amount(odd, 2)
+	# A precision that cannot be read is two decimals, ERPNext's own default.
+	row = [{"row": 1, "fields": {"amount": dict(cent)}}]
+	line = [{"qty": 3, "rate": 33.33, "amount": 100.0}]
+	assert mapping._without_recomputed_amounts(row, line) == []
+	assert mapping._without_recomputed_amounts(row, line, {"amount": 2}) == []
+	# A row with no quantity and rate (a tax row) keeps its amount, cent or not.
+	assert mapping._without_recomputed_amounts(row, [{"amount": 100.0}], {"amount": 2}) == row
+
+
+CDC_PAYLOAD = {"Id": "900", "SyncToken": "4", "MetaData": {"LastUpdatedTime": "2026-11-10T10:20:00-08:00"}}
+
+
+def _left_flagged_by_a_refresh(monkeypatch):
+	"""A draft *Refresh draft* rebuilt, repriced by ERPNext and therefore left flagged, as
+	the next sync finds it."""
+	mapping, writes, doc, row, values = _rebuilt_draft(monkeypatch, reprice=True)
+	mapping.refresh_linked_draft("Invoice", "900")
+	_replay(row, writes)
+	assert row.conflict_status == "QuickBooks Changed"
+	return mapping, writes, doc, row, values
+
+
+def test_an_ordinary_sync_pass_does_not_erase_the_note_a_write_left(monkeypatch):
+	"""The note says "rebuilt from QuickBooks, still differs". Until v1.801.2 the next pass
+	that looked at the row rewrote it as "QuickBooks changed this record. Nothing was
+	written." Now a replay of the same payload builds the note it already has and writes
+	nothing, and a newer payload moves the token and keeps the mark."""
+	mapping, writes, _doc_, row, _values = _left_flagged_by_a_refresh(monkeypatch)
+	before = json.loads(row.qbo_changes)
+	assert before["after_write"] == "refresh" and before["after_write_fields"] == ["items"]
+
+	preview = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD), SETTINGS, preview=True)
+	assert preview["action"] == "would_flag" and writes["set_value"] == []
+
+	again = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD), SETTINGS)
+	assert again["action"] == "flagged" and again["fields"] == ["items"]
+	assert writes["set_value"] == [], "the same note: nothing to write, and nothing erased"
+
+	newer = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD, SyncToken="5"), SETTINGS)
+	assert newer["action"] == "flagged"
+	_replay(row, writes)
+	note = json.loads(row.qbo_changes)
+	assert note["sync_token"] == "5", "Keep ERPNext advances to what the reviewer is shown"
+	assert note["after_write"] == "refresh" and note["after_write_fields"] == ["items"]
+	assert note["tables"] == before["tables"] and "no_baseline" not in note["tables"]["items"]
+	assert row.conflict_status == "QuickBooks Changed" and row.sync_token == "4", "a flag holds the cursor"
+
+
+def test_the_mark_goes_when_the_difference_does_and_not_before(monkeypatch):
+	"""QuickBooks changes another field while the rebuilt lines are still wrong: the note
+	holds both and keeps the mark, naming only the lines as the write's. A person corrects
+	the lines: the mark goes and the QuickBooks change stays. They correct that too: the
+	flag clears and the lines have a reference again."""
+	mapping, writes, doc, row, values = _left_flagged_by_a_refresh(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core import matching
+
+	values["customer"] = "Other Customer"
+	mixed = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD, SyncToken="5"), SETTINGS)
+	_replay(row, writes)
+	note = mapping.stored_changes(row)
+	assert mixed["fields"] == ["customer", "items"]
+	assert note["after_write"] == "refresh" and note["after_write_fields"] == ["items"]
+	assert note["fields"]["customer"] == {"erpnext": "Acme Supply", "qbo": "Other Customer"}
+	assert matching._changed_since_write(note) is True
+
+	doc.items = [dict(line) for line in REBUILT_LINES]
+	lines_fixed = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD, SyncToken="5"), SETTINGS)
+	_replay(row, writes)
+	note = mapping.stored_changes(row)
+	assert lines_fixed["action"] == "flagged" and lines_fixed["fields"] == ["customer"]
+	assert "after_write" not in note and "after_write_fields" not in note
+	assert matching._changed_since_write(note) is False
+
+	doc.customer = "Other Customer"
+	done = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD, SyncToken="5"), SETTINGS)
+	_replay(row, writes)
+	assert done["action"] == "unchanged"
+	assert row.conflict_status == "Clean" and row.qbo_changes is None and row.sync_token == "5"
+	assert json.loads(row.settled_qbo_values)["items"] == REBUILT_LINES, "the lines have a reference again"
+	assert doc.saves == [{"ignore_permissions": True}], "one save: the person's Refresh draft. No sync saved it"
+
+
+def test_a_sync_judges_what_a_write_left_by_the_writes_own_amount_rule(monkeypatch):
+	"""A rebuild leaves one line repriced and another a cent out through rounding. The
+	write passed the cent. A person corrects the repriced line by hand; the next sync must
+	pass the cent too, or the draft stays flagged over it for good."""
+	mapping, writes, doc, row, values = _rebuilt_draft(monkeypatch, reprice=False)
+	metas = {
+		"Sales Invoice": _typed_meta([_field("items", "Table", options="Sales Invoice Item")]),
+		"Sales Invoice Item": _typed_meta(
+			[_field("qty", "Float"), _field("rate", "Currency", 2), _field("amount", "Currency", 2)]
+		),
+	}
+	monkeypatch.setattr(mapping.frappe, "get_meta", lambda doctype: metas[doctype], raising=False)
+	values["items"] = [
+		{"item_code": "SERVICE-LABOR", "qty": 3, "rate": 33.33333, "amount": 100.0, "price_list_rate": 33.33333},
+		{"item_code": "SERVICE-CALL", "qty": 1, "rate": 0.0, "amount": 0.0, "price_list_rate": 0.0},
+	]
+	saved = [
+		{"item_code": "SERVICE-LABOR", "qty": 3.0, "rate": 33.33, "amount": 99.99, "price_list_rate": 33.33},
+		{"item_code": "SERVICE-CALL", "qty": 1.0, "rate": 250.0, "amount": 250.0, "price_list_rate": 250.0},
+	]
+
+	def save(**kwargs):
+		doc.saves.append(kwargs)
+		doc.items = [dict(line) for line in saved]
+
+	doc.save = save
+	result = mapping.refresh_linked_draft("Invoice", "900")
+	_replay(row, writes)
+	assert [line["row"] for line in result["remaining"]["tables"]["items"]["rows"]] == [2], "the cent was passed"
+
+	doc.items[1] = dict(saved[1], rate=0.0, amount=0.0, price_list_rate=0.0)
+	result = mapping.upsert_entity("Invoice", dict(CDC_PAYLOAD), SETTINGS)
+	_replay(row, writes)
+
+	assert result["action"] == "unchanged"
+	assert row.conflict_status == "Clean" and row.qbo_changes is None
+	# The same table with no write behind it is still read strictly by a sync.
+	assert mapping._table_differences(doc.items, values["items"], {"qty": 3, "rate": 2, "amount": 2}) == [
+		{"row": 1, "fields": {"amount": {"erpnext": 99.99, "qbo": 100.0}}}
+	]
+
+
+def test_a_sync_cannot_clear_the_flag_a_clear_that_did_not_take_left(monkeypatch):
+	"""*Use QuickBooks values* blanked a field and the record's own validation put the
+	value back. The field has no reference left and QuickBooks says nothing about it,
+	which is exactly what a sync skips: the next pass found nothing and cleared the flag
+	while the record still held the value. Judged as the write judged it, it stays."""
+	mapping, _frappe, writes, doc, row = _flagged_customer(monkeypatch)
+	note = json.loads(row.qbo_changes)
+	note["fields"] = {"payment_terms": {"erpnext": "Net 45", "qbo": None, "cleared": True}}
+	row.qbo_changes = json.dumps(note)
+	plain_save = doc.save
+
+	def save(**kwargs):
+		plain_save(**kwargs)
+		doc.payment_terms = "Net 45"
+
+	doc.save = save
+	mapping.use_qbo_values("Customer", "1", fields=["payment_terms"])
+	_replay(row, writes)
+	left = json.loads(row.qbo_changes)
+	assert left["after_write"] == "use" and left["after_write_fields"] == ["payment_terms"]
+	payload = {"Id": "1", "SyncToken": "6", "MetaData": {"LastUpdatedTime": "2026-11-03T10:20:00-08:00"}}
+	values = {"customer_name": "Acme Supply", "payment_terms": None}
+
+	result = mapping._review_linked_record("Customer", "1", payload, "Customer", dict(values), row, doc)
+
+	assert result["action"] == "flagged" and result["fields"] == ["payment_terms"]
+	assert writes["set_value"] == [], "the note it already has"
+	assert row.conflict_status == "QuickBooks Changed"
+
+	# A person clears it by hand: now the difference is gone, and so is the flag.
+	doc.payment_terms = ""
+	result = mapping._review_linked_record("Customer", "1", payload, "Customer", dict(values), row, doc)
+	_replay(row, writes)
+	assert result["action"] == "unchanged"
+	assert row.conflict_status == "Clean" and row.qbo_changes is None
+
+
+def test_a_note_written_before_the_field_list_existed_is_read_whole():
+	"""v1.800.0 wrote ``after_write`` without ``after_write_fields``. Every field of such a
+	note is one the write left."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	old = {"after_write": "use", "fields": {"tax_id": {}, "customer_name": {}}, "tables": {"items": {}}}
+	assert mapping._after_write_fields(old) == ["customer_name", "tax_id", "items"]
+	assert mapping._after_write_fields(dict(old, after_write_fields=["tax_id"])) == ["tax_id"]
+
+
+def test_change_view_says_when_quickbooks_moved_again_after_a_write(monkeypatch):
+	matching, frappe, _events = _matching(monkeypatch)
+	monkeypatch.setattr(frappe.db, "get_value", lambda *args, **kwargs: None, raising=False)
+	note = {
+		"after_write": "refresh",
+		"after_write_fields": ["items"],
+		"fields": {},
+		"tables": {"items": {"rows": [], "qbo": []}},
+	}
+	row = types.SimpleNamespace(
+		conflict_status="QuickBooks Changed",
+		erpnext_doctype="Sales Invoice",
+		erpnext_name="ACC-SINV-2026-00042",
+		qbo_changes=json.dumps(note),
+	)
+	view = matching.change_view(row)
+	assert view["after_write"] == "refresh" and view["changed_since_write"] is False
+
+	row.qbo_changes = json.dumps(dict(note, fields={"customer": {"erpnext": "A", "qbo": "B"}}))
+	view = matching.change_view(row)
+	assert view["after_write"] == "refresh" and view["changed_since_write"] is True
+
+	row.qbo_changes = json.dumps({"fields": {"customer": {"erpnext": "A", "qbo": "B"}}})
+	assert matching.change_view(row)["changed_since_write"] is False
+
+	js = _read(PAGE_JS)
+	head = js[js.index("function changesHead(changes, scope) {") :]
+	head = head[: head.index("\n\t}\n")]
+	assert head.index("changes.after_write && changes.changed_since_write") < head.index('changes.after_write === "refresh"')
+	assert "QuickBooks has changed it again since" in head
+
+
+def test_the_priced_line_docstring_says_what_it_does_and_why():
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	source = _function_source(MAPPING_PY, "_priced_line")
+	assert "**What it does.**" in source and "**Why.**" in source
+	for upstream in (
+		"AccountsController.set_missing_item_details",
+		"calculate_taxes_and_totals.calculate_item_rate",
+		"get_price_list_rate",
+		"force_item_fields",
+		"v16.54.0",
+	):
+		assert upstream in source, upstream
+	# And it still does exactly the one thing it says.
+	assert "row['price_list_rate'] = row['rate']" in _code_only(source)
+	line = {"rate": 0, "qty": 2}
+	assert mapping._priced_line(line) is line and line == {"rate": 0, "qty": 2, "price_list_rate": 0}
+
+
+def test_the_changelog_and_readme_explain_the_third_review():
+	changelog = _read(REPO / "CHANGELOG.md")
+	entry = changelog[changelog.index("## [1.801.2]") :]
+	entry = entry[: entry.index("\n## [", 5)]
+	for word in ("price_list_currency", "set_price_list_currency", "after_write", "one cent", "_priced_line"):
+		assert word in entry, word
+	readme = _read(APP / "quickbooks_online" / "README.md")
+	for word in ("_price_list_pair", "after_write_fields", "_rejudge_what_a_write_left", "RECOMPUTED_AMOUNT_UNITS"):
+		assert word in readme, word
 
 
 def test_it_is_wired_into_ci_on_a_pytest_step():

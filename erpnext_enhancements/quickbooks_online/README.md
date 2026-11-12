@@ -206,11 +206,39 @@ saying "QuickBooks said 0, and that was dealt with" would let the next sync skip
 the flag while the draft still holds 250. With no reference the field is compared with the record
 on every pass that looks, until the two agree or a person chooses Keep ERPNext (which settles what
 QuickBooks said). Left out of the check: a Payment Entry's `remarks`, which ERPNext composes itself
-on every save (`REWRITTEN_ON_SAVE`), and a line's `amount` where its `qty` and `rate` both took
-(`_without_recomputed_amounts`). ERPNext computes the amount from the rate as the field rounds it;
-QuickBooks keeps more decimals, so 3 at 33.33333 is 100.00 there and 99.99 here. A first-time
-create has always produced that cent, the preflight already refuses a total further out than
-rounding explains, and no rebuild can change it. The sync's own comparison still reports it.
+on every save (`REWRITTEN_ON_SAVE`), and a line's `amount` that ERPNext recomputed to within a cent.
+
+**The amount rule is one rule for every DocType** (`_without_recomputed_amounts`, v1.801.2).
+ERPNext computes a line's amount from the rate as the field rounds it; QuickBooks keeps more
+decimals, so 3 at 33.33333 is 100.00 there and 99.99 here, and no rebuild can change that.
+
+| | |
+|---|---|
+| What is tolerated | The `amount` cell only, on a row the mapper gave a `qty` and a `rate` |
+| When | Both `qty` and `rate` agree with the record, each at the precision its own field stores |
+| How much | One unit of the last decimal `amount` stores (`RECOMPUTED_AMOUNT_UNITS`): one cent |
+| What is never tolerated | `rate` and `qty` themselves. If either differs, the row is reported as found, amount included |
+
+The cent is the allowance the Sales Invoice preflight gives a line. Until v1.801.2 the amount was
+dropped at any distance, which was only safe where a preflight had already bounded the total. A
+Quotation and a Purchase Order have none. A line that rounding moves by more than a cent now stays
+flagged after a write, and *Keep ERPNext* answers it. A sync's own comparison of a table still
+reports every cent.
+
+**A later sync keeps the note a write left** (`_rejudge_what_a_write_left`, v1.801.2). The note
+names the fields the write left differing (`after_write_fields`). A sync that looks at the row
+judges those fields the way the write did: the record against what QuickBooks says now, a table
+without its recomputed amounts, a clear still open while the record holds a value. That last one
+matters: a cleared field has no reference and QuickBooks says nothing about it, which a sync
+otherwise skips, so it used to clear the flag.
+
+| The next pass finds | The note |
+|---|---|
+| the same differences | untouched; nothing is written |
+| the same, on a newer payload | the new token, `after_write` kept |
+| those and a field QuickBooks changed since | both, `after_write` kept; the page says the list is a mix (`changed_since_write`) |
+| the write's fields agreeing, others differing | an ordinary "QuickBooks changed" note |
+| nothing differing | cleared, and the fields have a reference again |
 
 **Why it exists: ERPNext reprices a line that carries no `price_list_rate`.** On every save
 `accounts_controller.set_missing_item_details` copies the Item's list price onto a line whose
@@ -227,6 +255,23 @@ QuickBooks changed, and every snapshot stored before v1.800.0 lacks the key. A b
 cannot see ERPNext reprice anything, so the check after the write is the one that runs against the
 real controller. **Drafts created at the wrong rate before v1.800.0 are not found by a sync** while
 QuickBooks leaves their lines alone: their reference says "0, as QuickBooks said".
+
+**The Price List's currency is ERPNext's to set** (`_price_list_pair`, v1.801.2). A line's list
+price is in the document's currency and ERPNext never converts one a line already carries, so the
+pair above stays equal in any currency. The document header is different:
+`AccountsController.set_price_list_currency` replaces `price_list_currency` with the Price List's
+own currency on every save. The Sales Invoice and Quotation mappers therefore send what ERPNext
+would set, and both header fields are build-only like the two above.
+
+| The Price List is in | `price_list_currency` | `plc_conversion_rate` |
+|---|---|---|
+| the company's currency | that currency | 1 |
+| the document's currency, not the company's | that currency | the document's exchange rate |
+| a third currency | that currency | none: a create is parked for it, a *Refresh draft* keeps the draft's own |
+| unknown, or there is no Price List | the document's currency | as above for that currency |
+
+The buy-side mappers name no Price List; ERPNext takes the supplier's or the Buying Settings
+default and derives the pair.
 
 Every answer records the QuickBooks value as settled, so a field is not flagged again while
 QuickBooks still says the same thing: a standing difference is answered once. The Sync Log counts

@@ -1363,7 +1363,9 @@ def test_sales_invoice_sets_currency_exchange_and_receivable(monkeypatch):
 		if doctype == "Company":
 			return {"default_receivable_account": "Debtors - SF", "default_currency": "USD"}.get(fieldname)
 		if doctype == "Price List":
-			return "Standard Selling"
+			# By name it is the Price List's own currency (v1.801.2, ``_price_list_pair``);
+			# by filter it is the default selling list.
+			return "USD" if fieldname == "currency" else "Standard Selling"
 		if doctype == "QuickBooks Sync Mapping" and filters.get("qbo_entity_type") == "Customer":
 			return "Acme Supply"
 		return None

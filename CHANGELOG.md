@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.801.2] - 2026-11-11
+
+Four things the third review of #1437 (v1.800.0, "QuickBooks sync links, never overwrites") left
+open. Every one is in the review path of the QuickBooks import; nothing here starts a sync or
+writes to a record by itself.
+
+### Behavior that changes
+- **A draft whose rebuilt line is more than one cent off QuickBooks' amount now stays flagged
+  after *Refresh draft*.** It used to come back Clean at any distance (see Fixed). The answer to
+  such a line is *Keep ERPNext*, once.
+- **A Sales Invoice or Quotation in a third currency is parked on create.** "Third" means the
+  document's currency is neither the company's nor the Price List's, and the Price List's is not
+  the company's. The reason given is the missing Price List exchange rate. Production has one
+  currency and three Price Lists, all in it, so no document there meets this today.
+
+### Fixed
+- **The Price List's currency on a document in another currency.** The Sales Invoice and Quotation
+  mappers sent `price_list_currency` = the document's currency and `plc_conversion_rate` = 1. Read
+  in erpnext v16.54.0, the version production runs:
+  - `AccountsController.set_price_list_currency` runs on every save and replaces
+    `price_list_currency` with the Price List's own currency. So on a document in another currency
+    the saved header never held what was mapped. The check a write runs on its own result
+    (v1.800.0) compares every mapped field, and *Refresh draft* could never come back Clean on
+    such a draft.
+  - The same function keeps a `plc_conversion_rate` it is given unless the Price List is in the
+    company's currency. A Price List in a foreign currency, on a document in that currency, kept
+    the mapped 1. `get_item_details.get_price_list_rate` multiplies an Item Price by that rate for
+    any line with no list price, which is every line a person later adds to the draft by hand.
+  - **What the review expected and the tag does not do:** ERPNext does not convert a list price a
+    line already carries. A line's `price_list_rate` is in the document's currency,
+    `set_missing_item_details` leaves a value that is not None alone, and `calculate_item_values`
+    only derives `base_price_list_rate` from it. The pair `_priced_line` sets (list price = rate)
+    stays equal through a save in any currency. The fault was in the header, not the lines.
+  - The fix is `mapping._price_list_pair`: the Price List's own currency, with a rate of 1 when
+    that is the company's currency, the document's exchange rate when it is the document's, and no
+    rate otherwise. Both fields are now build-only (`BUILD_ONLY_FIELDS`): they are instructions to
+    ERPNext, which derives them again on every save, so they are never compared, flagged or
+    settled. The buy-side mappers name no Price List and are unchanged.
+  - Not run on a bench: production has no document in a second currency to try it on.
+- **The amount a rebuilt line may differ by is one cent, on every DocType.** After a write, a
+  line's `amount` was left out of "still differs" whenever its quantity and rate both took, at any
+  distance, on the ground that the preflight had already refused a total further out than rounding
+  explains. That holds for a Sales Invoice and a Purchase Invoice. A Quotation and a Purchase
+  Order have no such preflight, so nothing bounded what was passed over: QuickBooks keeps a
+  quantity like 0.6666999, ERPNext stores 0.667, the line moves by dollars, and the rebuild read
+  Clean. The bound is now in the rule itself (`_without_recomputed_amounts`,
+  `RECOMPUTED_AMOUNT_UNITS`): one unit of the last decimal the `amount` field stores, the same
+  allowance the Sales Invoice preflight gives a line. It reads the row and names no DocType. A
+  changed rate cannot hide behind it: `rate` and `qty` get no tolerance at all, and if either
+  differs the row is reported as found, amount included.
+- **A sync no longer rewrites the note a person's own write left.** *Refresh draft* and *Use
+  QuickBooks values* flag the mapping themselves when the saved record still differs, with a note
+  marked `after_write`. The next sync that looked at the row replaced it with an ordinary one, and
+  the page then said "QuickBooks changed this record. Nothing was written." about a draft a person
+  had just rebuilt. The sync also judged those fields by its own rules, which had two consequences:
+  - A draft with a line one cent off through rounding stayed flagged for the cent after a person
+    had corrected everything else by hand.
+  - **A clear that did not take lost its flag.** The field has no reference left and QuickBooks
+    says nothing about it, which is exactly what a sync skips, so the next pass found nothing and
+    set the mapping Clean while the record still held the value.
+
+  Now the fields such a note names (`after_write_fields`) are judged the way the write judged them
+  (`_rejudge_what_a_write_left`). The mark stays while any of them still differs, whatever else
+  QuickBooks changes meanwhile, and a pass that finds the same differences writes nothing. It goes
+  when the difference does: *Keep ERPNext*, a write that comes back clean, or a pass that finds
+  those fields agreeing. Where QuickBooks has changed other fields since, the page says the list
+  is a mix of both.
+
+### Changed
+- **`_priced_line`'s docstring says what it does and why**, in that order, with the two upstream
+  functions that reprice a zero-rate line between them (`set_missing_item_details`,
+  `calculate_item_rate`) and where each lives. The story of how it was found stays in the v1.800.0
+  entry.
+
+### Tests
+- `test_quickbooks_link_only.py`: 28 new cases (200 in the file). The Price List pair in each
+  currency arrangement and through each mapper; a *Refresh draft* that comes back Clean whatever
+  ERPNext makes of the pair; the amount rule on all four DocTypes; an ordinary sync pass, a newer
+  payload, a mixed note, a hand correction and a clear that did not take, each against a note a
+  write left. Bench-free, on the suite's existing `python -m pytest` step.
+
+### Not in this change
+- **Finding drafts that were created at the wrong rate before v1.800.0.** A person-started resync
+  could flag a linked draft whose total is off QuickBooks' `TotalAmt`. Measured on production
+  today, 109 linked draft Sales Invoices and 205 linked draft Quotations are further from
+  `TotalAmt` than rounding explains, so one run would raise that many flags unless it is capped,
+  and it cannot yet tell a line ERPNext repriced from one an accountant changed on purpose. That
+  is its own piece of work.
+
 ## [1.801.0] - 2026-11-11
 
 ### Added
