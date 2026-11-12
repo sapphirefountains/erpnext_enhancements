@@ -975,7 +975,7 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 														<td data-label="Rate" class="money-col"><div class="pt-money-cell">
 															<span :class="{ 'pt-no-price': priceCells(row, group.doctype) && priceCells(row, group.doctype).state !== 'priced' }">{{ priceText(priceCells(row, group.doctype), 'rate') }}</span>
 															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'quote'" class="pt-where-note">{{ priceCells(row, group.doctype).draft ? 'draft quote' : 'quote' }}</small>
-<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'receipt' && priceCells(row, group.doctype).draft" class="pt-where-note">draft receipt</small>
+															<small v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).kind === 'receipt' && priceCells(row, group.doctype).draft" class="pt-where-note">draft receipt</small>
 														</div></td>
 														<td data-label="Amount" class="money-col" :title="priceTitle(priceCells(row, group.doctype))"><div class="pt-money-cell">
 															<span v-if="priceCells(row, group.doctype) && priceCells(row, group.doctype).state === 'priced'">{{ priceText(priceCells(row, group.doctype), 'amount') }}</span>

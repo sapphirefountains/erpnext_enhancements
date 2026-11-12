@@ -700,9 +700,14 @@ def test_a_return_receipt_leaves_spent_and_reduces_what_was_received():
 def test_a_foreign_currency_order_is_spent_in_the_companys_currency():
 	"""The line is 5.00 in the supplier's currency and 5.50 in the company's: only the base figures
 	are read."""
-	item = _item([chain(po_line_qty=10, po_line_rate=5, po_line_base_rate=5.5, po_line_base_amount=55)])
+	row = chain(po_line_qty=10, po_line_received_qty=4, po_line_rate=5, po_line_base_rate=5.5, po_line_base_amount=55)
+	item = _item([row])
 	assert item["spent"] == 55
 	assert (item["unit_price_low"], item["unit_price_high"]) == (5.5, 5.5)
+	# What has arrived is valued at the company-currency rate too: 4 at 5.50, not 4 at 5.00.
+	assert item["received_value"] == 22
+	line = flat(Feed([row]).chain(ACCESS))[0]
+	assert line["po_rate"] == 5.5 and line["po_amount"] == 55 and line["po_unit_rate"] == 5.5
 
 
 def test_a_line_with_a_conversion_factor_is_spent_at_its_amount_not_rate_times_stock_quantity():
