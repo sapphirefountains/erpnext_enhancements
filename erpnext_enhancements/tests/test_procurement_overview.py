@@ -226,6 +226,12 @@ def test_capped_shelf_rows_cuts_a_job_to_what_the_shelf_holds():
 	]
 	assert out[1]["item_name"] == "B"  # no name sent: the code stands in
 	assert stock.capped_shelf_rows(None, None) == []
+	# The Project Shelf module's later shape: qty already cut, the ledger balance beside it as tagged.
+	later = stock.capped_shelf_rows(
+		[{"project": "P1", "item_code": "B", "qty": 1, "tagged": 2}, {"project": "P1", "item_code": "C", "qty": 0, "tagged": -1}],
+		[{"item_code": "B", "on_hand": 1, "tagged": 2}],
+	)
+	assert [(r["item_code"], r["qty"], r["recorded"]) for r in later] == [("B", 1, 2)]
 
 
 def test_shelf_rows_is_the_same_rule_per_item():
