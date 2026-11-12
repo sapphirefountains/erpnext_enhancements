@@ -828,7 +828,8 @@ move out of any bin does.
 **People's saved list filters.** Frappe's rename means to rewrite a saved filter that names the
 renamed record, but at v16.56.0 it looks for them with `LIKE` and no wildcards and finds none, so
 a list somebody last filtered to `Stores - SF` would open empty. The patch rewrites the quoted old
-name in `__UserSettings` and drops the cached copies.
+name in `__UserSettings` and drops the cached copies. Its report says how many rows and how many
+people, never who: the migrate output lands in the build log.
 
 **If the patch did not finish.** `patches/rename_stores_to_project_shelf` cannot raise (that would
 abort the deploy), so it is recorded as run whatever happened. Each of its five steps answers done,

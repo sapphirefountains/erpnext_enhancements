@@ -127,6 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `LIKE '<old name>'` and no wildcards, which matches nothing. A list somebody last filtered to
     `Stores - SF` would open on a warehouse that no longer exists and show no rows. The patch
     replaces the quoted old name with the new one in those rows and drops their cached copies.
+    Its report gives the number of rows and of people, never who they are: the migrate output
+    lands in the build log, and a user id is a sign-in address.
   - **The patch cannot raise and says what it did.** Five steps (the rename, the search index,
     the saved filters, the two settings), each in its own savepoint, each answering done, already,
     skipped or failed, followed by counts of what now points at the shelf. A clean run writes no

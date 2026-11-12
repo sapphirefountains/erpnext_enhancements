@@ -1642,7 +1642,7 @@ erpnext_enhancements.patches.backfill_triton_widget_mode
 # request lines, the Company's default warehouse) and set warehouse_name, which that ERPNext version has no rename
 # hook to do; index the Warehouse names again for the Desk's search; rewrite the quoted old name in people's saved
 # list filters (__UserSettings; Frappe 16.56.0's rename looks for them with LIKE and no wildcards, so it rewrites
-# none) and drop their cached copies; fill Inventory Scanner Settings
+# none) and drop their cached copies, reporting how many rows and people but never who; fill Inventory Scanner Settings
 # .project_shelf_warehouse and .overhead_receiving_warehouse ("Inventory Room") ONLY where tabSingles has no row
 # for the field (on a never-saved Single every declared default is written first). On a site with no shop group
 # "Inventory - SF", or with no Stores and no Project Shelf, every step answers "not needed here" and NO Error Log

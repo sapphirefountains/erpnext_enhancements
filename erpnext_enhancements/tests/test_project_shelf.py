@@ -1646,7 +1646,50 @@ class TestThePatch(_Base):
 			sorted(STATE["cache_dropped"]),
 			[("_user_settings", "Bin::pat@example.com"), ("_user_settings", "Stock Ledger Entry::sam@example.com")],
 		)
-		# Twice is once.
+
+	def test_the_report_counts_people_and_never_names_them(self):
+		"""The migrate output lands in the build log, and a user id is a sign-in address."""
+		STATE["user_settings"] = [
+			{"user": "pat@example.com", "doctype": "Bin", "data": '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'},
+			{"user": "pat@example.com", "doctype": "Stock Ledger Entry", "data": '{"filters":[["x","warehouse","=","Stores - SF"]]}'},
+			{"user": "sam@example.com", "doctype": "Bin", "data": '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'},
+		]
+		base._warehouse(SHELF, "Project Shelf")
+		status, detail = patch.rewrite_saved_filters(SHELF)
+		self.assertEqual(status, patch.DONE)
+		self.assertEqual(
+			detail, "3 saved list settings of 2 people now name Project Shelf - SF: lists Bin, Stock Ledger Entry"
+		)
+		self.assertNotIn("@", detail)
+		STATE["user_settings"] = STATE["user_settings"][:1]
+		STATE["user_settings"][0]["data"] = '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'
+		self.assertIn("1 saved list setting of 1 person now name", patch.rewrite_saved_filters(SHELF)[1])
+
+	def test_nothing_the_whole_run_prints_or_logs_names_a_person(self):
+		import contextlib
+		import io
+
+		STATE["user_settings"] = [
+			{"user": "pat@example.com", "doctype": "Bin", "data": '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'},
+			{"user": "sam@example.com", "doctype": "Bin", "data": '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'},
+		]
+		# One skipped step, so the run also writes its Error Log row.
+		del base._table("Warehouse")[ROOM]
+		printed = io.StringIO()
+		with contextlib.redirect_stdout(printed):
+			reports = self._run()
+		self.assertIn("3. People's saved list filters: done. 2 saved list settings of 2 people", printed.getvalue())
+		self.assertEqual(len(reports), 1)
+		for text in (printed.getvalue(), *(f"{title} {message}" for title, message in STATE["errors"])):
+			self.assertNotIn("@", text)
+			self.assertNotIn("example.com", text)
+
+	def test_rewriting_saved_filters_twice_is_once(self):
+		STATE["user_settings"] = [
+			{"user": "pat@example.com", "doctype": "Bin", "data": '{"filters":[["Bin","warehouse","=","Stores - SF"]]}'},
+		]
+		base._warehouse(SHELF, "Project Shelf")
+		self.assertEqual(patch.rewrite_saved_filters(SHELF)[0], patch.DONE)
 		before = [dict(row) for row in STATE["user_settings"]]
 		self.assertEqual(patch.rewrite_saved_filters(SHELF)[0], patch.ALREADY)
 		self.assertEqual(STATE["user_settings"], before)

@@ -27,7 +27,9 @@ In this order, each in its own step:
    and no wildcards, which matches a row that is nothing but the name, so none. A list
    somebody last filtered to ``Stores - SF`` would open on a warehouse that no longer exists
    and show nothing. This step replaces the quoted old name with the new one in those rows,
-   and drops their cached copies. It prints how many rows, for which lists, and whose.
+   and drops their cached copies. It prints how many rows and how many people, and for which
+   lists; **never who**: the migrate output lands in the build log, and a person's sign-in
+   address does not belong there. The names are in the table for anyone who needs them.
 4. **The setting.** ``Inventory Scanner Settings.project_shelf_warehouse`` is filled with the
    shelf **only where ``tabSingles`` has no row for it**, never over a stored value, an emptied
    one included: a Stock Manager who cleared it switched the Project Shelf off on purpose. On a
@@ -224,11 +226,13 @@ def rewrite_saved_filters(shelf):
 			frappe.cache.hdel("_user_settings", f"{doctype}::{user}")
 		except Exception:
 			pass
+	# Counts only. This text is printed to the migrate output and may be written to the Error
+	# Log; a user id here is a sign-in address, so who the rows belong to is never said.
 	lists = sorted({doctype for _user, doctype in rows})
-	people = sorted({user for user, _doctype in rows})
+	people = len({user for user, _doctype in rows})
 	return DONE, (
-		f"{len(rows)} saved list settings now name {shelf}: lists {', '.join(lists)}; "
-		f"people {', '.join(people)}"
+		f"{len(rows)} saved list {'setting' if len(rows) == 1 else 'settings'} of {people} "
+		f"{'person' if people == 1 else 'people'} now name {shelf}: lists {', '.join(lists)}"
 	)
 
 
