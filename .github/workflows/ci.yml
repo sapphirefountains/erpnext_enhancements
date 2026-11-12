@@ -4151,6 +4151,18 @@ jobs:
       # workspace) drift. Own frappe stub, so its own step; unittest classes.
       - name: Warehouse Transactions report and hub links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v
+      # Inventory reports (v1.805.0): Location Contents, Where Is This Item, Project Materials and Job Site Contents.
+      # Fails the build if a status rule changes (as expected, assigned and empty, here and unassigned, here but
+      # assigned to another bin, on order, undecided, held at a place that is never a bin), if Location Contents
+      # stops calling the Bin Manager's own listing rule (api.stock_scan._items_at, no row cap) or grows a copy of
+      # it, if the Project Shelf's shares stop adding up to what is on the shelf, if the project roll-up changes
+      # (ordered from order lines, received from receipt lines, returns, still to come against closed-short, used
+      # less brought back, "not located" for non-stock lines), if a report raises before the Project Shelf field
+      # exists, if a stock ledger read stops skipping canceled entries or a value is interpolated into SQL, if a row
+      # carries markup (print and export read the raw cell), or if the hub links, card counts or the force-import
+      # patch (savepoint + rollback per workspace) drift. Own frappe stub, so its own step; unittest classes.
+      - name: Inventory reports and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_reports -v
       # "Turn on Maintain Stock" (v1.754.0): writes is_stock_item past ERPNext's Item.cant_change, so
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery
