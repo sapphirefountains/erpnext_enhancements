@@ -4094,6 +4094,18 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
+      # The Bin Manager's views beyond one bin (v1.806.1, inventory_enhancements/bin_views.py): By
+      # project, Job sites, Problems and the picker's filters. Its own frappe stub with stand-ins for
+      # api.stock_scan and job_sites, so its own step. Fails the build if an endpoint reads before the
+      # role gate or writes anything, if "unassigned stock" is counted at a job site, the boneyard or
+      # the Project Shelf, if a customer reaches a caller who cannot read Projects or a value one who
+      # cannot read the Stock Ledger, if the boot's extras can fail the page, if the Project Shelf's
+      # numbers stop coming through project_stock.shelf_stock, or if a SQL function is written as a
+      # get_all field. The page side (four tabs as history entries, filters written into the address
+      # in place, Back from a bin onto the filtered picker, the moves between shelf and site through
+      # the existing move_to) is scripts/test_bin_manager.mjs, run by the step above.
+      - name: Bin Manager views (by project, job sites, problems, filters) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_bin_views -v
       # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
       # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
       # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write

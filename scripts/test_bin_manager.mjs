@@ -13,6 +13,11 @@
  *
  * Nik's rule: every screen is its own history entry; dialogs and state panels are not.
  *
+ * Since v1.806.1 the page has four tabs (Bins, By project, Job sites, Problems), each a route and so
+ * an entry, and the picker has filters, which are NOT entries: they are written into the picker's own
+ * address in place, and read back out of it on Back, Forward and a shared link. The second half of
+ * this file holds the page to both, against views.js and the real page script.
+ *
  * Run: node scripts/test_bin_manager.mjs   (from tests/test_bin_manager.py)
  */
 
@@ -24,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(HERE, "..", "erpnext_enhancements");
 const logic = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/logic.js")).href);
+const views = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/views.js")).href);
 const { Controller } = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/controller.js")).href);
 const PAGE_JS = path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js");
 // The reorder boxes (v1.725.0), the real modules, for the page test that gives the page its bundle.
@@ -129,6 +135,13 @@ function makeServer(options) {
 				return { levels, can_edit: true };
 			}
 			if (name === "get_recent") return [];
+			// The views' reads (v1.806.1, bin_views.py), answered from the fixture.
+			if (name === "item_locations") return JSON.parse(JSON.stringify(fixture.item_locations || { item_code: args.item_code, item_name: args.item_code, is_stock_item: true, locations: {} }));
+			if (name === "project_index") return JSON.parse(JSON.stringify(fixture.project_index || []));
+			if (name === "project_view") return JSON.parse(JSON.stringify(fixture.project_view || { project: { project: args.project, project_name: args.project }, shelf: null, site: null, send_refusal: null }));
+			if (name === "problems") return JSON.parse(JSON.stringify(fixture.problems || {}));
+			// api.stock_scan.job_site: opens the job's site and says which warehouse it is.
+			if (name === "job_site") return { warehouse: "Job Site PRJ-90001 Opened - SF", warehouse_name: "Job Site PRJ-90001 Opened", job_site: true, project: args.project, created: true };
 			// TASK-2026-02914: a count up from an empty bin for an item ERPNext has no cost for is not a save
 			// but the question "what does one cost?" until a rate comes with it.
 			if (name === "set_count" && fixture.nocost && (!args.rate || fixture.stubborn)) {
@@ -148,7 +161,10 @@ function makeServer(options) {
 			return { log, message: `${name} done`, repeated: !!server.repeat };
 		});
 	};
-	server.writes = () => server.calls.filter((c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder/.test(c.method));
+	server.writes = () =>
+		server.calls.filter(
+			(c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder|item_locations|project_index|project_view|problems|job_site/.test(c.method)
+		);
 	return server;
 }
 
@@ -245,6 +261,10 @@ function makeWorld(server) {
 			world.entries[world.index].state = Object.assign({}, world.state(), tag);
 		},
 		history_back: () => world.back(),
+		// history.replaceState with a new query: the entry on screen, in place.
+		replace_query: (query) => {
+			world.entries[world.index].url = world.path() + (query || "");
+		},
 		render: () => rendered && rendered.push(world.route().join("/")),
 		now: () => 1760000000000,
 		random: () => Math.random(),
@@ -708,7 +728,7 @@ function loadPage(options) {
 				html: (kind) => `<div class="sf-state sf-state--${kind}"></div>`,
 			},
 		},
-		sf_bin_manager: Object.assign({ version: 1, Controller }, logic),
+		sf_bin_manager: Object.assign({ version: 2, Controller, views }, logic),
 		// The reorder bundle, when the test asks for it: the real modules over this stand-in's root, which
 		// has no querySelectorAll (nothing is drawn into a real DOM here).
 		sf_reorder: (options || {}).reorder
@@ -726,12 +746,23 @@ function loadPage(options) {
 			get state() {
 				return world.state();
 			},
-			replaceState: (s) => {
+			replaceState: (s, _title, url) => {
 				world.entries[world.index].state = s;
+				// With an address: the entry's own, in place (how the picker's filters are written).
+				if (typeof url === "string" && url) world.entries[world.index].url = url;
 			},
 			back: () => world.back(),
 		},
-		location: { reload: () => {} },
+		location: {
+			reload: () => {},
+			get pathname() {
+				return world.path();
+			},
+			get search() {
+				return world.query() ? `?${world.query()}` : "";
+			},
+			hash: "",
+		},
 	};
 	const __ = (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args && args[i] !== undefined ? args[i] : m));
 	const document = { activeElement: null };
@@ -1467,6 +1498,436 @@ test("the real page: a role check that throws shows no Reorder Board link and br
 		check(`${name}: the picker still draws`, /bm-filter/.test(r.root.__state.html), true);
 		check(`${name}: the link is ${name.endsWith("works") ? "there" : "not there"}`, boardLinkIn(r.root.__state.html), name.endsWith("works") ? 1 : 0);
 	}
+});
+
+// ------------------------------------------------------------------ views and filters (v1.806.1)
+
+const SHELF = "Project Shelf - SF";
+const SITE = "Job Site PRJ-90001 Water Wall - SF";
+const OLD_SITE = "Job Site PRJ-80000 Old Lobby - SF";
+const VAN = "Van 2 - SF";
+
+// A boot as bin_views.decorate sends it: every bin with its kind, a site with its job.
+const VIEW_BOOT = Object.assign({}, BOOT, {
+	can_see_value: true,
+	shelf_warehouse: SHELF,
+	shelf_name: "Project Shelf",
+	job_sites: true,
+	bins: [
+		{ warehouse: BIN_A, warehouse_name: "Bin A1-1-1", trail: "Row A", kind: "shop_bin", on_hand_items: 2, assigned_items: 3, missing_items: 1, unassigned_items: 0, stock_value: 12 },
+		{ warehouse: BIN_B, warehouse_name: "Shelf B/2", trail: "Row B", kind: "shop_bin", on_hand_items: 0, assigned_items: 0, missing_items: 0, unassigned_items: 0, stock_value: 0 },
+		{ warehouse: "Bin C - SF", warehouse_name: "Bin C", trail: "Row B", kind: "shop_bin", on_hand_items: 1, assigned_items: 0, missing_items: 0, unassigned_items: 1, stock_value: 3 },
+		{ warehouse: BONEYARD, warehouse_name: "Boneyard", trail: "", kind: "boneyard", is_boneyard: true, on_hand_items: 0, assigned_items: 0, missing_items: 0, unassigned_items: 0 },
+		{ warehouse: SHELF, warehouse_name: "Project Shelf", trail: "", kind: "project_shelf", on_hand_items: 9, assigned_items: 0, missing_items: 0, unassigned_items: 0, stock_value: 900 },
+		{ warehouse: VAN, warehouse_name: "Van 2", trail: "Vehicles", kind: "vehicle", on_hand_items: 1, assigned_items: 1, missing_items: 0, unassigned_items: 0, stock_value: 5 },
+		{ warehouse: SITE, warehouse_name: "Job Site PRJ-90001 Water Wall", trail: "Job Sites", kind: "job_site", project: "PRJ-90001", project_name: "Water Wall", customer: "Acme Hotels", project_closed: false, on_hand_items: 2, assigned_items: 0, missing_items: 0, unassigned_items: 0, stock_value: 502 },
+		{ warehouse: OLD_SITE, warehouse_name: "Job Site PRJ-80000 Old Lobby", trail: "Job Sites", kind: "job_site", project: "PRJ-80000", project_name: "Old Lobby", customer: "Bolt Bank", project_closed: true, on_hand_items: 1, assigned_items: 0, missing_items: 0, unassigned_items: 0, stock_value: 40 },
+	],
+});
+
+const PROJECT_VIEW = {
+	project: { project: "PRJ-90001", project_name: "Water Wall", customer: "Acme Hotels", status: "Active", closed: false },
+	shelf: { warehouse: SHELF, warehouse_name: "Project Shelf", items: [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", qty: 6 }] },
+	site: { warehouse: SITE, warehouse_name: "Job Site PRJ-90001 Water Wall", disabled: false, items: [{ item_code: "PDT-0002", item_name: "ELBOW, 2 IN", stock_uom: "Unit", qty: 4, value: 2 }] },
+	send_refusal: null,
+};
+
+const PROBLEMS = {
+	assigned_empty: { rows: [{ warehouse: BIN_A, warehouse_name: "Bin A1-1-1", item_code: "PDT-0003", item_name: "VALVE <2 IN>", stock_uom: "Unit" }], total: 1, truncated: false },
+	unassigned_stock: { rows: [{ warehouse: "Bin C - SF", warehouse_name: "Bin C", item_code: "PDT-0004", item_name: "TEE", stock_uom: "Unit", qty: 3 }], total: 1, truncated: false },
+	finished_shelf: { rows: [], total: 0, truncated: false },
+	finished_site: { rows: [{ project: "PRJ-80000", project_name: "Old Lobby", status: "Completed", warehouse: OLD_SITE, warehouse_name: "Job Site PRJ-80000 Old Lobby", item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", qty: 1 }], total: 1, truncated: false },
+};
+
+const VIEW_FIXTURE = {
+	boot: VIEW_BOOT,
+	item_locations: { item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", is_stock_item: true, locations: { [BIN_A]: { on_hand: 4, assigned: true }, [SITE]: { on_hand: 2, assigned: false } } },
+	project_index: [
+		{ project: "PRJ-90001", project_name: "Water Wall", customer: "Acme Hotels", status: "Active", closed: false, site: SITE, site_items: 2, shelf_items: 1 },
+		{ project: "PRJ-80000", project_name: "Old Lobby", customer: "Bolt Bank", status: "Completed", closed: true, site: OLD_SITE, site_items: 1, shelf_items: 0 },
+	],
+	project_view: PROJECT_VIEW,
+	problems: PROBLEMS,
+};
+
+function makeViewController(fixture) {
+	const server = makeServer(Object.assign({}, VIEW_FIXTURE, fixture || {}));
+	const world = makeWorld(server);
+	const renders = [];
+	const ctl = new Controller(world.env(renders));
+	world.page = { show: () => ctl.show() };
+	return { server, world, ctl, renders };
+}
+
+const shown = (ctl) => ctl.shown_bins().map((b) => b.warehouse_name);
+
+test("routes: the three new screens, and a bin is still every other second segment", () => {
+	check("by project", logic.parse_route(["bin-manager", "by-project"]), { screen: "projects" });
+	check("one job", logic.parse_route(["bin-manager", "by-project", "PRJ-90001"]), { screen: "project", project: "PRJ-90001" });
+	check("job sites", logic.parse_route(["bin-manager", "job-sites"]), { screen: "sites" });
+	check("problems", logic.parse_route(["bin-manager", "problems"]), { screen: "problems" });
+	check("a bin, as before", logic.parse_route(["bin-manager", SITE]), { screen: "bin", warehouse: SITE });
+	for (const target of [{ screen: "picker" }, { screen: "projects" }, { screen: "project", project: "PRJ-90001" }, { screen: "sites" }, { screen: "problems" }, { screen: "bin", warehouse: BIN_B }]) {
+		check(`round trip ${target.screen}`, logic.parse_route(logic.build_route(target)), target);
+	}
+	check("a job with no id is the list", logic.build_route({ screen: "project" }), ["bin-manager"]);
+	check("tabs", logic.TABS.map((t) => t.screen), ["picker", "projects", "sites", "problems"]);
+	check("a bin is under Bins, a job under By project", [logic.tab_of({ screen: "bin" }), logic.tab_of({ screen: "project" }), logic.tab_of(null)], ["picker", "projects", "picker"]);
+	// No bin on this site is named like a view: a warehouse's docname ends in the company's abbreviation.
+	check("no boot bin collides", VIEW_BOOT.bins.some((b) => [logic.SEGMENT_PROJECTS, logic.SEGMENT_SITES, logic.SEGMENT_PROBLEMS].includes(b.warehouse)), false);
+});
+
+test("filters: read from an address, written in a fixed order, unknown values dropped", () => {
+	check("default", views.read_filters(null), { q: "", kind: "", project: "", item: "", quick: "" });
+	check("read", views.read_filters({ kind: "job_site", project: " PRJ-90001 ", quick: "has_stock", q: "wall", item: "PDT-0001", warehouse: "x" }), {
+		q: "wall", kind: "job_site", project: "PRJ-90001", item: "PDT-0001", quick: "has_stock",
+	});
+	check("an unknown kind or quick filter is dropped", views.read_filters({ kind: "attic", quick: "sparkly" }), views.default_filters());
+	check("written in order, blanks left out", views.filters_query({ quick: "empty", kind: "shop_bin", q: " row a " }), "?q=row+a&kind=shop_bin&quick=empty");
+	check("no filters, no query", views.filters_query(views.default_filters()), "");
+	check("round trip", views.read_filters(Object.fromEntries(new URLSearchParams(views.filters_query({ kind: "vehicle", project: "PRJ-1", item: "A/B 2", quick: "missing", q: "x" })))), {
+		q: "x", kind: "vehicle", project: "PRJ-1", item: "A/B 2", quick: "missing",
+	});
+	check("has_filters", [views.has_filters(views.default_filters()), views.has_filters({ q: "  " }), views.has_filters({ quick: "empty" })], [false, false, true]);
+});
+
+test("filters: kind, job, quick filters and an item narrow the picker, and combine", () => {
+	const bins = VIEW_BOOT.bins;
+	const names = (f, locations) => views.apply_filters(bins, f, locations).map((b) => b.warehouse_name);
+	check("no filter is every bin, in order", names({}).length, bins.length);
+	check("job sites", names({ kind: "job_site" }), ["Job Site PRJ-90001 Water Wall", "Job Site PRJ-80000 Old Lobby"]);
+	check("the shelf", names({ kind: "project_shelf" }), ["Project Shelf"]);
+	check("vehicles", names({ kind: "vehicle" }), ["Van 2"]);
+	check("boneyard", names({ kind: "boneyard" }), ["Boneyard"]);
+	check("a job", names({ project: "PRJ-90001" }), ["Job Site PRJ-90001 Water Wall"]);
+	check("has stock", names({ quick: "has_stock", kind: "shop_bin" }), ["Bin A1-1-1", "Bin C"]);
+	check("empty", names({ quick: "empty" }), ["Shelf B/2", "Boneyard"]);
+	check("assigned items missing", names({ quick: "missing" }), ["Bin A1-1-1"]);
+	check("unassigned stock", names({ quick: "unassigned" }), ["Bin C"]);
+	check("typed words too", names({ kind: "shop_bin", q: "bin c" }), ["Bin C"]);
+	const locations = VIEW_FIXTURE.item_locations.locations;
+	check("an item: where it is or is assigned", names({ item: "PDT-0001" }, locations), ["Bin A1-1-1", "Job Site PRJ-90001 Water Wall"]);
+	check("an item still being read shows nothing, not everything", names({ item: "PDT-0001" }, null), []);
+	check("an item and a kind", names({ item: "PDT-0001", kind: "job_site" }, locations), ["Job Site PRJ-90001 Water Wall"]);
+	check("a boot from before the kinds only knows the boneyard", [views.bin_kind({ is_boneyard: true }), views.bin_kind({}), views.bin_kind({ kind: "attic" })], ["boneyard", "shop_bin", "shop_bin"]);
+	check("kinds offered, with counts", views.kind_options(bins).map((k) => `${k.label} ${k.count}`), ["Shop bins 3", "Project Shelf 1", "Job sites 2", "Boneyard 1", "Vehicles 1"]);
+	check("jobs offered, by name", views.project_options(bins).map((j) => views.project_label(j)), ["Old Lobby · Bolt Bank", "Water Wall · Acme Hotels"]);
+	check("a row's words", views.bin_summary(bins[0], locations[BIN_A]), "4 here · assigned here · 2 on hand · 3 assigned · 1 missing");
+	check("a site's words say nothing of assignments", views.bin_summary(bins[6], null), "2 on hand");
+	check("the filters in words", views.describe_filters({ kind: "job_site", project: "PRJ-90001", quick: "has_stock", q: "wall" }, bins), 'Job sites · Water Wall · Has stock · "wall"');
+});
+
+test("job sites: one row per site, live jobs first, with totals and what wants doing", () => {
+	const rows = views.site_rows(VIEW_BOOT.bins);
+	check("rows", rows.map((r) => [r.project_name, r.customer, r.items, r.value, r.closed]), [["Water Wall", "Acme Hotels", 2, 502, false], ["Old Lobby", "Bolt Bank", 1, 40, true]]);
+	check("totals", views.site_totals(rows), { sites: 2, items: 3, value: 542 });
+	check("a finished job with stock is flagged", [views.site_flag(rows[0]), views.site_flag(rows[1]).label], [null, "Job finished, stock still here"]);
+	const hidden = views.site_rows(VIEW_BOOT.bins.map((b) => Object.assign({}, b, { stock_value: undefined })));
+	check("no value for a caller who may not see it", [hidden[0].value, views.site_totals(hidden).value], [null, null]);
+	check("money", views.money(1234.5), "$1,234.50");
+});
+
+test("by project: the two places, and which way each row moves", () => {
+	const perms = logic.permissions(VIEW_BOOT);
+	const s = views.project_sections(PROJECT_VIEW, perms);
+	check("shelf rows are the job's share, shaped for the Move dialog", s.shelf.rows, [{ item_code: "PDT-0001", item_name: "PUMP, 1 HP", stock_uom: "Unit", on_hand: 6, value: null }]);
+	check("shelf rows go to the site", s.shelf.move, { key: "to_site", label: "Send to job site" });
+	check("site rows come back", s.site.move, { key: "to_shelf", label: "Bring back to the shelf" });
+	check("to the site", views.project_move("to_site", PROJECT_VIEW), { from_warehouse: SHELF, to_warehouse: SITE, needs_site: false });
+	check("back to the shelf", views.project_move("to_shelf", PROJECT_VIEW), { from_warehouse: SITE, to_warehouse: SHELF, needs_site: false });
+	const no_site = Object.assign({}, PROJECT_VIEW, { site: null });
+	check("no site yet: it is opened first", views.project_move("to_site", no_site), { from_warehouse: SHELF, to_warehouse: null, needs_site: true });
+	const finished = Object.assign({}, PROJECT_VIEW, { send_refusal: "Old Lobby is Completed, so nothing more is sent to its job site." });
+	const f = views.project_sections(finished, perms);
+	check("a finished job: nothing is sent, and the sentence is shown", [f.shelf.move, f.shelf.blocked, views.project_move("to_site", finished)], [null, finished.send_refusal, null]);
+	check("but what is there still comes back", f.site.move.key, "to_shelf");
+	const reader = views.project_sections(PROJECT_VIEW, logic.permissions(Object.assign({}, VIEW_BOOT, { can_move: false })));
+	check("without the right to move, no buttons and no scolding", [reader.shelf.move, reader.shelf.blocked, reader.site.move], [null, null, null]);
+	check("no shelf set up", views.project_sections(Object.assign({}, PROJECT_VIEW, { shelf: null }), perms).site.move, null);
+	check("unknown direction", views.project_move("sideways", PROJECT_VIEW), null);
+	check("find a job", views.filter_projects(VIEW_FIXTURE.project_index, "bolt lobby").map((p) => p.project), ["PRJ-80000"]);
+	check("a job's counts", views.project_counts_text(VIEW_FIXTURE.project_index[0]), "1 on the Project Shelf · 2 at the job site");
+	check("no site yet", views.project_counts_text({ shelf_items: 2, site: null }), "2 on the Project Shelf · no job site yet");
+});
+
+test("problems: four lists in a fixed order, counted", () => {
+	const sections = views.problem_sections(PROBLEMS);
+	check("order", sections.map((s) => s.key), ["assigned_empty", "unassigned_stock", "finished_shelf", "finished_site"]);
+	check("counts", sections.map((s) => s.total), [1, 1, 0, 1]);
+	check("total", views.problem_total(PROBLEMS), 3);
+	check("nothing read is nothing found", views.problem_total(null), 0);
+	check("each says what to do", sections.every((s) => s.hint.length > 20), true);
+});
+
+test("a tab is one history entry each; Back and Forward walk them", async () => {
+	const { server, world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	const start = world.entries.length;
+	ctl.open_tab("projects");
+	await settle();
+	check("by project: one entry", [world.entries.length - start, world.path()], [1, "/desk/bin-manager/by-project"]);
+	check("the list was read", ctl.state.projects.length, 2);
+	ctl.open_tab("sites");
+	await settle();
+	ctl.open_tab("problems");
+	await settle();
+	check("three tabs, three entries", world.entries.length - start, 3);
+	check("problems were read", views.problem_total(ctl.state.problems.data), 3);
+	ctl.open_tab("problems");
+	check("the tab already on screen adds nothing", world.entries.length - start, 3);
+	world.back();
+	await settle();
+	check("Back: job sites", ctl.state.target, { screen: "sites" });
+	world.back();
+	world.back();
+	await settle();
+	check("Back twice more: the picker", ctl.state.target, { screen: "picker" });
+	world.forward();
+	await settle();
+	check("Forward: by project", ctl.state.target, { screen: "projects" });
+	check("every read was a GET", server.calls.filter((c) => /bin_views\./.test(c.method)).every((c) => c.opts.method === "GET"), true);
+	check("no view wrote anything", server.writes().length, 0);
+});
+
+test("a filter is written into the picker's address in place: never a history entry", async () => {
+	const { world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	const entries = world.entries.length;
+	ctl.set_filters({ kind: "job_site" });
+	ctl.set_filters({ quick: "has_stock" });
+	ctl.set_filter("wall");
+	await settle();
+	check("no entry added", world.entries.length, entries);
+	check("the address says the filters", world.query(), "q=wall&kind=job_site&quick=has_stock");
+	check("and the list follows", shown(ctl), ["Job Site PRJ-90001 Water Wall"]);
+	check("the old name for what is typed still holds it", ctl.state.filter, "wall");
+	ctl.clear_filters();
+	await settle();
+	check("cleared: a bare address, every bin", [world.query(), shown(ctl).length, world.entries.length], ["", VIEW_BOOT.bins.length, entries]);
+});
+
+test("Back from a bin lands on the picker as it was left; a bare picker has no filters", async () => {
+	const { world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	ctl.set_filters({ kind: "job_site", project: "PRJ-90001" });
+	ctl.open_bin(SITE);
+	await settle();
+	check("the bin's address carries no filters", [world.path(), world.query()], ["/desk/bin-manager/" + encodeURIComponent(SITE), ""]);
+	check("it knows where it came from", ctl.came_from(), "picker");
+	ctl.leave_bin();
+	await settle();
+	check("back on the filtered picker", [ctl.state.target.screen, ctl.state.filters.kind, ctl.state.filters.project], ["picker", "job_site", "PRJ-90001"]);
+	check("same list", shown(ctl), ["Job Site PRJ-90001 Water Wall"]);
+	world.forward();
+	await settle();
+	check("Forward: the bin again", ctl.state.target, { screen: "bin", warehouse: SITE });
+	// The tab, clicked from another screen, is the picker with no filters: the address is the truth.
+	ctl.open_tab("picker");
+	await settle();
+	check("a bare picker address has none", [world.query(), views.has_filters(ctl.state.filters)], ["", false]);
+});
+
+test("a shared link opens the picker filtered, and the old ?warehouse= link still opens its bin", async () => {
+	const { world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager?kind=job_site&quick=has_stock");
+	await settle();
+	check("filtered", [ctl.state.filters.kind, ctl.state.filters.quick, shown(ctl).length], ["job_site", "has_stock", 2]);
+	check("the options were consumed", world.route_options, null);
+	world.go_to("/desk/bin-manager?warehouse=" + encodeURIComponent(BIN_A));
+	await settle();
+	check("the bin", ctl.state.target, { screen: "bin", warehouse: BIN_A });
+});
+
+test("the item filter asks the server where the item is, and a late answer for another item is dropped", async () => {
+	const { server, world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager");
+	await settle();
+	ctl.set_filters({ item: "PDT-0001" });
+	check("nothing shown while it is read", [ctl.state.item.loading, shown(ctl)], [true, []]);
+	await settle();
+	const call = server.calls.find((c) => c.method.endsWith("bin_views.item_locations"));
+	check("asked once, by GET", [call.args, call.opts.method], [{ item_code: "PDT-0001" }, "GET"]);
+	check("the places that hold it or have it assigned", shown(ctl), ["Bin A1-1-1", "Job Site PRJ-90001 Water Wall"]);
+	check("in the address", world.query(), "item=PDT-0001");
+	// A link with the item in it reads it on arrival.
+	const linked = makeViewController();
+	linked.world.go_to("/desk/bin-manager?item=PDT-0001&kind=job_site");
+	await settle();
+	check("a link with an item", shown(linked.ctl), ["Job Site PRJ-90001 Water Wall"]);
+	ctl.set_filters({ item: "" });
+	await settle();
+	check("cleared", [ctl.state.item, shown(ctl).length], [null, VIEW_BOOT.bins.length]);
+	// Two picks in a row: only the last answer counts.
+	let release;
+	server.delay.set("item_locations", new Promise((resolve) => (release = resolve)));
+	ctl.set_filters({ item: "PDT-OLD" });
+	server.delay.delete("item_locations");
+	ctl.set_filters({ item: "PDT-0001" });
+	await settle();
+	release();
+	await settle();
+	check("the answer on screen is for the item on screen", ctl.state.item.item_code, "PDT-0001");
+	server.fail.set("item_locations", [{ status: 417, message: "There is no item PDT-NOPE." }]);
+	ctl.set_filters({ item: "PDT-NOPE" });
+	await settle();
+	check("a refusal is kept for the page to show", ctl.state.item.error.message, "There is no item PDT-NOPE.");
+});
+
+test("by project: a job is one entry, and a move between shelf and site is the page's ordinary Move", async () => {
+	const { server, world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager/by-project");
+	await settle();
+	const entries = world.entries.length;
+	ctl.open_project("PRJ-90001");
+	await settle();
+	check("one entry", [world.entries.length - entries, world.path()], [1, "/desk/bin-manager/by-project/PRJ-90001"]);
+	check("the job was read", ctl.state.project.data.project.project_name, "Water Wall");
+	const sections = views.project_sections(ctl.state.project.data, ctl.perms());
+	const before = world.entries.length;
+	await ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 2 }, "bm-proj-0000001");
+	await settle();
+	const write = server.writes().pop();
+	check("move_to, shelf to site, nothing made a home", [write.method.endsWith("bin_assignments.move_to"), write.args], [
+		true,
+		{ item_code: "PDT-0001", from_warehouse: SHELF, to_warehouse: SITE, qty: 2, client_ref: "bm-proj-0000001", make_home: 0 },
+	]);
+	check("no site had to be opened", server.calls.some((c) => c.method.endsWith("stock_scan.job_site")), false);
+	check("a save is no history entry", world.entries.length, before);
+	check("the job is read again after it", server.calls.filter((c) => c.method.endsWith("bin_views.project_view")).length, 2);
+	check("the notice can undo it", ctl.state.notice.log.can_undo, true);
+	await ctl.project_submit("to_shelf", sections.site.rows[0], { qty: 1 }, "bm-proj-0000002");
+	const back = server.writes().pop();
+	check("site to shelf", [back.args.from_warehouse, back.args.to_warehouse, back.args.item_code], [SITE, SHELF, "PDT-0002"]);
+	// Only this job's share of the shelf may be sent, checked before any call. The row already shows
+	// what the first move left (6 less the 2 sent), as a row on a bin does after a move.
+	const calls = server.writes().length;
+	const err = await ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 60 }, "bm-proj-0000003").catch((e) => e);
+	check("more than the job's share is refused in words", [err.message, server.writes().length], ["Only 4 Unit is here.", calls]);
+	ctl.leave_project();
+	await settle();
+	check("All jobs steps back to the list", [ctl.state.target.screen, world.entries.length], ["projects", before]);
+});
+
+test("by project: a job with no site has it opened first, once, and a refusal there saves nothing", async () => {
+	const { server, world, ctl } = makeViewController({ project_view: Object.assign({}, PROJECT_VIEW, { site: null }) });
+	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	const row = views.project_sections(ctl.state.project.data, ctl.perms()).shelf.rows[0];
+	await ctl.project_submit("to_site", row, { qty: 1 }, "bm-proj-0000004");
+	const order = server.calls.filter((c) => /job_site$|move_to$/.test(c.method)).map((c) => c.method.split(".").pop());
+	check("the site is opened, then the move", order, ["job_site", "move_to"]);
+	check("opened for this job", server.calls.find((c) => c.method.endsWith("job_site")).args, { project: "PRJ-90001" });
+	check("moved to the site that answered", server.writes().pop().args.to_warehouse, "Job Site PRJ-90001 Opened - SF");
+
+	const refused = makeViewController({ project_view: Object.assign({}, PROJECT_VIEW, { site: null }) });
+	refused.world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	refused.server.fail.set("job_site", [{ status: 417, message: "Job sites are kept for Build jobs, and Water Wall is not one." }]);
+	const err = await refused.ctl.project_submit("to_site", row, { qty: 1 }, "bm-proj-0000005").catch((e) => e);
+	check("the server's sentence, and nothing moved", [err.message, err.keep_ref, refused.server.calls.some((c) => c.method.endsWith("move_to"))], [
+		"Job sites are kept for Build jobs, and Water Wall is not one.", false, false,
+	]);
+	// A job that cannot be sent to at all never reaches the server.
+	const closed = makeViewController({ project_view: Object.assign({}, PROJECT_VIEW, { send_refusal: "Old Lobby is Completed." }) });
+	closed.world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	const none = await closed.ctl.project_submit("to_site", row, { qty: 1 }, "bm-proj-0000006").catch((e) => e);
+	check("refused here", [none.keep_ref, closed.server.writes().length], [false, 0]);
+});
+
+test("a bin opened from Job sites or Problems steps back to where it was opened", async () => {
+	const { world, ctl } = makeViewController();
+	world.go_to("/desk/bin-manager/problems");
+	await settle();
+	const entries = world.entries.length;
+	ctl.open_bin(BIN_A);
+	await settle();
+	check("one entry, tagged", [world.entries.length - entries, ctl.came_from()], [1, "problems"]);
+	ctl.leave_bin();
+	await settle();
+	check("back on Problems, no second copy", [ctl.state.target.screen, world.index], ["problems", entries - 1]);
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	check("a bin opened by a link has no tag", ctl.came_from(), null);
+});
+
+test("the real page: tabs, filters and the three views draw, and names are data", async () => {
+	const { server, world, registry, click } = loadPage(VIEW_FIXTURE);
+	world.go_to("/desk/bin-manager");
+	await settle();
+	const root = () => registry.root.__state.html;
+	const part = (sel) => registry.found[sel][0].innerHTML;
+	check("four tabs, Bins on", [(root().match(/class="bm-tab /g) || []).length, /class="bm-tab is-on"[^>]*data-tab="picker"/.test(root().replace(/\s+/g, " "))], [4, true]);
+	check("kinds offered with counts", /data-kind="job_site">Job sites <span class="bm-chip-count">2<\/span>/.test(part(".bm-filters")), true);
+	check("a job to pick", /<option value="PRJ-90001" >Water Wall · Acme Hotels<\/option>/.test(part(".bm-filters")), true);
+	check("every bin listed", (part(".bm-list").match(/data-act="bin"/g) || []).length, VIEW_BOOT.bins.length);
+	check("a site says whose it is", /Water Wall · Acme Hotels/.test(part(".bm-list")), true);
+	const entries = world.entries.length;
+	click({ "data-act": "kind", "data-kind": "job_site" });
+	await settle();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	check("a kind click filters the list", (part(".bm-list").match(/data-act="bin"/g) || []).length, 2);
+	check("and writes the address in place", [world.query(), world.entries.length], ["kind=job_site", entries]);
+	check("the count says so", /2 of 8 places/.test(part(".bm-filters")), true);
+	click({ "data-act": "quick", "data-quick": "has_stock" });
+	click({ "data-act": "quick", "data-quick": "has_stock" });
+	await settle();
+	check("a quick filter clicked twice is off again", /data-quick="has_stock"[^>]*aria-pressed="true"/.test(part(".bm-filters")), false);
+
+	click({ "data-act": "tab", "data-tab": "sites" });
+	await settle();
+	check("Job sites is an entry", [world.entries.length - entries, world.path()], [1, "/desk/bin-manager/job-sites"]);
+	check("the filter did not leak onto it", world.query(), "");
+	check("a row per site with its job, items and value", [/Water Wall/.test(part(".bm-list")), /\$502\.00/.test(part(".bm-list")), /2 job sites/.test(part(".bm-list"))], [true, true, true]);
+	check("a finished job with stock is flagged", /Job finished, stock still here/.test(part(".bm-list")), true);
+
+	click({ "data-act": "tab", "data-tab": "problems" });
+	await settle();
+	check("Problems lists each kind", [/Assigned but empty/.test(part(".bm-list")), /Stock with no assignment/.test(part(".bm-list")), /Still at a finished job/.test(part(".bm-list"))], [true, true, true]);
+	check("an item's name is escaped", [/VALVE &lt;2 IN&gt;/.test(part(".bm-list")), /VALVE <2 IN>/.test(part(".bm-list"))], [true, false]);
+
+	click({ "data-act": "project", "data-project": "PRJ-90001" });
+	await settle();
+	check("a job from a problem row", world.path(), "/desk/bin-manager/by-project/PRJ-90001");
+	check("both places drawn", [/On the Project Shelf for this job/.test(part(".bm-project-body")), /At the job site/.test(part(".bm-project-body"))], [true, true]);
+	check("each row has its one move", [/data-move="to_site"/.test(part(".bm-project-body")), /data-move="to_shelf"/.test(part(".bm-project-body"))], [true, true]);
+	click({ "data-act": "project-move", "data-move": "to_site", "data-section": "shelf", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	check("the dialog opened, with the job's share as the quantity", [d.shown, d.values.qty], [true, 6]);
+	d.values.qty = 2;
+	await d.click_primary();
+	await settle();
+	const write = server.writes().pop();
+	check("it moved through move_to", [write.method.endsWith("bin_assignments.move_to"), write.args.from_warehouse, write.args.to_warehouse, write.args.qty], [true, SHELF, SITE, 2]);
+	check("the dialog closed", d.shown, false);
+	world.back();
+	await settle();
+	check("Back from the job is Problems", world.path(), "/desk/bin-manager/problems");
+});
+
+test("the real page: a filtered picker comes back after a bin, and a boot without the views' data is the old page", async () => {
+	const { world, registry, click } = loadPage(VIEW_FIXTURE);
+	world.go_to("/desk/bin-manager?kind=job_site");
+	await settle();
+	const part = (sel) => registry.found[sel][0].innerHTML;
+	check("a shared link is filtered on arrival", (part(".bm-list").match(/data-act="bin"/g) || []).length, 2);
+	click({ "data-act": "bin", "data-bin": SITE });
+	await settle();
+	check("the bin's way back names the picker", /All bins/.test(registry.root.__state.html), true);
+	world.back();
+	await settle();
+	check("Back: the same two", [(part(".bm-list").match(/data-act="bin"/g) || []).length, world.query()], [2, "kind=job_site"]);
+
+	// A server that sends no kinds (the deploy's first minutes, or the views' data failed): every bin, no kind row.
+	const old = loadPage();
+	old.world.go_to("/desk/bin-manager");
+	await settle();
+	check("every bin still listed", (old.registry.found[".bm-list"][0].innerHTML.match(/data-act="bin"/g) || []).length, BOOT.bins.length);
+	check("the boneyard is still marked", /Boneyard<\/span>/.test(old.registry.found[".bm-list"][0].innerHTML), true);
+	check("no job box with no jobs", /bm-project-filter/.test(old.registry.found[".bm-filters"][0].innerHTML), false);
 });
 
 // ------------------------------------------------------------------ run

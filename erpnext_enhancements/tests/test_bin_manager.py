@@ -46,6 +46,7 @@ PAGE_JS = PAGE_DIR / "bin_manager.js"
 PAGE_CSS = PAGE_DIR / "bin_manager.css"
 BUNDLE = APP / "public" / "js" / "bin_manager.bundle.js"
 LOGIC = APP / "public" / "js" / "bin_manager" / "logic.js"
+VIEWS_JS = APP / "public" / "js" / "bin_manager" / "views.js"
 CONTROLLER = APP / "public" / "js" / "bin_manager" / "controller.js"
 HARNESS = REPO / "scripts" / "test_bin_manager.mjs"
 OPS_HUB = APP / "enhancements_core" / "workspace" / "operations_hub" / "operations_hub.json"
@@ -357,6 +358,43 @@ class TestManagerBoot(_Base):
 		self.assertEqual(out["boneyard_name"], "Boneyard")
 		self.assertEqual(names[:2], [BIN_A, BIN_B], "shelf-number order")
 
+	def test_every_bin_says_what_kind_of_place_it_is(self):
+		"""v1.806.1, on the real bin_views over this stub: no Project Shelf and no job sites are
+		set up here, so every place is a shop bin and the boneyard is the boneyard."""
+		out = base.bins.manager_boot()
+		by = {b["warehouse"]: b for b in out["bins"]}
+		self.assertEqual(by[BIN_A]["kind"], "shop_bin")
+		self.assertEqual(by[BONEYARD]["kind"], "boneyard")
+		for row in out["bins"]:
+			self.assertIn("missing_items", row)
+			self.assertIn("unassigned_items", row)
+		self.assertEqual(by[BONEYARD]["unassigned_items"], 0, "nothing is ever assigned to the boneyard")
+		self.assertIsNone(out["shelf_warehouse"])
+		self.assertFalse(out["job_sites"])
+		self.assertIn("can_see_value", out)
+
+	def test_the_views_data_failing_leaves_the_page_as_it_was(self):
+		from erpnext_enhancements.inventory_enhancements import bin_views
+
+		original = bin_views.decorate
+
+		def broken(bins):
+			raise RuntimeError("the views' data could not be read")
+
+		logged = []
+		original_log = base.FRAPPE.log_error
+		bin_views.decorate = broken
+		base.FRAPPE.log_error = lambda *a, **kw: logged.append((a, kw))
+		try:
+			out = base.bins.manager_boot()
+		finally:
+			bin_views.decorate = original
+			base.FRAPPE.log_error = original_log
+		self.assertEqual(len(out["bins"]), len(base.bins.manager_boot()["bins"]))
+		self.assertTrue(out["can_manage"])
+		self.assertNotIn("kind", out["bins"][0])
+		self.assertEqual(len(logged), 1)
+
 	def test_what_the_caller_may_do_comes_from_their_permissions(self):
 		out = base.bins.manager_boot()
 		self.assertEqual(
@@ -578,7 +616,7 @@ class TestThePageFiles(unittest.TestCase):
 		self.assertIn("window.sf_bin_manager", BUNDLE.read_text(encoding="utf-8"))
 
 	def test_the_page_never_reads_a_settings_single_or_calls_frappe_dialogs(self):
-		code = _code(PAGE_JS) + _code(CONTROLLER) + _code(LOGIC)
+		code = _code(PAGE_JS) + _code(CONTROLLER) + _code(LOGIC) + _code(VIEWS_JS)
 		self.assertNotRegex(code, r"get_single_value|Inventory Scanner Settings|frappe\.db\.get_value")
 		self.assertNotIn("frappe.call(", code, "every request goes through the quiet sf_kit call")
 		self.assertNotIn("location.search", code, "route_options, never only the query string")
@@ -593,16 +631,36 @@ class TestThePageFiles(unittest.TestCase):
 				encoding="utf-8"
 			),
 		}
-		found = re.findall(r'(BA|SCAN) \+ "(\w+)"', code)
-		self.assertGreaterEqual(len(found), 11)
+		sources["erpnext_enhancements.inventory_enhancements.bin_views."] = (
+			APP / "inventory_enhancements" / "bin_views.py"
+		).read_text(encoding="utf-8")
+		prefixes = {
+			"BA": "erpnext_enhancements.inventory_enhancements.bin_assignments.",
+			"SCAN": "erpnext_enhancements.api.stock_scan.",
+			"VIEWS": "erpnext_enhancements.inventory_enhancements.bin_views.",
+		}
+		found = re.findall(r'(BA|SCAN|VIEWS) \+ "(\w+)"', code)
+		self.assertGreaterEqual(len(found), 16)
+		self.assertEqual(
+			sorted(name for prefix, name in found if prefix == "VIEWS"),
+			["item_locations", "problems", "project_index", "project_view"],
+		)
+		self.assertIn(("SCAN", "job_site"), found, "By project opens a job's site before the first move to it")
 		for prefix, name in found:
-			module = (
-				"erpnext_enhancements.inventory_enhancements.bin_assignments."
-				if prefix == "BA"
-				else "erpnext_enhancements.api.stock_scan."
-			)
+			module = prefixes[prefix]
 			with self.subTest(endpoint=name):
 				self.assertRegex(sources[module], rf"@frappe\.whitelist\([^)]*\)\ndef {name}\(")
+
+	def test_a_filter_is_written_in_place_and_a_view_is_a_route(self):
+		"""Nik's rule, read from the source: the page's only history write of its own is a
+		replaceState, the tabs go through the router, and the views module is in the bundle."""
+		page = _code(PAGE_JS)
+		self.assertIn("window.history.replaceState(", page)
+		self.assertNotIn("pushState(", page + _code(CONTROLLER))
+		self.assertIn("this.ctl.open_tab(", page)
+		bundle = BUNDLE.read_text(encoding="utf-8")
+		self.assertIn('import * as views from "./bin_manager/views.js";', bundle)
+		self.assertIn("{ version: VERSION, Controller, views }", bundle)
 
 
 class TestWhereToFindIt(unittest.TestCase):

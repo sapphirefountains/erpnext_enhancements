@@ -20,6 +20,21 @@
 //   /desk/bin-manager/<warehouse>   one bin: its items, the actions, and this bin's recent saves
 //   /desk/bin-manager?warehouse=X   a deep link: opens X in place of the picker entry
 //
+// and since v1.806.1 (Nik, 2026-11-12: "more filters and different views... by Project which items
+// are at the Job Site"):
+//
+//   /desk/bin-manager/by-project             the jobs with material on the Project Shelf or at a site
+//   /desk/bin-manager/by-project/<project>   one job: its shelf and its site, and moves between them
+//   /desk/bin-manager/job-sites              every job site with its job, item count and value
+//   /desk/bin-manager/problems               assigned but empty, stock with no assignment, stock still
+//                                            held for a finished job
+//
+// The four tabs are routes, so each is one history entry. The picker's FILTERS (what is typed, the
+// kind of place, a job, an item, a quick filter) are written into the picker's own address in place
+// (?kind=job_site&project=PRJ-00597, history.replaceState): a filter is never a history entry, and
+// Back from a bin lands on the picker as it was left, read back out of the address like a deep link.
+// What each view shows is public/js/bin_manager/views.js; its numbers are bin_views.py's.
+//
 // Picking a bin is one frappe.set_route; Back is the browser's and lands on the picker; Forward lands
 // on the bin. Dialogs (frappe.ui.Dialog) push nothing, and the router closes an open one on any route
 // change (router.set_history -> frappe.ui.hide_open_dialog), so Back with a dialog open closes it and
@@ -87,7 +102,8 @@ class BinManagerPage {
 		// error"), so both globals are checked; a page without them says so instead of waiting.
 		this.ready = new Promise((resolve) => frappe.require(BM_ASSETS, resolve)).then(() => {
 			this.sf = window.sf_kit && window.sf_kit.state ? window.sf_kit : null;
-			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller ? window.sf_bin_manager : null;
+			// `views` came with v1.806.1: a copy of the bundle without it cannot draw this page.
+			this.bm = window.sf_bin_manager && window.sf_bin_manager.Controller && window.sf_bin_manager.views ? window.sf_bin_manager : null;
 			if (this.sf && this.bm) this.ctl = new this.bm.Controller(this.env());
 		});
 		// The reorder boxes are not part of `ready`: the bins draw as soon as the page's own files are here, and
@@ -102,6 +118,8 @@ class BinManagerPage {
 			call: (method, args, opts) => this.sf.call(method, args, opts),
 			get_route: () => frappe.get_route(),
 			set_route: (route, replace) => {
+				// A filter still waiting to be written belongs to the entry being left.
+				this.flush_query();
 				if (replace) frappe.route_flags.replace_route = true;
 				frappe.set_route(route);
 				// Read by push_state, which has already run; left set, the next screen would replace too.
@@ -119,11 +137,41 @@ class BinManagerPage {
 					// Untagged: "All bins" pushes the picker instead of stepping back, and Back still works.
 				}
 			},
-			history_back: () => window.history.back(),
+			history_back: () => {
+				this.flush_query();
+				window.history.back();
+			},
+			replace_query: (query) => this.replace_query(query),
 			render: () => this.render(),
 			now: () => Date.now(),
 			random: () => Math.random(),
 		};
+	}
+
+	// The picker's filters into its own address, in place: no history entry. A moment later rather than
+	// at once, because typing in the search box changes them on every key and Safari refuses more than
+	// 100 history writes in 30 seconds. Only ever written onto the picker's own address.
+	replace_query(query) {
+		this._query = query;
+		clearTimeout(this._query_timer);
+		this._query_timer = setTimeout(() => this.flush_query(), 250);
+	}
+
+	flush_query() {
+		clearTimeout(this._query_timer);
+		this._query_timer = null;
+		if (this._query === undefined || this._query === null) return;
+		const query = this._query;
+		this._query = null;
+		const route = frappe.get_route() || [];
+		if (route[0] !== BM_PAGE || route.length !== 1) return;
+		// Written, never read: the filters come in through frappe.route_options (controller.show), which
+		// the router fills from the address on every route change.
+		try {
+			window.history.replaceState(window.history.state, "", window.location.pathname + query + window.location.hash);
+		} catch (e) {
+			// The filters still work; only the address is a step behind.
+		}
 	}
 
 	// The reorder boxes (v1.725.0): the shared editor, once its bundle has arrived, wired to this page's
@@ -301,6 +349,23 @@ class BinManagerPage {
 			const row = code ? this.row(code) : null;
 			if (act === "bin") this.ctl.open_bin(el.getAttribute("data-bin"));
 			else if (act === "leave") this.ctl.leave_bin();
+			else if (act === "tab") this.ctl.open_tab(el.getAttribute("data-tab"));
+			else if (act === "kind") this.ctl.set_filters({ kind: el.getAttribute("data-kind") || "" });
+			else if (act === "quick") {
+				// A second click on the one that is on turns it off.
+				const quick = el.getAttribute("data-quick") || "";
+				this.ctl.set_filters({ quick: this.ctl.state.filters.quick === quick ? "" : quick });
+			} else if (act === "clear-filters") {
+				this.ctl.clear_filters();
+				this.$root.find(".bm-filter").val("");
+			} else if (act === "item-filter") this.item_filter_dialog();
+			else if (act === "item-clear") this.ctl.set_filters({ item: "" });
+			else if (act === "project") this.ctl.open_project(el.getAttribute("data-project"));
+			else if (act === "leave-project") this.ctl.leave_project();
+			else if (act === "project-move") {
+				const moving = this.project_row(el.getAttribute("data-section"), code);
+				if (moving) this.project_move_dialog(el.getAttribute("data-move"), moving);
+			}
 			else if (act === "undo") this.undo(el.getAttribute("data-log"), el);
 			else if (act === "retry") this.ctl.refresh();
 			else if (act === "reorder-toggle") this.toggle_reorder();
@@ -324,13 +389,29 @@ class BinManagerPage {
 		});
 		this.$root.on("input", ".bm-filter", (e) => {
 			if (!this.ctl) return;
-			this.ctl.state.filter = e.currentTarget.value;
-			this.draw_bins();
+			this.ctl.set_filters({ q: e.currentTarget.value });
 		});
 		this.$root.on("keydown", ".bm-filter", (e) => {
 			if (e.key !== "Enter" || !this.ctl) return;
-			const bins = this.bm.filter_bins(this.boot_bins(), this.ctl.state.filter);
+			const bins = this.ctl.shown_bins();
 			if (bins.length === 1) this.ctl.open_bin(bins[0].warehouse);
+		});
+		this.$root.on("change", ".bm-project-filter", (e) => {
+			if (!this.ctl) return;
+			// Left first, so the redraw the change causes is not held back by the box it came from.
+			const value = e.currentTarget.value;
+			e.currentTarget.blur();
+			this.ctl.set_filters({ project: value });
+		});
+		this.$root.on("input", ".bm-project-search", (e) => {
+			if (!this.ctl) return;
+			this.ctl.state.project_filter = e.currentTarget.value;
+			this.draw_projects();
+		});
+		this.$root.on("keydown", ".bm-project-search", (e) => {
+			if (e.key !== "Enter" || !this.ctl) return;
+			const rows = this.bm.views.filter_projects(this.ctl.state.projects || [], this.ctl.state.project_filter);
+			if (rows.length === 1) this.ctl.open_project(rows[0].project);
 		});
 	}
 
@@ -360,6 +441,10 @@ class BinManagerPage {
 		const t = this.ctl.state.target;
 		if (!t) return;
 		if (t.screen === "picker") this.render_picker();
+		else if (t.screen === "projects") this.render_projects();
+		else if (t.screen === "project") this.render_project();
+		else if (t.screen === "sites") this.render_sites();
+		else if (t.screen === "problems") this.render_problems();
 		else this.render_bin();
 	}
 
@@ -385,17 +470,24 @@ class BinManagerPage {
 			this.drawn = "picker";
 			this.$root.html(`
 				<div class="bm-picker">
+					${this.tabs_html()}
 					<div class="bm-toolbar">
 						<input type="search" class="form-control bm-filter" autocomplete="off"
 							placeholder="${this.esc(__("Find a bin: type part of its name"))}"
 							aria-label="${this.esc(__("Find a bin"))}">
 						${this.board_link()}
 					</div>
+					<div class="bm-filters"></div>
 					<div class="bm-list"></div>
 				</div>`);
 			this.$root.find(".bm-filter").val(this.ctl.state.filter || "");
 			setTimeout(() => this.$root.find(".bm-filter").trigger("focus"), 0);
 		}
+		// The box follows the filters when they changed without it (Back onto a filtered picker, Clear),
+		// and is left alone while it is being typed in.
+		const box = this.$root.find(".bm-filter")[0];
+		if (box && document.activeElement !== box && box.value !== (this.ctl.state.filter || "")) box.value = this.ctl.state.filter || "";
+		this.draw_filters();
 		this.draw_bins();
 	}
 
@@ -408,26 +500,32 @@ class BinManagerPage {
 			else this.sf.state.render(list, "loading", { title: __("Loading the bins…") });
 			return;
 		}
-		const bins = this.bm.filter_bins(st.boot.bins || [], st.filter);
+		// The item filter waits for its answer: which places hold the item is the server's to say.
+		const item = st.item;
+		if (st.filters.item && item && item.error) {
+			this.failed(list, item.error, () => this.ctl.load_item(), __("Could not find where that item is."));
+			return;
+		}
+		if (st.filters.item && (!item || item.loading)) {
+			this.sf.state.render(list, "loading", { title: __("Finding where that item is…") });
+			return;
+		}
+		const bins = this.ctl.shown_bins();
 		if (!bins.length) {
+			const v = this.bm.views;
+			const what = v.describe_filters(st.filters, st.boot.bins || [], item && item.data);
+			const not_stock = st.filters.item && item && item.data && item.data.is_stock_item === false;
 			this.sf.state.render(list, "empty", {
-				title: st.filter ? __("No bin matches {0}.", [st.filter]) : __("There are no bins yet."),
+				title: not_stock
+					? __("{0} is not kept in stock, so it is at no bin.", [item.data.item_name])
+					: v.has_filters(st.filters)
+					? __("No place matches: {0}.", [what])
+					: __("There are no bins yet."),
 			});
 			return;
 		}
 		const parts = this.bm.group_bins(bins).map((group) => {
-			const items = group.bins
-				.map((b) => {
-					const counts = [];
-					counts.push(__("{0} on hand", [b.on_hand_items]));
-					counts.push(__("{0} assigned", [b.assigned_items]));
-					const chip = b.is_boneyard ? this.sf.chip(__("Boneyard"), "warn") : "";
-					return `<li><button type="button" class="bm-bin" data-act="bin" data-bin="${this.esc(b.warehouse)}">
-						<span class="bm-bin-name">${this.esc(b.warehouse_name)}</span> ${chip}
-						<span class="bm-bin-counts">${this.esc(counts.join(" · "))}</span>
-					</button></li>`;
-				})
-				.join("");
+			const items = group.bins.map((b) => this.bin_row_html(b)).join("");
 			const title = group.trail ? `<h3 class="bm-group-title">${this.esc(group.trail)}</h3>` : "";
 			return `<section class="bm-group">${title}<ul class="bm-bins">${items}</ul></section>`;
 		});
@@ -444,7 +542,7 @@ class BinManagerPage {
 			this.$root.html(`
 				<div class="bm-binview">
 					<div class="bm-head">
-						<button type="button" class="btn btn-default btn-sm bm-back" data-act="leave">← ${this.esc(__("All bins"))}</button>
+						<button type="button" class="btn btn-default btn-sm bm-back" data-act="leave">← ${this.esc(this.back_label())}</button>
 						<div class="bm-title">
 							<h2 class="bm-name"></h2>
 							<div class="bm-trail"></div>
@@ -483,6 +581,15 @@ class BinManagerPage {
 		this.draw_items(loc);
 		this.sync_reorder(loc);
 		this.draw_recent();
+	}
+
+	// Where the bin's back button goes: the screen that opened it.
+	back_label() {
+		const from = this.ctl.came_from();
+		if (from === "sites") return __("Job sites");
+		if (from === "problems") return __("Problems");
+		if (from === "project") return __("Back to the job");
+		return __("All bins");
 	}
 
 	draw_notice() {
@@ -602,6 +709,458 @@ class BinManagerPage {
 			.join("")}</ul>`;
 	}
 
+	// ------------------------------------------------------------------ the views beyond one bin (v1.806.1)
+
+	// The tabs across the top of every screen but a bin and one job. Each is a route, so a tab is one
+	// frappe.set_route and one history entry.
+	tabs_html() {
+		const on = this.bm.tab_of(this.ctl.state.target);
+		const tabs = this.bm.TABS.map((t) => {
+			const count = t.screen === "problems" && this.problem_count() ? ` <span class="bm-tab-count">${this.esc(this.problem_count())}</span>` : "";
+			return `<button type="button" class="bm-tab ${t.screen === on ? "is-on" : ""}" role="tab" aria-selected="${t.screen === on}"
+				data-act="tab" data-tab="${this.esc(t.screen)}">${this.esc(__(t.label))}${count}</button>`;
+		}).join("");
+		return `<div class="bm-tabs" role="tablist" aria-label="${this.esc(__("Bin Manager views"))}">${tabs}</div>`;
+	}
+
+	// How many problems the last read found, once the Problems view has been opened this visit.
+	problem_count() {
+		const held = this.ctl.state.problems;
+		return held && held.data ? this.bm.views.problem_total(held.data) : 0;
+	}
+
+	money(value) {
+		try {
+			if (typeof format_currency === "function") return format_currency(value);
+		} catch (e) {
+			// The plain formatter below.
+		}
+		return this.bm.views.money(value);
+	}
+
+	// The picker's filters, under its search box: the kinds of place, the quick filters, a job, an item.
+	// Drawn again on every change; the search box above is not, so typing is never interrupted.
+	draw_filters() {
+		const el = this.$root.find(".bm-filters")[0];
+		if (!el) return;
+		const st = this.ctl.state;
+		const v = this.bm.views;
+		const bins = this.boot_bins();
+		if (!st.boot) {
+			el.innerHTML = "";
+			return;
+		}
+		// A select being used is left alone: replacing it would close its list under the pointer.
+		const active = document.activeElement;
+		if (active && active.classList && active.classList.contains("bm-project-filter") && el.contains(active)) return;
+		const f = st.filters;
+		const chip = (act, attr, key, label, count, on) =>
+			`<button type="button" class="bm-chipbtn ${on ? "is-on" : ""}" aria-pressed="${on}" data-act="${act}" ${attr}="${this.esc(key)}">${this.esc(
+				label
+			)}${count === null ? "" : ` <span class="bm-chip-count">${this.esc(count)}</span>`}</button>`;
+		const kinds = v.kind_options(bins);
+		const kind_row =
+			kinds.length > 1
+				? `<div class="bm-chiprow" role="group" aria-label="${this.esc(__("Kind of place"))}">${chip("kind", "data-kind", "", __("All"), bins.length, !f.kind)}${kinds
+						.map((k) => chip("kind", "data-kind", k.key, __(k.label), k.count, f.kind === k.key))
+						.join("")}</div>`
+				: "";
+		const quick_row = `<div class="bm-chiprow" role="group" aria-label="${this.esc(__("Quick filters"))}">${v.QUICK.map((q) =>
+			chip("quick", "data-quick", q.key, __(q.label), null, f.quick === q.key)
+		).join("")}</div>`;
+		const jobs = v.project_options(bins);
+		// A job the address names stays in the list even when it has no site, so the box says what is filtering.
+		if (f.project && !jobs.some((j) => j.project === f.project)) jobs.push({ project: f.project, project_name: f.project, customer: "" });
+		const job_box = jobs.length
+			? `<label class="bm-filterbox">${this.esc(__("Job"))}
+				<select class="form-control input-xs bm-project-filter" aria-label="${this.esc(__("Show one job's site"))}">
+					<option value="">${this.esc(__("Any job"))}</option>
+					${jobs
+						.map((j) => `<option value="${this.esc(j.project)}" ${j.project === f.project ? "selected" : ""}>${this.esc(v.project_label(j))}</option>`)
+						.join("")}
+				</select></label>`
+			: "";
+		const item = st.item;
+		const item_name = (item && item.data && item.data.item_name) || f.item;
+		const item_box = f.item
+			? `<span class="bm-filterbox bm-item-on">${this.esc(__("Item"))} <b>${this.esc(item_name)}</b>
+				<button type="button" class="btn btn-xs btn-default" data-act="item-clear" aria-label="${this.esc(__("Stop filtering by this item"))}">✕</button></span>`
+			: `<button type="button" class="btn btn-xs btn-default" data-act="item-filter">${this.esc(__("Filter by item…"))}</button>`;
+		const clear = v.has_filters(f) ? `<button type="button" class="btn btn-xs btn-default" data-act="clear-filters">${this.esc(__("Clear filters"))}</button>` : "";
+		const shown = this.ctl.shown_bins().length;
+		const count = v.has_filters(f) ? __("{0} of {1} places", [shown, bins.length]) : __("{0} places", [bins.length]);
+		const job_link = f.project
+			? `<button type="button" class="btn btn-xs btn-default" data-act="project" data-project="${this.esc(f.project)}">${this.esc(
+					__("See this job's shelf and site")
+			  )}</button>`
+			: "";
+		el.innerHTML = `${kind_row}${quick_row}<div class="bm-filterrow">${job_box}${item_box}${job_link}${clear}<span class="bm-count" aria-live="polite">${this.esc(
+			count
+		)}</span></div>`;
+	}
+
+	// One row of the picker: the place, what kind it is when that is not a plain shop bin, whose site it is,
+	// and its counts (with what the filtered item is doing there first).
+	bin_row_html(b) {
+		const v = this.bm.views;
+		const kind = v.bin_kind(b);
+		const tones = { project_shelf: "service", job_site: "good", boneyard: "warn", vehicle: "neutral" };
+		const labels = { project_shelf: __("Project Shelf"), job_site: __("Job site"), boneyard: __("Boneyard"), vehicle: __("Vehicle") };
+		const chip = labels[kind] ? this.sf.chip(labels[kind], tones[kind]) : "";
+		const job = b.project ? `<span class="bm-bin-job">${this.esc(v.project_label(b))}</span>` : "";
+		const done = b.project_closed ? this.sf.chip(__("Job finished"), "warn") : "";
+		const item = this.ctl.state.item;
+		const location = item && item.data && this.ctl.state.filters.item ? item.data.locations[b.warehouse] : null;
+		return `<li><button type="button" class="bm-bin" data-act="bin" data-bin="${this.esc(b.warehouse)}">
+			<span class="bm-bin-name">${this.esc(b.warehouse_name)}</span> ${chip} ${done} ${job}
+			<span class="bm-bin-counts">${this.esc(v.bin_summary(b, location))}</span>
+		</button></li>`;
+	}
+
+	// "Filter by item…": find an item, then show only the places that hold it or have it assigned.
+	item_filter_dialog() {
+		let timer = null;
+		let seq = 0;
+		const d = new frappe.ui.Dialog({
+			title: __("Show the places for one item"),
+			fields: [
+				{ fieldtype: "Data", fieldname: "query", label: __("Find the item"), placeholder: __("Part number, name or barcode") },
+				{ fieldtype: "HTML", fieldname: "results" },
+			],
+		});
+		const results = d.fields_dict.results.$wrapper;
+		const search = () => {
+			const query = (d.get_value("query") || "").trim();
+			const mine = ++seq;
+			if (!query) {
+				results.empty();
+				return;
+			}
+			results.html(`<p class="bm-muted">${this.esc(__("Searching…"))}</p>`);
+			this.ctl.search_items(query).then(
+				(rows) => {
+					if (mine !== seq) return;
+					rows = rows || [];
+					results.html(
+						rows.length
+							? `<ul class="bm-pick-list">${rows
+									.map(
+										(r) =>
+											`<li><button type="button" class="bm-pick" data-bm-item="${this.esc(r.item_code)}">${this.esc(r.item_name)}
+											<span class="bm-muted">${this.esc(r.item_code)}</span></button></li>`
+									)
+									.join("")}</ul>`
+							: `<p class="bm-muted">${this.esc(__("No item matches."))}</p>`
+					);
+				},
+				(err) => {
+					if (mine === seq) results.html(`<p class="bm-dialog-msg">${this.esc((err && err.message) || "")}</p>`);
+				}
+			);
+		};
+		d.fields_dict.query.$input.on("input", () => {
+			clearTimeout(timer);
+			timer = setTimeout(search, BM_SEARCH_DELAY_MS);
+		});
+		results.on("click", "[data-bm-item]", (e) => {
+			const code = e.currentTarget.getAttribute("data-bm-item");
+			d.hide();
+			this.ctl.set_filters({ item: code });
+		});
+		d.show();
+		return d;
+	}
+
+	// ---- By project: the jobs that have material somewhere
+
+	render_projects() {
+		this.page.set_title(__("Bin Manager"));
+		if (this.drawn !== "projects") {
+			this.drawn = "projects";
+			this.$root.html(`
+				<div class="bm-view">
+					${this.tabs_html()}
+					<div class="bm-toolbar">
+						<input type="search" class="form-control bm-project-search" autocomplete="off"
+							placeholder="${this.esc(__("Find a job: type part of its name or customer"))}"
+							aria-label="${this.esc(__("Find a job"))}">
+					</div>
+					<p class="bm-note">${this.esc(__("Jobs with material on the Project Shelf or at a job site. Pick one to see both, and to move items between them."))}</p>
+					<div class="bm-list"></div>
+				</div>`);
+			this.$root.find(".bm-project-search").val(this.ctl.state.project_filter || "");
+		}
+		this.draw_projects();
+	}
+
+	draw_projects() {
+		const list = this.$root.find(".bm-list")[0];
+		if (!list) return;
+		const st = this.ctl.state;
+		if (!st.projects) {
+			if (st.projects_error) this.failed(list, st.projects_error, () => this.ctl.load_projects(), __("Could not load the jobs."));
+			else this.sf.state.render(list, "loading", { title: __("Loading the jobs…") });
+			return;
+		}
+		const v = this.bm.views;
+		const rows = v.filter_projects(st.projects, st.project_filter);
+		if (!rows.length) {
+			this.sf.state.render(list, "empty", {
+				title: st.project_filter ? __("No job matches {0}.", [st.project_filter]) : __("No job has material on the Project Shelf or at a job site yet."),
+			});
+			return;
+		}
+		list.innerHTML = `<ul class="bm-bins bm-jobs">${rows
+			.map(
+				(r) => `<li><button type="button" class="bm-bin" data-act="project" data-project="${this.esc(r.project)}">
+					<span class="bm-bin-name">${this.esc(v.project_label(r))}</span> ${r.closed ? this.sf.chip(__("Job finished"), "warn") : ""}
+					<span class="bm-bin-job">${this.esc(r.project)}</span>
+					<span class="bm-bin-counts">${this.esc(v.project_counts_text(r))}</span>
+				</button></li>`
+			)
+			.join("")}</ul>`;
+	}
+
+	// ---- By project: one job's Project Shelf and job site, side by side
+
+	render_project() {
+		const st = this.ctl.state;
+		const project = st.target.project;
+		const held = st.project && st.project.project === project ? st.project : null;
+		const data = held && held.data;
+		this.page.set_title(data ? data.project.project_name : __("Bin Manager"));
+		if (this.drawn !== `project:${project}`) {
+			this.drawn = `project:${project}`;
+			this.$root.html(`
+				<div class="bm-view bm-projectview">
+					<div class="bm-head">
+						<button type="button" class="btn btn-default btn-sm bm-back" data-act="leave-project">← ${this.esc(__("All jobs"))}</button>
+						<div class="bm-title">
+							<h2 class="bm-name"></h2>
+							<div class="bm-trail"></div>
+						</div>
+					</div>
+					<div class="bm-notice"></div>
+					<div class="bm-project-body"></div>
+				</div>`);
+		}
+		this.$root.find(".bm-name").text(data ? data.project.project_name : project);
+		const sub = data ? [data.project.project, data.project.customer, data.project.status].filter(Boolean).join(" · ") : "";
+		this.$root.find(".bm-trail").text(sub);
+		this.draw_notice();
+		const body = this.$root.find(".bm-project-body")[0];
+		if (!data) {
+			if (held && held.error) this.failed(body, held.error, () => this.ctl.load_project(), __("Could not load this job."));
+			else this.sf.state.render(body, "loading", { title: __("Loading the job…") });
+			return;
+		}
+		const sections = this.bm.views.project_sections(data, this.perms());
+		const parts = [];
+		if (data.project.closed) parts.push(`<p class="bm-note">${this.esc(__("This job is finished. What is still held for it can be brought back to a shelf."))}</p>`);
+		if (sections.shelf) parts.push(this.project_section_html(sections.shelf));
+		else parts.push(`<p class="bm-note">${this.esc(__("No Project Shelf is set up yet, so there is nothing to show for the shelf."))}</p>`);
+		if (sections.site) parts.push(this.project_section_html(sections.site));
+		else {
+			parts.push(
+				`<section class="bm-section"><h3 class="bm-section-title">${this.esc(__("At the job site"))}</h3><p class="bm-muted">${this.esc(
+					data.send_refusal || __("This job has no site yet. It is opened the first time something is sent to it.")
+				)}</p></section>`
+			);
+		}
+		body.innerHTML = parts.join("");
+	}
+
+	project_section_html(section) {
+		const priced = section.rows.some((r) => r.value !== null && r.value !== undefined);
+		const open = `<button type="button" class="btn btn-xs btn-default" data-act="bin" data-bin="${this.esc(section.warehouse)}">${this.esc(
+			__("Open {0}", [section.warehouse_name])
+		)}</button>`;
+		const blocked = section.blocked ? `<p class="bm-muted">${this.esc(section.blocked)}</p>` : "";
+		if (!section.rows.length) {
+			return `<section class="bm-section"><h3 class="bm-section-title">${this.esc(__(section.title))} ${open}</h3>${blocked}<p class="bm-muted">${this.esc(
+				__(section.empty)
+			)}</p></section>`;
+		}
+		const rows = section.rows
+			.map((r) => {
+				const button = section.move
+					? `<button type="button" class="btn btn-xs btn-default" data-act="project-move" data-move="${this.esc(section.move.key)}"
+						data-section="${this.esc(section.key)}" data-item="${this.esc(r.item_code)}">${this.esc(__(section.move.label))}</button>`
+					: "";
+				return `<tr>
+					<td class="bm-item">${this.item_cell(r, this.perms())}</td>
+					<td class="bm-qty">${this.esc(this.bm.amount(r.on_hand, r.stock_uom))}</td>
+					${priced ? `<td class="bm-qty">${r.value === null || r.value === undefined ? "" : this.esc(this.money(r.value))}</td>` : ""}
+					<td class="bm-row-actions">${button}</td>
+				</tr>`;
+			})
+			.join("");
+		return `<section class="bm-section"><h3 class="bm-section-title">${this.esc(__(section.title))} ${open}</h3>${blocked}
+			<table class="bm-table">
+				<thead><tr>
+					<th scope="col">${this.esc(__("Item"))}</th>
+					<th scope="col" class="bm-qty">${this.esc(__("Quantity"))}</th>
+					${priced ? `<th scope="col" class="bm-qty">${this.esc(__("Value"))}</th>` : ""}
+					<th scope="col"><span class="bm-sr">${this.esc(__("Actions"))}</span></th>
+				</tr></thead>
+				<tbody>${rows}</tbody>
+			</table></section>`;
+	}
+
+	// The row a By project button names: its section's, by item code.
+	project_row(section_key, code) {
+		const held = this.ctl.state.project;
+		const sections = this.bm.views.project_sections(held && held.data, this.perms());
+		const section = sections[section_key];
+		return section ? section.rows.find((r) => r.item_code === code) || null : null;
+	}
+
+	// "Send to job site" / "Bring back to the shelf": the page's ordinary Move, between the two places.
+	project_move_dialog(direction, row) {
+		const held = this.ctl.state.project;
+		const move = this.bm.views.project_move(direction, held && held.data);
+		if (!move || !row) return;
+		const to_site = direction === "to_site";
+		const here = this.bm.amount(row.on_hand, row.stock_uom);
+		const about = to_site
+			? move.needs_site
+				? __("{0} on the Project Shelf for this job. This job has no site yet: sending opens it.", [here])
+				: __("{0} on the Project Shelf for this job.", [here])
+			: __("{0} at the job site.", [here]);
+		this.save_dialog({
+			kind: "move",
+			row,
+			title: to_site ? __("Send {0} to the job site", [this.safe(row.item_name)]) : __("Bring {0} back to the Project Shelf", [this.safe(row.item_name)]),
+			primary_label: to_site ? __("Send") : __("Bring back"),
+			fields: [
+				{
+					fieldtype: "Float",
+					fieldname: "qty",
+					label: __("Quantity ({0})", [this.safe(row.stock_uom)]),
+					default: row.on_hand,
+					reqd: 1,
+					description: this.safe(about),
+				},
+			],
+			values: (d, picked) => ({ qty: picked && picked.qty !== undefined ? picked.qty : d.get_value("qty") }),
+			submit: (given, ref) => this.ctl.project_submit(direction, row, given, ref),
+		});
+	}
+
+	// ---- Job sites: every site with its job, item count and value
+
+	render_sites() {
+		this.page.set_title(__("Bin Manager"));
+		if (this.drawn !== "sites") {
+			this.drawn = "sites";
+			this.$root.html(`<div class="bm-view">${this.tabs_html()}<div class="bm-list"></div></div>`);
+		}
+		const list = this.$root.find(".bm-list")[0];
+		const st = this.ctl.state;
+		if (!st.boot) {
+			if (st.boot_error) this.failed(list, st.boot_error, () => this.ctl.load_boot(true), __("Could not load the job sites."));
+			else this.sf.state.render(list, "loading", { title: __("Loading the job sites…") });
+			return;
+		}
+		const v = this.bm.views;
+		const rows = v.site_rows(st.boot.bins || []);
+		if (!rows.length) {
+			this.sf.state.render(list, "empty", {
+				title: __("There are no job sites yet."),
+				body: __("A job's site is opened the first time something is sent to the job: from By project here, or Move to… then A job site in Stock Scan."),
+			});
+			return;
+		}
+		const totals = v.site_totals(rows);
+		const priced = totals.value !== null;
+		const body = rows
+			.map((r) => {
+				const flag = v.site_flag(r);
+				const job = r.project
+					? `<button type="button" class="bm-linkbtn" data-act="project" data-project="${this.esc(r.project)}">${this.esc(r.project_name)}</button>`
+					: `<span class="bm-muted">${this.esc(__("No job"))}</span>`;
+				return `<tr>
+					<td><button type="button" class="bm-linkbtn" data-act="bin" data-bin="${this.esc(r.warehouse)}">${this.esc(r.warehouse_name)}</button></td>
+					<td>${job} ${flag && r.project ? this.sf.chip(__(flag.label), flag.tone) : ""}</td>
+					<td>${this.esc(r.customer)}</td>
+					<td class="bm-qty">${this.esc(r.items)}</td>
+					${priced ? `<td class="bm-qty">${r.value === null ? "" : this.esc(this.money(r.value))}</td>` : ""}
+				</tr>`;
+			})
+			.join("");
+		list.innerHTML = `<table class="bm-table bm-sites">
+			<thead><tr>
+				<th scope="col">${this.esc(__("Job site"))}</th>
+				<th scope="col">${this.esc(__("Job"))}</th>
+				<th scope="col">${this.esc(__("Customer"))}</th>
+				<th scope="col" class="bm-qty">${this.esc(__("Items"))}</th>
+				${priced ? `<th scope="col" class="bm-qty">${this.esc(__("Value"))}</th>` : ""}
+			</tr></thead>
+			<tbody>${body}</tbody>
+			<tfoot><tr>
+				<th scope="row" colspan="3">${this.esc(__("{0} job sites", [totals.sites]))}</th>
+				<td class="bm-qty">${this.esc(totals.items)}</td>
+				${priced ? `<td class="bm-qty">${this.esc(this.money(totals.value))}</td>` : ""}
+			</tr></tfoot>
+		</table>`;
+	}
+
+	// ---- Problems: where the records and the shelves disagree
+
+	render_problems() {
+		this.page.set_title(__("Bin Manager"));
+		if (this.drawn !== "problems") {
+			this.drawn = "problems";
+			this.$root.html(`<div class="bm-view">${this.tabs_html()}<div class="bm-list"></div></div>`);
+		}
+		const list = this.$root.find(".bm-list")[0];
+		const held = this.ctl.state.problems;
+		if (!held || !held.data) {
+			if (held && held.error) this.failed(list, held.error, () => this.ctl.load_problems(), __("Could not load the problems."));
+			else this.sf.state.render(list, "loading", { title: __("Checking the bins…") });
+			return;
+		}
+		const sections = this.bm.views.problem_sections(held.data);
+		if (!sections.some((s) => s.total)) {
+			this.sf.state.render(list, "empty", { title: __("Nothing to fix. Every assigned bin has stock and every item on hand has a bin.") });
+			return;
+		}
+		list.innerHTML = sections
+			.map((s) => {
+				const head = `<h3 class="bm-section-title">${this.esc(__(s.title))} <span class="bm-tab-count">${this.esc(s.total)}</span></h3>`;
+				if (!s.total) return `<section class="bm-section">${head}<p class="bm-muted">${this.esc(__("None."))}</p></section>`;
+				const by_job = s.by === "job";
+				const rows = s.rows
+					.map((r) => {
+						const where = by_job
+							? `<button type="button" class="bm-linkbtn" data-act="project" data-project="${this.esc(r.project)}">${this.esc(r.project_name || r.project)}</button>
+								<span class="bm-muted">${this.esc(r.status || "")}</span>`
+							: `<button type="button" class="bm-linkbtn" data-act="bin" data-bin="${this.esc(r.warehouse)}">${this.esc(r.warehouse_name || r.warehouse)}</button>`;
+						const qty = r.qty === undefined || r.qty === null ? "" : this.esc(this.bm.amount(r.qty, r.stock_uom));
+						return `<tr>
+							<td>${where}</td>
+							<td class="bm-item">${this.item_cell(r, this.perms())}</td>
+							<td class="bm-qty">${qty}</td>
+						</tr>`;
+					})
+					.join("");
+				const cut = s.truncated ? `<p class="bm-note">${this.esc(__("Showing the first {0} of {1}.", [s.rows.length, s.total]))}</p>` : "";
+				return `<section class="bm-section">${head}<p class="bm-muted">${this.esc(__(s.hint))}</p>
+					<table class="bm-table">
+						<thead><tr>
+							<th scope="col">${this.esc(by_job ? __("Job") : __("Place"))}</th>
+							<th scope="col">${this.esc(__("Item"))}</th>
+							<th scope="col" class="bm-qty">${this.esc(__("On hand"))}</th>
+						</tr></thead>
+						<tbody>${rows}</tbody>
+					</table>${cut}</section>`;
+			})
+			.join("");
+		// The tab's count is part of the skeleton, drawn before the answer came.
+		const tab = this.$root.find('.bm-tab[data-tab="problems"]');
+		if (tab.length && !tab.find(".bm-tab-count").length) tab.append(` <span class="bm-tab-count">${this.esc(this.problem_count())}</span>`);
+	}
+
 	// ------------------------------------------------------------------ saves without a dialog
 
 	undo(log, el) {
@@ -635,7 +1194,7 @@ class BinManagerPage {
 	// get_values()/get_value() again then finds no quantity and says "Enter the quantity you counted,
 	// 0 or more." to a person who just typed 0. So the action uses `picked`, and puts a refused 0 back in
 	// its box (restore_zeros) so the person sees what they typed.
-	save_dialog({ kind, row, title, fields, primary_label, values, on_build }) {
+	save_dialog({ kind, row, title, fields, primary_label, values, on_build, submit }) {
 		let ref = this.ctl.new_ref();
 		let busy = false;
 		const d = new frappe.ui.Dialog({
@@ -649,7 +1208,8 @@ class BinManagerPage {
 				const button = d.get_primary_btn();
 				button.prop("disabled", true);
 				const given = values ? values(d, picked) : picked || d.get_values(true) || {};
-				this.ctl.submit(kind, row, given, ref).then(
+				// `submit` is a save the controller makes another way (By project's moves): same promise.
+				(submit ? submit(given, ref) : this.ctl.submit(kind, row, given, ref)).then(
 					(out) => {
 						busy = false;
 						button.prop("disabled", false);

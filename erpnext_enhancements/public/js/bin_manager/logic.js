@@ -7,6 +7,9 @@
  *   routes          /desk/bin-manager is the picker, /desk/bin-manager/<warehouse> one bin. Each is
  *                   its own history entry. ?warehouse=<name> on the bare route (frappe.route_options,
  *                   since v16.50 also in the address) opens that bin in place of the picker.
+ *                   Since v1.806.1 three more screens have a route of their own:
+ *                   /desk/bin-manager/by-project (and /by-project/<project>), /job-sites and
+ *                   /problems. What each shows is views.js.
  *   actions         which buttons a row shows, from what the server said the caller may do
  *                   (manager_boot: can_manage, can_count, can_move, can_create_items, the boneyard)
  *   make-home       "Make <bin> this item's bin" is ticked when the whole quantity on hand moves,
@@ -26,6 +29,7 @@ import { unitCostProblem } from "../stock_scan/logic.js";
 export const PAGE = "bin-manager";
 export const BA = "erpnext_enhancements.inventory_enhancements.bin_assignments.";
 export const SCAN = "erpnext_enhancements.api.stock_scan.";
+export const VIEWS = "erpnext_enhancements.inventory_enhancements.bin_views.";
 
 // stock_scan_rules.TOLERANCE: what counts as "nothing left".
 export const TOLERANCE = 1e-6;
@@ -37,7 +41,16 @@ export const READS = {
 	recent: SCAN + "get_recent",
 	search_items: SCAN + "search_items",
 	check_new_item: SCAN + "check_new_item",
+	// The views beyond one bin (v1.806.1, inventory_enhancements/bin_views.py): all reads.
+	item_locations: VIEWS + "item_locations",
+	project_index: VIEWS + "project_index",
+	project_view: VIEWS + "project_view",
+	problems: VIEWS + "problems",
 };
+
+// Opens a job's site warehouse the first time something is sent to the job (v1.801.0). The By
+// project view calls it before a move to a job that has no site yet.
+export const OPEN_SITE = SCAN + "job_site";
 
 // The kinds of save, each one endpoint. "keep" and "add" are both an assign: "keep" puts an item
 // already listed here on the bin (an undecided or default-only row), "add" one found by search.
@@ -64,16 +77,51 @@ export const ACTION_LABELS = {
 
 // ------------------------------------------------------------------ routes
 
+// The screens with a word of their own after the page's name. A warehouse's docname ends in
+// its company's abbreviation ("Bin A1-1-1 - SF"), so none can be one of these words; a bin is
+// every other second segment, as it always was.
+export const SEGMENT_PROJECTS = "by-project";
+export const SEGMENT_SITES = "job-sites";
+export const SEGMENT_PROBLEMS = "problems";
+
+// The tabs across the top, in order. A bin belongs to Bins and one job to By project.
+export const TABS = [
+	{ screen: "picker", label: "Bins" },
+	{ screen: "projects", label: "By project" },
+	{ screen: "sites", label: "Job sites" },
+	{ screen: "problems", label: "Problems" },
+];
+
+export function tab_of(target) {
+	const screen = target && target.screen;
+	if (screen === "bin") return "picker";
+	if (screen === "project") return "projects";
+	return TABS.some((t) => t.screen === screen) ? screen : "picker";
+}
+
 // The screen a route names, or null when it is not this page's.
 export function parse_route(route) {
 	const parts = Array.isArray(route) ? route : [];
 	if (parts[0] !== PAGE) return null;
-	const warehouse = typeof parts[1] === "string" ? parts[1].trim() : "";
-	return warehouse ? { screen: "bin", warehouse } : { screen: "picker" };
+	const first = typeof parts[1] === "string" ? parts[1].trim() : "";
+	if (!first) return { screen: "picker" };
+	if (first === SEGMENT_PROJECTS) {
+		const project = typeof parts[2] === "string" ? parts[2].trim() : "";
+		return project ? { screen: "project", project } : { screen: "projects" };
+	}
+	if (first === SEGMENT_SITES) return { screen: "sites" };
+	if (first === SEGMENT_PROBLEMS) return { screen: "problems" };
+	return { screen: "bin", warehouse: first };
 }
 
 export function build_route(target) {
-	return target && target.screen === "bin" && target.warehouse ? [PAGE, target.warehouse] : [PAGE];
+	const t = target || {};
+	if (t.screen === "bin" && t.warehouse) return [PAGE, t.warehouse];
+	if (t.screen === "project" && t.project) return [PAGE, SEGMENT_PROJECTS, t.project];
+	if (t.screen === "projects") return [PAGE, SEGMENT_PROJECTS];
+	if (t.screen === "sites") return [PAGE, SEGMENT_SITES];
+	if (t.screen === "problems") return [PAGE, SEGMENT_PROBLEMS];
+	return [PAGE];
 }
 
 export function route_key(target) {
@@ -88,6 +136,12 @@ export function read_route_options(options) {
 	const out = { warehouse: text(opts.warehouse), q: text(opts.q) };
 	out.any = Object.keys(opts).length > 0;
 	return out;
+}
+
+// A copy of the route options, taken before they are cleared: the picker's filters are read out
+// of it (views.read_filters).
+export function copy_route_options(options) {
+	return options && typeof options === "object" ? Object.assign({}, options) : {};
 }
 
 // ------------------------------------------------------------------ saves
@@ -190,6 +244,8 @@ export function request(kind, warehouse, row, values, ref) {
 			method,
 			args: {
 				item_code,
+				// `warehouse` is the place the row is at: the bin on screen, or (By project) the
+				// shelf or the site the row was listed under.
 				from_warehouse: warehouse,
 				to_warehouse: v.to_warehouse,
 				qty: number(v.qty),

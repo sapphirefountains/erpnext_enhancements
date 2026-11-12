@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.806.1] - 2026-11-12
+
+### Added
+- **The Bin Manager has filters on its picker and three more views: By project, Job sites and
+  Problems.** Nikolas, 2026-11-12: "In the Bin Manager page, having more filters and different
+  views would be good. So for example I want to be able to see by Project which items are at the
+  Job Site, etc."
+  - **Filters on the picker.** The kind of place (shop bins, Project Shelf, job sites, Boneyard,
+    vehicles, each with its count), a job (shown with its customer), an item (the places that
+    hold it or have it assigned, with how much is there), and one quick filter: has stock, empty,
+    assigned items missing, unassigned stock. They combine with the box for typing a name.
+  - **By project** (`/desk/bin-manager/by-project`). The jobs that have material on the Project
+    Shelf or at a job site. Pick one to see both lists side by side. Each shelf row has **Send to
+    job site** and each site row has **Bring back to the shelf**.
+  - **Job sites** (`/desk/bin-manager/job-sites`). Every job site with its job, customer, item
+    count and value, with a total. A finished job whose site still holds stock is flagged.
+  - **Problems** (`/desk/bin-manager/problems`). Four lists, each row linked to the bin or job
+    that fixes it: assigned but empty, stock with no assignment, stock on the Project Shelf for a
+    finished job, and stock still at a finished job's site. On production today that is 108
+    assigned-but-empty rows and 30 with no assignment.
+  - **Back and Forward.** The four tabs are routes, so each is one history entry. The picker's
+    filters are written into the picker's own address in place
+    (`?kind=job_site&project=PRJ-00597`), so a filter is never a history entry, Back from a bin
+    lands on the picker as it was left, and a link carries the filters. The old
+    `/desk/bin-manager/<warehouse>` and `?warehouse=` links work as before.
+  - **The moves are the page's ordinary Move.** Send and Bring back call the existing
+    `bin_assignments.move_to`: a logged Material Transfer that carries the job and can be undone.
+    Nothing is made an item's bin from here. A job with no site has it opened first, through the
+    existing `api.stock_scan.job_site`. Only the job's own share of the shelf can be sent.
+  - **What "on the Project Shelf for this job" means.** The job's stock ledger rows at the shelf,
+    added up, and never more than the shelf holds. It comes through one function,
+    `project_stock.shelf_stock`, so it can be swapped for the Project Shelf module's own answer
+    in one place.
+  - **Kinds of place are decided on the server** (`inventory_enhancements/bin_views.py`): the
+    Project Shelf from `Inventory Scanner Settings.project_shelf_warehouse`, the sites from the
+    job-site field, vehicles from `Employee.custom_default_vehicle_warehouse`. A site without one
+    of those simply has none of that kind. If that data cannot be read at all, the page is the
+    one it was before this release.
+  - **Stock at a job site, the boneyard or the Project Shelf is never "unassigned".** Nothing is
+    assigned to those places by design.
+  - **Who sees what.** Every new read is behind the same role gate as the rest of the page. A
+    job's customer is shown only to someone who can read Projects, and stock value only to
+    someone who can read the Stock Ledger.
+
+### Tests
+- `tests/test_bin_views.py` (23 tests, own frappe stub, own CI step): the gate before every read,
+  no writes, the kinds, the counts, the customer and value gates, By project and Problems.
+  `scripts/test_bin_manager.mjs` grew from 342 to 486 checks: the new routes, the filters through
+  the address, a tab as one history entry, Back from a bin onto the filtered picker, the moves,
+  and the real page script drawing each view. `tests/test_bin_manager.py` holds the boot's new
+  keys, the new endpoints as whitelisted, and the page to `replaceState` only.
+- **Not run:** nothing here ran on a bench or against production. The page was checked in a
+  browser against a stand-in Desk with made-up data.
+
 ## [1.806.0] - 2026-11-12
 
 ### Added
