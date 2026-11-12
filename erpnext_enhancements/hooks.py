@@ -226,6 +226,9 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
+		# v1.807.0 -- Supplier Returns: the launcher the Procurement Tracker's Return buttons call
+		# (erpnext_enhancements.supplier_return.start). See the Purchase Receipt entry below.
+		"public/js/supplier_return_start.js",
 		# The Scope tab's Tasks Tree (custom_tasks_html): mounts the TaskTreeManager
 		# class that erpnext_enhancements.bundle.js ships, and falls back to the raw
 		# /assets path only when the bundle lacks it (v1.777.0). The tree's own
@@ -374,7 +377,17 @@ doctype_js = {
 		"public/js/po_receive_items.js",
 		# v1.726.0 -- "Find suppliers": who else sells this order's items (Find a Supplier page).
 		"public/js/supplier_finder_buttons.js",
+		# v1.807.0 -- Supplier Returns: Create > Return to Supplier, once something was received.
+		"public/js/supplier_return_start.js",
 	],
+	# v1.807.0 -- Supplier Returns (Nik, 2026-11-12). One file under five doctypes: Create >
+	# Return to Supplier on a submitted receipt (the ticked rows, or every line that can still go
+	# back) and on an order, and a line at the top of a Purchase Return, Debit Note, replacement
+	# receipt or refund payment naming the Supplier Return it belongs to. The standard doctypes
+	# gain no Custom Field: the link is kept on the Supplier Return and their forms ask for it
+	# (api/supplier_returns.linked). The file registers behind one flag, so being evaluated once
+	# per doctype changes nothing. Purchase Receipt had no doctype_js entry before this.
+	"Purchase Receipt": ["public/js/supplier_return_start.js"],
 	"Material Request": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -442,8 +455,16 @@ doctype_js = {
 	# accounting_intake
 	"Document Intake": "public/js/accounting_intake/document_intake.js",
 	# quickbooks_online write-back button (intake-created PI / Payment Entry)
-	"Purchase Invoice": "public/js/quickbooks_online/qbo_writeback_button.js",
-	"Payment Entry": "public/js/quickbooks_online/qbo_writeback_button.js",
+	# v1.807.0 -- and supplier_return_start.js, which says which Supplier Return a Debit Note or
+	# a refund payment belongs to (see the Purchase Receipt entry above).
+	"Purchase Invoice": [
+		"public/js/quickbooks_online/qbo_writeback_button.js",
+		"public/js/supplier_return_start.js",
+	],
+	"Payment Entry": [
+		"public/js/quickbooks_online/qbo_writeback_button.js",
+		"public/js/supplier_return_start.js",
+	],
 	# stripe_payments
 	"Stripe Payments Settings": "public/js/stripe_payments/stripe_payments_settings.js",
 	"Sales Invoice": "public/js/stripe_payments/sales_invoice_pay_button.js",
@@ -1168,6 +1189,14 @@ doc_events = {
 	# allowed to price that order, and Remarks must say "No charge: ...". Without it the form's
 	# tick was a way around what the two receiving screens ask. Rows ERPNext frees itself (a
 	# customer-provided item, a pricing rule's free item) pass untouched.
+	#
+	# v1.807.0 -- Supplier Returns. A Supplier Return (inventory_enhancements/supplier_returns.py)
+	# links ERPNext's own Purchase Return, and a replacement receipt, by name; these three bring it
+	# up to date when that document is submitted, canceled or deleted: its Stock line, and a
+	# dropped link. After the stage handlers, so a return's order stage has already been walked
+	# back. on_document_change NEVER raises (it logs): a stale label on a Supplier Return must not
+	# be the reason a receipt cannot be submitted. It reads by name and does nothing when no
+	# Supplier Return names this document, which is every receipt today.
 	"Purchase Receipt": {
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
@@ -1175,14 +1204,16 @@ doc_events = {
 		],
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
-		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",
-		"on_cancel": "erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+		"on_submit": [
+			"erpnext_enhancements.po_order_stage.advance_on_receipt",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		],
+		"on_cancel": [
+			"erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		],
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 	},
-	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
-	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
-	# line of its receipt credited that account, or when it names no receipt, so billing an old
-	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
-	# Purchase Invoice had no doc_events block before this one.
 	# v1.809.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
 	# to bring stock in. ERPNext swaps a typed $0 for the item's last valuation, and refuses when
 	# there is none; but it takes a last valuation of exactly 0 without a word, so an item whose
@@ -1195,14 +1226,34 @@ doc_events = {
 		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 	},
+	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
+	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
+	# line of its receipt credited that account, or when it names no receipt, so billing an old
+	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
+	# Purchase Invoice had no doc_events block before this one.
+	#
+	# v1.807.0 -- Supplier Returns, two things. (1) tell_the_bill: an orange message, never a
+	# refusal, when a bill being entered covers a receipt line or an order line that is on a
+	# standing Supplier Return with no Debit Note yet, so the person entering it knows the bill
+	# should not charge for what went back. After the guard, so a refused bill is not also given
+	# advice; only in a person's web request; never raises. (2) on_document_change: a Debit Note a
+	# Supplier Return links sets that return's outcome when it is submitted (Credit Received once
+	# nothing is owed on it) and takes it back when it is canceled or deleted. Never raises.
+	#
 	# v1.809.0 -- and the price rule above, for an invoice that receives stock itself (Update
 	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {
+		# The guard first; then Supplier Returns' advice, so a refused bill is not also given
+		# advice; then the price warning, which never raises.
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.tell_the_bill",
 			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		],
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+		"on_submit": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 	},
 	# v1.809.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
 	# Invoices never updated stock (the relaxed rule, behind a tick box). Canceling or crediting
@@ -1212,6 +1263,17 @@ doc_events = {
 	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
 	"Delivery Note": {
 		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
+	},
+	# v1.807.0 -- Supplier Returns: the refund. A submitted Payment Entry that RECEIVES money from
+	# a Supplier and names a Supplier Return's Debit Note (or the already-paid bill that note was
+	# set against) is linked as that return's refund and sets Refund Received with the payment's
+	# own amount and date; canceling or deleting it takes that back. An ordinary payment TO a
+	# supplier is never matched (payment_type must be Receive). Never raises. Payment Entry had no
+	# doc_events block before this one.
+	"Payment Entry": {
+		"on_submit": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 	},
 	# v1.754.0 -- and the third half: anything that rebuilds such a receipt's ledger from today's
 	# Maintain Stock flag. A Landed Cost Voucher cancels and re-posts its receipts' stock ledger and
@@ -1951,6 +2013,12 @@ scheduler_events = {
 		"4-59/5 * * * *": ["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 	},
 	"daily": [
+		# Supplier Returns (v1.807.0): re-read the Debit Note of each return still waiting on
+		# money. A debit note set against a later bill in Payment Reconciliation changes its
+		# outstanding amount without any doc_event this app hears, so "Credit Received" would
+		# otherwise wait for somebody to open the return. Reads and one save per return; sends
+		# nothing (a return request goes only from a person's click); never raises.
+		"erpnext_enhancements.inventory_enhancements.supplier_returns.sync_open_returns",
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
 		# lapsed holds (status Expired frees the fountains); and draft each confirmed rental's
 		# balance invoice when delivery is Rental Settings.balance_days_before_delivery away. A
@@ -2751,6 +2819,10 @@ after_migrate = [
 	# Invoice. Same module and same reason as the order's format. MUST sit ABOVE
 	# ensure_chrome_pdf_generator, or they render on wkhtmltopdf.
 	"erpnext_enhancements.enhancements_core.setup_procurement_print_formats.ensure_procurement_print_formats",
+	# inventory_enhancements (v1.807.0): "Supplier Return - Sapphire", the PDF attached to a
+	# return request and the paper that goes in the box, built from the same fragments as the
+	# five above. Idempotent + guarded. MUST sit ABOVE ensure_chrome_pdf_generator.
+	"erpnext_enhancements.inventory_enhancements.setup_supplier_return_print_format.ensure_supplier_return_print_format",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",

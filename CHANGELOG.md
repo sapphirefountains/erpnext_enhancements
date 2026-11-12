@@ -198,6 +198,167 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the deploy: ERPNext's real `update_bin_qty` and `update_child_qty_rate`, the job under a
   real worker, and the three screens in a browser.
 
+## [1.807.0] - 2026-11-12
+
+### Added
+- **Supplier Returns: sending something we bought back to the supplier, tracked from the request
+  to the money.** Nikolas, 2026-11-12: "we need to come up with a systemized way to process
+  returning items we purchased. Help me come up with a return process that is simple and tracked
+  ... like Supplier Quotation, we have a new DocType (unless one exists) that we can use to email
+  vendors and return to our suppliers ... a way to return them and track them and know if we got
+  our money back ... this all needs to work with the accounting system too (not QBO but
+  ERPNext)." The process, every accounting case and the rehearsal steps are in
+  [`docs/supplier-returns.md`](docs/supplier-returns.md).
+  - **What ERPNext already has, read in v16.54.0 (what production runs).** A Purchase Receipt
+    with `is_return` takes the goods out of stock and reverses the receipt's ledger entry (credit
+    the stock account, debit Stock Received But Not Billed); it also lowers the received quantity
+    on the purchase order line. A Purchase Invoice with `is_return`, the Debit Note, lowers what
+    we owe. A Payment Entry of type Receive is the refund. Nothing records the *request*: what we
+    asked the supplier, their return number, the tracking number, and whether the money came
+    back. There is no RMA document for purchases. That gap is all this release adds.
+  - **A new DocType, Supplier Return** (with Supplier Return Item for its lines and Supplier
+    Return Payment for its refunds and credits), in Inventory Enhancements,
+    where the Purchasing card, Stock Scan and the receipts' Maintain Stock guard already are. It
+    is a tracking record: it never writes a stock or ledger entry. It is not submittable; each
+    step is a button and the status is never typed (a save that changes it is put back).
+  - **It starts from what was received, so nobody retypes a line.** Create > Return to Supplier on
+    a Purchase Receipt (the ticked rows, or everything that can still go back) and on a Purchase
+    Order; Return buttons on receipts and lines in the Project form's Procurement Tracker; and
+    Return to supplier on an item in Stock Scan, which saves a Draft for purchasing to send. A
+    line may not return more than its receipt line received, less what other returns hold and
+    what was returned with ERPNext's own button.
+  - **The steps:** Draft; Requested (the email went, or the supplier was asked by phone, in person
+    or on their website); Approved by Supplier (their return number) or Denied; Sent Back (by
+    carrier with a tracking number, dropped off, or picked up; this is when stock leaves); then
+    Refund Received, Credit Received, Replacement Received or Closed Without Credit. Canceled
+    before the items go. The form says who the return is waiting on and for how many days; the
+    list has a Waiting on Money button; the workspace shortcut counts the returns waiting on
+    money.
+  - **Stock and money move through ERPNext's own documents, drafted and never submitted here.**
+    At Sent Back one click calls ERPNext's `make_purchase_return`, cuts the result to this
+    return's lines and quantities and saves a draft for the person to check and submit. When a
+    bill exists in ERPNext, one click drafts the Debit Note the same way (Update Stock off: the
+    Purchase Return moves the stock). The refund is ERPNext's `get_payment_entry`. No code here
+    writes a ledger entry or sets a docstatus.
+    - **The Debit Note lowers the bill when the bill can take it.** In ERPNext 16.54.0
+      `Purchase Invoice.update_outstanding_for_self` defaults to 1 and `make_return_doc` leaves it
+      there, so a debit note made the standard way is booked against *itself*
+      (`add_supplier_gl_entry`): the bill stays fully unpaid and nothing lowers it until somebody
+      runs Payment Reconciliation. If the bill is paid in the meantime, the supplier is overpaid.
+      A return against an unpaid bill means "pay this bill less", so the note drafted here has
+      that box turned **off** when the bill's outstanding amount covers the note: it is booked
+      against the bill, the bill's outstanding drops and the note's own is 0
+      (`taxes_and_totals.calculate_outstanding_amount`). When the bill cannot absorb the note (it
+      is paid, or nearly) the box is left **on**, and the note carries what the supplier owes us,
+      which is what a refund Payment Entry is made against. ERPNext applies the same rule itself
+      (`accounts_controller.validate_against_voucher_outstanding`). Chosen over keeping the
+      default and tracking Payment Reconciliation as a step: it is what the person means, it
+      closes the window in which the bill is paid in full by mistake, and it is ERPNext's own
+      checkbox, visible on the draft.
+    - **A fixed-amount charge on a partial return is said, not changed.** ERPNext's own return
+      reverses an "Actual" charge in full whatever part is going back. Nobody but the person knows
+      what the supplier will give back of a freight charge, so the figure stays as ERPNext made it
+      and the draft says so in its Remarks, on its timeline and in a message when it is created.
+      Production had one such row among 187 on submitted receipts.
+  - **Three kinds of line.** A stock item received into stock: the Purchase Return takes it out.
+    A non-stock line: nothing is in stock, and the Purchase Return posts nothing, but it lowers
+    the order's received quantity, which lets a replacement be received against the same line
+    and makes ERPNext bill the receipt for less. **A line received before its item kept stock is
+    record only.** ERPNext builds a return's ledger from what keeps stock today, so it would
+    take out stock that was never put in, and
+    `maintain_stock.refuse_unstocked_receipt_return` (v1.754.0) refuses that. The guard is not
+    touched and its `ignore_maintain_stock_guard` flag is never set: such a line is left off the
+    Purchase Return, the return is recorded and tracked anyway, and the record says why no stock
+    document was made.
+  - **No Custom Field on Purchase Receipt, Purchase Invoice or Payment Entry.** A Custom Field is
+    forever on this site (hidden, never deleted). The links live on the Supplier Return; the
+    standard forms ask which return they belong to and say so at the top. A submitted Receive
+    payment from the supplier that names a return's Debit Note (or the already-paid bill the note
+    was set against) is linked as its refund by that reference. A payment *to* a supplier is
+    never matched.
+  - **Knowing whether the money came back.** While bills are still entered outside ERPNext, a
+    refund or credit is an amount, a date and a reference typed by Accounts User, Accounts
+    Manager or Purchase Manager, and the form, the timeline and the report all say "Typed by
+    hand. It is not backed by an ERPNext payment." Once a submitted Debit Note or Payment Entry
+    backs the money, the outcome and the amount are read from it and cannot be typed: the
+    buttons are not offered, the endpoint refuses, a form save is put back, and anything typed
+    earlier gives way with a note on the timeline. A debit note the supplier still owes us on is
+    not "received". A daily job re-reads the Debit Note of each return still waiting, because
+    Payment Reconciliation changes a note's outstanding amount without any event this app hears.
+    - **Each refund or credit is a row, and a payment is counted once.** A row with a Payment
+      Entry holds *this return's share* of it: what the payment allocates to the return's Debit
+      Note, or, for one payment covering several returns, a split between them
+      (`supplier_return_rules.split_payment`); a payment linked by hand takes only what other
+      returns have not already counted. So one 100 refund for two returns is never 100 on each.
+    - **A refund that arrives in parts needs no reopen.** A typed entry can be ticked *More is
+      still expected*, and a return can hold several payments. *No More Is Coming* finishes a
+      return at what has come back; the report shows the difference.
+  - **The email to the supplier.** Send Return Request shows the recipient (the address on the
+    return, the supplier's contacts, the supplier's own address, or another one typed in), the
+    subject and the message, all editable, with a preview in the letterhead; the PDF is attached
+    and the email is on the return's timeline. The wording is the Desk Email Template *Supplier
+    Return Request*, seeded once. **It is sent only by that Send button.** Saving, every other
+    step, the documents' hooks and the daily job never send, and the endpoint refuses an API
+    key, a token and a background job (`signed_in_browser`, the rule the Maintain Stock switch
+    uses).
+    - *The Desk's text editor rewrites a table's markup*, so the items table is not in the text
+      the person edits. A marker line stands in for it and the server puts the real table,
+      built from the return's saved lines, in its place (or at the end if the marker was
+      deleted). The preview is what goes.
+  - **Print format Supplier Return - Sapphire**, in the buying documents' design: titled Return
+    Request for the supplier, with the reason and condition under each line, rates and the
+    amount expected back, and, once known, the return number and tracking number, so it is also
+    the paper that goes in the box. Nothing internal prints.
+  - **Report Supplier Returns: Money Outstanding**: by supplier, oldest first, with sent back on,
+    days waiting, expected, received, difference, where the amount comes from, and where the
+    bill stands. Views: Waiting on money, Came back short or over, All returns. Linked from the
+    Purchasing card of the Inventory Enhancements workspace with Supplier Returns itself.
+  - **The bill that should come in lower.** Billing from the receipt in ERPNext already subtracts
+    what a submitted Purchase Return took back. A bill typed by hand or made from the order now
+    shows an orange message naming the return when it covers a line that is on one with no
+    Debit Note (`supplier_returns.tell_the_bill`; never a refusal). While bills are entered
+    elsewhere, the report says "Not billed in ERPNext. The bill should come in lower".
+  - **The Order Stage needed no change.** `po_order_stage.advance_on_receipt` already walks an
+    order back when a Purchase Return lowers what was received. Reports that skip returns
+    (`api/supplier_search.py`, `kpi_dashboards/snapshots.py`, Store Run Charge Matching) filter
+    on `is_return = 0` and are untouched.
+  - **For other modules:** `supplier_returns.returned_lines(purchase_order_items=None,
+    project=None)`, one dict per Supplier Return line. The keys are a contract with the Project
+    Materials report. It never raises and gives `[]` before the DocType is installed.
+  - **The doc_events never raise.** Purchase Receipt, Purchase Invoice and Payment Entry each
+    gained `on_submit`, `on_cancel` and `on_trash` handlers that refresh a linked Supplier
+    Return inside a savepoint and log a failure. A stale label on a return must not be the
+    reason a receipt or a payment cannot be submitted. They read by name and do nothing when no
+    return names the document, which is every document today.
+  - **Found by the independent review of the pull request and fixed before merge.**
+    - *A reopened return is judged again.* While Denied or Canceled a return's quantities were
+      free for another return. Reopening one re-runs the quantity limit and refuses when they
+      have been taken (10 received, A denied, B takes 10, A reopened: 20 would have been claimed).
+    - *A Purchase Return made with ERPNext's own button is linked only if it says what the
+      Supplier Return says*: the same receipt lines at the same quantities. And a submitted return
+      that took more than its record says (the draft was changed) counts for the excess, in the
+      receipt line's own unit, and the record's Stock line says the two disagree.
+    - *A canceled receipt never traps its return.* ERPNext lets a receipt be canceled under a
+      return that is not finished. The form then says why in red, and Cancel Return, Supplier
+      Denied, Close Without Credit and recording what came back still work.
+    - *A finished return's fees, tracking and request are locked.* They stay open until the
+      outcome, because a restocking fee is often learned when the refund arrives; after it they
+      are part of it. Reopen is how a manager changes one.
+    - *`returned_lines("POI-1")`* takes a single name as a string.
+    - *The bill notice* is for returns still in motion, matches a bill row on its receipt line
+      when it names one (so the bill for a replacement receipt is not told about the return it
+      replaced), and *a bill's number* is shown on the form and the report only to somebody who
+      may read Purchase Invoices.
+  - **What a migrate does to a site:** three new DocTypes and one Report by model sync; the Email
+    Template *Supplier Return Request* created if absent (nothing is sent); the Print Format
+    upserted; the Inventory Enhancements workspace re-imported with two links and a shortcut. No
+    existing record is changed.
+  - **Tests.** `tests/test_supplier_return_rules.py` (the rules, no stub) and
+    `tests/test_supplier_returns.py` (the module on a frappe stub whose database is real SQLite:
+    the quantity limit on data, each accounting case through to the document it chooses, the
+    money rule, the email, the wiring), each its own CI step. **What they cannot prove** is the
+    standard Purchase Return and Debit Note actually posting; `docs/supplier-returns.md` has the
+    seventeen-step rehearsal for the production mirror.
 ## [1.805.0] - 2026-11-12
 
 ### Added

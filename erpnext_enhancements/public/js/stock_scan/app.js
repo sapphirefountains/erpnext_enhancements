@@ -40,7 +40,7 @@
  * item rather than written into whatever is on screen now (`post`).
  */
 
-import { BIN, M, call, upload } from "./transport.js";
+import { BIN, M, RET, call, upload } from "./transport.js";
 import {
 	MAX_QTY,
 	REASON_ONLY_THIS_JOB,
@@ -139,6 +139,12 @@ function needsReload(error) {
  * An error line with room for one way out ("Reload"): the stepper's and the Move sheet's.
  * `show(text, action)`; an empty `text` hides it.
  */
+/**
+ * Why something is going back to a supplier: `supplier_return_rules.REASONS`, in its order.
+ * `tests/test_supplier_returns.py` holds the two lists equal.
+ */
+const RETURN_REASONS = ["Wrong item", "Damaged", "Defective", "Not needed", "Over-shipped", "Other"];
+
 function errorLine(className) {
 	const text = el("span", "ee-ss-error-text");
 	let onAction = null;
@@ -977,8 +983,156 @@ export class StockScanApp {
 				button([icon("close"), el("span", null, "Remove from this bin")], "ee-ss-linkbtn ee-ss-remove-btn", () => this.openRemove())
 			);
 		}
+		if (this.canReturn(item)) {
+			view.appendChild(
+				button([icon("moveOut"), el("span", null, "Return to supplier")], "ee-ss-linkbtn ee-ss-return-btn", () => this.openReturn())
+			);
+		}
 		this.updateStepper();
 		return view;
+	}
+
+	// --- Supplier Returns (v1.807.0): Return to supplier ---------------------------------------
+
+	/** May start a Supplier Return (`api.stock_scan._can_return`: create on the DocType). */
+	canReturn(item) {
+		return !!(this.boot.can_return && item && item.item_code);
+	}
+
+	/**
+	 * Return to supplier: start a Draft Supplier Return for this item from the shelf, so nobody
+	 * retypes the line. Two sheets, one after the other like Remove → Move to…: which receipt it
+	 * came in on (the newest receipts that still have some of it to return), then how many, why,
+	 * and what is wrong with it. `RET.START` saves the Draft and nothing else: no stock moves
+	 * here (that is the Purchase Return, made on the Desk when the item is sent back) and no email
+	 * goes (purchasing sends the request from the return's form). So there is no undo and no
+	 * Stock Scan Log row; the toast names the return.
+	 */
+	async openReturn() {
+		if (this.reportBusy()) return;
+		const v = this.view;
+		const item = v.item;
+		if (v.name !== "item" || !this.canReturn(item)) return;
+		const error = errorLine("ee-ss-field-error");
+		const note = el("p", "ee-ss-sheet-text", "Looking for the receipts this item came in on…");
+		const list = el("ul", "ee-ss-list");
+		let closed = false;
+		const handle = sheet({
+			title: "Return to supplier",
+			body: append(el("div", "ee-ss-return"), note, list, error.node),
+			onClose: () => {
+				closed = true;
+			},
+			actions: [{ label: "Cancel", kind: "ghost" }],
+		});
+		let data;
+		try {
+			data = await call(RET.CHOICES, { item_code: item.item_code });
+		} catch (e) {
+			if (!closed) {
+				note.textContent = "";
+				error.show((e && e.message) || "Could not load the receipts. Close this and try again.");
+			}
+			return;
+		}
+		if (closed) return;
+		const receipts = (data && data.receipts) || [];
+		if (!data || !data.allowed) {
+			note.textContent = "You can't start a supplier return. Ask purchasing to start it.";
+			return;
+		}
+		if (!receipts.length) {
+			note.textContent = `No receipt has any ${item.item_name} left to return. It was never received on a purchase order, or it has all been returned already.`;
+			return;
+		}
+		note.textContent = `Which receipt did this ${item.item_name} come in on?`;
+		for (const receipt of receipts) {
+			for (const line of receipt.lines || []) {
+				const sub = [receipt.name, line.purchase_order, `up to ${plain(line.returnable)} ${line.uom || ""}`.trim()]
+					.filter(Boolean)
+					.join(" · ");
+				const row = button(
+					[
+						append(
+							el("span", "ee-ss-row-main"),
+							el("span", "ee-ss-row-title", `${receipt.supplier_name || receipt.supplier} · ${receipt.posting_date}`),
+							el("span", "ee-ss-row-sub", sub)
+						),
+						icon("next", "ee-ss-row-go"),
+					],
+					"ee-ss-row ee-ss-order",
+					() => {
+						handle.close("action");
+						this.askReturn(item, receipt, line);
+					}
+				);
+				list.appendChild(append(el("li"), row));
+			}
+		}
+	}
+
+	/** The second sheet: how many, why, and the state it is in. */
+	askReturn(item, receipt, line) {
+		const most = Math.max(Number(line.returnable) || 0, 0);
+		const qty = input({ inputmode: "decimal", value: plain(Math.min(1, most)), label: "How many are going back", enterkeyhint: "next" });
+		const reason = select([["", "Pick a reason"], ...RETURN_REASONS], "", "Reason");
+		const notes = document.createElement("textarea");
+		notes.className = "ee-ss-input ee-ss-return-notes";
+		notes.rows = 3;
+		notes.setAttribute("aria-label", "What is wrong with it");
+		notes.placeholder = "What is wrong with it, and the state it is in";
+		const error = errorLine("ee-ss-field-error");
+		let closed = false;
+		sheet({
+			title: `Return ${item.item_name}`,
+			body: append(
+				el("div", "ee-ss-return"),
+				el("p", "ee-ss-sheet-text", `From ${receipt.supplier_name || receipt.supplier}, receipt ${receipt.name}. Up to ${plain(most)} ${line.uom || ""} can go back.`),
+				el("p", "ee-ss-note", "How many"),
+				qty,
+				el("p", "ee-ss-note", "Reason"),
+				reason,
+				notes,
+				el("p", "ee-ss-note", "This starts the return. Purchasing sends the request to the supplier. Keep the item aside until then."),
+				error.node
+			),
+			initialFocus: qty,
+			onClose: () => {
+				closed = true;
+			},
+			actions: [
+				{
+					label: "Start return",
+					kind: "primary",
+					large: true,
+					close: false,
+					onClick: async (h, btn) => {
+						const amount = Number(String(qty.value || "").trim());
+						if (!(amount > 0)) return error.show("Enter how many are going back.");
+						if (amount > most + 1e-9) return error.show(`Only ${plain(most)} can go back on this receipt.`);
+						if (!reason.value) return error.show("Pick a reason.");
+						if (reason.value === "Other" && !notes.value.trim()) return error.show("The reason is Other, so say what is wrong.");
+						error.show("");
+						busy(btn, true, "Starting…");
+						try {
+							const made = await call(RET.START, {
+								purchase_receipt_item: line.purchase_receipt_item,
+								qty: amount,
+								reason: reason.value,
+								condition_notes: notes.value.trim(),
+							});
+							if (!closed) h.close("action");
+							toast(`Return ${(made && made.name) || ""} started. Purchasing sends the request to the supplier.`, { kind: "ok" });
+						} catch (e) {
+							busy(btn, false);
+							if (!closed) error.show((e && e.message) || "Could not start the return. Try again.");
+						}
+						return false;
+					},
+				},
+				{ label: "Cancel", kind: "ghost" },
+			],
+		});
 	}
 
 	// --- Bin assignments (v1.692.0): Move to…, Remove from this bin ---------------------------
