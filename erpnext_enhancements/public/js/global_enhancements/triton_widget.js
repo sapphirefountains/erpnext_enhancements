@@ -518,8 +518,11 @@ import { detectPageContext } from "../capture/page_context.js";
 		//
 		// The last resort used to be a hardcoded "gemini-3.5-flash". Auto is
 		// always first in both the live list and the fallback, so `models[0]`
-		// already is Auto — and Auto routes ordinary prompts to that same Flash
-		// anyway, while leaving Pro and Lite reachable.
+		// already is Auto — and Auto is answered by whichever model Triton
+		// currently defaults to, so it is the one choice that cannot name a
+		// model Triton has dropped. A configured default that is not in the
+		// list lands here too; `start_session` on the server applies the same
+		// rule to what is actually sent (`_listed_model_or_auto`).
 		const values = models.map((m) => m.value);
 		const saved = localStorage.getItem(LS_MODEL);
 		let initial;

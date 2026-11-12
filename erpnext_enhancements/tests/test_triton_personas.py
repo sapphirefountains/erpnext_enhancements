@@ -207,9 +207,9 @@ def test_update_only_sends_the_fields_supplied(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_start_session_forwards_persona_key(monkeypatch):
 	triton_chat, calls, _ = _load(monkeypatch, request_result={"id": 1})
-	monkeypatch.setattr(
-		triton_chat, "get_settings", lambda: {"default_model": "gemini-3.5-flash"}
-	)
+	# Auto. A named default would make `start_session` ask Triton for its model
+	# list first (`_listed_model_or_auto`), and this test is about the persona.
+	monkeypatch.setattr(triton_chat, "get_settings", lambda: {"default_model": ""})
 
 	triton_chat.start_session(persona_key="builtin:dan_bot")
 	assert calls[0][2]["persona_key"] == "builtin:dan_bot"

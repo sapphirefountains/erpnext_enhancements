@@ -49,7 +49,7 @@
    "label": "Enable Triton Assistant"
   },
   {
-   "description": "Pin the widget's model picker to one model. Leave blank (the default) for Auto, where Triton chooses a tier per message from the prompt — Flash for ordinary questions, Pro for research-shaped ones, Lite for trivial ones.",
+   "description": "Pin the widget's model picker to one model: a model id exactly as the picker's own list has it. Leave blank (the default) for Auto, where Triton chooses the model for each message. An id Triton does not currently offer is treated as blank.",
    "fieldname": "default_model",
    "fieldtype": "Data",
    "label": "Default Model"

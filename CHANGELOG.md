@@ -117,6 +117,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     card the frame can only request), reply-finished notifications, and removing the classic
     widget and the relay, which waits for a pilot.
 
+## [1.801.1] - 2026-11-11
+
+### Fixed
+- **The Triton widget's fallback model list offered a model Triton no longer serves.** On 2026-11-11
+  Triton (0.83.0) moved to new Google models. Its catalog is now `gemini-4-argon` (the default, at
+  medium reasoning), `gemini-3.8-flash` and `gemini-3.5-flash-lite`; `gemini-3.1-pro-preview` and
+  `gemini-3.5-flash` were **dropped**. The list in `triton_chat.py` that the picker paints first on
+  every page load, and falls back to when Triton's live list cannot be fetched, still offered
+  `gemini-3.1-pro-preview` as "Pro" and had no entry for the model Triton now answers with.
+  - **What a user saw.** Mostly nothing, which is why it went unnoticed: Triton reads a `gemini-*` id
+    it has dropped as Auto and logs a warning (`schemas/chat.py::_known_model_or_auto`, read in
+    Triton 0.86.0). So "Pro" was a choice that quietly meant Auto, and it was on offer whenever the
+    live list was slow or unreachable.
+  - **The list is now Triton's Gemini catalog, in its order**
+    (`TRITON_FALLBACK_MODEL_IDS`), and its labels come from the same function as the live list's
+    (`_models_from_ids`). The fallback used to carry hand-written labels ("Flash", "Pro", "Lite")
+    while the live list said "Flash 3.8", so the labels changed a moment after the panel painted.
+    Both now read `Auto`, `Argon 4`, `Flash 3.8`, `Flash Lite 3.5`. Triton's own app shows
+    "4 Argon" from its catalog's `short_label`; that label is only served by
+    `/assistant/models/catalog`, which the widget does not read, and moving to it is a feature
+    change this release does not make.
+  - **The default stays Auto** (`_DEFAULT_MODEL = ""`), deliberately. Auto is the one value that
+    cannot go stale; an Auto turn is already answered by the model Nikolas chose as Triton's default
+    (`gemini-4-argon` at medium); and an explicit id on a request moves a Triton turn off its
+    deployed agent onto the in-process path, which a pinned default would do to every turn.
+  - **The truth is in the Triton repository**, `backend/app/core/model_catalog.py`.
+    `tests/test_triton_widget_defaults.py` now holds a three-line pinned copy of it and fails the
+    build when the fallback offers an id that is not in the copy, is out of order, or is labeled by
+    a second rule. The pin moves by hand when Triton's catalog does.
+- **A *Default Model* that Triton no longer lists starts the chat on Auto, instead of reaching
+  Triton.** `Triton Assistant Settings.default_model` is free text on a Single, and an id typed there
+  outlives its model. It was sent to Triton on every new chat by two routes: the widget's
+  `ensureSession` falls back to it whenever the picker is on Auto, and `start_session` does the same.
+  A dropped `gemini-*` id cost a warning in Triton's log per chat. Any other unlisted id (a typo, or
+  an id from another model family) is a **422** from Triton, which this proxy reports as "Triton error
+  (422)": no session, so no new chat for anyone whose picker is on Auto, until somebody corrects a
+  setting that gives no hint it is the cause.
+  - `start_session` now sends a model id only when Triton lists it right now
+    (`_listed_model_or_auto`, measured against `list_models()`: the live list, cached five minutes,
+    or the fallback when Triton is unreachable). Measuring against the live list means a model Triton
+    adds later can be pinned without a release of this app.
+  - An empty default, which is what production has (read 2026-11-11), costs nothing: no cache read
+    and no request.
+  - `get_config` still hands the widget the stored value untouched. It runs on every page load and
+    must not wait on Triton, and the widget only selects a default that is in its list.
+  - One consequence: Triton's live list is Gemini-only, so a Claude id in *Default Model* is Auto
+    here too. That changes what is stored on the Triton session, not what answers. The picker never
+    offered such an id, and Triton's router ignores a session default that is not one of its Auto
+    tiers.
+  - `_models_from_ids` no longer iterates a non-list answer. A dict iterates as its keys, so an
+    error body returned with a 200 would have been offered as models.
+  - The field's description named the old tiers ("Flash for ordinary questions, Pro for
+    research-shaped ones"); it now says what the field takes and that an unlisted id is treated as
+    blank.
+
+### Changed
+- **`api/telephony.py` no longer names the Live model Google retires on 2026-12-13.**
+  `get_gateway_config` carried `gemini-live-2.5-flash-native-audio` as its default `voice_model_id`.
+  It is now `gemini-3.8-live`, the id Triton has used for realtime voice since 0.83.0 (`LIVE_MODEL`
+  and `VOICE_LIVE_MODEL` in its `core/config.py`), held in one constant,
+  `_DEFAULT_VOICE_MODEL_ID`.
+  - **This changes nothing anyone can hear, and the comment on the constant says why.** Nothing reads
+    the value today: Triton has never called `get_gateway_config` (no commit in its history names
+    the endpoint or the field) and runs Live sessions on its own setting; the Desk softphone is a
+    Twilio Voice client and names no model. The endpoint dates from March 2026, when the gateway was
+    Poseidon, which is retired.
+  - **It is not the value of an empty setting either.** `voice_model_id` is a declared field of
+    `Triton Settings`, so `getattr(settings, "voice_model_id", default)` finds it (None when blank)
+    and never reaches the default. The id is returned only when the Single cannot be loaded. That is
+    left as it was.
+  - **No patch, on purpose.** `Triton Settings.voice_model_id` has no default in the DocType, so
+    anything stored there was typed by a person, and nothing consumes it. A patch would rewrite a
+    value somebody chose in exchange for no change in behavior, and a patch that raises aborts the
+    deploy. If production stores the retiring id, a System Manager can change it on the settings
+    form, where the edit is tracked.
+
+Docs and comments only: the comment above the widget's `applyModels` fallback described Auto in terms
+of the dropped tiers, and the CI step for the widget-default suite now says what its pinned catalog
+is for. Left alone: `api/gemini.py`, this app's own Gemini client, whose `MODEL_ID`
+(`gemini-3.8-flash`) is current; the lifecycle paragraph in its header is older than Triton's reading
+of Google's table and wants its own change.
+
+Not verified: no model call was made and production was not read. The ids are from Triton's
+catalog at 0.86.0, not from Google.
+
 ## [1.801.0] - 2026-11-11
 
 ### Added

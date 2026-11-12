@@ -4168,6 +4168,17 @@ jobs:
       # never resolve to it -- blank fell through to Triton Settings'
       # chat_model_id, which is set on every real site. The failure is silent
       # (the picker just opens on Flash), so it needs a test rather than review.
+      #
+      # Since v1.801.1 it also holds a pinned copy of the Gemini half of Triton's
+      # model catalog and fails when the widget's fallback list offers an id that
+      # is not in it. The fallback offered `gemini-3.1-pro-preview` as "Pro" after
+      # Triton dropped it on 2026-11-11, and nothing noticed: a stale model id is
+      # not an error anywhere in this app, it is a picker entry that quietly does
+      # something else. The same file checks that a stale *Default Model* setting
+      # starts a chat on Auto instead of reaching Triton, and that
+      # `api/telephony.py` no longer names the Live model Google retires on
+      # 2026-12-13. The truth is in the Triton repository
+      # (`backend/app/core/model_catalog.py`); the pin moves with it by hand.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
       # The framed Triton widget's server half (v1.802.0): who is put on it, and the one-time
