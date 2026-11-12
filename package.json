@@ -1,6 +1,6 @@
 {
   "name": "erpnext-enhancements",
-  "version": "1.802.1",
+  "version": "1.802.2",
   "description": "ERPNext Enhancements",
   "private": true,
   "scripts": {

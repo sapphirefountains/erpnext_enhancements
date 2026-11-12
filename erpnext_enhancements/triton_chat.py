@@ -95,15 +95,21 @@ TRITON_FALLBACK_MODEL_IDS = (
 def _pretty_model_label(model_id: str) -> str:
     """Turn a raw model id into a short picker label.
 
-    "gemini-4-argon" -> "Argon 4", "gemini-3.8-flash" -> "Flash 3.8",
-    "gemini-3.5-flash-lite" -> "Flash Lite 3.5".
+    "gemini-4-argon" -> "4 Argon", "gemini-3.8-flash" -> "3.8 Flash",
+    "gemini-3.5-flash-lite" -> "3.5 Flash Lite".
 
     The ONE labeling rule for this widget: the live list and the fallback list
     both go through it (`_models_from_ids`), so a label cannot change under the
     user when the live list replaces the fallback a moment after the panel
-    paints. Triton's own app labels the same models from its catalog's
-    `short_label` ("4 Argon"); that label is served only by
-    `/assistant/models/catalog`, which this widget does not read.
+    paints.
+
+    Version first, then the tier, because that is how the Triton site names the
+    same models (its catalog's `short_label`: "4 Argon", "3.8 Flash",
+    "3.5 Flash Lite"). Until v1.802.2 this put the tier first ("Argon 4"), so
+    one model had two names depending on where it was picked. The site's label
+    is served only by `/assistant/models/catalog`, which this widget does not
+    read; `tests/test_triton_widget_defaults.py` holds the catalog's labels and
+    fails when this rule and they disagree.
     """
     s = (model_id or "").replace("gemini-", "")
     parts = [p for p in s.split("-") if p]
@@ -112,7 +118,7 @@ def _pretty_model_label(model_id: str) -> str:
     version = parts[0]
     tier_words = [w for w in parts[1:] if w.lower() != "preview"]
     tier = " ".join(w.capitalize() for w in tier_words)
-    return f"{tier} {version}".strip() if tier else version
+    return f"{version} {tier}".strip() if tier else version
 
 
 def _models_from_ids(ids) -> list:
@@ -134,7 +140,7 @@ def _models_from_ids(ids) -> list:
 # The fallback as the picker takes it. Built by the same function as the live
 # list, never written out by hand: hand-written labels ("Flash", "Pro", "Lite")
 # are what this list carried before, and they disagreed with the live labels
-# ("Flash 3.8") the widget swapped in a moment later.
+# ("Flash 3.8" then, "3.8 Flash" now) the widget swapped in a moment later.
 TRITON_MODELS = _models_from_ids(TRITON_FALLBACK_MODEL_IDS)
 
 
