@@ -29,8 +29,8 @@ only the filters that hold a value, and a Query Report's ``%(supplier)s`` with S
 missing key (the reason ``warehouse_transactions`` is one too).
 
 **Permissions.** The rows come from ``frappe.get_list``, so the reader's Supplier Return read
-permission and any User Permissions apply. Bills are a display lookup for rows the reader may
-already see. No aggregate is written as a string field (frappe 16 refuses that in ``get_list``).
+permission and any User Permissions apply. That a bill exists is said to every reader; its number
+is shown only to one who may read Purchase Invoices. No aggregate is written as a string field (frappe 16 refuses that in ``get_list``).
 """
 
 import frappe
@@ -120,7 +120,12 @@ def _rows(filters, view):
 	]
 	bills = _bills(doc.purchase_receipt for doc in docs)
 	today = nowdate()
-	return [rules.report_row(doc, bills.get(doc.purchase_receipt) or [], today) for doc in docs]
+	# The rows are the reader's own (get_list). A bill's number is another document's: it is named
+	# only for a reader who may read Purchase Invoices, and otherwise only said to exist.
+	may_read_bills = bool(frappe.has_permission("Purchase Invoice", "read"))
+	return [
+		rules.report_row(doc, bills.get(doc.purchase_receipt) or [], today, may_read_bills) for doc in docs
+	]
 
 
 def _summary(rows):

@@ -61,11 +61,13 @@
   "money_source",
   "column_break_outcome",
   "debit_note",
-  "payment_entry",
   "amount_difference",
   "closed_on",
   "money_recorded_by",
   "outcome_notes",
+  "payments_section",
+  "payments",
+  "money_settled",
   "status_changed_on",
   "waiting_on_money"
  ],
@@ -426,15 +428,6 @@
    "search_index": 1
   },
   {
-   "fieldname": "payment_entry",
-   "fieldtype": "Link",
-   "label": "Refund Payment",
-   "no_copy": 1,
-   "options": "Payment Entry",
-   "read_only": 1,
-   "search_index": 1
-  },
-  {
    "fieldname": "amount_difference",
    "fieldtype": "Currency",
    "label": "Expected Less Received",
@@ -460,6 +453,29 @@
    "fieldname": "outcome_notes",
    "fieldtype": "Small Text",
    "label": "Outcome Notes",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "payments_section",
+   "fieldtype": "Section Break",
+   "label": "What Came Back, Part by Part"
+  },
+  {
+   "description": "One row for each refund or credit. A row with a Payment Entry is this return's share of that payment; a row without one was typed by hand. Added by the buttons at the top of the form, never here.",
+   "fieldname": "payments",
+   "fieldtype": "Table",
+   "label": "Refunds and Credits",
+   "no_copy": 1,
+   "options": "Supplier Return Payment",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "money_settled",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "No More Is Coming",
    "no_copy": 1,
    "read_only": 1
   },

@@ -150,6 +150,36 @@ REOPEN_TO = {
 }
 
 
+#: What a finished return no longer lets anybody change. Until then these stay open, because a
+#: restocking fee or a tracking number is often learned late; once the outcome is recorded they
+#: are part of it (the expected amount decides whether the report calls a return "short"). Reopen
+#: is how a manager changes one afterwards.
+LOCKED_WHEN_FINAL = (
+	"requested_resolution",
+	"tax_amount",
+	"restocking_fee",
+	"return_shipping_cost",
+	"shipping_deducted",
+	"return_method",
+	"carrier",
+	"tracking_number",
+	"supplier_return_number",
+	"supplier_response_notes",
+	"contact_email",
+	"request_notes",
+	"posting_date",
+)
+
+
+def locked_fields(status):
+	"""The header fields a plain save may not change at ``status``.
+
+	* Draft: none. * After Draft: the supplier, the receipt and the lines (checked apart, with the
+	lines), nothing here. * At a final status: everything in :data:`LOCKED_WHEN_FINAL`.
+	"""
+	return LOCKED_WHEN_FINAL if status in FINAL else ()
+
+
 class RuleError(ValueError):
 	"""A refusal, in words meant for the person."""
 
@@ -159,6 +189,8 @@ def may(action, roles):
 	roles = set(roles or ())
 	if action == "reopen":
 		return bool(roles & REOPEN_ROLES)
+	if action == "settle":
+		return bool(roles & MONEY_ROLES)
 	spec = ACTIONS.get(action)
 	return bool(spec and roles & spec[2])
 
@@ -201,11 +233,13 @@ def _cannot(action, status):
 	return text
 
 
-def allowed_actions(status, roles, money_backed=False):
+def allowed_actions(status, roles, money_backed=False, received=0.0, owed=0.0):
 	"""The actions the form offers, in the order the steps happen.
 
 	``money_backed``: a Debit Note or Payment Entry is linked and submitted, so a typed refund or
-	credit is refused (:func:`check_typed_money`); the buttons are not offered.
+	credit is refused (:func:`check_typed_money`); the buttons are not offered. ``received`` and
+	``owed`` decide "settle" (No More Is Coming): something has come back, and no Debit Note still
+	shows the supplier owing (``owed`` is what a **Debit Note** shows owed, not the shortfall).
 	"""
 	out = []
 	for action, (sources, _target, _roles) in ACTIONS.items():
@@ -213,7 +247,17 @@ def allowed_actions(status, roles, money_backed=False):
 			continue
 		if money_backed and action in ("refund", "credit"):
 			continue
+		if action == "close" and float(received or 0) > 0.005:
+			# Something did come back: "without credit" would be untrue. Settle instead.
+			continue
 		out.append(action)
+	if (
+		status == SENT_BACK
+		and may("settle", roles)
+		and float(received or 0) > 0.005
+		and float(owed or 0) <= 0.005
+	):
+		out.append("settle")
 	if status in REOPEN_TO and may("reopen", roles):
 		out.append("reopen")
 	return out
@@ -453,6 +497,95 @@ def trim_return_rows(rows, wanted):
 	return kept, short
 
 
+def returned_outside(rows, linked):
+	"""``{receipt line: quantity}`` returned through ERPNext that no Supplier Return accounts for.
+
+	``rows``: submitted Purchase Return rows against the receipt, ``[(receipt line, return,
+	quantity)]`` with quantities positive and in the receipt line's unit. ``linked``: for each
+	Purchase Return a standing Supplier Return links, what that Supplier Return's own lines say,
+	``{return: {receipt line: quantity}}``.
+
+	A return nobody links counts in full. A linked one counts only where it took **more** than its
+	Supplier Return says: that Supplier Return's lines are already counted as claimed, and the
+	excess is goods ERPNext no longer has that no record claims.
+	"""
+	taken = {}
+	for line, parent, qty in rows or []:
+		key = (parent, line)
+		taken[key] = taken.get(key, 0.0) + abs(float(qty or 0))
+	out = {}
+	for (parent, line), qty in taken.items():
+		if parent in (linked or {}):
+			qty = max(qty - float((linked[parent] or {}).get(line) or 0), 0.0)
+		if qty > 1e-9:
+			out[line] = round(out.get(line, 0.0) + qty, 6)
+	return out
+
+
+def link_problems(wanted, taken, labels=None):
+	"""Why a Purchase Return made with ERPNext's own button may not be linked, one sentence each.
+
+	``wanted``: ``{receipt line: quantity}`` from the Supplier Return's ``Stock`` and ``Non-stock``
+	lines. ``taken``: ``{receipt line: quantity}`` on the Purchase Return. They must say the same
+	thing: a link means "these are the same goods", and the quantity limit trusts it.
+	"""
+	labels = labels or {}
+	problems = []
+	for line in sorted(set(wanted or {}) | set(taken or {}), key=str):
+		want, took = float((wanted or {}).get(line) or 0), float((taken or {}).get(line) or 0)
+		if abs(want - took) <= 1e-6:
+			continue
+		item = labels.get(line, line)
+		if want <= 0:
+			problems.append(f"It returns {_plain(took)} of {item}, which is not on this Supplier Return.")
+		elif took <= 0:
+			problems.append(f"It does not return {item}; this Supplier Return says {_plain(want)}.")
+		else:
+			problems.append(f"It returns {_plain(took)} of {item}; this Supplier Return says {_plain(want)}.")
+	return problems
+
+
+def return_mismatch(wanted, taken, labels=None):
+	"""One sentence for the record when a submitted Purchase Return differs from the return's
+	lines (somebody changed the draft before submitting it), or ``""``."""
+	problems = link_problems(wanted, taken, labels)
+	if not problems:
+		return ""
+	return "The Purchase Return and this record disagree: " + " ".join(problems)
+
+
+def fixed_charge_notice(charges, partial, document="Purchase Return"):
+	"""What the person is told about fixed-amount charges on a partial return, or ``""``.
+
+	ERPNext's own return reverses a fixed-amount ("Actual") charge **in full**, whatever part of
+	the receipt or bill is going back; charges worked out from the net total scale by themselves.
+	Nobody but the person knows what the supplier will really give back of a freight charge, so
+	the figure is left as ERPNext made it and this says so, on the draft itself.
+
+	``charges``: ``[(description, amount)]`` for the draft's fixed-amount rows, amounts positive.
+	"""
+	charges = [
+		(name, abs(float(amount or 0))) for name, amount in charges or [] if abs(float(amount or 0)) > 0.005
+	]
+	if not partial or not charges:
+		return ""
+	listed = ", ".join(f"{name or 'Charge'} ({amount:,.2f})" for name, amount in charges)
+	return (
+		f"This {document} is for part of what was received, and ERPNext reversed "
+		f"{'this fixed charge' if len(charges) == 1 else 'these fixed charges'} in full: {listed}. "
+		"Change each to what the supplier is really giving back before you submit."
+	)
+
+
+def as_names(value):
+	"""A name or an iterable of names, as a sorted list. A string is one name, never its letters."""
+	if value is None:
+		return []
+	if isinstance(value, str):
+		value = [value]
+	return sorted({name for name in value if name})
+
+
 # ---------------------------------------------------------------------------
 # Money
 # ---------------------------------------------------------------------------
@@ -462,21 +595,51 @@ def _submitted(document):
 	return bool(document) and int(document.get("docstatus") or 0) == 1
 
 
-def money_from_documents(debit_note=None, payment_entry=None):
-	"""What the linked accounting documents say about the money.
+def _total(rows):
+	return round(sum(float(row.get("amount") or 0) for row in rows or []), 2)
+
+
+def _latest(rows, key):
+	dates = [row.get(key) for row in rows or [] if row.get(key)]
+	return max(dates, key=lambda value: str(value)) if dates else None
+
+
+def _references(rows):
+	seen = []
+	for row in rows or []:
+		reference = (row.get("reference") or row.get("name") or "").strip()
+		if reference and reference not in seen:
+			seen.append(reference)
+	return ", ".join(seen)
+
+
+def money_from_documents(debit_note=None, payments=None, typed=None, expected=0.0, settled=False):
+	"""What the money side says: the linked accounting documents first, a person's word last.
 
 	``debit_note``: ``{"name", "docstatus", "amount", "owed", "posting_date", "reference"}`` where
 	``amount`` is the note's total (positive) and ``owed`` is what the supplier still owes us on it
 	(positive; zero once it has been set against a bill or refunded).
-	``payment_entry``: ``{"name", "docstatus", "amount", "posting_date", "reference"}``.
+	``payments``: this return's share of each submitted refund Payment Entry,
+	``[{"name", "amount", "posting_date", "reference"}]``. A return may have several (a refund that
+	arrives in parts), and a payment shared by several returns is split between them
+	(:func:`split_payment`), so no amount is counted twice.
+	``typed``: what a person typed, ``[{"amount", "date", "reference", "kind"}]``.
+	``expected``: the amount expected back. ``settled``: somebody said no more is coming.
 
-	Returns ``{"backed", "status", "source", "amount", "date", "reference", "note"}``:
+	Returns ``{"backed", "status", "source", "amount", "date", "reference", "note", "owed"}``:
 
-	* a submitted Payment Entry: **Refund Received**, the payment's amount and date;
-	* else a submitted Debit Note with nothing owed on it: **Credit Received**, the note's amount;
-	* else a submitted Debit Note the supplier still owes us on: no status yet (``status`` is
-	  ``None``), but ``backed`` is true, so nobody types an outcome over it;
-	* else ``backed`` is false and the outcome is whatever a person types.
+	* **A submitted Debit Note** decides. While the supplier still owes on it, no status yet
+	  (``status`` is ``None``); ``amount`` is what has come back so far. Once nothing is owed:
+	  **Refund Received** when a payment was part of it, else **Credit Received**, at the note's
+	  amount.
+	* **Else payments** with no Debit Note: **Refund Received** once they add up to the expected
+	  amount, or once ``settled``; until then no status, and ``amount`` is the sum so far.
+	* **Else typed entries**: ``backed`` is false. The status is final only when ``settled`` (the
+	  person said that was the last of it): Refund Received if any entry was a refund, else Credit
+	  Received.
+	* **Else** nothing: ``backed`` false, no status.
+
+	``backed`` true means a document decides, so nobody types an outcome over it.
 	"""
 	blank = {
 		"backed": False,
@@ -486,43 +649,132 @@ def money_from_documents(debit_note=None, payment_entry=None):
 		"date": None,
 		"reference": "",
 		"note": "",
+		"owed": 0.0,
 	}
-	if _submitted(payment_entry):
-		return dict(
-			blank,
-			backed=True,
-			status=REFUND_RECEIVED,
-			source=FROM_PAYMENT,
-			amount=round(float(payment_entry.get("amount") or 0), 2),
-			date=payment_entry.get("posting_date"),
-			reference=payment_entry.get("reference") or payment_entry.get("name") or "",
-			note=f"From Payment Entry {payment_entry.get('name')}.",
-		)
+	payments = [row for row in payments or [] if float(row.get("amount") or 0) > 0.005]
+	refunds = _total(payments)
+	expected = round(float(expected or 0), 2)
 	if _submitted(debit_note):
 		amount = round(abs(float(debit_note.get("amount") or 0)), 2)
 		owed = round(abs(float(debit_note.get("owed") or 0)), 2)
+		name = debit_note.get("name")
 		if owed > 0.005:
 			return dict(
 				blank,
 				backed=True,
 				source=FROM_DEBIT_NOTE,
+				amount=round(max(amount - owed, 0.0), 2),
+				date=_latest(payments, "posting_date"),
+				reference=_references(payments),
+				owed=owed,
 				note=(
-					f"Debit Note {debit_note.get('name')} is for {amount:,.2f} and the supplier still "
-					f"owes {owed:,.2f} on it. Record the refund as a Payment Entry against it, or set it "
-					"against a later bill in Payment Reconciliation."
+					f"Debit Note {name} is for {amount:,.2f} and the supplier still owes {owed:,.2f} "
+					"on it. Record the refund as a Payment Entry against it, or set it against a later "
+					"bill in Payment Reconciliation."
 				),
 			)
 		return dict(
 			blank,
 			backed=True,
-			status=CREDIT_RECEIVED,
-			source=FROM_DEBIT_NOTE,
+			status=REFUND_RECEIVED if refunds > 0.005 else CREDIT_RECEIVED,
+			source=FROM_PAYMENT if refunds > 0.005 else FROM_DEBIT_NOTE,
 			amount=amount,
-			date=debit_note.get("posting_date"),
-			reference=debit_note.get("reference") or debit_note.get("name") or "",
-			note=f"From Debit Note {debit_note.get('name')}.",
+			date=_latest(payments, "posting_date") or debit_note.get("posting_date"),
+			reference=_references(payments) or debit_note.get("reference") or name or "",
+			note=f"From Debit Note {name}.",
+		)
+	if payments:
+		done = bool(settled) or (expected > 0.005 and refunds >= expected - 0.005)
+		names = ", ".join(str(row.get("name")) for row in payments)
+		return dict(
+			blank,
+			backed=True,
+			status=REFUND_RECEIVED if done else None,
+			source=FROM_PAYMENT,
+			amount=refunds,
+			date=_latest(payments, "posting_date"),
+			reference=_references(payments),
+			owed=0.0 if done else round(max(expected - refunds, 0.0), 2),
+			note=(
+				f"From Payment Entry {names}."
+				if done
+				else f"{refunds:,.2f} of {expected:,.2f} has come back ({names}). Record the rest when it "
+				"arrives, or choose No More Is Coming."
+			),
+		)
+	typed = [row for row in typed or [] if float(row.get("amount") or 0) > 0.005]
+	if typed:
+		total = _total(typed)
+		kind = REFUND_RECEIVED if any(row.get("kind") == "refund" for row in typed) else CREDIT_RECEIVED
+		return dict(
+			blank,
+			status=kind if settled else None,
+			source=TYPED,
+			amount=total,
+			date=_latest(typed, "date"),
+			reference=_references(typed),
+			owed=0.0 if settled else round(max(expected - total, 0.0), 2),
+			note=NOT_BACKED,
 		)
 	return blank
+
+
+def check_settle(received, documents=None):
+	"""Refuse "No More Is Coming" where it would be untrue. Raises :class:`RuleError`.
+
+	It finishes a return at what has come back so far. With nothing back, the honest ending is
+	Close Without Credit; with a Debit Note the supplier still owes on, the books say more is
+	coming, and that is settled in accounting first.
+	"""
+	if float(received or 0) <= 0.005:
+		raise RuleError("Nothing has come back yet. If nothing will, use Close Without Credit.")
+	if documents and float(documents.get("owed") or 0) > 0.005 and documents.get("source") == FROM_DEBIT_NOTE:
+		raise RuleError(
+			"The Debit Note still shows the supplier owing "
+			f"{float(documents.get('owed')):,.2f}. Settle that in accounting first (a refund Payment "
+			"Entry, Payment Reconciliation against a later bill, or a write-off); this return then "
+			"finishes by itself."
+		)
+
+
+def split_payment(allocated, claims):
+	"""Share one payment's amount between the returns it refunds, so it is counted once.
+
+	``allocated``: what the payment puts against the invoice. ``claims``: ``[(return, most)]``,
+	oldest first, where ``most`` is the most that return can take (its Debit Note's amount).
+	Returns ``{return: share}``; the shares never add up to more than ``allocated``.
+	"""
+	left = round(abs(float(allocated or 0)), 2)
+	shares = {}
+	for name, most in claims or []:
+		share = round(min(left, max(float(most or 0), 0.0)), 2)
+		shares[name] = share
+		left = round(left - share, 2)
+	return shares
+
+
+def by_hand_share(paid, taken_elsewhere, asked=None, still_expected=None):
+	"""How much of a payment linked by hand counts for this return. Raises :class:`RuleError`.
+
+	``paid``: the payment's amount. ``taken_elsewhere``: what other returns already count from
+	it. ``asked``: the amount the person entered. Left blank, it is what this return still expects
+	(``still_expected``) when that is known, and never more than is left of the payment.
+	"""
+	left = round(float(paid or 0) - float(taken_elsewhere or 0), 2)
+	if left <= 0.005:
+		raise RuleError("All of that payment is already counted on other returns.")
+	if asked in (None, ""):
+		expected = float(still_expected or 0)
+		return round(min(left, expected), 2) if expected > 0.005 else left
+	try:
+		asked = round(float(asked), 2)
+	except (TypeError, ValueError):
+		raise RuleError("Enter how much of the payment is for this return.") from None
+	if asked <= 0:
+		raise RuleError("Enter how much of the payment is for this return.")
+	if asked > left + 0.005:
+		raise RuleError(f"Only {left:,.2f} of that payment is left: the rest is counted on other returns.")
+	return asked
 
 
 def check_typed_money(kind, amount, on, reference, today, documents=None):
@@ -574,6 +826,11 @@ def difference(expected, received):
 # ---------------------------------------------------------------------------
 # The bill
 # ---------------------------------------------------------------------------
+
+
+#: The returns a bill is told about: the ones still in motion. A finished return has nothing
+#: left to adjust on a bill (the refund, credit or replacement already happened).
+BILL_NOTICE_STATUSES = tuple(status for status in STATUSES if status not in FINAL)
 
 
 def bill_notice(returns):
@@ -779,16 +1036,22 @@ def in_view(view, status, resolution, expected, received):
 	return waiting_on_money(status, resolution)
 
 
-def bill_state(debit_note, bills):
-	"""One phrase on where the bill stands, for the person who enters or checks it."""
+def bill_state(debit_note, bills, may_read_bills=True):
+	"""One phrase on where the bill stands, for the person who enters or checks it.
+
+	``may_read_bills`` false (a reader without Purchase Invoice read): that a bill exists is said,
+	its number is not.
+	"""
 	if debit_note:
-		return f"Debit Note {debit_note}"
+		return f"Debit Note {debit_note}" if may_read_bills else "Debit Note made"
 	if bills:
+		if not may_read_bills:
+			return "Billed in ERPNext. Needs a Debit Note"
 		return "Billed: " + ", ".join(bills) + ". Needs a Debit Note"
 	return "Not billed in ERPNext. The bill should come in lower"
 
 
-def report_row(doc, bills, today):
+def report_row(doc, bills, today, may_read_bills=True):
 	"""One row of the report from a Supplier Return's header ``doc`` (a dict)."""
 	status, resolution = doc.get("status"), doc.get("requested_resolution")
 	expected, received = float(doc.get("expected_amount") or 0), float(doc.get("amount_received") or 0)
@@ -805,12 +1068,13 @@ def report_row(doc, bills, today):
 		if waiting
 		else None,
 		"expected_amount": round(expected, 2),
-		"amount_received": round(received, 2) if settled else None,
-		"outstanding": round(expected, 2)
+		# A part that has already come back shows while the rest is waited on.
+		"amount_received": round(received, 2) if settled or received > 0.005 else None,
+		"outstanding": round(max(expected - received, 0.0), 2)
 		if waiting
 		else (difference(expected, received) if settled else None),
 		"money_source": NOT_BACKED if doc.get("money_source") == TYPED else (doc.get("money_source") or ""),
-		"bill": bill_state(doc.get("debit_note"), bills) if status in GONE else "",
+		"bill": bill_state(doc.get("debit_note"), bills, may_read_bills) if status in GONE else "",
 		"supplier_return_number": doc.get("supplier_return_number"),
 		"purchase_receipt": doc.get("purchase_receipt"),
 		"purchase_order": doc.get("purchase_order"),

@@ -77,6 +77,9 @@ def _fields(path):
 
 HEADER_FIELDS = [f["fieldname"] for f in _fields(DOCTYPE_DIR / "supplier_return.json")]
 LINE_FIELDS = [f["fieldname"] for f in _fields(CHILD_DIR / "supplier_return_item.json")]
+PAYMENT_CHILD = "Supplier Return Payment"
+PAYMENT_DIR = INVENTORY / "doctype" / "supplier_return_payment"
+PAYMENT_FIELDS = [f["fieldname"] for f in _fields(PAYMENT_DIR / "supplier_return_payment.json")]
 
 SCHEMA = (
 	f"create table `tab{DOCTYPE}` (name text primary key, creation text, "
@@ -85,17 +88,21 @@ SCHEMA = (
 	f"create table `tab{CHILD}` (name text, parent text, idx int, "
 	+ ", ".join(f"`{f}`" for f in LINE_FIELDS)
 	+ ")",
+	f"create table `tab{PAYMENT_CHILD}` (name text, parent text, parenttype text, idx int, "
+	+ ", ".join(f"`{f}`" for f in PAYMENT_FIELDS)
+	+ ")",
 	"create table `tabPurchase Receipt` (name text primary key, docstatus int, is_return int default 0, "
 	"return_against text, supplier text, supplier_name text, company text, posting_date text, net_total real, "
 	"total_taxes_and_charges real, remarks text)",
 	"create table `tabPurchase Receipt Item` (name text, parent text, parenttype text, idx int, item_code text, "
 	"item_name text, qty real, uom text, conversion_factor real, rate real, project text, warehouse text, "
-	"purchase_order text, purchase_order_item text, supplier_part_no text, purchase_receipt_item text)",
+	"purchase_order text, purchase_order_item text, supplier_part_no text, purchase_receipt_item text, "
+	"stock_qty real)",
 	"create table `tabItem` (name text primary key, is_stock_item int default 0)",
 	"create table `tabStock Ledger Entry` (name text, voucher_type text, voucher_detail_no text)",
 	"create table `tabPurchase Invoice` (name text primary key, docstatus int, is_return int default 0, "
 	"return_against text, supplier text, grand_total real, outstanding_amount real, posting_date text, "
-	"bill_no text, status text, update_stock int, remarks text)",
+	"bill_no text, status text, update_stock int, remarks text, update_outstanding_for_self int)",
 	"create table `tabPurchase Invoice Item` (name text, parent text, item_code text, qty real, pr_detail text, "
 	"po_detail text, purchase_receipt text, conversion_factor real)",
 	"create table `tabPayment Entry` (name text primary key, docstatus int, payment_type text, party_type text, "
@@ -163,6 +170,8 @@ class Doc(Row):
 		object.__setattr__(self, "_before", None)
 		object.__setattr__(self, "meta", types.SimpleNamespace(get_label=lambda field: field))
 		self._d.setdefault("items", [])
+		if doctype == DOCTYPE:
+			self._d.setdefault("payments", [])
 
 	def is_new(self):
 		return self._new
@@ -178,12 +187,12 @@ class Doc(Row):
 
 	def set(self, key, value):
 		self._d[key] = value
-		if key == "items":
+		if key in ("items", "payments", "taxes"):
 			for idx, row in enumerate(value, 1):
 				row.idx = idx
 
 	def as_dict(self):
-		return {k: v for k, v in self._d.items() if k != "items"}
+		return {k: v for k, v in self._d.items() if k not in ("items", "payments", "taxes")}
 
 	def check_permission(self, ptype="read"):
 		if (self.doctype, ptype) in STATE["denied"]:
@@ -197,6 +206,11 @@ class Doc(Row):
 
 	def run_method(self, name):
 		STATE["ran"].append((self.doctype, name))
+		if name == "calculate_taxes_and_totals" and self.doctype == "Purchase Invoice":
+			# ERPNext's totals for a return are negative: the kept lines, plus its tax rows.
+			lines = sum(abs(row.qty) * (row.rate or 0) for row in self.items)
+			taxes = sum(abs(row.tax_amount or 0) for row in self.get("taxes") or [])
+			self.grand_total = -(lines + taxes)
 
 	def save(self):
 		if self.doctype == DOCTYPE:
@@ -247,6 +261,15 @@ def _store_return(doc):
 			f"insert into `tab{CHILD}` ({', '.join(f'`{c}`' for c in cols)}) values ({', '.join('?' for _ in cols)})",
 			values,
 		)
+	CONN.execute(f"delete from `tab{PAYMENT_CHILD}` where parent = ?", (doc.name,))
+	for idx, row in enumerate(doc.get("payments") or [], 1):
+		cols = ["name", "parent", "parenttype", "idx", *PAYMENT_FIELDS]
+		values = [f"{doc.name}-P{idx}", doc.name, DOCTYPE, idx, *[_cell(row.get(f)) for f in PAYMENT_FIELDS]]
+		CONN.execute(
+			f"insert into `tab{PAYMENT_CHILD}` ({', '.join(f'`{c}`' for c in cols)}) "
+			f"values ({', '.join('?' for _ in cols)})",
+			values,
+		)
 
 
 def _cell(value):
@@ -276,6 +299,7 @@ def _store_standard(doc):
 				idx=idx,
 				item_code=row.item_code,
 				qty=row.qty,
+				stock_qty=row.stock_qty,
 				purchase_receipt_item=row.purchase_receipt_item,
 			)
 	else:
@@ -286,9 +310,10 @@ def _store_standard(doc):
 			is_return=1,
 			return_against=doc.return_against,
 			supplier=doc.supplier,
-			grand_total=-sum(abs(r.qty) * (r.rate or 0) for r in doc.items),
+			grand_total=doc.grand_total,
 			outstanding_amount=0,
 			update_stock=doc.update_stock,
+			update_outstanding_for_self=doc.update_outstanding_for_self,
 			remarks=doc.remarks,
 		)
 	STATE["standard"][doc.name] = doc
@@ -369,6 +394,8 @@ def _load_return(name):
 		doc = Doc(DOCTYPE, dict(rows[0]), new=False)
 		lines = _select(CHILD, {"parent": name}, ["idx", *LINE_FIELDS])
 		doc.set("items", [Row(dict(line)) for line in sorted(lines, key=lambda l: l["idx"])])
+		parts = _select(PAYMENT_CHILD, {"parent": name}, ["idx", *PAYMENT_FIELDS])
+		doc.set("payments", [Row(dict(part)) for part in sorted(parts, key=lambda p: p["idx"])])
 		return doc
 
 	doc = build()
@@ -543,15 +570,26 @@ def _fake_make_purchase_return(receipt):
 					rate=line.rate,
 				),
 			)
+	# ERPNext reverses a fixed-amount charge in full whatever is going back (make_return_doc).
+	target.set("taxes", [Row(dict(tax)) for tax in STATE.get("return_taxes") or []])
 	return target
 
 
 def _fake_make_debit_note(invoice):
+	"""Stands in for ERPNext's mapper, with ERPNext 16.54.0's default left as ERPNext leaves it:
+	*Update Outstanding for Self* is 1 on every debit note the mapper hands back."""
 	STATE["mapper_calls"].append(("debit_note", invoice))
 	target = Doc(
 		"Purchase Invoice",
-		{"is_return": 1, "return_against": invoice, "supplier": SUPPLIER, "update_stock": 1},
+		{
+			"is_return": 1,
+			"return_against": invoice,
+			"supplier": SUPPLIER,
+			"update_stock": 1,
+			"update_outstanding_for_self": 1,
+		},
 	)
+	target.set("taxes", [Row(dict(tax)) for tax in STATE.get("note_taxes") or []])
 	for line in _select(
 		"Purchase Invoice Item",
 		{"parent": invoice},
@@ -565,10 +603,77 @@ def _fake_make_debit_note(invoice):
 				pr_detail=line.pr_detail,
 				po_detail=line.po_detail,
 				conversion_factor=line.conversion_factor or 1,
-				rate=10.0,
+				rate=22.0,
 			),
 		)
 	return target
+
+
+def erpnext_submits_debit_note(name, bill_no=None):
+	"""What ERPNext 16.54.0 does when a debit note is submitted, **from the box the module left on
+	the draft**, so a test's outcome follows from the module's choice and is not assumed.
+
+	* The box on (the mapper's default): the note is booked against itself. It carries minus its
+	  total as outstanding and the bill is untouched (``purchase_invoice.add_supplier_gl_entry``).
+	* The box off: the note is booked against the bill, whose outstanding drops, and the note's own
+	  is 0 (``taxes_and_totals.calculate_outstanding_amount``).
+	* The box off but the bill too small: ERPNext turns it back on
+	  (``accounts_controller.validate_against_voucher_outstanding``).
+
+	Returns whether the note ended up booked against itself.
+	"""
+	draft = STATE["standard"][name]
+	total = abs(draft.grand_total)
+	bill = _select("Purchase Invoice", draft.return_against, ["outstanding_amount"])[0]
+	for_self = bool(draft.update_outstanding_for_self) or total > (bill.outstanding_amount or 0) + 0.005
+	if not for_self:
+		update("Purchase Invoice", draft.return_against, outstanding_amount=bill.outstanding_amount - total)
+	submit(
+		"Purchase Invoice",
+		name,
+		grand_total=-total,
+		outstanding_amount=-total if for_self else 0,
+		posting_date="2026-11-12",
+		bill_no=bill_no,
+	)
+	return for_self
+
+
+def erpnext_refund(name, amount, references=None, party=None, kind="Receive", reference_no="CHK 4410"):
+	"""A Payment Entry submitted in ERPNext: ``references`` is ``{invoice: allocated}``. As ERPNext
+	does, each invoice's outstanding moves by what the payment puts against it before any hook
+	of ours runs."""
+	insert(
+		"Payment Entry",
+		name=name,
+		docstatus=0,
+		payment_type=kind,
+		party_type="Supplier",
+		party=party or SUPPLIER,
+		paid_amount=amount,
+		posting_date="2026-11-20",
+		reference_no=reference_no,
+	)
+	STATE.setdefault("references", {})[name] = [
+		Row(reference_doctype="Purchase Invoice", reference_name=invoice, allocated_amount=allocated)
+		for invoice, allocated in (references or {}).items()
+	]
+	if kind == "Receive":
+		for invoice, allocated in (references or {}).items():
+			row = _select("Purchase Invoice", invoice, ["outstanding_amount"])[0]
+			update("Purchase Invoice", invoice, outstanding_amount=(row.outstanding_amount or 0) + allocated)
+	submit("Payment Entry", name)
+
+
+def erpnext_cancels_refund(name):
+	for row in STATE.get("references", {}).get(name, []):
+		invoice = _select("Purchase Invoice", row.reference_name, ["outstanding_amount"])[0]
+		update(
+			"Purchase Invoice",
+			row.reference_name,
+			outstanding_amount=(invoice.outstanding_amount or 0) - row.allocated_amount,
+		)
+	submit("Payment Entry", name, method="on_cancel")
 
 
 def _guard(doc):
@@ -742,7 +847,9 @@ def submit(doctype, name, method="on_submit", **values):
 
 def _row(doctype, name):
 	if doctype == "Payment Entry":
-		row = _select(doctype, name, ["payment_type", "party_type", "party"])[0]
+		row = _select(doctype, name, ["payment_type", "party_type", "party", "posting_date", "reference_no"])[
+			0
+		]
 		return dict(row, references=STATE.get("references", {}).get(name, []))
 	return {}
 
@@ -1249,6 +1356,9 @@ class TestStockAndAccountingCases(Base):
 
 
 class TestMoney(Base):
+	"""A return of 2 pumps: 2 x 20 = 40, plus 4 of tax, so 44 is expected back. The bill charges
+	22 a pump, so its debit note for 2 is 44 too."""
+
 	def bill(self, outstanding=200.0):
 		insert(
 			"Purchase Invoice",
@@ -1281,6 +1391,18 @@ class TestMoney(Base):
 			purchase_receipt=RECEIPT,
 		)
 
+	def note_for(self, lines, bill="PINV-1"):
+		"""A return sent back with its Debit Note drafted. ``(return, note)``."""
+		STATE["roles"] = {"Purchase User"}
+		name = sent_back(lines)
+		STATE["roles"] = {"Accounts User", "Accounts Manager"}
+		return name, core.make_debit_note(name, bill)["name"]
+
+	def outstanding(self, invoice):
+		return _select("Purchase Invoice", invoice, ["outstanding_amount"])[0].outstanding_amount
+
+	# --- typed by hand -------------------------------------------------------------------
+
 	def test_before_the_bill_money_is_typed_and_says_so(self):
 		name = sent_back({"PRI-1": 2})
 		STATE["roles"] = {"Accounts User"}
@@ -1291,10 +1413,70 @@ class TestMoney(Base):
 			(rules.CREDIT_RECEIVED, 44.0, "CM-204", rules.TYPED),
 		)
 		self.assertEqual(doc.money_recorded_by, "buyer@example.com")
+		self.assertEqual(
+			[(p.kind, p.amount, p.payment_entry) for p in doc.payments], [("Credit", 44.0, None)]
+		)
 		self.assertTrue(any(rules.NOT_BACKED in text for _dt, _name, text in STATE["comments"]))
 		state = api.state(name)
 		self.assertTrue(state["typed_by_hand"])
 		self.assertEqual(state["not_backed"], rules.NOT_BACKED)
+
+	def test_a_refund_that_arrives_in_two_parts(self):
+		"""Recorded as it arrives, with no reopen in between."""
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "refund", 20, "2026-11-10", "CHK 1", more_expected=True)
+		doc = get(name)
+		self.assertEqual((doc.status, doc.amount_received, doc.waiting_on_money), (rules.SENT_BACK, 20.0, 1))
+		state = api.state(name)
+		self.assertIn("refund", state["actions"])
+		self.assertIn("settle", state["actions"])
+		self.assertNotIn("close", state["actions"], "something did come back")
+		self.assertEqual((state["received"], state["owed"]), (20.0, 24.0))
+		api.record_money(name, "refund", 24, "2026-11-12", "CHK 2")
+		doc = get(name)
+		self.assertEqual(
+			(doc.status, doc.amount_received, doc.money_reference, doc.amount_difference),
+			(rules.REFUND_RECEIVED, 44.0, "CHK 1, CHK 2", 0.0),
+		)
+		self.assertEqual(len(doc.payments), 2)
+		self.assertEqual(str(doc.money_received_on), "2026-11-12")
+
+	def test_no_more_is_coming_finishes_at_what_came_back(self):
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		with self.assertRaises(FrappeError) as caught:
+			core.settle(name, "Gave up")
+		self.assertIn("Nothing has come back", str(caught.exception))
+		core.record_money(name, "refund", 20, "2026-11-10", "CHK 1", more_expected=True)
+		with self.assertRaises(FrappeError) as caught:
+			core.close_without_credit(name, "Gave up")
+		self.assertIn("Something did come back", str(caught.exception))
+		api.settle(name, "The supplier kept a fee")
+		doc = get(name)
+		self.assertEqual(
+			(doc.status, doc.amount_received, doc.amount_difference), (rules.REFUND_RECEIVED, 20.0, 24.0)
+		)
+
+	def test_a_stock_user_cannot_say_no_more_is_coming(self):
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "refund", 20, "2026-11-10", "CHK 1", more_expected=True)
+		STATE["roles"] = {"Stock User"}
+		with self.assertRaises(FRAPPE.PermissionError):
+			core.settle(name, "Gave up")
+		self.assertNotIn("settle", api.state(name)["actions"])
+
+	def test_a_row_typed_into_the_table_is_refused(self):
+		name = sent_back({"PRI-1": 2})
+		doc = get(name)
+		doc.append("payments", {"amount": 9999, "kind": "Refund", "received_on": TODAY, "reference": "x"})
+		with self.assertRaises(FrappeError) as caught:
+			doc.save()
+		self.assertIn("recorded with the buttons", str(caught.exception))
+		self.assertEqual(get(name).payments, [])
+
+	# --- the debit note, and which invoice it lowers -----------------------------------------
 
 	def test_a_bill_in_erpnext_offers_the_debit_note(self):
 		self.bill()
@@ -1322,71 +1504,95 @@ class TestMoney(Base):
 		with self.assertRaises(FrappeError):
 			core.make_debit_note(name, "PINV-9")
 
-	def test_returned_before_the_bill_was_paid_the_debit_note_is_the_credit(self):
-		self.bill()
-		name = sent_back({"PRI-1": 2})
-		STATE["roles"] = {"Accounts User"}
-		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit(
-			"Purchase Invoice",
-			made,
-			grand_total=-44.0,
-			outstanding_amount=0,
-			posting_date="2026-11-12",
-			bill_no="CM-204",
-		)
+	def test_an_unpaid_bill_is_lowered_by_the_debit_note(self):
+		"""ERPNext's mapper hands the note back booked against itself (the box on). The bill is
+		unpaid and covers the note, so the module turns the box off, and ERPNext then lowers the
+		bill: we pay less, and the return has its credit."""
+		self.bill(outstanding=200.0)
+		name, made = self.note_for({"PRI-1": 2})
+		self.assertEqual(STATE["standard"][made].update_outstanding_for_self, 0)
+		self.assertFalse(erpnext_submits_debit_note(made, "CM-204"), "booked against the bill")
+		self.assertEqual(self.outstanding("PINV-1"), 156.0, "the bill is paid for 44 less")
 		doc = get(name)
 		self.assertEqual(
 			(doc.status, doc.amount_received, doc.money_source, doc.money_reference),
 			(rules.CREDIT_RECEIVED, 44.0, rules.FROM_DEBIT_NOTE, "CM-204"),
 		)
 		self.assertEqual(doc.waiting_on_money, 0)
+		self.assertTrue(any("set against the bill" in text for _dt, _name, text in STATE["comments"]))
+
+	def test_left_as_the_mapper_made_it_the_bill_would_stay_unpaid(self):
+		"""Why the box is turned off: with ERPNext's default the same note does not touch the bill."""
+		self.bill(outstanding=200.0)
+		name, made = self.note_for({"PRI-1": 2})
+		STATE["standard"][made].update_outstanding_for_self = 1
+		self.assertTrue(erpnext_submits_debit_note(made))
+		self.assertEqual(self.outstanding("PINV-1"), 200.0)
+		self.assertEqual(get(name).status, rules.SENT_BACK)
+
+	def test_a_paid_bill_leaves_the_amount_owed_on_the_note(self):
+		self.bill(outstanding=0)
+		name, made = self.note_for({"PRI-1": 2})
+		self.assertEqual(STATE["standard"][made].update_outstanding_for_self, 1, "the bill can't absorb it")
+		self.assertTrue(erpnext_submits_debit_note(made))
+		doc = get(name)
+		self.assertEqual((doc.status, doc.waiting_on_money), (rules.SENT_BACK, 1))
+		state = api.state(name)
+		self.assertEqual(state["owed"], 44.0)
+		self.assertIn("still owes 44.00", state["money_note"])
+		self.assertNotIn("settle", state["actions"], "the books say more is coming")
+		self.assertEqual(core.refund_source(name), {"doctype": "Purchase Invoice", "name": made})
+
+	def test_a_bill_too_small_for_the_note_keeps_erpnexts_default(self):
+		self.bill(outstanding=30.0)
+		_name, made = self.note_for({"PRI-1": 2})
+		self.assertEqual(STATE["standard"][made].update_outstanding_for_self, 1)
 
 	def test_the_amount_cannot_be_typed_over_a_document(self):
-		self.bill()
-		name = sent_back({"PRI-1": 2})
-		STATE["roles"] = {"Accounts User", "Accounts Manager"}
-		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit(
-			"Purchase Invoice", made, grand_total=-44.0, outstanding_amount=-44.0, posting_date="2026-11-12"
-		)
-		self.assertEqual(get(name).status, rules.SENT_BACK, "the supplier still owes on the note")
+		self.bill(outstanding=0)
+		name, made = self.note_for({"PRI-1": 2})
+		erpnext_submits_debit_note(made)
 		with self.assertRaises(FrappeError) as caught:
 			core.record_money(name, "refund", 9999, TODAY, "CHK 1")
 		self.assertIn("can't be typed", str(caught.exception))
 		with self.assertRaises(FrappeError):
 			core.close_without_credit(name, "Give up")
+		with self.assertRaises(FrappeError) as caught:
+			core.settle(name, "Give up")
+		self.assertIn("Nothing has come back", str(caught.exception))
 		self.assertNotIn("refund", api.state(name)["actions"])
 		doc = get(name)
 		doc.amount_received, doc.money_source = 9999, rules.TYPED
 		doc.save()
 		self.assertIsNone(get(name).amount_received, "nor through an ordinary save")
 
-	def test_returned_after_the_bill_was_paid_the_refund_is_a_payment_entry(self):
-		self.bill(outstanding=0)
+	def test_typed_money_gives_way_to_a_document(self):
+		self.bill(outstanding=200.0)
 		name = sent_back({"PRI-1": 2})
 		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "credit", 40, "2026-11-10", "CM-1", more_expected=True)
 		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit(
-			"Purchase Invoice", made, grand_total=-44.0, outstanding_amount=-44.0, posting_date="2026-11-12"
-		)
-		self.assertEqual(core.refund_source(name), {"doctype": "Purchase Invoice", "name": made})
-		insert(
-			"Payment Entry",
-			name="PE-1",
-			docstatus=0,
-			payment_type="Receive",
-			party_type="Supplier",
-			party=SUPPLIER,
-			paid_amount=44.0,
-			posting_date="2026-11-20",
-			reference_no="CHK 4410",
-		)
-		STATE["references"] = {"PE-1": [Row(reference_doctype="Purchase Invoice", reference_name=made)]}
-		submit("Payment Entry", "PE-1")
+		erpnext_submits_debit_note(made, "CM-204")
 		doc = get(name)
 		self.assertEqual(
-			doc.payment_entry, "PE-1", "linked by the invoice it names, with no field on the payment"
+			(doc.status, doc.amount_received, doc.money_source),
+			(rules.CREDIT_RECEIVED, 44.0, rules.FROM_DEBIT_NOTE),
+		)
+		self.assertEqual(doc.payments, [], "the typed entry is gone, and the timeline says so")
+		self.assertTrue(any("typed by hand was replaced" in text for _dt, _name, text in STATE["comments"]))
+
+	# --- the refund ----------------------------------------------------------------------
+
+	def test_returned_after_the_bill_was_paid_the_refund_is_a_payment_entry(self):
+		self.bill(outstanding=0)
+		name, made = self.note_for({"PRI-1": 2})
+		erpnext_submits_debit_note(made)
+		erpnext_refund("PE-1", 44.0, {made: 44.0})
+		doc = get(name)
+		self.assertEqual(
+			[(p.payment_entry, p.amount, p.kind, p.by_hand) for p in doc.payments],
+			[("PE-1", 44.0, "Refund", 0)],
+			"recorded by the invoice the payment names, with no field on the payment",
 		)
 		self.assertEqual(
 			(
@@ -1398,57 +1604,143 @@ class TestMoney(Base):
 			),
 			(rules.REFUND_RECEIVED, 44.0, rules.FROM_PAYMENT, "CHK 4410", "2026-11-20"),
 		)
+		self.assertEqual(core.linked_to("Payment Entry", "PE-1")[0]["name"], name)
 		with self.assertRaises(FrappeError) as caught:
-			STATE["roles"] = {"Accounts Manager"}
 			core.reopen(name, "Oops")
 		self.assertIn("Cancel that document", str(caught.exception))
-		submit("Payment Entry", "PE-1", method="on_cancel")
+		erpnext_cancels_refund("PE-1")
 		doc = get(name)
-		self.assertEqual((doc.status, doc.payment_entry, doc.amount_received), (rules.SENT_BACK, None, None))
+		self.assertEqual((doc.status, doc.payments, doc.amount_received), (rules.SENT_BACK, [], None))
 		self.assertEqual(doc.waiting_on_money, 1)
 
-	def test_a_refund_that_names_the_paid_bill_the_note_was_set_against(self):
+	def test_a_refund_in_two_payments_against_the_note(self):
 		self.bill(outstanding=0)
-		name = sent_back({"PRI-1": 2})
-		STATE["roles"] = {"Accounts User"}
-		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit("Purchase Invoice", made, grand_total=-44.0, outstanding_amount=0, posting_date="2026-11-12")
-		update("Purchase Invoice", "PINV-1", outstanding_amount=-44.0)
-		self.assertEqual(core.refund_source(name), {"doctype": "Purchase Invoice", "name": "PINV-1"})
+		name, made = self.note_for({"PRI-1": 2})
+		erpnext_submits_debit_note(made)
+		erpnext_refund("PE-A", 20.0, {made: 20.0}, reference_no="CHK 1")
+		doc = get(name)
+		self.assertEqual(
+			(doc.status, doc.amount_received), (rules.SENT_BACK, 20.0), "the note still shows 24 owed"
+		)
+		self.assertEqual(api.state(name)["owed"], 24.0)
+		erpnext_refund("PE-B", 24.0, {made: 24.0}, reference_no="CHK 2")
+		doc = get(name)
+		self.assertEqual((doc.status, doc.amount_received), (rules.REFUND_RECEIVED, 44.0))
+		self.assertEqual([p.payment_entry for p in doc.payments], ["PE-A", "PE-B"])
+		self.assertEqual(doc.money_reference, "CHK 1, CHK 2")
+
+	def test_one_payment_for_two_returns_is_counted_once(self):
+		"""One 66 refund covering two debit notes: 44 on one return and 22 on the other, never 66
+		on each."""
+		self.bill(outstanding=0)
+		first, first_note = self.note_for({"PRI-1": 2})
+		second, second_note = self.note_for({"PRI-2": 1})
+		erpnext_submits_debit_note(first_note)
+		erpnext_submits_debit_note(second_note)
+		erpnext_refund("PE-1", 66.0, {first_note: 44.0, second_note: 22.0})
+		amounts = [get(first).amount_received, get(second).amount_received]
+		self.assertEqual(amounts, [44.0, 22.0])
+		self.assertEqual(sum(amounts), 66.0, "the payment's amount, once")
+		self.assertEqual({row["name"] for row in core.linked_to("Payment Entry", "PE-1")}, {first, second})
+
+	def test_one_payment_naming_a_paid_bill_is_split_between_its_returns(self):
+		"""Debit notes booked against a bill that was then overpaid: the refund names the bill,
+		and is shared oldest first, each return up to its own note."""
+		self.bill(outstanding=200.0)
+		first, first_note = self.note_for({"PRI-1": 2})
+		second, second_note = self.note_for({"PRI-2": 1})
+		for note, total in ((first_note, 44.0), (second_note, 22.0)):
+			submit(
+				"Purchase Invoice", note, grand_total=-total, outstanding_amount=0, posting_date="2026-11-12"
+			)
+		update("Purchase Invoice", "PINV-1", outstanding_amount=-50.0)
+		self.assertEqual(core.refund_source(first), {"doctype": "Purchase Invoice", "name": "PINV-1"})
+		erpnext_refund("PE-2", 50.0, {"PINV-1": 50.0})
+		self.assertEqual([get(first).payments[0].amount, get(second).payments[0].amount], [44.0, 6.0])
+		self.assertEqual(get(first).status, rules.REFUND_RECEIVED)
+
+	def test_a_payment_linked_by_hand_is_never_counted_twice(self):
+		"""No debit note (the bill is in QuickBooks), and one 50 refund covering two returns."""
+		first = sent_back({"PRI-1": 2})  # expects 44
+		second = sent_back({"PRI-2": 5})  # expects 33
+		third = sent_back({"PRI-3": 1})
 		insert(
 			"Payment Entry",
-			name="PE-2",
-			docstatus=0,
+			name="PE-H",
+			docstatus=1,
 			payment_type="Receive",
 			party_type="Supplier",
 			party=SUPPLIER,
-			paid_amount=44.0,
-			posting_date="2026-11-20",
+			paid_amount=50.0,
+			posting_date="2026-11-15",
+			reference_no="ACH 77",
 		)
-		STATE["references"] = {"PE-2": [Row(reference_doctype="Purchase Invoice", reference_name="PINV-1")]}
-		submit("Payment Entry", "PE-2")
-		self.assertEqual((get(name).status, get(name).payment_entry), (rules.REFUND_RECEIVED, "PE-2"))
-
-	def test_a_payment_to_the_supplier_is_never_taken_for_a_refund(self):
-		self.bill()
-		name = sent_back({"PRI-1": 2})
 		STATE["roles"] = {"Accounts User"}
-		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit("Purchase Invoice", made, grand_total=-44.0, outstanding_amount=-44.0)
-		for pe, kind, party in (("PE-PAY", "Pay", SUPPLIER), ("PE-OTHER", "Receive", OTHER_SUPPLIER)):
+		self.assertEqual(api.link_payment_entry(first, "PE-H"), rules.REFUND_RECEIVED)
+		self.assertEqual(get(first).amount_received, 44.0, "what this return still expects, not all 50")
+		self.assertEqual(api.link_payment_entry(second, "PE-H"), rules.SENT_BACK)
+		doc = get(second)
+		self.assertEqual(
+			(doc.amount_received, doc.payments[0].by_hand), (6.0, 1), "what is left of the payment"
+		)
+		with self.assertRaises(FrappeError) as caught:
+			core.link_payment_entry(third, "PE-H")
+		self.assertIn("already counted on other returns", str(caught.exception))
+		with self.assertRaises(FrappeError):
+			core.link_payment_entry(first, "PE-H")
+		self.assertEqual(get(first).amount_received + get(second).amount_received, 50.0)
+
+	def test_an_amount_given_by_hand_cannot_exceed_what_is_left(self):
+		first = sent_back({"PRI-1": 2})
+		second = sent_back({"PRI-2": 5})
+		insert(
+			"Payment Entry",
+			name="PE-H",
+			docstatus=1,
+			payment_type="Receive",
+			party_type="Supplier",
+			party=SUPPLIER,
+			paid_amount=50.0,
+			posting_date="2026-11-15",
+		)
+		STATE["roles"] = {"Accounts User"}
+		core.link_payment_entry(first, "PE-H", amount=30)
+		with self.assertRaises(FrappeError) as caught:
+			core.link_payment_entry(second, "PE-H", amount=25)
+		self.assertIn("Only 20.00 of that payment is left", str(caught.exception))
+		core.link_payment_entry(second, "PE-H", amount=20)
+		self.assertEqual((get(first).amount_received, get(second).amount_received), (30.0, 20.0))
+
+	def test_a_second_payment_can_be_linked_to_the_same_return(self):
+		name = sent_back({"PRI-1": 2})
+		for pe, amount in (("PE-X", 20.0), ("PE-Y", 24.0)):
 			insert(
 				"Payment Entry",
 				name=pe,
-				docstatus=0,
-				payment_type=kind,
+				docstatus=1,
+				payment_type="Receive",
 				party_type="Supplier",
-				party=party,
-				paid_amount=44.0,
+				party=SUPPLIER,
+				paid_amount=amount,
+				posting_date="2026-11-15",
 			)
-			STATE["references"] = {pe: [Row(reference_doctype="Purchase Invoice", reference_name=made)]}
-			submit("Payment Entry", pe)
-			self.assertIsNone(get(name).payment_entry, pe)
-		self.assertEqual(get(name).status, rules.SENT_BACK)
+		STATE["roles"] = {"Accounts User"}
+		self.assertEqual(core.link_payment_entry(name, "PE-X"), rules.SENT_BACK)
+		self.assertEqual(core.link_payment_entry(name, "PE-Y"), rules.REFUND_RECEIVED)
+		self.assertEqual(get(name).amount_received, 44.0)
+
+	def test_a_payment_to_the_supplier_is_never_taken_for_a_refund(self):
+		self.bill(outstanding=0)
+		name, made = self.note_for({"PRI-1": 2})
+		erpnext_submits_debit_note(made)
+		erpnext_refund("PE-PAY", 44.0, {made: 44.0}, kind="Pay")
+		erpnext_refund("PE-OTHER", 44.0, {made: 44.0}, party=OTHER_SUPPLIER)
+		doc = get(name)
+		self.assertEqual((doc.payments, doc.status), ([], rules.SENT_BACK))
+		for pe in ("PE-PAY", "PE-OTHER"):
+			update("Payment Entry", pe, docstatus=1)
+			with self.assertRaises(FrappeError):
+				core.link_payment_entry(name, pe)
 
 	def test_no_refund_payment_without_a_debit_note(self):
 		name = sent_back({"PRI-1": 2})
@@ -1457,71 +1749,404 @@ class TestMoney(Base):
 			core.refund_source(name)
 		self.assertIn("Record Money Received", str(caught.exception))
 
-	def test_linking_documents_made_with_erpnexts_own_buttons(self):
-		name = sent_back({"PRI-1": 2})
-		insert(
-			"Purchase Receipt",
-			name="PR-RET-H",
-			docstatus=1,
-			is_return=1,
-			return_against=RECEIPT,
-			supplier=SUPPLIER,
-		)
-		insert(
-			"Purchase Receipt",
-			name="PR-RET-W",
-			docstatus=1,
-			is_return=1,
-			return_against="PR-OTHER",
-			supplier=SUPPLIER,
-		)
-		with self.assertRaises(FrappeError):
-			core.link_purchase_return(name, "PR-RET-W")
-		with self.assertRaises(FrappeError):
-			core.link_purchase_return(name, RECEIPT)
-		core.link_purchase_return(name, "PR-RET-H")
-		self.assertIn("took the items out of stock", get(name).stock_state)
-		other = sent_back({"PRI-2": 1})
-		with self.assertRaises(FrappeError) as caught:
-			core.link_purchase_return(other, "PR-RET-H")
-		self.assertIn("already linked", str(caught.exception))
-		STATE["roles"] = {"Accounts User"}
-		insert(
-			"Payment Entry",
-			name="PE-H",
-			docstatus=1,
-			payment_type="Receive",
-			party_type="Supplier",
-			party=SUPPLIER,
-			paid_amount=40,
-			posting_date="2026-11-15",
-		)
-		insert(
-			"Payment Entry",
-			name="PE-P",
-			docstatus=1,
-			payment_type="Pay",
-			party_type="Supplier",
-			party=SUPPLIER,
-			paid_amount=40,
-		)
-		with self.assertRaises(FrappeError):
-			core.link_payment_entry(name, "PE-P")
-		self.assertEqual(core.link_payment_entry(name, "PE-H"), rules.REFUND_RECEIVED)
-		self.assertEqual(get(name).amount_received, 40.0)
-
 	def test_the_daily_job_notices_a_debit_note_settled_elsewhere(self):
+		"""Payment Reconciliation sets the note against a later bill: no event of ours hears it."""
 		self.bill(outstanding=0)
-		name = sent_back({"PRI-1": 2})
-		STATE["roles"] = {"Accounts User"}
-		made = core.make_debit_note(name, "PINV-1")["name"]
-		submit(
-			"Purchase Invoice", made, grand_total=-44.0, outstanding_amount=-44.0, posting_date="2026-11-12"
-		)
+		name, made = self.note_for({"PRI-1": 2})
+		erpnext_submits_debit_note(made)
 		update("Purchase Invoice", made, outstanding_amount=0)
 		core.sync_open_returns()
 		self.assertEqual(get(name).status, rules.CREDIT_RECEIVED)
 		self.assertEqual(STATE["sent"], [], "the daily job sends nothing")
+
+
+class TestReviewFindings(Base):
+	"""One class per gap the independent review of PR 1448 found, each with its failing case."""
+
+	def manager(self):
+		STATE["roles"] = {"Purchase User", "Purchase Manager", "Accounts Manager"}
+
+	# 1. A return that comes back into play is judged again.
+
+	def test_reopening_a_denied_return_cannot_claim_what_another_took(self):
+		"""10 received. A asks for 10 and is denied; B takes all 10; A is reopened: 20 would be
+		claimed against 10."""
+		first = new_return({"PRI-1": 10})
+		core.record_denial(first, "Past the return window")
+		second = sent_back({"PRI-1": 10})
+		self.manager()
+		with self.assertRaises(FrappeError) as caught:
+			core.reopen(first, "They changed their mind")
+		for words in ("can't be reopened", "While it was Denied", "TST-PUMP-1"):
+			self.assertIn(words, str(caught.exception))
+		self.assertEqual(get(first).status, rules.DENIED)
+		lines = core.returned_lines(purchase_order_items=["POI-1"])
+		self.assertEqual([(l["supplier_return"], l["qty"]) for l in lines], [(second, 10.0)])
+
+	def test_reopening_a_canceled_return_is_judged_the_same_way(self):
+		first = new_return({"PRI-1": 10})
+		core.cancel_return(first, "Mistake")
+		new_return({"PRI-1": 4})
+		self.manager()
+		with self.assertRaises(FrappeError):
+			core.reopen(first, "Not a mistake")
+		self.assertEqual(get(first).status, rules.CANCELED)
+
+	def test_reopening_is_allowed_when_the_quantity_is_still_free(self):
+		first = new_return({"PRI-1": 6})
+		core.record_denial(first, "Past the return window")
+		other = new_return({"PRI-1": 4})
+		self.manager()
+		core.reopen(first, "They changed their mind")
+		self.assertEqual(get(first).status, rules.REQUESTED)
+		self.assertEqual(core.receipt_facts(RECEIPT)[0]["returnable"], 0)
+		core.cancel_return(other, "Not needed")
+		self.assertEqual(core.receipt_facts(RECEIPT)[0]["returnable"], 4)
+
+	def test_a_save_that_brings_a_return_back_is_judged_even_without_the_reopen_step(self):
+		"""Defense in depth: validate re-checks on any move out of Denied or Canceled."""
+		first = new_return({"PRI-1": 10})
+		core.record_denial(first, "No")
+		new_return({"PRI-1": 10})
+		doc = get(first)
+		doc.status = rules.REQUESTED
+		doc.flags.ee_action = True
+		with self.assertRaises(FrappeError):
+			doc.save()
+
+	# 3. A linked Purchase Return must say what the Supplier Return says.
+
+	def erpnext_return(self, name, rows, docstatus=1):
+		insert(
+			"Purchase Receipt",
+			name=name,
+			docstatus=docstatus,
+			is_return=1,
+			return_against=RECEIPT,
+			supplier=SUPPLIER,
+		)
+		for idx, (line, item, qty) in enumerate(rows, 1):
+			insert(
+				"Purchase Receipt Item",
+				name=f"{name}-{idx}",
+				parent=name,
+				item_code=item,
+				qty=-qty,
+				stock_qty=-qty,
+				purchase_receipt_item=line,
+			)
+
+	def test_a_return_that_took_more_than_this_record_says_cannot_be_linked(self):
+		"""All 10 returned with ERPNext's button, linked to a record for 2: the next return would
+		be offered 8 that ERPNext no longer has."""
+		name = sent_back({"PRI-1": 2})
+		self.erpnext_return("PR-RET-ALL", [("PRI-1", "TST-PUMP-1", 10)])
+		with self.assertRaises(FrappeError) as caught:
+			core.link_purchase_return(name, "PR-RET-ALL")
+		for words in ("does not return the same items", "returns 10 of TST-PUMP-1", "says 2"):
+			self.assertIn(words, str(caught.exception))
+		self.assertIsNone(get(name).purchase_return)
+		self.assertEqual(
+			core.receipt_facts(RECEIPT)[0]["returnable"], 0, "10 are gone; 2 of them claimed here too"
+		)
+
+	def test_a_return_of_other_lines_cannot_be_linked(self):
+		name = sent_back({"PRI-1": 2})
+		self.erpnext_return("PR-RET-MIX", [("PRI-1", "TST-PUMP-1", 2), ("PRI-2", "TST-FITTING-1", 1)])
+		with self.assertRaises(FrappeError) as caught:
+			core.link_purchase_return(name, "PR-RET-MIX")
+		self.assertIn("which is not on this Supplier Return", str(caught.exception))
+		self.erpnext_return("PR-RET-NONE", [("PRI-2", "TST-FITTING-1", 2)])
+		with self.assertRaises(FrappeError):
+			core.link_purchase_return(name, "PR-RET-NONE")
+
+	def test_a_matching_return_is_linked_and_counted_once(self):
+		name = sent_back({"PRI-1": 2})
+		self.erpnext_return("PR-RET-OK", [("PRI-1", "TST-PUMP-1", 2)])
+		self.assertEqual(
+			core.receipt_facts(RECEIPT)[0]["returnable"], 6, "before the link: 2 claimed, 2 outside"
+		)
+		core.link_purchase_return(name, "PR-RET-OK")
+		self.assertEqual(core.receipt_facts(RECEIPT)[0]["returnable"], 8, "the same 2, once")
+		self.assertIn("took the items out of stock", get(name).stock_state)
+
+	def test_a_draft_changed_before_it_was_submitted_is_counted_as_erpnext_has_it(self):
+		"""The module drafts -5; the person makes it -8 and submits. ERPNext has 2 left, not 5."""
+		name = sent_back({"PRI-1": 5})
+		made = core.make_purchase_return(name)["name"]
+		CONN.execute(
+			"update `tabPurchase Receipt Item` set qty = -8, stock_qty = -8 where parent = ?", (made,)
+		)
+		submit("Purchase Receipt", made)
+		self.assertEqual(core.receipt_facts(RECEIPT)[0]["returnable"], 2)
+		state = get(name).stock_state
+		for words in ("disagree", "returns 8 of TST-PUMP-1", "says 5"):
+			self.assertIn(words, state)
+
+	def test_a_return_in_another_unit_is_counted_in_the_receipt_lines_unit(self):
+		"""Received 10 Boxes of 12. A hand-built return of 24 Nos is 2 Boxes, not 24."""
+		update("Purchase Receipt Item", "PRI-1", conversion_factor=12)
+		insert("Purchase Receipt", name="PR-RET-NOS", docstatus=1, is_return=1, return_against=RECEIPT)
+		insert(
+			"Purchase Receipt Item",
+			name="NOS-1",
+			parent="PR-RET-NOS",
+			item_code="TST-PUMP-1",
+			qty=-24,
+			stock_qty=-24,
+			purchase_receipt_item="PRI-1",
+		)
+		self.assertEqual(core.receipt_facts(RECEIPT)[0]["returnable"], 8)
+
+	# 5. A canceled receipt never traps its return.
+
+	def cancel_receipt(self):
+		update("Purchase Receipt", RECEIPT, docstatus=2)
+
+	def test_a_draft_whose_receipt_was_canceled_can_always_be_canceled(self):
+		name = new_return({"PRI-1": 2})
+		self.cancel_receipt()
+		doc = get(name)
+		doc.request_notes = "Still want it back"
+		with self.assertRaises(FrappeError) as caught:
+			doc.save()
+		for words in ("was canceled", "Cancel the return"):
+			self.assertIn(words, str(caught.exception))
+		for step in (
+			lambda: core.mark_requested(name, "Phone"),
+			lambda: core.record_approval(name, "RMA-1"),
+			lambda: core.mark_sent_back(name, "Dropped off"),
+		):
+			with self.assertRaises(FrappeError) as caught:
+				step()
+			self.assertIn("was canceled", str(caught.exception))
+		state = api.state(name)
+		self.assertTrue(state["receipt_canceled"])
+		self.assertEqual(state["actions"], ["deny", "cancel"], "only the ways out are offered")
+		self.assertIn("was canceled", state["receipt_gone"])
+		core.cancel_return(name, "The receipt was canceled")
+		self.assertEqual(get(name).status, rules.CANCELED)
+
+	def test_a_new_return_cannot_start_on_a_canceled_receipt(self):
+		doc = core.build_from_receipt(RECEIPT, only_lines=["PRI-1"])
+		doc.items[0].reason = "Damaged"
+		self.cancel_receipt()
+		with self.assertRaises(FrappeError) as caught:
+			doc.insert()
+		self.assertIn("is canceled, so nothing on it can be returned", str(caught.exception))
+		with self.assertRaises(FrappeError):
+			core.build_from_receipt(RECEIPT)
+
+	def test_a_requested_return_can_be_denied_or_canceled(self):
+		name = new_return({"PRI-1": 2})
+		core.mark_requested(name, "Phone")
+		self.cancel_receipt()
+		core.record_denial(name, "Receipt was entered twice")
+		self.assertEqual(get(name).status, rules.DENIED)
+
+	def test_a_sent_back_return_can_be_closed_or_have_its_money_recorded(self):
+		closed = sent_back({"PRI-1": 2})
+		paid = sent_back({"PRI-2": 1})
+		self.cancel_receipt()
+		STATE["roles"] = {"Accounts User"}
+		with self.assertRaises(FrappeError):
+			core.make_purchase_return(closed)
+		core.close_without_credit(closed, "Receipt canceled; nothing owed")
+		self.assertEqual(get(closed).status, rules.CLOSED_NO_CREDIT)
+		core.record_money(paid, "refund", 6.6, TODAY, "CHK 5")
+		self.assertEqual(get(paid).status, rules.REFUND_RECEIVED)
+		self.assertFalse(api.state(paid)["needs_purchase_return"])
+
+	def test_the_hooks_still_never_raise_with_the_receipt_gone(self):
+		name = sent_back({"PRI-1": 2})
+		made = core.make_purchase_return(name)["name"]
+		self.cancel_receipt()
+		core.on_document_change(Doc("Purchase Receipt", {"name": made}, new=False), "on_trash")
+		self.assertIsNone(get(name).purchase_return)
+		self.assertEqual(STATE["logs"], [])
+
+	# 6. One name given as a string.
+
+	def test_a_single_name_as_a_string_is_one_name(self):
+		name = new_return({"PRI-1": 2})
+		lines = core.returned_lines("POI-1")
+		self.assertEqual([(l["supplier_return"], l["purchase_order_item"]) for l in lines], [(name, "POI-1")])
+		self.assertEqual(core.returned_lines(purchase_order_items="POI-1"), lines)
+		self.assertEqual(core.returned_lines(purchase_order_items="POI-NOPE"), [])
+		self.assertEqual(core.returned_lines(""), [])
+
+	# 7. Which fields lock, and when.
+
+	def test_fees_and_tracking_stay_open_while_the_return_waits(self):
+		name = new_return({"PRI-1": 2})
+		core.mark_sent_back(name, "Carrier", "Test Freight", "1Z999")
+		doc = get(name)
+		doc.tracking_number, doc.restocking_fee = "1Z998", 4
+		doc.save()
+		doc = get(name)
+		self.assertEqual((doc.tracking_number, doc.expected_amount), ("1Z998", 40.0))
+		doc.tracking_number = ""
+		with self.assertRaises(FrappeError) as caught:
+			doc.save()
+		self.assertIn("enter the carrier and the tracking number", str(caught.exception))
+
+	def test_a_finished_returns_fees_tracking_and_request_are_locked(self):
+		name = new_return({"PRI-1": 2})
+		core.mark_sent_back(name, "Carrier", "Test Freight", "1Z999")
+		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "refund", 30, TODAY, "CHK 1")
+		self.assertEqual(get(name).amount_difference, 14.0)
+		for field, value in (
+			("restocking_fee", 14),
+			("tax_amount", 0),
+			("return_shipping_cost", 9),
+			("shipping_deducted", 1),
+			("requested_resolution", rules.CREDIT),
+			("tracking_number", "1Z000"),
+			("carrier", "Other Freight"),
+			("return_method", "Dropped off"),
+			("supplier_return_number", "RMA-9"),
+		):
+			doc = get(name)
+			doc.set(field, value)
+			with self.assertRaises(FrappeError) as caught:
+				doc.save()
+			self.assertIn("can't be changed", str(caught.exception), field)
+		self.assertEqual(get(name).amount_difference, 14.0, "the short figure cannot be edited away")
+		self.assertTrue(api.state(name)["locked"])
+
+	def test_a_manager_reopens_to_change_one(self):
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "refund", 30, TODAY, "CHK 1")
+		STATE["roles"] = {"Accounts Manager"}
+		core.reopen(name, "The supplier kept a fee we did not record")
+		doc = get(name)
+		doc.restocking_fee = 14
+		doc.save()
+		self.assertEqual(get(name).expected_amount, 30.0)
+
+	def test_a_closed_or_denied_return_is_locked_too(self):
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		core.close_without_credit(name, "Supplier refused")
+		doc = get(name)
+		doc.restocking_fee = 44
+		with self.assertRaises(FrappeError):
+			doc.save()
+
+	# 8. A fixed-amount charge on a partial return.
+
+	TAXES = (
+		{"charge_type": "Actual", "description": "Freight", "tax_amount": -35.0},
+		{"charge_type": "On Net Total", "description": "Sales Tax", "tax_amount": -4.0},
+	)
+
+	def test_a_partial_return_says_the_fixed_charge_was_reversed_in_full(self):
+		"""ERPNext's own return reverses a fixed charge in full. The figure is left as ERPNext
+		made it, and the draft says the person must change it."""
+		STATE["return_taxes"] = self.TAXES
+		name = sent_back({"PRI-1": 2})
+		made = core.make_purchase_return(name)
+		for words in ("for part of what was received", "Freight (35.00)", "before you submit"):
+			self.assertIn(words, made["notice"])
+		self.assertNotIn("Sales Tax", made["notice"], "a charge on the net total scales by itself")
+		target = STATE["standard"][made["name"]]
+		self.assertEqual(
+			[tax.tax_amount for tax in target.taxes], [-35.0, -4.0], "ERPNext's figures, untouched"
+		)
+		self.assertIn("Freight (35.00)", target.remarks, "on the document itself")
+		self.assertTrue(
+			any(doc == "Purchase Receipt" and "Freight" in text for doc, _n, text in STATE["comments"])
+		)
+
+	def test_a_whole_return_needs_no_such_notice(self):
+		STATE["return_taxes"] = self.TAXES
+		insert("Stock Ledger Entry", name="SLE-3", voucher_type="Purchase Receipt", voucher_detail_no="PRI-3")
+		name = sent_back({"PRI-1": 10, "PRI-2": 5, "PRI-3": 2})
+		made = core.make_purchase_return(name)
+		self.assertEqual(made["notice"], "")
+		self.assertNotIn("Freight", STATE["standard"][made["name"]].remarks)
+
+	def test_no_fixed_charge_no_notice(self):
+		STATE["return_taxes"] = self.TAXES[1:]
+		name = sent_back({"PRI-1": 2})
+		self.assertEqual(core.make_purchase_return(name)["notice"], "")
+
+	def test_the_debit_note_says_it_too(self):
+		STATE["note_taxes"] = self.TAXES
+		insert(
+			"Purchase Invoice",
+			name="PINV-1",
+			docstatus=1,
+			is_return=0,
+			supplier=SUPPLIER,
+			grand_total=200.0,
+			outstanding_amount=200.0,
+			posting_date="2026-11-05",
+		)
+		insert(
+			"Purchase Invoice Item",
+			name="PII-1",
+			parent="PINV-1",
+			item_code="TST-PUMP-1",
+			qty=10,
+			pr_detail="PRI-1",
+			purchase_receipt=RECEIPT,
+		)
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		made = core.make_debit_note(name, "PINV-1")
+		self.assertIn("This Debit Note is for part of what was received", made["notice"])
+		self.assertIn("Freight (35.00)", STATE["standard"][made["name"]].remarks)
+
+	# Said in the hand-back, and small enough to fix.
+
+	def test_the_bill_for_a_replacement_receipt_is_not_told_about_the_return(self):
+		sent_back({"PRI-1": 2})
+		bill = Doc(
+			"Purchase Invoice", {"is_return": 0, "items": [Row(pr_detail="PRI-NEW", po_detail="POI-1")]}
+		)
+		core.tell_the_bill(bill)
+		self.assertEqual(
+			STATE["messages"], [], "the row names its own receipt line, and that is not on a return"
+		)
+
+	def test_a_finished_return_is_not_mentioned_on_a_bill(self):
+		name = sent_back({"PRI-1": 2})
+		STATE["roles"] = {"Accounts User"}
+		core.record_money(name, "refund", 44, TODAY, "CHK 1")
+		core.tell_the_bill(Doc("Purchase Invoice", {"is_return": 0, "items": [Row(pr_detail="PRI-1")]}))
+		self.assertEqual(STATE["messages"], [])
+
+	def test_a_bills_number_is_shown_only_to_somebody_who_may_read_bills(self):
+		insert(
+			"Purchase Invoice",
+			name="PINV-1",
+			docstatus=1,
+			is_return=0,
+			supplier=SUPPLIER,
+			grand_total=200.0,
+			outstanding_amount=200.0,
+			posting_date="2026-11-05",
+			bill_no="INV-7781",
+		)
+		insert(
+			"Purchase Invoice Item",
+			name="PII-1",
+			parent="PINV-1",
+			item_code="TST-PUMP-1",
+			qty=10,
+			pr_detail="PRI-1",
+			purchase_receipt=RECEIPT,
+		)
+		name = sent_back({"PRI-1": 2})
+		self.assertEqual(api.state(name)["bills"][0]["bill_no"], "INV-7781")
+		STATE["denied"].add(("Purchase Invoice", "read"))
+		self.assertEqual(api.state(name)["bills"], [])
+		self.assertEqual(
+			rules.bill_state(None, ["PINV-1"], may_read_bills=False), "Billed in ERPNext. Needs a Debit Note"
+		)
 
 
 class TestTheBillNotice(Base):
@@ -2025,7 +2650,19 @@ class TestWiring(unittest.TestCase):
 	def test_the_links_point_at_erpnexts_own_documents(self):
 		self.assertEqual(self.fields["purchase_return"]["options"], "Purchase Receipt")
 		self.assertEqual(self.fields["debit_note"]["options"], "Purchase Invoice")
-		self.assertEqual(self.fields["payment_entry"]["options"], "Payment Entry")
+		payments = json.loads((PAYMENT_DIR / "supplier_return_payment.json").read_text(encoding="utf-8"))
+		self.assertEqual(self.fields["payments"]["options"], PAYMENT_CHILD)
+		self.assertEqual(
+			self.fields["payments"].get("read_only"), 1, "rows come from the buttons and the sync"
+		)
+		by_name = {f["fieldname"]: f for f in payments["fields"]}
+		self.assertEqual(by_name["payment_entry"]["options"], "Payment Entry")
+		self.assertEqual((payments["module"], payments.get("istable")), ("Inventory Enhancements", 1))
+		self.assertNotIn("payment_entry", self.fields, "a return can hold several payments")
+		self.assertIn(
+			"class SupplierReturnPayment(Document)",
+			(PAYMENT_DIR / "supplier_return_payment.py").read_text(encoding="utf-8"),
+		)
 		self.assertEqual(self.fields["replacement_receipt"]["options"], "Purchase Receipt")
 
 	def test_permissions_are_the_roles_the_rules_name(self):
@@ -2153,6 +2790,12 @@ class TestWiring(unittest.TestCase):
 	def test_the_scripts_lists_are_the_rules(self):
 		form = DOCTYPE_DIR / "supplier_return.js"
 		self.assertEqual(_js_list(form, "SR_METHODS"), list(rules.METHODS))
+		self.assertEqual(set(_js_list(form, "SR_FINAL")), set(rules.FINAL))
+		self.assertEqual(
+			_js_list(form, "SR_LOCKED_WHEN_FINAL"),
+			[field for field in rules.LOCKED_WHEN_FINAL if field != "posting_date"],
+			"posting_date is already read-only after Draft",
+		)
 		self.assertEqual(_js_list(form, "SR_WAYS"), [way for way in rules.REQUEST_WAYS if way != "Email"])
 		scan = APP / "public" / "js" / "stock_scan" / "app.js"
 		self.assertEqual(_js_list(scan, "RETURN_REASONS"), list(rules.REASONS))

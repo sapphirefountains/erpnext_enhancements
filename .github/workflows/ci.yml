@@ -4160,7 +4160,9 @@ jobs:
       # standard return is cut to the wrong lines or a shortfall is trimmed in silence, if a typed
       # refund is accepted once a Debit Note or Payment Entry is linked, if a debit note the
       # supplier still owes on counts as money received, or if the keys the Project Materials
-      # report reads (returned_line) are renamed. Pure: no frappe, no stub. unittest classes.
+      # report reads (returned_line) are renamed; if one payment covering two returns can be counted
+      # in full on each, if a finished return's fees stop being locked, or if a Purchase Return
+      # that took more than its record says can be linked. Pure: no frappe, no stub. unittest.
       - name: Supplier Returns rules (steps, quantities, which document, the money rule; bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v
       # Supplier Returns, the module and its endpoints, with the module's own queries run for real
@@ -4173,7 +4175,10 @@ jobs:
       # request (a save, a step, a doc_event, the daily job) or that endpoint accepts an API key;
       # if a doc_event can raise into a Purchase Receipt's or a payment's submit; or if hooks, the
       # DocType's options, the scripts' lists, Stock Scan's endpoint map, the print format, the
-      # workspace or the patches drift from the code. Own frappe stub, so its own step; unittest.
+      # workspace or the patches drift from the code; if a return reopened from Denied can claim
+      # what another return took meanwhile; if the Debit Note drafted against an unpaid bill is
+      # left booked against itself (ERPNext 16.54's default), so the bill stays unpaid; or if a
+      # canceled receipt leaves its return with no way out. Own frappe stub, so its own step.
       - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the

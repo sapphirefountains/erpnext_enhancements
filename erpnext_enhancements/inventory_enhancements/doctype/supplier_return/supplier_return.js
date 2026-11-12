@@ -25,6 +25,28 @@ const SR_WAITING = {
 };
 
 const SR_METHODS = ["Carrier", "Dropped off", "Supplier pickup"];
+const SR_FINAL = [
+	"Denied",
+	"Refund Received",
+	"Credit Received",
+	"Replacement Received",
+	"Closed Without Credit",
+	"Canceled",
+];
+const SR_LOCKED_WHEN_FINAL = [
+	"requested_resolution",
+	"tax_amount",
+	"restocking_fee",
+	"return_shipping_cost",
+	"shipping_deducted",
+	"return_method",
+	"carrier",
+	"tracking_number",
+	"supplier_return_number",
+	"supplier_response_notes",
+	"contact_email",
+	"request_notes",
+];
 const SR_WAYS = ["Phone", "In person", "Supplier's website"];
 
 function sr_call(method, args, freeze_message) {
@@ -273,8 +295,15 @@ function sr_make_purchase_return(frm) {
 				: __("Draft Purchase Return {0} created. Check the warehouse on each line, then submit it.", [made.name]),
 			indicator: "blue",
 		});
+		sr_say_notice(made.notice);
 		frappe.set_route("Form", "Purchase Receipt", made.name);
 	});
+}
+
+// A toast, not a dialog: the router closes an open dialog on the route change that follows.
+// The same words are in the draft's remarks and on its timeline.
+function sr_say_notice(notice) {
+	if (notice) frappe.show_alert({ message: frappe.utils.escape_html(notice), indicator: "orange" }, 20);
 }
 
 function sr_money_dialog(frm, state) {
@@ -309,10 +338,19 @@ function sr_money_dialog(frm, state) {
 				reqd: 1,
 				description: __("The check number, the credit memo number, or where the refund shows."),
 			},
+			{
+				fieldname: "more_expected",
+				fieldtype: "Check",
+				label: __("More is still expected"),
+				description: __(
+					"Tick it when this is one part of the refund. The return keeps waiting for the rest, and you record that when it arrives."
+				),
+			},
 			{ fieldname: "notes", fieldtype: "Small Text", label: __("Notes") },
 		],
 		__("Record"),
-		"record_money"
+		"record_money",
+		(values) => Object.assign({}, values, { more_expected: values.more_expected ? 1 : 0 })
 	);
 }
 
@@ -368,7 +406,9 @@ function sr_debit_note(frm, state) {
 	const make = (bill) =>
 		sr_call("make_debit_note", { name: frm.doc.name, purchase_invoice: bill }, __("Building the Debit Note...")).then((r) => {
 			const made = r.message || {};
-			if (made.name) frappe.set_route("Form", "Purchase Invoice", made.name);
+			if (!made.name) return;
+			sr_say_notice(made.notice);
+			frappe.set_route("Form", "Purchase Invoice", made.name);
 		});
 	if (bills.length === 1) {
 		frappe.confirm(__("Create a Debit Note against bill {0} for the items on this return?", [bills[0].name]), () => make(bills[0].name));
@@ -441,9 +481,14 @@ function sr_headline(frm, state) {
 			"orange"
 		);
 	}
-	if (state.record_only_note) frm.set_intro(state.record_only_note, "blue");
-	if (state.typed_by_hand) frm.set_intro(state.not_backed, "yellow");
-	if (state.money_note && state.money_backed && state.waiting_on === "money") frm.set_intro(state.money_note, "blue");
+	// set_intro takes HTML, and these carry item codes and document names: escaped here.
+	const esc = frappe.utils.escape_html;
+	if (state.receipt_canceled) frm.set_intro(esc(state.receipt_gone), "red");
+	if (state.record_only_note) frm.set_intro(esc(state.record_only_note), "blue");
+	if (state.typed_by_hand) frm.set_intro(esc(state.not_backed), "yellow");
+	if (state.money_note && state.money_backed && state.waiting_on === "money") {
+		frm.set_intro(esc(state.money_note), "blue");
+	}
 }
 
 function sr_buttons(frm, state) {
@@ -512,6 +557,29 @@ function sr_buttons(frm, state) {
 	}
 	if (has("replacement")) {
 		frm.add_custom_button(__("Record Replacement Received"), () => sr_replacement_dialog(frm), steps);
+	}
+	if (has("settle")) {
+		frm.add_custom_button(
+			__("No More Is Coming"),
+			() =>
+				sr_prompt(
+					frm,
+					__("No More Is Coming"),
+					[
+						{
+							fieldname: "info",
+							fieldtype: "HTML",
+							options: `<p>${__(
+								"This finishes the return at what has come back so far. The report shows the difference from what was expected."
+							)}</p>`,
+						},
+						{ fieldname: "reason", fieldtype: "Small Text", label: __("Why the rest is not coming") },
+					],
+					__("Finish"),
+					"settle"
+				),
+			steps
+		);
 	}
 	if (has("close")) {
 		frm.add_custom_button(
@@ -596,23 +664,47 @@ function sr_buttons(frm, state) {
 				documents
 			);
 		}
-		if (frm.doc.debit_note && !frm.doc.payment_entry) {
+		if (frm.doc.debit_note && flt(state.owed) > 0) {
 			frm.add_custom_button(__("Create Refund Payment"), () => sr_refund_payment(frm), documents);
 		}
-		if (!frm.doc.payment_entry) {
-			frm.add_custom_button(
-				__("Link Existing Refund Payment"),
-				() =>
-					sr_link_dialog(frm, __("Link Existing Refund Payment"), "Payment Entry", "link_payment_entry", "payment_entry", {
-						payment_type: "Receive",
-						party_type: "Supplier",
-						party: frm.doc.supplier,
-						docstatus: 1,
-					}),
-				documents
-			);
-		}
-		if (frm.doc.debit_note || frm.doc.payment_entry || frm.doc.purchase_return) {
+		// A return can hold several payments (a refund that arrives in parts), so this stays.
+		frm.add_custom_button(
+			__("Link a Refund Payment"),
+			() =>
+				sr_prompt(
+					frm,
+					__("Link a Refund Payment"),
+					[
+						{
+							fieldname: "payment_entry",
+							fieldtype: "Link",
+							options: "Payment Entry",
+							label: __("Payment Entry"),
+							reqd: 1,
+							get_query: () => ({
+								filters: {
+									payment_type: "Receive",
+									party_type: "Supplier",
+									party: frm.doc.supplier,
+									docstatus: 1,
+								},
+							}),
+						},
+						{
+							fieldname: "amount",
+							fieldtype: "Currency",
+							label: __("How much of it is for this return"),
+							description: __(
+								"Leave blank to take whatever other returns have not already counted. A payment is never counted twice."
+							),
+						},
+					],
+					__("Link"),
+					"link_payment_entry"
+				),
+			documents
+		);
+		if (frm.doc.debit_note || (frm.doc.payments || []).length || frm.doc.purchase_return) {
 			frm.add_custom_button(__("Check the Documents"), () => sr_step(frm, "refresh", {}), documents);
 		}
 	}
@@ -633,6 +725,10 @@ frappe.ui.form.on("Supplier Return", {
 		frm.set_df_property("items", "cannot_add_rows", true);
 		frm.set_df_property("items", "cannot_delete_rows", !draft);
 		for (const field of ["supplier", "purchase_receipt", "posting_date"]) frm.set_df_property(field, "read_only", !draft);
+		// A finished return's fees, shipping and request are part of its outcome
+		// (`supplier_return_rules.LOCKED_WHEN_FINAL`; the server refuses the save too).
+		const finished = SR_FINAL.includes(frm.doc.status);
+		for (const field of SR_LOCKED_WHEN_FINAL) frm.set_df_property(field, "read_only", finished);
 		frm.fields_dict.items.grid.update_docfield_property("qty", "read_only", !draft);
 
 		if (draft) {

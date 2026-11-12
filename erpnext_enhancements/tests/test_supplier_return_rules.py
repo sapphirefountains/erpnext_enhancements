@@ -169,6 +169,22 @@ class TestWhoMay(unittest.TestCase):
 	def test_no_typed_money_button_once_a_document_decides(self):
 		self.assertEqual(rules.allowed_actions(rules.SENT_BACK, BOOKS, money_backed=True), ["close"])
 
+	def test_no_more_is_coming_is_offered_once_something_came_back(self):
+		self.assertEqual(
+			rules.allowed_actions(rules.SENT_BACK, BOOKS, received=20.0),
+			["refund", "credit", "settle"],
+			"and Close Without Credit is not: something did come back",
+		)
+		self.assertEqual(rules.allowed_actions(rules.SENT_BACK, BOOKS, True, received=40.0), ["settle"])
+		self.assertEqual(
+			rules.allowed_actions(rules.SENT_BACK, BOOKS, True, received=68.5, owed=50.0),
+			[],
+			"a Debit Note still shows the supplier owing: that is settled in accounting",
+		)
+		self.assertEqual(rules.allowed_actions(rules.SENT_BACK, CLERK, received=20.0), ["replacement"])
+		self.assertTrue(rules.may("settle", BOOKS))
+		self.assertFalse(rules.may("settle", BUYER))
+
 
 class TestWaiting(unittest.TestCase):
 	def test_whose_move(self):
@@ -413,37 +429,21 @@ class TestMoney(unittest.TestCase):
 		"posting_date": "2026-11-10",
 		"reference": "CM-77",
 	}
-	PAYMENT = {
-		"name": "PE-1",
-		"docstatus": 1,
-		"amount": 110.0,
-		"posting_date": "2026-11-11",
-		"reference": "CHK 4410",
-	}
+	PAYMENT = {"name": "PE-1", "amount": 118.5, "posting_date": "2026-11-11", "reference": "CHK 4410"}
 
-	def test_no_documents_means_a_person_types_it(self):
+	def test_nothing_recorded_decides_nothing(self):
 		answer = rules.money_from_documents()
 		self.assertFalse(answer["backed"])
 		self.assertIsNone(answer["status"])
+		self.assertEqual(answer["amount"], 0.0)
 
-	def test_drafts_and_canceled_documents_decide_nothing(self):
+	def test_a_draft_or_canceled_debit_note_decides_nothing(self):
 		for docstatus in (0, 2):
-			answer = rules.money_from_documents(
-				debit_note=dict(self.NOTE, docstatus=docstatus),
-				payment_entry=dict(self.PAYMENT, docstatus=docstatus),
-			)
+			answer = rules.money_from_documents(debit_note=dict(self.NOTE, docstatus=docstatus))
 			self.assertFalse(answer["backed"], docstatus)
 
-	def test_a_refund_payment_is_refund_received_at_its_own_amount(self):
-		answer = rules.money_from_documents(debit_note=self.NOTE, payment_entry=self.PAYMENT)
-		self.assertEqual(answer["status"], rules.REFUND_RECEIVED)
-		self.assertEqual(answer["source"], rules.FROM_PAYMENT)
-		self.assertEqual(answer["amount"], 110.0)
-		self.assertEqual(answer["date"], "2026-11-11")
-		self.assertEqual(answer["reference"], "CHK 4410")
-
 	def test_a_settled_debit_note_is_credit_received(self):
-		"""Set against the bill (return before the bill was paid): what we owe went down."""
+		"""Booked against the bill (the return came before the bill was paid): we owe less."""
 		answer = rules.money_from_documents(debit_note=self.NOTE)
 		self.assertEqual(answer["status"], rules.CREDIT_RECEIVED)
 		self.assertEqual(answer["source"], rules.FROM_DEBIT_NOTE)
@@ -455,8 +455,73 @@ class TestMoney(unittest.TestCase):
 		answer = rules.money_from_documents(debit_note=dict(self.NOTE, owed=118.5))
 		self.assertIsNone(answer["status"])
 		self.assertTrue(answer["backed"], "but nobody may type an outcome over it")
+		self.assertEqual((answer["amount"], answer["owed"]), (0.0, 118.5))
 		self.assertIn("still owes 118.50", answer["note"])
 		self.assertIn("Payment Entry", answer["note"])
+
+	def test_a_note_refunded_in_full_is_refund_received(self):
+		answer = rules.money_from_documents(debit_note=self.NOTE, payments=[self.PAYMENT])
+		self.assertEqual(answer["status"], rules.REFUND_RECEIVED)
+		self.assertEqual(answer["source"], rules.FROM_PAYMENT)
+		self.assertEqual(answer["amount"], 118.5)
+		self.assertEqual(answer["date"], "2026-11-11")
+		self.assertEqual(answer["reference"], "CHK 4410")
+
+	def test_a_note_refunded_in_part_still_waits(self):
+		part = dict(self.PAYMENT, amount=68.5)
+		answer = rules.money_from_documents(debit_note=dict(self.NOTE, owed=50.0), payments=[part])
+		self.assertIsNone(answer["status"])
+		self.assertEqual((answer["amount"], answer["owed"]), (68.5, 50.0), "what has come back so far")
+
+	def test_payments_without_a_note_wait_until_they_add_up(self):
+		first = {"name": "PE-1", "amount": 40.0, "posting_date": "2026-11-05", "reference": "CHK 1"}
+		second = {"name": "PE-2", "amount": 60.0, "posting_date": "2026-11-09", "reference": "CHK 2"}
+		answer = rules.money_from_documents(payments=[first], expected=100)
+		self.assertIsNone(answer["status"])
+		self.assertTrue(answer["backed"])
+		self.assertEqual((answer["amount"], answer["owed"]), (40.0, 60.0))
+		self.assertIn("40.00 of 100.00 has come back", answer["note"])
+		answer = rules.money_from_documents(payments=[first, second], expected=100)
+		self.assertEqual(answer["status"], rules.REFUND_RECEIVED)
+		self.assertEqual(
+			(answer["amount"], answer["date"], answer["reference"]), (100.0, "2026-11-09", "CHK 1, CHK 2")
+		)
+
+	def test_a_short_refund_finishes_only_when_somebody_says_no_more_is_coming(self):
+		part = {"name": "PE-1", "amount": 40.0, "posting_date": "2026-11-05"}
+		self.assertIsNone(rules.money_from_documents(payments=[part], expected=100)["status"])
+		answer = rules.money_from_documents(payments=[part], expected=100, settled=True)
+		self.assertEqual(
+			(answer["status"], answer["amount"], answer["owed"]), (rules.REFUND_RECEIVED, 40.0, 0.0)
+		)
+
+	def test_an_unknown_expected_amount_never_finishes_a_return_by_itself(self):
+		part = {"name": "PE-1", "amount": 40.0}
+		self.assertIsNone(rules.money_from_documents(payments=[part], expected=0)["status"])
+
+	def test_typed_entries_are_never_backed_and_finish_when_the_person_says_so(self):
+		part = {"amount": 40.0, "date": "2026-11-05", "reference": "CHK 1", "kind": "refund"}
+		answer = rules.money_from_documents(typed=[part], expected=100)
+		self.assertEqual((answer["backed"], answer["status"], answer["source"]), (False, None, rules.TYPED))
+		self.assertEqual((answer["amount"], answer["owed"], answer["note"]), (40.0, 60.0, rules.NOT_BACKED))
+		rest = {"amount": 60.0, "date": "2026-11-09", "reference": "CHK 2", "kind": "refund"}
+		answer = rules.money_from_documents(typed=[part, rest], expected=100)
+		self.assertIsNone(answer["status"], "a typed total is somebody's word; they say when it is final")
+		answer = rules.money_from_documents(typed=[part, rest], expected=100, settled=True)
+		self.assertEqual((answer["status"], answer["amount"]), (rules.REFUND_RECEIVED, 100.0))
+		self.assertEqual((answer["date"], answer["reference"]), ("2026-11-09", "CHK 1, CHK 2"))
+
+	def test_a_typed_credit(self):
+		entry = {"amount": 44.0, "date": "2026-11-05", "reference": "CM-1", "kind": "credit"}
+		answer = rules.money_from_documents(typed=[entry], expected=44, settled=True)
+		self.assertEqual(answer["status"], rules.CREDIT_RECEIVED)
+
+	def test_documents_outrank_what_was_typed(self):
+		typed = [{"amount": 999.0, "date": "2026-11-05", "reference": "x", "kind": "refund"}]
+		answer = rules.money_from_documents(debit_note=self.NOTE, typed=typed, settled=True)
+		self.assertEqual((answer["amount"], answer["source"]), (118.5, rules.FROM_DEBIT_NOTE))
+		answer = rules.money_from_documents(payments=[self.PAYMENT], typed=typed, expected=118.5)
+		self.assertEqual((answer["amount"], answer["source"]), (118.5, rules.FROM_PAYMENT))
 
 	def test_typed_money_needs_amount_date_and_reference(self):
 		good = rules.check_typed_money("refund", "118.50", "2026-11-10", " CHK 4410 ", "2026-11-12")
@@ -475,7 +540,7 @@ class TestMoney(unittest.TestCase):
 
 	def test_typed_money_is_refused_once_a_document_is_linked(self):
 		for documents in (
-			rules.money_from_documents(payment_entry=self.PAYMENT),
+			rules.money_from_documents(payments=[self.PAYMENT], expected=500),
 			rules.money_from_documents(debit_note=self.NOTE),
 			rules.money_from_documents(debit_note=dict(self.NOTE, owed=50)),
 		):
@@ -483,9 +548,52 @@ class TestMoney(unittest.TestCase):
 				rules.check_typed_money("refund", 118.5, "2026-11-10", "CHK 1", "2026-11-12", documents)
 			self.assertIn("can't be typed", str(caught.exception))
 
-	def test_typed_money_is_allowed_beside_a_draft_document(self):
+	def test_typed_money_is_allowed_beside_a_draft_document_and_after_a_typed_part(self):
 		documents = rules.money_from_documents(debit_note=dict(self.NOTE, docstatus=0))
 		self.assertTrue(rules.check_typed_money("credit", 5, "2026-11-10", "CM-1", "2026-11-12", documents))
+		part = [{"amount": 40.0, "date": "2026-11-05", "reference": "CHK 1", "kind": "refund"}]
+		documents = rules.money_from_documents(typed=part, expected=100)
+		self.assertTrue(rules.check_typed_money("refund", 60, "2026-11-10", "CHK 2", "2026-11-12", documents))
+
+	def test_no_more_is_coming_needs_something_to_have_come(self):
+		with self.assertRaises(rules.RuleError) as caught:
+			rules.check_settle(0, rules.money_from_documents())
+		self.assertIn("Close Without Credit", str(caught.exception))
+		rules.check_settle(
+			40, rules.money_from_documents(payments=[{"name": "PE-1", "amount": 40}], expected=100)
+		)
+
+	def test_no_more_is_coming_is_refused_while_a_debit_note_says_more_is_owed(self):
+		documents = rules.money_from_documents(
+			debit_note=dict(self.NOTE, owed=50.0), payments=[dict(self.PAYMENT, amount=68.5)]
+		)
+		with self.assertRaises(rules.RuleError) as caught:
+			rules.check_settle(documents["amount"], documents)
+		self.assertIn("still shows the supplier owing 50.00", str(caught.exception))
+
+	def test_one_payment_is_shared_and_never_counted_twice(self):
+		self.assertEqual(rules.split_payment(100, [("A", 60), ("B", 60)]), {"A": 60.0, "B": 40.0})
+		self.assertEqual(rules.split_payment(100, [("A", 60), ("B", 30)]), {"A": 60.0, "B": 30.0})
+		self.assertEqual(rules.split_payment(50, [("A", 60), ("B", 30)]), {"A": 50.0, "B": 0.0})
+		self.assertEqual(rules.split_payment(-66, [("A", 44), ("B", 22)]), {"A": 44.0, "B": 22.0})
+		for allocated, claims in ((100, [("A", 60), ("B", 60)]), (10, [("A", 60), ("B", 60), ("C", 5)])):
+			self.assertLessEqual(sum(rules.split_payment(allocated, claims).values()), allocated)
+		self.assertEqual(rules.split_payment(100, []), {})
+
+	def test_a_payment_linked_by_hand_takes_only_what_is_left(self):
+		self.assertEqual(rules.by_hand_share(50, 0), 50.0)
+		self.assertEqual(rules.by_hand_share(50, 0, still_expected=44), 44.0, "what this return expects")
+		self.assertEqual(rules.by_hand_share(50, 44, still_expected=33), 6.0, "what is left of the payment")
+		self.assertEqual(rules.by_hand_share(50, 20, asked="30"), 30.0)
+		for args, words in (
+			((50, 50), "already counted on other returns"),
+			((50, 44, 7), "Only 6.00 of that payment is left"),
+			((50, 0, 0), "how much of the payment"),
+			((50, 0, "lots"), "how much of the payment"),
+		):
+			with self.assertRaises(rules.RuleError) as caught:
+				rules.by_hand_share(*args)
+			self.assertIn(words, str(caught.exception))
 
 	def test_the_record_says_it_plainly(self):
 		self.assertIn("not backed by an ERPNext payment", rules.NOT_BACKED)
@@ -503,6 +611,95 @@ class TestMoney(unittest.TestCase):
 		):
 			with self.assertRaises(rules.RuleError):
 				rules.check_send_back(*args)
+
+
+class TestLocksLinksAndCharges(unittest.TestCase):
+	"""The rules added after the independent review of PR 1448."""
+
+	def test_nothing_is_locked_until_the_return_is_finished(self):
+		for status in (rules.DRAFT, rules.REQUESTED, rules.APPROVED, rules.SENT_BACK):
+			self.assertEqual(rules.locked_fields(status), (), status)
+		for status in rules.FINAL:
+			self.assertEqual(rules.locked_fields(status), rules.LOCKED_WHEN_FINAL, status)
+
+	def test_what_a_finished_return_locks(self):
+		for field in (
+			"restocking_fee",
+			"return_shipping_cost",
+			"shipping_deducted",
+			"tax_amount",
+			"carrier",
+			"tracking_number",
+			"return_method",
+			"requested_resolution",
+		):
+			self.assertIn(field, rules.LOCKED_WHEN_FINAL)
+
+	def test_a_return_nobody_links_counts_in_full(self):
+		rows = [("L1", "RET-1", 3), ("L1", "RET-2", 2), ("L2", "RET-2", 1)]
+		self.assertEqual(rules.returned_outside(rows, {}), {"L1": 5.0, "L2": 1.0})
+
+	def test_a_linked_return_counts_only_what_it_took_beyond_its_record(self):
+		rows = [("L1", "RET-1", 10)]
+		self.assertEqual(rules.returned_outside(rows, {"RET-1": {"L1": 2}}), {"L1": 8.0})
+		self.assertEqual(rules.returned_outside(rows, {"RET-1": {"L1": 10}}), {})
+		self.assertEqual(rules.returned_outside(rows, {"RET-1": {"L1": 12}}), {}, "never negative")
+		self.assertEqual(
+			rules.returned_outside(rows, {"RET-1": {}}), {"L1": 10.0}, "a line its record does not name"
+		)
+
+	def test_a_link_needs_the_same_lines_at_the_same_quantities(self):
+		self.assertEqual(rules.link_problems({"L1": 2}, {"L1": 2.0}), [])
+		labels = {"L1": "TST-PUMP-1", "L2": "TST-TEE-2"}
+		self.assertEqual(
+			rules.link_problems({"L1": 2}, {"L1": 10}, labels),
+			["It returns 10 of TST-PUMP-1; this Supplier Return says 2."],
+		)
+		self.assertEqual(
+			rules.link_problems({"L1": 2}, {"L1": 2, "L2": 1}, labels),
+			["It returns 1 of TST-TEE-2, which is not on this Supplier Return."],
+		)
+		self.assertEqual(
+			rules.link_problems({"L1": 2, "L2": 1}, {"L1": 2}, labels),
+			["It does not return TST-TEE-2; this Supplier Return says 1."],
+		)
+
+	def test_a_mismatch_is_said_on_the_record(self):
+		self.assertEqual(rules.return_mismatch({"L1": 5}, {"L1": 5}), "")
+		words = rules.return_mismatch({"L1": 5}, {"L1": 8}, {"L1": "TST-PUMP-1"})
+		self.assertIn("disagree", words)
+		self.assertIn("returns 8 of TST-PUMP-1; this Supplier Return says 5", words)
+
+	def test_a_fixed_charge_on_a_partial_return_is_said_not_changed(self):
+		words = rules.fixed_charge_notice([("Freight", -35.0), ("Handling", 0)], partial=True)
+		for part in (
+			"This Purchase Return is for part of what was received",
+			"this fixed charge in full",
+			"Freight (35.00)",
+			"before you submit",
+		):
+			self.assertIn(part, words)
+		self.assertNotIn("Handling", words)
+		both = rules.fixed_charge_notice([("Freight", 35), ("Crating", 12)], True, "Debit Note")
+		self.assertIn("This Debit Note", both)
+		self.assertIn("these fixed charges in full: Freight (35.00), Crating (12.00)", both)
+
+	def test_no_notice_for_a_whole_return_or_without_a_fixed_charge(self):
+		self.assertEqual(rules.fixed_charge_notice([("Freight", 35)], partial=False), "")
+		self.assertEqual(rules.fixed_charge_notice([], partial=True), "")
+		self.assertEqual(rules.fixed_charge_notice([("Freight", 0)], partial=True), "")
+
+	def test_a_string_is_one_name(self):
+		self.assertEqual(rules.as_names("POI-1"), ["POI-1"])
+		self.assertEqual(rules.as_names(["POI-2", "POI-1", None, "", "POI-1"]), ["POI-1", "POI-2"])
+		self.assertEqual(rules.as_names(("POI-1",)), ["POI-1"])
+		self.assertEqual(rules.as_names(name for name in ("POI-1",)), ["POI-1"])
+		for nothing in (None, "", [], ()):
+			self.assertEqual(rules.as_names(nothing), [])
+
+	def test_a_bill_is_told_only_about_returns_still_in_motion(self):
+		self.assertEqual(set(rules.BILL_NOTICE_STATUSES), set(rules.STATUSES) - rules.FINAL)
+		self.assertIn(rules.SENT_BACK, rules.BILL_NOTICE_STATUSES)
 
 
 class TestTheBill(unittest.TestCase):
@@ -748,6 +945,18 @@ class TestTheReport(unittest.TestCase):
 		self.assertEqual(row["money_source"], "Payment Entry")
 		self.assertEqual(row["outstanding"], 0.0)
 		self.assertEqual(row["bill"], "Debit Note DN-1")
+
+	def test_a_part_that_came_back_shows_while_the_rest_is_waited_on(self):
+		row = rules.report_row(self.doc(amount_received=20), [], "2026-11-12")
+		self.assertEqual((row["amount_received"], row["outstanding"], row["days_waiting"]), (20.0, 98.5, 10))
+
+	def test_a_bills_number_is_for_readers_of_bills(self):
+		row = rules.report_row(self.doc(), ["PINV-1"], "2026-11-12", may_read_bills=False)
+		self.assertEqual(row["bill"], "Billed in ERPNext. Needs a Debit Note")
+		row = rules.report_row(self.doc(debit_note="DN-1"), ["PINV-1"], "2026-11-12", may_read_bills=False)
+		self.assertEqual(row["bill"], "Debit Note made")
+		row = rules.report_row(self.doc(), [], "2026-11-12", may_read_bills=False)
+		self.assertEqual(row["bill"], "Not billed in ERPNext. The bill should come in lower")
 
 	def test_views(self):
 		waiting = (rules.SENT_BACK, rules.REFUND, 100, 0)

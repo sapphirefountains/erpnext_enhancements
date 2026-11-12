@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     we owe. A Payment Entry of type Receive is the refund. Nothing records the *request*: what we
     asked the supplier, their return number, the tracking number, and whether the money came
     back. There is no RMA document for purchases. That gap is all this release adds.
-  - **A new DocType, Supplier Return** (with Supplier Return Item), in Inventory Enhancements,
+  - **A new DocType, Supplier Return** (with Supplier Return Item for its lines and Supplier
+    Return Payment for its refunds and credits), in Inventory Enhancements,
     where the Purchasing card, Stock Scan and the receipts' Maintain Stock guard already are. It
     is a tracking record: it never writes a stock or ledger entry. It is not submittable; each
     step is a button and the status is never typed (a save that changes it is put back).
@@ -48,6 +49,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     bill exists in ERPNext, one click drafts the Debit Note the same way (Update Stock off: the
     Purchase Return moves the stock). The refund is ERPNext's `get_payment_entry`. No code here
     writes a ledger entry or sets a docstatus.
+    - **The Debit Note lowers the bill when the bill can take it.** In ERPNext 16.54.0
+      `Purchase Invoice.update_outstanding_for_self` defaults to 1 and `make_return_doc` leaves it
+      there, so a debit note made the standard way is booked against *itself*
+      (`add_supplier_gl_entry`): the bill stays fully unpaid and nothing lowers it until somebody
+      runs Payment Reconciliation. If the bill is paid in the meantime, the supplier is overpaid.
+      A return against an unpaid bill means "pay this bill less", so the note drafted here has
+      that box turned **off** when the bill's outstanding amount covers the note: it is booked
+      against the bill, the bill's outstanding drops and the note's own is 0
+      (`taxes_and_totals.calculate_outstanding_amount`). When the bill cannot absorb the note (it
+      is paid, or nearly) the box is left **on**, and the note carries what the supplier owes us,
+      which is what a refund Payment Entry is made against. ERPNext applies the same rule itself
+      (`accounts_controller.validate_against_voucher_outstanding`). Chosen over keeping the
+      default and tracking Payment Reconciliation as a step: it is what the person means, it
+      closes the window in which the bill is paid in full by mistake, and it is ERPNext's own
+      checkbox, visible on the draft.
+    - **A fixed-amount charge on a partial return is said, not changed.** ERPNext's own return
+      reverses an "Actual" charge in full whatever part is going back. Nobody but the person knows
+      what the supplier will give back of a freight charge, so the figure stays as ERPNext made it
+      and the draft says so in its Remarks, on its timeline and in a message when it is created.
+      Production had one such row among 187 on submitted receipts.
   - **Three kinds of line.** A stock item received into stock: the Purchase Return takes it out.
     A non-stock line: nothing is in stock, and the Purchase Return posts nothing, but it lowers
     the order's received quantity, which lets a replacement be received against the same line
@@ -68,11 +89,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refund or credit is an amount, a date and a reference typed by Accounts User, Accounts
     Manager or Purchase Manager, and the form, the timeline and the report all say "Typed by
     hand. It is not backed by an ERPNext payment." Once a submitted Debit Note or Payment Entry
-    is linked, the outcome and the amount are read from it and cannot be typed: the buttons are
-    not offered, the endpoint refuses, and a form save is put back. A debit note the supplier
-    still owes us on is not "received". A daily job re-reads the Debit Note of each return still
-    waiting, because Payment Reconciliation changes a note's outstanding amount without any
-    event this app hears.
+    backs the money, the outcome and the amount are read from it and cannot be typed: the
+    buttons are not offered, the endpoint refuses, a form save is put back, and anything typed
+    earlier gives way with a note on the timeline. A debit note the supplier still owes us on is
+    not "received". A daily job re-reads the Debit Note of each return still waiting, because
+    Payment Reconciliation changes a note's outstanding amount without any event this app hears.
+    - **Each refund or credit is a row, and a payment is counted once.** A row with a Payment
+      Entry holds *this return's share* of it: what the payment allocates to the return's Debit
+      Note, or, for one payment covering several returns, a split between them
+      (`supplier_return_rules.split_payment`); a payment linked by hand takes only what other
+      returns have not already counted. So one 100 refund for two returns is never 100 on each.
+    - **A refund that arrives in parts needs no reopen.** A typed entry can be ticked *More is
+      still expected*, and a return can hold several payments. *No More Is Coming* finishes a
+      return at what has come back; the report shows the difference.
   - **The email to the supplier.** Send Return Request shows the recipient (the address on the
     return, the supplier's contacts, the supplier's own address, or another one typed in), the
     subject and the message, all editable, with a preview in the letterhead; the PDF is attached
@@ -110,7 +139,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Return inside a savepoint and log a failure. A stale label on a return must not be the
     reason a receipt or a payment cannot be submitted. They read by name and do nothing when no
     return names the document, which is every document today.
-  - **What a migrate does to a site:** two new DocTypes and one Report by model sync; the Email
+  - **Found by the independent review of the pull request and fixed before merge.**
+    - *A reopened return is judged again.* While Denied or Canceled a return's quantities were
+      free for another return. Reopening one re-runs the quantity limit and refuses when they
+      have been taken (10 received, A denied, B takes 10, A reopened: 20 would have been claimed).
+    - *A Purchase Return made with ERPNext's own button is linked only if it says what the
+      Supplier Return says*: the same receipt lines at the same quantities. And a submitted return
+      that took more than its record says (the draft was changed) counts for the excess, in the
+      receipt line's own unit, and the record's Stock line says the two disagree.
+    - *A canceled receipt never traps its return.* ERPNext lets a receipt be canceled under a
+      return that is not finished. The form then says why in red, and Cancel Return, Supplier
+      Denied, Close Without Credit and recording what came back still work.
+    - *A finished return's fees, tracking and request are locked.* They stay open until the
+      outcome, because a restocking fee is often learned when the refund arrives; after it they
+      are part of it. Reopen is how a manager changes one.
+    - *`returned_lines("POI-1")`* takes a single name as a string.
+    - *The bill notice* is for returns still in motion, matches a bill row on its receipt line
+      when it names one (so the bill for a replacement receipt is not told about the return it
+      replaced), and *a bill's number* is shown on the form and the report only to somebody who
+      may read Purchase Invoices.
+  - **What a migrate does to a site:** three new DocTypes and one Report by model sync; the Email
     Template *Supplier Return Request* created if absent (nothing is sent); the Print Format
     upserted; the Inventory Enhancements workspace re-imported with two links and a shortcut. No
     existing record is changed.

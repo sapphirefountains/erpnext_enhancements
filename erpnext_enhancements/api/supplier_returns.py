@@ -10,7 +10,8 @@ What question each answers:
   lines, for ``frappe.model.open_mapped_doc``). ``start_from_scan`` saves a Draft for one line from
   the Stock Scan page, where there is no Desk form to fill.
 * **"What happens next?"** ``state`` (the buttons the caller may use, days waiting, what the stock
-  and money sides need) and one endpoint per step.
+  and money sides need) and one endpoint per step. ``state`` names a bill only to a caller who
+  may read Purchase Invoices.
 * **"Send it."** ``request_draft`` gives the email as the person will send it; ``send_request``
   sends what they approved.
 * **"Which ERPNext document?"** ``make_purchase_return``, ``make_debit_note``, ``refund_source``
@@ -227,19 +228,27 @@ def state(name):
 	plan = core._plan(doc)
 	purchase_return = core._document("Purchase Receipt", doc.purchase_return, [])
 	may_write = bool(doc.has_permission("write"))
+	roles = frappe.get_roles()
+	# A bill's number is shown only to somebody who may read bills. The Create Debit Note button
+	# needs it, and that button is for the money roles.
+	may_read_bills = bool(frappe.has_permission("Purchase Invoice", "read"))
+	receipt_live = core.receipt_is_live(doc.purchase_receipt)
 	return {
 		"status": doc.status,
-		"actions": rules.allowed_actions(doc.status, frappe.get_roles(), money["backed"])
-		if may_write
-		else [],
+		"actions": _actions(doc, roles, money, receipt_live) if may_write else [],
 		"waiting_on": rules.waiting_on(doc.status, doc.requested_resolution),
 		"days_waiting": rules.days_waiting(doc.status_changed_on or doc.creation, nowdate()),
-		"needs_purchase_return": rules.needs_stock_action(doc.status, plan, purchase_return),
+		"needs_purchase_return": receipt_live and rules.needs_stock_action(doc.status, plan, purchase_return),
 		"purchase_return_is_draft": bool(purchase_return and cint(purchase_return.docstatus) == 0),
 		"takes_stock": plan["takes_stock"],
 		"record_only_note": plan["note"],
+		"receipt_canceled": not receipt_live,
+		"receipt_gone": "" if receipt_live else core._receipt_gone(doc.purchase_receipt),
 		"money_backed": money["backed"],
 		"money_note": money["note"],
+		"received": flt(money["amount"]),
+		"owed": flt(money["owed"]),
+		"locked": doc.status in rules.FINAL,
 		"typed_by_hand": doc.money_source == rules.TYPED,
 		"not_backed": rules.NOT_BACKED,
 		"bills": [
@@ -251,11 +260,23 @@ def state(name):
 			}
 			for row in core.bills_for(doc)
 		]
-		if doc.status in rules.GONE
+		if doc.status in rules.GONE and may_read_bills
 		else [],
-		"may_money": rules.may("refund", frappe.get_roles()) and may_write,
-		"may_create": rules.may("send_back", frappe.get_roles()) and may_write,
+		"may_money": rules.may("refund", roles) and may_write,
+		"may_create": rules.may("send_back", roles) and may_write,
 	}
+
+
+def _actions(doc, roles, money, receipt_live):
+	"""The steps offered. With the receipt canceled, only the ways out and the money that is
+	already owed: ``supplier_returns._advance`` refuses the rest."""
+	# "No More Is Coming" is held back only while a Debit Note says the supplier still owes.
+	owed_on_note = money["owed"] if money["source"] == rules.FROM_DEBIT_NOTE else 0.0
+	actions = rules.allowed_actions(doc.status, roles, money["backed"], money["amount"], owed_on_note)
+	if receipt_live:
+		return actions
+	keep = set(core.WAYS_OUT) | {"refund", "credit", "settle"}
+	return [action for action in actions if action in keep]
 
 
 @frappe.whitelist(methods=["GET", "POST"])
@@ -299,9 +320,16 @@ def mark_sent_back(name, return_method, carrier=None, tracking_number=None, sent
 
 
 @frappe.whitelist(methods=["POST"])
-def record_money(name, kind, amount, received_on, reference, notes=None):
-	"""A refund or credit typed by hand: only while no Debit Note or Payment Entry is linked."""
-	return core.record_money(name, kind, amount, received_on, reference, notes).status
+def record_money(name, kind, amount, received_on, reference, notes=None, more_expected=0):
+	"""A refund or credit typed by hand: only while no Debit Note or Payment Entry is linked.
+	``more_expected``: this is one part, and the return keeps waiting for the rest."""
+	return core.record_money(name, kind, amount, received_on, reference, notes, cint(more_expected)).status
+
+
+@frappe.whitelist(methods=["POST"])
+def settle(name, reason=None):
+	"""No More Is Coming: finish the return at what has come back so far."""
+	return core.settle(name, reason).status
 
 
 @frappe.whitelist(methods=["POST"])
@@ -409,5 +437,7 @@ def link_debit_note(name, debit_note):
 
 
 @frappe.whitelist(methods=["POST"])
-def link_payment_entry(name, payment_entry):
-	return core.link_payment_entry(name, payment_entry)
+def link_payment_entry(name, payment_entry, amount=None):
+	"""Record a refund Payment Entry on this return. ``amount``: how much of it is for this
+	return (blank: whatever other returns have not already counted)."""
+	return core.link_payment_entry(name, payment_entry, amount)

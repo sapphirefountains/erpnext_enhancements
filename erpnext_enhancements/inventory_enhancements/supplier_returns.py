@@ -19,8 +19,8 @@ What is careful here, including the parts that look like omissions:
   ``purchase_invoice.make_debit_note``), cut the result down to this return's lines, and save a
   **draft**. The refund is ERPNext's ``get_payment_entry``, opened unsaved.
 * **No Custom Field on Purchase Receipt, Purchase Invoice or Payment Entry.** The link lives on
-  the Supplier Return (``purchase_return``, ``debit_note``, ``payment_entry``,
-  ``replacement_receipt``); the standard documents find their return by asking for it
+  the Supplier Return (``purchase_return``, ``debit_note``, ``replacement_receipt`` and the
+  ``payments`` table); the standard documents find their return by asking for it
   (:func:`linked_to`), and their doc_events call :func:`on_document_change`. A Custom Field is
   forever on this site (hidden, never deleted), and four of them were not worth that.
 * **A record-only line never reaches ERPNext.** A stock item's receipt line with no stock ledger
@@ -35,6 +35,20 @@ What is careful here, including the parts that look like omissions:
 * **Money typed by hand says so.** ``money_source`` is "Typed by hand" until a submitted Debit Note
   or Payment Entry is linked; from then on the outcome and the amount are read from that document
   on every sync and cannot be typed (``supplier_return_rules.check_typed_money``).
+* **A payment is counted once, and a return can hold several.** Each refund is a row of
+  ``payments`` holding *this return's share* of a Payment Entry
+  (``supplier_return_rules.split_payment`` and ``by_hand_share``), so one payment covering two
+  returns is never 100 on each, and a refund that arrives in parts is two rows. What a person
+  types is a row too, without a Payment Entry.
+* **A Debit Note this module drafts lowers the bill when the bill can take it.** ERPNext 16.54.0
+  books a debit note against itself by default (*Update Outstanding for Self*); see
+  :func:`make_debit_note` for why that box is turned off when the bill's outstanding covers the
+  note, and left on when it does not.
+* **A return that comes back into play is judged again.** While Denied or Canceled its quantities
+  were free; reopening it re-runs the quantity limit.
+* **A canceled receipt never traps a return.** ERPNext lets the receipt be canceled under a
+  return that is not finished. The ways out (cancel, deny, close, and recording what came back)
+  stay open, with a plain message on everything else.
 * **Reads are safe before the DocType exists.** :func:`returned_lines` is called by other modules'
   reports, which may deploy first.
 
@@ -67,11 +81,17 @@ ACTION_FIELDS = (
 	"money_reference",
 	"money_source",
 	"debit_note",
-	"payment_entry",
 	"closed_on",
 	"money_recorded_by",
 	"outcome_notes",
+	"money_settled",
 )
+
+#: The child table of refunds and credits. Its rows are written by the actions and the sync.
+PAYMENT_CHILD = "Supplier Return Payment"
+
+#: The steps that stay open when the receipt a return names has been canceled: the ways out.
+WAYS_OUT = ("cancel", "close", "deny")
 
 #: The line fields that say *what* is going back. Locked once the return leaves Draft.
 LINE_IDENTITY = ("purchase_receipt_item", "item_code", "qty")
@@ -84,7 +104,6 @@ ORIGINAL_ROLE = "returned on"
 LINK_FIELDS = {
 	"Purchase Receipt": ("purchase_return", "replacement_receipt"),
 	"Purchase Invoice": ("debit_note",),
-	"Payment Entry": ("payment_entry",),
 }
 
 RECEIPT_LINE_FIELDS = [
@@ -137,7 +156,8 @@ def returned_lines(purchase_order_items=None, project=None):
 	installed.
 	"""
 	try:
-		order_lines = sorted({name for name in (purchase_order_items or []) if name})
+		# One name given as a string is one name, not its letters.
+		order_lines = rules.as_names(purchase_order_items)
 		if not (order_lines or project) or not installed():
 			return []
 		conditions, values = ["p.status not in %(skip)s"], {"skip": tuple(sorted(rules.NOT_COUNTED))}
@@ -212,34 +232,68 @@ def _claimed_elsewhere(line_names, excluding=None):
 	return {name: flt(qty) for name, qty in rows}
 
 
-def _returned_outside(receipt, line_names):
-	"""``{receipt line: quantity}`` on submitted Purchase Returns no standing Supplier Return links."""
-	if not line_names:
-		return {}
-	linked = set()
-	if installed():
-		linked = set(
-			frappe.get_all(
-				DOCTYPE,
-				filters={"purchase_receipt": receipt, "status": ("not in", sorted(rules.NOT_COUNTED))},
-				pluck="purchase_return",
-			)
-		)
+def _return_rows(receipt, parents=None, submitted_only=True):
+	"""Purchase Return rows against ``receipt``: ``[(receipt line, return, quantity)]``.
+
+	The quantity is positive and in the **receipt line's** unit: a return built by hand in another
+	unit is converted through its stock quantity, so 1 Box of 12 is not read as 1 of 12.
+	"""
+	conditions = [
+		"p.is_return = 1",
+		"p.return_against = %(receipt)s",
+		"ifnull(c.purchase_receipt_item, '') != ''",
+		"p.docstatus = 1" if submitted_only else "p.docstatus < 2",
+	]
+	values = {"receipt": receipt}
+	if parents:
+		conditions.append("c.parent in %(parents)s")
+		values["parents"] = tuple(parents)
 	rows = frappe.db.sql(
-		"""
-		select c.purchase_receipt_item, c.parent, abs(c.qty)
+		f"""
+		select c.purchase_receipt_item, c.parent, c.qty, c.stock_qty, r.conversion_factor
 		from `tabPurchase Receipt Item` c
 		join `tabPurchase Receipt` p on p.name = c.parent
-		where p.docstatus = 1 and p.is_return = 1 and p.return_against = %(receipt)s
-			and c.purchase_receipt_item in %(lines)s
+		left join `tabPurchase Receipt Item` r on r.name = c.purchase_receipt_item
+		where {" and ".join(conditions)}
 		""",
-		{"receipt": receipt, "lines": tuple(line_names)},
+		values,
 	)
-	out = {}
-	for line, parent, qty in rows:
-		if parent not in linked:
-			out[line] = out.get(line, 0.0) + flt(qty)
+	out = []
+	for line, parent, qty, stock_qty, factor in rows:
+		factor = flt(factor) or 1.0
+		out.append((line, parent, abs(flt(stock_qty)) / factor if flt(stock_qty) else abs(flt(qty))))
 	return out
+
+
+def _returned_outside(receipt, line_names):
+	"""``{receipt line: quantity}`` returned through ERPNext that no Supplier Return accounts for
+	(``supplier_return_rules.returned_outside``): a return nobody links, in full, and whatever a
+	linked return took beyond what its Supplier Return says."""
+	wanted = set(line_names or [])
+	if not wanted:
+		return {}
+	rows = [row for row in _return_rows(receipt) if row[0] in wanted]
+	linked = {}
+	if rows and installed():
+		for parent, line, qty in frappe.db.sql(
+			f"""
+			select p.purchase_return, c.purchase_receipt_item, sum(c.qty)
+			from `tab{CHILD}` c
+			join `tab{DOCTYPE}` p on p.name = c.parent
+			where p.purchase_receipt = %(receipt)s
+				and p.status not in %(skip)s
+				and ifnull(p.purchase_return, '') != ''
+				and ifnull(c.line_kind, '') != %(record_only)s
+			group by p.purchase_return, c.purchase_receipt_item
+			""",
+			{
+				"receipt": receipt,
+				"skip": tuple(sorted(rules.NOT_COUNTED)),
+				"record_only": rules.RECORD_ONLY,
+			},
+		):
+			linked.setdefault(parent, {})[line] = flt(qty)
+	return rules.returned_outside(rows, linked)
 
 
 def receipt_facts(receipt, excluding=None):
@@ -285,7 +339,8 @@ def receipt_facts(receipt, excluding=None):
 	return facts
 
 
-def _receipt_header(receipt):
+def _receipt_header(receipt, live=True):
+	"""The receipt's header. With ``live``, refuses one that is not submitted."""
 	if not receipt:
 		frappe.throw(_("Which Purchase Receipt? None was named."))
 	header = frappe.db.get_value(
@@ -309,13 +364,27 @@ def _receipt_header(receipt):
 		frappe.throw(
 			_("{0} is itself a return. Start from the receipt the items came in on.").format(receipt)
 		)
-	if cint(header.docstatus) != 1:
+	if live and cint(header.docstatus) == 2:
+		frappe.throw(_("Purchase Receipt {0} is canceled, so nothing on it can be returned.").format(receipt))
+	if live and cint(header.docstatus) != 1:
 		frappe.throw(
 			_("Purchase Receipt {0} is not submitted, so nothing has been received on it yet.").format(
 				receipt
 			)
 		)
 	return header
+
+
+def receipt_is_live(receipt):
+	"""Whether the receipt a return names is still submitted. ERPNext lets a receipt be canceled
+	while a Supplier Return names it (a Supplier Return is never submitted, so it does not block)."""
+	return cint(frappe.db.get_value("Purchase Receipt", receipt, "docstatus") or 0) == 1 if receipt else False
+
+
+def _receipt_gone(receipt):
+	return _(
+		"Purchase Receipt {0} was canceled, so this return can't go any further. Cancel the return, or, if the items already went back, close it without credit or record what came back."
+	).format(receipt)
 
 
 def _supplier_email(supplier):
@@ -444,12 +513,25 @@ def _set_totals(doc, header=None, fresh_tax=False):
 def validate(doc):
 	"""Everything a save checks. The controller's ``validate``."""
 	before = doc.get_doc_before_save() if not doc.is_new() else None
+	by_action = bool(doc.flags.get("ee_action"))
 	_protect_action_fields(doc, before)
 	# The controller's validate runs before Frappe's own mandatory check, and a read by a blank
 	# name would answer with some other receipt.
 	if not doc.purchase_receipt or not doc.supplier:
 		frappe.throw(_("Pick the supplier and the Purchase Receipt the items came in on."))
-	header = _receipt_header(doc.purchase_receipt)
+	header = _receipt_header(doc.purchase_receipt, live=False)
+	if cint(header.docstatus) != 1:
+		# The receipt was canceled under the return. Nothing more is read from it: the lines keep
+		# what they held, and only a step may save (the ways out, and the sync). ``_advance``
+		# decides which steps; a plain save is told why.
+		if before is None:
+			# A new return: the receipt must be a submitted one (this says which it is not).
+			_receipt_header(doc.purchase_receipt)
+		if not by_action:
+			frappe.throw(_receipt_gone(doc.purchase_receipt))
+		_set_totals(doc)
+		_set_derived(doc)
+		return
 	if header.supplier != doc.supplier:
 		frappe.throw(
 			_("Purchase Receipt {0} is from {1}, not {2}.").format(
@@ -459,6 +541,8 @@ def validate(doc):
 	doc.company = header.company
 	if getdate(doc.posting_date) < getdate(header.posting_date):
 		frappe.throw(_("The return can't be dated before the receipt ({0}).").format(header.posting_date))
+	if before and not by_action:
+		_refuse_locked_changes(doc, before)
 	facts = {fact["purchase_receipt_item"]: fact for fact in receipt_facts(doc.purchase_receipt, doc.name)}
 	draft = doc.status == rules.DRAFT
 	if before and before.status != rules.DRAFT:
@@ -474,22 +558,12 @@ def validate(doc):
 		qty, reason, notes = row.qty, row.reason, row.condition_notes
 		_fill_line(row, fact)
 		row.qty, row.reason, row.condition_notes = qty, reason, notes
-	if draft:
-		problems = rules.quantity_problems(
-			[
-				{
-					"idx": row.idx,
-					"item_code": row.item_code,
-					"qty": row.qty,
-					"returnable": facts[row.purchase_receipt_item]["returnable"],
-					"received": row.received_qty,
-					"reason": row.reason,
-					"condition_notes": row.condition_notes,
-					"purchase_receipt_item": row.purchase_receipt_item,
-				}
-				for row in doc.items
-			]
-		)
+	# The quantities are judged while they can change (Draft), and again whenever a return that
+	# did not count comes back into play: while it was Denied or Canceled its lines were free for
+	# another return to take.
+	back_in_play = bool(before and before.status in rules.NOT_COUNTED and doc.status not in rules.NOT_COUNTED)
+	if draft or back_in_play:
+		problems = _quantity_problems(doc, facts)
 		if problems:
 			frappe.throw("<br>".join(frappe.utils.escape_html(problem) for problem in problems))
 	if doc.requested_resolution not in rules.RESOLUTIONS:
@@ -497,9 +571,74 @@ def validate(doc):
 	for field in ("tax_amount", "restocking_fee", "return_shipping_cost"):
 		if flt(doc.get(field)) < 0:
 			frappe.throw(_("{0} can't be negative.").format(doc.meta.get_label(field)))
+	if doc.status == rules.SENT_BACK and not by_action:
+		# How it went back stays correctable while the return waits, and stays complete.
+		try:
+			rules.check_send_back(doc.return_method, doc.carrier, doc.tracking_number)
+		except rules.RuleError as error:
+			_throw(error)
 	_set_totals(doc, header, fresh_tax=draft and _tax_is_untouched(doc, before, header))
 	_set_header_links(doc)
 	_set_derived(doc)
+
+
+def _quantity_problems(doc, facts=None):
+	"""``supplier_return_rules.quantity_problems`` for this return's lines against what its
+	receipt has left, this return's own lines not counted against it."""
+	if facts is None:
+		facts = {
+			fact["purchase_receipt_item"]: fact for fact in receipt_facts(doc.purchase_receipt, doc.name)
+		}
+	return rules.quantity_problems(
+		[
+			{
+				"idx": row.idx,
+				"item_code": row.item_code,
+				"qty": row.qty,
+				"returnable": (facts.get(row.purchase_receipt_item) or {}).get("returnable"),
+				"received": row.received_qty,
+				"reason": row.reason,
+				"condition_notes": row.condition_notes,
+				"purchase_receipt_item": row.purchase_receipt_item,
+			}
+			for row in doc.items
+		]
+	)
+
+
+def _same(a, b):
+	"""Whether two field values are the same thing, whatever type the form sent them as."""
+	if a in (None, "") and b in (None, ""):
+		return True
+	try:
+		return abs(float(a or 0) - float(b or 0)) < 0.005
+	except (TypeError, ValueError):
+		return str(a or "") == str(b or "")
+
+
+def _refuse_locked_changes(doc, before):
+	"""A finished return's fees, shipping and request are part of its outcome
+	(``supplier_return_rules.LOCKED_WHEN_FINAL``): a plain save may not change them."""
+	for field in rules.locked_fields(before.status):
+		if not _same(doc.get(field), before.get(field)):
+			frappe.throw(
+				_(
+					"This return is {0}, so {1} can't be changed. A Purchase Manager or an Accounts Manager can reopen it."
+				).format(before.status, doc.meta.get_label(field))
+			)
+
+
+def _payment_signature(doc):
+	return sorted(
+		(
+			row.get("payment_entry") or "",
+			round(flt(row.get("amount")), 2),
+			str(row.get("received_on") or "")[:10],
+			row.get("reference") or "",
+			row.get("kind") or "",
+		)
+		for row in doc.get("payments") or []
+	)
 
 
 def _protect_action_fields(doc, before):
@@ -509,11 +648,16 @@ def _protect_action_fields(doc, before):
 	if not before:
 		for field in ACTION_FIELDS:
 			doc.set(field, None)
+		doc.set("payments", [])
 		doc.status = rules.DRAFT
 		doc.status_changed_on = now_datetime()
 		return
 	for field in ACTION_FIELDS:
 		doc.set(field, before.get(field))
+	if _payment_signature(doc) != _payment_signature(before):
+		frappe.throw(
+			_("Refunds and credits are recorded with the buttons at the top of the form, not in the table.")
+		)
 
 
 def _refuse_line_changes(doc, before):
@@ -547,9 +691,19 @@ def _set_derived(doc):
 	"""The fields that are read off others on every save: stock, waiting, the difference."""
 	plan = _plan(doc)
 	doc.record_only_note = plan["note"]
-	doc.stock_state = rules.stock_state(
-		doc.status, plan, _document("Purchase Receipt", doc.purchase_return, [])
-	)
+	linked = _document("Purchase Receipt", doc.purchase_return, [])
+	state = rules.stock_state(doc.status, plan, linked)
+	if linked and cint(linked.docstatus) == 1:
+		# Somebody may have changed the draft before submitting it. Say so rather than let the
+		# record claim quantities ERPNext did not take.
+		taken = {}
+		for line, _parent, qty in _return_rows(doc.purchase_receipt, parents=[linked.name]):
+			taken[line] = taken.get(line, 0.0) + qty
+		labels = {row.purchase_receipt_item: row.item_code for row in doc.items}
+		mismatch = rules.return_mismatch(_wanted(plan, doc), taken, labels)
+		if mismatch:
+			state = f"{state} {mismatch}"
+	doc.stock_state = state
 	doc.waiting_on_money = cint(rules.waiting_on_money(doc.status, doc.requested_resolution))
 	if doc.status in (rules.REFUND_RECEIVED, rules.CREDIT_RECEIVED, rules.CLOSED_NO_CREDIT):
 		doc.amount_difference = rules.difference(doc.expected_amount, doc.amount_received)
@@ -565,7 +719,7 @@ def refuse_delete(doc):
 				doc.status
 			)
 		)
-	for field in ("purchase_return", "debit_note", "payment_entry"):
+	for field in ("purchase_return", "debit_note"):
 		if doc.get(field):
 			frappe.throw(_("Remove {0} first.").format(doc.get(field)))
 
@@ -599,6 +753,8 @@ def _save(doc, comment=None):
 
 
 def _advance(doc, action):
+	if action not in WAYS_OUT and not receipt_is_live(doc.purchase_receipt):
+		frappe.throw(_receipt_gone(doc.purchase_receipt))
 	try:
 		doc.status = rules.next_status(action, doc.status)
 	except rules.RuleError as error:
@@ -689,12 +845,13 @@ def mark_sent_back(name, return_method, carrier=None, tracking_number=None, sent
 	}
 
 
-def _money_documents(doc):
-	"""The linked Debit Note and Payment Entry as ``supplier_return_rules.money_from_documents`` reads them."""
+def _money_documents(doc, settled=None, with_typed=True):
+	"""The Debit Note, the payments and the typed entries as
+	``supplier_return_rules.money_from_documents`` reads them."""
 	note = _document(
 		"Purchase Invoice", doc.debit_note, ["grand_total", "outstanding_amount", "posting_date", "bill_no"]
 	)
-	payment = _document("Payment Entry", doc.payment_entry, ["paid_amount", "posting_date", "reference_no"])
+	rows = list(doc.get("payments") or [])
 	return rules.money_from_documents(
 		debit_note=note
 		and {
@@ -706,38 +863,119 @@ def _money_documents(doc):
 			"posting_date": note.posting_date,
 			"reference": note.bill_no,
 		},
-		payment_entry=payment
-		and {
-			"name": payment.name,
-			"docstatus": payment.docstatus,
-			"amount": flt(payment.paid_amount),
-			"posting_date": payment.posting_date,
-			"reference": payment.reference_no,
-		},
+		payments=[
+			{
+				"name": row.get("payment_entry"),
+				"amount": flt(row.get("amount")),
+				"posting_date": row.get("received_on"),
+				"reference": row.get("reference"),
+			}
+			for row in rows
+			if row.get("payment_entry")
+		],
+		typed=[
+			{
+				"amount": flt(row.get("amount")),
+				"date": row.get("received_on"),
+				"reference": row.get("reference"),
+				"kind": "refund" if row.get("kind") == "Refund" else "credit",
+			}
+			for row in rows
+			if with_typed and not row.get("payment_entry")
+		],
+		expected=doc.expected_amount,
+		settled=cint(doc.get("money_settled")) if settled is None else settled,
 	)
 
 
-def record_money(name, kind, amount, received_on, reference, notes=None):
-	"""A refund or a credit typed by the person who saw it. Refused once a document is linked."""
-	doc = load_for(name, kind if kind in ("refund", "credit") else "refund")
+def _apply_money(doc, notes=None):
+	"""Set the outcome fields, and the status where the money decides it, from the Debit Note,
+	the payments and the typed entries. Returns what ``money_from_documents`` said."""
+	notes = notes if notes is not None else []
+	money = _money_documents(doc)
+	doc.amount_received = money["amount"] if money["amount"] or doc.status == rules.CLOSED_NO_CREDIT else None
+	doc.money_received_on = money["date"]
+	doc.money_reference = money["reference"] or None
+	doc.money_source = money["source"] or None
+	target = money["status"]
+	if target and doc.status in rules.GONE and doc.status != target:
+		doc.status = target
+		doc.status_changed_on = now_datetime()
+		doc.closed_on = getdate(money["date"]) if money["date"] else nowdate()
+		notes.append(f"{target}: {frappe.utils.fmt_money(money['amount'])}. {_esc(money['note'])}")
+	elif not target and doc.status in (rules.REFUND_RECEIVED, rules.CREDIT_RECEIVED):
+		# What made it final no longer stands: a document was canceled, or the supplier owes on
+		# the note again.
+		doc.status = rules.SENT_BACK
+		doc.status_changed_on = now_datetime()
+		doc.closed_on = None
+		notes.append("What finished this return no longer stands, so it is waiting on money again.")
+	return money
+
+
+def record_money(name, kind, amount, received_on, reference, notes=None, more_expected=False):
+	"""A refund or a credit typed by the person who saw it. Refused once a document is linked.
+
+	``more_expected``: this is one part and the rest is still coming, so the return stays Sent
+	Back with the part recorded. Without it the entry finishes the return.
+	"""
+	action = kind if kind in ("refund", "credit") else "refund"
+	doc = load_for(name, action)
+	if not receipt_is_live(doc.purchase_receipt) and doc.status != rules.SENT_BACK:
+		frappe.throw(_receipt_gone(doc.purchase_receipt))
 	try:
+		rules.next_status(action, doc.status)
 		typed = rules.check_typed_money(
 			kind, amount, received_on, reference, nowdate(), _money_documents(doc)
 		)
 	except rules.RuleError as error:
 		_throw(error)
-	_advance(doc, kind)
-	doc.amount_received = typed["amount"]
-	doc.money_received_on = typed["date"]
-	doc.money_reference = typed["reference"]
-	doc.money_source = rules.TYPED
+	doc.append(
+		"payments",
+		{
+			"received_on": typed["date"],
+			"kind": "Refund" if kind == "refund" else "Credit",
+			"amount": typed["amount"],
+			"reference": typed["reference"],
+			"recorded_by": frappe.session.user,
+		},
+	)
+	if not cint(more_expected):
+		doc.money_settled = 1
 	doc.money_recorded_by = frappe.session.user
-	doc.outcome_notes = (notes or "").strip() or None
+	if (notes or "").strip():
+		doc.outcome_notes = notes.strip()
+	_apply_money(doc)
 	what = "a refund" if kind == "refund" else "a credit"
+	more = " More is still expected." if cint(more_expected) else ""
 	return _save(
 		doc,
 		f"{_who()} recorded {what} of {frappe.utils.fmt_money(typed['amount'])} "
-		f"(reference {_esc(typed['reference'])}). {rules.NOT_BACKED}",
+		f"(reference {_esc(typed['reference'])}). {rules.NOT_BACKED}{more}",
+	)
+
+
+def settle(name, reason=None):
+	"""No More Is Coming: finish a return at what has come back so far."""
+	doc = load_for(name, "settle")
+	if doc.status != rules.SENT_BACK:
+		frappe.throw(_("Only a return that is Sent Back and waiting on money can be finished this way."))
+	money = _money_documents(doc)
+	try:
+		rules.check_settle(money["amount"], money)
+	except rules.RuleError as error:
+		_throw(error)
+	doc.money_settled = 1
+	doc.money_recorded_by = frappe.session.user
+	if (reason or "").strip():
+		doc.outcome_notes = reason.strip()
+	_apply_money(doc)
+	if doc.status == rules.SENT_BACK:
+		frappe.throw(_("This return can't be finished yet: {0}").format(money["note"]))
+	return _save(
+		doc,
+		f"{_who()} said no more is coming: finished at {frappe.utils.fmt_money(doc.amount_received)} "
+		f"of {frappe.utils.fmt_money(doc.expected_amount)} expected.",
 	)
 
 
@@ -782,8 +1020,13 @@ def close_without_credit(name, reason):
 	doc = load_for(name, "close")
 	if not (reason or "").strip():
 		frappe.throw(_("Say why nothing is coming back."))
-	if _money_documents(doc)["backed"]:
-		frappe.throw(_("A Debit Note or Payment Entry is linked, so this return did get credit."))
+	money = _money_documents(doc)
+	if money["backed"] or flt(money["amount"]) > 0.005:
+		frappe.throw(
+			_(
+				"Something did come back on this return, or a Debit Note or Payment Entry is linked, so it can't be closed without credit. Use No More Is Coming to finish it at what came back."
+			)
+		)
 	_advance(doc, "close")
 	doc.amount_received = 0
 	doc.money_recorded_by = frappe.session.user
@@ -804,33 +1047,48 @@ def cancel_return(name, reason):
 
 
 def reopen(name, reason):
-	"""Undo a step recorded by mistake. A document-backed outcome is undone on its document."""
+	"""Undo a step recorded by mistake. A document-backed outcome is undone on its document.
+
+	A return that was Denied or Canceled did not count while it sat there, so another return may
+	have taken its quantities: they are judged again before it comes back.
+	"""
 	doc = load_for(name, "reopen")
 	if not (reason or "").strip():
 		frappe.throw(_("Say why it is reopened."))
-	if doc.money_source in (rules.FROM_DEBIT_NOTE, rules.FROM_PAYMENT):
-		frappe.throw(
-			_("The outcome comes from {0}. Cancel that document and this return reopens by itself.").format(
-				doc.payment_entry or doc.debit_note
-			)
-		)
 	was = doc.status
+	if was in (rules.REFUND_RECEIVED, rules.CREDIT_RECEIVED):
+		documents = _money_documents(doc, settled=False, with_typed=False)
+		if documents["status"]:
+			frappe.throw(
+				_(
+					"The outcome comes from a {0}. Cancel that document and this return reopens by itself."
+				).format(documents["source"])
+			)
 	try:
-		doc.status = rules.next_status("reopen", doc.status)
+		target = rules.next_status("reopen", doc.status)
 	except rules.RuleError as error:
 		_throw(error)
+	if was in rules.NOT_COUNTED:
+		if not receipt_is_live(doc.purchase_receipt):
+			frappe.throw(_receipt_gone(doc.purchase_receipt))
+		problems = _quantity_problems(doc)
+		if problems:
+			frappe.throw(
+				_(
+					"This return can't be reopened. While it was {0}, its items were free to go on another return:"
+				).format(was)
+				+ "<br>"
+				+ "<br>".join(frappe.utils.escape_html(problem) for problem in problems)
+			)
+	doc.status = target
 	doc.status_changed_on = now_datetime()
 	doc.closed_on = None
-	for field in (
-		"amount_received",
-		"money_received_on",
-		"money_reference",
-		"money_source",
-		"money_recorded_by",
-		"outcome_notes",
-		"replacement_receipt",
-	):
+	doc.money_settled = 0
+	# What a person typed is what is undone. A payment's share stays: it is the payment's.
+	doc.set("payments", [row for row in doc.get("payments") or [] if row.get("payment_entry")])
+	for field in ("money_recorded_by", "outcome_notes", "replacement_receipt"):
 		doc.set(field, None)
+	_apply_money(doc)
 	return _save(doc, f"{_who()} reopened it from {_esc(was)}: {_esc(reason)}")
 
 
@@ -848,18 +1106,40 @@ def _wanted(plan, doc):
 	return wanted
 
 
+def _fixed_charges(target):
+	"""The draft's fixed-amount charge rows, as ``[(description, amount)]``."""
+	return [
+		(row.get("description") or row.get("account_head"), abs(flt(row.get("tax_amount"))))
+		for row in target.get("taxes") or []
+		if row.get("charge_type") == "Actual"
+	]
+
+
+def _say_fixed_charges(target, notice):
+	"""Put the fixed-charge notice on the draft itself: its remarks before it is saved, and a
+	comment on its timeline after."""
+	if notice:
+		target.remarks = f"{target.get('remarks') or ''} {notice}".strip()
+
+
 def make_purchase_return(name):
-	"""Draft ERPNext's Purchase Return for this return's lines and link it. ``{"name", "existing"}``.
+	"""Draft ERPNext's Purchase Return for this return's lines and link it.
+	``{"name", "existing", "notice"}``.
 
 	The person opens the draft, checks the warehouse each line leaves from, and submits it. That
 	submit is what takes stock out and posts the ledger.
+
+	ERPNext's mapper reverses a fixed-amount charge in full whatever part is going back. This
+	leaves that figure as ERPNext made it and says so on the draft (``notice``).
 	"""
 	doc = load_for(name, "send_back")
 	if doc.status not in rules.GONE:
 		frappe.throw(_("Mark the return Sent Back first: stock leaves when the items do."))
 	live = _document("Purchase Receipt", doc.purchase_return, [])
 	if live and cint(live.docstatus) != 2:
-		return {"name": live.name, "existing": True}
+		return {"name": live.name, "existing": True, "notice": ""}
+	if not receipt_is_live(doc.purchase_receipt):
+		frappe.throw(_receipt_gone(doc.purchase_receipt))
 	# Read again: an item may have been switched to a stock item since the return was saved.
 	kinds = {
 		fact["purchase_receipt_item"]: fact["line_kind"]
@@ -876,6 +1156,7 @@ def make_purchase_return(name):
 	)
 
 	target = erpnext_make_purchase_return(doc.purchase_receipt)
+	mapped = sum(abs(flt(row.qty)) for row in target.items)
 	kept, short = rules.trim_return_rows(
 		[{"purchase_receipt_item": row.purchase_receipt_item, "qty": row.qty} for row in target.items],
 		_wanted(plan, doc),
@@ -907,11 +1188,18 @@ def make_purchase_return(name):
 	target.set("items", rows)
 	number = f" Supplier's return number {doc.supplier_return_number}." if doc.supplier_return_number else ""
 	target.remarks = f"Supplier Return {doc.name}.{number}"
+	partial = sum(abs(flt(row.qty)) for row in rows) < mapped - 1e-9 or bool(
+		[fact for fact in kinds if fact not in quantities]
+	)
+	notice = rules.fixed_charge_notice(_fixed_charges(target), partial, "Purchase Return")
+	_say_fixed_charges(target, notice)
 	target.run_method("calculate_taxes_and_totals")
 	target.insert()
+	if notice:
+		target.add_comment("Comment", _esc(notice))
 	doc.purchase_return = target.name
 	_save(doc, f"{_who()} drafted Purchase Return {_esc(target.name)}. It moves stock when it is submitted.")
-	return {"name": target.name, "existing": False}
+	return {"name": target.name, "existing": False, "notice": notice}
 
 
 def bills_for(doc):
@@ -937,13 +1225,29 @@ def bills_for(doc):
 
 
 def make_debit_note(name, purchase_invoice):
-	"""Draft ERPNext's Debit Note against a bill, cut down to this return's lines, and link it."""
+	"""Draft ERPNext's Debit Note against a bill, cut down to this return's lines, and link it.
+	``{"name", "existing", "notice"}``.
+
+	**Which invoice the note lowers.** In ERPNext 16.54.0 a debit note carries *Update Outstanding
+	for Self* (``update_outstanding_for_self``), default **on**, and the mapper leaves it on: the
+	note is then booked against itself (``purchase_invoice.add_supplier_gl_entry``), the bill
+	stays fully unpaid, and somebody has to run Payment Reconciliation before the credit lowers
+	anything. A return against a bill we have not paid means "pay this bill less", so when the
+	bill's outstanding amount covers the note this turns the box **off**: the note is booked
+	against the bill, the bill's outstanding drops, and the note's own is 0
+	(``taxes_and_totals.calculate_outstanding_amount``). When the bill cannot absorb the note (it
+	is paid, or nearly), the box is left **on**: the note then carries what the supplier owes us,
+	which is what a refund Payment Entry or a later reconciliation is made against. ERPNext
+	applies the same rule itself when the box is off and the bill is too small
+	(``accounts_controller.validate_against_voucher_outstanding``). It is ERPNext's own checkbox,
+	visible on the draft, and the person can change it before submitting.
+	"""
 	doc = load_for(name, "refund")
 	if doc.status not in rules.GONE:
 		frappe.throw(_("Mark the return Sent Back first."))
 	live = _document("Purchase Invoice", doc.debit_note, [])
 	if live and cint(live.docstatus) != 2:
-		return {"name": live.name, "existing": True}
+		return {"name": live.name, "existing": True, "notice": ""}
 	if purchase_invoice not in {row.name for row in bills_for(doc)}:
 		frappe.throw(_("{0} is not a submitted bill for the items on this return.").format(purchase_invoice))
 
@@ -952,6 +1256,7 @@ def make_debit_note(name, purchase_invoice):
 	)
 
 	target = erpnext_make_debit_note(purchase_invoice)
+	mapped = sum(abs(flt(row.qty)) for row in target.items)
 	by_line, by_order_line = {}, {}
 	for row in doc.items:
 		by_line[row.purchase_receipt_item] = by_line.get(row.purchase_receipt_item, 0.0) + flt(row.qty)
@@ -981,11 +1286,25 @@ def make_debit_note(name, purchase_invoice):
 	# The Purchase Return moves the stock. A debit note that also did would take it out twice.
 	target.update_stock = 0
 	target.remarks = f"Supplier Return {doc.name}."
+	partial = sum(abs(flt(row.qty)) for row in rows) < mapped - 1e-9
+	notice = rules.fixed_charge_notice(_fixed_charges(target), partial, "Debit Note")
+	_say_fixed_charges(target, notice)
 	target.run_method("calculate_taxes_and_totals")
+	total = abs(flt(target.get("rounded_total")) or flt(target.get("grand_total")))
+	bill_outstanding = flt(frappe.db.get_value("Purchase Invoice", purchase_invoice, "outstanding_amount"))
+	# See the docstring: against the bill when the bill can take it, against itself when it can't.
+	target.update_outstanding_for_self = 0 if total > 0 and bill_outstanding + 0.005 >= total else 1
 	target.insert()
+	if notice:
+		target.add_comment("Comment", _esc(notice))
 	doc.debit_note = target.name
-	_save(doc, f"{_who()} drafted Debit Note {_esc(target.name)} against {_esc(purchase_invoice)}.")
-	return {"name": target.name, "existing": False}
+	where = (
+		"It is set against the bill, so the bill is paid for less."
+		if not cint(target.update_outstanding_for_self)
+		else "The bill can't absorb it, so the note carries what the supplier owes us."
+	)
+	_save(doc, f"{_who()} drafted Debit Note {_esc(target.name)} against {_esc(purchase_invoice)}. {where}")
+	return {"name": target.name, "existing": False, "notice": notice}
 
 
 def refund_source(name):
@@ -1027,13 +1346,37 @@ def _link(doc, field, doctype, name, checks):
 
 
 def link_purchase_return(name, purchase_return):
-	"""Link a Purchase Return somebody made with ERPNext's own button."""
+	"""Link a Purchase Return somebody made with ERPNext's own button.
+
+	It must be a return against this return's receipt **and say what this return says**: the same
+	receipt lines at the same quantities (``supplier_return_rules.link_problems``). A link means
+	"these are the same goods", and the quantity limit trusts that.
+	"""
 	doc = load_for(name, "send_back")
 	header = _link(
 		doc, "purchase_return", "Purchase Receipt", purchase_return, ["is_return", "return_against"]
 	)
 	if not cint(header.is_return) or header.return_against != doc.purchase_receipt:
 		frappe.throw(_("{0} is not a return against {1}.").format(purchase_return, doc.purchase_receipt))
+	taken = {}
+	for line, _parent, qty in _return_rows(
+		doc.purchase_receipt, parents=[purchase_return], submitted_only=False
+	):
+		taken[line] = taken.get(line, 0.0) + qty
+	labels = {row.purchase_receipt_item: row.item_code for row in doc.items}
+	for fact in receipt_facts(doc.purchase_receipt, doc.name):
+		labels.setdefault(fact["purchase_receipt_item"], fact["item_code"])
+	problems = rules.link_problems(_wanted(_plan(doc), doc), taken, labels)
+	if problems:
+		frappe.throw(
+			_("{0} can't be linked to this return, because it does not return the same items:").format(
+				purchase_return
+			)
+			+ "<br>"
+			+ "<br>".join(frappe.utils.escape_html(problem) for problem in problems)
+			+ "<br>"
+			+ _("Start a Supplier Return whose lines match it, or change the draft Purchase Return.")
+		)
 	doc.purchase_return = purchase_return
 	_save(doc, f"{_who()} linked Purchase Return {_esc(purchase_return)}.")
 	return sync(doc.name)
@@ -1049,16 +1392,66 @@ def link_debit_note(name, debit_note):
 	return sync(doc.name)
 
 
-def link_payment_entry(name, payment_entry):
+def link_payment_entry(name, payment_entry, amount=None):
+	"""Link a refund Payment Entry by hand: money received from this supplier.
+
+	``amount`` is how much of the payment is for this return; blank takes what other returns have
+	not already counted. A payment's amount is never counted twice
+	(``supplier_return_rules.by_hand_share``), and a return can hold several payments.
+	"""
 	doc = load_for(name, "refund")
-	header = _link(
-		doc, "payment_entry", "Payment Entry", payment_entry, ["payment_type", "party_type", "party"]
+	header = frappe.db.get_value(
+		"Payment Entry",
+		payment_entry,
+		[
+			"name",
+			"docstatus",
+			"payment_type",
+			"party_type",
+			"party",
+			"paid_amount",
+			"posting_date",
+			"reference_no",
+		],
+		as_dict=True,
 	)
+	if not header or cint(header.docstatus) != 1:
+		frappe.throw(_("Payment Entry {0} doesn't exist or is not submitted.").format(payment_entry))
 	if header.payment_type != "Receive" or header.party_type != "Supplier" or header.party != doc.supplier:
 		frappe.throw(_("{0} is not money received from {1}.").format(payment_entry, doc.supplier))
-	doc.payment_entry = payment_entry
-	_save(doc, f"{_who()} linked refund Payment Entry {_esc(payment_entry)}.")
-	return sync(doc.name)
+	if any(row.get("payment_entry") == payment_entry for row in doc.get("payments") or []):
+		frappe.throw(_("{0} is already on this return.").format(payment_entry))
+	if doc.status not in rules.GONE:
+		frappe.throw(_("Mark the return Sent Back first."))
+	taken = sum(
+		flt(row.amount)
+		for row in frappe.get_all(
+			PAYMENT_CHILD,
+			filters={"payment_entry": payment_entry, "parenttype": DOCTYPE, "parent": ("!=", doc.name)},
+			fields=["amount"],
+		)
+	)
+	try:
+		still_expected = flt(doc.expected_amount) - flt(_money_documents(doc)["amount"])
+		share = rules.by_hand_share(header.paid_amount, taken, amount, still_expected)
+	except rules.RuleError as error:
+		_throw(error)
+	status = sync(
+		doc.name,
+		attach={
+			"payment_entry": payment_entry,
+			"amount": share,
+			"received_on": header.posting_date,
+			"reference": header.reference_no or payment_entry,
+			"by_hand": 1,
+		},
+	)
+	frappe.get_doc(DOCTYPE, doc.name).add_comment(
+		"Info",
+		f"{_who()} linked refund Payment Entry {_esc(payment_entry)}: "
+		f"{frappe.utils.fmt_money(share)} of it is for this return.",
+	)
+	return status
 
 
 # ---------------------------------------------------------------------------
@@ -1066,19 +1459,20 @@ def link_payment_entry(name, payment_entry):
 # ---------------------------------------------------------------------------
 
 
-def sync(name):
+def sync(name, attach=None):
 	"""Read the linked documents and set what follows from them. Returns the status.
 
-	A link to a deleted or canceled document is dropped. A submitted Payment Entry or a settled
-	Debit Note sets the outcome and the amount; losing one takes a document-backed outcome back to
-	Sent Back. A typed outcome is left alone unless a document now says otherwise.
+	A link to a deleted or canceled document is dropped, and so is the share of a payment that no
+	longer stands. ``attach`` adds (or updates) this return's share of one submitted Payment
+	Entry: ``{"payment_entry", "amount", "received_on", "reference", "by_hand"}``. Once a Debit
+	Note or a payment backs the money, what a person typed gives way to it. The outcome and the
+	amounts are then whatever ``supplier_return_rules.money_from_documents`` says.
 	"""
 	doc = frappe.get_doc(DOCTYPE, name)
-	changed, lost_replacement = [], False
+	notes, lost_replacement = [], False
 	for field, doctype in (
 		("purchase_return", "Purchase Receipt"),
 		("debit_note", "Purchase Invoice"),
-		("payment_entry", "Payment Entry"),
 		("replacement_receipt", "Purchase Receipt"),
 	):
 		linked = doc.get(field)
@@ -1088,35 +1482,46 @@ def sync(name):
 		if docstatus is None or cint(docstatus) == 2:
 			doc.set(field, None)
 			lost_replacement = lost_replacement or field == "replacement_receipt"
-			changed.append(f"{doctype} {_esc(linked)} is gone, so its link was removed.")
-	money = _money_documents(doc)
-	backed_before = doc.money_source in (rules.FROM_DEBIT_NOTE, rules.FROM_PAYMENT)
-	if money["status"] and doc.status in rules.GONE:
-		if (doc.status, doc.money_source, flt(doc.amount_received)) != (
-			money["status"],
-			money["source"],
-			money["amount"],
-		):
-			doc.status = money["status"]
-			doc.status_changed_on = now_datetime()
-			doc.closed_on = getdate(money["date"]) if money["date"] else nowdate()
-			changed.append(
-				f"{money['status']}: {frappe.utils.fmt_money(money['amount'])}. {_esc(money['note'])}"
-			)
-		doc.amount_received = money["amount"]
-		doc.money_received_on = money["date"]
-		doc.money_reference = money["reference"]
-		doc.money_source = money["source"]
-	elif backed_before:
-		# The document that set the outcome was canceled, or the supplier owes on the note again.
-		doc.status = rules.SENT_BACK
-		doc.status_changed_on = now_datetime()
-		doc.closed_on = None
-		for field in ("amount_received", "money_received_on", "money_reference", "money_source"):
-			doc.set(field, None)
-		changed.append(
-			"The document behind the outcome no longer stands, so this return is waiting on money again."
+			notes.append(f"{doctype} {_esc(linked)} is gone, so its link was removed.")
+	rows = []
+	for row in doc.get("payments") or []:
+		entry = row.get("payment_entry")
+		if entry and cint(frappe.db.get_value("Payment Entry", entry, "docstatus") or 0) != 1:
+			notes.append(f"Payment Entry {_esc(entry)} no longer stands, so its amount was taken off.")
+			continue
+		rows.append(row)
+	if attach:
+		existing = next((row for row in rows if row.get("payment_entry") == attach["payment_entry"]), None)
+		if existing:
+			existing.amount = attach["amount"]
+			attach = None
+	doc.set("payments", rows)
+	if attach:
+		doc.append(
+			"payments",
+			{
+				"payment_entry": attach["payment_entry"],
+				"kind": "Refund",
+				"amount": attach["amount"],
+				"received_on": attach.get("received_on"),
+				"reference": attach.get("reference"),
+				"by_hand": cint(attach.get("by_hand")),
+				"recorded_by": frappe.session.user,
+			},
 		)
+		notes.append(
+			f"Payment Entry {_esc(attach['payment_entry'])}: "
+			f"{frappe.utils.fmt_money(attach['amount'])} of it is for this return."
+		)
+	typed = [row for row in doc.get("payments") or [] if not row.get("payment_entry")]
+	if typed and _money_documents(doc, with_typed=False)["backed"]:
+		total = sum(flt(row.get("amount")) for row in typed)
+		doc.set("payments", [row for row in doc.get("payments") or [] if row.get("payment_entry")])
+		notes.append(
+			f"{frappe.utils.fmt_money(total)} typed by hand was replaced by the linked documents, "
+			"which now decide the amount."
+		)
+	_apply_money(doc, notes)
 	if doc.status == rules.REPLACEMENT_RECEIVED and lost_replacement:
 		doc.status = rules.SENT_BACK
 		doc.status_changed_on = now_datetime()
@@ -1124,7 +1529,7 @@ def sync(name):
 	doc.flags.ee_action = True
 	doc.flags.ignore_permissions = True
 	doc.save()
-	for line in changed:
+	for line in notes:
 		doc.add_comment("Info", line)
 	return doc.status
 
@@ -1133,6 +1538,21 @@ def linked_to(doctype, name):
 	"""The Supplier Returns a standard document belongs to: ``[{"name", "status", "role"}]``."""
 	if not installed() or not name:
 		return []
+	out = []
+	if doctype == "Payment Entry":
+		parents = sorted(
+			set(
+				frappe.get_all(
+					PAYMENT_CHILD, filters={"payment_entry": name, "parenttype": DOCTYPE}, pluck="parent"
+				)
+			)
+		)
+		if parents:
+			for row in frappe.get_all(
+				DOCTYPE, filters={"name": ("in", parents)}, fields=["name", "status"], order_by="creation asc"
+			):
+				out.append({"name": row.name, "status": row.status, "role": "a refund for"})
+		return out
 	fields = {
 		"Purchase Receipt": (
 			("purchase_return", "the Purchase Return for"),
@@ -1140,9 +1560,7 @@ def linked_to(doctype, name):
 			("purchase_receipt", ORIGINAL_ROLE),
 		),
 		"Purchase Invoice": (("debit_note", "the Debit Note for"),),
-		"Payment Entry": (("payment_entry", "the refund for"),),
 	}.get(doctype, ())
-	out = []
 	for field, role in fields:
 		for row in frappe.get_all(
 			DOCTYPE, filters={field: name}, fields=["name", "status"], order_by="creation asc"
@@ -1151,48 +1569,54 @@ def linked_to(doctype, name):
 	return out
 
 
-def _refunds_through(doc):
-	"""Supplier Returns a submitted Payment Entry refunds: by the invoices it names."""
+def _refund_shares(doc):
+	"""``{Supplier Return: share}`` for a submitted Payment Entry, by the invoices it names.
+
+	Only money **received** from a **Supplier**. Each reference row's allocated amount is shared
+	once: all of it to the return whose Debit Note the row names, or, when the row names a bill
+	that Debit Notes were set against, split between those returns oldest first, each up to its
+	own note (``supplier_return_rules.split_payment``).
+	"""
 	if doc.get("payment_type") != "Receive" or doc.get("party_type") != "Supplier":
-		return []
-	invoices = sorted(
-		{
-			row.get("reference_name")
-			for row in doc.get("references") or []
-			if row.get("reference_doctype") == "Purchase Invoice" and row.get("reference_name")
-		}
-	)
-	if not invoices:
-		return []
-	names = set(
-		frappe.get_all(
-			DOCTYPE,
-			filters={
-				"debit_note": ("in", invoices),
-				"payment_entry": ("is", "not set"),
-				"supplier": doc.get("party"),
-			},
-			pluck="name",
-		)
-	)
-	# A debit note set against a bill that was already paid: the refund names the bill.
-	for note in frappe.get_all(
-		"Purchase Invoice",
-		filters={"is_return": 1, "docstatus": 1, "return_against": ("in", invoices)},
-		pluck="name",
+		return {}
+	allocated = {}
+	for row in doc.get("references") or []:
+		if row.get("reference_doctype") == "Purchase Invoice" and row.get("reference_name"):
+			invoice = row.get("reference_name")
+			allocated[invoice] = allocated.get(invoice, 0.0) + abs(flt(row.get("allocated_amount")))
+	if not allocated:
+		return {}
+	standing = {"supplier": doc.get("party"), "status": ("not in", sorted(rules.NOT_COUNTED))}
+	shares = {}
+	for row in frappe.get_all(
+		DOCTYPE, filters=dict(standing, debit_note=("in", sorted(allocated))), fields=["name", "debit_note"]
 	):
-		names.update(
-			frappe.get_all(
-				DOCTYPE,
-				filters={
-					"debit_note": note,
-					"payment_entry": ("is", "not set"),
-					"supplier": doc.get("party"),
-				},
-				pluck="name",
+		shares[row.name] = shares.get(row.name, 0.0) + allocated.pop(row.debit_note, 0.0)
+	# What is left names bills. A Debit Note set against a bill that was already paid leaves the
+	# money owed on the bill, and the refund names the bill.
+	for bill, amount in allocated.items():
+		notes = {
+			row.name: abs(flt(row.grand_total))
+			for row in frappe.get_all(
+				"Purchase Invoice",
+				filters={"is_return": 1, "docstatus": 1, "return_against": bill},
+				fields=["name", "grand_total"],
 			)
-		)
-	return sorted(names)
+		}
+		if not notes:
+			continue
+		claims = [
+			(row.name, notes[row.debit_note])
+			for row in frappe.get_all(
+				DOCTYPE,
+				filters=dict(standing, debit_note=("in", sorted(notes))),
+				fields=["name", "debit_note"],
+				order_by="creation asc",
+			)
+		]
+		for name, share in rules.split_payment(amount, claims).items():
+			shares[name] = shares.get(name, 0.0) + share
+	return {name: round(share, 2) for name, share in shares.items() if share > 0.005}
 
 
 def on_document_change(doc, method=None):
@@ -1200,23 +1624,30 @@ def on_document_change(doc, method=None):
 	and ``on_trash``: bring the Supplier Returns that link this document up to date.
 
 	A submitted *Receive* Payment Entry that names a return's Debit Note (or the paid bill the note
-	was set against) is linked as that return's refund. Never raises.
+	was set against) is recorded on that return as a refund, at that return's share of it. Never
+	raises.
 	"""
 	try:
 		if not installed() or doc.doctype not in ("Purchase Receipt", "Purchase Invoice", "Payment Entry"):
 			return
 		names = {row["name"] for row in linked_to(doc.doctype, doc.name) if row["role"] != ORIGINAL_ROLE}
+		attach = {}
 		if doc.doctype == "Payment Entry" and method == "on_submit":
-			for name in _refunds_through(doc):
-				frappe.db.set_value(DOCTYPE, name, "payment_entry", doc.name, update_modified=False)
+			for name, share in _refund_shares(doc).items():
+				attach[name] = {
+					"payment_entry": doc.name,
+					"amount": share,
+					"received_on": doc.get("posting_date"),
+					"reference": doc.get("reference_no") or doc.name,
+				}
 				names.add(name)
 		if method == "on_trash":
-			for field in LINK_FIELDS[doc.doctype]:
+			for field in LINK_FIELDS.get(doc.doctype, ()):
 				for name in frappe.get_all(DOCTYPE, filters={field: doc.name}, pluck="name"):
 					frappe.db.set_value(DOCTYPE, name, field, None, update_modified=False)
 					names.add(name)
 		for name in sorted(names):
-			_sync_quietly(name)
+			_sync_quietly(name, attach.get(name))
 	except Exception:
 		frappe.log_error(
 			title="Supplier Return: sync from " + str(getattr(doc, "doctype", "")),
@@ -1224,13 +1655,13 @@ def on_document_change(doc, method=None):
 		)
 
 
-def _sync_quietly(name):
+def _sync_quietly(name, attach=None):
 	"""``sync`` inside a savepoint: a failure is rolled back and logged, so a half-written Supplier
 	Return never rides along in the transaction of the document being submitted."""
 	savepoint = "supplier_return_sync"
 	try:
 		frappe.db.savepoint(savepoint)
-		sync(name)
+		sync(name, attach)
 	except Exception:
 		message = frappe.get_traceback()
 		try:
@@ -1269,6 +1700,11 @@ def tell_the_bill(doc, method=None):
 	An orange message, never a refusal: ERPNext already bills a receipt for less once its Purchase
 	Return is submitted, and this covers the bill typed by hand or made from the order. Only in a
 	person's web request; silent in imports, jobs, migrate and tests. Never raises.
+
+	A bill row that names its receipt line is matched on that line alone, so the bill for a
+	**replacement** receipt on the same order line is not told about the return it replaced. Only
+	a row with no receipt line falls back to its order line. Finished returns are left out: their
+	refund, credit or replacement already happened.
 	"""
 	try:
 		if cint(doc.get("is_return")) or not getattr(frappe.local, "request", None) or not installed():
@@ -1278,28 +1714,31 @@ def tell_the_bill(doc, method=None):
 			for flag in ("in_import", "in_migrate", "in_patch", "in_install", "in_test")
 		):
 			return
-		lines = sorted({row.get("pr_detail") for row in doc.get("items") or [] if row.get("pr_detail")})
-		order_lines = sorted({row.get("po_detail") for row in doc.get("items") or [] if row.get("po_detail")})
+		rows = doc.get("items") or []
+		lines = sorted({row.get("pr_detail") for row in rows if row.get("pr_detail")})
+		order_lines = sorted(
+			{row.get("po_detail") for row in rows if row.get("po_detail") and not row.get("pr_detail")}
+		)
 		if not (lines or order_lines):
 			return
-		rows = frappe.db.sql(
+		found = frappe.db.sql(
 			f"""
 			select p.name, p.status, p.expected_amount, c.item_code, c.qty
 			from `tab{CHILD}` c
 			join `tab{DOCTYPE}` p on p.name = c.parent
-			where p.status not in %(skip)s and ifnull(p.debit_note, '') = ''
+			where p.status in %(open)s and ifnull(p.debit_note, '') = ''
 				and (c.purchase_receipt_item in %(lines)s or c.purchase_order_item in %(order_lines)s)
 			order by p.creation asc, c.idx asc
 			""",
 			{
-				"skip": tuple(sorted(rules.NOT_COUNTED)),
+				"open": tuple(rules.BILL_NOTICE_STATUSES),
 				"lines": tuple(lines or [""]),
 				"order_lines": tuple(order_lines or [""]),
 			},
 			as_dict=True,
 		)
 		returns = {}
-		for row in rows:
+		for row in found:
 			entry = returns.setdefault(
 				row.name,
 				{"name": row.name, "status": row.status, "expected_amount": row.expected_amount, "items": []},
