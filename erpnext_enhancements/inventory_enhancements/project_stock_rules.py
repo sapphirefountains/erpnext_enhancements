@@ -103,6 +103,9 @@ LEDGER_MOVE = "move"
 LEDGER_ISSUE = "issue"
 #: Stock that went back to the supplier.
 LEDGER_SUPPLIER_RETURN = "supplier_return"
+#: Stock put back into stock with the job on the entry and no order behind it (a Material
+#: Receipt): parts the job took and did not use.
+LEDGER_BROUGHT_BACK = "brought_back"
 
 _ISSUE_VOUCHERS = frozenset({"Delivery Note", "Sales Invoice"})
 _PURCHASE_VOUCHERS = frozenset({"Purchase Receipt", "Purchase Invoice"})
@@ -133,12 +136,17 @@ def ledger_kind(voucher_type, purpose=None, is_return=0, qty=0):
 	  take for the job;
 	* a **purchase return** (``is_return`` on the receipt, or a purchase voucher whose quantity is
 	  negative) went back to the supplier;
+	* a **Material Receipt** stock entry with the job on it is parts coming back from the job:
+	  they are stock again where they landed, and no longer "taken";
 	* everything else moved stock into or between places: a Purchase Receipt, a Material
-	  Transfer, a Material Receipt (parts brought back from the job).
+	  Transfer.
 	"""
 	voucher_type = str(voucher_type or "")
 	if voucher_type == "Stock Entry":
-		return LEDGER_ISSUE if str(purpose or "") == "Material Issue" else LEDGER_MOVE
+		purpose = str(purpose or "")
+		if purpose == "Material Issue":
+			return LEDGER_ISSUE
+		return LEDGER_BROUGHT_BACK if purpose == "Material Receipt" else LEDGER_MOVE
 	if voucher_type in _ISSUE_VOUCHERS:
 		return LEDGER_ISSUE
 	if voucher_type in _PURCHASE_VOUCHERS and (_on(is_return) or _qty(qty) < -TOLERANCE):
@@ -220,7 +228,7 @@ def _order(place):
 	return (PLACE_ORDER.index(place["kind"]), natural_key(place.get("label") or ""))
 
 
-def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returned=0.0):
+def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returned=0.0, held=None):
 	"""The places one item is for one job, as a list of place dicts, in :data:`PLACE_ORDER`.
 
 	* ``ledger`` -- the job's ledger rows for this item, each ``{"warehouse", "kind", "qty"}``
@@ -235,6 +243,15 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returne
 	  made in the Desk with no Supplier Return is only in the ledger; a return whose rows carry no
 	  job is only on the Supplier Return.
 
+	* ``held`` -- ``{warehouse: qty}`` for a place whose share for this job somebody else has
+	  already worked out, used as it stands instead of the ledger sum. The Project Shelf's number
+	  comes this way (``project_stock.places_for``), so the tracker and the Bin Manager, which
+	  both read it from the Project Shelf's own function, cannot disagree about it.
+
+	**Parts brought back are counted once, where they are.** A job that took 3 and put 3 back
+	(a Material Receipt with the job on it) has them at the place they came back to, and has
+	taken none: what came back is taken off "taken to the job", never below zero.
+
 	Each place is ``{"kind", "warehouse", "label", "qty", "text"}``. Nothing is listed at a
 	warehouse where the job's ledger sum is zero or negative (a take of shop stock for the job
 	leaves the bin's sum negative: that is a take, not a place), and never more than the Bin row
@@ -243,8 +260,9 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returne
 	names = names or {}
 	own = set(own_sites or ())
 	kind_of = kind_of or (lambda warehouse: KIND_SITE if warehouse in own else KIND_BIN)
+	held = held or {}
 	net = defaultdict(float)
-	taken = ledger_returned = 0.0
+	taken = ledger_returned = brought_back = 0.0
 	for row in ledger or ():
 		qty = _qty(row.get("qty"))
 		kind = row.get("kind")
@@ -252,8 +270,13 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returne
 			taken -= qty
 		elif kind == LEDGER_SUPPLIER_RETURN:
 			ledger_returned -= qty
+		elif kind == LEDGER_BROUGHT_BACK:
+			brought_back += qty
 		if row.get("warehouse"):
 			net[row["warehouse"]] += qty
+	taken = max(taken - max(brought_back, 0.0), 0.0)
+	for warehouse in held:
+		net.setdefault(warehouse, 0.0)
 
 	places = []
 	for warehouse in own:
@@ -263,7 +286,10 @@ def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None, returne
 	for warehouse, qty in net.items():
 		if warehouse in own:
 			continue
-		here = min(qty, _qty((on_hand or {}).get(warehouse)))
+		if warehouse in held:
+			here = _qty(held[warehouse])
+		else:
+			here = min(qty, _qty((on_hand or {}).get(warehouse)))
 		if here > TOLERANCE:
 			places.append(_place(kind_of(warehouse), here, warehouse, names.get(warehouse) or warehouse))
 	if taken > TOLERANCE:

@@ -290,13 +290,13 @@ function openProcurementPrintDialog(project, group) {
 function mountProcurementTracker(frm, el, pt, data, keep) {
 	const project = frm.doc.name;
 	const groups = data.groups || [];
-	if (!keep.collapsedGroups) {
-		// DocType groups collapsed by default.
-		keep.collapsedGroups = groups.reduce((acc, g) => {
-			acc[g.doctype] = true;
-			return acc;
-		}, {});
-	}
+	// DocType groups collapsed by default: every group the first time, and on a later refresh any
+	// group that was not there before (the job's first Purchase Receipt, say), which would
+	// otherwise open on its own.
+	if (!keep.collapsedGroups) keep.collapsedGroups = {};
+	groups.forEach((g) => {
+		if (!(g.doctype in keep.collapsedGroups)) keep.collapsedGroups[g.doctype] = true;
+	});
 	const columns = (registry) =>
 		Object.keys(registry).map((key) => ({ key: key, label: registry[key].label, cls: registry[key].cls || "" }));
 	const esc = frappe.utils.escape_html;
@@ -336,6 +336,13 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 				sortByDoc: keep.sortByDoc,
 				itemSort: keep.itemSort,
 			};
+		},
+		// A write to the address that is still waiting belongs to this app. Once the app is gone
+		// (the form refreshed and mounted a new one) it must not fire: it would put the OLD view
+		// back into the address a quarter of a second after the new app read it.
+		beforeUnmount() {
+			clearTimeout(address_timer);
+			address_timer = null;
 		},
 		created() {
 			// frappe copied the address's query into route_options; ours come back out.
@@ -414,6 +421,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			writeAddress() {
 				clearTimeout(address_timer);
 				address_timer = setTimeout(() => {
+					address_timer = null;
+					// Belt and braces with beforeUnmount: only the app the form is showing writes.
+					if (frm.__pt_app && frm.__pt_app !== app) return;
 					const route = frappe.get_route() || [];
 					if (route[0] !== "Form" || route[1] !== "Project" || route[2] !== project) return;
 					const next = pt.write_query(window.location.search, this.view);

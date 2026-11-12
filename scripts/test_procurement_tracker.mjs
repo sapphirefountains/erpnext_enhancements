@@ -332,6 +332,12 @@ test("the form script draws every column from the registries and never pushes hi
 	check("never routes to change a filter", /set_route\([^)]*pt_/.test(code), false);
 	check("gives the keys back", code.includes("frappe.route_options = pt.without_own_keys(frappe.route_options)"), true);
 	check("unmounts the last app", code.includes("frm.__pt_app.unmount()"), true);
+	// A write to the address still waiting when the form refreshes dies with its app: it would put
+	// the old view back a quarter of a second after the new app read the address.
+	check("the waiting address write is cancelled with its app", /beforeUnmount\(\) \{\s*clearTimeout\(address_timer\);/.test(code), true);
+	check("and only the app on screen ever writes", code.includes("if (frm.__pt_app && frm.__pt_app !== app) return;"), true);
+	// A group that first appears on a later refresh starts collapsed like the rest.
+	check("a new group starts collapsed", code.includes("if (!(g.doctype in keep.collapsedGroups)) keep.collapsedGroups[g.doctype] = true;"), true);
 	// Receive and Print are still there, and still stop the header's own click.
 	check("receive", code.includes('@click.stop="receiveAgainst(doc.name)"'), true);
 	check("print one", code.includes('@click.stop="printDoc(group.doctype, doc.name)"'), true);

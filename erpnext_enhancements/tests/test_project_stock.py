@@ -258,6 +258,10 @@ class TestPlacesFor(unittest.TestCase):
 		self.assertEqual(len(out["items"]), 300)
 		self.assertEqual(len(STATE["sql"]), 1)
 		self.assertEqual(sorted(STATE["get_all"]), ["Bin", "Item", "Warehouse"])
+		# And each item is handed only its own Bin rows, from one index (not a scan per item).
+		source = (APP / "inventory_enhancements" / "project_stock.py").read_text(encoding="utf-8")
+		self.assertIn("here_by_item.get(code)", source)
+		self.assertNotIn("for (item_code, warehouse), qty in on_hand.items() if item_code == code", source)
 		query, values = STATE["sql"][0]
 		self.assertEqual(values, {"project": PROJECT})
 		self.assertIn("sle.is_cancelled = 0", query)
@@ -392,6 +396,29 @@ class TestTheProjectShelfModule(unittest.TestCase):
 		self.assertEqual(self.asked, [PROJECT], "asked for this job, once")
 		self.assertEqual(STATE["sql"], [], "and the ledger is not read a second way")
 
+	def test_the_tracker_shows_the_modules_number_for_the_shelf_not_its_own_sum(self):
+		"""Two jobs share a short shelf. This job's ledger says 10 elbows and 9 are there, so the
+		tracker's own rule would say 9; the Project Shelf's function gives this job 6 of them and
+		the other job 3. Both screens show 6."""
+		STATE["items"] = {"ELBOW": ("FITTING, ELBOW", "Unit", 1), "PUMP": ("PUMP", "Each", 1)}
+		STATE["ledger"] = [_ledger("ELBOW", SHELF, 10), _ledger("PUMP", SHELF, 2), _ledger("PUMP", BIN, 1)]
+		STATE["bins"] = [("ELBOW", SHELF, 9), ("PUMP", SHELF, 2), ("PUMP", BIN, 1)]
+		STATE["settings"] = {}
+		_install_module(
+			"project_shelf",
+			warehouse=lambda: SHELF,
+			shelf_stock=lambda project=None, item_code=None: {
+				"rows": [{"project": PROJECT, "item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "qty": 6.0, "tagged": 10.0}],
+				"untagged": [],
+			},
+		)
+		out = stock.places_for(PROJECT, ["ELBOW", "PUMP"])["items"]
+		self.assertEqual([(p["kind"], p["qty"]) for p in out["ELBOW"]["places"]], [("project_shelf", 6.0)])
+		# An item the function gives this job none of has no shelf place, though the ledger has rows;
+		# its other places are untouched.
+		self.assertEqual([(p["kind"], p["qty"]) for p in out["PUMP"]["places"]], [("shop_bin", 1)])
+		self.assertEqual(stock.shelf_stock(PROJECT)[0]["qty"], 6.0, "the Bin Manager's number is the same one")
+
 	def test_every_jobs_share(self):
 		self.assertEqual(
 			stock.shelf_by_project(), {PROJECT: {"ELBOW": 6.0, "PUMP": 1.0}, "PRJ-90002": {"ELBOW": 3.0}}
@@ -491,12 +518,22 @@ class TestSupplierReturns(unittest.TestCase):
 
 
 def _lift(*names):
-	"""The named top-level functions of the feed module, compiled into a namespace of stand-ins."""
+	"""The named top-level functions and constants of the feed module, compiled into a namespace
+	of stand-ins."""
 	tree = ast.parse(FEED.read_text(encoding="utf-8"))
-	wanted = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-	assert {n.name for n in wanted} == set(names), names
+
+	def named(node):
+		if isinstance(node, ast.FunctionDef):
+			return node.name
+		if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+			return node.targets[0].id
+		return None
+
+	wanted = [node for node in tree.body if named(node) in names]
+	assert {named(n) for n in wanted} == set(names), names
 	for node in wanted:
-		node.decorator_list = []
+		if isinstance(node, ast.FunctionDef):
+			node.decorator_list = []
 	module = ast.Module(body=wanted, type_ignores=[])
 	namespace = {}
 	exec(compile(ast.fix_missing_locations(module), str(FEED), "exec"), namespace)
@@ -565,6 +602,42 @@ class TestTheFeedsNewFunctions(unittest.TestCase):
 		found = self.calls[0][1]
 		self.assertEqual(found["A"]["places"][0]["text"], "2 on the Project Shelf")
 		self.assertEqual(self.logged, [])
+
+
+class TestADocumentThatNeverJoinedAChain(unittest.TestCase):
+	"""``_minimal_item_row``, lifted out: only a submitted order is ordered."""
+
+	def setUp(self):
+		from erpnext_enhancements import procurement_quantities
+
+		self.ns = _lift("_minimal_item_row", "_ORDER_STAGE_DOCTYPES", "_CHAIN_FIELD")
+		self.ns["procurement_quantities"] = procurement_quantities
+
+	def row(self, doctype, docstatus, status):
+		item = {"name": "row-1", "item_code": "ELBOW", "item_name": "FITTING, ELBOW", "qty": 5}
+		return self.ns["_minimal_item_row"](doctype, "DOC-1", status, item, supplier="Acme Supply", docstatus=docstatus)
+
+	def test_a_draft_order_is_reported_as_draft_and_not_as_ordered(self):
+		row = self.row("Purchase Order", 0, "Draft")
+		self.assertEqual((row["ordered_qty"], row["draft_ordered_qty"], row["received_qty"]), (0, 5, 0))
+		self.assertEqual(row["order_status"], "Not Ordered")
+		self.assertEqual((row["po"], row["po_status"]), ("DOC-1", "Draft"))
+
+	def test_a_submitted_order_is_ordered(self):
+		row = self.row("Purchase Order", 1, "To Receive and Bill")
+		self.assertEqual((row["ordered_qty"], row["draft_ordered_qty"], row["received_qty"]), (5, 0, 0))
+
+	def test_a_draft_receipt_has_received_nothing_and_a_submitted_one_has(self):
+		draft = self.row("Purchase Receipt", 0, "Draft")
+		self.assertEqual((draft["ordered_qty"], draft["received_qty"], draft["draft_ordered_qty"]), (0, 0, 5))
+		done = self.row("Purchase Receipt", 1, "To Bill")
+		self.assertEqual((done["ordered_qty"], done["received_qty"]), (5, 5))
+
+	def test_a_request_is_still_an_ask_and_an_unknown_docstatus_is_as_before(self):
+		ask = self.row("Material Request", 0, "Draft")
+		self.assertEqual((ask["requested_qty"], ask["ordered_qty"]), (5, 0))
+		legacy = self.ns["_minimal_item_row"]("Purchase Order", "DOC-1", "To Receive and Bill", {"item_code": "A", "qty": 2})
+		self.assertEqual(legacy["ordered_qty"], 2)
 
 
 # ---------------------------------------------------------------------------

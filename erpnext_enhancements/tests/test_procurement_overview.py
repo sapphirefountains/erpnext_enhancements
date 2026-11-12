@@ -69,7 +69,8 @@ def by_kind(found):
 def test_ledger_kind_tells_a_take_from_a_transfer_and_a_return_from_a_receipt():
 	assert stock.ledger_kind("Stock Entry", "Material Issue") == stock.LEDGER_ISSUE
 	assert stock.ledger_kind("Stock Entry", "Material Transfer") == stock.LEDGER_MOVE
-	assert stock.ledger_kind("Stock Entry", "Material Receipt") == stock.LEDGER_MOVE
+	# Parts put back into stock with the job on the entry: they came back from the job.
+	assert stock.ledger_kind("Stock Entry", "Material Receipt") == stock.LEDGER_BROUGHT_BACK
 	assert stock.ledger_kind("Delivery Note") == stock.LEDGER_ISSUE
 	assert stock.ledger_kind("Purchase Receipt", "", 0, 5) == stock.LEDGER_MOVE
 	assert stock.ledger_kind("Purchase Receipt", "", 1, -5) == stock.LEDGER_SUPPLIER_RETURN
@@ -159,6 +160,40 @@ def test_parts_brought_back_from_the_job_are_at_the_bin_they_came_back_to():
 	# 5 went out and 2 came back: the bin's sum for the job is still negative, so it is not a
 	# place; the take stands at what the take entries say.
 	assert by_kind(found) == {stock.KIND_TAKEN: 5}
+
+
+def test_parts_brought_back_by_a_material_receipt_are_counted_once_where_they_are():
+	"""The review's case: ten received onto the shelf, three taken for the job, the three put back
+	by a Material Receipt. It read "10 on the Project Shelf" AND "3 taken to the job": thirteen
+	of ten."""
+	back = lambda warehouse, qty: {"warehouse": warehouse, "kind": stock.LEDGER_BROUGHT_BACK, "qty": qty}  # noqa: E731
+	ledger = [move(SHELF, 10), issue(SHELF, -3), back(SHELF, 3)]
+	assert by_kind(places(ledger, {SHELF: 10})) == {stock.KIND_SHELF: 10}
+	# Two of the three came back: one is still taken, and nine are on the shelf.
+	ledger = [move(SHELF, 10), issue(SHELF, -3), back(SHELF, 2)]
+	assert by_kind(places(ledger, {SHELF: 9})) == {stock.KIND_SHELF: 9, stock.KIND_TAKEN: 1}
+	# Brought back to a different bin than they were taken from: there, and not taken.
+	ledger = [issue(BIN, -3), back(SHELF, 3)]
+	assert by_kind(places(ledger, {SHELF: 3, BIN: 20})) == {stock.KIND_SHELF: 3}
+	# More put back than this job ever took: nothing is "taken", and never a negative.
+	ledger = [issue(BIN, -1), back(SHELF, 4)]
+	assert by_kind(places(ledger, {SHELF: 4})) == {stock.KIND_SHELF: 4}
+
+
+def test_a_place_whose_share_is_already_worked_out_is_used_as_it_stands():
+	"""The Project Shelf's own function shares a short shelf out between the jobs that claim it.
+	The tracker shows that number, the one the Bin Manager shows, not its own ledger sum."""
+	ledger = [move(SHELF, 6), move(BIN, 2)]
+	on_hand = {SHELF: 8, BIN: 2}
+	assert by_kind(places(ledger, on_hand)) == {stock.KIND_SHELF: 6, stock.KIND_BIN: 2}
+	shared = stock.item_places(ledger, on_hand, {SITE}, kind_of, NAMES, held={SHELF: 4})
+	assert by_kind(shared) == {stock.KIND_SHELF: 4, stock.KIND_BIN: 2}
+	# It says none of the shelf is this job's: no shelf place, whatever the ledger sums to.
+	none = stock.item_places(ledger, on_hand, {SITE}, kind_of, NAMES, held={SHELF: 0})
+	assert by_kind(none) == {stock.KIND_BIN: 2}
+	# And a share with no ledger row of this job's behind it still lists.
+	only = stock.item_places([], on_hand, {SITE}, kind_of, NAMES, held={SHELF: 3})
+	assert by_kind(only) == {stock.KIND_SHELF: 3}
 
 
 def test_stock_at_another_jobs_site_is_named_and_kept_apart():
@@ -286,6 +321,17 @@ def test_a_draft_order_is_not_an_order():
 	state = overview.line_state(line(ordered=0, draft=6))
 	assert state["states"] == [overview.TO_ORDER]
 	assert state["to_order_qty"] == 6
+
+
+def test_a_draft_order_that_never_joined_a_chain_is_not_ordered_either():
+	"""What the feed's ``_minimal_item_row`` now emits for a draft Purchase Order found only by
+	the sweep: its quantity as draft, nothing ordered. (That function is held to it in
+	``test_project_stock``; this is what the tracker then makes of the row.)"""
+	draft = {"source_doc_type": "Purchase Order", "po": "PO-DRAFT", "po_status": "Draft", "item_code": "A"}
+	draft.update(quantities.quantity_progress(None, 0, 0, 5))
+	assert overview.line_state(draft, TODAY)["states"] == [overview.TO_ORDER]
+	item = overview.by_item([draft], TODAY)[0]
+	assert (item["ordered_qty"], item["draft_ordered_qty"], item["states"]) == (0, 5, [overview.TO_ORDER])
 
 
 def test_late_needs_a_date_in_the_past_and_something_still_to_come():

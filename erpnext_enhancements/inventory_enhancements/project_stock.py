@@ -211,8 +211,9 @@ def places_for(project, item_codes=None):
 	that was never on a purchasing document) is included.
 
 	The queries, whatever the number of lines: the ledger (1), the sites (3, all small), the Bin
-	rows at the warehouses involved (1), their names (1), the items (1), and the job's Supplier
-	Returns (1, once that module is installed).
+	rows at the warehouses involved (1), their names (1), the items (1), and, once those modules
+	are installed, the job's Supplier Returns (1) and the job's share of the Project Shelf (one
+	call to ``project_shelf.shelf_stock``).
 	"""
 	project = _name(project)
 	if not project:
@@ -234,7 +235,20 @@ def places_for(project, item_codes=None):
 	by_item = {}
 	for row in ledger:
 		by_item.setdefault(row["item_code"], []).append(row)
+	# Indexed by item once. A shelf holds thousands of Bin rows, and filtering all of them again
+	# for every item of the job was items x rows.
+	here_by_item = {}
+	for (item_code, warehouse), qty in on_hand.items():
+		here_by_item.setdefault(item_code, {})[warehouse] = qty
 	returns = _returns(project)
+	# The job's share of the Project Shelf, from the Project Shelf's own function when it is
+	# installed (the same door the Bin Manager uses), so the two screens show one number. That
+	# function shares a short shelf out between the jobs that claim it; the ledger sum below
+	# would give each job its own full claim. Without the module the ledger rule is the answer
+	# on both screens already, so nothing more is read.
+	shelf_share = None
+	if shelf and _shelf_module() is not None:
+		shelf_share = {row["item_code"]: row["qty"] for row in _shelf_rows(project)}
 	codes = (
 		set(item_codes or ())
 		| set(by_item)
@@ -248,7 +262,7 @@ def places_for(project, item_codes=None):
 		if not item:
 			continue
 		stock = _truthy(item.is_stock_item)
-		here = {warehouse: qty for (item_code, warehouse), qty in on_hand.items() if item_code == code}
+		here = here_by_item.get(code) or {}
 		out[code] = {
 			"is_stock_item": stock,
 			"item_name": item.item_name or code,
@@ -260,6 +274,7 @@ def places_for(project, item_codes=None):
 				kind_of=kind_of,
 				names=names,
 				returned=(returns.get(code) or {}).get("gone"),
+				held=None if shelf_share is None else {shelf: shelf_share.get(code, 0.0)},
 			)
 			if stock
 			else [],
