@@ -167,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the quantity limit on data, each accounting case through to the document it chooses, the
     money rule, the email, the wiring), each its own CI step. **What they cannot prove** is the
     standard Purchase Return and Debit Note actually posting; `docs/supplier-returns.md` has the
-    fifteen-step rehearsal for the production mirror.
+    seventeen-step rehearsal for the production mirror.
 
 ## [1.802.2] - 2026-11-12
 
