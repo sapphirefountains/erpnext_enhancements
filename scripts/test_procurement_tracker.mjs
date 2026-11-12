@@ -279,6 +279,16 @@ test("a where-now shared by several lines of one item says so", () => {
 	check("nowhere yet", pt.shared_where_note({ where_now_lines: 3, where_now: [] }), "");
 });
 
+test("a Supplier Return under the places says whether the goods have left", () => {
+	check("sent back", pt.return_words({ status: "Sent Back", gone: true }), "sent back (Sent Back)");
+	check("money back", pt.return_words({ status: "Credit Received", gone: true }), "sent back (Credit Received)");
+	check("still here", pt.return_words({ status: "Requested", gone: false }), "to go back (Requested)");
+	check("no status", [pt.return_words({ gone: true }), pt.return_words(null)], ["sent back", "to go back"]);
+	// The template lists them from the row, and a click opens the return without toggling anything.
+	check("listed in the where cell", SCRIPT.includes(`v-for="r in (row.supplier_returns || [])"`), true);
+	check("opens the Supplier Return", SCRIPT.includes(`@click.stop="openDoc('Supplier Return', r.supplier_return)"`), true);
+});
+
 test("the filters in words", () => {
 	const options = { states: [{ value: "late", label: "Late" }], locations: [{ value: "project_shelf", label: "Project Shelf" }] };
 	check("all", pt.describe_filters({ status: "late", location: "project_shelf", supplier: "Acme Supply", action: true, q: " elbow " }, options),

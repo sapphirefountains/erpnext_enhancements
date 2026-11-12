@@ -310,6 +310,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 					class="pt-place" :class="'pt-place--' + placeTone(p.kind)" :title="placeTitle(p)">{{ p.text }}</span>
 			</template>
 			<span v-else class="pt-where-none" :class="{ 'pt-where-untracked': row.location_tracked === false }">{{ row.where_now_text || '-' }}</span>
+			<small v-for="r in (row.supplier_returns || [])" :key="r.supplier_return" class="pt-where-note">
+				<span class="doc-link" @click.stop="openDoc('Supplier Return', r.supplier_return)">{{ r.supplier_return }}</span>: {{ fmtQty(r.qty) }} {{ returnWords(r) }}
+			</small>
 			<small v-if="sharedNote(row)" class="pt-where-note">{{ sharedNote(row) }}</small>
 			<small v-if="receivedAt(row)" class="pt-where-note">Received at {{ receivedAt(row) }}</small>
 		</td>`;
@@ -487,6 +490,9 @@ function mountProcurementTracker(frm, el, pt, data, keep) {
 			},
 			sharedNote(row) {
 				return pt.shared_where_note(row);
+			},
+			returnWords(r) {
+				return pt.return_words(r);
 			},
 			receivedAt(row) {
 				const at = row.received_at;

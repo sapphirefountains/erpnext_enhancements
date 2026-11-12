@@ -44,9 +44,18 @@ rows at the warehouses involved, their names, the items, and the job sites), nev
 If it fails, the feed still answers, `located` is false, the widget says the locations could not
 be read, and the failure is in the Error Log.
 
-**The Project Shelf** is `Inventory Scanner Settings.project_shelf_warehouse`, a field another
-release adds. It is read with `Document.get`, so a site without it has no shelf and the old
-`Stores` is simply a named shop location.
+**The Project Shelf** is whatever `inventory_enhancements/project_shelf.py::warehouse()` says
+(another release's module, settled 2026-11-12). `project_stock.shelf_warehouse` imports it where
+it is used; on a site whose code does not have it yet, the setting
+`Inventory Scanner Settings.project_shelf_warehouse` is read with `Document.get`, and a site
+without that field has no shelf, so the old `Stores` is simply a named shop location.
+
+**Returned to the supplier** has two sources that describe the same goods: the ledger's
+purchase-return rows that name the job, and `supplier_returns.returned_lines(project=...)` (the
+Supplier Return record, another release again, imported the same way). They are never added; the
+larger figure is the place. Each Supplier Return that names the item is listed under the places
+with its status (`supplier_returns` on the row), "sent back" once its goods have left and "to go
+back" before, for a non-stock item too.
 
 **A line's state** is one of To order, Ordered, Partly received, Received, Late, Closed (plus
 Quote only and Bill only for documents that never joined a chain), from the line's own

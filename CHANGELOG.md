@@ -34,9 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     involved, their names, the items and the job sites: the same handful of queries for 3 lines
     or 300. If the lookup fails, the tracker still shows quantities and statuses and says the
     locations could not be read; the failure goes to the Error Log.
-  - **The Project Shelf.** Read from `Inventory Scanner Settings.project_shelf_warehouse`, a
-    field another release adds. It is read so that a site without the field has no shelf: until
-    then stock in `Stores` shows as a named shop location.
+  - **The Project Shelf.** The shelf is the Project Shelf module's own answer
+    (`inventory_enhancements/project_shelf.py`, `warehouse()`), which another release adds. That
+    module is imported where it is used, so either release can merge first: without it the
+    setting `Inventory Scanner Settings.project_shelf_warehouse` is read directly, and a site
+    without that field has no shelf, so stock in `Stores` shows as a named shop location.
+  - **Returned to the supplier.** Read from the stock ledger's purchase-return rows and, once the
+    Supplier Return record is installed, from `supplier_returns.returned_lines(project=...)`. The
+    purchase return behind a Supplier Return is the same goods the ledger counts, so the two are
+    never added: the larger figure is shown. Each Supplier Return that names the item is listed
+    under its places with its status, and says whether the goods have left ("sent back") or are
+    still here ("to go back"). A non-stock item's return is listed too. That module is also
+    imported where it is used; without it only the ledger is read.
   - **A plain status on every line.** To order, Ordered, Partly received, Received, Late or
     Closed, from the line's own quantities (`procurement_overview.py`). An order that was closed
     with goods outstanding, or a stopped request, is Closed and never Late: 148 order lines on
@@ -78,12 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   piece.
 
 ### Tests
-- `tests/test_procurement_overview.py` (pytest, 33 tests): the where-now rule, the states and the
-  by-item sums. `tests/test_project_stock.py` (23 tests, own frappe stub): the lookup's queries,
-  the feed's new functions, and the two `SELECT`s of the feed's `UNION` held to the same columns
-  in the same order, which otherwise fails only on MariaDB. `scripts/test_procurement_tracker.mjs`
-  (node, 99 checks): the address, the filters, sorting, labels and escaping. Each has its own CI
-  step.
+- `tests/test_procurement_overview.py` (pytest, 37 tests): the where-now rule, the states and the
+  by-item sums. `tests/test_project_stock.py` (32 tests, own frappe stub): the lookup's queries,
+  the Project Shelf and Supplier Return modules present, absent and failing, the feed's new
+  functions, and the two `SELECT`s of the feed's `UNION` held to the same columns in the same
+  order, which otherwise fails only on MariaDB. `scripts/test_procurement_tracker.mjs` (node, 105
+  checks): the address, the filters, sorting, labels and escaping. Each has its own CI step.
 - **Not run:** nothing here ran on a bench. `tests/test_procurement_status.py` needs one and is
   not in CI. The widget was checked in a browser against a stand-in Desk with made-up data, not
   against a real Project form.
