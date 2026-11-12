@@ -28,8 +28,8 @@
    "help": "Stock, reorder levels and prices are all kept in this unit. A supplier who sells by the box can still be ordered from in boxes once the box is added under Units & tax with how many units it holds."
   },
   "is_stock_item": {
-   "hint": "Tick for parts we keep on a shelf and count; not for services or assets",
-   "help": "A stock item has quantities in bins, shows in Stock Scan and can be put on the Reorder Board. Services and fixed assets are not stock. It cannot be changed once stock has moved, so decide before the first receipt."
+   "hint": "On for parts and materials, so receipts add to stock; off for labor, fees and assets",
+   "help": "A stock item has quantities in bins, shows in Stock Scan and on the Reorder Board, and receiving it adds to stock. It starts ticked. Labor, fees, other services and fixed assets are not stock. To turn it on later, use Turn on Maintain Stock on the Item form. It cannot be turned off once stock has moved."
   },
   "is_fixed_asset": {
    "hint": "Tick for equipment we own and track as an Asset, such as a rental fountain",

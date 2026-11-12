@@ -1081,6 +1081,11 @@ doc_events = {
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
+		# v1.809.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
+		# page's memory of it) link to the Item, and Frappe refuses to delete a document that is
+		# linked to. on_trash runs before that check, so the rows go first and an Item can still
+		# be deleted or merged away. Never raises; nothing happens for an item with no row.
+		"on_trash": "erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.forget_item",
 	},
 	# WI-013: block submitting a Purchase Order above the configurable approval
 	# threshold (ERPNext Enhancements Settings.po_approval_threshold, default 500;
@@ -1172,6 +1177,19 @@ doc_events = {
 	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
 	# the ledger; validate catches a return at its first save, before it can be submitted.
 	#
+	# v1.809.0 -- a price is required when a stock item is received (Nik, 2026-11-12;
+	# inventory_enhancements/receipt_price_rules.py has the rule and why). before_submit REFUSES a
+	# stock item's line whose rate is $0 and that is not ticked Allow Zero Valuation Rate (ERPNext's
+	# own field: a free sample, a warranty replacement). It is the one refusal behind every way a
+	# receipt is made -- the form, the order's Receive Items dialog, Stock Scan, the store-run
+	# sheet, the intake's drafts -- because each ends in this submit. validate only WARNS, on a
+	# draft, in a web request, and never raises: the intake creates drafts for a person to finish.
+	# Returns and internal transfers are left alone; nothing changes a rate on an existing document.
+	# The same before_submit also judges a row a PERSON ticked free: whoever submits must be
+	# allowed to price that order, and Remarks must say "No charge: ...". Without it the form's
+	# tick was a way around what the two receiving screens ask. Rows ERPNext frees itself (a
+	# customer-provided item, a pricing rule's free item) pass untouched.
+	#
 	# v1.807.0 -- Supplier Returns. A Supplier Return (inventory_enhancements/supplier_returns.py)
 	# links ERPNext's own Purchase Return, and a replacement receipt, by name; these three bring it
 	# up to date when that document is submitted, canceled or deleted: its Stock line, and a
@@ -1180,7 +1198,11 @@ doc_events = {
 	# be the reason a receipt cannot be submitted. It reads by name and does nothing when no
 	# Supplier Return names this document, which is every receipt today.
 	"Purchase Receipt": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
 		"on_submit": [
 			"erpnext_enhancements.po_order_stage.advance_on_receipt",
@@ -1191,6 +1213,18 @@ doc_events = {
 			"erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 		],
 		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+	},
+	# v1.809.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
+	# to bring stock in. ERPNext swaps a typed $0 for the item's last valuation, and refuses when
+	# there is none; but it takes a last valuation of exactly 0 without a word, so an item whose
+	# stock is already valued at nothing could be received again at $0. Refused at submit for a
+	# stock item's incoming row whose Basic Rate is 0 and that is not ticked Allow Zero Valuation
+	# Rate. Every other purpose (issue, transfer, manufacture) is left alone, and so is the Stock
+	# Scan page's own receipt, which always carries a cost above zero. Stock Entry had no
+	# doc_events block before.
+	"Stock Entry": {
+		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 	},
 	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
 	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
@@ -1205,14 +1239,30 @@ doc_events = {
 	# advice; only in a person's web request; never raises. (2) on_document_change: a Debit Note a
 	# Supplier Return links sets that return's outcome when it is submitted (Credit Received once
 	# nothing is owed on it) and takes it back when it is canceled or deleted. Never raises.
+	#
+	# v1.809.0 -- and the price rule above, for an invoice that receives stock itself (Update
+	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {
+		# The guard first; then Supplier Returns' advice, so a refused bill is not also given
+		# advice; then the price warning, which never raises.
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
 			"erpnext_enhancements.inventory_enhancements.supplier_returns.tell_the_bill",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 		"on_submit": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 		"on_cancel": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+	},
+	# v1.809.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
+	# Invoices never updated stock (the relaxed rule, behind a tick box). Canceling or crediting
+	# such an invoice moves no stock, but Create > Delivery Note on one would take out of stock
+	# goods that left long ago. Refused, for an item switched that way, against an invoice posted
+	# on or before the day of the switch. Reads the Maintain Stock Decision row the switch left;
+	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
+	"Delivery Note": {
+		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
 	},
 	# v1.807.0 -- Supplier Returns: the refund. A submitted Payment Entry that RECEIVES money from
 	# a Supplier and names a Supplier Return's Debit Note (or the already-paid bill that note was
@@ -1770,6 +1820,13 @@ scheduler_events = {
 			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
 			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
+			# v1.809.0 -- the Switch Items to Maintain Stock page's background job, started again
+			# while any Maintain Stock Decision row is still Queued. The rows are the work list, so
+			# a deploy that flushes the job queue loses nothing: this picks the run back up within
+			# ten minutes. With nothing Queued (the usual state) it is one count and nothing else.
+			# It never queues an item itself -- only a person pressing Switch on the page does --
+			# and it never raises. See inventory_enhancements/maintain_stock_bulk.py.
+			"erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.resume_queue",
 			# Lead triage (TASK-2026-01473): speed-to-lead SLA. Reminds a Lead's owner once
 			# its first-response deadline passes, escalates once the escalation time does,
 			# each at most once per Lead (Lead.custom_sla_alert). Deadlines are in working
