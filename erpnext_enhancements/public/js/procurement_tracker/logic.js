@@ -1,5 +1,5 @@
 /*
- * Procurement Tracker (v1.806.0): the widget's pure decisions, no DOM, no Vue and no frappe, so
+ * Procurement Tracker (v1.811.0): the widget's pure decisions, no DOM, no Vue and no frappe, so
  * scripts/test_procurement_tracker.mjs runs them under node. The Project form script
  * (public/js/project_enhancements.js) draws and wires; this file decides.
  *

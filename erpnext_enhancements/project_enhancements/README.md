@@ -948,7 +948,7 @@ Buying), which is unrelated and not in this repo.
   `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
   per-doctype sweep for documents linked to the project that never appeared in a chain.
 - **No caching**, server or client: a fresh round-trip on every form refresh.
-- **Where it is now, filters and the by-item view (v1.806.0).** The widget calls
+- **Where it is now, filters and the by-item view (v1.811.0).** The widget calls
   `get_procurement_overview`, which is `get_procurement_documents` plus one row per item for the
   job and the filter choices. Every line says what it is waiting on (To order, Ordered, Partly
   received, Received, Late, Closed; [`procurement_overview.py`](../procurement_overview.py), pure)

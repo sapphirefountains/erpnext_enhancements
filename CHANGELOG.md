@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.806.0] - 2026-11-12
+## [1.811.0] - 2026-11-12
 
 ### Added
 - **The Procurement Tracker says where each item is now, filters by place, status and supplier,

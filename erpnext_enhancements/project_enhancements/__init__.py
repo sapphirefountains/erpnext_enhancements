@@ -45,7 +45,7 @@ def get_procurement_status(project_name):
 	require_project_read(project_name)
 
 	result = _chain_rows(project_name)
-	# Each line's state and where its item is now (v1.806.0), so the assistant tool's default
+	# Each line's state and where its item is now (v1.811.0), so the assistant tool's default
 	# view carries them as the tracker does. Added keys only: nothing above is renamed.
 	_attach_overview(project_name, [row for rows in result.values() for row in rows])
 	return result
@@ -105,7 +105,7 @@ def _chain_rows(project_name):
                     ELSE 'Draft'
                 END as se_status,
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
-                /* For the tracker's filters (v1.806.0): who it is bought from, and the date
+                /* For the tracker's filters (v1.811.0): who it is bought from, and the date
                    it is due. The order line's expected date once there is a live order, else
                    the request line's required-by date. Both SELECTs of this UNION carry the
                    same four columns in the same place. */
@@ -332,7 +332,7 @@ def _chain_rows(project_name):
 			"po_line_qty": row.get("po_line_qty"),
 			"po_line_received_qty": row.get("po_line_received_qty"),
 			"po_docstatus": row.get("po_docstatus"),
-			# For the filters and the by-item view (v1.806.0, procurement_overview).
+			# For the filters and the by-item view (v1.811.0, procurement_overview).
 			"supplier": row.get("supplier"),
 			"expected_date": str(row.get("expected_date")) if row.get("expected_date") else None,
 			"conversion_factor": row.get("po_conversion_factor"),
@@ -454,7 +454,7 @@ def _minimal_item_row(doctype, docname, status, item, supplier=None, docstatus=N
 		)
 	elif doctype == "Purchase Receipt" and docstatus == 1:
 		# A submitted receipt with no order behind it (a store run): the goods are here. It used
-		# to read "Not Received" on the receipt that received it (v1.806.0).
+		# to read "Not Received" on the receipt that received it (v1.811.0).
 		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=qty)
 	elif doctype in _ORDER_STAGE_DOCTYPES:
 		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=0)
@@ -635,7 +635,7 @@ def get_procurement_documents(project_name):
 	``is_open`` / ``open_rule`` come from ``procurement_quantities.document_is_open`` and
 	drive the tracker's Print → Open choice; both are ``None`` for a doctype with no "open".
 
-	Since v1.806.0 each item row also says what it is waiting on (``line_state`` and friends)
+	Since v1.811.0 each item row also says what it is waiting on (``line_state`` and friends)
 	and where its item is now (``where_now``, ``where_now_text``); see
 	:func:`get_procurement_overview` and ``procurement_overview``.
 	"""
@@ -760,7 +760,7 @@ def _attach_overview(project_name, rows):
 
 @frappe.whitelist()
 def get_procurement_overview(project_name):
-	"""Everything the Project form's Procurement Tracker draws (v1.806.0).
+	"""Everything the Project form's Procurement Tracker draws (v1.811.0).
 
 	``{"groups", "items", "filters", "located", "today"}``:
 

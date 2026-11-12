@@ -3913,7 +3913,7 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
-      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.806.0).
+      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.811.0).
       # procurement_overview.py and inventory_enhancements/project_stock_rules.py are pure, so this is
       # plain pytest (a unittest step would collect nothing and pass). Fails the build if a place ever
       # shows more than its Bin row holds, if a job's stock at another job's site reads as its own, if a

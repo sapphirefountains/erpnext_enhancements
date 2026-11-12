@@ -2,7 +2,7 @@
 # For license information, please see license.txt
 
 """Bench-free tests for the Procurement Tracker's "where it is now" lookup and its wiring
-(v1.806.0).
+(v1.811.0).
 
 Three layers:
 
