@@ -1445,8 +1445,15 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	 */
 	// The sentence over a flagged row's differences. A note left by a person's own write
 	// (changes.after_write) is not QuickBooks changing anything: the draft was rebuilt, or
-	// the values were written, and the saved record still holds something else.
+	// the values were written, and the saved record still holds something else. A later
+	// sync keeps that mark while any of those fields still differs; if QuickBooks has
+	// changed other fields since (changes.changed_since_write), the sentence says both.
 	function changesHead(changes, scope) {
+		if (changes.after_write && changes.changed_since_write) {
+			return scope === "t"
+				? __("This draft was rebuilt from QuickBooks and ERPNext still held different values. QuickBooks has changed it again since, so the fields below are a mix of both. Nothing was written by the sync.")
+				: __("The QuickBooks values were written and ERPNext still held different values. QuickBooks has changed the record again since, so the fields below are a mix of both. Nothing was written by the sync.");
+		}
 		if (changes.after_write === "refresh") {
 			return __("This draft was rebuilt from QuickBooks, and ERPNext still holds different values for the fields below. Correct the draft by hand, or choose Keep ERPNext to accept it as it is.");
 		}

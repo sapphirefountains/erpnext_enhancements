@@ -68,6 +68,7 @@ from erpnext_enhancements.quickbooks_online.core.constants import (
 	TRANSACTION_ENTITIES,
 )
 from erpnext_enhancements.quickbooks_online.core.mapping import (
+	_after_write_fields,
 	_display_name,
 	_is_qbo_customer_job,
 	_same_for_review,
@@ -616,10 +617,21 @@ def change_view(row) -> dict | None:
 		# "refresh" / "use": the note is what a person's own write left differing
 		# (``mapping._differences_after_write``), not something a sync found.
 		"after_write": note.get("after_write") or None,
+		# True when a later sync added fields to such a note: QuickBooks has changed the
+		# record again, and the page must not call every field below the write's.
+		"changed_since_write": _changed_since_write(note),
 		"fields": fields,
 		"tables": tables,
 		"issues": [str(issue) for issue in note["issues"] if issue],
 	}
+
+
+def _changed_since_write(note: dict) -> bool:
+	"""True when an ``after_write`` note holds a field its write did not leave."""
+	if not note.get("after_write"):
+		return False
+	left = set(_after_write_fields(note))
+	return any(fieldname not in left for fieldname in list(note["fields"]) + list(note["tables"]))
 
 
 def status_counts(entity_types) -> dict:
