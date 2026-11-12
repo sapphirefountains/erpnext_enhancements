@@ -34,8 +34,14 @@ means. Before a Project Shelf is set, no row is of that kind and the note says s
 that row's job. Canceled entries are left out, as everywhere else.
 
 **A search is capped** at ``MAX_ITEMS`` items and the unfiltered list at ``MAX_ROWS`` rows, and
-the note says when either cut something off. The stock ledger is read grouped by item and
-warehouse on its own index, so the read stays the same shape however long the ledger gets.
+the note says when either cut something off.
+
+**What the last-movement reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound
+index that helps, ``item_code, warehouse, posting_datetime, creation``, and none that leads
+with ``warehouse``. With an item or a search, both reads start from the item codes and use it.
+With nothing chosen, the grouped read walks that whole index, and the Project Shelf's by-job read
+looks at every ledger row to find the shelf's. Both then grow with the whole ledger (832 rows on
+production on 2026-11-12), not with what is on hand. No index is added here.
 
 **A Script Report** because every filter is optional. Opens at
 ``/desk/query-report/Where Is This Item``.
@@ -68,7 +74,7 @@ def execute(filters=None):
 	rows, notes = get_rows(filters, where)
 	if not where.shelf:
 		notes.append(_(data.NO_SHELF_NOTE))
-	return get_columns(), rows, "<br>".join(notes) or None, None, get_summary(rows)
+	return get_columns(), rows, data.message(*notes), None, get_summary(rows)
 
 
 def get_columns():

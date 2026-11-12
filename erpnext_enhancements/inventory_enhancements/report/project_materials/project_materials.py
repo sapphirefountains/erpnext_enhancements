@@ -142,7 +142,11 @@ def receipt_lines(project):
 
 def job_ledger(project):
 	"""The job's live stock ledger rows, grouped the way ``rules.used_by_item`` and
-	``rules.received_into`` read them."""
+	``rules.received_into`` read them.
+
+	Stock Ledger Entry has no index on ``project`` at ERPNext 16.54.0, so this reads every ledger
+	row to find the job's. Its cost grows with the whole ledger (832 rows on production on
+	2026-11-12), not with the job. No index is added here."""
 	return frappe.db.sql(
 		"""
 		select s.item_code, s.voucher_type, se.purpose, s.warehouse, sum(s.actual_qty) as qty
@@ -259,7 +263,7 @@ def project_message(project, info, where, short=0):
 		lines.append(_(data.NO_SHELF_NOTE))
 	if short:
 		lines.append(_(SHORT_SHELF_NOTE).format(short))
-	return "<br>".join(lines)
+	return data.message(*lines)
 
 
 def item_summary(rows):
@@ -355,7 +359,7 @@ def held_message(shelf_rows, where):
 			lines.append(_(SHORT_SHELF_NOTE).format(short))
 	if not where.sites_ready:
 		lines.append(_("Job sites are not set up on this site, so nothing is shown as at a job site."))
-	return "<br>".join(lines)
+	return data.message(*lines)
 
 
 def held_summary(rows):

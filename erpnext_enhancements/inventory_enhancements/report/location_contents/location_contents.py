@@ -203,7 +203,7 @@ def keep(row, filters):
 
 
 def get_message(where):
-	return None if where.shelf else _(data.NO_SHELF_NOTE)
+	return data.message(None if where.shelf else _(data.NO_SHELF_NOTE))
 
 
 def get_summary(rows):

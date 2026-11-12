@@ -396,7 +396,8 @@ def project_item_rows(
 	the shelf, not at the site, not used. For an item that is not a stock item that is all of it,
 	since a receipt of one writes no stock ledger row. For a stock item it is stock received into
 	a shop bin (where stock is not kept by job; *Received Into* names the bin), or received before
-	Maintain Stock was switched on. It is never less than nothing.
+	Maintain Stock was switched on. It is never less than nothing, and it can read low: parts taken from the shop's own stock for
+	the job count as used, and what was used is taken off what was received.
 
 	**A return is counted once.** A Supplier Return sends stock back through ERPNext's own return
 	receipt, so the same goods can show in both: as a return receipt's line, and as a Supplier

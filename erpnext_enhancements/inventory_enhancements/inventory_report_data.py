@@ -34,8 +34,9 @@ original receipt line and no return is counted twice.
 
 **Permissions.** These reads are plain SQL and ``get_all``: each report is gated by its roles and
 by report permission on its reference doctype, as ``api.stock_scan._items_at`` is gated by the
-Stock Scan roles. They do not apply User Permissions. That matches the Bin Manager and Stock Scan,
-which list a location's stock to anyone the page admits.
+Stock Scan roles. They do not apply User Permissions. That matches the Bin Manager and Stock Scan, which list a
+location's stock to anyone the page admits, and every report says so in the note over its table
+(:func:`message`).
 
 Indentation is tabs (new file).
 """
@@ -53,10 +54,20 @@ VEHICLE_FIELD = "custom_default_vehicle_warehouse"
 #: How many names go into one ``in (...)`` list.
 CHUNK = 1000
 
+#: Said over every report's table. The reads here are behind each report's roles, not behind
+#: User Permissions, and the person reading the rows should know that without opening the docs.
+ALL_ROWS_NOTE = "This report shows everything its filters match. User Permissions do not narrow it."
+
 NO_SHELF_NOTE = (
 	"No Project Shelf is set (Inventory Scanner Settings, Project Shelf Warehouse), "
 	"so nothing is shown as on the Project Shelf."
 )
+
+
+def message(*notes):
+	"""The note over a report's table: the given lines (already safe to show as HTML), then the
+	line that says User Permissions are not applied. Every report ends its message with it."""
+	return "<br>".join([*(note for note in notes if note), frappe._(ALL_ROWS_NOTE)])
 
 
 def chunks(values, size=CHUNK):
@@ -273,10 +284,12 @@ def site_bins(where, projects=None, item_codes=None):
 
 def _shelf_module():
 	"""The Project Shelf change's own module (``inventory_enhancements/project_shelf.py``), or
-	``None`` on a site where it is not installed yet."""
+	``None`` on a site where it is not installed yet. ``None`` as well when the module is there
+	and fails to import for any reason: a fault in another change's module must not take a
+	report down, and the adapter's own reading gives the same numbers."""
 	try:
 		from erpnext_enhancements.inventory_enhancements import project_shelf as module
-	except ImportError:
+	except Exception:
 		return None
 	return module
 
@@ -380,8 +393,15 @@ def _claims_from_module(module, shelf, codes):
 
 def _own_shelf_claims(shelf, codes):
 	"""This module's own reading: the net of ``actual_qty`` over the live ledger rows at the
-	shelf, by the Project each row carries. One grouped query on the one warehouse, so it stays
-	small however long the ledger gets. Rows with no Project are not a claim; what they leave
+	shelf, by the Project each row carries. One grouped query.
+
+	**Its cost grows with the whole stock ledger, not with the shelf.** At ERPNext 16.54.0 Stock
+	Ledger Entry has no index that leads with ``warehouse``: its one compound index is
+	``item_code, warehouse, posting_datetime, creation``. Asked for given items, this read starts
+	from that index. Asked for the whole shelf, it reads every ledger row to find the shelf's (832
+	rows on production on 2026-11-12). No index is added here.
+
+	 Rows with no Project are not a claim; what they leave
 	shows up as the gap between the claims and ``tabBin``."""
 	item_clause = "and item_code in %(items)s" if codes else ""
 	params = {"shelf": shelf}
@@ -408,10 +428,12 @@ def _own_shelf_claims(shelf, codes):
 
 def _returns_module():
 	"""The Supplier Return change's module (``inventory_enhancements/supplier_returns.py``), or
-	``None`` on a site where it is not installed yet."""
+	``None`` on a site where it is not installed yet. ``None`` as well when the module is there
+	and fails to import for any reason: a fault in another change's module must not take a
+	report down. Project Materials then shows the returns ERPNext's own return receipts record."""
 	try:
 		from erpnext_enhancements.inventory_enhancements import supplier_returns as module
-	except ImportError:
+	except Exception:
 		return None
 	return module
 

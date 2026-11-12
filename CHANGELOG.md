@@ -91,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       `inventory_enhancements/project_shelf.py` with `warehouse()` and
       `shelf_stock(project=None, item_code=None)`. The adapter imports it inside a guard: present,
       it supplies which warehouse is the shelf and each job's net, so these reports and the shelf's
-      own screens read one answer; absent, the adapter reads the same ledger rows itself. Both
+      own screens read one answer; absent, or there and failing to import for any
+      reason, the adapter reads the same ledger rows itself. Both
       paths do the same arithmetic, so the two changes can merge in either order and no number
       moves. An answer that is not for this shelf or not in the agreed shape falls back to the
       adapter's own reading. The real module was not on `main` when this was written, so that path
@@ -100,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `inventory_enhancements/supplier_returns.py` and settles
     `returned_lines(purchase_order_items=None, project=None)` for other modules.
     `inventory_report_data.supplier_return_lines` imports it inside a guard, so either change can
-    merge first, and answers nothing before it is installed. A Supplier Return moves its stock
+    merge first, and answers nothing before it is installed or if the module fails to import. A
+    Supplier Return moves its stock
     through ERPNext's own return receipt (a Purchase Receipt with *Is Return*), which Project
     Materials also reads, so the same goods can show twice. Both records name the receipt line the
     goods came in on, and per receipt line the larger of the two is what went back
@@ -116,13 +118,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     doctypes are ones Stock User can report on: Warehouse, and Purchase Order for Project
     Materials. Every Inventory Clerk and every Projects or Purchase user on production also holds
     Stock User (2026-11-12), so nobody the roles admit is then refused. No permission is changed.
-    The reads are SQL behind those gates, as `_items_at` is, and do not apply User Permissions.
+    The reads are SQL behind those gates, as `_items_at` is, and do not apply User Permissions. Every
+    report says so over its own table, not only in the docs: "This report shows everything its
+    filters match. User Permissions do not narrow it."
   - **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
     hub's landing page). On the Operations Hub: Location Contents, Where Is This Item and Job Site
     Contents in its Inventory card, Project Materials in its Reports card beside Pending Items by
     Project. `patches/inventory_reports_hub_links` force-imports both workspaces, each in its own
     savepoint (frappe's `import_doc` deletes the stored row before it inserts), logs a failure and
-    never raises. It writes no business data.
+    never raises. It writes no business data. A force-import replaces the stored workspace with
+    the file, so an edit made to either one in the Desk would be lost. On production on 2026-11-12
+    both stored workspaces were identical to the repo's files (content, links, shortcuts, quick
+    lists and roles compared), so nothing is lost there unless one is edited before the merge.
   - **Print and export** are Frappe's own grid print, PDF, CSV and Excel. Each row holds plain
     values under declared fieldnames; the status colors and the document links are added on screen
     by the report's formatter, which the grid print also runs. No report has an `.html` template of
@@ -133,11 +140,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Order Analysis and Procurement Tracker give ordered against received per line; Project wise
     Stock Tracking gives cost per project. None says whether an item belongs in the bin it is in,
     whose job shelf stock is for, or where one job's items stand from order to use.
+  - **What the stock ledger reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound
+    index that helps, `item_code, warehouse, posting_datetime, creation`, and none on `project` or
+    leading with `warehouse`. A read that starts from item codes uses it. Three do not: a job's
+    ledger rows (Project Materials), the ledger at the job sites (Job Site Contents), and the whole
+    shelf's rows by job (the adapter's own reading, and Where Is This Item with nothing chosen).
+    Each looks at every ledger row, so its cost grows with the whole ledger, not with the job, the
+    sites or the shelf. Production had 832 ledger rows on 2026-11-12. No index is added here; an
+    index on `project` and one leading with `warehouse` are the fix when the ledger is large.
   - **What the reports cannot show yet.** Where a non-stock item is (it never enters stock, so
     it is never at a location, on the shelf or at a site: only ordered and received). Stock by job
     in a shop bin. Anything on the Project Shelf until the shelf is set. A disabled item, which the Bin Manager's
     listing rule leaves out of Location Contents (Where Is This Item does find it).
-  - **Tests:** `tests/test_inventory_reports.py` (160 tests, bench-free, its own CI step): the
+  - **Tests:** `tests/test_inventory_reports.py` (166 tests, bench-free, its own CI step): the
     status rules, the shelf and site split, the project roll-up, the stay at a site, the reports
     themselves on a `frappe` stub, the shape of every query, the exported rows and the hub links.
     Each query shape was also run read-only against production. Not run: the reports in a browser

@@ -1179,7 +1179,8 @@ Whose stock is on the shelf comes through **one adapter**,
   under it. The Project Shelf change ships `inventory_enhancements/project_shelf.py`; when that
   module is installed the adapter asks its `shelf_stock()` for those nets (and its `warehouse()`
   for which warehouse is the shelf), so these reports and the shelf's own screens read one answer.
-  Before it is installed the adapter reads the same ledger rows itself. Both paths do the same
+  Before it is installed, or if it is there and fails to import, the adapter reads the same ledger
+  rows itself. Both paths do the same
   arithmetic, so the swap changes no number, and an answer that is not for this shelf or not in the
   agreed shape falls back to the adapter's own reading.
 
@@ -1214,11 +1215,24 @@ sent back is *Return Requested*: those goods are still here.
   for both. Every Inventory Clerk and every Projects or Purchase user on production holds Stock
   User (2026-11-12), so nobody the roles admit is then refused.
 - **Permissions.** The reads are SQL behind those gates, like `_items_at`; they do not apply User
-  Permissions.
+  Permissions. Every report says so over its own table: "This report shows everything its filters
+  match. User Permissions do not narrow it." (`inventory_report_data.message`).
+- **What the stock ledger reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound index that helps,
+  `item_code, warehouse, posting_datetime, creation`, and none on `project` or leading with
+  `warehouse`. A read
+  that starts from item codes uses it (Where Is This Item with an item or a search). Three reads do
+  not: a job's ledger rows (Project Materials), the ledger at the job sites (Job Site Contents) and
+  the whole shelf's rows by job (the adapter's own reading, and Where Is This Item with nothing
+  chosen). Each looks at every ledger row, so its cost grows with the whole ledger, not with the
+  job, the sites or the shelf. Production had 832 ledger rows on 2026-11-12. No index is added here;
+  when the ledger is large, an index on `project` and one leading with `warehouse` are the fix.
 - **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
   hub's landing page). On the Operations Hub, three in its Inventory card and Project Materials in
   its Reports card. `patches/inventory_reports_hub_links` force-imports both workspaces, each in
-  its own savepoint.
+  its own savepoint. A force-import replaces the stored workspace with the file, so an edit made to
+  either one in the Desk would be lost. On production on 2026-11-12 both stored workspaces were
+  identical to the repo's files (content, links, shortcuts, quick lists and roles compared), so
+  nothing is lost there unless one is edited before the merge.
 - **Print and export** use Frappe's own grid print, PDF, CSV and Excel. A row holds plain values
   under declared fieldnames; the status colors and the document links are added on screen by each
   report's formatter. There is no report `.html` of our own.

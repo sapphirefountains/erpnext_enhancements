@@ -1347,6 +1347,65 @@ class TestSharedReads(_Case):
 		self._module(raises=True)
 		self.assertEqual(data.project_shelf(), "Project Shelf - SF")
 
+	def _import_fails(self, module_name, error):
+		"""Make ``from erpnext_enhancements.inventory_enhancements import <module_name>`` raise
+		``error`` for one test, as a module that is on disk and broken would."""
+		import builtins
+
+		real = builtins.__import__
+
+		def failing(name, globals=None, locals=None, fromlist=(), level=0):
+			if name == "erpnext_enhancements.inventory_enhancements" and module_name in (fromlist or ()):
+				raise error
+			return real(name, globals, locals, fromlist, level)
+
+		self.patched.set(builtins, "__import__", failing)
+
+	def test_a_project_shelf_module_that_fails_to_import_does_not_take_a_report_down(self):
+		self.patched.restore()
+		for error in (
+			RuntimeError("boom"),
+			SyntaxError("bad file"),
+			AttributeError("frappe.x"),
+			ImportError("gone"),
+		):
+			with self.subTest(type(error).__name__):
+				self._import_fails("project_shelf", error)
+				self.assertIsNone(data._shelf_module())
+				# The shelf is still found from the setting, and its shares from the ledger.
+				STATE["settings"] = {"project_shelf_warehouse": "Project Shelf - SF"}
+				STATE["values"][("Warehouse", "Project Shelf - SF")] = {"name": "Project Shelf - SF"}
+				self.assertEqual(data.project_shelf(), "Project Shelf - SF")
+				self._shelf_sql(
+					[{"item_code": "A", "actual_qty": 4, "valuation_rate": 1}],
+					[{"item_code": "A", "project": "JOB-1", "qty": 4}],
+				)
+				rows = data.shelf_stock_by_project("Project Shelf - SF")
+				self.assertEqual([(r["project"], r["qty"]) for r in rows], [("JOB-1", 4.0)])
+				self.patched.restore()
+				_reset()
+
+	def test_a_supplier_returns_module_that_fails_to_import_does_not_take_a_report_down(self):
+		self.patched.restore()
+		for error in (
+			RuntimeError("boom"),
+			SyntaxError("bad file"),
+			AttributeError("frappe.x"),
+			ImportError("gone"),
+		):
+			with self.subTest(type(error).__name__):
+				self._import_fails("supplier_returns", error)
+				self.assertIsNone(data._returns_module())
+				self.assertEqual(data.supplier_return_lines("JOB-1"), [])
+				self.patched.restore()
+
+	def test_the_import_guards_catch_any_failure_not_only_a_missing_module(self):
+		tree = ast.parse((INV / "inventory_report_data.py").read_text(encoding="utf-8"))
+		for name in ("_shelf_module", "_returns_module"):
+			fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+			handlers = [h for n in ast.walk(fn) if isinstance(n, ast.Try) for h in n.handlers]
+			self.assertEqual([ast.unparse(h.type) for h in handlers], ["Exception"], name)
+
 	def test_the_module_is_found_by_import_and_its_absence_is_not_an_error(self):
 		self.patched.restore()
 		name = "erpnext_enhancements.inventory_enhancements.project_shelf"
@@ -1588,9 +1647,9 @@ class TestLocationContents(_Case):
 		self.assertEqual(rows[("Project Shelf - SF", "A")]["status"], rules.STATUS_ELSEWHERE)
 		self.assertEqual(rows[("Project Shelf - SF", "A")]["kind"], rules.KIND_SHOP)
 		self.assertEqual(rows[("Project Shelf - SF", "C")]["status"], rules.STATUS_EMPTY)
-		self.assertEqual(message, data.NO_SHELF_NOTE)
+		self.assertEqual(message, data.NO_SHELF_NOTE + "<br>" + data.ALL_ROWS_NOTE)
 		self.places()
-		self.assertIsNone(self.run_report()[2])
+		self.assertEqual(self.run_report()[2], data.ALL_ROWS_NOTE)
 
 	def test_only_problems_and_the_status_filter_narrow_the_table_not_the_cards(self):
 		_columns, every, _m, _c, cards = self.run_report(location="Shelf A - SF")
@@ -1797,7 +1856,7 @@ class TestWhereIsThisItem(_Case):
 		self.assertEqual(sum(r["on_hand"] for r in shelf), 9.0)
 		self.assertIn(where_item.SHORT_SHELF_NOTE, message)
 		self.shares = [{"item_code": "A", "project": "JOB-1", "qty": 9.0, "value": 90.0}]
-		self.assertIsNone(self.run_report(item_code="A")[2])
+		self.assertEqual(self.run_report(item_code="A")[2], data.ALL_ROWS_NOTE)
 
 	def test_a_claim_on_an_item_with_nothing_left_on_the_shelf_still_gets_its_rows(self):
 		self.shares = [
@@ -2288,7 +2347,7 @@ class TestJobSiteContents(_Case):
 
 	def test_everything_out_on_every_job(self):
 		_columns, rows, message, _chart, cards = self.run_report()
-		self.assertIsNone(message)
+		self.assertEqual(message, data.ALL_ROWS_NOTE)
 		self.assertEqual(self.asked, [(None, None)])
 		self.assertEqual(
 			[(r["project"], r["warehouse"], r["item_code"]) for r in rows],
@@ -2352,7 +2411,7 @@ class TestJobSiteContents(_Case):
 		self.places(sites_ready=False)
 		_columns, rows, message, _chart, cards = self.run_report()
 		self.assertEqual(rows, [])
-		self.assertEqual(message, "Job sites are not set up on this site yet.")
+		self.assertEqual(message, "Job sites are not set up on this site yet.<br>" + data.ALL_ROWS_NOTE)
 		self.assertEqual(self.asked, [])
 		self.assertEqual({card["value"] for card in cards}, {0})
 
@@ -2449,6 +2508,55 @@ class TestQueries(unittest.TestCase):
 		for path in self.OURS:
 			source = _strip_py(path.read_text(encoding="utf-8"))
 			self.assertNotRegex(source, r"\.custom_\w+", path.name)
+
+
+class TestPermissionsNote(_Case):
+	"""Every report says, over its own table, that User Permissions do not narrow it. Until this
+	was on the page only the docs said so."""
+
+	def setUp(self):
+		super().setUp()
+		self.patched.set(location_contents, "locations_with_anything", lambda item_code=None: set())
+		self.patched.set(where_item, "bin_rows", lambda codes: [])
+		self.patched.set(where_item, "last_movements", lambda codes, shelf=None: ({}, {}))
+		self.patched.set(data, "shelf_stock_by_project", lambda *a, **k: [])
+		self.patched.set(data, "site_bins", lambda *a, **k: [])
+		self.patched.set(project_materials, "order_lines", lambda project: [])
+		self.patched.set(project_materials, "receipt_lines", lambda project: [])
+		self.patched.set(project_materials, "job_ledger", lambda project: [])
+		self.patched.set(job_site_contents, "site_ledger", lambda warehouses: {})
+
+	def messages(self):
+		return {
+			"Location Contents": location_contents.execute({})[2],
+			"Where Is This Item": where_item.execute({})[2],
+			"Project Materials, one job": project_materials.execute({"project": "JOB-1"})[2],
+			"Project Materials, every job": project_materials.execute({})[2],
+			"Job Site Contents": job_site_contents.execute({})[2],
+		}
+
+	def test_the_note_is_the_last_line_over_every_report(self):
+		for kwargs in ({}, {"shelf": None}, {"sites_ready": False}, {"shelf": None, "sites_ready": False}):
+			self.places(**kwargs)
+			for name, message in self.messages().items():
+				with self.subTest(name, **kwargs):
+					self.assertTrue(message.endswith(data.ALL_ROWS_NOTE), message)
+					self.assertEqual(message.count(data.ALL_ROWS_NOTE), 1)
+
+	def test_the_note_says_it_in_plain_words(self):
+		self.assertEqual(
+			data.ALL_ROWS_NOTE,
+			"This report shows everything its filters match. User Permissions do not narrow it.",
+		)
+		self.assertEqual(data.message(), data.ALL_ROWS_NOTE)
+		self.assertEqual(data.message("One", None, "", "Two"), "One<br>Two<br>" + data.ALL_ROWS_NOTE)
+
+	def test_no_report_builds_its_message_without_it(self):
+		for folder, _ref, _roles in REPORT_RECORDS.values():
+			source = _strip_py((REPORTS / folder / f"{folder}.py").read_text(encoding="utf-8"))
+			with self.subTest(folder):
+				self.assertIn("data.message(", source)
+				self.assertNotIn("<br>", source)
 
 
 class TestPrintAndExport(_Case):

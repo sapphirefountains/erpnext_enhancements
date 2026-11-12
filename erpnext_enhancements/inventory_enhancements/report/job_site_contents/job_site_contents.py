@@ -23,7 +23,8 @@ none on hand and some on order lists, as it does on the site's own Stock Scan sc
 (``inventory_report_rules.stay``): the day the balance last rose from nothing, so parts that were
 all used and then sent again are not counted from the first delivery. *Last Arrival* is the
 newest row that raised the balance. The ledger is read only for the sites that hold something,
-in ledger order (``posting_datetime``, then ``creation``), canceled entries left out.
+in ledger order (``posting_datetime``, then ``creation``), canceled entries left out. That read
+filters on the warehouse, which no Stock Ledger Entry index leads with (see ``site_ledger``).
 
 **Value** is ERPNext's own stock value for the item at the site. A transfer to a site moves no
 value in the books (a site shares the shop's inventory account), but each warehouse keeps its own
@@ -51,9 +52,10 @@ def execute(filters=None):
 	filters = frappe._dict(filters or {})
 	where = data.places()
 	if not where.sites_ready:
-		return get_columns(), [], _("Job sites are not set up on this site yet."), None, get_summary([])
+		message = data.message(_("Job sites are not set up on this site yet."))
+		return get_columns(), [], message, None, get_summary([])
 	rows = get_rows(filters, where)
-	message = None if where.sites else _("There are no job site warehouses yet.")
+	message = data.message(None if where.sites else _("There are no job site warehouses yet."))
 	return get_columns(), rows, message, None, get_summary(rows)
 
 
@@ -103,7 +105,12 @@ def get_columns():
 
 def site_ledger(warehouses):
 	"""The live stock ledger rows at the given sites, oldest first, as
-	``{(item_code, warehouse): [row, ...]}``."""
+	``{(item_code, warehouse): [row, ...]}``.
+
+	Stock Ledger Entry has no index that leads with ``warehouse`` at ERPNext 16.54.0, so this
+	reads every ledger row to find the sites' and sorts what it keeps. Its cost grows with the
+	whole ledger (832 rows on production on 2026-11-12), not with what is on the sites. No index
+	is added here."""
 	out = {}
 	for part in data.chunks(warehouses):
 		for row in frappe.db.sql(
