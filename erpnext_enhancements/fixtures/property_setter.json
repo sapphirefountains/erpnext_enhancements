@@ -1662,7 +1662,7 @@
   "property": "default",
   "property_type": "Text",
   "row_name": null,
-  "value": "0"
+  "value": "1"
  },
  {
   "default_value": null,
@@ -7498,7 +7498,7 @@
   "property": "description",
   "property_type": "Text",
   "row_name": null,
-  "value": "Tick for parts we keep on a shelf and count; not for services or assets"
+  "value": "On for parts and materials, so receipts add to stock; off for labor, fees and assets"
  },
  {
   "default_value": null,

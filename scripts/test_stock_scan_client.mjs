@@ -2084,6 +2084,35 @@ async function appBinActions() {
 		process.exit(2);
 	}
 	const L = await load("logic.js");
+
+	// v1.809.0: "what did one cost?" for an order line with no price (api/stock_scan.add answers
+	// `needs_order_price` instead of saving; inventory_enhancements/receipt_price_rules.py).
+	check("order price: the question is told from a save and from the unit-cost question",
+		[L.isOrderPricePrompt({ needs_order_price: true }), L.isOrderPricePrompt({ needs_valuation_rate: true }), L.isOrderPricePrompt({ log: {} }), L.isOrderPricePrompt(null)],
+		[true, false, false, false]);
+	check("order price: a typed price is read like a unit cost", [L.orderPriceProblem("12.50", "Box"), L.orderPriceProblem("1,250.5", "Box")], [{ rate: 12.5 }, { rate: 1250.5 }]);
+	check("order price: blank, zero, junk, a decimal comma and a slipped decimal are refused in words",
+		["", "0", "abc", "2,5", String(L.MAX_UNIT_PRICE + 1)].map((text) => typeof L.orderPriceProblem(text, "Box").problem),
+		["string", "string", "string", "string", "string"]);
+	check("order price: the refusal names the unit", L.orderPriceProblem("", "Box").problem, "Enter the price per Box.");
+	{
+		const can = L.orderPriceText({ item_name: "Widget", uom: "Box", purchase_order: "PO-0007", can_price: true, can_mark_free: true }, 3);
+		check("order price: the words name the order, the item and ONE unit",
+			[/PO-0007 has no price for Widget/.test(can.lead), can.title, can.label, /ONE Box/.test(can.per), /3 you counted/.test(can.note), can.button, can.free, can.stop, can.reasonLabel],
+			[true, "What did one cost?", "Price per Box", true, true, "Receive at this price", "It was free", "Stop", "Why was it free?"]);
+		// A person who can neither price the order nor mark a line free: nothing to enter, nothing to tick.
+		// The server's own sentence says why and who can, and names who it asked.
+		const stuck = L.orderPriceText({
+			item_code: "PDT-0008", purchase_order: "PO-0007", can_price: false, can_mark_free: false,
+			why: "You can receive against PO-0007, but you can't set prices on it. Purchasing can.", asked: ["Test Buyer"],
+		}, 3);
+		check("order price: a person who can't price is told why, who can, and who was asked",
+			[stuck.title, stuck.cannot, /Nothing was received\. Test Buyer has been asked to put the price on the order\./.test(stuck.note), /Set it aside/.test(stuck.note), stuck.stop],
+			["This one can't be received yet", "You can receive against PO-0007, but you can't set prices on it. Purchasing can.", true, true, "OK"]);
+		check("order price: and is never told to mark it free", [/free|no charge/i.test(stuck.note), /free|no charge/i.test(stuck.cannot)], [false, false]);
+		const two = L.orderPriceText({ purchase_order: "PO-0007", can_price: false, can_mark_free: false, asked: ["Test Buyer", "Second Buyer"] }, 1);
+		check("order price: two people asked, or nobody", [/Test Buyer and Second Buyer have been asked/.test(two.note), /Tell purchasing it needs a price\./.test(L.orderPriceText({ can_price: false }, 1).note)], [true, true]);
+	}
 	const T = await load("transport.js");
 	const N = await load("nav.js");
 	exported(L, "logic.js", [

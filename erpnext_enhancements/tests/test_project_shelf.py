@@ -72,6 +72,13 @@ _OWN_MODULES = (
 	"erpnext_enhancements.inventory_enhancements.project_shelf",
 	"erpnext_enhancements.procurement_project",
 	"erpnext_enhancements.patches.rename_stores_to_project_shelf",
+	"erpnext_enhancements.api.procurement",
+	"erpnext_enhancements.inventory_enhancements.receipt_price",
+	"erpnext",
+	"erpnext.buying",
+	"erpnext.buying.doctype",
+	"erpnext.buying.doctype.purchase_order",
+	"erpnext.buying.doctype.purchase_order.purchase_order",
 	"frappe.model",
 	"frappe.model.rename_doc",
 	"frappe.utils.global_search",
@@ -90,13 +97,14 @@ scan = None
 bins = None
 sites = None
 procurement = None
+receiving = None
 patch = None
 FRAPPE = None
 _ORIGINAL = {}
 
 
 def setUpModule():
-	global shelf, scan, bins, sites, procurement, patch, FRAPPE
+	global shelf, scan, bins, sites, procurement, receiving, patch, FRAPPE
 	for name in _OWN_MODULES:
 		sys.modules.pop(name, None)
 	sites_base.setUpModule()
@@ -187,7 +195,55 @@ def setUpModule():
 	search_module.rebuild_for_doctype = rebuild_for_doctype
 	sys.modules["frappe.utils.global_search"] = search_module
 
+	# ERPNext's receipt mapper and Maintain Stock's price step, as api/procurement.py imports them
+	# (v1.809.0). The mapper builds a receipt of the order's wanted lines, each at the order
+	# line's own warehouse; the price step answers what the test tells it to.
+	for dotted in ("erpnext", "erpnext.buying", "erpnext.buying.doctype", "erpnext.buying.doctype.purchase_order"):
+		sys.modules[dotted] = types.ModuleType(dotted)
+	mapper = types.ModuleType("erpnext.buying.doctype.purchase_order.purchase_order")
+
+	def make_purchase_receipt(name, args=None):
+		order = base._table("Purchase Order")[name]
+		receipt = base.Doc("Purchase Receipt", {"company": order["company"], "__islocal": 1})
+		for row in order["items"]:
+			if row["name"] in (args or {}).get("filtered_children", ()):
+				receipt.append(
+					"items",
+					{
+						"purchase_order_item": row["name"],
+						"item_code": row["item_code"],
+						"project": row.get("project"),
+						"warehouse": row.get("warehouse"),
+					},
+				)
+		STATE["receipt"] = receipt
+		return receipt
+
+	mapper.make_purchase_receipt = make_purchase_receipt
+	sys.modules["erpnext.buying.doctype.purchase_order.purchase_order"] = mapper
+	price_step = types.ModuleType("erpnext_enhancements.inventory_enhancements.receipt_price")
+
+	def settle_before_receipt(po, wanted, typed, hold=True):
+		held = [name for name in STATE.get("held", ()) if name in wanted]
+		STATE.setdefault("settled", []).append({"wanted": set(wanted), "typed": dict(typed), "hold": hold})
+		return {
+			"free": set(),
+			"held": held,
+			"held_lines": [{"purchase_order_item": name, "idx": 1, "item_code": ITEM} for name in held],
+			"asked": ["purchasing"] if held else [],
+			"message": "Row 1 was left for purchasing to price." if held else "",
+			"remark": "",
+		}
+
+	price_step.settle_before_receipt = settle_before_receipt
+	sys.modules["erpnext_enhancements.inventory_enhancements.receipt_price"] = price_step
+	FRAPPE.utils.nowtime = lambda: "09:00:00"
+
 	from erpnext_enhancements import procurement_project as procurement_module
+	from erpnext_enhancements.api import procurement as receiving_module
+
+	receiving = receiving_module
+	receiving._over_receipt_allowance = lambda item_code: 0.0
 	from erpnext_enhancements.inventory_enhancements import project_shelf as shelf_module
 	from erpnext_enhancements.patches import rename_stores_to_project_shelf as patch_module
 
@@ -1502,6 +1558,214 @@ class TestPurchaseLines(_Base):
 		self.assertIn("places = {} if target else", source)
 		self.assertIn("_receiving_warehouse(place, po.company)", source)
 		self.assertLess(source.index("_receiving_warehouse(place, po.company)"), source.index("make_purchase_receipt("))
+
+
+# --------------------------------------------------------------------------- where it meets the price rule
+
+
+class TestWhereItMeetsThePriceRule(_Base):
+	"""Maintain Stock (v1.809.0) holds a stock item's line that has no price back from the
+	receipt. The Project Shelf gives each received line its place. The two run in one function,
+	``api.procurement.receive_items``, on ERPNext's own receipt mapper (stubbed here)."""
+
+	ORDER = "PUR-ORD-0077"
+
+	def setUp(self):
+		super().setUp()
+		base._rule(ITEM, BIN_B)
+		base._table("Purchase Order")[self.ORDER] = {
+			"name": self.ORDER,
+			"docstatus": 1,
+			"status": "To Receive and Bill",
+			"company": COMPANY,
+			"per_received": 0,
+			"items": [
+				base._dict(name="held", item_code=ITEM, qty=2, received_qty=0, project=JOB_A, warehouse=SHELF),
+				base._dict(name="overhead", item_code=ITEM, qty=3, received_qty=0, project=OVERHEAD, warehouse=SHELF),
+				base._dict(name="job", item_code=ITEM, qty=4, received_qty=0, project=JOB_B, warehouse=SHELF),
+			],
+		}
+		for row in base._table("Purchase Order")[self.ORDER]["items"]:
+			base._table("Purchase Order Item")[row["name"]] = {**row, "parent": self.ORDER, "parenttype": "Purchase Order"}
+
+	def _receive(self, rows, **kwargs):
+		return receiving.receive_items(self.ORDER, rows, **kwargs)
+
+	def _placed(self):
+		return {row.purchase_order_item: row.warehouse for row in STATE["receipt"].items}
+
+	def test_the_dialogs_places_are_the_ones_the_shelf_rule_offers(self):
+		lines = procurement.receiving_defaults(self.ORDER)["lines"]
+		self.assertEqual(
+			{name: (answer["warehouse"], answer["changed"]) for name, answer in lines.items()},
+			{"held": (SHELF, False), "overhead": (BIN_B, True), "job": (SHELF, False)},
+		)
+
+	def test_a_line_held_for_a_price_is_not_received_and_gets_no_place(self):
+		"""The dialog sent a place for every line, the held one included. It is dropped from the
+		receipt with its place, so nothing of it reaches the shelf or anywhere else."""
+		STATE["held"] = ["held"]
+		out = self._receive(
+			[
+				{"purchase_order_item": "held", "qty": 2, "warehouse": SHELF},
+				{"purchase_order_item": "overhead", "qty": 3, "warehouse": BIN_B},
+				{"purchase_order_item": "job", "qty": 4, "warehouse": SHELF},
+			]
+		)
+		self.assertEqual(self._placed(), {"overhead": BIN_B, "job": SHELF})
+		self.assertEqual([row["purchase_order_item"] for row in out["received"]], ["overhead", "job"])
+		self.assertEqual([row["purchase_order_item"] for row in out["held"]], ["held"])
+		self.assertTrue(STATE["receipt"].flags.receiving_places_chosen)
+		# The price step saw every line that arrived, before any receipt existed.
+		self.assertEqual(STATE["settled"][0]["wanted"], {"held", "overhead", "job"})
+
+	def test_a_place_sent_only_for_a_held_line_does_not_count_as_a_place_chosen(self):
+		"""Otherwise the receipt's own rule would stand aside for a choice that was never used."""
+		STATE["held"] = ["held"]
+		self._receive(
+			[{"purchase_order_item": "held", "qty": 2, "warehouse": BIN_A}, {"purchase_order_item": "overhead", "qty": 3}]
+		)
+		self.assertEqual(self._placed(), {"overhead": SHELF})
+		self.assertFalse(STATE["receipt"].flags.receiving_places_chosen)
+
+	def test_with_every_line_held_there_is_no_receipt_and_no_place(self):
+		STATE["held"] = ["held", "overhead", "job"]
+		out = self._receive(
+			[
+				{"purchase_order_item": "held", "qty": 2, "warehouse": SHELF},
+				{"purchase_order_item": "overhead", "qty": 3, "warehouse": BIN_B},
+				{"purchase_order_item": "job", "qty": 4, "warehouse": SHELF},
+			]
+		)
+		self.assertIsNone(out["purchase_receipt"])
+		self.assertNotIn("receipt", STATE)
+		self.assertEqual(base._vouchers("Purchase Receipt"), [])
+
+	def test_a_held_line_and_the_overhead_rule_on_one_receipt_with_no_places_sent(self):
+		"""A caller that names no place (not the dialog, not a scan): the receipt's own hook
+		places the lines. The held line is not on the receipt to be placed; the Overhead line
+		that names the shelf goes to the item's bin; the job's line stays on the shelf."""
+		STATE["held"] = ["held"]
+		self._receive(
+			[
+				{"purchase_order_item": "held", "qty": 2},
+				{"purchase_order_item": "overhead", "qty": 3},
+				{"purchase_order_item": "job", "qty": 4},
+			]
+		)
+		receipt = STATE["receipt"]
+		self.assertFalse(receipt.flags.receiving_places_chosen)
+		self.assertEqual(self._placed(), {"overhead": SHELF, "job": SHELF}, "as ERPNext mapped them")
+		# The stub's insert runs no hooks, so the receipt's first save is replayed here: the same
+		# lines, not yet saved, with the flag receive_items left on them.
+		unsaved = base.Doc("Purchase Receipt", {"company": COMPANY, "__islocal": 1})
+		for row in receipt.items:
+			unsaved.append("items", dict(row))
+		unsaved.flags.receiving_places_chosen = receipt.flags.receiving_places_chosen
+		procurement.default_receipt_warehouses(unsaved)
+		self.assertEqual(
+			{row.purchase_order_item: row.warehouse for row in unsaved.items}, {"overhead": BIN_B, "job": SHELF}
+		)
+
+	def test_a_bad_place_is_refused_before_the_price_step_writes_anything(self):
+		STATE["held"] = ["held"]
+		self.assertRefused(
+			self._receive,
+			"group of locations",
+			rows=[{"purchase_order_item": "job", "qty": 4, "warehouse": "Inventory - SF"}],
+		)
+		self.assertNotIn("settled", STATE, "no price was put on the order and no ToDo made")
+		self.assertNotIn("receipt", STATE)
+
+	def test_a_scan_at_the_shelf_still_wins_and_still_meets_the_price_step(self):
+		"""Stock Scan receives one line into the bin that was scanned, and refuses rather than
+		holds (``hold_unpriced=0``). At the Project Shelf that bin is the shelf, whatever the
+		line's project."""
+		out = receiving.receive_order_line("overhead", 3, SHELF, item_code=ITEM)
+		self.assertEqual(self._placed(), {"overhead": SHELF})
+		self.assertTrue(STATE["receipt"].flags.receiving_places_chosen)
+		self.assertFalse(STATE["settled"][0]["hold"])
+		self.assertEqual(out["held"], [])
+
+	def test_stock_scan_asks_for_the_price_before_anything_at_the_shelf(self):
+		"""At the shelf as anywhere: the price question comes back before a log row exists, and
+		a receipt against an order needs no job from the page (the order line carries it)."""
+		original = scan._order_price_prompt
+		scan._order_price_prompt = lambda *a, **k: {"needs_order_price": True, "message": "No price on the order."}
+		try:
+			out = scan.add(ITEM, SHELF, 1, base._ref(40), purchase_order_item="job")
+		finally:
+			scan._order_price_prompt = original
+		self.assertEqual(out, {"needs_order_price": True, "message": "No price on the order."})
+		self.assertEqual(base._table("Stock Scan Log"), {})
+		self.assertNotIn("receipt", STATE)
+		# With the price settled, the same save receives onto the shelf with no job asked for.
+		scan._order_price_prompt = lambda *a, **k: None
+		try:
+			scan.add(ITEM, SHELF, 1, base._ref(41), purchase_order_item="job")
+		finally:
+			scan._order_price_prompt = original
+		self.assertEqual(self._placed(), {"job": SHELF})
+		source = ast.unparse(
+			next(
+				n
+				for n in ast.walk(ast.parse((APP / "api" / "stock_scan.py").read_text(encoding="utf-8")))
+				if isinstance(n, ast.FunctionDef) and n.name == "add"
+			)
+		)
+		self.assertLess(source.index("_order_price_prompt("), source.index("_begin_log("))
+		self.assertLess(source.index("receive_order_line("), source.index("project_shelf.is_shelf(location.name)"))
+
+	def test_receive_items_keeps_the_price_step_before_the_receipt_and_the_places_after_it(self):
+		source = ast.unparse(
+			next(
+				n
+				for n in ast.walk(ast.parse(RECEIVE.read_text(encoding="utf-8")))
+				if isinstance(n, ast.FunctionDef) and n.name == "receive_items"
+			)
+		)
+		checked = source.index("_receiving_warehouse(place, po.company)")
+		settled = source.index("receipt_price.settle_before_receipt(")
+		dropped = source.index("places = {name: place for name, place in places.items() if name in wanted}")
+		built = source.index("make_purchase_receipt(po.name")
+		self.assertLess(checked, settled)
+		self.assertLess(settled, dropped)
+		self.assertLess(dropped, built)
+
+	def test_the_dialog_asks_both_questions_and_posts_both_answers(self):
+		script = (APP / "public" / "js" / "po_receive_items.js").read_text(encoding="utf-8")
+		self.assertIn('"erpnext_enhancements.api.procurement.lines_needing_price"', script)
+		self.assertIn('"erpnext_enhancements.procurement_project.receiving_defaults"', script)
+		# The price question first; where each line goes next; neither failure stops the dialog.
+		opener = script[script.index("erpnext_enhancements.procurement.receive_items = function (frm) {") :]
+		self.assertLess(opener.index("method: NEEDS_PRICE"), opener.index("() => open(null)"))
+		self.assertIn("receiving_defaults(frm).then((defaults) =>", opener)
+		self.assertIn("() => ({})", script)
+		# Both sets of columns, and both answers on each posted row.
+		self.assertIn("...price_fields,", script)
+		self.assertIn('label: __("Put in")', script)
+		self.assertLess(script.index("...price_fields,"), script.index('label: __("Put in")'))
+		self.assertIn('warehouse: line.warehouse || "",', script)
+		self.assertIn("else if (can_price && flt(line.price) > 0) out.rate = flt(line.price);", script)
+
+	def test_an_item_switched_to_maintain_stock_does_not_land_on_the_shelf_by_its_old_default(self):
+		"""Maintain Stock's switch turns on items whose Item Default is the warehouse that was
+		Stores. Being a stock item changes nothing here: the shelf lists what is on it, the
+		item has no bin of its own from that default, and its new-item rule never names the shelf."""
+		base._table("Putaway Rule").clear()
+		base._default(ITEM, SHELF)
+		STATE["items_at"] = [
+			{"name": ITEM, "item_name": "PART", "image": None, "stock_uom": "Unit", "on_hand": 0, "on_order": 0, "assigned": 0, "is_default": 1, "undecided": 0},
+		]
+		self.assertEqual(scan._items_at(scan._warehouse(SHELF)), ([], False))
+		self.assertIsNone(procurement.item_own_bin(ITEM, COMPANY))
+		self.assertEqual(procurement.default_line_warehouse(ITEM, OVERHEAD, COMPANY)["warehouse"], ROOM)
+		item = scan._quick_item(
+			{"item_code": "NEW-0009", "item_name": "VALVE, NEWER", "item_group": "Parts", "stock_uom": "Unit"},
+			scan._warehouse(SHELF),
+		)
+		self.assertEqual(item.item_defaults, [{"company": COMPANY, "default_warehouse": None}])
+		self.assertEqual(item.is_stock_item, 1)
 
 
 # --------------------------------------------------------------------------- the patch

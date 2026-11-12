@@ -963,6 +963,54 @@ def _receipt_cost(item, location, entered, qty):
 	)
 
 
+def _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge, no_charge_reason=None):
+	"""The question the page asks when the order line being received has no price, or ``None``.
+
+	``None`` when the line needs no price, when the caller can't read the order
+	(``receive_items`` refuses that in its own words), and when a usable answer came with the
+	save from a person who may give it: a price from one who may price the order, or "no charge"
+	with its reason from one who may mark a line free.
+
+	For a person who may do neither, the question is the answer: nothing can be received, so
+	purchasing's ToDo is made here (this returns normally, so it is kept) and the payload says who
+	was asked. An answer such a person sends anyway is ignored, not obeyed.
+	"""
+	if not purchase_order:
+		return None
+	from erpnext_enhancements.inventory_enhancements import receipt_price, receipt_price_rules
+
+	if not frappe.has_permission("Purchase Order", "read", doc=purchase_order):
+		return None
+	po = frappe.get_doc("Purchase Order", purchase_order)
+	needing = receipt_price.needing_price(po, wanted={line})
+	if not needing:
+		return None
+	block = receipt_price.price_block(po)
+	can_mark_free = receipt_price.may_mark_free(po)
+	reason_required = bool(receipt_price_rules.NO_CHARGE_NEEDS_REASON)
+	if cint(no_charge) and can_mark_free and (cstr(no_charge_reason).strip() or not reason_required):
+		return None
+	if not cint(no_charge) and order_rate not in (None, "") and block is None:
+		return None
+	row = needing[0]
+	stuck = block is not None and not can_mark_free
+	return {
+		"needs_order_price": True,
+		"item_code": item.name,
+		"item_name": item.item_name or item.name,
+		"uom": row.get("uom") or item.stock_uom,
+		"purchase_order": po.name,
+		"row": row.get("idx"),
+		"can_price": block is None,
+		"can_mark_free": can_mark_free,
+		"reason_required": reason_required,
+		"why": receipt_price_rules.block_sentence(block, po.name) if block else "",
+		"asked": receipt_price.ask_purchasing(po, needing) if stuck else [],
+		"qty": qty,
+		"max_rate": receipt_price_rules.MAX_UNIT_PRICE,
+	}
+
+
 def _project(project, company, required=False):
 	"""The job a take is charged to, checked; ``None`` when none was picked."""
 	project = cstr(project).strip()
@@ -1151,6 +1199,9 @@ def add(
 	project=None,
 	scanned_code=None,
 	rate=None,
+	order_rate=None,
+	no_charge=0,
+	no_charge_reason=None,
 ):
 	"""Add stock to a location: received against an open order line, or added without one.
 
@@ -1177,6 +1228,19 @@ def add(
 	own mapper (``procurement.receive_order_line``) builds the receipt, and ERPNext posts no
 	stock and no GL for a non-stock line (84 of 103 submitted receipts on production are
 	non-stock only). Every other path keeps ``_stock_item``'s refusal.
+
+	**A stock item's order line with no price** (v1.809.0; ``receipt_price_rules`` has the rule):
+	the receipt would be refused, so nothing is posted and the answer is a payload,
+	``{needs_order_price: True, item_code, item_name, uom, purchase_order, row, can_price,
+	can_mark_free, reason_required, why, asked, qty, max_rate}``. A person who may price the
+	order is asked what one cost and sends the same save again with ``order_rate`` (per unit of
+	the **order line's** UOM, the unit the order is priced in), or with ``no_charge=1`` and
+	``no_charge_reason`` for a free sample or a warranty replacement, or stops. The price goes
+	on the order line through ERPNext's Update Items. A person who may not (no write on the
+	order, or they raised the request it fills: ``why`` says which, and who can) gets no price
+	box: nothing is received, and purchasing gets a ToDo on the order (``asked`` names them),
+	made here, when the question is answered, so it is kept. No log row is written for the
+	question.
 	"""
 	_check_access()
 	ref = _client_ref(client_ref)
@@ -1195,6 +1259,9 @@ def add(
 
 		line = cstr(purchase_order_item).strip()
 		purchase_order = frappe.db.get_value("Purchase Order Item", line, "parent")
+		prompt = _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge, no_charge_reason)
+		if prompt:
+			return prompt
 		log = _begin_log(
 			ref,
 			rules.ACTION_RECEIVE,
@@ -1213,6 +1280,9 @@ def add(
 			remarks=rules.remark(
 				rules.ACTION_RECEIVE, who, location.name, qty, item.stock_uom, purchase_order=purchase_order
 			),
+			rate=order_rate,
+			no_charge=cint(no_charge),
+			no_charge_reason=no_charge_reason,
 		)
 		_finish_log(log, "Purchase Receipt", result.get("purchase_receipt"))
 		return _result(log.name)
@@ -1711,7 +1781,8 @@ def _quick_item(spec, location):
 	the Desk (from 2026-10-01 it refuses a duplicate code or a name that is just the code). If
 	the receipt then fails, the request rolls back and the Item goes with it.
 
-	``is_stock_item`` is set because the site's Property Setter defaults it to 0. The Item
+	``is_stock_item`` is set here whatever the site's default is (a Property Setter kept it at 0
+	until v1.809.0, and 1 since): a part bought on a store run always keeps stock. The Item
 	Default is the bin it was bought into, for this company: without one, ERPNext copies the
 	Item Group's defaults or the Company's default warehouse (``Stores - SF`` then; the Project
 	Shelf since v1.810.0), and the item would be on record as kept in a place it has never

@@ -60,6 +60,9 @@ import {
 	ordersAtStore,
 	costPromptText,
 	isCostPrompt,
+	isOrderPricePrompt,
+	orderPriceProblem,
+	orderPriceText,
 	parseQty,
 	plain,
 	reasonWarning,
@@ -2232,6 +2235,14 @@ export class StockScanApp {
 				else this.askUnitCost(v, method, args, result, ref);
 				return;
 			}
+			if (isOrderPricePrompt(result)) {
+				// Not a save either (v1.809.0): the order line has no price, a stock item can't be received
+				// without one, and the server has posted nothing. Ask, and send this save again with the answer.
+				this.updateStepper();
+				if (sheetUi) sheetUi.showError(result.why || "That order line still has no price. Ask purchasing to put it on the order.");
+				else this.askOrderPrice(v, method, args, result, ref);
+				return;
+			}
 			if (ui && ui.onDone) ui.onDone();
 			this.afterSave(v, result, keepChange);
 			// A store-run line has more to do once it is in (the run bar, the item at its bin,
@@ -2343,6 +2354,109 @@ export class StockScanApp {
 			if (addBtn && !addBtn.disabled) submit(h, addBtn);
 		});
 		field.select && field.select();
+	}
+
+	/**
+	 * "What did one cost?" (v1.809.0). The server answered a receive with `needs_order_price`
+	 * (`isOrderPricePrompt`): the order line is a stock item's and has no price, and the receipt would be
+	 * refused. What the sheet offers depends on who is holding the phone, and the server says which:
+	 *   - may price the order (`can_price`): a price box, sent as `order_rate` (per unit of the ORDER's
+	 *     UOM), which the server puts on the order;
+	 *   - may mark a line free (`can_mark_free`): "It was free" with a reason, sent as `no_charge` and
+	 *     `no_charge_reason`;
+	 *   - neither: no box and no button but OK. Nothing is received, and the server has already left
+	 *     purchasing a ToDo (`asked`). This person is never told to mark anything free.
+	 * Stop (or OK) posts nothing. Built like `askUnitCost`: one reference for the life of the sheet, the
+	 * button off while the save is out, a refusal shown inside the sheet. A sheet is already a history
+	 * marker (nav.js).
+	 */
+	askOrderPrice(v, method, args, prompt, ref) {
+		const copy = orderPriceText(prompt, args.qty);
+		const error = errorLine("ee-ss-field-error");
+		const canPrice = !!prompt.can_price;
+		const canFree = !!prompt.can_mark_free;
+		const reasonRequired = prompt.reason_required !== false;
+		let closed = false;
+		let posting = false;
+		const field = input({
+			className: "ee-ss-input ee-ss-cost-input",
+			type: "text",
+			inputmode: "decimal",
+			enterkeyhint: "done",
+			value: "",
+			label: copy.label,
+		});
+		const reasonField = input({
+			className: "ee-ss-input",
+			type: "text",
+			enterkeyhint: "done",
+			value: "",
+			label: copy.reasonLabel,
+		});
+		const send = (h, btn, extra) => {
+			if (posting) return false;
+			posting = true;
+			this.post(v, method, Object.assign({}, args, extra), {
+				button: btn,
+				ref,
+				showError: (text, action) => {
+					if (text) posting = false;
+					error.show(text, action);
+				},
+				isOpen: () => !closed,
+				onDone: () => h.close("action"),
+			});
+			return false;
+		};
+		const submit = (h, btn) => {
+			if (posting) return false;
+			const answer = orderPriceProblem(field.value, prompt.uom);
+			if (answer.problem) {
+				error.show(answer.problem);
+				field.focus();
+				return false;
+			}
+			return send(h, btn, { order_rate: answer.rate });
+		};
+		const free = (h, btn) => {
+			if (posting) return false;
+			const reason = String(reasonField.value || "").trim();
+			if (reasonRequired && !reason) {
+				error.show(copy.reasonMissing);
+				reasonField.focus();
+				return false;
+			}
+			return send(h, btn, { no_charge: 1, no_charge_reason: reason || undefined });
+		};
+		const body = append(el("div", "ee-ss-cost"), el("p", "ee-ss-sheet-text", copy.lead));
+		if (canPrice) append(body, el("label", "ee-ss-field-label", copy.label), field, el("p", "ee-ss-note", copy.per));
+		else append(body, el("p", "ee-ss-note", copy.cannot));
+		if (canFree) append(body, el("label", "ee-ss-field-label", copy.reasonLabel), reasonField, el("p", "ee-ss-note", copy.reasonHint));
+		append(body, error.node, el("p", "ee-ss-note", copy.note));
+		const h = sheet({
+			title: copy.title,
+			onClose: () => {
+				closed = true;
+			},
+			body,
+			initialFocus: canPrice ? field : "sheet",
+		});
+		const actions = [];
+		if (canPrice) {
+			actions.push({ label: copy.button, kind: "add", large: true, close: false, onClick: (handle, btn) => submit(handle, btn) });
+		}
+		if (canFree) {
+			actions.push({ label: copy.free, kind: "outline", close: false, onClick: (handle, btn) => free(handle, btn) });
+		}
+		actions.push({ label: copy.stop, kind: "ghost" });
+		const buttons = h.setActions(actions);
+		if (canPrice) {
+			field.addEventListener("keydown", (event) => {
+				if (event.key !== "Enter") return;
+				event.preventDefault();
+				if (buttons[0] && !buttons[0].disabled) submit(h, buttons[0]);
+			});
+		}
 	}
 
 	/**

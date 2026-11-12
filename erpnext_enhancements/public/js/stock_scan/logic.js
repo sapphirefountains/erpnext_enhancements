@@ -881,6 +881,78 @@ export function isCostPrompt(result) {
 }
 
 /**
+ * Whether a save's answer is the question "what did one cost?" for an order line with no price
+ * (v1.809.0): `add` answers `{needs_order_price: true, ...}` when the line being received is a stock
+ * item's and its order has no price on it. Nothing was posted.
+ */
+export function isOrderPricePrompt(result) {
+	return !!(result && typeof result === "object" && result.needs_order_price === true);
+}
+
+/**
+ * What the person typed as the price of one unit on the order: `{rate}` or `{problem}`. The same
+ * reading of a number as `unitCostProblem`, without the cap on a without-order add: this is the
+ * order's own price. At most MAX_UNIT_PRICE (above), which `receipt_price_rules.MAX_UNIT_PRICE`
+ * equals; the server checks it again (`receipt_price_rules.checked_price`).
+ */
+export function orderPriceProblem(text, uom) {
+	const per = uom ? ` per ${uom}` : "";
+	const raw = String(text === null || text === undefined ? "" : text).trim();
+	if (!raw) return { problem: `Enter the price${per}.` };
+	if (raw.includes(",") && !/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(raw)) {
+		return { problem: `Enter the price${per} as a number, like 12.50.` };
+	}
+	const plainText = raw.replace(/,/g, "");
+	if (!/^(\d+\.?\d*|\.\d+)$/.test(plainText)) return { problem: `Enter the price${per} as a number, like 12.50.` };
+	const rate = Number(plainText);
+	if (!Number.isFinite(rate) || rate < 0.005) return { problem: `The price${per} must be more than 0.` };
+	if (rate > MAX_UNIT_PRICE) {
+		return { problem: `A price${per} above ${MAX_UNIT_PRICE.toLocaleString("en-US")} is not right. Check the number.` };
+	}
+	return { rate: Math.round(rate * 1e6) / 1e6 };
+}
+
+/**
+ * The words of that question, from the server's payload. Three people (`receipt_price_rules`): one who
+ * may price the order, one who may only mark the line free, and one who can do neither. For the last
+ * the server has already asked purchasing (`asked`, their names) and the sheet only says so.
+ */
+export function orderPriceText(prompt, qty) {
+	const p = prompt || {};
+	const uom = p.uom || "unit";
+	const name = p.item_name || p.item_code || "this item";
+	const order = p.purchase_order || "the purchase order";
+	const asked = Array.isArray(p.asked) ? p.asked.filter(Boolean) : [];
+	const stuck = !p.can_price && !p.can_mark_free;
+	const who = asked.length > 1 ? `${asked.slice(0, -1).join(", ")} and ${asked[asked.length - 1]}` : asked[0];
+	const askedLine = asked.length
+		? `${who} ${asked.length === 1 ? "has" : "have"} been asked to put the price on the order.`
+		: "Tell purchasing it needs a price.";
+	let note;
+	if (p.can_price) {
+		note = `The price is put on ${order}, and the ${qty === undefined || qty === "" ? "goods are" : `${plain(qty)} you counted are`} received at it.`;
+	} else if (p.can_mark_free) {
+		note = "If it was not free, stop: purchasing has to put the price on the order first.";
+	} else {
+		note = `Nothing was received. ${askedLine} Set it aside and receive it once the order has a price.`;
+	}
+	return {
+		title: stuck ? "This one can't be received yet" : "What did one cost?",
+		lead: `${order} has no price for ${name}. Stock comes in at the price on the order, so it can't be received without one.`,
+		label: `Price per ${uom}`,
+		per: `Enter what ONE ${uom} cost, not the total. It is on the packing slip or the invoice.`,
+		cannot: p.why || `You can't set prices on ${order}. Purchasing can.`,
+		reasonLabel: "Why was it free?",
+		reasonHint: "A free sample, a warranty replacement.",
+		reasonMissing: "Say why it was free.",
+		note,
+		button: "Receive at this price",
+		free: "It was free",
+		stop: stuck ? "OK" : "Stop",
+	};
+}
+
+/**
  * What the person typed as a unit cost: `{rate}` or `{problem}`. A positive number, at most
  * MAX_UNIT_COST; the server checks it again (`check_unit_cost`). Thousands commas are allowed
  * ("1,250.50"), and a comma used as a decimal ("2,5") is refused rather than read as 25. With the

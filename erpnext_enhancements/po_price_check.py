@@ -12,6 +12,10 @@ is later issued to is charged nothing for it. On 2026-09-24, 281 of the 327 subm
 Purchase Order lines dated in the previous 90 days had a rate of 0 (the Operations
 dashboard's *Unpriced PO Lines* KPI counts them nightly).
 
+**Since v1.809.0 the receipt refuses** (Nik, 2026-11-12): a stock item's line with no price
+can't be received (``inventory_enhancements/receipt_price_rules.py``). This order-time warning
+stays a warning, and its words say what happens at the dock.
+
 **Why a warning.** Nik's decision of 2026-09-24 (TASK-2026-02238): warn, never block. With
 most lines unpriced today, a refusal would stop purchasing outright on the day it shipped,
 and an order whose price is genuinely not known yet still has to reach the supplier. The
@@ -118,9 +122,10 @@ def warning_message(rows):
 	return (
 		f"<p>{lead}</p><ul>{items}</ul><p>"
 		+ _(
-			"Stock received against these lines comes in at $0, so it is valued at nothing and any "
-			"job it is issued to is charged nothing for it. POL-0602 section 4.6 requires a price on "
-			"every line. Set the rate with <b>Update Items</b> before the goods are received."
+			"Stock comes in at the price on the order, so a line for an item we keep in stock "
+			"can't be received until it has one. POL-0602 section 4.6 requires a price on "
+			"every line. Set the rate with <b>Update Items</b> before the goods arrive; the person "
+			"receiving is asked for it otherwise."
 		)
 		+ "</p>"
 	)
