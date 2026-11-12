@@ -81,6 +81,41 @@ def _customer_provided(codes):
 	)
 
 
+def _free_rules(rows):
+	"""The Pricing Rules that could really have made one of ``rows`` a free item on a purchase:
+	named by a row that claims ``is_free_item``, and existing, enabled, for buying, and giving a
+	product. ``{name: {"free_item", "same_item"}}``; empty when no row claims it, so the usual
+	receipt costs no query.
+
+	A made-up name, a disabled rule, a price discount and a selling rule are all absent from the
+	answer, so a row that names one is judged like any other row at $0.
+	"""
+	names = sorted(
+		{
+			name
+			for row in rows
+			if cint(row.get("is_free_item"))
+			for name in rules.rule_names(row.get("pricing_rules"))
+		}
+	)
+	if not names:
+		return {}
+	found = frappe.get_all(
+		"Pricing Rule",
+		filters={
+			"name": ("in", names),
+			"disable": 0,
+			"buying": 1,
+			"price_or_product_discount": "Product",
+		},
+		fields=["name", "free_item", "same_item"],
+	)
+	return {
+		rule.get("name"): {"free_item": rule.get("free_item"), "same_item": rule.get("same_item")}
+		for rule in found
+	}
+
+
 def _judged(doc):
 	"""``(unpriced, ticked)`` for the document: the stock rows at $0 with no "free" mark, and the
 	ones a person ticked free. Both empty when the rule does not judge the document."""
@@ -101,7 +136,7 @@ def _judged(doc):
 	if not zero:
 		return [], []
 	provided = _customer_provided(row.get("item_code") for row in zero if cint(row.get(rules.FREE_FIELD)))
-	kwargs = {"rate_field": field, "customer_provided": provided}
+	kwargs = {"rate_field": field, "customer_provided": provided, "free_rules": _free_rules(zero)}
 	return rules.unpriced_lines(zero, stock, **kwargs), rules.ticked_lines(zero, stock, **kwargs)
 
 
@@ -206,6 +241,7 @@ def _order_lines(po):
 			"rate": row.rate,
 			"uom": row.uom,
 			"is_free_item": row.get("is_free_item"),
+			"pricing_rules": row.get("pricing_rules"),
 		}
 		for row in po.get("items") or []
 		if row.item_code
@@ -217,7 +253,10 @@ def needing_price(po, wanted=None):
 	received: ``[{"purchase_order_item", "idx", "item_code", "item_name", "uom"}]``."""
 	lines = _order_lines(po)
 	return rules.order_lines_needing_price(
-		lines, _stock_items(line["item_code"] for line in lines), wanted=wanted
+		lines,
+		_stock_items(line["item_code"] for line in lines),
+		wanted=wanted,
+		free_rules=_free_rules(lines),
 	)
 
 

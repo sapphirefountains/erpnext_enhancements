@@ -46,6 +46,14 @@ PART = "TST-PUMP-100"
 OTHER_PART = "TST-TEE-200"
 FEE = "TST-FREIGHT"
 ORDER = "PO-TEST-1"
+#: A buying rule that gives a free product, as ERPNext would have made the free row from.
+REAL_RULE = {
+	"name": "PRLE-0001",
+	"buying": 1,
+	"price_or_product_discount": "Product",
+	"free_item": "TST-PUMP-100",
+}
+FREE_RULES = {"PRLE-0001": {"free_item": "TST-PUMP-100", "same_item": 0}}
 BUYER = "buyer@example.com"
 OTHER_BUYER = "second.buyer@example.com"
 FULL_NAMES = {BUYER: "Test Buyer", OTHER_BUYER: "Second Buyer", "manager@example.com": "Test Manager"}
@@ -123,6 +131,19 @@ def build_frappe():
 				return [code for code in STATE["customer_provided"] if code in wanted]
 			assert filters.get("is_stock_item") == 1, filters
 			return [code for code in STATE["stock_items"] if code in wanted]
+		if doctype == "Pricing Rule":
+			# The real query: by name, enabled, for buying, giving a product.
+			assert filters["disable"] == 0 and filters["buying"] == 1, filters
+			assert filters["price_or_product_discount"] == "Product", filters
+			STATE["rule_lookups"].append(sorted(filters["name"][1]))
+			return [
+				_dict(name=rule["name"], free_item=rule.get("free_item"), same_item=rule.get("same_item", 0))
+				for rule in STATE["pricing_rules"]
+				if rule["name"] in filters["name"][1]
+				and not rule.get("disable")
+				and rule.get("buying")
+				and rule.get("price_or_product_discount") == "Product"
+			]
 		if doctype == "Has Role":
 			assert filters["role"] == "PO Creator", filters
 			return list(STATE["po_creators"])
@@ -212,6 +233,9 @@ def reset_state(**overrides):
 		"enabled_users": [BUYER, OTHER_BUYER, "manager@example.com", "receiver@example.com"],
 		"my_requests": [],
 		"customer_provided": [],
+		# The site's Pricing Rules. Production has none; a test adds what it needs.
+		"pricing_rules": [],
+		"rule_lookups": [],
 		# Who the Reorder Board alerts (its own recipients(): the alert role's people).
 		"alert_people": [OTHER_BUYER, "manager@example.com", "Administrator", "receiver@example.com"],
 		"singles": {("ERPNext Enhancements Settings", "po_sod_enforcement_enabled"): 1},
@@ -334,20 +358,25 @@ class RuleTest(unittest.TestCase):
 		self.assertFalse(rules.is_unpriced(line(item_code=FEE), self.STOCK), "a non-stock line")
 		self.assertFalse(rules.is_unpriced(line(allow_zero_valuation_rate=1), self.STOCK), "free on purpose")
 		self.assertFalse(
-			rules.is_unpriced(line(is_free_item=1, pricing_rules="PRLE-0001"), self.STOCK),
+			rules.is_unpriced(
+				line(is_free_item=1, pricing_rules="PRLE-0001"), self.STOCK, free_rules=FREE_RULES
+			),
 			"a pricing rule's free item",
 		)
 		self.assertFalse(rules.is_unpriced(line(item_code=None), self.STOCK))
 		# A row that only claims to be a free item, with no rule behind it, was not made by ERPNext.
 		self.assertTrue(rules.is_unpriced(line(is_free_item=1), self.STOCK))
+		self.assertTrue(
+			rules.is_unpriced(line(is_free_item=1, pricing_rules="x"), self.STOCK, free_rules=FREE_RULES)
+		)
 
 	def test_what_erpnext_frees_itself_is_told_from_a_persons_tick(self):
 		"""Read from ERPNext v16.54.0: a pricing rule's free row carries ``is_free_item`` and the
 		rule's name in ``pricing_rules``; a customer-provided item is ticked for the Item's flag."""
 		by_rule = line(is_free_item=1, pricing_rules="PRLE-0001")
-		self.assertTrue(rules.erpnext_free(by_rule))
-		self.assertFalse(rules.erpnext_free(line(is_free_item=1)))
-		self.assertFalse(rules.erpnext_free(line(is_free_item=1, pricing_rules="  ")))
+		self.assertTrue(rules.erpnext_free(by_rule, free_rules=FREE_RULES))
+		self.assertFalse(rules.erpnext_free(line(is_free_item=1), free_rules=FREE_RULES))
+		self.assertFalse(rules.erpnext_free(line(is_free_item=1, pricing_rules="  "), free_rules=FREE_RULES))
 		provided = line(allow_zero_valuation_rate=1)
 		self.assertTrue(rules.erpnext_free(provided, customer_provided={PART}))
 		self.assertFalse(rules.erpnext_free(provided))
@@ -358,9 +387,37 @@ class RuleTest(unittest.TestCase):
 		self.assertFalse(rules.is_ticked(line(item_code=FEE, allow_zero_valuation_rate=1), self.STOCK))
 		self.assertFalse(rules.is_ticked(line(), self.STOCK), "not ticked: that is unpriced")
 		both = line(is_free_item=1, pricing_rules="PRLE-0001", allow_zero_valuation_rate=1)
-		self.assertFalse(rules.is_ticked(both, self.STOCK), "a rule's free row stays the rule's")
+		self.assertFalse(
+			rules.is_ticked(both, self.STOCK, free_rules=FREE_RULES), "a rule's free row stays the rule's"
+		)
 		found = rules.ticked_lines([line(1, rate=5), line(2, allow_zero_valuation_rate=1)], self.STOCK)
 		self.assertEqual([(l["idx"], l["order"]) for l in found], [(2, ORDER)])
+
+	def test_a_free_item_marker_proves_nothing_without_a_real_rule(self):
+		"""``is_free_item`` and ``pricing_rules`` are read-only on the form only. Anyone who can save
+		a receipt through the API can write them, so the rule named must be one that could really
+		have made the row."""
+		forged = line(is_free_item=1, pricing_rules="x")
+		# No rules known at all (the usual site): nothing is rule-made.
+		self.assertFalse(rules.erpnext_free(forged))
+		self.assertFalse(rules.erpnext_free(line(is_free_item=1, pricing_rules="PRLE-0001")))
+		# A name that is not a real buying product rule.
+		self.assertFalse(rules.erpnext_free(forged, free_rules=FREE_RULES))
+		# A real rule, but its free item is some other item.
+		other = line(item_code=OTHER_PART, is_free_item=1, pricing_rules="PRLE-0001")
+		self.assertFalse(rules.erpnext_free(other, free_rules=FREE_RULES))
+		# A real rule that gives "the same item", or names no free item: any item it applied to.
+		self.assertTrue(
+			rules.erpnext_free(other, free_rules={"PRLE-0001": {"free_item": None, "same_item": 1}})
+		)
+		# The field as ERPNext may hold it: one name, a comma list, a JSON list.
+		self.assertEqual(rules.rule_names("PRLE-0001"), ["PRLE-0001"])
+		self.assertEqual(rules.rule_names(" PRLE-0001 , PRLE-0002 "), ["PRLE-0001", "PRLE-0002"])
+		self.assertEqual(rules.rule_names('["PRLE-0001", "PRLE-0002"]'), ["PRLE-0001", "PRLE-0002"])
+		self.assertEqual(rules.rule_names("[not json"), [])
+		self.assertEqual(rules.rule_names(None), [])
+		listed = line(is_free_item=1, pricing_rules='["x", "PRLE-0001"]')
+		self.assertTrue(rules.erpnext_free(listed, free_rules=FREE_RULES))
 
 	def test_the_reason_is_a_line_in_remarks(self):
 		self.assertEqual(rules.reason_in("No charge: warranty replacement"), "warranty replacement")
@@ -760,15 +817,63 @@ class TickedOnTheFormTest(unittest.TestCase):
 		# A customer-provided item: ERPNext ticks the box on every save.
 		STATE["customer_provided"] = [PART]
 		price.refuse_unpriced_stock_lines(self.desk_receipt())
-		# A pricing rule's free item: is_free_item with the rule's name, and no tick at all.
+		# A pricing rule's free item: is_free_item with the name of a real rule, and no tick at all.
 		STATE["customer_provided"] = []
-		by_rule = Doc(
+		STATE["pricing_rules"] = [dict(REAL_RULE)]
+		price.refuse_unpriced_stock_lines(self.free_by_rule())
+		self.assertEqual(STATE["thrown"], [])
+		self.assertEqual(STATE["rule_lookups"], [["PRLE-0001"]], "the rule was looked up, not taken on trust")
+
+	def free_by_rule(self, rule="PRLE-0001", **row):
+		return Doc(
 			"Purchase Receipt",
 			"PR-TEST-2",
-			items=[line(1, is_free_item=1, pricing_rules="PRLE-0001")],
+			items=[line(1, is_free_item=1, pricing_rules=rule, **row)],
 		)
-		price.refuse_unpriced_stock_lines(by_rule)
-		self.assertEqual(STATE["thrown"], [])
+
+	def test_a_forged_free_item_marker_is_refused(self):
+		"""The hole round 3 found: a receiver who cannot price the order saves a draft through the
+		API with ``is_free_item: 1`` and ``pricing_rules: "x"``, and submits. No such rule exists,
+		so the row is an unpriced stock line like any other."""
+		STATE["denied"].add(("Purchase Order", "write"))
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(self.free_by_rule("x"))
+		self.assertIn("Row 1 (TST-PUMP-100) has no price", str(caught.exception))
+		self.assertEqual(STATE["rule_lookups"], [["x"]])
+
+	def test_naming_a_rule_that_could_not_have_made_the_row_is_refused_too(self):
+		cases = {
+			"disabled": dict(REAL_RULE, disable=1),
+			"a selling rule": dict(REAL_RULE, buying=0),
+			"a price discount": dict(REAL_RULE, price_or_product_discount="Price"),
+			"gives another item": dict(REAL_RULE, free_item=OTHER_PART),
+		}
+		for label, rule in cases.items():
+			with self.subTest(label):
+				reset_state(pricing_rules=[rule])
+				with self.assertRaises(FRAPPE.ValidationError):
+					price.refuse_unpriced_stock_lines(self.free_by_rule())
+
+	def test_a_forged_marker_with_the_box_ticked_is_a_persons_tick(self):
+		"""Ticking the box as well does not help: it is then a "no charge" a person gave, and is
+		held to who they are and why."""
+		STATE["denied"].add(("Purchase Order", "write"))
+		doc = self.free_by_rule("x", allow_zero_valuation_rate=1)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			price.refuse_unpriced_stock_lines(doc)
+		self.assertIn("is ticked Allow Zero Valuation Rate", str(caught.exception))
+		self.assertIn("Purchasing can.", str(caught.exception))
+
+	def test_the_usual_receipt_asks_nothing_about_pricing_rules(self):
+		price.refuse_unpriced_stock_lines(Doc("Purchase Receipt", "PR-TEST-5", items=[line(1, rate=5)]))
+		doc = Doc(
+			"Purchase Receipt",
+			"PR-TEST-6",
+			items=[line(1, allow_zero_valuation_rate=1)],
+			remarks="No charge: x",
+		)
+		price.refuse_unpriced_stock_lines(doc)
+		self.assertEqual(STATE["rule_lookups"], [])
 
 	def test_a_row_with_no_order_needs_write_on_purchase_orders(self):
 		loose = Doc(
@@ -873,6 +978,16 @@ class PricingTheOrderTest(unittest.TestCase):
 		po = order()
 		self.assertEqual([l["purchase_order_item"] for l in price.needing_price(po)], ["poi-1"])
 		self.assertEqual(price.needing_price(po, wanted={"poi-2"}), [])
+
+	def test_an_orders_free_item_line_needs_no_price_only_for_a_real_rule(self):
+		po = order()
+		po.items[0]["is_free_item"] = 1
+		po.items[0]["pricing_rules"] = "PRLE-0001"
+		self.assertEqual(
+			[l["purchase_order_item"] for l in price.needing_price(po)], ["poi-1"], "no such rule"
+		)
+		STATE["pricing_rules"] = [dict(REAL_RULE)]
+		self.assertEqual(price.needing_price(po), [])
 
 	def test_a_price_goes_through_erpnexts_update_items(self):
 		po = order()

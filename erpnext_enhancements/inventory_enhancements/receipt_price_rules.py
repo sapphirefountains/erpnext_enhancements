@@ -52,6 +52,15 @@ itself writes, not by guessing (:func:`erpnext_free`):
   with ``is_free_item = 1`` **and** ``pricing_rules`` naming the rule. Both must be there: a row
   that only claims ``is_free_item`` was not made by a rule, and is judged like any other.
 
+  **And the rule it names must be a real one** (round 3 of the review). Both fields are
+  read-only on the form, but Frappe does not hold a read-only field on the server, and ERPNext
+  skips its pricing checks for a free-item row. So a receiver could save a draft through the API
+  with ``is_free_item: 1`` and ``pricing_rules: "x"`` and submit: stock at $0, no reason. A row
+  counts as rule-made only when a Pricing Rule it names exists, is enabled, applies to buying
+  and gives a product (``price_or_product_discount = "Product"``), and that rule's free item is
+  this row's item (or the rule gives "the same item"). ``receipt_price._free_rules`` reads
+  those; :func:`erpnext_free` judges. Production has no pricing rules at all.
+
 **What is left alone.** A return (its rate comes from the receipt it returns), an internal
 transfer between companies (its rate is the sender's valuation), a non-stock line, and every
 document already submitted: nothing here changes a rate on an existing receipt.
@@ -141,16 +150,47 @@ def _truthy(value):
 		return bool(value)
 
 
-def erpnext_free(row, customer_provided=()):
+def rule_names(pricing_rules):
+	"""The Pricing Rule names a row's ``pricing_rules`` field holds: one name, a comma list, or a
+	JSON list, as ERPNext's own ``get_applied_pricing_rules`` reads it."""
+	text = str(pricing_rules or "").strip()
+	if not text:
+		return []
+	if text.startswith("["):
+		try:
+			import json
+
+			return [str(name).strip() for name in json.loads(text) if str(name).strip()]
+		except ValueError:
+			return []
+	return [name.strip() for name in text.split(",") if name.strip()]
+
+
+def erpnext_free(row, customer_provided=(), free_rules=None):
 	"""Whether ERPNext itself made this row free, as opposed to a person ticking a box.
 
 	A customer-provided item (the Item's own flag; ERPNext ticks the box for it on every save), or
-	a pricing rule's free item (``is_free_item`` together with the rule's name in
-	``pricing_rules``, which is how ERPNext adds one).
+	a pricing rule's free item: ``is_free_item``, with ``pricing_rules`` naming a rule in
+	``free_rules`` whose free item is this row's.
+
+	``free_rules`` is ``{rule name: {"free_item", "same_item"}}`` for the rules that could have
+	made a free row on a purchase: enabled, for buying, giving a product. A name that is not in it
+	(a made-up name, a disabled rule, a price discount, a selling rule) proves nothing, and with
+	no ``free_rules`` at all no row is taken as rule-made.
 	"""
-	if _get(row, "item_code") in (customer_provided or ()):
+	code = _get(row, "item_code")
+	if code in (customer_provided or ()):
 		return True
-	return _truthy(_get(row, "is_free_item")) and bool(str(_get(row, "pricing_rules") or "").strip())
+	if not _truthy(_get(row, "is_free_item")):
+		return False
+	for name in rule_names(_get(row, "pricing_rules")):
+		rule = (free_rules or {}).get(name)
+		if rule is None:
+			continue
+		free_item = rule.get("free_item")
+		if _truthy(rule.get("same_item")) or not free_item or free_item == code:
+			return True
+	return False
 
 
 def _zero_stock_row(row, stock_items, rate_field):
@@ -158,24 +198,24 @@ def _zero_stock_row(row, stock_items, rate_field):
 	return bool(code) and code in stock_items and abs(number(_get(row, rate_field))) < ZERO_RATE_BELOW
 
 
-def is_unpriced(row, stock_items, rate_field="rate", customer_provided=()):
+def is_unpriced(row, stock_items, rate_field="rate", customer_provided=(), free_rules=None):
 	"""Whether one line is a stock item's line with no price and no "free on purpose" mark.
 
 	A ticked row is not unpriced; it is a person's "no charge", judged by :func:`is_ticked`.
 	"""
 	if not _zero_stock_row(row, stock_items, rate_field):
 		return False
-	if erpnext_free(row, customer_provided) or _truthy(_get(row, FREE_FIELD)):
+	if erpnext_free(row, customer_provided, free_rules) or _truthy(_get(row, FREE_FIELD)):
 		return False
 	return True
 
 
-def is_ticked(row, stock_items, rate_field="rate", customer_provided=()):
+def is_ticked(row, stock_items, rate_field="rate", customer_provided=(), free_rules=None):
 	"""Whether one line is a stock item's line at $0 that a *person* ticked free: the box is
 	ticked, and ERPNext did not tick or free it itself."""
 	if not _zero_stock_row(row, stock_items, rate_field):
 		return False
-	return _truthy(_get(row, FREE_FIELD)) and not erpnext_free(row, customer_provided)
+	return _truthy(_get(row, FREE_FIELD)) and not erpnext_free(row, customer_provided, free_rules)
 
 
 def applies(doctype, is_return=False, is_internal=False, update_stock=True, purpose=None):
@@ -203,7 +243,13 @@ def incoming_rows(doctype, rows):
 
 
 def unpriced_lines(
-	rows, stock_items, order_field="purchase_order", rate_field="rate", customer_provided=(), judge=None
+	rows,
+	stock_items,
+	order_field="purchase_order",
+	rate_field="rate",
+	customer_provided=(),
+	judge=None,
+	free_rules=None,
 ):
 	"""The unpriced lines, as ``[{"idx", "item_code", "name", "order"}]``.
 
@@ -215,7 +261,13 @@ def unpriced_lines(
 	judge = judge or is_unpriced
 	out = []
 	for position, row in enumerate(rows or (), start=1):
-		if not judge(row, stock_items, rate_field=rate_field, customer_provided=customer_provided):
+		if not judge(
+			row,
+			stock_items,
+			rate_field=rate_field,
+			customer_provided=customer_provided,
+			free_rules=free_rules,
+		):
 			continue
 		out.append(
 			{
@@ -228,7 +280,9 @@ def unpriced_lines(
 	return out
 
 
-def ticked_lines(rows, stock_items, order_field="purchase_order", rate_field="rate", customer_provided=()):
+def ticked_lines(
+	rows, stock_items, order_field="purchase_order", rate_field="rate", customer_provided=(), free_rules=None
+):
 	"""The stock rows at $0 that a person ticked free, in the shape of :func:`unpriced_lines`."""
 	return unpriced_lines(
 		rows,
@@ -237,6 +291,7 @@ def ticked_lines(rows, stock_items, order_field="purchase_order", rate_field="ra
 		rate_field=rate_field,
 		customer_provided=customer_provided,
 		judge=is_ticked,
+		free_rules=free_rules,
 	)
 
 
@@ -382,7 +437,7 @@ def draft_warning(doctype, lines):
 # ---------------------------------------------------------------------------
 
 
-def order_lines_needing_price(order_lines, stock_items, wanted=None):
+def order_lines_needing_price(order_lines, stock_items, wanted=None, free_rules=None):
 	"""The order lines that would make an unpriced receipt line.
 
 	``order_lines`` are dicts with ``name``, ``idx``, ``item_code``, ``item_name``, ``rate``,
@@ -394,7 +449,7 @@ def order_lines_needing_price(order_lines, stock_items, wanted=None):
 	for line in order_lines or ():
 		if wanted is not None and line.get("name") not in wanted:
 			continue
-		if not is_unpriced(line, stock_items):
+		if not is_unpriced(line, stock_items, free_rules=free_rules):
 			continue
 		out.append(
 			{

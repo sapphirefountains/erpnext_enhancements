@@ -163,6 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     customer-provided item (the Item's own flag; ERPNext ticks the box for it on every save) and
     a pricing rule's free item (`is_free_item` together with the rule's name in `pricing_rules`).
     A row that only claims `is_free_item`, with no rule behind it, is judged like any other.
+  - **The rule a free row names must be a real one.** Those two fields are read-only on the
+    form, but Frappe does not hold a read-only field on the server and ERPNext skips its pricing
+    checks for a free-item row, so a draft saved through the API with `is_free_item: 1` and any
+    text in `pricing_rules` would have passed. A row now counts as rule-made only when a Pricing
+    Rule it names exists, is enabled, applies to buying, gives a product, and gives this row's
+    item. Production has no pricing rules, so today no row passes this way.
   - **A receiver who can do neither is not stuck and does not get a $0 receipt.** The line is
     left unreceived, the rest of the delivery is received as usual, and purchasing gets a ToDo on
     the order naming the rows that need a price: the order's author when they can still price

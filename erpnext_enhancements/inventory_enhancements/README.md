@@ -1501,7 +1501,9 @@ in the 180 days before 2026-11-12 had a rate of 0.
   Purchase Receipt form and an intake draft are not a way around the two screens, which write
   that Remarks line themselves. Left alone, because ERPNext frees them itself: a
   customer-provided item (the Item's flag) and a pricing rule's free item (`is_free_item` with
-  the rule's name in `pricing_rules`).
+  the rule's name in `pricing_rules`). The rule named must be real: it exists, is enabled, is for
+  buying, gives a product, and gives that row's item. The two fields are read-only on the form
+  only, so a made-up rule name proves nothing.
 * **The ToDo** goes to the order's author when they can still price it, otherwise to the people
   the Reorder Board alerts (`Inventory Scanner Settings.reorder_alert_role`, Purchase Manager by
   default; `reorder_board.recipients()`), never the asker or a service account. It sits on the
