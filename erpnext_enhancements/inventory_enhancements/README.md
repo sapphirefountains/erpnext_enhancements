@@ -1527,7 +1527,7 @@ why:
 | Outcome | Which items |
 |---|---|
 | Will switch | A physical item by its name and group, and every safety check of the single switch passes |
-| Stays non-stock | A fixed asset; a name ending in `(deleted)` (an old QuickBooks line); an item this app keeps non-stock on purpose; a placeholder, a copy, or an item with no name of its own; the Service item group; the Office item group (pending Nik: `CONSUMABLE_GROUPS`); a code starting `SRV-`; a name starting with a value stream and a dash (`BUILD - ...`, `Rent - ...`); a whole word such as labor, fee, rent, travel, mileage, freight, delivery, deposit, consulting, service, tax, expense, installation, permit, warranty, discount; a line in All Item Groups with no `PDT-` product code |
+| Stays non-stock | A fixed asset; a name ending in `(deleted)` (an old QuickBooks line); an item this app keeps non-stock on purpose; a placeholder, a copy, or an item with no name of its own; the Service item group; the Office item group (Nik's decision of 2026-11-12; `CONSUMABLE_GROUPS`); a code starting `SRV-`; a name starting with a value stream and a dash (`BUILD - ...`, `Rent - ...`); a whole word such as labor, fee, rent, travel, mileage, freight, delivery, deposit, consulting, service, tax, expense, installation, permit, warranty, discount; a line in All Item Groups with no `PDT-` product code |
 | Can't switch yet | A physical item one check refuses, with that check's words |
 
 The rule is a guess from the name, and the page says so: any line can be changed with *Your
@@ -1592,9 +1592,9 @@ in the 180 days before 2026-11-12 had a rate of 0.
   | Cannot edit the order | No | No | The line is left unreceived; the rest is received; purchasing gets a ToDo |
   | Raised the Material Request the order fills | No (*Update Items* would refuse them: separation of duties) | No | The same, and they are told why in their own words |
 
-  "No charge only for a person who may price, and with a reason" is the manager's recommended
-  default, **pending Nik's answer**: `NO_CHARGE_NEEDS_ORDER_WRITE` and `NO_CHARGE_NEEDS_REASON` in
-  `receipt_price_rules.py`.
+  "No charge only for a person who may price, and with a reason" is **Nik's decision of
+  2026-11-12**. The two constants that hold it are `NO_CHARGE_NEEDS_ORDER_WRITE` and
+  `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules.py`.
 * **The same two questions are asked at the submit, on the server, however the document was
   made** (`receipt_price._refuse_ticks`). A stock row at $0 with *Allow Zero Valuation Rate*
   ticked by a person needs: the person submitting to be allowed to price that row's order (with

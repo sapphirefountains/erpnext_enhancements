@@ -544,7 +544,7 @@ class RuleTest(unittest.TestCase):
 		self.assertEqual((both["prices"], both["free"]), ({}, [("a", "sample")]))
 
 	def test_no_charge_needs_a_reason(self):
-		self.assertTrue(rules.NO_CHARGE_NEEDS_REASON, "the default pending Nik's answer")
+		self.assertTrue(rules.NO_CHARGE_NEEDS_REASON, "Nik's decision of 2026-11-12")
 		out = rules.settle(self.NEEDING[:1], {"a": {"no_charge": 1, "reason": "  "}})
 		self.assertEqual(out["free"], [])
 		self.assertEqual(
@@ -552,7 +552,7 @@ class RuleTest(unittest.TestCase):
 		)
 
 	def test_a_person_who_can_do_neither_has_every_line_held_whatever_they_send(self):
-		self.assertTrue(rules.NO_CHARGE_NEEDS_ORDER_WRITE, "the default pending Nik's answer")
+		self.assertTrue(rules.NO_CHARGE_NEEDS_ORDER_WRITE, "Nik's decision of 2026-11-12")
 		typed = {"a": {"rate": 5}, "b": {"no_charge": 1, "reason": "sample"}}
 		out = rules.settle(self.NEEDING, typed, can_price=False, can_mark_free=False)
 		self.assertEqual([h["purchase_order_item"] for h in out["held"]], ["a", "b", "c", "d"])

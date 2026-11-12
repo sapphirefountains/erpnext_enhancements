@@ -77,10 +77,10 @@ that for a person who may price the order.
 the order, and the person must not be the one who raised the Material Request it fills: *Update
 Items* re-runs this app's separation-of-duties gate, which refuses them (:data:`BLOCKS`).
 Marking a line free is held to the same people, and needs a reason
-(:data:`NO_CHARGE_NEEDS_ORDER_WRITE`, :data:`NO_CHARGE_NEEDS_REASON`). **Both are the manager's
-recommended defaults, pending Nik's answer on 2026-11-12; each is one constant to flip.** Without
-them, "no charge" would be one tap past the refusal for anyone who can receive, and stock would
-come in at $0 with only a Comment to show for it.
+(:data:`NO_CHARGE_NEEDS_ORDER_WRITE`, :data:`NO_CHARGE_NEEDS_REASON`). **Nik decided both on
+2026-11-12**: only someone who can edit the purchase order may receive a stock line at no charge,
+and with a reason. Each is one constant. Without them, "no charge" would be one tap past the
+refusal for anyone who can receive, and stock would come in at $0 with only a Comment to show.
 
 A receiver who can do neither does not get a $0 receipt and is not stuck either: the line is
 **left unreceived**, the rest of the delivery is received as usual, and purchasing gets a ToDo on
@@ -104,7 +104,7 @@ MAX_UNIT_PRICE = 100000.0
 FREE_FIELD = "allow_zero_valuation_rate"
 FREE_LABEL = "Allow Zero Valuation Rate"
 
-#: PENDING NIK (2026-11-12), the manager's recommended defaults. Only a person who may price the
+#: Decided by Nik on 2026-11-12. Only a person who may price the
 #: order may receive a line as "no charge", and must say why. Enforced on the server at submit,
 #: so it holds on the two receiving screens, on the Purchase Receipt form, on an intake draft and
 #: on a Material Receipt alike. Set the first to False and any receiver may mark a line free

@@ -36,8 +36,8 @@ ERPNext itself refuses to stock.
    and a switch can't be undone from the form once the item is used.
 5. The Service item group (:data:`SERVICE_GROUPS`).
 6. A group of things bought to be used up, not kept as stock (:data:`CONSUMABLE_GROUPS`:
-   Office). **Pending Nik's answer, 2026-11-12**: the manager's recommended default. To let
-   office items switch, empty that tuple; nothing else changes.
+   Office). **Decided by Nik on 2026-11-12**: office supplies stay non-stock by default. Any
+   one of them can still be switched on the page. Emptying that tuple would undo the decision.
 7. A code starting with ``SRV-``, the company's service codes (:data:`SERVICE_CODE_PREFIXES`).
 8. A name that starts with a value stream and a dash, such as ``BUILD - Consulting`` or
    ``Rent - Insurance``, after any leading code (:data:`STREAM_PREFIXES`). Those are QuickBooks
@@ -87,7 +87,7 @@ STATUS_REFUSED = "Refused"
 SERVICE_GROUPS = ("Service", "Services")
 
 #: Item groups of things bought to be used, not kept as stock: paper, ink, soap, snacks.
-#: PENDING NIK (2026-11-12): the manager's recommended default. Make this ``()`` to let them switch.
+#: Decided by Nik on 2026-11-12: these stay non-stock by default. ``()`` would let them switch.
 CONSUMABLE_GROUPS = ("Office",)
 
 #: The group the QuickBooks import filed everything under, products and services alike.

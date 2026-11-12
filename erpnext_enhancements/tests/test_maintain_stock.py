@@ -2267,7 +2267,7 @@ class BulkNameRuleTest(unittest.TestCase):
 				self.assertEqual(self.rule(code, name, group), expected)
 
 	def test_office_supplies_stay_until_someone_says_otherwise(self):
-		"""The manager's recommended default, pending Nik: one tuple to empty."""
+		"""Nik's decision of 2026-11-12: office supplies stay non-stock by default."""
 		self.assertEqual(bulk_rules.CONSUMABLE_GROUPS, ("Office",))
 		for name in (
 			"TRAIL MIX, MULTIPACK, 15 OZ",

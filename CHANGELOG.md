@@ -52,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     three items with only a number for a name. A switch can't be undone from the form once the
     item has a submitted document, so the rule now refuses to guess: nothing whose name does not
     say what it is switches by rule, and in the catch-all group only a product code does.
-    **Office staying non-stock is the manager's recommended default, pending Nik's answer;**
-    emptying `CONSUMABLE_GROUPS` lets office items switch. Words were added by reading every
+    **Office staying non-stock by default is Nik's decision of 2026-11-12** (the tuple is
+    `CONSUMABLE_GROUPS`; any one item can still be switched on the page). Words were added by reading every
     name on production; "tips", "repair", "winterizing" and "charge" are left out, each because
     a real part there carries it (nozzle tips, a repair coupling, a winterizing plug).
   - **The rule is a guess from the name, so any line can be changed before applying** (*Your
@@ -146,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     moment the price is written, because *Update Items* deletes any row it is not sent.
   - **Who may price, and who may say "no charge".** Pricing needs write on the order. Marking a
     line no charge is held to the same people and needs a reason, which goes into a Comment on
-    the order. **Both are the manager's recommended defaults, pending Nik's answer**
+    the order. **Nik decided both on 2026-11-12**
     (`NO_CHARGE_NEEDS_ORDER_WRITE`, `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules`; each is
     one constant). The first draft let any receiver mark a line free, and its dialog told the
     people who could not price to do just that, which made the refusal one tap to get past.
