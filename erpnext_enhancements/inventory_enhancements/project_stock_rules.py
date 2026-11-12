@@ -1,0 +1,311 @@
+# Copyright (c) 2026, Sapphire Fountains and contributors
+# For license information, please see license.txt
+
+"""Where a project's material is now, worked out from the stock ledger (v1.806.0). No Frappe:
+tested bench-free (``tests/test_project_stock.py``).
+
+**The question.** The Procurement Tracker used to show one warehouse per line: where the line
+was *received*. A part received onto the Project Shelf and carried to the job a week later
+still read "Stores". The owner asked for where it is now (Nik, 2026-11-12): on the Project
+Shelf, at the job's site, in a named bin, taken to the job, or sent back to the supplier.
+
+**ERPNext keeps on-hand by item and warehouse, with no project on that table.** What does carry
+the project is the Stock Ledger: every receipt, move and take posted for a job has the job on
+its ledger rows. So "where is this job's material" is answered in two parts:
+
+* **At the job's own site**, everything on hand is the job's. A site warehouse belongs to one
+  project (``job_sites``), so its Bin rows are read as they stand.
+* **Anywhere else**, the ledger rows that name the job are added up by item and warehouse. What
+  is left at a warehouse is what was received or moved there for the job and has not been moved
+  on or taken *with the job on the entry*. That sum is then **capped at what the Bin row says is
+  there now**: a shelf-to-shelf move made without a job, or a count correction, takes stock away
+  without the ledger saying whose it was, and the page must never show more at a place than the
+  place holds.
+
+A take posted for the job (a Material Issue, or a delivery) is **taken to the job**; a purchase
+return is **returned to the supplier**. Whatever the purchasing documents say was received and
+none of the above accounts for is **place not recorded**, said in those words rather than left
+out: it was received before the item kept stock, or it was moved or counted with no job on the
+entry.
+
+**What this is not.** It is not a reservation and it is not exact per purchase-order line. Two
+lines of one item on one job share one answer, and two jobs that share a shelf each see their
+own ledger sum against the same Bin row. It is the best reading of the records there are, and
+every figure can be traced to ledger rows that name the job.
+
+Indentation is tabs (new file).
+"""
+
+from collections import defaultdict
+
+from erpnext_enhancements.inventory_enhancements.stock_scan_rules import TOLERANCE, natural_key
+
+# ---------------------------------------------------------------------------
+# Kinds of place
+# ---------------------------------------------------------------------------
+
+#: The shared Project Shelf (``Inventory Scanner Settings.project_shelf_warehouse``).
+KIND_SHELF = "project_shelf"
+#: The site warehouse of the job being asked about.
+KIND_SITE = "job_site"
+#: Any other shop location, named: a shelf bin, the inventory room.
+KIND_BIN = "shop_bin"
+#: A service truck or van.
+KIND_VEHICLE = "vehicle"
+#: Another job's site (or the hand-made site with no job of its own).
+KIND_OTHER_SITE = "other_site"
+#: The boneyard.
+KIND_BONEYARD = "boneyard"
+#: Left stock for the job: a Material Issue or a delivery with the job on it.
+KIND_TAKEN = "taken"
+#: Sent back to the supplier: a purchase return.
+KIND_RETURNED = "returned"
+#: Received for the job, and no record says where it is.
+KIND_UNRECORDED = "unrecorded"
+
+#: The order places are listed in: where the stock can be picked up first, then where it went.
+PLACE_ORDER = (
+	KIND_SHELF,
+	KIND_SITE,
+	KIND_BIN,
+	KIND_VEHICLE,
+	KIND_OTHER_SITE,
+	KIND_BONEYARD,
+	KIND_TAKEN,
+	KIND_RETURNED,
+	KIND_UNRECORDED,
+)
+
+#: Kinds that are a warehouse somebody can walk to.
+WAREHOUSE_KINDS = (KIND_SHELF, KIND_SITE, KIND_BIN, KIND_VEHICLE, KIND_OTHER_SITE, KIND_BONEYARD)
+
+#: What each kind is called on screen. A shop bin, a vehicle and another job's site are called by
+#: their own names, so they are absent here.
+KIND_LABELS = {
+	KIND_SHELF: "Project Shelf",
+	KIND_SITE: "Job site",
+	KIND_BIN: "Shop bins",
+	KIND_VEHICLE: "Vehicles",
+	KIND_OTHER_SITE: "Another job's site",
+	KIND_BONEYARD: "Boneyard",
+	KIND_TAKEN: "Taken to the job",
+	KIND_RETURNED: "Returned to supplier",
+	KIND_UNRECORDED: "Place not recorded",
+}
+
+# ---------------------------------------------------------------------------
+# Ledger rows
+# ---------------------------------------------------------------------------
+
+#: Stock moved in or between places: a receipt, a transfer, stock brought back from a job.
+LEDGER_MOVE = "move"
+#: Stock that left for the job.
+LEDGER_ISSUE = "issue"
+#: Stock that went back to the supplier.
+LEDGER_SUPPLIER_RETURN = "supplier_return"
+
+_ISSUE_VOUCHERS = frozenset({"Delivery Note", "Sales Invoice"})
+_PURCHASE_VOUCHERS = frozenset({"Purchase Receipt", "Purchase Invoice"})
+
+#: Names that mark a warehouse, or a group above it, as a vehicle. Only a fallback: the rule
+#: that decides is ``Employee.custom_default_vehicle_warehouse`` (``project_stock.vehicles``).
+_VEHICLE_WORDS = ("truck", "van", "vehicle", "trailer")
+
+
+def _qty(value):
+	try:
+		return float(value or 0)
+	except (TypeError, ValueError):
+		return 0.0
+
+
+def _on(value):
+	try:
+		return bool(int(value or 0))
+	except (TypeError, ValueError):
+		return False
+
+
+def ledger_kind(voucher_type, purpose=None, is_return=0, qty=0):
+	"""What one ledger row (or one grouped sum of them) did, for :func:`item_places`.
+
+	* a **Material Issue** stock entry, a Delivery Note or a stock-updating Sales Invoice is a
+	  take for the job;
+	* a **purchase return** (``is_return`` on the receipt, or a purchase voucher whose quantity is
+	  negative) went back to the supplier;
+	* everything else moved stock into or between places: a Purchase Receipt, a Material
+	  Transfer, a Material Receipt (parts brought back from the job).
+	"""
+	voucher_type = str(voucher_type or "")
+	if voucher_type == "Stock Entry":
+		return LEDGER_ISSUE if str(purpose or "") == "Material Issue" else LEDGER_MOVE
+	if voucher_type in _ISSUE_VOUCHERS:
+		return LEDGER_ISSUE
+	if voucher_type in _PURCHASE_VOUCHERS and (_on(is_return) or _qty(qty) < -TOLERANCE):
+		return LEDGER_SUPPLIER_RETURN
+	return LEDGER_MOVE
+
+
+# ---------------------------------------------------------------------------
+# Kinds of warehouse
+# ---------------------------------------------------------------------------
+
+
+def looks_like_vehicle(names):
+	"""Whether any of ``names`` (a warehouse's own name and its groups') reads as a vehicle."""
+	for name in names or ():
+		words = str(name or "").lower().replace("-", " ").split()
+		if any(word.rstrip("s") in _VEHICLE_WORDS or word in _VEHICLE_WORDS for word in words):
+			return True
+	return False
+
+
+def warehouse_kind(warehouse, shelf=None, boneyard=None, own_sites=(), all_sites=(), vehicles=()):
+	"""Which kind of place a warehouse is. ``own_sites`` are the sites of the job being asked
+	about; ``all_sites`` every job site (``job_sites.site_warehouses``). Asked with no job, every
+	site is :data:`KIND_SITE`."""
+	if not warehouse:
+		return KIND_BIN
+	if shelf and warehouse == shelf:
+		return KIND_SHELF
+	if warehouse in own_sites:
+		return KIND_SITE
+	if warehouse in all_sites:
+		return KIND_OTHER_SITE if own_sites else KIND_SITE
+	if boneyard and warehouse == boneyard:
+		return KIND_BONEYARD
+	if warehouse in vehicles:
+		return KIND_VEHICLE
+	return KIND_BIN
+
+
+def plain(value):
+	"""A quantity for a sentence: ``6`` not ``6.0``, ``2.5`` not ``2.500``."""
+	text = f"{_qty(value):.3f}".rstrip("0").rstrip(".")
+	return text or "0"
+
+
+def place_text(kind, qty, name=None):
+	"""One place in words: ``6 on the Project Shelf``, ``4 at the job site``, ``2 in Bin A1-2-3``."""
+	amount = plain(qty)
+	if kind == KIND_SHELF:
+		return f"{amount} on the Project Shelf"
+	if kind == KIND_SITE:
+		return f"{amount} at the job site"
+	if kind == KIND_TAKEN:
+		return f"{amount} taken to the job"
+	if kind == KIND_RETURNED:
+		return f"{amount} returned to the supplier"
+	if kind == KIND_UNRECORDED:
+		return f"{amount} with no place recorded"
+	if kind == KIND_BONEYARD:
+		return f"{amount} in the boneyard"
+	if kind == KIND_OTHER_SITE:
+		return f"{amount} at {name or 'another job site'}"
+	return f"{amount} in {name or 'the shop'}"
+
+
+def _place(kind, qty, warehouse=None, name=None):
+	label = name if kind in (KIND_BIN, KIND_VEHICLE, KIND_OTHER_SITE) and name else KIND_LABELS[kind]
+	return {
+		"kind": kind,
+		"warehouse": warehouse,
+		"label": label,
+		"qty": round(_qty(qty), 6),
+		"text": place_text(kind, qty, name),
+	}
+
+
+def _order(place):
+	return (PLACE_ORDER.index(place["kind"]), natural_key(place.get("label") or ""))
+
+
+def item_places(ledger, on_hand, own_sites=(), kind_of=None, names=None):
+	"""The places one item is for one job, as a list of place dicts, in :data:`PLACE_ORDER`.
+
+	* ``ledger`` -- the job's ledger rows for this item, each ``{"warehouse", "kind", "qty"}``
+	  with ``kind`` from :func:`ledger_kind` and ``qty`` signed as the ledger has it.
+	* ``on_hand`` -- ``{warehouse: qty}``: what the item's Bin rows say is there now.
+	* ``own_sites`` -- the job's own site warehouses. Everything on hand there is the job's.
+	* ``kind_of`` -- ``warehouse -> kind`` (:func:`warehouse_kind`, already told the shelf and
+	  the sites); ``names`` -- ``{warehouse: warehouse_name}``.
+
+	Each place is ``{"kind", "warehouse", "label", "qty", "text"}``. Nothing is listed at a
+	warehouse where the job's ledger sum is zero or negative (a take of shop stock for the job
+	leaves the bin's sum negative: that is a take, not a place), and never more than the Bin row
+	holds.
+	"""
+	names = names or {}
+	own = set(own_sites or ())
+	kind_of = kind_of or (lambda warehouse: KIND_SITE if warehouse in own else KIND_BIN)
+	net = defaultdict(float)
+	taken = returned = 0.0
+	for row in ledger or ():
+		qty = _qty(row.get("qty"))
+		kind = row.get("kind")
+		if kind == LEDGER_ISSUE:
+			taken -= qty
+		elif kind == LEDGER_SUPPLIER_RETURN:
+			returned -= qty
+		if row.get("warehouse"):
+			net[row["warehouse"]] += qty
+
+	places = []
+	for warehouse in own:
+		qty = _qty((on_hand or {}).get(warehouse))
+		if qty > TOLERANCE:
+			places.append(_place(KIND_SITE, qty, warehouse, names.get(warehouse)))
+	for warehouse, qty in net.items():
+		if warehouse in own:
+			continue
+		here = min(qty, _qty((on_hand or {}).get(warehouse)))
+		if here > TOLERANCE:
+			places.append(_place(kind_of(warehouse), here, warehouse, names.get(warehouse) or warehouse))
+	if taken > TOLERANCE:
+		places.append(_place(KIND_TAKEN, taken))
+	if returned > TOLERANCE:
+		places.append(_place(KIND_RETURNED, returned))
+	places.sort(key=_order)
+	return places
+
+
+def with_unrecorded(places, received):
+	"""``places`` plus a :data:`KIND_UNRECORDED` place for what was received and nothing above
+	accounts for. ``received`` is what the purchasing documents say arrived for the job, in the
+	stock unit; ``None`` (nothing knows) adds nothing.
+
+	An approximation in one direction only: parts taken for the job out of shop stock count
+	toward "accounted for", so they can hide an unrecorded remainder, never invent one.
+	"""
+	places = list(places or ())
+	if received is None:
+		return places
+	accounted = sum(_qty(p.get("qty")) for p in places)
+	missing = _qty(received) - accounted
+	if missing > TOLERANCE:
+		places.append(_place(KIND_UNRECORDED, missing))
+	return places
+
+
+def places_text(places):
+	"""Every place in one line: ``6 on the Project Shelf · 4 at the job site``."""
+	return " · ".join(p["text"] for p in places or ())
+
+
+def shelf_rows(ledger, on_hand, shelf):
+	"""What is on the Project Shelf for one job: ``{item_code: qty}``.
+
+	``ledger`` is the job's rows for every item (``{"item_code", "warehouse", "qty"}``),
+	``on_hand`` is ``{item_code: qty}`` at the shelf. The same rule as :func:`item_places`: the
+	job's ledger sum at the shelf, never more than the shelf holds.
+	"""
+	net = defaultdict(float)
+	for row in ledger or ():
+		if shelf and row.get("warehouse") == shelf and row.get("item_code"):
+			net[row["item_code"]] += _qty(row.get("qty"))
+	out = {}
+	for item_code, qty in net.items():
+		here = min(qty, _qty((on_hand or {}).get(item_code)))
+		if here > TOLERANCE:
+			out[item_code] = round(here, 6)
+	return out

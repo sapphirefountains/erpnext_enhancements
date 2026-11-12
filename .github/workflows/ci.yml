@@ -3913,6 +3913,32 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
+      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.806.0).
+      # procurement_overview.py and inventory_enhancements/project_stock_rules.py are pure, so this is
+      # plain pytest (a unittest step would collect nothing and pass). Fails the build if a place ever
+      # shows more than its Bin row holds, if a job's stock at another job's site reads as its own, if a
+      # closed order reads as late or a draft order as ordered, if the by-item sums stop de-duplicating
+      # the feed's fan-out or start counting quotes and bills, or if a non-stock item's location stops
+      # being said in words.
+      - name: Procurement Tracker states, by-item view and where-now rules (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_overview.py -q
+      # The where-now lookup against the database (inventory_enhancements/project_stock.py) on its own
+      # frappe stub, so its own step: one ledger query and three reads whatever the number of lines, a
+      # site with no Project Shelf setting has no shelf, and a settings or job-site read that fails
+      # never raises. Then the feed's new functions lifted out of project_enhancements/__init__.py
+      # (which needs a bench to import): the overview is gated on Project read first, and a failed
+      # lookup leaves the feed standing and says so. And the source: both SELECTs of the feed's UNION
+      # name the same columns in the same order (a drift there fails only on MariaDB), the tracker
+      # script dials an endpoint that exists, and every v-html goes through the escaping highlighter.
+      - name: Procurement Tracker where-now lookup and feed wiring (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_stock -v
+      # The tracker's pure browser logic (public/js/procurement_tracker/logic.js) under node: the view
+      # and its filters round-trip through the address and never become a history entry, the filters
+      # narrow lines, documents and items alike, blanks sort last both ways, a half-done status never
+      # takes a finished one's colour, names are never read as markup (table and printed list), and the
+      # form script calls only what exists.
+      - name: Procurement Tracker filters, address and sorting (node)
+        run: node scripts/test_procurement_tracker.mjs
       # Receive Items on the Purchase Order (ER-2026-458194): the endpoint is POST-only,
       # the receipt is inserted and submitted through the framework's permission checks
       # (no ignore_permissions), it is built by ERPNext's own mapper, and the form script

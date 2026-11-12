@@ -8,6 +8,7 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements import procurement_overview
 from erpnext_enhancements import procurement_quantities
 from erpnext_enhancements.utils import attachment_copies
 
@@ -43,6 +44,16 @@ def get_procurement_status(project_name):
 
 	require_project_read(project_name)
 
+	result = _chain_rows(project_name)
+	# Each line's state and where its item is now (v1.806.0), so the assistant tool's default
+	# view carries them as the tracker does. Added keys only: nothing above is renamed.
+	_attach_overview(project_name, [row for rows in result.values() for row in rows])
+	return result
+
+
+def _chain_rows(project_name):
+	"""The chain query behind :func:`get_procurement_status`, grouped by the latest stage each
+	line has reached. No permission check and no where-now: both callers add their own."""
 	# Combined query for Material Request based flows and Direct Purchase Orders
 	sql = """
         SELECT
@@ -94,6 +105,13 @@ def get_procurement_status(project_name):
                     ELSE 'Draft'
                 END as se_status,
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
+                /* For the tracker's filters (v1.806.0): who it is bought from, and the date
+                   it is due. The order line's expected date once there is a live order, else
+                   the request line's required-by date. Both SELECTs of this UNION carry the
+                   same four columns in the same place. */
+                COALESCE(po.supplier, sq.supplier) as supplier,
+                COALESCE(IF(po.name IS NULL, NULL, po_item.schedule_date), mr_item.schedule_date) as expected_date,
+                po_item.conversion_factor as po_conversion_factor,
                 /* The old `po_item.qty as ordered_qty` and
                    `COALESCE(pr_item.qty, sed.qty) as received_qty` are gone: both were
                    *one chain row's* quantities being read as the line's totals, so an
@@ -191,6 +209,9 @@ def get_procurement_status(project_name):
                 NULL as se_name,
                 NULL as se_status,
                 pr_item.warehouse as warehouse,
+                po.supplier as supplier,
+                po_item.schedule_date as expected_date,
+                po_item.conversion_factor as po_conversion_factor,
                 pr.is_subcontracted as is_subcontracted
             FROM
                 `tabPurchase Order Item` po_item
@@ -311,6 +332,10 @@ def get_procurement_status(project_name):
 			"po_line_qty": row.get("po_line_qty"),
 			"po_line_received_qty": row.get("po_line_received_qty"),
 			"po_docstatus": row.get("po_docstatus"),
+			# For the filters and the by-item view (v1.806.0, procurement_overview).
+			"supplier": row.get("supplier"),
+			"expected_date": str(row.get("expected_date")) if row.get("expected_date") else None,
+			"conversion_factor": row.get("po_conversion_factor"),
 		}
 		# requested_qty / ordered_qty / received_qty / order_status / receive_status /
 		# completion_percentage, all computed from THIS line's own quantities. The
@@ -408,7 +433,7 @@ def _docstatus_label(docstatus):
 _ORDER_STAGE_DOCTYPES = {"Purchase Order", "Purchase Receipt", "Purchase Invoice"}
 
 
-def _minimal_item_row(doctype, docname, status, item):
+def _minimal_item_row(doctype, docname, status, item, supplier=None, docstatus=None):
 	"""Builds an item row (same shape the feed expects) for a document that was
 	not reached through the chain query. Only the document's own chain node is
 	populated; upstream/downstream nodes are left blank."""
@@ -419,7 +444,11 @@ def _minimal_item_row(doctype, docname, status, item):
 	# code put it in `ordered_qty` for every doctype, so an untouched request rendered
 	# as fully ordered here too.
 	qty = item.get("qty") or 0
-	if doctype in _ORDER_STAGE_DOCTYPES:
+	if doctype == "Purchase Receipt" and docstatus == 1:
+		# A submitted receipt with no order behind it (a store run): the goods are here. It used
+		# to read "Not Received" on the receipt that received it (v1.806.0).
+		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=qty)
+	elif doctype in _ORDER_STAGE_DOCTYPES:
 		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=0)
 	else:
 		progress = procurement_quantities.quantity_progress(requested=qty, ordered=0, received=0)
@@ -441,6 +470,9 @@ def _minimal_item_row(doctype, docname, status, item):
 		"warehouse": item.get("warehouse"),
 		"uom": item.get("uom"),
 		"stock_uom": item.get("stock_uom"),
+		"supplier": supplier,
+		"expected_date": str(item.get("schedule_date")) if item.get("schedule_date") else None,
+		"conversion_factor": item.get("conversion_factor"),
 		# This document never joined a chain, so the row has no mr_item/po_item to key
 		# on — but the child row it was built from has its own name, which is identity
 		# enough for the browser's row key.
@@ -479,10 +511,13 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	if not candidate_names:
 		return {}
 
+	header_fields = ["name", "status", "docstatus"]
+	if doctype in _HAS_SUPPLIER:
+		header_fields.append("supplier")
 	valid = frappe.get_all(
 		doctype,
 		filters={"name": ["in", list(candidate_names)], "docstatus": ["<", 2]},
-		fields=["name", "status", "docstatus"],
+		fields=header_fields,
 	)
 
 	item_fields = ["name", "parent", "item_code", "item_name", "qty"]
@@ -490,7 +525,7 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	# raises rather than degrades. `_supplementary_documents` is wrapped in a bare
 	# except upstream, so an unguarded read would silently drop a whole doctype group
 	# from the feed rather than erroring visibly.
-	for optional in ("warehouse", "uom", "stock_uom"):
+	for optional in ("warehouse", "uom", "stock_uom", "schedule_date", "conversion_factor"):
 		if item_meta.has_field(optional):
 			item_fields.append(optional)
 
@@ -498,7 +533,10 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	for v in valid:
 		status = v.status or _docstatus_label(v.docstatus)
 		items = frappe.get_all(item_doctype, filters={"parent": v.name}, fields=item_fields)
-		result[v.name] = [_minimal_item_row(doctype, v.name, status, it) for it in items]
+		result[v.name] = [
+			_minimal_item_row(doctype, v.name, status, it, supplier=v.get("supplier"), docstatus=v.docstatus)
+			for it in items
+		]
 	return result
 
 
@@ -588,14 +626,24 @@ def get_procurement_documents(project_name):
 	Each item row keeps the full Doc Chain fields (mr/rfq/sq/po/pr/pi + statuses).
 	``is_open`` / ``open_rule`` come from ``procurement_quantities.document_is_open`` and
 	drive the tracker's Print → Open choice; both are ``None`` for a doctype with no "open".
+
+	Since v1.806.0 each item row also says what it is waiting on (``line_state`` and friends)
+	and where its item is now (``where_now``, ``where_now_text``); see
+	:func:`get_procurement_overview` and ``procurement_overview``.
 	"""
 	if not project_name:
 		return []
 
 	require_project_read(project_name)
+	output, _rows, _items, _located = _documents_and_overview(project_name)
+	return output
 
+
+def _documents_and_overview(project_name):
+	"""``(groups, rows, items, located)``: the document tree, its distinct item rows with their
+	state and where-now attached, the by-item rows, and whether the where-now lookup worked."""
 	# 1. Flatten the chain rows (each already carries every doc name in its chain).
-	status = get_procurement_status(project_name)
+	status = _chain_rows(project_name)
 	chain_rows = [item for items in status.values() for item in items]
 
 	# 2. Group every chain row under each document it belongs to.
@@ -661,7 +709,75 @@ def get_procurement_documents(project_name):
 			}
 		)
 
-	return output
+	# 5. Each line's state and where its item is now: one pass over the distinct rows (the same
+	#    dict sits under every document its chain touches), one lookup for the whole project.
+	rows, seen = [], set()
+	for dt in PROCUREMENT_DOCTYPE_ORDER:
+		for doc_rows in doc_items[dt].values():
+			for row in doc_rows:
+				if id(row) not in seen:
+					seen.add(id(row))
+					rows.append(row)
+	items, located = _attach_overview(project_name, rows)
+	return output, rows, items, located
+
+
+def _today():
+	from frappe.utils import nowdate
+
+	return nowdate()
+
+
+def _attach_overview(project_name, rows):
+	"""Attach each line's state and where-now (``procurement_overview.attach``) and return
+	``(by-item rows, located)``.
+
+	The where-now is a second opinion on top of the feed, read from the stock ledger
+	(``inventory_enhancements.project_stock``): a fixed handful of queries for the whole
+	project. If it fails, the feed still answers, every line still has its state, and
+	``located`` is False so the tracker can say the locations could not be read instead of
+	showing blanks that look like "nowhere". The failure goes to the Error Log.
+	"""
+	found = None
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_stock
+
+		codes = {row.get("item_code") for row in rows if row.get("item_code")}
+		found = project_stock.places_for(project_name, codes)["items"]
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Procurement feed: where-now lookup failed")
+	items = procurement_overview.attach(rows, found, _today())
+	return items, found is not None
+
+
+@frappe.whitelist()
+def get_procurement_overview(project_name):
+	"""Everything the Project form's Procurement Tracker draws (v1.806.0).
+
+	``{"groups", "items", "filters", "located", "today"}``:
+
+	* ``groups`` -- :func:`get_procurement_documents`, unchanged in shape.
+	* ``items`` -- the tracker by item: one row per item for the project, with requested,
+	  ordered and received across every document, its suppliers and documents, and where it is
+	  now (``procurement_overview.by_item``).
+	* ``filters`` -- the suppliers, states and locations at least one line is in, so the tracker
+	  offers no filter that matches nothing.
+	* ``located`` -- False when the where-now lookup failed; the tracker says so.
+
+	Gated on Project read like every tracker endpoint.
+	"""
+	if not project_name:
+		return {"groups": [], "items": [], "filters": {}, "located": True, "today": _today()}
+
+	require_project_read(project_name)
+	output, rows, items, located = _documents_and_overview(project_name)
+	return {
+		"groups": output,
+		"items": items,
+		"filters": procurement_overview.filter_options(rows, items),
+		"located": located,
+		"today": _today(),
+	}
 
 
 def sync_attachments_from_opportunity(doc, method):

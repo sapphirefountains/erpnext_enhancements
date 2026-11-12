@@ -8,7 +8,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 
 | File | Purpose | Key functions / classes | Wiring |
 |---|---|---|---|
-| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `on_update` → `sync_attachments_from_opportunity` (one copy of each file, by `utils/attachment_copies.files_to_copy`, v1.749.1); `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
+| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `get_procurement_overview`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `on_update` → `sync_attachments_from_opportunity` (one copy of each file, by `utils/attachment_copies.files_to_copy`, v1.749.1); `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
 | `doctype/master_project/master_project.py` | Master Project controller; rollup of member Projects + Tasks | `MasterProject.get_projects_and_tasks` | Doctype controller |
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project_notes`, `project_stakeholder`, `{build,design,rent,service}_customer_requests`, `{build,design,rent,service}_deliverables` | Project child tables ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
@@ -948,6 +948,19 @@ Buying), which is unrelated and not in this repo.
   `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
   per-doctype sweep for documents linked to the project that never appeared in a chain.
 - **No caching**, server or client: a fresh round-trip on every form refresh.
+- **Where it is now, filters and the by-item view (v1.806.0).** The widget calls
+  `get_procurement_overview`, which is `get_procurement_documents` plus one row per item for the
+  job and the filter choices. Every line says what it is waiting on (To order, Ordered, Partly
+  received, Received, Late, Closed; [`procurement_overview.py`](../procurement_overview.py), pure)
+  and where its item is now for this job: on the Project Shelf, at the job's site, in a named bin,
+  taken to the job, returned to the supplier, or "place not recorded". That comes from the stock
+  ledger rows that name the job, capped at what each Bin row holds
+  ([`inventory_enhancements/project_stock.py`](../inventory_enhancements/project_stock.py), a fixed
+  handful of queries per project, never one per line). A non-stock item says its location is not
+  tracked. The view and the filters (place, status, supplier, needs action, search) live in the
+  address as `pt_*` keys, written with `history.replaceState`. The widget's decisions are
+  [`public/js/procurement_tracker/logic.js`](../public/js/procurement_tracker/logic.js), tested
+  under node.
 - **Printing (v1.517.0):** every document row has **Print** (Frappe's print view, new tab) and
   every group header has **Print**, which prints the group as one PDF — **All**, or **Open**
   where the doctype has one (Material Request, Purchase Order, Purchase Invoice). "Open" is
