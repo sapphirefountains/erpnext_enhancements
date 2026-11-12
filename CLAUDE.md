@@ -119,6 +119,17 @@ Verified, and all of them expensive to rediscover:
   `inventory_enhancements/item_naming_rules.py` takes the last route and says why. **Note the
   failure direction: it passes.** An acceptance criterion or KPI written the obvious way
   reports clean forever and nobody goes looking.
+- **A Desk Page that shares its address with a DocType is never reached.** Frappe's router makes a
+  route out of every DocType the user can read by slugging its name (`warehouse-map` for
+  `Warehouse Map`), and asks "is the first part of the address a DocType?" before "is it a page?"
+  (`router.js` `setup` and `segment_kind`, read at v16.56.0; a Workspace is asked before both). So
+  a Page `warehouse-map` beside a DocType `Warehouse Map` opens the DocType's list view for
+  everyone who can read it, and the page for everyone who cannot: one address, two destinations,
+  no error in either. The Warehouse Map's DocType is `Warehouse Floor Map` for this reason
+  (v1.815.0). `tests/test_warehouse_map.py` holds every Page in the app against every DocType in
+  the app, and `tests/test_workspaces.py` does the same for Workspaces; neither can see a clash
+  with a DocType that ERPNext or Frappe ships, so check the name of a new Page against those by
+  hand.
 - **A `www/` controller whose filename contains a hyphen is never imported by Frappe**, so
   its `get_context()` silently never runs. `stripe-return.py` was broken this way from the
   day it was written. `scripts/check_www_controllers.py` guards it in CI.

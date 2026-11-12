@@ -1,12 +1,12 @@
 """Seed the "Warehouse Map Editor" role and its one-role profile (v1.815.0).
 
 Nik, 2026-11-12, asked who may create and edit the warehouse map: "People you name". So drawing
-and changing a Warehouse Map is this role's (with System Manager), and everyone who already works
-the inventory (the Stock Scan roles) may look. See the Warehouse Map DocType's permissions and
-``api/warehouse_map.py``.
+and changing a Warehouse Floor Map (a map on the Warehouse Map page) is this role's (with System
+Manager), and everyone who already works the inventory (the Stock Scan roles) may look. See the
+Warehouse Floor Map DocType's permissions and ``api/warehouse_map.py``.
 
-Runs **pre_model_sync** so the role exists before the Warehouse Map DocType syncs the permission
-row naming it. Insert-only and idempotent, the same shape as ``seed_contract_manager_role``. The
+Runs **pre_model_sync** so the role exists before the Warehouse Floor Map DocType syncs the
+permission row naming it. Insert-only and idempotent, the same shape as ``seed_contract_manager_role``. The
 one-role "Warehouse Map Editor" Role Profile is how a user who already has role profiles is given
 the role: on this site a profiled user's roles are rebuilt from their profiles on every save, so a
 role granted directly would not stay. Nobody is granted anything here; who holds the role is

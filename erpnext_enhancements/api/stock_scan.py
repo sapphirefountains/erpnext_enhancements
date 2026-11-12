@@ -2672,7 +2672,7 @@ def boot_payload(args=None):
 			# Whether Move to… offers "A job site" (v1.801.0): the group is chosen and the
 			# Warehouse field exists. 0 hides it, and the page is as it was.
 			"job_sites": 1 if job_sites.enabled() else 0,
-			# Whether "Show on map" is offered (v1.815.0): a Warehouse Map that is not hidden
+			# Whether "Show on map" is offered (v1.815.0): a Warehouse Floor Map that is not hidden
 			# exists. 0 hides the link, and the page is as it was.
 			"warehouse_map": 1 if _has_warehouse_map() else 0,
 		},
@@ -2688,11 +2688,11 @@ def boot_payload(args=None):
 
 
 def _has_warehouse_map():
-	"""Whether there is a Warehouse Map to show (v1.815.0, ``api/warehouse_map.py``). **Never
+	"""Whether there is a Warehouse Floor Map to show (v1.815.0, ``api/warehouse_map.py``). **Never
 	raises**, for the reason ``_store_run_boot`` gives: this runs inside the page's own boot, and
 	between a deploy's code and its migrate the table is not there yet."""
 	try:
-		return bool(frappe.db.exists("Warehouse Map", {"disabled": 0}))
+		return bool(frappe.db.exists("Warehouse Floor Map", {"disabled": 0}))
 	except Exception:
 		return False
 

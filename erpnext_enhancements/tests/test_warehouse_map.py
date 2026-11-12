@@ -6,7 +6,7 @@
 Three layers, in this order:
 
 * ``inventory_enhancements/warehouse_map_rules.py`` runs for real: it has no Frappe in it.
-* ``api/warehouse_map.py`` and the ``Warehouse Map`` controller run for real on a small in-memory
+* ``api/warehouse_map.py`` and the ``Warehouse Floor Map`` controller run for real on a small in-memory
   ``frappe`` stub of this suite's own (so it has its own CI step), with stand-ins for the modules
   they lean on: ``api.stock_scan`` (the role gate and the settings), ``bin_assignments`` and
   ``bin_views`` (the bins' counts and kinds; ``tests/test_bin_manager`` and ``tests/test_bin_views``
@@ -53,12 +53,12 @@ from erpnext_enhancements.inventory_enhancements import stock_scan_rules  # noqa
 from erpnext_enhancements.inventory_enhancements import warehouse_map_rules as rules  # noqa: E402
 
 API_SOURCE = APP / "api" / "warehouse_map.py"
-CONTROLLER_SOURCE = APP / "inventory_enhancements" / "doctype" / "warehouse_map" / "warehouse_map.py"
+CONTROLLER_SOURCE = APP / "inventory_enhancements" / "doctype" / "warehouse_floor_map" / "warehouse_floor_map.py"
 PAGE_DIR = APP / "inventory_enhancements" / "page" / "warehouse_map"
 NODE_HARNESS = REPO_ROOT / "scripts" / "test_warehouse_map.mjs"
 
-MAP = "Warehouse Map"
-SHAPE = "Warehouse Map Shape"
+MAP = "Warehouse Floor Map"
+SHAPE = "Warehouse Floor Map Shape"
 
 ROOT = "All Warehouses - SF"
 INV = "Inventory - SF"
@@ -385,7 +385,7 @@ _MODULES = (
 	"erpnext_enhancements.inventory_enhancements.job_sites",
 	"erpnext_enhancements.inventory_enhancements.bin_assignments",
 	"erpnext_enhancements.inventory_enhancements.bin_views",
-	"erpnext_enhancements.inventory_enhancements.doctype.warehouse_map.warehouse_map",
+	"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map",
 )
 _PACKAGE_ATTRS = ("job_sites", "bin_assignments", "bin_views")
 
@@ -684,9 +684,9 @@ def setUpModule():
 	_reset()
 	_install()
 	controller = _load(
-		"erpnext_enhancements.inventory_enhancements.doctype.warehouse_map.warehouse_map", CONTROLLER_SOURCE
+		"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map", CONTROLLER_SOURCE
 	)
-	WarehouseMap = controller.WarehouseMap
+	WarehouseMap = controller.WarehouseFloorMap
 	api = _load("erpnext_enhancements.api.warehouse_map", API_SOURCE)
 
 
@@ -1078,7 +1078,7 @@ class TestTheFiles(unittest.TestCase):
 			self.assertEqual(first.id, "MAP", f"line {node.lineno}")
 
 	def test_the_doctype_gives_looking_to_the_stock_roles_and_changing_to_the_editors(self):
-		doctype = json.loads((CONTROLLER_SOURCE.parent / "warehouse_map.json").read_text(encoding="utf-8"))
+		doctype = json.loads((CONTROLLER_SOURCE.parent / "warehouse_floor_map.json").read_text(encoding="utf-8"))
 		self.assertEqual(doctype["module"], "Inventory Enhancements")
 		perms = {row["role"]: row for row in doctype["permissions"]}
 		self.assertEqual(set(perms), stock_scan_rules.SCAN_ROLES | {rules.EDITOR_ROLE})
@@ -1094,7 +1094,7 @@ class TestTheFiles(unittest.TestCase):
 		self.assertEqual((doctype["autoname"], fields["map_name"].get("unique")), ("field:map_name", 1))
 
 	def test_a_box_is_a_child_row_that_links_a_warehouse(self):
-		path = APP / "inventory_enhancements" / "doctype" / "warehouse_map_shape" / "warehouse_map_shape.json"
+		path = APP / "inventory_enhancements" / "doctype" / "warehouse_floor_map_shape" / "warehouse_floor_map_shape.json"
 		doctype = json.loads(path.read_text(encoding="utf-8"))
 		self.assertEqual((doctype["istable"], doctype["module"]), (1, "Inventory Enhancements"))
 		fields = {f["fieldname"]: f for f in doctype["fields"]}
@@ -1134,6 +1134,35 @@ class TestTheFiles(unittest.TestCase):
 		self.assertNotIn("Has Role", source)
 		self.assertNotIn("add_roles", source)
 
+	def test_no_page_shares_its_address_with_a_doctype(self):
+		"""Frappe's router makes a route out of every DocType a user can read, by slugging its name,
+		and asks "is this a DocType?" before "is this a page?" (``router.js`` ``segment_kind``,
+		read at v16.56.0). So a Page named ``warehouse-map`` beside a DocType named ``Warehouse
+		Map`` is never reached by anyone who can read the DocType: its address opens the list
+		view. This page's DocType was named exactly that until the day it was built. Every Page
+		in the app against every DocType in the app."""
+
+		def slug(name):  # router.js slug()
+			return name.lower().replace(" ", "-")
+
+		def named(kind, pattern):
+			out = []
+			for path in APP.glob(pattern):
+				try:
+					data = json.loads(path.read_text(encoding="utf-8"))
+				except ValueError:
+					continue
+				if isinstance(data, dict) and data.get("doctype") == kind and data.get("name"):
+					out.append(data["name"])
+			return out
+
+		doctypes = {slug(name): name for name in named("DocType", "**/doctype/*/*.json")}
+		pages = named("Page", "**/page/*/*.json")
+		self.assertIn(slug(MAP), doctypes)
+		self.assertIn("warehouse-map", pages)
+		clashes = {page: doctypes[page] for page in pages if page in doctypes}
+		self.assertEqual(clashes, {}, "a Page whose address is a DocType's list view is never reached")
+
 	def test_the_page_opens_to_the_stock_scan_roles(self):
 		page = json.loads((PAGE_DIR / "warehouse_map.json").read_text(encoding="utf-8"))
 		self.assertEqual({row["role"] for row in page["roles"]}, stock_scan_rules.SCAN_ROLES)
@@ -1167,7 +1196,7 @@ class TestTheFiles(unittest.TestCase):
 		self.assertTrue((APP / "public" / "js" / "warehouse_map.bundle.js").exists())
 		# The picture is uploaded as a private file attached to the map's own record.
 		self.assertIn("make_attachments_public: false", code)
-		self.assertIn('doctype: "Warehouse Map"', code)
+		self.assertIn('doctype: "Warehouse Floor Map"', code)
 
 	def test_the_doors_into_the_map(self):
 		hooks = (APP / "hooks.py").read_text(encoding="utf-8")

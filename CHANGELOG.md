@@ -44,9 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so nothing of it ships here: the picture is a **private file** attached to the map's own record,
   served by Frappe to exactly the people who can read the map. A public file or a web address is
   refused, by the DocType itself.
-- New DocTypes **Warehouse Map** and **Warehouse Map Shape** (Inventory Enhancements), the
+- New DocTypes **Warehouse Floor Map** and **Warehouse Floor Map Shape** (Inventory Enhancements), the
   endpoints in `api/warehouse_map.py`, and the rules in
   `inventory_enhancements/warehouse_map_rules.py`.
+- **Why the record is a "Warehouse Floor Map" and the page a "Warehouse Map".** Frappe's router turns
+  every DocType a user can read into a route by slugging its name, and checks for a DocType before
+  it checks for a page (`router.js` `segment_kind`, read at v16.56.0). A DocType named `Warehouse
+  Map` slugs to `warehouse-map`, which is the page's address: everyone who can read the DocType
+  would land on its list view and the page would never open. Nothing errors, and a stand-in router
+  that does not know about DocTypes shows the page working, which is how this got as far as a
+  commit before it was read in Frappe's source. `tests/test_warehouse_map.py` now fails the build if
+  any Page in this app shares its address with any DocType in this app.
 
 ### Notes
 - **Nothing here writes a Warehouse, a Putaway Rule or stock.** The map only points at warehouses.
@@ -65,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DocTypes sync, inside the deploy's migrate, so each of its two steps (the role, its Role Profile)
   is on its own and a failure becomes one Error Log row, "Warehouse Map Editor role seed", saying
   what to create by hand. Until the role exists only a System Manager can edit a map.
-- Tested bench-free (`tests/test_warehouse_map.py`, 69 tests on its own frappe stub, and
+- Tested bench-free (`tests/test_warehouse_map.py`, 70 tests on its own frappe stub, and
   `scripts/test_warehouse_map.mjs` under node), both in CI. Not run on a bench.
 
 ## [1.814.0] - 2026-11-12

@@ -8,7 +8,7 @@ our warehouse locations at our office. I'll provide the floor plan layout and yo
 the map from that."
 
 The page is ``inventory_enhancements/page/warehouse_map`` (``/desk/warehouse-map``); a map is a
-``Warehouse Map`` record. Every judgement is in ``inventory_enhancements/warehouse_map_rules.py``
+``Warehouse Floor Map`` record. Every judgement is in ``inventory_enhancements/warehouse_map_rules.py``
 (pure, tested bench-free); the rules about what may be *stored* run in the DocType's own
 ``validate``, so this file and the Desk form cannot disagree.
 
@@ -33,7 +33,7 @@ Things this module is careful about:
   (``bin_assignments._bin_rows`` and ``bin_views.decorate``), so the map and the Bin Manager
   cannot disagree about which bins hold stock or have a problem.
 * **Who may look, who may change.** Every read asks the Stock Scan role gate
-  (``api.stock_scan._check_access``) and read on Warehouse Map. A change is saved **as the
+  (``api.stock_scan._check_access``) and read on Warehouse Floor Map. A change is saved **as the
   caller** (``doc.save()``, never ``ignore_permissions``), so it needs the DocType's own write
   permission: the Warehouse Map Editor role, or System Manager. The role adds editing to someone
   who already works the inventory; by itself it does not open the page.
@@ -60,8 +60,8 @@ from frappe.utils import cint, cstr, flt
 from erpnext_enhancements.api import stock_scan as scan
 from erpnext_enhancements.inventory_enhancements import warehouse_map_rules as rules
 
-MAP = "Warehouse Map"
-SHAPE = "Warehouse Map Shape"
+MAP = "Warehouse Floor Map"
+SHAPE = "Warehouse Floor Map Shape"
 
 #: The map's own fields the editor may send. ``map_name`` is handled apart (a rename).
 _MAP_FIELDS = ("sort_order", "disabled", "width", "height", "background")

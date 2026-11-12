@@ -28,7 +28,7 @@ model, the pure rules and the label reads.
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
-| `doctype/warehouse_map/`, `doctype/warehouse_map_shape/` | The **Warehouse Map** (v1.815.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
+| `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.815.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
 | `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, in shelf-number order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
 | `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.815.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
@@ -1141,13 +1141,19 @@ view. An item being looked for is outlined on top of that, on every floor it is 
 
 | | |
 |---|---|
-| `doctype/warehouse_map/` | One floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (hidden from everyone but editors while it is being drawn), `background` (the floor plan picture), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
-| `doctype/warehouse_map_shape/` | One box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from` |
+| `doctype/warehouse_floor_map/` | DocType **Warehouse Floor Map**, one floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (hidden from everyone but editors while it is being drawn), `background` (the floor plan picture), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
+| `doctype/warehouse_floor_map_shape/` | DocType **Warehouse Floor Map Shape**, one box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from` |
 | `warehouse_map_rules.py` | Every judgement, no Frappe: what a box may be, the front view, the boxes worth placing, which box shows a warehouse, the colors |
 | `api/warehouse_map.py` | The endpoints (see [`api/README.md`](../api/README.md)) |
 | `page/warehouse_map/` | The page script (draws and wires) and its CSS, every selector under `.wm-` |
 | `public/js/warehouse_map/logic.js` | The page's pure decisions, in `warehouse_map.bundle.js` (`window.sf_warehouse_map`) |
 
+- **The DocType is not called "Warehouse Map", on purpose.** Frappe's router makes a route out of
+  every DocType a user can read by slugging its name, and asks "is this a DocType?" before "is
+  this a page?" (`router.js` `segment_kind`, read at v16.56.0). A DocType named `Warehouse Map`
+  slugs to `warehouse-map`, the page's own address, so everyone who can read it (everyone the page
+  is for) would get its list view and never the page. Hence `Warehouse Floor Map`. A test holds
+  every Page in this app against every DocType in this app.
 - **The rules run in the DocType's `validate`**, not in the endpoint, so the Desk form (the plain
   way in) is held to them too: a box is the named fields only, finite and inside the drawing; a
   rack is tied to a warehouse and a label has words; **one warehouse is on one box and one map**,
@@ -1156,7 +1162,7 @@ view. An item being looked for is outlined on top of that, on every floor it is 
   file, never a web address. It is attached to the map's own record, so Frappe serves it to
   exactly the people who can read the map (`File.has_permission`, read at v16.56.0). The editor
   uploads with `make_attachments_public: false` and refuses a file that came back public.
-- **A map reads warehouses and never writes one.** `Warehouse Map` and `Warehouse Map Shape` are
+- **A map reads warehouses and never writes one.** `Warehouse Floor Map` and `Warehouse Floor Map Shape` are
   in `ignore_links_on_delete` (`hooks.py`), so a map is never the reason an empty bin cannot be
   deleted. The box left behind is drawn dashed in red ("no longer a warehouse") and the next save
   is refused until it is removed or tied to another warehouse.

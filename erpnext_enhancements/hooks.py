@@ -3651,13 +3651,13 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
 # published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
-# Warehouse Map / Warehouse Map Shape (v1.815.0): a box on the warehouse map links the Warehouse it
+# Warehouse Floor Map / Warehouse Floor Map Shape (v1.815.0): a box on the warehouse map links the Warehouse it
 # stands for. A map only points at warehouses, so it must never be the reason an empty bin cannot be
 # deleted. The box left behind is drawn as "no longer a warehouse" in the map's editor and refused on
 # the map's next save until it is removed or tied to another warehouse. Both names are listed: Frappe
 # skips the child DocType that holds the Link, and the parent it reports. Added to the list above
 # rather than written into it, because two suites read that line as it stands.
-ignore_links_on_delete += ["Warehouse Map", "Warehouse Map Shape"]
+ignore_links_on_delete += ["Warehouse Floor Map", "Warehouse Floor Map Shape"]
 
 portal_menu_items = [
 	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and

@@ -25,7 +25,7 @@
 // never location.search. Moves between screens are frappe.set_route(...parts, options): an array AND an
 // options object as two arguments is not a form the router unwraps.
 //
-// THE EDITOR changes one Warehouse Map record and nothing else: no Warehouse, no Putaway Rule, no stock.
+// THE EDITOR changes one Warehouse Floor Map record and nothing else: no Warehouse, no Putaway Rule, no stock.
 // Save sends the whole list of boxes (api.warehouse_map.save_map) with the `modified` stamp it was
 // opened with, so two people editing cannot silently overwrite each other. Leaving with unsaved boxes is
 // not blocked (that would break Back): the boxes are kept while the Desk stays open, the page says so,
@@ -1313,7 +1313,7 @@ class WarehouseMapPage {
 	upload() {
 		const ed = this.edit;
 		new frappe.ui.FileUploader({
-			doctype: "Warehouse Map",
+			doctype: "Warehouse Floor Map",
 			docname: ed.name,
 			fieldname: "background",
 			folder: "Home/Attachments",

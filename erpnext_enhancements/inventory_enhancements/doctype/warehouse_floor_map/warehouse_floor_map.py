@@ -1,10 +1,10 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for Warehouse Map (v1.815.0): one floor or area of the building, drawn.
+"""Controller for Warehouse Floor Map (v1.815.0): one floor or area of the building, drawn.
 
 A map is a floor plan picture (a **private** file attached to this record) and the boxes placed
-over it (``Warehouse Map Shape`` rows), each tied to a Warehouse. The Warehouse Map page
+over it (``Warehouse Floor Map Shape`` rows), each tied to a Warehouse. The Warehouse Map page
 (``inventory_enhancements/page/warehouse_map``) draws it and edits it through
 ``api/warehouse_map.py``; this form in the Desk is the plain way in and is held to the same rules,
 because every one of them runs here in :meth:`validate` and not in the endpoint:
@@ -17,9 +17,18 @@ because every one of them runs here in :meth:`validate` and not in the endpoint:
   (``elsewhere_problem``), so "show this bin on the map" has one answer.
 
 A map **reads** warehouses and never writes one. Its ``warehouse`` Link follows a rename by
-itself. ``Warehouse Map`` is in ``ignore_links_on_delete`` (``hooks.py``), so a map never stops
+itself. ``Warehouse Floor Map`` is in ``ignore_links_on_delete`` (``hooks.py``), so a map never stops
 somebody deleting an empty bin; the box left behind is drawn as "no longer a warehouse" in the
 editor and refused on the next save until it is removed or re-tied.
+
+**Why it is not called "Warehouse Map".** The page is ``/desk/warehouse-map``, and Frappe's
+router turns every DocType a user can read into a route of its own by slugging its name
+(``router.js`` ``setup``: ``routes[slug(doctype)]``), then asks "is the first part of the address a
+DocType?" *before* "is it a page?" (``segment_kind``, read at v16.56.0). A DocType named
+``Warehouse Map`` slugs to ``warehouse-map``, so for everyone who can read it, which is everyone
+the page is for, the page's address would open this DocType's list view and the page would never
+be reached. It was named that until the day it was built; ``tests/test_warehouse_map.py`` now
+fails the build if any Page in this app shares its address with any DocType in this app.
 
 The class name is what Frappe derives from the DocType's name (spaces stripped, no re-casing);
 ``tests/test_doctype_controller_names.py`` holds it to that.
@@ -32,7 +41,7 @@ from frappe.model.document import Document
 from erpnext_enhancements.inventory_enhancements import warehouse_map_rules as rules
 
 
-class WarehouseMap(Document):
+class WarehouseFloorMap(Document):
 	def validate(self):
 		problem = rules.map_name_problem(self.map_name) or rules.background_problem(self.background)
 		if problem:
@@ -55,8 +64,8 @@ class WarehouseMap(Document):
 	def _placed_elsewhere(self):
 		"""``{warehouse: map}`` for every box on every other map."""
 		rows = frappe.get_all(
-			"Warehouse Map Shape",
-			filters={"parenttype": "Warehouse Map", "parent": ["!=", self.name or ""]},
+			"Warehouse Floor Map Shape",
+			filters={"parenttype": "Warehouse Floor Map", "parent": ["!=", self.name or ""]},
 			fields=["parent", "warehouse"],
 		)
 		return {row.warehouse: row.parent for row in rows if row.warehouse}
