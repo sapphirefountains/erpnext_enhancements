@@ -125,6 +125,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     item's bin* are refused there. A leftover rule or default goes away when its stock is moved
     off the shelf with *Make … this item's bin* ticked. A new item's bin is never the shelf or a
     job site (`_quick_item`).
+  - **An item's first count never opens on the shelf.** Maintain Stock's switch (v1.809.0) ends
+    on *Open a Stock Reconciliation*, with the item and a warehouse already on the row. The
+    warehouse was the item's Item Default (`maintain_stock._default_warehouse`), and the switch
+    is for items that were bought and never stocked, which are the items whose only default is
+    the one ERPNext handed out by itself: over 700 of the 774 defaults that name the shelf are on
+    non-stock items. Left alone, the first count of a shop consumable would have opened on the
+    shelf, and saving it would have put the stock where the shop reads zero of it, tagged to no
+    job, at a place where a take asks which job it is for. `maintain_stock.first_count_warehouse`
+    now answers the item's own bin (`procurement_project.item_own_bin`), else the Overhead
+    receiving warehouse, else nothing, and with nothing the row's location is empty and the
+    person has to choose it: ERPNext 16.54.0's Stock Reconciliation fills a row's warehouse
+    only from the form's own *Default Warehouse*, never from the item. The message after the
+    switch says where the form opens and that the shelf is only for parts bought for a job. On
+    a site with no Project Shelf set up the suggestion is the item's default as before, except
+    that it is never a job site, and the message is word for word what it was. The bulk page
+    (*Switch Items to Maintain Stock*) opens no count and suggests no place, so nothing changed
+    there. Left as it was on purpose: the switch still gives an open order line that has no
+    warehouse the item's default (`_fill_warehouses`), because a line's right place depends on
+    its project, and production has no such line.
   - **The stock KPIs say which stock they mean.** *Stocked Items Below Reorder*, *Stocked Items
     Out of Stock* and *Out-of-Stock Sellable Items* now mean **shop stock** and leave out job
     sites and the shelf (they summed every bin, so parts on a job site already counted as on

@@ -629,12 +629,29 @@ def delivery_refusal(lines):
 	)
 
 
-def next_steps(item_code, account, account_is_company_default):
-	"""What to do after the switch, in words. ``account`` may be ``None``."""
+def next_steps(item_code, account, account_is_company_default, count_at=None, not_at=None):
+	"""What to do after the switch, in words. ``account`` may be ``None``.
+
+	``not_at`` is what the Project Shelf is called on a site that has one (v1.813.0), and
+	``count_at`` the location the first count will open on there, if the item has one. With a
+	shelf the text says where to count the item and where not to: the item's old default
+	warehouse is the shelf on most items this switch is for, and a count there would take the
+	stock out of the shop's. With no ``not_at`` the text is what it was.
+	"""
 	text = (
 		f"Maintain Stock is on for {item_code}. It has no cost yet, so put its first stock in "
 		"with a Stock Reconciliation that gives a quantity and a valuation rate."
 	)
+	if not_at and count_at:
+		text += (
+			f" Count it where it is kept: the form opens on {count_at}, so change that if it is "
+			f"somewhere else. Not on {not_at}, which is only for parts bought for a job."
+		)
+	elif not_at:
+		text += (
+			" It has no bin yet, so choose the location it is kept in on the form. "
+			f"Not {not_at}, which is only for parts bought for a job."
+		)
 	if account and not account_is_company_default:
 		text += (
 			f" Pick {account} as its Difference Account: the company has no default Stock "

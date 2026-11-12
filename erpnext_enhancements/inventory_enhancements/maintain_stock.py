@@ -421,6 +421,54 @@ def _default_warehouse(item_code, company):
 		return None
 
 
+def first_count_warehouse(item_code, company):
+	"""Where the item's first count opens: the warehouse the result's ``warehouse`` carries and
+	*Open a Stock Reconciliation* puts on the new form's row. ``None`` leaves the row's
+	location empty, so the person has to choose it.
+
+	**Never the Project Shelf and never a job site** (v1.813.0;
+	``project_shelf_rules.first_count_warehouse`` has the rule and why). On a site with a
+	Project Shelf it is the item's own bin (``procurement_project.item_own_bin``), else the
+	Overhead receiving warehouse, else nothing. On a site with no shelf set up it is the
+	item's default warehouse, as it was before. It is not what an open order line with no
+	warehouse is given (:func:`_fill_warehouses`): a line's right place depends on its project.
+	Never raises. On a site with a shelf a failure answers ``None`` (the person chooses: the
+	item's default there is most likely the shelf itself). Whether there is a shelf is asked
+	first and by itself, so a site with none depends on nothing else here.
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+		has_shelf = bool(project_shelf.warehouse())
+		not_shop = project_shelf.not_shop_warehouses()
+	except Exception:
+		return _default_warehouse(item_code, company)
+	if not has_shelf:
+		return project_shelf_rules.first_count_warehouse(
+			False, default=_default_warehouse(item_code, company), not_bins=not_shop
+		)
+	try:
+		from erpnext_enhancements import procurement_project
+
+		return project_shelf_rules.first_count_warehouse(
+			True,
+			own=procurement_project.item_own_bin(item_code, company),
+			fallback=project_shelf.fallback_warehouse(),
+		)
+	except Exception:
+		return None
+
+
+def _shelf_label():
+	"""What the Project Shelf is called here, or ``None`` on a site that has none. Never raises."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		return project_shelf.label()
+	except Exception:
+		return None
+
+
 def _fill_order_warehouses(item_code, plan, full_name):
 	"""Give each open order line that has no warehouse the one the plan chose, and say so on the
 	order. A direct column write, like the flag: the line is submitted, and ERPNext offers no way
@@ -541,8 +589,12 @@ def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 		"company": company,
 		"account": account,
 		"account_is_company_default": is_default,
-		"warehouse": _default_warehouse(item_code, company),
-		"next_steps": rules.next_steps(item_code, account, is_default),
+		# Where the first count opens (v1.813.0): never the Project Shelf or a job site. The
+		# item's old default warehouse is the shelf on most items this switch is for.
+		"warehouse": (count_at := first_count_warehouse(item_code, company)),
+		"next_steps": rules.next_steps(
+			item_code, account, is_default, count_at=count_at, not_at=_shelf_label()
+		),
 		# What the bulk page records: the invoices the relaxed rule let through.
 		"invoices_before_switch": invoices,
 		"open_orders_recounted": sum(cint(g.get("count")) for g in open_groups.values()),

@@ -842,6 +842,17 @@ default and by the v1.689.0 backfill. They are not deleted and not rewritten: th
 when its stock is moved off the shelf with *Make … this item's bin* ticked, the same release a
 move out of any bin does.
 
+**An item's first count never opens there** (`maintain_stock.first_count_warehouse`, rule in
+`project_shelf_rules.first_count_warehouse`). After Maintain Stock is switched on for one item,
+*Open a Stock Reconciliation* opens a count with the item and a location on its row. That location
+was the item's Item Default, which on most items the switch is for is the shelf (over 700 of the 774
+defaults naming it were on non-stock items). It is now the item's own bin, else the Overhead
+receiving warehouse, else empty, and an empty one has to be chosen by the person: ERPNext's form
+fills a row's warehouse only from its own *Default Warehouse*. The message after the switch says
+which location the form opens on and that the shelf is only for parts bought for a job
+(`maintain_stock_rules.next_steps`). With no shelf set up the suggestion is the item's default, as
+before, but never a job site. The bulk switch page opens no count, so it suggests no place.
+
 **A label printed for `Stores` still opens the shelf** (`project_shelf.former_name`,
 `api.stock_scan._warehouse`), unless a warehouse of that name exists again.
 

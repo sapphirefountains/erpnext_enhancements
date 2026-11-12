@@ -134,6 +134,30 @@ def line_warehouse(has_project, overhead, shelf, own=None, fallback=None):
 	return None, REASON_NONE
 
 
+def first_count_warehouse(has_shelf, default=None, own=None, fallback=None, not_bins=()):
+	"""Where an item's first count is suggested, right after Maintain Stock is turned on for it
+	(``maintain_stock.first_count_warehouse``, the *Open a Stock Reconciliation* prefill).
+
+	The switch is for items that were bought and never kept in stock, and those are the items
+	whose Item Default is the warehouse ERPNext handed out by itself: ``Stores``, which is the
+	Project Shelf since v1.813.0 (over 700 of the 774 such defaults were on non-stock items). A
+	count entered there would put a shop consumable on the shelf: the shop would read zero of
+	it, the units would belong to no job, and a take there would ask for one.
+
+	* **With a Project Shelf**: the item's own bin (``own``, which never is the shelf, a job
+	  site or the boneyard), else the shop's general receiving location (``fallback``), else
+	  nothing, so the person has to say where the item really is.
+	* **With none set up**: the item's default as before, unless it is one of ``not_bins``
+	  (a job site): nothing is ever counted in as shop stock at a place that is not the shop's.
+	"""
+	if has_shelf:
+		return _name(own) or _name(fallback) or None
+	default = _name(default)
+	if not default or default in {_name(name) for name in not_bins or ()}:
+		return None
+	return default
+
+
 def may_default(current, automatic=()):
 	"""Whether a line's location may still be set by the rule: it is blank, or it is one of
 	the values nobody chose (``automatic``: the shelf, the item's Item Default). A location a

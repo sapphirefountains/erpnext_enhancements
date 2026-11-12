@@ -77,6 +77,7 @@ _OWN_MODULES = (
 	"erpnext_enhancements.inventory_enhancements.project_stock",
 	"erpnext_enhancements.inventory_enhancements.bin_views",
 	"erpnext_enhancements.inventory_enhancements.inventory_report_data",
+	"erpnext_enhancements.inventory_enhancements.maintain_stock",
 	"erpnext",
 	"erpnext.buying",
 	"erpnext.buying.doctype",
@@ -101,13 +102,14 @@ bins = None
 sites = None
 procurement = None
 receiving = None
+switch = None
 patch = None
 FRAPPE = None
 _ORIGINAL = {}
 
 
 def setUpModule():
-	global shelf, scan, bins, sites, procurement, receiving, patch, FRAPPE
+	global shelf, scan, bins, sites, procurement, receiving, switch, patch, FRAPPE
 	for name in _OWN_MODULES:
 		sys.modules.pop(name, None)
 	sites_base.setUpModule()
@@ -269,6 +271,13 @@ def setUpModule():
 
 	receiving = receiving_module
 	receiving._over_receipt_allowance = lambda item_code: 0.0
+
+	# Maintain Stock's switch (v1.809.0), for the one function of it this release changed.
+	FRAPPE.utils.format_datetime = lambda value=None, fmt=None: str(value)
+	FRAPPE.utils.get_fullname = lambda user=None: user
+	from erpnext_enhancements.inventory_enhancements import maintain_stock as switch_module
+
+	switch = switch_module
 	from erpnext_enhancements.inventory_enhancements import project_shelf as shelf_module
 	from erpnext_enhancements.patches import rename_stores_to_project_shelf as patch_module
 
@@ -1791,6 +1800,154 @@ class TestWhereItMeetsThePriceRule(_Base):
 		)
 		self.assertEqual(item.item_defaults, [{"company": COMPANY, "default_warehouse": None}])
 		self.assertEqual(item.is_stock_item, 1)
+
+
+# --------------------------------------------------------------------------- the first count after the switch
+
+
+class TestTheFirstCountAfterTheSwitch(_Base):
+	"""Maintain Stock's switch (v1.809.0) ends on *Open a Stock Reconciliation*, with the item
+	and a warehouse already on the row. The warehouse was the item's Item Default, and on most
+	items the switch is for that is the warehouse that was Stores: the Project Shelf."""
+
+	def setUp(self):
+		super().setUp()
+		self._default = switch._default_warehouse
+		switch._default_warehouse = lambda item_code, company: STATE.get("item_default")
+
+	def tearDown(self):
+		switch._default_warehouse = self._default
+
+	# --- the rule ---------------------------------------------------------------------------
+
+	def test_with_a_shelf_it_is_the_items_bin_then_the_fallback_then_nothing(self):
+		self.assertEqual(rules.first_count_warehouse(True, default=SHELF, own=BIN_B, fallback=ROOM), BIN_B)
+		self.assertEqual(rules.first_count_warehouse(True, default=SHELF, own=None, fallback=ROOM), ROOM)
+		self.assertIsNone(rules.first_count_warehouse(True, default=SHELF, own=None, fallback=None))
+		# The item's default is never read on a site with a shelf, whatever it names.
+		self.assertIsNone(rules.first_count_warehouse(True, default=BIN_A))
+
+	def test_with_no_shelf_it_is_the_items_default_as_before(self):
+		self.assertEqual(rules.first_count_warehouse(False, default=BIN_A, own=BIN_B, fallback=ROOM), BIN_A)
+		self.assertIsNone(rules.first_count_warehouse(False, default=None))
+		self.assertIsNone(rules.first_count_warehouse(False, default=SITE, not_bins={SITE}), "never a job site")
+
+	# --- the four items ----------------------------------------------------------------------
+
+	def test_an_item_whose_default_is_the_shelf_is_not_counted_onto_it(self):
+		base._default(ITEM, SHELF)
+		STATE["item_default"] = SHELF
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), ROOM, "the Overhead receiving warehouse")
+		# A leftover rule at the shelf is not a bin either.
+		base._rule(ITEM, SHELF)
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), ROOM)
+
+	def test_an_item_with_a_real_bin_is_counted_at_its_bin(self):
+		base._default(ITEM, SHELF)
+		base._rule(ITEM, BIN_B)
+		STATE["item_default"] = SHELF
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), BIN_B)
+
+	def test_an_item_with_neither_leaves_the_place_for_the_person_to_choose(self):
+		_reset(fallback=False)
+		base._default(ITEM, SHELF)
+		STATE["item_default"] = SHELF
+		self.assertIsNone(switch.first_count_warehouse(ITEM, COMPANY))
+		# And with no default at all.
+		base._table("Item Default").clear()
+		STATE["item_default"] = None
+		self.assertIsNone(switch.first_count_warehouse(ITEM, COMPANY))
+
+	def test_on_a_site_without_the_project_shelf_setting_nothing_changes(self):
+		_reset(shelf_on=False)
+		STATE["item_default"] = "Test Bin - TC"
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), "Test Bin - TC")
+		# Even the warehouse that would be the shelf, were the setting filled: it is just a warehouse.
+		STATE["item_default"] = SHELF
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), SHELF)
+		STATE["item_default"] = None
+		self.assertIsNone(switch.first_count_warehouse(ITEM, COMPANY))
+
+	def test_never_a_job_site_shelf_or_no_shelf(self):
+		STATE["columns"] = {("Warehouse", sites_base.FIELD)}
+		base._warehouse(SITE, "Job Site PRJ-90001 Water Wall", **{sites_base.FIELD: BUILD})
+		base._default(ITEM, SITE)
+		STATE["item_default"] = SITE
+		self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), ROOM)
+		_reset(shelf_on=False)
+		STATE["columns"] = {("Warehouse", sites_base.FIELD)}
+		base._warehouse(SITE, "Job Site PRJ-90001 Water Wall", **{sites_base.FIELD: BUILD})
+		STATE["item_default"] = SITE
+		self.assertIsNone(switch.first_count_warehouse(ITEM, COMPANY))
+
+	def test_it_never_raises(self):
+		base._rule(ITEM, BIN_B)
+		original = procurement.item_own_bin
+		procurement.item_own_bin = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		try:
+			self.assertIsNone(switch.first_count_warehouse(ITEM, COMPANY), "with a shelf, a failure offers nothing")
+		finally:
+			procurement.item_own_bin = original
+		# When the shelf itself cannot be asked about, the site is as it was before the shelf.
+		original_warehouse = shelf.warehouse
+		shelf.warehouse = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+		STATE["item_default"] = BIN_A
+		try:
+			self.assertEqual(switch.first_count_warehouse(ITEM, COMPANY), BIN_A)
+		finally:
+			shelf.warehouse = original_warehouse
+
+	# --- what the person is told, and what the form gets ------------------------------------
+
+	def test_the_message_says_where_to_count_it_and_where_not_to(self):
+		from erpnext_enhancements.inventory_enhancements import maintain_stock_rules as switch_rules
+
+		plain = switch_rules.next_steps(ITEM, "5119 - Stock Adjustment - SF", True)
+		with_bin = switch_rules.next_steps(ITEM, "5119 - Stock Adjustment - SF", True, count_at=BIN_B, not_at="Project Shelf")
+		self.assertIn(f"the form opens on {BIN_B}", with_bin)
+		self.assertIn("Not on Project Shelf, which is only for parts bought for a job.", with_bin)
+		no_bin = switch_rules.next_steps(ITEM, "5119 - Stock Adjustment - SF", True, not_at="Project Shelf")
+		self.assertIn("It has no bin yet, so choose the location it is kept in on the form.", no_bin)
+		self.assertIn("Not Project Shelf", no_bin)
+		# On a site with no shelf the text is exactly what it was, a suggested place or not.
+		self.assertEqual(switch_rules.next_steps(ITEM, "5119 - Stock Adjustment - SF", True, count_at=BIN_B), plain)
+		self.assertNotIn("Project Shelf", plain)
+		# The account sentence still follows, and the added ones never say "Pick" (that word is
+		# how the account sentence is recognized).
+		self.assertNotIn("Pick", with_bin)
+		self.assertNotIn("Pick", no_bin)
+		self.assertIn("Don't cancel, return, bill or re-cost", with_bin)
+
+	def test_the_switch_hands_the_form_that_place_and_the_form_fills_nothing_else(self):
+		tree = ast.parse((APP / "inventory_enhancements" / "maintain_stock.py").read_text(encoding="utf-8"))
+		turn_on = ast.unparse(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "turn_on"))
+		self.assertIn("'warehouse': (count_at := first_count_warehouse(item_code, company))", turn_on)
+		self.assertNotIn("'warehouse': _default_warehouse(", turn_on)
+		self.assertIn("count_at=count_at, not_at=_shelf_label()", turn_on)
+		script = (APP / "public" / "js" / "item_maintain_stock.js").read_text(encoding="utf-8")
+		self.assertIn("if (out.warehouse) values.warehouse = out.warehouse;", script)
+		self.assertEqual(script.count("values.warehouse ="), 1)
+
+	def test_a_line_with_no_warehouse_on_an_open_order_is_still_filled_from_the_items_default(self):
+		"""Left as it was on purpose: an open order line's right place depends on its project,
+		and for a job's line the shelf is right. Production has no such line today."""
+		tree = ast.parse((APP / "inventory_enhancements" / "maintain_stock.py").read_text(encoding="utf-8"))
+		fill = ast.unparse(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_fill_warehouses"))
+		self.assertIn("_default_warehouse(item_code, company)", fill)
+
+	def test_the_bulk_switch_page_suggests_no_place_for_a_first_count(self):
+		"""It turns items on and records that it did. It opens no count and keeps no warehouse."""
+		bulk = (APP / "inventory_enhancements" / "maintain_stock_bulk.py").read_text(encoding="utf-8")
+		one = bulk[bulk.index("def _switch_one(row):") :]
+		one = one[: one.index("\ndef ", 10)]
+		self.assertIn("maintain_stock.turn_on(", one)
+		self.assertNotIn("warehouse", one)
+		self.assertNotIn("next_steps", one)
+		page = APP / "inventory_enhancements" / "page" / "maintain_stock_switch"
+		for script in page.glob("*.js"):
+			text = script.read_text(encoding="utf-8")
+			self.assertNotIn("Stock Reconciliation", text, script.name)
+			self.assertNotIn("warehouse", text.lower(), script.name)
 
 
 # --------------------------------------------------------------------------- the tracker's reading
