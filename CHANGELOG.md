@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A User Permission on Warehouse does not hide a map.** Frappe applies User Permissions to Link
   fields in child rows, so someone restricted to a few warehouses would have been refused the whole
   map and its picture. The box's Link ignores them (production has none on Warehouse today).
+- **The doors follow the map without anyone signing in again.** They read one boot flag, and Frappe
+  keeps each person's boot data in Redis until they next sign in (`sessions.py`, read at v16.56.0).
+  So when a map is created, deleted, hidden or shown, those cached payloads are dropped: the same
+  call Triton Assistant Settings makes when it is saved, now unable to raise in either place.
+  Without it the first map would have reached people already signed in only at their next sign-in,
+  and the doors would have outlived the last map. Saving boxes clears nothing.
 - **Opening a bay does not jump the page to the top.** The Desk scrolls to the top on every route
   change, and here each screen is a route; the page turns that off for itself, as the Opportunity
   Board does.
@@ -113,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Frappe v16.56.0's source): the Left / Center / Right order, the public copy of the floor plan, the
   shrunk picture, the quote in a map's name, the optional stale-save stamp, the scroll to the top,
   and the User Permission case above. Each has a test that fails without its fix.
-- Tested bench-free (`tests/test_warehouse_map.py`, 98 tests on its own frappe stub, and
+- Tested bench-free (`tests/test_warehouse_map.py`, 104 tests on its own frappe stub, and
   `scripts/test_warehouse_map.mjs`, 179 checks under node), both in CI. Not run on a bench.
 
 ## [1.814.0] - 2026-11-12

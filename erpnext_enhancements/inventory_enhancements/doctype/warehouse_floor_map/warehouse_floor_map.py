@@ -37,6 +37,12 @@ the page is for, the page's address would open this DocType's list view and the 
 be reached. It was named that until the day it was built; ``tests/test_warehouse_map.py`` now
 fails the build if any Page in this app shares its address with any DocType in this app.
 
+**Every door to the map reads one boot flag** (``frappe.boot.ee_warehouse_map``: a map that is
+not hidden exists), and Frappe caches each person's boot payload until they sign in again. So
+when a map's visibility changes (:meth:`on_update` for a new map or a changed *Disabled* box,
+:meth:`on_trash` for a map that was on show) the cached payloads are dropped
+(``warehouse_map_files.clear_boot_cache``, which cannot raise). Saving boxes clears nothing.
+
 The class name is what Frappe derives from the DocType's name (spaces stripped, no re-casing);
 ``tests/test_doctype_controller_names.py`` holds it to that.
 """
@@ -44,7 +50,9 @@ The class name is what Frappe derives from the DocType's name (spaces stripped, 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import cint
 
+from erpnext_enhancements.inventory_enhancements import warehouse_map_files as files
 from erpnext_enhancements.inventory_enhancements import warehouse_map_rules as rules
 
 
@@ -81,6 +89,17 @@ class WarehouseFloorMap(Document):
 		problem = rules.elsewhere_problem(shapes, self._placed_elsewhere())
 		if problem:
 			frappe.throw(_(problem))
+
+	def on_update(self):
+		"""A new map, or one whose *Disabled* box changed, changes what the doors should do."""
+		before = self.get_doc_before_save()
+		if before is None or cint(before.get("disabled")) != cint(self.disabled):
+			files.clear_boot_cache()
+
+	def on_trash(self):
+		"""Deleting a map that was on show may leave none: the doors have to be asked again."""
+		if not cint(self.disabled):
+			files.clear_boot_cache()
 
 	def _background_file_problem(self):
 		"""Why the picture's address does not name this map's own private file, or ``None``.

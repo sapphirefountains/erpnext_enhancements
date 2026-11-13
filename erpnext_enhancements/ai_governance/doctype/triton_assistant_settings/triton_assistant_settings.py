@@ -51,10 +51,21 @@ class TritonAssistantSettings(Document):
 
 
 def clear_boot_cache():
-    """Drop every person's cached boot payload, once the current transaction has committed."""
+    """Drop every person's cached boot payload, once the current transaction has committed.
+
+    Also called when a Warehouse Map's visibility changes (v1.815.0,
+    ``inventory_enhancements/warehouse_map_files.clear_boot_cache``), so the app has one way of
+    doing this. The delete itself cannot raise: it runs after the commit, where an error would
+    turn a save that worked into a failed request, and Frappe's own ``delete_key`` swallows only
+    a refused connection. A cache that could not be cleared costs a stale Desk until the next
+    sign-in, which is what there was before this call existed.
+    """
 
     def clear():
-        frappe.cache.delete_key("bootinfo")
+        try:
+            frappe.cache.delete_key("bootinfo")
+        except Exception:
+            pass
 
     after_commit = getattr(frappe.db, "after_commit", None)
     if after_commit is not None and hasattr(after_commit, "add"):

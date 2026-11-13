@@ -30,7 +30,7 @@ model, the pure rules and the label reads.
 | `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
 | `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.815.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
 | `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, numbers and position words in the order a person sees them, or the box's own order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
-| `warehouse_map_files.py` | The map's two doc_events on other DocTypes, and its boot flag: `refuse_public_file` (`File` `validate`: a File attached to a map is never public), `follow_warehouse_rename` (`Warehouse` `after_rename`: a box's own order follows a rename; cannot raise), `has_visible_map` (`frappe.boot.ee_warehouse_map`). Imports nothing but Frappe |
+| `warehouse_map_files.py` | The map's two doc_events on other DocTypes, and its boot flag: `refuse_public_file` (`File` `validate`: a File attached to a map is never public), `follow_warehouse_rename` (`Warehouse` `after_rename`: a box's own order follows a rename; cannot raise), `has_visible_map` (`frappe.boot.ee_warehouse_map`) and `clear_boot_cache` (drops the Desk's cached boot data when a map's visibility changes; cannot raise). Imports nothing but Frappe at load |
 | `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.815.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
@@ -1241,9 +1241,12 @@ that really sits at an angle), and tied to any warehouse through the picker.
 Every *Show on map* door waits for a map: the Bin Manager's button, the Item and Warehouse
 forms and the two reports read `frappe.boot.ee_warehouse_map` (`boot.py`, 1 when a map that is
 not hidden exists), and Stock Scan reads the same fact in its own boot. The Bin Manager's *Map*
-tab is also shown to someone who may create a map, so there is a way to draw the first one. The
-flag is read when the Desk loads, so a door appears on the next page load after the first map is
-saved.
+tab is also shown to someone who may create a map, so there is a way to draw the first one.
+Frappe caches each person's boot payload in Redis until they sign in again, so the DocType drops
+those cached payloads whenever a map's visibility changes: a map is created, deleted, hidden or
+shown (`warehouse_map_files.clear_boot_cache`, the same call Triton Assistant Settings makes on
+save; it cannot raise). A door then appears, or goes, on each person's next page load. Saving
+boxes clears nothing.
 
 The page sets `disable_scroll_to_top` on its wrapper, as the Opportunity Board does: the Desk
 ends every route change by scrolling to the top, and here opening a bay is a route, so a tap far

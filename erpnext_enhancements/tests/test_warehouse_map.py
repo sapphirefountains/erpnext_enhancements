@@ -497,8 +497,10 @@ _MODULES = (
 	"erpnext_enhancements.inventory_enhancements.bin_views",
 	"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map",
 	"erpnext_enhancements.inventory_enhancements.warehouse_map_files",
+	# The one place this app clears the Desk's cached boot data; the map reuses it, for real.
+	"erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings",
 )
-_PACKAGE_ATTRS = ("job_sites", "bin_assignments", "bin_views")
+_PACKAGE_ATTRS = ("job_sites", "bin_assignments", "bin_views", "warehouse_map_files")
 
 STATE = {}
 _ORIGINAL = {}
@@ -553,6 +555,9 @@ def _reset():
 			"writes": [],
 			"stamp": 0,
 			"decorate_fails": False,
+			# Every key the code asked the cache to drop, and whether Redis is answering.
+			"cache_cleared": [],
+			"redis_down": False,
 		}
 	)
 
@@ -646,6 +651,9 @@ def _install():
 		def is_new(self):
 			return bool(self.__dict__.get("_new"))
 
+		def get_doc_before_save(self):
+			return self.__dict__.get("_doc_before_save")
+
 		def __getattr__(self, key):
 			return None
 
@@ -665,6 +673,7 @@ def _install():
 
 		def save(self):
 			creating = not self.__dict__.get("name")
+			before = None if creating else dict(STATE["maps"].get(self.__dict__["name"]) or {})
 			STATE["writes"].append(("save", self.__dict__.get("name") or self.map_name))
 			for ptype in ("create", "write") if creating else ("write",):
 				if not has_permission(MAP, ptype):
@@ -691,6 +700,10 @@ def _install():
 				for key in ("name", "map_name", "sort_order", "disabled", "background", "width", "height", "modified")
 			}
 			STATE["maps"][self.name]["shapes"] = [_Row(row) for row in self.__dict__.get("shapes") or []]
+			# As Frappe does: the record as it was before this save (nothing for a new one) is
+			# what on_update compares against.
+			self.__dict__["_doc_before_save"] = None if creating else _Row(before)
+			self.on_update()
 			return self
 
 	def get_doc(doctype, name):
@@ -724,6 +737,7 @@ def _install():
 		STATE["writes"].append(("delete", name))
 		if not has_permission(MAP, "delete"):
 			raise _Denied("No delete permission")
+		get_doc(MAP, name).on_trash()
 		del STATE["maps"][name]
 
 	frappe.throw = throw
@@ -734,6 +748,13 @@ def _install():
 	frappe.rename_doc = rename_doc
 	frappe.delete_doc = delete_doc
 	frappe.db = types.SimpleNamespace(exists=exists, set_value=set_value)
+
+	def delete_key(key):
+		if STATE["redis_down"]:
+			raise TimeoutError("redis did not answer")
+		STATE["cache_cleared"].append(key)
+
+	frappe.cache = types.SimpleNamespace(delete_key=delete_key)
 	frappe._ = lambda text: text
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
 	frappe.log_error = lambda *a, **kw: STATE["calls"].append(("log_error", kw.get("title")))
@@ -840,15 +861,21 @@ def setUpModule():
 		_ORIGINAL[name] = sys.modules.pop(name, None)
 	_reset()
 	_install()
+	# The hooks' module first, and set on the package: the controller imports it from there, and
+	# the tests and the controller have to hold the same module.
+	import erpnext_enhancements.inventory_enhancements as package
+
+	files = _load(
+		"erpnext_enhancements.inventory_enhancements.warehouse_map_files",
+		APP / "inventory_enhancements" / "warehouse_map_files.py",
+	)
+	_ORIGINAL["attr:warehouse_map_files"] = None
+	package.warehouse_map_files = files
 	controller = _load(
 		"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map", CONTROLLER_SOURCE
 	)
 	WarehouseMap = controller.WarehouseFloorMap
 	api = _load("erpnext_enhancements.api.warehouse_map", API_SOURCE)
-	files = _load(
-		"erpnext_enhancements.inventory_enhancements.warehouse_map_files",
-		APP / "inventory_enhancements" / "warehouse_map_files.py",
-	)
 
 
 def tearDownModule():
@@ -1552,6 +1579,80 @@ class TestTheFiles(unittest.TestCase):
 		body = body[: body.index("\ndef ", 10)]
 		self.assertIn("except Exception:", body)
 		self.assertIn("return False", body)
+
+
+class TestTheDoorsFollowTheMap(_Base):
+	"""N1 of the review's second round. Every "Show on map" door reads
+	``frappe.boot.ee_warehouse_map``, and Frappe keeps each person's boot payload in Redis until
+	they sign in again (``sessions.py``, v16.56.0). Nothing cleared it, so the first map reached
+	people already signed in only at their next sign-in, and the doors outlived the last map."""
+
+	def payload(self, **over):
+		data = {"map_name": "Shop Floor", "shapes": [_box()]}
+		data.update(over)
+		return json.dumps(data)
+
+	def test_the_first_map_reaches_people_already_signed_in(self):
+		self.as_editor()
+		api.save_map(self.payload())
+		self.assertEqual(STATE["cache_cleared"], ["bootinfo"])
+
+	def test_saving_boxes_clears_nothing(self):
+		stored = self.shop_floor()
+		self.as_editor()
+		saved = api.save_map(self.payload(shapes=[_box(warehouse=BAY2)]), name="Shop Floor", modified=stored["modified"])
+		api.save_map(self.payload(sort_order=3, disabled=0), name="Shop Floor", modified=saved["modified"])
+		self.assertEqual(STATE["cache_cleared"], [])
+
+	def test_hiding_and_showing_a_map_do(self):
+		stored = self.shop_floor()
+		self.as_editor()
+		saved = api.save_map(self.payload(disabled=1), name="Shop Floor", modified=stored["modified"])
+		self.assertEqual(STATE["cache_cleared"], ["bootinfo"])
+		saved = api.save_map(self.payload(disabled=1), name="Shop Floor", modified=saved["modified"])
+		self.assertEqual(STATE["cache_cleared"], ["bootinfo"])
+		api.save_map(self.payload(disabled="0"), name="Shop Floor", modified=saved["modified"])
+		self.assertEqual(STATE["cache_cleared"], ["bootinfo", "bootinfo"])
+
+	def test_deleting_a_map_that_was_on_show_does_and_a_hidden_one_does_not(self):
+		self.shop_floor()
+		_seed("Draft", disabled=1)
+		self.as_editor()
+		api.delete_map("Draft")
+		self.assertEqual(STATE["cache_cleared"], [])
+		api.delete_map("Shop Floor")
+		self.assertEqual(STATE["cache_cleared"], ["bootinfo"])
+
+	def test_redis_being_away_never_fails_a_save_or_a_delete(self):
+		self.as_editor()
+		STATE["redis_down"] = True
+		saved = api.save_map(self.payload())
+		self.assertIn("Shop Floor", STATE["maps"])
+		self.assertEqual(api.delete_map(saved["name"]), {"deleted": "Shop Floor"})
+		self.assertEqual(STATE["cache_cleared"], [])
+		self.assertIsNone(files.clear_boot_cache())
+
+	def test_it_is_the_one_call_the_app_already_makes(self):
+		"""Triton Assistant Settings' ``clear_boot_cache``, reused: after the commit where the
+		database offers that, and unable to raise in either place."""
+		source = (APP / "inventory_enhancements" / "warehouse_map_files.py").read_text(encoding="utf-8")
+		body = source[source.index("def clear_boot_cache") : source.index("def has_visible_map")]
+		self.assertIn("triton_assistant_settings import", body)
+		self.assertIn("except Exception:", body)
+		self.assertNotIn("delete_key", body)
+		triton = sys.modules["erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings"]
+		queued = []
+		sys.modules["frappe"].db.after_commit = types.SimpleNamespace(add=queued.append)
+		try:
+			files.clear_boot_cache()
+			self.assertEqual((len(queued), STATE["cache_cleared"]), (1, []))
+			queued[0]()
+			self.assertEqual(STATE["cache_cleared"], ["bootinfo"])
+			STATE["redis_down"] = True
+			self.assertIsNone(queued[0]())
+		finally:
+			del sys.modules["frappe"].db.after_commit
+		self.assertTrue(callable(triton.clear_boot_cache))
 
 
 class TestThePictureStaysPrivate(_Base):

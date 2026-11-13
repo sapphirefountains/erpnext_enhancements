@@ -34,6 +34,16 @@ its business.
 * :func:`has_visible_map` -- whether any map is on show, for ``frappe.boot.ee_warehouse_map``
   (``boot.py``), which every "Show on map" door in the Desk reads so that none of them leads to
   an empty page.
+
+* :func:`clear_boot_cache` -- that flag is part of each person's boot payload, which Frappe keeps
+  in Redis and rebuilds only at sign-in, on a cache clear or after a deploy (``sessions.py``
+  ``get``, read at v16.56.0). So the DocType calls this whenever a map's visibility changes (a
+  map is created, deleted, hidden or shown); otherwise the first map would reach people already
+  signed in only when they next signed in, and the doors would outlive the last map. It is the
+  call this app already makes for the same reason when Triton Assistant Settings is saved
+  (``clear_boot_cache`` there: ``frappe.cache.delete_key("bootinfo")`` once the transaction has
+  committed), reused so there is one way of doing it. **It cannot raise**: with Redis away the
+  map still saves, and the doors catch up at the next sign-in.
 """
 
 import frappe
@@ -83,6 +93,22 @@ def follow_warehouse_rename(doc, method=None, old=None, new=None, merge=False):
 	except Exception:
 		try:
 			frappe.log_error(title="Warehouse Map: a renamed warehouse was not carried into a box's order")
+		except Exception:
+			pass
+
+
+def clear_boot_cache():
+	"""Drop every person's cached boot payload, so ``frappe.boot.ee_warehouse_map`` is worked out
+	again on their next Desk load. Never raises."""
+	try:
+		from erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings import (
+			clear_boot_cache as clear,
+		)
+
+		clear()
+	except Exception:
+		try:
+			frappe.log_error(title="Warehouse Map: the Desk's cached boot data was not cleared")
 		except Exception:
 			pass
 
