@@ -21,7 +21,7 @@ formatting of data."* Read this section first; it is the current shape.
 | A line's state, the by-item rows, the filter choices | [`procurement_overview.py`](../erpnext_enhancements/procurement_overview.py) — app root, pure, no `frappe` import |
 | Where an item is now: the rule | [`inventory_enhancements/project_stock_rules.py`](../erpnext_enhancements/inventory_enhancements/project_stock_rules.py) — pure |
 | Where an item is now: the queries | [`inventory_enhancements/project_stock.py`](../erpnext_enhancements/inventory_enhancements/project_stock.py) — `places_for(project, item_codes)` |
-| The widget's decisions (filters, address, sorting, labels, print) | [`public/js/procurement_tracker/logic.js`](../erpnext_enhancements/public/js/procurement_tracker/logic.js), bundled as `procurement_tracker.bundle.js` → `window.sf_procurement_tracker` |
+| The widget's decisions (filters, address, sorting, labels, print) | [`public/js/procurement_tracker/logic.js`](../erpnext_enhancements/public/js/procurement_tracker/logic.js), bundled as `procurement_tracker.bundle.js` → `window.sf_procurement_tracker`. The bundle's `VERSION` is an API level the form script checks (`REQUIRED_LOGIC_LEVEL`, v1.816.1): bump both together when the script needs a new export, or a tab open across a deploy shows a "Reload" note instead of the tracker |
 | The widget itself | `public/js/project_enhancements.js` — `mountProcurementTracker` (the Vue app and template) and `render_procurement_tracker` (load, unmount, mount) |
 
 **Where it is now.** ERPNext keeps on-hand by item and warehouse, with no project on that table.
