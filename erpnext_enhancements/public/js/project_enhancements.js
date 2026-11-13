@@ -269,6 +269,25 @@ function openProcurementPrintDialog(project, group) {
 }
 
 /**
+ * The API level of the tracker's logic (procurement_tracker.bundle.js, `VERSION` there) that THIS script
+ * needs (v1.816.1). This script is doctype_js, so it travels in the form's meta; the logic is a bundle
+ * fetched through frappe.boot.assets_json. A Desk tab that was open across a deploy can run the new script
+ * against the old logic, and then the first call to something new throws. So the script asks first, and
+ * draws a "reload" note instead of the tracker when the logic is too old. BUMP it with the bundle's
+ * VERSION whenever this script starts calling an export the bundle did not have; the node suite fails the
+ * build if the two numbers differ. Pure on purpose: scripts/test_procurement_tracker.mjs runs it.
+ */
+const REQUIRED_LOGIC_LEVEL = 2;
+
+function procurementLogicProblem(pt) {
+	if (!pt || typeof pt !== "object") return "missing";
+	// The level is the rule; the two functions are belt and braces for a copy that has a level but not the code.
+	if (!(pt.version >= REQUIRED_LOGIC_LEVEL)) return "old";
+	if (typeof pt.merge_views !== "function" || typeof pt.fallback_views !== "function") return "old";
+	return "";
+}
+
+/**
  * The Procurement Tracker's Vue app (v1.811.0): two groupings of one job's purchasing, with
  * filters that live in the address.
  *
@@ -1587,6 +1606,18 @@ frappe.ui.form.on("Project", {
 			$(wrapper).html('<div class="procurement-tracker-mount">Loading Procurement Tracker...</div>');
 			const mount = $(wrapper).find(".procurement-tracker-mount")[0];
 			const failed = (message) => $(wrapper).html($('<div class="text-danger"></div>').text(message));
+			// This tab holds an older copy of the tracker's logic than this script (a deploy while it was open):
+			// say so, in the tracker's place, and leave the rest of the form alone.
+			const outdated = () =>
+				$(wrapper).html(
+					$('<div class="procurement-tracker-note text-muted"></div>')
+						.text(__("The Procurement Tracker was updated. Reload this page to use it.") + " ")
+						.append(
+							$('<button type="button" class="btn btn-default btn-xs"></button>')
+								.text(__("Reload"))
+								.on("click", () => window.location.reload())
+						)
+				);
 
 			// The widget's decisions (filters, sorting, the address) are a bundle of their own,
 			// public/js/procurement_tracker, so node can test them. v16's frappe.require calls
@@ -1634,8 +1665,13 @@ frappe.ui.form.on("Project", {
 					if (frm.__pt_seq !== seq || frm.doc.name !== project) return;
 					try {
 						const pt = window.sf_procurement_tracker;
-						if (!pt) {
+						const problem = procurementLogicProblem(pt);
+						if (problem === "missing") {
 							failed(__("The Procurement Tracker could not load its files. Reload the page to try again."));
+							return;
+						}
+						if (problem) {
+							outdated();
 							return;
 						}
 						const data = (r && r.message) || {};
@@ -1645,8 +1681,9 @@ frappe.ui.form.on("Project", {
 						}
 						frm.__pt_app = mountProcurementTracker(frm, mount, pt, data, frm.__pt_keep, views);
 					} catch (e) {
+						// No modal: the tracker is a side widget, and a dialog on every open of a Project is worse than
+						// the red line it leaves in the tracker's place (v1.816.1).
 						console.error(e);
-						frappe.msgprint("Error inside procurement tracker callback: " + e.message);
 						failed("Error: " + e.message);
 					}
 				},

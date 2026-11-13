@@ -219,6 +219,15 @@ Verified, and all of them expensive to rediscover:
   one Frappe derives. `tests/test_doctype_controller_names.py` fails the build on it now, and
   111 child tables plus 144 other doctypes were clean — this is a one-letter trap, not a
   widespread one. `override_doctype_class` entries are skipped by the sweep entirely.
+- **A `doctype_js` file and the bundle it `frappe.require`s can reach a Desk tab from two different
+  deploys.** The script travels in the form's meta; the bundle is resolved through the tab's
+  `frappe.boot.assets_json`, which is as old as the tab. A tab open across a deploy gets the new script
+  (meta cache cleared by another tab) over the old hashed bundle, or over a `window.sf_*` installed
+  earlier, and the first call to an export the old bundle lacks throws — v1.816.0 put "pt.merge_views is
+  not a function" in front of every Project opened in such a tab. So when a form script starts calling
+  something new from a bundle, bump the bundle's `VERSION` and the level the script checks before it
+  mounts (`REQUIRED_LOGIC_LEVEL` in `project_enhancements.js`); a too-old bundle draws a "Reload this page"
+  note, never a throw or a `msgprint`. `scripts/test_procurement_tracker.mjs` holds the two numbers equal.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

@@ -1090,6 +1090,57 @@ test("round 2: a link that cannot carry the column filters says so, a late answe
 	check("the total is labelled when Spent is the first column", code.includes('<small v-if="spentIndex === 0" class="pt-where-note">Total spent on these items'), true);
 });
 
+// ------------------------------------------------------------------ the form script against an older bundle (v1.816.1)
+
+// The form script (doctype_js) and the logic bundle reach a Desk tab by different roads, so after a deploy a
+// tab can hold the new script and the old logic. The script's own check, lifted out of the file and run.
+const BUNDLE = fs.readFileSync(path.join(APP, "public/js/procurement_tracker.bundle.js"), "utf8");
+const levelGuard = (() => {
+	const a = SCRIPT.indexOf("const REQUIRED_LOGIC_LEVEL");
+	const b = SCRIPT.indexOf("\n}\n", SCRIPT.indexOf("function procurementLogicProblem")) + 3;
+	if (a < 0 || b < a) throw new Error("the level check is not in project_enhancements.js");
+	return new Function(SCRIPT.slice(a, b) + "\nreturn { REQUIRED_LOGIC_LEVEL, procurementLogicProblem };")();
+})();
+
+test("the level the form script needs is the level the bundle installs", () => {
+	const bundled = Number((BUNDLE.match(/^const VERSION = (\d+);$/m) || [])[1]);
+	check("the bundle declares a VERSION", Number.isInteger(bundled), true);
+	check("REQUIRED_LOGIC_LEVEL equals the bundle's VERSION", levelGuard.REQUIRED_LOGIC_LEVEL, bundled);
+	check("a bundle at the current level replaces an older copy in the same window", BUNDLE.includes("window.sf_procurement_tracker.version >= VERSION"), true);
+	const installed = Object.assign({ version: bundled }, pt);
+	check("the logic as the bundle installs it passes the form script's check", levelGuard.procurementLogicProblem(installed), "");
+});
+
+test("a too-old or missing logic is told apart, and nothing is thrown", () => {
+	const need = levelGuard.REQUIRED_LOGIC_LEVEL;
+	const guard = levelGuard.procurementLogicProblem;
+	const v1 = Object.assign({}, pt, { version: need - 1 });
+	delete v1.merge_views;
+	delete v1.fallback_views;
+	check("the old bundle (level below, no merge_views) is old", guard(v1), "old");
+	check("an old level is old even when the functions happen to be there", guard(Object.assign({}, pt, { version: need - 1 })), "old");
+	check("no level at all is old", guard(Object.assign({}, pt, { version: undefined })), "old");
+	check("the right level without merge_views is old", guard(Object.assign({}, pt, { version: need, merge_views: undefined })), "old");
+	check("the right level without fallback_views is old", guard(Object.assign({}, pt, { version: need, fallback_views: "x" })), "old");
+	check("nothing installed is missing", guard(undefined), "missing");
+	check("null is missing", guard(null), "missing");
+	check("a string is missing", guard("nope"), "missing");
+	check("a newer logic than the script needs is fine", guard(Object.assign({}, pt, { version: need + 1 })), "");
+});
+
+test("an old logic draws a reload note and no dialog; the rest of the form is left alone", () => {
+	const at = SCRIPT.indexOf("const problem = procurementLogicProblem(pt);");
+	check("the check runs before anything is mounted", at > 0 && at < SCRIPT.indexOf("mountProcurementTracker(frm, mount, pt, data"), true);
+	check("an old logic calls outdated() and returns", /if \(problem\) \{\s*outdated\(\);\s*return;\s*\}/.test(SCRIPT), true);
+	check("the note says what happened in plain words", SCRIPT.includes('__("The Procurement Tracker was updated. Reload this page to use it.")'), true);
+	check("its button reloads the page", SCRIPT.includes('.on("click", () => window.location.reload())'), true);
+	const tail = SCRIPT.slice(SCRIPT.indexOf("Promise.all([logic, feed, saved])"));
+	const catchAt = tail.indexOf("} catch (e) {");
+	const mountCatch = tail.slice(catchAt, tail.indexOf("},", catchAt));
+	check("a failure inside the mount keeps its console line and its red text", mountCatch.includes("console.error(e);") && mountCatch.includes('failed("Error: " + e.message)'), true);
+	check("and raises no modal", mountCatch.includes("msgprint"), false);
+});
+
 // ------------------------------------------------------------------ run
 
 for (const { name, fn } of tests) {

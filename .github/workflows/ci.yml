@@ -3961,7 +3961,8 @@ jobs:
       # and its filters round-trip through the address and never become a history entry, the filters
       # narrow lines, documents and items alike, blanks sort last both ways, a half-done status never
       # takes a finished one's colour, names are never read as markup (table and printed list), and the
-      # form script calls only what exists.
+      # form script calls only what exists. And (v1.816.1) the form script's required logic level equals the
+      # bundle's VERSION, and a logic that is too old draws a reload note instead of throwing.
       - name: Procurement Tracker filters, address and sorting (node)
         run: node scripts/test_procurement_tracker.mjs
       # The Procurement Tracker's saved views (v1.816.0): procurement_view_rules.py is pure, and the
