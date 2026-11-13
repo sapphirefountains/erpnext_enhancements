@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Warehouse Map's two doc_events on other people's DocTypes, and its boot flag (v1.815.0).
+"""The Warehouse Map's two doc_events on other people's DocTypes, and its boot flag (v1.818.0).
 
 Kept apart from ``api/warehouse_map.py`` on purpose: both handlers run on records this feature
 does not own (every ``File`` saved on the site, every ``Warehouse`` renamed), so this module

@@ -306,7 +306,7 @@ doctype_js = {
 		"public/js/water_engineering/pump_curve_chart.js",
 		# v1.726.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
 		"public/js/supplier_finder_buttons.js",
-		# v1.815.0 -- "Show on map": opens the Warehouse Map page with this Item lit up.
+		# v1.818.0 -- "Show on map": opens the Warehouse Map page with this Item lit up.
 		"public/js/warehouse_map_links.js",
 		# v1.754.0 -- Actions > "Turn on Maintain Stock" for an Item ERPNext's form refuses to
 		# switch: shows each safety check, then a confirm calls api.maintain_stock.turn_on.
@@ -1503,7 +1503,7 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name",
 		],
 		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
-		# Warehouse Map (v1.815.0): a File attached to a Warehouse Floor Map is a floor plan picture,
+		# Warehouse Map (v1.818.0): a File attached to a Warehouse Floor Map is a floor plan picture,
 		# a real building's layout, and is never public. The map's own validate only stops a public
 		# address being STORED on the map; this refuses the public File itself, however it was made
 		# (the Desk form's attach panel, the File form's Is Private box, any upload naming the
@@ -1516,7 +1516,7 @@ doc_events = {
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
-	# Warehouse Map (v1.815.0): a box on the map can carry its own order of shelves and bins
+	# Warehouse Map (v1.818.0): a box on the map can carry its own order of shelves and bins
 	# (Warehouse Floor Map Shape.bin_order), a list of warehouse names kept as text. Frappe's
 	# rename rewrites Link fields and does not reach text, so this rewrites the lines that name the
 	# renamed warehouse. It cannot raise: it must never be the reason a rename failed. The only
@@ -3731,7 +3731,7 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
 # published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
-# Warehouse Floor Map / Warehouse Floor Map Shape (v1.815.0): a box on the warehouse map links the
+# Warehouse Floor Map / Warehouse Floor Map Shape (v1.818.0): a box on the warehouse map links the
 # Warehouse it stands for. A map only points at warehouses, so it must never be the reason an empty
 # bin cannot be deleted. The box left behind is drawn as "deleted" in the map's editor and refused
 # on the map's next save until it is removed or tied to another warehouse. (A warehouse that is only

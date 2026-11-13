@@ -924,7 +924,7 @@ export class StockScanApp {
 	}
 
 	/**
-	 * "Show on map" (v1.815.0): a link to the Warehouse Map (a Desk page) on a location or an
+	 * "Show on map" (v1.818.0): a link to the Warehouse Map (a Desk page) on a location or an
 	 * item, or nothing when the site has no map (`settings.warehouse_map`). A real link in a NEW
 	 * tab, never a route of this page: the run's job, its draft and the camera's permission all
 	 * live in this tab, and the phone's Back from the map closes that tab and lands here as it was.

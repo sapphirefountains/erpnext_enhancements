@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Every judgement the Warehouse Map makes (v1.815.0). No Frappe, no I/O.
+"""Every judgement the Warehouse Map makes (v1.818.0). No Frappe, no I/O.
 
 Nik, 2026-11-12: "we need a map for the location bins and a way to edit and create the map for
 our warehouse locations at our office."

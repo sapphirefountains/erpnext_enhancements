@@ -1,4 +1,4 @@
-/* Warehouse Map (v1.815.0). A Desk Page's stylesheet is appended to <head> once and stays for the
+/* Warehouse Map (v1.818.0). A Desk Page's stylesheet is appended to <head> once and stays for the
    whole Desk session, so every selector here starts with .wm- (tests/test_warehouse_map.py holds
    it). Colors are the app tokens (sf_tokens.bundle.css, global) with the Desk's own as fallback,
    so the page follows light and dark with the rest of the Desk. The three status colors are the

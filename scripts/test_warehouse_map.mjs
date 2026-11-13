@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The Warehouse Map page's pure decisions (v1.815.0) under node:
+ * The Warehouse Map page's pure decisions (v1.818.0) under node:
  * erpnext_enhancements/public/js/warehouse_map/logic.js.
  *
  * What is held:

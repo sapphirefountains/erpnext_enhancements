@@ -29,7 +29,7 @@ from erpnext_enhancements.utils.normalize_hook import desk_registry
 
 
 def _warehouse_map_flag():
-	"""``frappe.boot.ee_warehouse_map`` (v1.815.0): 1 when a Warehouse Map that is not hidden
+	"""``frappe.boot.ee_warehouse_map`` (v1.818.0): 1 when a Warehouse Map that is not hidden
 	exists. Every "Show on map" door in the Desk reads it (the Bin Manager, the Item and Warehouse
 	forms, two reports), so none of them is offered where it would lead to an empty page; Stock
 	Scan reads the same fact in its own boot. Cosmetic: the page and its endpoints check

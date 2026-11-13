@@ -1,5 +1,5 @@
 /*
- * Warehouse Map entry point (v1.815.0): the page's pure decisions
+ * Warehouse Map entry point (v1.818.0): the page's pure decisions
  * (public/js/warehouse_map/logic.js) as one esbuild bundle with a content-hashed name.
  *
  * Loaded only by the Warehouse Map Desk page (inventory_enhancements/page/warehouse_map), never

@@ -1,5 +1,5 @@
 /*
- * Warehouse Map (v1.815.0): the page's pure decisions. No DOM and no frappe;
+ * Warehouse Map (v1.818.0): the page's pure decisions. No DOM and no frappe;
  * scripts/test_warehouse_map.mjs runs it under node. The page script
  * (inventory_enhancements/page/warehouse_map/warehouse_map.js) draws and wires.
  *

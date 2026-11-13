@@ -57,7 +57,7 @@ frappe.query_reports["Location Contents"] = {
 		},
 	],
 
-	// "Show on map" (v1.815.0): the Warehouse Map page on the chosen Location (and with the chosen
+	// "Show on map" (v1.818.0): the Warehouse Map page on the chosen Location (and with the chosen
 	// Item lit up, when there is one); with neither, the map itself. A Desk route, so Back returns to
 	// this report with its filters.
 	onload(report) {

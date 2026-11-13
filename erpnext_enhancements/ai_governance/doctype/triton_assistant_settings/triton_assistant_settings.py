@@ -53,7 +53,7 @@ class TritonAssistantSettings(Document):
 def clear_boot_cache():
     """Drop every person's cached boot payload, once the current transaction has committed.
 
-    Also called when a Warehouse Map's visibility changes (v1.815.0,
+    Also called when a Warehouse Map's visibility changes (v1.818.0,
     ``inventory_enhancements/warehouse_map_files.clear_boot_cache``), so the app has one way of
     doing this. The delete itself cannot raise: it runs after the commit, where an error would
     turn a save that worked into a failed request, and Frappe's own ``delete_key`` swallows only

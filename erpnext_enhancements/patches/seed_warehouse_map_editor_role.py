@@ -1,4 +1,4 @@
-"""Seed the "Warehouse Map Editor" role and its one-role profile (v1.815.0).
+"""Seed the "Warehouse Map Editor" role and its one-role profile (v1.818.0).
 
 Nik, 2026-11-12, asked who may create and edit the warehouse map: "People you name". So drawing
 and changing a Warehouse Floor Map (a map on the Warehouse Map page) is this role's (with System

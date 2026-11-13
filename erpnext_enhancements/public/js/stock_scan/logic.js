@@ -414,7 +414,7 @@ export function splitPlaces(places) {
 }
 
 /**
- * "Show on map" (v1.815.0): the Warehouse Map page's address for a location (`w`) or an item
+ * "Show on map" (v1.818.0): the Warehouse Map page's address for a location (`w`) or an item
  * (`item`). The map is a Desk page; its own server call decides which map and box to show.
  * Nothing to point at is no link ("").
  */

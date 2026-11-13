@@ -1878,7 +1878,7 @@ body .page-footer {
 	padding-left: 20px;
 	color: var(--ss-text);
 }
-/* "Show on map" (v1.815.0) is a real link dressed as the page's link buttons. */
+/* "Show on map" (v1.818.0) is a real link dressed as the page's link buttons. */
 a.ee-ss-linkbtn {
 	text-decoration: none;
 }

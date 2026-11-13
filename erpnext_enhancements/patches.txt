@@ -4,7 +4,7 @@
 # Contract / Contract Template / Contract Signature Request sync permission rows naming it.
 # Insert-only; grants it to nobody.
 erpnext_enhancements.patches.seed_contract_manager_role
-# v1.815.0: the "Warehouse Map Editor" role (and its one-role profile) that creates and changes Warehouse Floor Maps (the Warehouse Map page's records).
+# v1.818.0: the "Warehouse Map Editor" role (and its one-role profile) that creates and changes Warehouse Floor Maps (the Warehouse Map page's records).
 # pre_model_sync so the role exists before the Warehouse Floor Map DocType syncs the permission row naming it.
 # Insert-only; grants it to nobody.
 erpnext_enhancements.patches.seed_warehouse_map_editor_role

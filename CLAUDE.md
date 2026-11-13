@@ -126,7 +126,7 @@ Verified, and all of them expensive to rediscover:
   a Page `warehouse-map` beside a DocType `Warehouse Map` opens the DocType's list view for
   everyone who can read it, and the page for everyone who cannot: one address, two destinations,
   no error in either. The Warehouse Map's DocType is `Warehouse Floor Map` for this reason
-  (v1.815.0). `tests/test_warehouse_map.py` holds every Page in the app against every DocType in
+  (v1.818.0). `tests/test_warehouse_map.py` holds every Page in the app against every DocType in
   the app, and `tests/test_workspaces.py` does the same for Workspaces; neither can see a clash
   with a DocType that ERPNext or Frappe ships, so check the name of a new Page against those by
   hand.

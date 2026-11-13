@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Warehouse Map page's endpoints (v1.815.0): a drawn map of where the bins are.
+"""The Warehouse Map page's endpoints (v1.818.0): a drawn map of where the bins are.
 
 Nik, 2026-11-12: "we need a map for the location bins and a way to edit and create the map for
 our warehouse locations at our office. I'll provide the floor plan layout and you help me create

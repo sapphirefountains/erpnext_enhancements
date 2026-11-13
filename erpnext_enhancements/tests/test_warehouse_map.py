@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for the Warehouse Map (v1.815.0).
+"""Bench-free tests for the Warehouse Map (v1.818.0).
 
 Three layers, in this order:
 

@@ -79,7 +79,7 @@ const BM_PAGE = "bin-manager";
 // page is gated on the server too: this only keeps a link that ends in "no permission" off the screen. The check is
 // the Desk's own (frappe.user), never a read of a Settings Single.
 const BM_BOARD_ROUTE = "reorder-board";
-// The Warehouse Map (v1.815.0): the same roles as this page, so the link is shown to everyone here.
+// The Warehouse Map (v1.818.0): the same roles as this page, so the link is shown to everyone here.
 const BM_MAP_ROUTE = "warehouse-map";
 const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
 const BM_SEARCH_DELAY_MS = 250;
@@ -295,7 +295,7 @@ class BinManagerPage {
 		}
 	}
 
-	// Whether the Warehouse Map's doors are shown (v1.815.0): a map exists (the boot's flag), or, for
+	// Whether the Warehouse Map's doors are shown (v1.818.0): a map exists (the boot's flag), or, for
 	// the tab only, this person may create one. Anything unreadable is "no".
 	map_offered(or_can_create) {
 		try {
@@ -741,7 +741,7 @@ class BinManagerPage {
 			return `<button type="button" class="bm-tab ${t.screen === on ? "is-on" : ""}" role="tab" aria-selected="${t.screen === on}"
 				data-act="tab" data-tab="${this.esc(t.screen)}">${this.esc(__(t.label))}${count}</button>`;
 		}).join("");
-		// The Warehouse Map (v1.815.0) is its own page (inventory_enhancements/page/warehouse_map), drawn
+		// The Warehouse Map (v1.818.0) is its own page (inventory_enhancements/page/warehouse_map), drawn
 		// with these same tabs, so from here it reads as one more view. One frappe.set_route: its own
 		// history entry, and Back lands here again.
 		// Offered once a map exists (frappe.boot.ee_warehouse_map, boot.py), and before that only to

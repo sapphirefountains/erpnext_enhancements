@@ -1,4 +1,4 @@
-// Warehouse Map (v1.815.0). Nik, 2026-11-12: "we need a map for the location bins and a way to edit
+// Warehouse Map (v1.818.0). Nik, 2026-11-12: "we need a map for the location bins and a way to edit
 // and create the map for our warehouse locations at our office."
 //
 // A map is one floor: a floor plan picture with boxes over it, each box a Warehouse (a bay, a room).

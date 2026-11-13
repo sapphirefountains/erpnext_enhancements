@@ -4182,7 +4182,7 @@ jobs:
       # the existing move_to) is scripts/test_bin_manager.mjs, run by the step above.
       - name: Bin Manager views (by project, job sites, problems, filters) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_bin_views -v
-      # The Warehouse Map (v1.815.0, api/warehouse_map.py, inventory_enhancements/warehouse_map_rules.py
+      # The Warehouse Map (v1.818.0, api/warehouse_map.py, inventory_enhancements/warehouse_map_rules.py
       # and the Warehouse Floor Map DocType): a drawn floor plan with a box for each bay and room. Its own
       # frappe stub (whose Document.save asks the write permission and runs the real validate) with
       # stand-ins for api.stock_scan, bin_assignments, bin_views and job_sites, so its own step. Fails

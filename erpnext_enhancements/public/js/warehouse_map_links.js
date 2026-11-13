@@ -1,4 +1,4 @@
-// "Show on map" on the Item form (v1.815.0): opens the Warehouse Map page
+// "Show on map" on the Item form (v1.818.0): opens the Warehouse Map page
 // (/desk/warehouse-map) with this item lit up wherever it is on hand or assigned. A Desk route,
 // so Back returns to the Item.
 //

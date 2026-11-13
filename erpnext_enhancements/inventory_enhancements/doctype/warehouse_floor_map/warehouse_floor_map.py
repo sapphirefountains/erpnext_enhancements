@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for Warehouse Floor Map (v1.815.0): one floor or area of the building, drawn.
+"""Controller for Warehouse Floor Map (v1.818.0): one floor or area of the building, drawn.
 
 A map is a floor plan picture (a **private** file attached to this record) and the boxes placed
 over it (``Warehouse Floor Map Shape`` rows), each tied to a Warehouse. The Warehouse Map page

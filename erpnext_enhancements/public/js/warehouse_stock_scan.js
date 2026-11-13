@@ -12,7 +12,7 @@
  * window.open rather than frappe.set_route: both are website routes (www/), not Desk
  * pages, and they print or run full-screen on their own.
  *
- * "Show on Map" (v1.815.0), on a location and on a group alike, opens the Warehouse Map page
+ * "Show on Map" (v1.818.0), on a location and on a group alike, opens the Warehouse Map page
  * on the box that shows this warehouse. That one is a Desk page, so it is a frappe.set_route
  * and Back returns to this form. Shown to the roles that may open the page
  * (stock_scan_rules.SCAN_ROLES) once a map exists (frappe.boot.ee_warehouse_map); the page is

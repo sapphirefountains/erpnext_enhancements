@@ -38,7 +38,7 @@ frappe.query_reports["Where Is This Item"] = {
 		},
 	],
 
-	// "Show on map" (v1.815.0): the Warehouse Map page with the chosen Item lit up. A Desk route,
+	// "Show on map" (v1.818.0): the Warehouse Map page with the chosen Item lit up. A Desk route,
 	// so Back returns to this report with its filters.
 	onload(report) {
 		// Offered once a map exists (frappe.boot.ee_warehouse_map, boot.py).
