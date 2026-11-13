@@ -500,7 +500,7 @@ def _fake(name, **functions):
 
 def _unfake(*names, block=True):
 	"""Take a stand-in out again. For the Project Shelf's module that now means blocking the
-	import, not just forgetting the stand-in: the real module shipped in v1.815.0, so with
+	import, not just forgetting the stand-in: the real module shipped in v1.817.0, so with
 	nothing in ``sys.modules`` the ``import`` would succeed and run it on this suite's small
 	stub. A ``None`` entry makes ``import`` raise ImportError, which is the site these tests
 	mean by "the Project Shelf release is not installed"."""

@@ -523,7 +523,7 @@ def install_stubs():
 	item_module.Item = StubItem
 	item_module.get_item_defaults = lambda item_code, company: STATE["item_defaults"].get(item_code) or {}
 
-	# ERPNext's own answer to "which warehouse does a new line for this item get" (v1.815.0). The
+	# ERPNext's own answer to "which warehouse does a new line for this item get" (v1.817.0). The
 	# order below is 16.54.0's, read at the tag: the header's warehouse, the item's default, its
 	# item group's, its brand's, the row's own, then the Company's default. Never Stock Settings.
 	details = types.ModuleType("erpnext.stock.get_item_details")
@@ -2078,7 +2078,7 @@ class OpenOrderSwitchTest(unittest.TestCase):
 		self.assertEqual(on_order[0][1], "PO-T-BLANK")
 		self.assertIn(f"row 1 was given {MAIN}", on_order[0][3])
 
-	# --- a line with no warehouse gets what ERPNext gives a new line (v1.815.0) --------------
+	# --- a line with no warehouse gets what ERPNext gives a new line (v1.817.0) --------------
 
 	def _line_warehouse(self, name="PO-T-BLANK-1", table="Purchase Order Item"):
 		return CONN.execute(f"select warehouse from `tab{table}` where name = ?", (name,)).fetchone()[0]
@@ -2123,7 +2123,7 @@ class OpenOrderSwitchTest(unittest.TestCase):
 		self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: MAIN})
 
 	def test_stock_settings_default_is_never_read(self):
-		"""It was the fallback until v1.815.0, and the docstring called that ERPNext's order.
+		"""It was the fallback until v1.817.0, and the docstring called that ERPNext's order.
 		ERPNext never reads it for a line, and copies it into every new item."""
 		add_open_po(name="PO-T-BLANK", warehouse="")
 		STATE["singles"][("Stock Settings", "default_warehouse")] = STORES

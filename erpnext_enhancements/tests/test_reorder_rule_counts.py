@@ -89,7 +89,7 @@ def _metrics(rules, bins, counts, elsewhere=(), not_shop=()):
 
 	``bins`` are at the shop's ``Bin A``. ``elsewhere`` are ``(item, warehouse, qty)`` rows at any
 	other warehouse, and ``not_shop`` the warehouses whose stock is not the shop's (job sites and
-	the Project Shelf, v1.815.0).
+	the Project Shelf, v1.817.0).
 	"""
 	conn = sqlite_sql.connect(*DDL)
 	conn.executemany("insert into `tabItem Reorder` values (?, 'Item', 'Bin A', ?, ?)", rules)
@@ -171,7 +171,7 @@ class TestARuleCountsByExisting(unittest.TestCase):
 		self.assertEqual((none["stocked_items_out"], none["items_below_reorder"]), (0, 0))
 
 	def test_stock_on_the_project_shelf_or_a_job_site_does_not_stock_the_shop(self):
-		"""v1.815.0: "below reorder" and "out of stock" ask whether the SHOP has the part. Ten on the
+		"""v1.817.0: "below reorder" and "out of stock" ask whether the SHOP has the part. Ten on the
 		Project Shelf were bought for a job, and four on a job site are across town."""
 		rules_ = [("PART", 4, 10), ("OTHER", 4, 10)]
 		bins = [("PART", 0), ("OTHER", 9)]

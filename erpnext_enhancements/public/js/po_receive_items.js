@@ -27,7 +27,7 @@
  * "Arriving now" defaults to what is still pending, so the common case of "the whole rest
  * turned up" is one click, and a partial delivery is typing the smaller numbers.
  *
- * "Put in" (v1.815.0, Nik 2026-11-12) is where each line goes. It opens on the line's default
+ * "Put in" (v1.817.0, Nik 2026-11-12) is where each line goes. It opens on the line's default
  * place -- the Project Shelf for a job's line, the item's own bin for an Overhead one
  * (`procurement_project.receiving_defaults`) -- and the person receiving can pick any other
  * location per line. The dialog still opens if that lookup fails: each line then shows the
@@ -40,7 +40,7 @@ frappe.provide("erpnext_enhancements.procurement");
 	// v1.809.0: which open lines are a stock item's with no price. Such a line can't be received
 	// until it has one (inventory_enhancements/receipt_price_rules.py), so the dialog asks here.
 	const NEEDS_PRICE = "erpnext_enhancements.api.procurement.lines_needing_price";
-	// v1.815.0: where each line goes by default (the Project Shelf for a job's line, the item's own
+	// v1.817.0: where each line goes by default (the Project Shelf for a job's line, the item's own
 	// bin for an Overhead one). Asked after the price question; the dialog opens without it too.
 	const DEFAULTS = "erpnext_enhancements.procurement_project.receiving_defaults";
 
@@ -303,7 +303,7 @@ frappe.provide("erpnext_enhancements.procurement");
 					const out = {
 						purchase_order_item: line.purchase_order_item,
 						qty: flt(line.arriving),
-						// Where this line is put (v1.815.0). A line the server holds back for a price
+						// Where this line is put (v1.817.0). A line the server holds back for a price
 						// is not received, so the place sent for it is not used.
 						warehouse: line.warehouse || "",
 					};

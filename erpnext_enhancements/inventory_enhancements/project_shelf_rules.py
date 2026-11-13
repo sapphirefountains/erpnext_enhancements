@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Every judgement about the Project Shelf (v1.815.0). No Frappe: tested bench-free.
+"""Every judgement about the Project Shelf (v1.817.0). No Frappe: tested bench-free.
 
 **What the Project Shelf is.** One shared warehouse where parts bought for a job wait until
 the job uses them. The owner's decision of 2026-11-12: everything ordered for a project is
@@ -141,7 +141,7 @@ def first_count_warehouse(has_shelf, default=None, own=None, fallback=None, not_
 
 	The switch is for items that were bought and never kept in stock, and those are the items
 	whose Item Default is the warehouse ERPNext handed out by itself: ``Stores``, which is the
-	Project Shelf since v1.815.0 (over 700 of the 774 such defaults were on non-stock items). A
+	Project Shelf since v1.817.0 (over 700 of the 774 such defaults were on non-stock items). A
 	count entered there would put a shop consumable on the shelf: the shop would read zero of
 	it, the units would belong to no job, and a take there would ask for one.
 

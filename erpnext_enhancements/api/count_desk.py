@@ -15,7 +15,7 @@ this module reads and writes. The things it is careful about:
   ``api.stock_scan._items_at`` (on hand, assigned, its default, on order, not yet decided), called
   with ``limit=None``: the phone caps a location at 150 items, and a count that silently stopped at
   150 would leave the rest of a large location uncounted (the Project Shelf, which was
-  ``Stores - SF`` until v1.815.0, is the one that holds that many).
+  ``Stores - SF`` until v1.817.0, is the one that holds that many).
 * **What posts is the variance, applied to what is on hand now** (``count_desk_rules.post_plan``),
   so a take or a receipt after the shelf was counted survives the count. A count posted since by
   somebody else supersedes this one for that item and bin.

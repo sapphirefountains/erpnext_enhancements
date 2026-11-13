@@ -890,7 +890,7 @@ export class StockScanApp {
 			const sub = append(el("span", "ee-ss-row-sub"), item.item_code);
 			if (item.on_order > 0) append(sub, " ", el("span", "ee-ss-badge", "on order"));
 			if (item.undecided) append(sub, " ", el("span", "ee-ss-badge", "not assigned"));
-			// On the Project Shelf (v1.815.0): the jobs the item is held for, from the ledger.
+			// On the Project Shelf (v1.817.0): the jobs the item is held for, from the ledger.
 			const heldFor = loc.project_shelf ? shelfJobsText(item.jobs) : "";
 			if (heldFor) append(sub, " · ", `for ${heldFor}`);
 			else if (loc.project_shelf && item.on_hand > 0) append(sub, " ", el("span", "ee-ss-badge", "no job on record"));
@@ -990,7 +990,7 @@ export class StockScanApp {
 			return `${shown.join(", ")}${list.length > 3 ? `, and ${list.length - 3} more` : ""}`;
 		};
 		if (places.shop.length) view.appendChild(el("p", "ee-ss-also", `Also at: ${placesText(places.shop)}`));
-		// On the Project Shelf (v1.815.0): in the building, bought for a job. Named with its jobs.
+		// On the Project Shelf (v1.817.0): in the building, bought for a job. Named with its jobs.
 		for (const place of places.shelf) {
 			const heldFor = shelfJobsText(place.jobs);
 			view.appendChild(
@@ -1197,7 +1197,7 @@ export class StockScanApp {
 		return this.settings.project_shelf_name || "the Project Shelf";
 	}
 
-	/** The line the Project Shelf carries, on its own screen and on an item opened there (v1.815.0). */
+	/** The line the Project Shelf carries, on its own screen and on an item opened there (v1.817.0). */
 	shelfNote() {
 		const note = el("p", "ee-ss-note ee-ss-shelf-note", "Parts here were bought for a job. They are not counted as shop stock, and a take here names the job.");
 		note.setAttribute("role", "note");
@@ -1205,7 +1205,7 @@ export class StockScanApp {
 	}
 
 	/**
-	 * The job a move onto or off the Project Shelf carries (v1.815.0), as a block for a move
+	 * The job a move onto or off the Project Shelf carries (v1.817.0), as a block for a move
 	 * sheet. Whose stock is on the shelf is read from the job on each movement, so a move that
 	 * releases stock to a bin says which job it was bought for ("off"), and a move that sets
 	 * stock aside on the shelf says which job it is for ("onto"). `set(mode, jobs)` shows the
@@ -1307,7 +1307,7 @@ export class StockScanApp {
 		if (!this.canManage() || !item || !item.warehouse) return false;
 		// A job site is nobody's bin (v1.801.0): there is nothing to take the item off.
 		if (item.job_site) return false;
-		// Nor is the Project Shelf (v1.815.0): parts wait there for their job.
+		// Nor is the Project Shelf (v1.817.0): parts wait there for their job.
 		if (item.project_shelf) return false;
 		const stocked = (Number(item.on_hand) || 0) > 0;
 		if (item.blocked && stocked) return false;
@@ -1374,7 +1374,7 @@ export class StockScanApp {
 		};
 		const error = errorLine("ee-ss-field-error");
 		const showError = (text, action) => error.show(text, action);
-		// The job the move carries when one end is the Project Shelf (v1.815.0); hidden otherwise.
+		// The job the move carries when one end is the Project Shelf (v1.817.0); hidden otherwise.
 		const jobLine = this.shelfJobLine(() => showError(""));
 
 		/** The box: shown with `can_manage` once a place is picked, never for the boneyard. */
@@ -2020,7 +2020,7 @@ export class StockScanApp {
 		if (d.verb === "take") {
 			// At a job site the take is that job's (v1.801.0): no picker, whatever the chip says.
 			const project = takeProject(item, this.job);
-			// On the Project Shelf every take names its job (v1.815.0), whatever the setting says.
+			// On the Project Shelf every take names its job (v1.817.0), whatever the setting says.
 			if (takeNeedsJob(item, this.settings.require_project_for_take, project)) {
 				this.pickJob({ reason: "take", then: () => this.save() });
 				return;
@@ -2035,7 +2035,7 @@ export class StockScanApp {
 			});
 			return;
 		}
-		// Not on the Project Shelf (v1.815.0): a store run's receipt names no job, and the server
+		// Not on the Project Shelf (v1.817.0): a store run's receipt names no job, and the server
 		// refuses one there.
 		const storeRun = this.storeRunReady() && item.store_run_ok !== false && !item.project_shelf;
 		const hasOrders = !!(item.open_orders && item.open_orders.length);
@@ -2109,7 +2109,7 @@ export class StockScanApp {
 						el("span", "ee-ss-row-title", `${line.purchase_order} · ${line.supplier_name || line.supplier}`),
 						el("span", "ee-ss-row-sub", `${plain(line.pending_stock_qty)} of ${plain(ordered)} ${uom} still to come${due ? ` · due ${due}` : ""}`),
 					];
-					// Whose order it is, and where it was ordered for (v1.815.0). The bin on screen still
+					// Whose order it is, and where it was ordered for (v1.817.0). The bin on screen still
 					// decides where this receipt goes: scanning a bin means "put it here".
 					if (line.project_name) parts.push(el("span", "ee-ss-row-sub", `For ${line.project_name}`));
 					if (line.for_project_shelf && !item.project_shelf) {
@@ -2147,7 +2147,7 @@ export class StockScanApp {
 								})
 					);
 				}
-				// Nothing lands on the Project Shelf without a job (v1.815.0), so there is no "found" choice there.
+				// Nothing lands on the Project Shelf without a job (v1.817.0), so there is no "found" choice there.
 				if (!item.project_shelf) list.appendChild(choice(handle, "Not on a purchase order", "Found, or not from a job", { without_po: 1 }));
 				body.appendChild(list);
 				if (item.project_shelf && !job) {
@@ -2584,7 +2584,7 @@ export class StockScanApp {
 			less.setAttribute("aria-label", "One less");
 			const more = button("+", "ee-ss-mini-step", () => step(1));
 			more.setAttribute("aria-label", "One more");
-			// The job the move carries when one end is the Project Shelf (v1.815.0); hidden otherwise.
+			// The job the move carries when one end is the Project Shelf (v1.817.0); hidden otherwise.
 			const jobLine = this.shelfJobLine(() => showError(""));
 			jobLine.set(moveJobMode(place, item), place.jobs, place.jobs_exact);
 			fill(
@@ -2732,7 +2732,7 @@ export class StockScanApp {
 	 * `opts.reason` "job_site" (v1.801.0): Move to…'s "A job site". The pick goes to
 	 * `opts.onPick` and is NOT remembered as the run's job: sending pipe to one job says nothing
 	 * about which job the next take is for. Only jobs that keep material on site are listed.
-	 * `opts.reason` "shelf" (v1.815.0): the job a move onto or off the Project Shelf carries.
+	 * `opts.reason` "shelf" (v1.817.0): the job a move onto or off the Project Shelf carries.
 	 * Like "job_site" the pick goes to `opts.onPick` and is not remembered; every open job is listed.
 	 */
 	pickJob(opts) {
@@ -3982,7 +3982,7 @@ export class StockScanApp {
 			if (!row.is_stock_item) append(sub, " ", el("span", "ee-ss-badge", "not tracked"));
 			// The total is the shop's (v1.801.0); what is out on jobs is said beside it.
 			if (!here && Number(row.on_job_sites) > 0) append(sub, " ", el("span", "ee-ss-badge", `${plain(row.on_job_sites)} on job sites`));
-			// ... and what is on the Project Shelf, bought for a job (v1.815.0).
+			// ... and what is on the Project Shelf, bought for a job (v1.817.0).
 			if (!here && Number(row.on_project_shelf) > 0) append(sub, " ", el("span", "ee-ss-badge", `${plain(row.on_project_shelf)} for jobs`));
 			return append(
 				el("li"),
@@ -4131,7 +4131,7 @@ export class StockScanApp {
 							el("span", "ee-ss-row-main"),
 							el("span", "ee-ss-row-title", place.warehouse_name),
 							el("span", "ee-ss-row-sub", placeAmount(place, item.stock_uom)),
-							// Not the shop's (v1.815.0): bought for a job, and which.
+							// Not the shop's (v1.817.0): bought for a job, and which.
 							place.project_shelf ? el("span", "ee-ss-row-sub", `Bought for a job${shelfJobsText(place.jobs) ? `: ${shelfJobsText(place.jobs)}` : ""}`) : null
 						),
 						icon("next", "ee-ss-row-go"),

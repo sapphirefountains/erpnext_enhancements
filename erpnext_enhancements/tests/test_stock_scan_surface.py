@@ -115,7 +115,7 @@ CONTRACT = {
 			"no_charge_reason",
 		},
 	),
-	# ``project`` (v1.815.0): the job a move onto or off the Project Shelf carries.
+	# ``project`` (v1.817.0): the job a move onto or off the Project Shelf carries.
 	"MOVE": (
 		"move_here",
 		{"item_code", "warehouse", "from_warehouse", "qty", "client_ref"},

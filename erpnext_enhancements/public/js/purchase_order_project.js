@@ -24,7 +24,7 @@
  * erpnext_enhancements.procurement_project repeats the fill server-side for the
  * REST API / data-import paths that never load a form script.
  *
- * Where a line is received (v1.815.0, Nik 2026-11-12). The same project decides the line's
+ * Where a line is received (v1.817.0, Nik 2026-11-12). The same project decides the line's
  * Warehouse: a line for a job defaults to the Project Shelf, a line for an Overhead project
  * to the item's own bin (the rule is the server's, `procurement_project.line_warehouses`).
  * It is a default, not a lock:

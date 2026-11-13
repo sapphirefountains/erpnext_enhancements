@@ -31,7 +31,7 @@ model, the pure rules and the label reads.
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
-| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.815.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.817.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
 | `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
 | `project_stock_rules.py` | Where a project's material is now (v1.811.0), worked out from the stock ledger rows that name the job: the kinds of place (Project Shelf, the job's site, a shop bin, a vehicle, taken to the job, returned to the supplier, place not recorded), `item_places` (never more at a place than its Bin row holds; everything at the job's own site is the job's; a Supplier Return and the ledger's return rows never added together), `capped_shelf_rows`, `return_summary`, `shelf_rows`. No Frappe, no I/O |
 | `project_stock.py` | The reads behind it: `places_for(project, item_codes)` for the Procurement Tracker (one ledger query and three reads whatever the number of lines), `shelf_stock(project)` and `shelf_by_project()` (the one door for "what is on the Project Shelf for this job": `project_shelf.shelf_stock`, cut to what the shelf holds, with a ledger fallback until that module is installed), `shelf_warehouse()` (`project_shelf.warehouse()`, else the setting read with `Document.get`, so a site without the field has no shelf). The job's Supplier Returns come from `supplier_returns.returned_lines`. Both sibling modules are imported where they are used, so the releases can merge in any order. Writes nothing |
@@ -351,7 +351,7 @@ The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR
 
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.815.0) and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.817.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -690,7 +690,7 @@ all five with what to do. By hand: create a group Warehouse "Job Sites" under th
 choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
 safe twice.
 
-### The Project Shelf (v1.815.0)
+### The Project Shelf (v1.817.0)
 
 The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
 Parker can then change what location the item is going to", "everything but overhead items should
@@ -702,7 +702,7 @@ inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested be
 warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
 is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
 not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
-did before v1.815.0. It is an ordinary location in every other way: it has a QR label, it can be
+did before v1.817.0. It is an ordinary location in every other way: it has a QR label, it can be
 received to, counted and moved from.
 
 **Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
@@ -829,7 +829,7 @@ job-site work left them, and the shelf is taken out of their reading the same wa
 That is the right outcome for them: an order for a job no longer makes the board think the shop is
 covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
 replenishment order placed on an Overhead project now defaults to the item's own bin, inside
-`Inventory - SF`, so both kinds of rule count it; before v1.815.0 it defaulted to `Stores` and the
+`Inventory - SF`, so both kinds of rule count it; before v1.817.0 it defaulted to `Stores` and the
 23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
 are not corrected: no code of ours runs inside them.
 
@@ -1798,7 +1798,7 @@ flow and an assistant's `create_document` take the default.
 open Purchase Order or Material Request line. The switch recounts the Bin with ERPNext's own
 `stock_balance.get_ordered_qty`, `get_indented_qty` and `update_bin_qty` for each warehouse an
 open line names, gives a line with no warehouse the one ERPNext would give a new line for the
-item (its default, its group's, its brand's, then the Company's default; v1.815.0, it read Stock
+item (its default, its group's, its brand's, then the Company's default; v1.817.0, it read Stock
 Settings' default before, which ERPNext never does) and says so on the order, and refuses only when there is no warehouse to give. What was already
 received on a partly received line stays out of stock and guarded; what is left goes into stock
 when it is received. The module docstring has each case as read from ERPNext v16.54.0. An open

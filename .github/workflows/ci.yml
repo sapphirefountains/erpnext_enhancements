@@ -3964,6 +3964,17 @@ jobs:
       # form script calls only what exists.
       - name: Procurement Tracker filters, address and sorting (node)
         run: node scripts/test_procurement_tracker.mjs
+      # The Procurement Tracker's saved views (v1.816.0): procurement_view_rules.py is pure, and the
+      # endpoints (procurement_views.py) and the DocType controller run on a frappe stand-in of this
+      # file's own with an in-memory table, so this is plain pytest with its own step (a unittest step
+      # would collect nothing and pass, and the stand-in must not leak into another suite). Fails the
+      # build if a view stored with an unknown column, a filter that does not suit its column, or more
+      # than the size limit is ever accepted, if a broken or outdated stored view fails to come back
+      # repaired, and the safety rule: if anybody but a view's owner can read, change, rename or delete
+      # it, or tell from the answer whether it exists, or if any role but System Manager gets a
+      # permission on the DocType (which would open every person's views through /api/resource).
+      - name: Procurement Tracker saved views, layout rules and owner checks (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_view_rules.py -q
       # The tracker's "returned to the supplier" against the REAL Supplier Return module (v1.807.0), not
       # a stand-in: supplier_returns.returned_lines on test_supplier_returns' own stub (real SQL on
       # SQLite, returns made through that module's own functions), read through project_stock._returns
@@ -4120,7 +4131,7 @@ jobs:
       # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
       - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
-      # The Project Shelf (v1.815.0, the owner's 2026-11-12 decision: everything ordered for a project is received
+      # The Project Shelf (v1.817.0, the owner's 2026-11-12 decision: everything ordered for a project is received
       # onto one shared shelf, and stock there is not shop stock). If this fails, a purchase line for a job could
       # default somewhere other than the shelf (or an Overhead line onto it), parts bought for a job could read as
       # stock the shop has (the search total, "Also at", a reorder rule that rolls up at the company's root), a

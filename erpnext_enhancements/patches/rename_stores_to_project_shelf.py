@@ -1,5 +1,5 @@
 """Rename the ``Stores`` warehouse to ``Project Shelf``, name it in the settings, and take it
-off the items that never go into stock (v1.815.0).
+off the items that never go into stock (v1.817.0).
 
 The owner's decision of 2026-11-12: everything ordered for a project is received onto one
 shared Project Shelf, and stock there is not stock the shop has

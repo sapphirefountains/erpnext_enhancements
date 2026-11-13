@@ -280,12 +280,12 @@ def _company_default_warehouse(company):
 def _fill_warehouses(item_code, lines):
 	"""``{company: warehouse}`` for the companies whose open lines lack a warehouse.
 
-	**What a new line for the item would be given** (v1.815.0): ERPNext's own answer
+	**What a new line for the item would be given** (v1.817.0): ERPNext's own answer
 	(:func:`_erpnext_line_warehouse`), then the item's own default, then the Company's default
 	warehouse, the first of them that is a real, enabled, non-group warehouse of that company. A
 	company with none is left out, and the check fails.
 
-	Until v1.815.0 this read the item's default and then Stock Settings' default warehouse, and
+	Until v1.817.0 this read the item's default and then Stock Settings' default warehouse, and
 	said that was ERPNext's order. It is not: ERPNext never reads Stock Settings there, and ends
 	on the Company's default. The difference began to matter with the Project Shelf patch, which
 	blanks the default warehouse of every non-stock item that named the shelf: such an item with
@@ -473,7 +473,7 @@ def first_count_warehouse(item_code, company):
 	*Open a Stock Reconciliation* puts on the new form's row. ``None`` leaves the row's
 	location empty, so the person has to choose it.
 
-	**Never the Project Shelf and never a job site** (v1.815.0;
+	**Never the Project Shelf and never a job site** (v1.817.0;
 	``project_shelf_rules.first_count_warehouse`` has the rule and why). On a site with a
 	Project Shelf it is the item's own bin (``procurement_project.item_own_bin``), else the
 	Overhead receiving warehouse, else nothing. On a site with no shelf set up it is the
@@ -636,7 +636,7 @@ def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 		"company": company,
 		"account": account,
 		"account_is_company_default": is_default,
-		# Where the first count opens (v1.815.0): never the Project Shelf or a job site. The
+		# Where the first count opens (v1.817.0): never the Project Shelf or a job site. The
 		# item's old default warehouse is the shelf on most items this switch is for.
 		"warehouse": (count_at := first_count_warehouse(item_code, company)),
 		"next_steps": rules.next_steps(

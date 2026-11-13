@@ -39,7 +39,7 @@ them except one: the receipts.
     (``buying.utils.validate_stock_item_warehouse``), and ``get_purchase_order_qty`` counts a line
     only at its warehouse. The switch writes onto such a line the warehouse ERPNext would give a
     new line for the item (the item's default, its group's, its brand's, then the Company's
-    default; ``maintain_stock._fill_warehouses``, corrected in v1.815.0: it read Stock Settings'
+    default; ``maintain_stock._fill_warehouses``, corrected in v1.817.0: it read Stock Settings'
     default, which ERPNext never does) and says so on the order. With none to use, the check
     refuses and says what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
     a warehouse.
@@ -363,7 +363,7 @@ def open_orders_detail(groups, plan):
 def open_orders_stuck_detail(plan):
 	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it.
 
-	The advice names the item's own default and nothing else (v1.815.0). It used to offer Stock
+	The advice names the item's own default and nothing else (v1.817.0). It used to offer Stock
 	Settings' Default Warehouse as well; ERPNext copies that into every new item, so setting it
 	to get one item switched gives every later item the same default warehouse.
 	"""
@@ -640,7 +640,7 @@ def delivery_refusal(lines):
 def next_steps(item_code, account, account_is_company_default, count_at=None, not_at=None):
 	"""What to do after the switch, in words. ``account`` may be ``None``.
 
-	``not_at`` is what the Project Shelf is called on a site that has one (v1.815.0), and
+	``not_at`` is what the Project Shelf is called on a site that has one (v1.817.0), and
 	``count_at`` the location the first count will open on there, if the item has one. With a
 	shelf the text says where to count the item and where not to: the item's old default
 	warehouse is the shelf on most items this switch is for, and a count there would take the
