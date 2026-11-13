@@ -65,6 +65,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     for the first time, which is the Desk's Create > Purchase Receipt
     (`default_receipt_warehouses`; never a return, and never when a person has just said where
     the lines go). Any other warehouse a person picked is left alone.
+  - **A job's part added with Update Items goes to the shelf too, not into the item's own bin.**
+    Found on the production mirror on 2026-11-13, before the merge: Update Items on a submitted
+    order for a job, adding a stock item that has a bin of its own, ordered the part into that
+    bin, which is shop stock. That row never arrives blank. The dialog pre-fills its warehouse
+    column when the item is picked, and for a row sent without one ERPNext fills the same value
+    itself (`accounts_controller.get_new_child_item_warehouse`, read at erpnext v16.54.0):
+    the order's own target warehouse, else the item's Item Default, its item group's default,
+    its brand's default, else the Company's default warehouse. `default_new_order_line` left
+    any location that was already there alone, unless it was an Overhead line on the shelf. A
+    non-stock item, and a stock item with no default, arrived with the Company's default (the
+    shelf) and were right; 297 enabled stock items on production have a default that is not.
+    - **Now a job's row at a location nobody chose is placed by the rule, which is the shelf**
+      (`project_shelf_rules.added_row_may_default`). "Nobody chose" is exactly what ERPNext
+      fills for the item by itself, and ERPNext's own function is asked for it
+      (`get_item_warehouse_`, without the order's header), so all four of its defaults are
+      covered in its own order and with the user's Warehouse permissions, and none of that
+      order is copied here. Only on a version where that function cannot be called are the
+      Item Default and the Company's default read instead; a group's or a brand's default is
+      not covered on that fallback.
+    - **What stays:** a location typed in the dialog (anything that is not ERPNext's own
+      fill), and the order's own target warehouse (Set Target Warehouse), which is a person's
+      choice for the whole order even when it is also the item's default.
+    - **Known limit.** A person who deliberately picks the item's own default bin for a job's
+      line in that dialog cannot be told apart from ERPNext's default: the same value arrives
+      either way. That row goes to the shelf. The location can still be changed when the line
+      is received.
+    - **An Overhead row is not touched by this.** Off the shelf it keeps the location it
+      arrives with, exactly as before. The project rule of v1.816.3 still runs first, and a
+      draft order's lines are placed as they were.
   - **Receiving, with the price rule of v1.809.0.** `receive_items` checks the places the dialog
     sent, then runs the price step, then builds the receipt. A line the price step holds back is
     not received, and it is given no place either: its place is dropped with it, so nothing of

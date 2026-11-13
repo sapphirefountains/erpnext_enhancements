@@ -1197,8 +1197,14 @@ doc_events = {
 			# own (accounts_controller.update_child_qty_rate), so the order's before_validate hooks
 			# never see it, and it arrives with the Company's default warehouse, which is the shelf.
 			# This gives it its location by the rule: an Overhead line on the shelf goes to the
-			# item's own bin, a line with no location gets its project's default place, and any
-			# other location is left alone. SECOND, after the project rule above: it places the row
+			# item's own bin, a line with no location gets its project's default place, and a JOB's
+			# line at a location nobody chose goes to the shelf. "Nobody chose" is exactly what
+			# ERPNext fills for the item by itself (its own function is asked: the item's, its
+			# group's or its brand's default, else the Company's), which for a stock item with a
+			# bin is that bin, in shop stock. A location typed in the dialog, and the order's own
+			# target warehouse, are left alone. Known limit: the item's own default picked on
+			# purpose in the dialog cannot be told from ERPNext's fill, and goes to the shelf too.
+			# SECOND, after the project rule above: it places the row
 			# by the project that rule has just filled (the header's, else the one the lines
 			# share). When that rule refuses the row (several jobs, no header) this never runs. It
 			# still fills a blank project from the header itself, which does nothing while the rule

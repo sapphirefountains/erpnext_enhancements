@@ -177,6 +177,35 @@ def overhead_on_shelf(current, has_project, overhead, shelf):
 	return bool(shelf and has_project and overhead and _name(current) == shelf)
 
 
+def added_row_may_default(current, has_project, overhead, shelf, header=None, automatic=()):
+	"""Whether a row that is inserted on its own into a submitted order (ERPNext's Update
+	Items) may be placed by the rule. It arrives with a location already on it: the one typed
+	in the dialog, else the order's own target warehouse, else ERPNext's default for the item.
+
+	* No location: yes.
+	* **An Overhead line on the Project Shelf**: yes (:func:`overhead_on_shelf`).
+	* Any other Overhead line, a line with no project, a site with no Project Shelf: no. The
+	  row keeps what it has.
+	* **A job's line** is the rest. It may be placed, which for a job means the shelf, only
+	  when its location is one nobody chose: ``automatic``, what ERPNext fills in for the item
+	  by itself. The order's own target warehouse (``header``) is a person's choice for the
+	  whole order and stays, even when it is also the item's default. Any location that is
+	  neither was typed in the dialog and stays.
+
+	One thing this cannot tell apart: a person who picks, in the dialog, the very warehouse
+	ERPNext would have filled in. That row goes to the shelf like any other; the location can
+	still be changed when the line is received.
+	"""
+	current = _name(current)
+	if not current or overhead_on_shelf(current, has_project, overhead, shelf):
+		return True
+	if not _name(shelf) or not has_project or overhead:
+		return False
+	if current == _name(header):
+		return False
+	return may_default(current, automatic)
+
+
 def form_may_default(current, first_or_item_changed, automatic=(), previous=None, applied=None):
 	"""Whether the Purchase Order form may set a line's location by the rule, when the line's
 	item or project has just changed. **A location a person picked by hand stays.**

@@ -266,6 +266,56 @@ def _is_new(doc):
 		return False
 
 
+def _erpnext_fills(item_code, company):
+	"""The location ERPNext puts on a new order line for ``item_code`` by itself, as a tuple of
+	at most a few names: what a row holds when nobody chose its location.
+
+	**ERPNext's own function is asked** (``erpnext.stock.get_item_details.get_item_warehouse_``),
+	never a copy of its order. It is the function Update Items itself calls for a row the dialog
+	sent no warehouse for (``accounts_controller.get_new_child_item_warehouse``), and the one
+	behind the value the dialog pre-fills when an item is picked. Read at erpnext v16.54.0, its
+	order is the item's Item Default, the item group's default, the brand's default, then the
+	Company's default warehouse, each only if the user's Warehouse permissions allow it. It is
+	asked here with no order header, so the order's own target warehouse is not part of the
+	answer: that one is a person's choice (:func:`_order_target_warehouse`).
+
+	When ERPNext's function answers nothing, ERPNext filled nothing, and nothing is automatic.
+	Only when the function cannot be called at all (a version where it has moved) does this
+	fall back to what this module can read by itself: the Item Default and the Company's
+	default. An item group's or a brand's default is not covered on that fallback. Never raises.
+	"""
+	if not (item_code or "").strip():
+		return ()
+	try:
+		from erpnext.stock.get_item_details import get_item_warehouse_
+
+		answer = get_item_warehouse_(
+			frappe._dict(company=company, warehouse=None, set_warehouse=None),
+			frappe._dict(name=item_code),
+			True,
+		)
+		return ((answer or "").strip(),) if (answer or "").strip() else ()
+	except Exception:
+		pass
+	found = []
+	try:
+		found.append(_item_default_warehouse(item_code, company))
+	except Exception:
+		pass
+	found.append(_company_default_warehouse(company))
+	return tuple(name.strip() for name in found if (name or "").strip())
+
+
+def _order_target_warehouse(order):
+	"""The order's own target warehouse (``Purchase Order.set_warehouse``, "Set Target
+	Warehouse"), or ``None``. ERPNext puts it on a row the dialog sent no warehouse for, ahead
+	of every default of the item. Never raises."""
+	try:
+		return (frappe.db.get_value("Purchase Order", order, "set_warehouse") or "").strip() or None
+	except Exception:
+		return None
+
+
 def default_new_order_line(doc, method=None):
 	"""``before_insert`` on **Purchase Order Item**: a row added to a submitted order with
 	Update Items.
@@ -276,8 +326,29 @@ def default_new_order_line(doc, method=None):
 
 	* **its project**, from the order's header, when it has none. ERPNext's Update Items
 	  sets none, and the field is mandatory here;
-	* **its location by the rule** when it has none, or when it is an Overhead line on the
-	  Project Shelf (ERPNext fills the Company's default warehouse, which is the shelf).
+	* **its location by the rule** when it has none, when it is an Overhead line on the
+	  Project Shelf (ERPNext fills the Company's default warehouse, which is the shelf), **or
+	  when it is a job's line at a location nobody chose** (below).
+
+	**A job's line at the item's own default goes to the shelf.** The row never arrives blank
+	in practice: the dialog pre-fills its warehouse column when the item is picked, and for a
+	row sent without one ERPNext fills the same value itself
+	(``accounts_controller.get_new_child_item_warehouse`` at v16.54.0). For a stock item with a
+	bin of its own that value is the bin, so a part bought for a job was ordered into shop
+	stock (found on the production mirror, 2026-11-13). A job's row whose location is exactly
+	what ERPNext fills for the item (:func:`_erpnext_fills`: the item's, its group's or its
+	brand's default, or the Company's) is therefore placed by the rule, which for a job is the
+	shelf. A location that is anything else was typed in the dialog and stays, and so does
+	the order's own target warehouse (:func:`_order_target_warehouse`). The rule is
+	``project_shelf_rules.added_row_may_default``.
+
+	**Known limit.** A person who picks, in the dialog, the very warehouse ERPNext would have
+	filled (the item's own default bin, for a job's line) cannot be told apart from ERPNext's
+	default: the same value arrives either way. That row goes to the shelf. The location can
+	still be changed when the line is received.
+
+	**An Overhead line is not touched by this**: off the shelf it keeps the location it
+	arrives with, as before.
 
 	**It runs second on that hook.** ``procurement_line_project.fill_new_line_project``
 	(v1.816.3) is listed before it in ``hooks.py`` and owns the project: the header's, else the
@@ -306,8 +377,14 @@ def default_new_order_line(doc, method=None):
 		project = (doc.get("project") or "").strip()
 		current = (doc.get("warehouse") or "").strip()
 		shelf = project_shelf.warehouse()
-		if current and not project_shelf_rules.overhead_on_shelf(
-			current, bool(project), is_overhead(project), shelf
+		overhead = is_overhead(project)
+		# Only a job's line at some other location than the shelf needs the two reads: every
+		# other row is decided without them, exactly as before.
+		asks = bool(current and shelf and project and not overhead and current != shelf)
+		header = _order_target_warehouse(doc.get("parent")) if asks else None
+		automatic = _erpnext_fills(doc.get("item_code"), order.get("company")) if asks and current != header else ()
+		if not project_shelf_rules.added_row_may_default(
+			current, bool(project), overhead, shelf, header=header, automatic=automatic
 		):
 			return
 		answer = default_line_warehouse(doc.get("item_code"), project, order.get("company"))

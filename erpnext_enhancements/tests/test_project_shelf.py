@@ -31,6 +31,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
 """
 
 import ast
+import contextlib
 import json
 import sys
 import types
@@ -405,6 +406,33 @@ class TestWhereALineGoes(unittest.TestCase):
 		self.assertTrue(rules.may_default(SHELF, (SHELF, None)))
 		self.assertFalse(rules.may_default(BIN_A, (SHELF, ROOM)))
 		self.assertFalse(rules.may_default(BIN_A, ()))
+
+	def test_a_row_added_to_a_submitted_order_is_placed_only_where_nobody_chose(self):
+		"""``added_row_may_default(current, has_project, overhead, shelf, header, automatic)``."""
+		may = rules.added_row_may_default
+		# No location, and an Overhead line on the shelf: always.
+		self.assertTrue(may("", True, False, SHELF))
+		self.assertTrue(may(None, False, False, None))
+		self.assertTrue(may(SHELF, True, True, SHELF))
+		# A job's line at what ERPNext fills by itself: yes. At anything else: no.
+		self.assertTrue(may(BIN_A, True, False, SHELF, automatic=(BIN_A,)), "the item's default bin")
+		self.assertTrue(may(ROOM, True, False, SHELF, automatic=(ROOM,)), "a group's, a brand's or the Company's")
+		self.assertFalse(may(BIN_B, True, False, SHELF, automatic=(BIN_A,)), "typed in the dialog")
+		self.assertFalse(may(BIN_A, True, False, SHELF, automatic=()), "ERPNext filled nothing")
+		self.assertFalse(may(BIN_A, True, False, SHELF, automatic=(None, "")))
+		# The order's own target warehouse is a person's choice, even when it is the default too.
+		self.assertFalse(may(BIN_A, True, False, SHELF, header=BIN_A, automatic=(BIN_A,)))
+		self.assertTrue(may(BIN_A, True, False, SHELF, header=BIN_B, automatic=(BIN_A,)))
+		# An Overhead line off the shelf keeps what it has, whatever put it there.
+		self.assertFalse(may(BIN_A, True, True, SHELF, automatic=(BIN_A,)))
+		self.assertFalse(may(ROOM, True, True, SHELF, automatic=(ROOM,)))
+		# No project, or no Project Shelf: nothing to place by.
+		self.assertFalse(may(BIN_A, False, False, SHELF, automatic=(BIN_A,)))
+		self.assertFalse(may(BIN_A, True, False, None, automatic=(BIN_A,)))
+		self.assertFalse(may(BIN_A, True, False, "", automatic=(BIN_A,)))
+		# A job's line already on the shelf has nowhere to go: the answer does not matter, and
+		# the function that uses the rule asks nothing for it.
+		self.assertFalse(may(SHELF, True, False, SHELF, automatic=()))
 
 	def test_an_overhead_line_on_the_shelf_is_the_one_place_nobody_chooses(self):
 		self.assertTrue(rules.overhead_on_shelf(SHELF, True, True, SHELF))
@@ -1464,6 +1492,7 @@ class TestPurchaseLines(_Base):
 		base._table("Purchase Order")["PUR-ORD-0009"] = {
 			"name": "PUR-ORD-0009",
 			"project": values.pop("header", OVERHEAD),
+			"set_warehouse": values.pop("target", None),
 			"company": COMPANY,
 			"docstatus": 1,
 		}
@@ -1486,6 +1515,167 @@ class TestPurchaseLines(_Base):
 		row = self._new_line(header=JOB_A, warehouse=None)
 		procurement.default_new_order_line(row)
 		self.assertEqual(row.warehouse, SHELF)
+
+	# --- a job's row at a location nobody chose (found on the mirror, 2026-11-13) -------------
+
+	@contextlib.contextmanager
+	def _erpnext_answers(self, answer=None, fails=False):
+		"""ERPNext's ``get_item_warehouse_`` for the length of a block: it answers ``answer``,
+		or raises. Outside the block this suite has no such module, which is the fallback."""
+		names = ("erpnext.stock", "erpnext.stock.get_item_details")
+		saved = {name: sys.modules.get(name) for name in names}
+		calls = []
+		module = types.ModuleType(names[1])
+
+		def get_item_warehouse_(ctx, item, overwrite_warehouse, defaults=None):
+			calls.append((item.name, ctx.company, ctx.set_warehouse, ctx.warehouse, overwrite_warehouse))
+			if fails:
+				raise RuntimeError("get_item_warehouse_ has moved")
+			return answer
+
+		module.get_item_warehouse_ = get_item_warehouse_
+		sys.modules.setdefault(names[0], types.ModuleType(names[0]))
+		sys.modules[names[1]] = module
+		try:
+			yield calls
+		finally:
+			for name, was in saved.items():
+				if was is None:
+					sys.modules.pop(name, None)
+				else:
+					sys.modules[name] = was
+
+	def test_a_job_row_at_the_items_own_default_bin_goes_to_the_shelf(self):
+		"""The gap the rehearsal found. A stock item with a bin of its own, added to a submitted
+		order for a job: ERPNext fills the item's default before the insert, and the row was
+		ordered into shop stock. It is a job's part, and nobody chose that bin."""
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A) as calls:
+			row = self._new_line(header=JOB_A, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+		self.assertEqual((row.project, row.warehouse), (JOB_A, SHELF))
+		# ERPNext's own function, asked as Update Items asks it, without the order's header.
+		self.assertEqual(calls, [(ITEM, COMPANY, None, None, True)])
+
+	def test_it_does_on_a_version_where_erpnexts_function_has_moved_too(self):
+		"""No ERPNext function to ask (this suite has none outside ``_erpnext_answers``), or one
+		that raises: the Item Default and the Company's default are read here instead."""
+		base._default(ITEM, BIN_A)
+		row = self._new_line(header=JOB_A, warehouse=BIN_A)
+		procurement.default_new_order_line(row)
+		self.assertEqual(row.warehouse, SHELF)
+		with self._erpnext_answers(fails=True):
+			row = self._new_line(header=JOB_A, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, SHELF)
+			base._table("Company")[COMPANY] = {"name": COMPANY, "default_warehouse": ROOM}
+			row = self._new_line(header=JOB_A, warehouse=ROOM)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, SHELF, "the Company's default, where it is not the shelf")
+
+	def test_a_group_a_brand_and_the_company_default_count_as_nobodys_choice(self):
+		"""Whichever of its defaults ERPNext used, the row holds ERPNext's answer and nothing a
+		person picked. ERPNext is asked, so its order is never copied here."""
+		for label, filled in (("item group default", BIN_B), ("brand default", ROOM), ("Company default", BIN_A)):
+			with self.subTest(label), self._erpnext_answers(filled):
+				row = self._new_line(header=JOB_A, warehouse=filled)
+				procurement.default_new_order_line(row)
+				self.assertEqual(row.warehouse, SHELF)
+
+	def test_a_job_row_at_a_location_typed_in_the_dialog_stays(self):
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A):
+			row = self._new_line(header=JOB_A, warehouse=BIN_B)
+			procurement.default_new_order_line(row)
+			self.assertEqual((row.project, row.warehouse), (JOB_A, BIN_B))
+		# And with nothing to ask ERPNext: the same.
+		row = self._new_line(header=JOB_A, warehouse=BIN_B)
+		procurement.default_new_order_line(row)
+		self.assertEqual(row.warehouse, BIN_B)
+
+	def test_the_orders_own_target_warehouse_stays_even_when_it_is_the_items_default(self):
+		"""Set Target Warehouse on the order is a person's choice for every line of it. ERPNext
+		puts it on the row ahead of the item's defaults, and nothing more is asked."""
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A) as calls:
+			row = self._new_line(header=JOB_A, target=BIN_A, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, BIN_A)
+			self.assertEqual(calls, [])
+			row = self._new_line(header=JOB_A, target=BIN_B, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, SHELF, "the header names another place: this one was ERPNext's fill")
+
+	def test_when_erpnext_fills_nothing_nothing_is_automatic(self):
+		"""The user's Warehouse permissions hide every default: ERPNext answered nothing, so the
+		location on the row came from the dialog. The Item Default is not read behind its back."""
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(None):
+			row = self._new_line(header=JOB_A, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+		self.assertEqual(row.warehouse, BIN_A)
+
+	def test_an_overhead_row_off_the_shelf_keeps_the_location_it_arrives_with(self):
+		"""Unchanged by the fix: at its own bin, at its Item Default when it has another bin
+		assigned, at a group's default. Only the shelf is ever taken from an Overhead row."""
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A) as calls:
+			row = self._new_line(header=OVERHEAD, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_A))
+			base._rule(ITEM, BIN_B)
+			row = self._new_line(header=OVERHEAD, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, BIN_A, "not moved to the assigned bin: nobody asked for that")
+			self.assertEqual(calls, [], "an Overhead row asks ERPNext nothing")
+		with self._erpnext_answers(ROOM):
+			row = self._new_line(header=OVERHEAD, warehouse=ROOM)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, ROOM)
+		row = self._new_line(header=OVERHEAD, warehouse=SHELF)
+		procurement.default_new_order_line(row)
+		self.assertEqual(row.warehouse, BIN_B, "and the shelf is still taken from it")
+
+	def test_a_job_row_on_the_shelf_or_with_no_shelf_set_up_asks_nothing(self):
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A) as calls:
+			row = self._new_line(header=JOB_A, warehouse=SHELF)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, SHELF)
+			_reset(shelf_on=False)
+			base._default(ITEM, BIN_A)
+			row = self._new_line(header=JOB_A, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+			self.assertEqual(row.warehouse, BIN_A, "no Project Shelf: the row keeps what ERPNext gave it")
+			self.assertEqual(calls, [])
+
+	def test_a_row_with_no_project_keeps_its_location(self):
+		base._default(ITEM, BIN_A)
+		with self._erpnext_answers(BIN_A):
+			row = self._new_line(header=None, warehouse=BIN_A)
+			procurement.default_new_order_line(row)
+		self.assertEqual((row.project, row.warehouse), (None, BIN_A))
+
+	def test_a_read_that_fails_leaves_the_row_as_erpnext_made_it(self):
+		"""Never raises. The order's target warehouse cannot be read: it is taken as none."""
+		base._default(ITEM, BIN_A)
+		original = FRAPPE.db.get_value
+
+		def get_value(doctype, filters, fieldname="name", *args, **kwargs):
+			if fieldname == "set_warehouse":
+				raise RuntimeError("the order could not be read")
+			return original(doctype, filters, fieldname, *args, **kwargs)
+
+		FRAPPE.db.get_value = get_value
+		try:
+			with self._erpnext_answers(BIN_A):
+				row = self._new_line(header=JOB_A, warehouse=BIN_A)
+				procurement.default_new_order_line(row)
+		finally:
+			FRAPPE.db.get_value = original
+		self.assertEqual(row.warehouse, SHELF)
+		self.assertEqual(procurement._erpnext_fills("", COMPANY), ())
+		self.assertEqual(procurement._erpnext_fills(None, None), ())
 
 	def test_a_row_of_another_document_and_a_failure_are_left_alone(self):
 		row = base.Doc("Purchase Order Item", {"parenttype": "Supplier Quotation", "parent": "SQ-1", "item_code": ITEM, "warehouse": SHELF})
@@ -1603,6 +1793,19 @@ class TestPurchaseLines(_Base):
 		self._order_with_lines(OVERHEAD, [JOB_A, JOB_B])
 		row = self._run_before_insert(self._added_row(warehouse=SHELF))
 		self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_B))
+
+	def test_a_job_row_whose_project_comes_from_the_lines_leaves_the_items_bin_for_the_shelf(self):
+		"""Both rules, in the registered order, on the row the rehearsal could not run: no header
+		project, every line on one job, a stock item with its own bin."""
+		base._default(ITEM, BIN_A)
+		self._order_with_lines(None, [JOB_A, JOB_A])
+		with self._erpnext_answers(BIN_A):
+			row = self._run_before_insert(self._added_row(warehouse=BIN_A))
+		self.assertEqual((row.project, row.warehouse), (JOB_A, SHELF))
+		self._order_with_lines(None, [OVERHEAD])
+		with self._erpnext_answers(BIN_A):
+			row = self._run_before_insert(self._added_row(warehouse=BIN_A))
+		self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_A))
 
 	def test_a_project_already_on_the_row_is_kept_by_both(self):
 		self._order_with_lines(OVERHEAD, [OVERHEAD])

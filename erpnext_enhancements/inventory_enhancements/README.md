@@ -792,6 +792,20 @@ the shelf and the item has somewhere better to go, it is moved, on every path:
   in words), so this one places the row by whichever project that rule filled. `hooks.py` holds
   both in one `"Purchase Order Item"` entry, as a list; a second entry would silently drop the
   first.
+  **The row never arrives blank, so "by the rule" needs one more case.** The dialog pre-fills the
+  warehouse when the item is picked, and ERPNext fills the same value for a row sent without one
+  (`accounts_controller.get_new_child_item_warehouse` at v16.54.0): the order's own target
+  warehouse, else the item's, its item group's or its brand's default, else the Company's. For a
+  stock item with a bin of its own that is the bin, so a job's part was ordered into shop stock
+  (found on the production mirror, 2026-11-13). A **job's** row whose location is exactly what
+  ERPNext fills for the item goes to the shelf (`project_shelf_rules.added_row_may_default`;
+  ERPNext's own `get_item_warehouse_` is asked, so its four defaults are covered in its own
+  order, and only the Item Default and the Company's default where that function cannot be
+  called). A location typed in the dialog stays, and so does the order's own target warehouse.
+  An Overhead row off the shelf keeps the location it arrives with. *Known limit:* a person who
+  picks the item's own default bin on purpose for a job's line in that dialog cannot be told
+  apart from ERPNext's default, and that row goes to the shelf; the location can still be
+  changed when the line is received.
 - **A receipt saved for the first time** (`procurement_project.default_receipt_warehouses`,
   `before_validate` on Purchase Receipt): the Desk's Create > Purchase Receipt copies the order
   line's warehouse. First save only, so a place the receiver picks afterwards stays; never a
