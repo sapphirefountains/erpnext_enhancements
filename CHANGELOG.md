@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.816.1] - 2026-11-13
+
+### Fixed
+- **Opening a Project in a Desk tab that was already open when 1.816.0 deployed raised a dialog,
+  "Error inside procurement tracker callback: pt.merge_views is not a function".** The new form
+  script ran against the old tracker logic. The two reach a tab by different roads:
+  `project_enhancements.js` is `doctype_js`, so it travels inside the form's meta, and the first time
+  a stale tab opens a Project it fetches the *new* script (its cached meta is cleared when any other
+  tab loads the new build). The logic is a bundle, and `frappe.require("procurement_tracker.bundle.js")`
+  resolves it through that tab's `frappe.boot.assets_json`, which is as old as the tab: it names the
+  *old* hashed file. Or `window.sf_procurement_tracker` was already installed before the deploy. Either
+  way the new script called `pt.merge_views` on logic that did not have it. A fresh tab was never
+  affected, and nothing on the server was wrong. The same mix can happen to any `doctype_js` +
+  `frappe.require` pair after any deploy that adds an export the script starts to call.
+  - The logic now has an **API level**: `VERSION` in `procurement_tracker.bundle.js` goes from 1 to 2,
+    and the form script names the level it needs (`REQUIRED_LOGIC_LEVEL`). Before it mounts anything it
+    checks the level, and `merge_views` and `fallback_views` as functions, belt and braces. A logic that is
+    too old is not an error: the tracker's place on the form shows "The Procurement Tracker was updated.
+    Reload this page to use it." with a **Reload** button, and the rest of the Project form works as it
+    always did. The bundle's header says to bump `VERSION` whenever the form script starts calling a new
+    export; a newer bundle now also replaces an older copy installed in the same window, which `VERSION = 1`
+    could never do.
+  - A failure while mounting the tracker no longer raises a dialog. It leaves the console line and the
+    red "Error: ..." text in the tracker's place; a side widget should not interrupt every open of a
+    Project. (The "Server Error in get_procurement_overview" dialog is unchanged.)
+  - Reloading the tab is the whole cure for anyone already stuck: it reloads `frappe.boot`, so
+    `assets_json` names the new bundle.
+
+### Tests
+- `scripts/test_procurement_tracker.mjs` (already a CI step): the level the form script requires equals
+  the bundle's `VERSION`; the form script's own check, lifted out of the file and run, calls the old
+  bundle (level 1, no `merge_views`) "old", nothing installed "missing", and the logic as the bundle
+  installs it fine; an old logic draws the note before anything is mounted, and the mount's catch raises
+  no dialog. 68 tests, 651 checks.
+
 ## [1.816.0] - 2026-11-12
 
 ### Added
