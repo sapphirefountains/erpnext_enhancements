@@ -113,6 +113,14 @@ frappe.provide("erpnext_enhancements.package_tracking");
 			where: row.last_location || "",
 			checked: ["FedEx", "UPS"].includes(row.resolved_carrier) ? ago(row.last_checked) : "",
 			note: "",
+			// A carrier guessed from the number may be someone else's shipment: say where the carrier
+			// says it is going, and how to correct a wrong guess, for as long as the row lives.
+			going: row.carrier_guessed && row.destination ? __("Going to {0}", [row.destination]) : "",
+			guess_note: row.carrier_guessed
+				? __(
+						"The carrier was guessed from the number. If this is not our package, remove it and add it again with the right carrier."
+				  )
+				: "",
 		};
 		if (delivered && row.delivered_on) {
 			const at = clock(row.delivered_on);
@@ -159,6 +167,7 @@ frappe.provide("erpnext_enhancements.package_tracking");
 				p.when ? `<span>${esc(p.when)}</span>` : "",
 				p.detail ? `<span class="ee-pkg-muted">${esc(p.detail)}</span>` : "",
 				p.where ? `<span class="ee-pkg-muted">${esc(p.where)}</span>` : "",
+				p.going ? `<span class="ee-pkg-going">${esc(p.going)}</span>` : "",
 				p.checked ? `<span class="ee-pkg-muted">${esc(p.checked)}</span>` : "",
 			].filter(Boolean);
 			const remove = data.can_remove
@@ -166,7 +175,9 @@ frappe.provide("erpnext_enhancements.package_tracking");
 						__("Remove tracking number {0}", [p.number])
 				  )}">${esc(__("Remove"))}</button>`
 				: "";
-			const note = p.note ? `<div class="ee-pkg-note">${esc(p.note)}</div>` : "";
+			const note =
+				(p.note ? `<div class="ee-pkg-note">${esc(p.note)}</div>` : "") +
+				(p.guess_note ? `<div class="ee-pkg-note">${esc(p.guess_note)}</div>` : "");
 			return (
 				`<div class="ee-pkg-row">` +
 				`<div class="ee-pkg-line"><span class="ee-pkg-carrier">${esc(p.carrier)}</span> ${number} ${bits.join(" ")} ${remove}</div>` +
@@ -215,6 +226,7 @@ frappe.provide("erpnext_enhancements.package_tracking");
 			.ee-pkg-row:first-of-type { border-top: 0; }
 			.ee-pkg-line { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; overflow-wrap: anywhere; }
 			.ee-pkg-carrier { font-weight: 600; }
+			.ee-pkg-going { font-weight: 600; }
 			.ee-pkg-muted, .ee-pkg-note { color: var(--text-muted, #6c7680); }
 			.ee-pkg-note { font-size: var(--text-xs, 12px); margin-top: 2px; }
 			.ee-pkg-pill { border-radius: 999px; padding: 1px 8px; font-size: var(--text-xs, 12px); white-space: nowrap;
@@ -342,6 +354,9 @@ frappe.provide("erpnext_enhancements.package_tracking");
 				if (still_showing(frm, name)) draw(frm, data);
 				if (data.too_soon) {
 					frappe.show_alert({ message: __("Checked less than a minute ago."), indicator: "blue" });
+				} else if (data.user_limited) {
+					// The server words it: the limit, and the minutes until it opens again.
+					frappe.show_alert({ message: data.message, indicator: "orange" }, 10);
 				}
 			},
 			() => $button.prop("disabled", false).text(__("Refresh"))

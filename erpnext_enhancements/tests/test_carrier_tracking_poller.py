@@ -160,11 +160,22 @@ def _make_frappe():
 		cint=lambda v: int(v or 0),
 	)
 	cache_store = {}
+	frappe.incr_calls = []
+
+	def incrby(key, amount=1):
+		frappe.incr_calls.append(key)
+		cache_store[key] = int(cache_store.get(key) or 0) + amount
+		return cache_store[key]
+
 	frappe.cache = types.SimpleNamespace(
 		get_value=cache_store.get,
 		set_value=lambda key, value, expires_in_sec=None: cache_store.__setitem__(key, value),
 		delete_value=lambda key: cache_store.pop(key, None),
 		delete_keys=lambda prefix: None,
+		make_key=lambda key, user=None, shared=False: f"site|{key}",
+		incrby=incrby,
+		expire_key=lambda key, time, **k: cache_store.__setitem__(f"ttl:{key}", time),
+		ttl=lambda key: 240,
 	)
 	frappe.cache_store = cache_store
 
@@ -245,7 +256,17 @@ def _make_frappe():
 	db_query.DatabaseQuery = DatabaseQuery
 	model.document, model.db_query = document, db_query
 	frappe.model = model
+	permissions = types.ModuleType("frappe.permissions")
+	permissions.get_role_permissions = lambda meta, user=None: frappe.state.get(
+		"role_permissions", {"read": 1}
+	)
+	share = types.ModuleType("frappe.share")
+	share.get_shared = lambda doctype, user=None, **k: list(frappe.state.get("shared", []))
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(name=doctype)
+	frappe.permissions, frappe.share = permissions, share
 	frappe.stub_modules = {
+		"frappe.permissions": permissions,
+		"frappe.share": share,
 		"frappe.model": model,
 		"frappe.model.document": document,
 		"frappe.model.db_query": db_query,
@@ -871,9 +892,11 @@ class _Endpoint(unittest.TestCase):
 		self.checked = []
 		api.config.feature_enabled = lambda settings=None: self.enabled
 		tracking.live_carriers = lambda settings=None: list(self.live)
-		tracking.check_rows = lambda rows, manual=True: self.checked.append([r["name"] for r in rows]) or len(
-			rows
-		)
+		tracking.check_rows = lambda rows, manual=True: self.checked.append([r["name"] for r in rows]) or {
+			"checked": len(rows),
+			"user_limited": False,
+			"retry_minutes": 0,
+		}
 		for pair in (
 			("Purchase Order", "read"),
 			("Tracked Package", "read"),
@@ -1002,13 +1025,16 @@ class TestWebRequestBounds(_Endpoint):
 		tracking.apply = lambda row, result, now, manual=False: {}
 		try:
 			rows = [row(name=f"r{i}", tracking_number=f"1Z00000000000{i:05d}") for i in range(12)]
-			self.assertEqual(tracking.check_rows(rows), tracking.WEB_MAX_CHECKS)
+			self.assertEqual(tracking.check_rows(rows)["checked"], tracking.WEB_MAX_CHECKS)
 			calls.clear()
 			ticks = iter([0, 0, 10, 30, 40, 50])
-			self.assertEqual(tracking.check_rows(rows, clock=lambda: next(ticks)), 2)
-			FRAPPE.cache_store[tracking._user_key()] = tracking.USER_CALLS_PER_WINDOW
+			self.assertEqual(tracking.check_rows(rows, clock=lambda: next(ticks))["checked"], 2)
+			FRAPPE.cache_store["site|" + tracking._user_key()] = tracking.USER_CALLS_PER_WINDOW
 			calls.clear()
-			self.assertEqual(tracking.check_rows(rows), 0)
+			out = tracking.check_rows(rows)
+			self.assertEqual(out["checked"], 0)
+			self.assertTrue(out["user_limited"])
+			self.assertEqual(out["retry_minutes"], 4)
 			self.assertEqual(calls, [])
 		finally:
 			(
@@ -1099,6 +1125,13 @@ class TestListPermissions(_Endpoint):
 		self.perm = importlib.import_module("erpnext_enhancements.carrier_tracking.permissions")
 		FRAPPE.state.pop("match_conditions", None)
 		FRAPPE.state.pop("match_raises", None)
+		FRAPPE.state["role_permissions"] = {"read": 1}
+		FRAPPE.state.pop("shared", None)
+
+	def tearDown(self):
+		FRAPPE.state.pop("role_permissions", None)
+		FRAPPE.state.pop("shared", None)
+		super().tearDown()
 
 	def test_has_permission_follows_the_order(self):
 		FRAPPE.perms[("Purchase Order", "read", "PO-OPEN")] = True
@@ -1314,12 +1347,201 @@ class TestOneBadRow(unittest.TestCase):
 		finally:
 			tracking.apply = original
 			FRAPPE.state.pop("traceback", None)
-		self.assertEqual(out["checked"], 2)
+		# Three carrier calls were made; the bad row's answer could not be saved.
+		self.assertEqual(out["checked"], 3)
 		self.assertEqual(out["broken"], ["bad"])
 		stamped = [updates for name, updates in FRAPPE.writes if name == "bad"]
 		self.assertEqual(stamped[0]["last_checked"], NOW)
 		self.assertEqual(len(FRAPPE.logged), 1)
 		self.assertNotIn("abcdef0123456789", FRAPPE.logged[0][1])
+
+
+# ----------------------------------------------------------------------------- review round 2
+
+
+def rejected(scope):
+	return {"outcome": "rejected", "status": None, "error": "turned down", "scope": scope}
+
+
+class TestRejectedAboutOneNumber(unittest.TestCase):
+	"""S1: a refusal about one number stops that package after a few days; a refusal about every
+	number counts for none of them; one package's refusal does not cost the carrier the run."""
+
+	def test_rule_stops_only_a_number_rejection_with_no_answer_ever(self):
+		old = row(creation=NOW - timedelta(days=R.REJECTED_GIVE_UP_DAYS, hours=1))
+		self.assertEqual(R.apply_result(old, rejected("number"), NOW)["stop_reason"], R.STOP_REJECTED)
+		young = row(creation=NOW - timedelta(days=1))
+		self.assertNotIn("polling_stopped", R.apply_result(young, rejected("number"), NOW))
+		answered = row(creation=NOW - timedelta(days=10), last_success=NOW - timedelta(days=5))
+		self.assertNotIn("polling_stopped", R.apply_result(answered, rejected("number"), NOW))
+		self.assertNotIn("polling_stopped", R.apply_result(old, rejected("carrier"), NOW))
+		self.assertNotIn("failure_count", R.apply_result(old, rejected("number"), NOW))
+
+	def test_blocks_carrier(self):
+		self.assertFalse(R.blocks_carrier(rejected("number")))
+		self.assertTrue(R.blocks_carrier(rejected("carrier")))
+		self.assertTrue(R.blocks_carrier(failed("unavailable")))
+		self.assertFalse(R.blocks_carrier(ok()))
+
+	def _round(self, answers, rows_):
+		written = []
+		round_ = tracking.Round(lambda r, res: written.append((r["name"], res)))
+		blocked = []
+		for r in rows_:
+			if blocked:
+				break
+			if round_.handle(C.UPS, r, answers[r["name"]]):
+				blocked.append(r["name"])
+		round_.flush()
+		return dict(written), blocked
+
+	def test_two_numbers_refused_in_one_round_is_the_carrier(self):
+		old = NOW - timedelta(days=10)
+		rows_ = [row(name="a", creation=old), row(name="b", creation=old), row(name="c", creation=old)]
+		written, blocked = self._round({"a": rejected("number"), "b": rejected("number"), "c": ok()}, rows_)
+		self.assertEqual(blocked, ["b"])
+		self.assertEqual({written["a"]["scope"], written["b"]["scope"]}, {"carrier"})
+		self.assertNotIn("c", written)
+		for name in ("a", "b"):
+			self.assertNotIn("polling_stopped", R.apply_result(rows_[0], written[name], NOW))
+
+	def test_one_number_refused_while_another_answers_is_that_number(self):
+		rows_ = [row(name="a"), row(name="b"), row(name="c")]
+		written, blocked = self._round({"a": rejected("number"), "b": ok(), "c": ok()}, rows_)
+		self.assertEqual(blocked, [])
+		self.assertEqual(written["a"]["scope"], "number")
+		self.assertEqual(set(written), {"a", "b", "c"})
+
+	def test_the_ambiguous_case_is_written_as_the_number(self):
+		written, blocked = self._round({"a": rejected("number")}, [row(name="a")])
+		self.assertEqual(written["a"]["scope"], "number")
+		self.assertEqual(blocked, [])
+
+	def test_the_poller_keeps_checking_the_carrier_after_one_numbers_refusal(self):
+		saved = (
+			tracking.config._settings,
+			tracking.config.feature_enabled,
+			tracking.config.carrier_config,
+			tracking.due_rows,
+			tracking.client.track,
+		)
+		calls = []
+		answers = {"1Z0000000000000001": rejected("number")}
+		tracking.config._settings = lambda: object()
+		tracking.config.feature_enabled = lambda settings=None: True
+		tracking.config.carrier_config = lambda carrier, settings=None: tracking.client.Config(
+			carrier, "Sandbox", "i", "s"
+		)
+		rows_ = [row(name=f"r{i}", tracking_number=f"1Z000000000000000{i}") for i in range(1, 5)]
+		tracking.due_rows = lambda carriers, now, limit: list(rows_)
+		tracking.client.track = lambda cfg, number, cache, http=None, now=None: calls.append(
+			number
+		) or answers.get(number, ok())
+		FRAPPE.writes.clear()
+		try:
+			out = tracking.run_poll()
+		finally:
+			(
+				tracking.config._settings,
+				tracking.config.feature_enabled,
+				tracking.config.carrier_config,
+				tracking.due_rows,
+				tracking.client.track,
+			) = saved
+		self.assertEqual(len(calls), 4)
+		self.assertEqual(out["skipped_carriers"], [])
+		self.assertEqual(len(FRAPPE.writes), 4)
+
+	def test_a_mistyped_ups_number_stops_after_three_days_at_the_real_cadence(self):
+		state = row(creation=NOW)
+		moment = NOW
+		checks = 0
+		while moment <= NOW + timedelta(days=30) and not state.get("polling_stopped"):
+			if R.is_due(state, moment):
+				checks += 1
+				state.update(R.apply_result(state, rejected("number"), moment))
+			moment += timedelta(hours=1)
+		self.assertEqual(state["stop_reason"], R.STOP_REJECTED)
+		# The loop's clock moves one hour past the check that stopped it.
+		self.assertLessEqual(moment - NOW, timedelta(days=R.REJECTED_GIVE_UP_DAYS, hours=3))
+		self.assertLess(checks, 40)
+		self.assertEqual(state["failure_count"], 0)
+
+
+class TestShareOnlyListAccess(_Endpoint):
+	"""S2: a person who reaches Purchase Orders only through shares lists only those orders' packages."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.perm = importlib.import_module("erpnext_enhancements.carrier_tracking.permissions")
+		FRAPPE.state["match_conditions"] = ""  # what build_match_conditions returns on its shares-only branch
+
+	def tearDown(self):
+		for key in ("role_permissions", "shared", "match_conditions"):
+			FRAPPE.state.pop(key, None)
+		super().tearDown()
+
+	def test_shared_orders_only(self):
+		FRAPPE.state["role_permissions"] = {}
+		FRAPPE.state["shared"] = ["PO-OPEN", "PO-O'NEIL"]
+		sql = self.perm.query_conditions("stock.manager@example.com")
+		self.assertIn("`tabTracked Package`.`reference_name` in ('PO-OPEN', 'PO-O''NEIL')", sql)
+
+	def test_nothing_shared_is_nothing(self):
+		FRAPPE.state["role_permissions"] = {}
+		FRAPPE.state["shared"] = []
+		self.assertEqual(self.perm.query_conditions("stock.manager@example.com"), "1=0")
+
+	def test_role_read_still_uses_frappes_conditions(self):
+		FRAPPE.state["role_permissions"] = {"read": 1}
+		self.assertEqual(
+			self.perm.query_conditions("buyer@example.com"),
+			"`tabTracked Package`.`reference_doctype` = 'Purchase Order'",
+		)
+
+
+class TestRoundTwoLows(_Endpoint):
+	def test_refresh_at_the_persons_limit_says_so(self):
+		self.live = [C.UPS]
+		self.package("tp-1", "PO-OPEN")
+		saved = tracking.refresh_order
+		tracking.refresh_order = lambda po: {"checked": 0, "user_limited": True, "retry_minutes": 4}
+		try:
+			out = api.refresh_order("PO-OPEN")
+		finally:
+			tracking.refresh_order = saved
+		self.assertTrue(out["user_limited"])
+		self.assertFalse(out["too_soon"])
+		self.assertIn("Try again in 4 minutes", out["message"])
+
+	def test_amendment_moves_packages_only_with_read_on_the_canceled_order(self):
+		import importlib
+
+		hooks = importlib.import_module("erpnext_enhancements.carrier_tracking.purchase_order_hooks")
+		FRAPPE.orders["PO-NEW"] = {"name": "PO-NEW", "docstatus": 0, "status": "Draft", "per_received": 0}
+		self.package("tp-1", "PO-CANCELED")
+		FRAPPE.perms[("Purchase Order", "read", "PO-CANCELED")] = False
+		hooks.after_insert(types.SimpleNamespace(name="PO-NEW", amended_from="PO-CANCELED"))
+		self.assertEqual(FRAPPE.packages["tp-1"]["reference_name"], "PO-CANCELED")
+		FRAPPE.perms[("Purchase Order", "read", "PO-CANCELED")] = True
+		hooks.after_insert(types.SimpleNamespace(name="PO-NEW", amended_from="PO-CANCELED"))
+		self.assertEqual(FRAPPE.packages["tp-1"]["reference_name"], "PO-NEW")
+
+	def test_the_persons_counter_is_one_atomic_increment(self):
+		FRAPPE.incr_calls.clear()
+		FRAPPE.cache_store.clear()
+		self.assertTrue(tracking._take_user_call())
+		self.assertEqual(FRAPPE.incr_calls, ["site|" + tracking._user_key()])
+		self.assertEqual(FRAPPE.cache_store["ttl:" + tracking._user_key()], tracking.USER_WINDOW_SECONDS)
+		FRAPPE.cache_store["site|" + tracking._user_key()] = tracking.USER_CALLS_PER_WINDOW
+		self.assertFalse(tracking._take_user_call())
+
+	def test_destination_is_stored_with_an_answer(self):
+		updates = R.apply_result(row(), ok(destination="Orem, UT, US"), NOW)
+		self.assertEqual(updates["destination"], "Orem, UT, US")
+		self.assertIn("destination", package_rules.CARRIER_FIELD_DEFAULTS)
 
 
 if __name__ == "__main__":

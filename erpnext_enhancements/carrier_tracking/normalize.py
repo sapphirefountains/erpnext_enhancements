@@ -115,6 +115,7 @@ def fedex_package(track_result):
 		"estimated_delivery": None if status == C.DELIVERED else estimate,
 		"delivered_at": delivered_at,
 		"last_location": location,
+		"destination": fedex_destination(result),
 	}
 
 
@@ -128,6 +129,27 @@ FEDEX_PACKAGE_CODES = {
 	"TRACKING.DATA.NOTFOUND": "not_found",
 	"TRACKING.TRACKINGNUMBER.INVALID": "invalid",
 }
+
+
+def fedex_destination(track_result):
+	"""Where FedEx says the package is going: 'City, ST, US', or "".
+
+	Read from ``recipientInformation.address``, then ``lastUpdatedDestinationAddress``, then
+	``destinationLocation.locationContactAndAddress.address`` (all ``AddressVO`` in the Track spec).
+	Shown on a row whose carrier was guessed, so a person can see whether it is coming to us.
+	"""
+	result = _dict(track_result)
+	for address in (
+		_dict(_dict(result.get("recipientInformation")).get("address")),
+		_dict(result.get("lastUpdatedDestinationAddress")),
+		_dict(
+			_dict(_dict(result.get("destinationLocation")).get("locationContactAndAddress")).get("address")
+		),
+	):
+		place = _place(address)
+		if place:
+			return place
+	return ""
 
 
 def fedex_error_outcome(code):
@@ -209,6 +231,21 @@ def ups_status(type_code, status_code=None, words=""):
 _UPS_ESTIMATE_TYPES = ("RDD", "SDD")
 
 
+def ups_destination(package):
+	"""Where UPS says the package is going, from ``packageAddress[]``: the entry whose ``type``
+	names the destination (an assumption: the Tracking spec lists the array, not its type values)."""
+	for entry in _list(_dict(package).get("packageAddress")):
+		entry = _dict(entry)
+		if (
+			"DEST" in str(entry.get("type") or "").upper()
+			or "SHIP TO" in str(entry.get("type") or "").upper()
+		):
+			place = _place(_dict(entry.get("address")))
+			if place:
+				return place
+	return ""
+
+
 def ups_package(package):
 	"""Normalize one ``trackResponse.shipment[].package[]`` entry."""
 	package = package if isinstance(package, dict) else {}
@@ -274,6 +311,7 @@ def ups_package(package):
 		"estimated_delivery": estimate,
 		"delivered_at": delivered_at,
 		"last_location": location,
+		"destination": ups_destination(package),
 	}
 
 

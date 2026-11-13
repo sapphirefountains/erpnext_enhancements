@@ -566,16 +566,72 @@ class TestErrorPaths(unittest.TestCase):
 
 	def test_malformed_json_and_wrong_shapes(self):
 		for body in (
-			"<html>oops</html>",
 			{"output": "x"},
 			{"output": {"completeTrackResults": [{}]}},
 			{"output": {}},
 		):
 			result, _, _ = self.run_track(FakeResponse(200, body))
 			self.assertEqual(result["outcome"], "bad_response", body)
-		for body in ("nope", {"trackResponse": []}, {}):
+		for body in ({"trackResponse": []}, {}):
 			result, _, _ = self.run_track(FakeResponse(200, body), C.UPS, UPS_NUMBER)
 			self.assertEqual(result["outcome"], "bad_response", body)
+
+	def test_a_200_that_is_not_json_is_the_carrier_being_unavailable(self):
+		# Review round 2: an HTML page with a 200 for a day used to count against every package.
+		for carrier, number in ((C.FEDEX, FEDEX_NUMBER), (C.UPS, UPS_NUMBER)):
+			result, _, _ = self.run_track(FakeResponse(200, "<html>oops</html>"), carrier, number)
+			self.assertEqual(result["outcome"], "unavailable", carrier)
+
+	def test_rejected_scope(self):
+		# Clearly not about one number: the carrier.
+		for answer, carrier, number in (
+			(FakeResponse(400, {"errors": [{"code": "CUSTOMER.USAGE.LOCKED"}]}), C.FEDEX, FEDEX_NUMBER),
+			(FakeResponse(404, {"errors": [{"code": "NOT.FOUND.ERROR"}]}), C.FEDEX, FEDEX_NUMBER),
+			(FakeResponse(405, {"errors": [{"code": "WHATEVER"}]}), C.FEDEX, FEDEX_NUMBER),
+			(FakeResponse(400, {"response": {"errors": [{"code": "VSS002"}]}}), C.UPS, UPS_NUMBER),
+			(FakeResponse(404, {}), C.UPS, UPS_NUMBER),
+			(FakeResponse(400, "<html>"), C.UPS, UPS_NUMBER),
+		):
+			result, _, _ = self.run_track(answer, carrier, number)
+			self.assertEqual((result["outcome"], result["scope"]), ("rejected", "carrier"), answer.text)
+		# Ambiguous: a 400 with a code we cannot place may be this number.
+		for answer, carrier, number in (
+			(FakeResponse(400, {"response": {"errors": [{"code": "151018"}]}}), C.UPS, UPS_NUMBER),
+			(FakeResponse(400, {"errors": [{"code": "TRACKING.LOCALE.INVALID"}]}), C.FEDEX, FEDEX_NUMBER),
+		):
+			result, _, _ = self.run_track(answer, carrier, number)
+			self.assertEqual((result["outcome"], result["scope"]), ("rejected", "number"), answer.text)
+
+	def test_destination(self):
+		out = N.fedex_package(
+			{
+				"latestStatusDetail": {"code": "IT"},
+				"recipientInformation": {
+					"address": {"city": "OREM", "stateOrProvinceCode": "UT", "countryCode": "US"}
+				},
+			}
+		)
+		self.assertEqual(out["destination"], "OREM, UT, US")
+		out = N.fedex_package(
+			{
+				"latestStatusDetail": {"code": "IT"},
+				"lastUpdatedDestinationAddress": {"city": "LEHI", "stateOrProvinceCode": "UT"},
+			}
+		)
+		self.assertEqual(out["destination"], "LEHI, UT")
+		self.assertEqual(N.fedex_package({"latestStatusDetail": {"code": "IT"}})["destination"], "")
+		out = N.ups_package(
+			{
+				"packageAddress": [
+					{"type": "ORIGIN", "address": {"city": "Far Away"}},
+					{
+						"type": "DESTINATION",
+						"address": {"city": "Provo", "stateProvince": "UT", "countryCode": "US"},
+					},
+				]
+			}
+		)
+		self.assertEqual(out["destination"], "Provo, UT, US")
 
 	def test_hostile_response_never_raises(self):
 		class Hostile:
@@ -726,6 +782,8 @@ class TestNormalizeFedEx(unittest.TestCase):
 				"checked_at",
 				"error",
 				"retry_after",
+				"scope",
+				"destination",
 			},
 		)
 

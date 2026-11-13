@@ -61,6 +61,10 @@ widened. External Contractor reads orders and sees no tracking.
 On top of the roles, a package is visible only with its order (`permissions.py`): one package needs
 read on its Purchase Order, and lists and reports of Tracked Package are cut to orders the person can
 read, using Frappe's own match conditions for Purchase Order (User Permissions, owner rules, shares).
+Someone who reaches Purchase Orders only through shares (no role read on Purchase Order, as Stock
+Manager here) lists only the packages of the orders shared with them, or none: Frappe's match
+conditions return nothing for that case, so `permissions.query_conditions` builds it from
+`frappe.share.get_shared`.
 A REST insert goes through the same gate in `TrackedPackage.validate`: the switch must be on, the
 order readable and still able to take a package, and every carrier-written field is reset to its
 starting value, so a create cannot arrive "Delivered" or with a `last_checked` that skips polling.
@@ -75,7 +79,8 @@ is not Closed, Completed, Canceled, Delivered (drop-ship) or fully received
   blocks the delete. Frappe runs `on_trash` before its Dynamic Link check (v16.56.0
   `delete_doc.py`, lines 177 and 184-185), which is what makes this possible.
 * **Amending a canceled order** moves its packages to the amendment as soon as the amendment exists
-  (`after_insert`): they are the same boxes. Running twice moves nothing; a number already on the
+  (`after_insert`): they are the same boxes. Only if the person amending can read the canceled order,
+  since a REST insert can name any canceled order in `amended_from`. Running twice moves nothing; a number already on the
   amendment is not doubled. Deleting that draft amendment gives them back.
 * **A canceled order that is never amended** keeps its packages, shown read-only (no Add, Remove or
   Refresh) and no longer polled.
@@ -85,7 +90,10 @@ is not Closed, Completed, Canceled, Delivered (drop-ship) or fully received
 Only `1Z…` (UPS) and a 22-digit number starting `96` (FedEx Ground) are certain. A bare 12- or
 15-digit number is *probably* FedEx, so with carrier Auto it is tracked as FedEx **marked as a
 guess**: the banner says "FedEx (guessed)" and the poller gives up on it after two days of "not
-found" instead of a week, with a note to add it again with the carrier picked. Asking the person to
+found" instead of a week, with a note to add it again with the carrier picked. A guess FedEx does
+answer for may still be someone else's shipment, so the row stays marked "(guessed)", shows where
+the carrier says it is going ("Going to Orem, UT, US", when the answer has it), and says in one
+sentence that the carrier was guessed and how to correct it. Asking the person to
 pick a carrier for every 12-digit FedEx Express number, which is most of what arrives, would be the
 worse trade.
 ### The purchaser's date is never overwritten
@@ -115,6 +123,18 @@ ask again. Only these mean something about the package: FedEx `TRACKING.TRACKING
 matched exactly, and UPS's 404 in its documented error envelope. A UPS 400 is documented only as
 "Invalid request", so it is never read as an invalid number.
 
+**A refusal that may be about one number** (a 400 or 404 with a code we cannot place, scope
+`number`) is told apart from one about every number by comparing packages in the same run
+(`tracking.Round`): if a second package of the same carrier gets it too, it is the carrier's and
+counts for neither (the carrier is skipped for the rest of the run); if another package gets a real
+answer, it was that number's. A package that only ever gets this refusal, with no answer ever, is
+stopped after 3 days with "Check that the number and the carrier are right", the typical case being
+a mistyped number on a carrier picked by hand. One package's refusal no longer costs the carrier the
+rest of the run. The ambiguous case left is a carrier with a single package due in the run: that
+refusal is taken as about the number, and a person's Refresh restarts the package if the carrier
+then answers. A 200 whose body is not JSON is the carrier being unavailable, never a package
+failure.
+
 "Could not check" never changes a stored status. Each answer is committed on its own, and a row
 whose check or save fails is rolled back, stamped as checked (so it goes to the back of the line)
 and logged once per run, so one bad row cannot stop the poller. A deploy that flushes the queue
@@ -123,7 +143,8 @@ costs one run. The reasoning for each number is in `poll_rules.py`.
 A person's Refresh, and the first check after Add, run inside the web request, so they are capped:
 at most 5 packages and 25 seconds per request (the rest are the poller's), one round per order per
 minute shared by Add and Refresh (adding and removing a number cannot get round it), and 30 carrier
-calls per person per 10 minutes.
+calls per person per 10 minutes, counted with an atomic Redis increment. A Refresh refused by that
+limit says so and says how many minutes to wait.
 
 ## On the Purchase Order
 
@@ -201,7 +222,14 @@ or `normalize.py` if the first real answers disagree.
    "delivered" needs the letter D or 011 with the words saying delivered. Otherwise the letter
    decides, which can only under-state progress.
 7. **UPS `expires_in` is a string** (as the OAuth spec types every field); it is cast with `int()`.
-8. **The public tracking pages** (`/wtrk/track/?trknbr=` and `/track?loc=en_US&tracknum=`) were
+8. **Where a package is going**: FedEx's `recipientInformation.address`, then
+   `lastUpdatedDestinationAddress`, then `destinationLocation.locationContactAndAddress.address`
+   (all in the Track spec); UPS's `packageAddress[]` entry whose `type` names the destination (the
+   spec lists the array, not its type values).
+9. **Which UPS and FedEx error codes are about the account or the request as a whole**
+   (`client.FEDEX_CARRIER_CODE_PREFIXES`, `client.UPS_CARRIER_CODES`), read from the error lists; a
+   code outside them on a 400 or 404 is treated as possibly about the number (see above).
+10. **The public tracking pages** (`/wtrk/track/?trknbr=` and `/track?loc=en_US&tracknum=`) were
    checked live, not in documentation.
 
 ## Turning it on

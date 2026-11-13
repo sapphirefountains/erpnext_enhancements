@@ -24,6 +24,7 @@
   "estimated_delivery",
   "delivered_on",
   "last_location",
+  "destination",
   "column_break_status",
   "last_checked",
   "last_success",
@@ -170,6 +171,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "destination",
+   "fieldtype": "Data",
+   "label": "Going To",
+   "read_only": 1,
+   "description": "Where the carrier says the package is going, when its answer says. Shown on the order for a carrier guessed from the number."
+  },
+  {
    "fieldname": "column_break_status",
    "fieldtype": "Column Break"
   },
@@ -222,7 +230,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-13 18:00:00.000000",
+ "modified": "2026-11-13 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Carrier Tracking",
  "name": "Tracked Package",

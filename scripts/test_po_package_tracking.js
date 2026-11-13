@@ -263,5 +263,34 @@ const other = ns.describe({ status: "Not Tracked", resolved_carrier: "Other", tr
 check("Other keeps an http link", other.url, "http://example.com/t");
 check("Other is not 'checked'", other.checked, "");
 
+// Review round 2, S3: a guessed carrier that answered stays marked, says where it is going, and how to correct it.
+const guessed = ns.banner_html(
+	{
+		enabled: true,
+		packages: [
+			{
+				name: "tp-g",
+				tracking_number: "100000000001",
+				resolved_carrier: "FedEx",
+				carrier_guessed: 1,
+				status: "In Transit",
+				last_success: "2026-11-13 09:00:00",
+				destination: "Somewhere Else, NV, US",
+			},
+		],
+		live_carriers: ["FedEx"],
+	},
+	{}
+);
+check("a guessed row stays marked after an answer", guessed.includes("FedEx (guessed)"), true);
+check("a guessed row says where it is going", guessed.includes("Going to Somewhere Else, NV, US"), true);
+check("a guessed row says how to correct it", guessed.includes("The carrier was guessed from the number"), true);
+const sure = ns.banner_html(
+	{ enabled: true, packages: [{ name: "tp-s", tracking_number: "1Z0000000000000001", resolved_carrier: "UPS",
+		status: "In Transit", destination: "Somewhere Else, NV, US" }], live_carriers: ["UPS"] },
+	{}
+);
+check("a certain carrier gets no guess note", sure.includes("guessed"), false);
+
 console.log(`${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

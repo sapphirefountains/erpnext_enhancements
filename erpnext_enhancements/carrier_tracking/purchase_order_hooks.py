@@ -12,9 +12,10 @@ item 2; the Sapphire Manager's decision).
   since they came from there.
 * **An amendment takes the packages with it.** Canceling an order and amending it makes a new order
   for the same goods, and the boxes on the truck are the same boxes. ``after_insert`` of the amended
-  order (the moment it exists) moves every package of the canceled order to it. Safe to run twice:
-  a second run finds nothing left on the canceled order. A number already on the amendment is left on
-  the canceled order rather than doubled.
+  order (the moment it exists) moves every package of the canceled order to it, **if the person
+  amending can read the canceled order** (``amended_from`` can be set through REST to any canceled
+  order). Safe to run twice: a second run finds nothing left on the canceled order. A number already
+  on the amendment is left on the canceled order rather than doubled.
 * **A canceled order that was never amended keeps its packages**, shown read-only on its form and no
   longer polled (the poller reads submitted orders only).
 
@@ -88,6 +89,11 @@ def after_insert(doc, method=None):
 	try:
 		amended_from = getattr(doc, "amended_from", None) or ""
 		if not amended_from or not _installed():
+			return
+		# Frappe checks only that amended_from exists and is canceled, and a REST insert can set it to
+		# any canceled order. Moving packages needs read on the order they come from, so nobody can
+		# take another order's packages by naming it (review round 2).
+		if not frappe.has_permission(ORDER, "read", doc=amended_from):
 			return
 		move_packages(amended_from, doc.name)
 	except Exception:

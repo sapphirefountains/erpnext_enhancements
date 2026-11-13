@@ -36,6 +36,7 @@ CARRIER_FIELD_DEFAULTS = {
 	"estimated_delivery": None,
 	"delivered_on": None,
 	"last_location": "",
+	"destination": "",
 	"last_checked": None,
 	"last_success": None,
 	"last_change": None,

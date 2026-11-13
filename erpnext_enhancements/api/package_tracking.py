@@ -206,8 +206,15 @@ def refresh_order(purchase_order):
 	_require_enabled()
 	order = _order(purchase_order)
 	_require("read")
-	checked = None if _canceled(order) else tracking.refresh_order(order.name)
+	answer = None if _canceled(order) else tracking.refresh_order(order.name)
 	payload = _payload(order)
-	payload["checked"] = checked
-	payload["too_soon"] = checked is None and not _canceled(order)
+	payload["checked"] = answer["checked"] if answer else None
+	payload["too_soon"] = answer is None and not _canceled(order)
+	payload["user_limited"] = bool(answer and answer.get("user_limited"))
+	payload["retry_minutes"] = (answer or {}).get("retry_minutes") or 0
+	if payload["user_limited"]:
+		payload["message"] = _(
+			"You have asked the carriers {0} times in the last {1} minutes, which is the limit. "
+			"Try again in {2} minutes; the hourly check carries on meanwhile."
+		).format(tracking.USER_CALLS_PER_WINDOW, tracking.USER_WINDOW_SECONDS // 60, payload["retry_minutes"])
 	return payload

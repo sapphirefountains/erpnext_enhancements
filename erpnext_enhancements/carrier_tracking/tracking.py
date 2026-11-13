@@ -66,6 +66,7 @@ ROW_FIELDS = (
 	"estimated_delivery",
 	"delivered_on",
 	"last_location",
+	"destination",
 	"last_checked",
 	"last_success",
 	"last_change",
@@ -87,6 +88,7 @@ DISPLAY_FIELDS = (
 	"estimated_delivery",
 	"delivered_on",
 	"last_location",
+	"destination",
 	"last_checked",
 	"last_success",
 	"last_error",
@@ -185,6 +187,18 @@ def run_poll(clock=time.monotonic):
 	blocked = set()
 	checked = 0
 	broken = []
+
+	def write(row, result):
+		# One row must not stop the run, nor be picked first for ever: undo it, stamp it checked
+		# with a plain note, and go on. The traceback is logged once, after the loop.
+		try:
+			apply(row, result, now)
+			frappe.db.commit()
+		except Exception:
+			broken.append((row.get("name"), C.mask(frappe.get_traceback(), limit=1500)))
+			_mark_broken(row, now)
+
+	round_ = Round(write)
 	for row in rows:
 		if clock() - started > R.RUN_BUDGET_SECONDS:
 			break
@@ -193,20 +207,62 @@ def run_poll(clock=time.monotonic):
 			continue
 		try:
 			result = client.track(configs[carrier], row.get("tracking_number"), cache, now=now)
-			apply(row, result, now)
-			frappe.db.commit()
 		except Exception:
-			# One row must not stop the run, nor be picked first for ever: undo it, stamp it checked
-			# with a plain note, and go on. The traceback is logged once, after the loop.
 			broken.append((row.get("name"), C.mask(frappe.get_traceback(), limit=1500)))
 			_mark_broken(row, now)
 			continue
 		checked += 1
-		if result.get("outcome") in R.CARRIER_LEVEL:
+		if round_.handle(carrier, row, result):
 			blocked.add(carrier)
+	round_.flush()
 	if broken:
 		_log_broken(broken)
 	return {"checked": checked, "skipped_carriers": sorted(blocked), "broken": [name for name, _ in broken]}
+
+
+class Round:
+	"""Tells a refusal about one number from a refusal about every number, within one round of checks.
+
+	An ambiguous refusal (``poll_rules.is_number_rejection``: a 400 or 404 with a code we cannot place)
+	is held, not written, until another package of the same carrier is answered in the same round:
+
+	* **another package gets the same kind of refusal**: the carrier is refusing our requests, not
+	  these numbers. Both are written as carrier-level (nothing counted, nothing stopped) and the
+	  carrier is skipped for the rest of the round;
+	* **another package gets a real answer** (found, not found, invalid, unreadable): the refusal was
+	  about its own number, and is written so (``poll_rules`` may stop it after
+	  ``REJECTED_GIVE_UP_DAYS``);
+	* **nothing else is learned** (no other package of that carrier, or only carrier-level failures):
+	  the ambiguous case. At the end of the round the refusal is written as about its number. If the
+	  carrier was at fault after all, a person's Refresh restarts the package once it answers.
+
+	``write(row, result)`` saves one row. ``handle`` returns whether the carrier should be skipped for
+	the rest of the round.
+	"""
+
+	def __init__(self, write):
+		self.write = write
+		self.pending = {}
+
+	def handle(self, carrier, row, result):
+		if R.is_number_rejection(result):
+			first = self.pending.pop(carrier, None)
+			if first is None:
+				self.pending[carrier] = (row, result)
+				return False
+			for held_row, held_result in (first, (row, result)):
+				self.write(held_row, dict(held_result, scope=client.SCOPE_CARRIER))
+			return True
+		if carrier in self.pending and result.get("outcome") not in R.CARRIER_LEVEL:
+			held_row, held_result = self.pending.pop(carrier)
+			self.write(held_row, held_result)
+		self.write(row, result)
+		return R.blocks_carrier(result)
+
+	def flush(self):
+		for held_row, held_result in list(self.pending.values()):
+			self.write(held_row, held_result)
+		self.pending.clear()
 
 
 def _mark_broken(row, now):
@@ -261,30 +317,37 @@ def live_carriers(settings=None):
 def check_rows(rows, manual=True, clock=time.monotonic):
 	"""Ask the carriers about ``rows`` now, inside a web request. Rows of a carrier that is not live
 	are left alone. At most ``WEB_MAX_CHECKS`` calls and ``WEB_BUDGET_SECONDS``; the rest wait for
-	the poller. Each call also counts against the person's window (``USER_CALLS_PER_WINDOW``)."""
+	the poller. Each call also counts against the person's window (``USER_CALLS_PER_WINDOW``).
+
+	Returns ``{"checked": n, "user_limited": bool, "retry_minutes": m}``; ``user_limited`` says the
+	person's window was full, so the banner can say why nothing was checked and when to try again.
+	"""
+	outcome = {"checked": 0, "user_limited": False, "retry_minutes": 0}
 	settings = config._settings()
 	configs = {carrier: config.carrier_config(carrier, settings) for carrier in live_carriers(settings)}
 	if not configs:
-		return 0
+		return outcome
 	now = frappe.utils.now_datetime()
 	cache = config.cache()
 	started = clock()
 	blocked = set()
-	checked = 0
+	round_ = Round(lambda row, result: apply(row, result, now, manual=manual))
 	for row in rows:
-		if checked >= WEB_MAX_CHECKS or clock() - started > WEB_BUDGET_SECONDS:
+		if outcome["checked"] >= WEB_MAX_CHECKS or clock() - started > WEB_BUDGET_SECONDS:
 			break
 		carrier = row.get("resolved_carrier")
 		if carrier not in configs or carrier in blocked:
 			continue
 		if not _take_user_call():
+			outcome["user_limited"] = True
+			outcome["retry_minutes"] = _user_wait_minutes()
 			break
 		result = client.track(configs[carrier], row.get("tracking_number"), cache, now=now)
-		apply(row, result, now, manual=manual)
-		checked += 1
-		if result.get("outcome") in R.CARRIER_LEVEL:
+		outcome["checked"] += 1
+		if round_.handle(carrier, row, result):
 			blocked.add(carrier)
-	return checked
+	round_.flush()
+	return outcome
 
 
 def _user_key():
@@ -294,19 +357,30 @@ def _user_key():
 def _take_user_call():
 	"""Count one carrier call against the person's window; ``False`` once the window is full.
 
-	Each call renews the window (a plain Redis ``SET`` without an expiry would drop it, so every write
-	carries one). If Redis cannot be read the call is allowed: the order's cooldown and the request's
-	own cap still bound it.
+	Atomic: Redis ``INCR`` on the site-namespaced key (``frappe.cache.make_key``, the same prefix
+	Frappe's own ``set_value`` uses), and the window's expiry is set by the call that opens it. So
+	parallel requests cannot go over the limit. If Redis cannot be reached the call is allowed: the
+	order's cooldown and the request's own cap still bound it.
 	"""
 	try:
 		key = _user_key()
-		used = int(frappe.cache.get_value(key) or 0)
-		if used >= USER_CALLS_PER_WINDOW:
-			return False
-		frappe.cache.set_value(key, used + 1, expires_in_sec=USER_WINDOW_SECONDS)
-		return True
+		used = int(frappe.cache.incrby(frappe.cache.make_key(key), 1))
+		if used == 1:
+			frappe.cache.expire_key(key, USER_WINDOW_SECONDS)
+		return used <= USER_CALLS_PER_WINDOW
 	except Exception:
 		return True
+
+
+def _user_wait_minutes():
+	"""Whole minutes until the person's window opens again (at least 1)."""
+	try:
+		seconds = int(frappe.cache.ttl(frappe.cache.make_key(_user_key())))
+	except Exception:
+		seconds = USER_WINDOW_SECONDS
+	if seconds <= 0:
+		seconds = USER_WINDOW_SECONDS
+	return max(1, -(-seconds // 60))
 
 
 def refresh_cooldown_key(purchase_order):
@@ -327,9 +401,9 @@ def claim_order_cooldown(purchase_order):
 
 
 def refresh_order(purchase_order):
-	"""Check the FedEx and UPS packages on one order now (capped, see ``check_rows``). Returns how
-	many were checked, or ``None`` when the order was checked less than ``REFRESH_COOLDOWN_SECONDS``
-	ago. Packages not reached are the poller's."""
+	"""Check the FedEx and UPS packages on one order now (capped, see ``check_rows``). Returns
+	``check_rows``' answer, or ``None`` when the order was checked less than
+	``REFRESH_COOLDOWN_SECONDS`` ago. Packages not reached are the poller's."""
 	if not claim_order_cooldown(purchase_order):
 		return None
 	rows = [row for row in rows_for_order(purchase_order) if row.get("resolved_carrier") in C.TRACKABLE]

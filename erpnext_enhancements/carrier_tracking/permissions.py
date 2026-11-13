@@ -62,20 +62,42 @@ def has_permission(doc, ptype=None, user=None):
 
 
 def query_conditions(user=None):
-	"""SQL limiting Tracked Package lists to packages on orders ``user`` can read. Fails closed."""
+	"""SQL limiting Tracked Package lists to packages on orders ``user`` can read. Fails closed.
+
+	Two cases, because Frappe builds them differently:
+
+	* **The person reads Purchase Orders through a role.** Frappe's own match conditions for Purchase
+	  Order (User Permissions, owner rules, shares) are used as a sub-select.
+	* **The person has no role read on Purchase Order** and reaches orders only through shares (Stock
+	  Manager here: it reads Tracked Package, but production's Purchase Order permissions do not give
+	  it read). ``build_match_conditions`` then puts the share filter into the query it is building
+	  and returns ``""`` (``db_query.py`` 1060-1065 at v16.56.0), which would have let such a person
+	  list every package (review round 2). So this case is built here: the orders shared with them
+	  (``frappe.share.get_shared``), or nothing.
+	"""
 	user = user or frappe.session.user
 	if _unscoped(user):
 		return ""
 	table = f"`tab{DOCTYPE}`"
+	base = f"{table}.`reference_doctype` = {frappe.db.escape(ORDER)}"
 	try:
 		if not frappe.has_permission(ORDER, "read", user=user):
 			return "1=0"
+		from frappe.permissions import get_role_permissions
+		from frappe.share import get_shared
+
+		role_permissions = get_role_permissions(frappe.get_meta(ORDER), user=user)
+		if not (role_permissions.get("read") or role_permissions.get("select")):
+			shared = [name for name in (get_shared(ORDER, user) or []) if name]
+			if not shared:
+				return "1=0"
+			names = ", ".join(frappe.db.escape(name) for name in shared)
+			return f"({base} and {table}.`reference_name` in ({names}))"
 		from frappe.model.db_query import DatabaseQuery
 
 		order_conditions = DatabaseQuery(ORDER, user=user).build_match_conditions(as_condition=True)
 	except Exception:
 		return "1=0"
-	base = f"{table}.`reference_doctype` = {frappe.db.escape(ORDER)}"
 	if not order_conditions:
 		return base
 	return (

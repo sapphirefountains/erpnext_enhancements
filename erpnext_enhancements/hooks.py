@@ -2345,8 +2345,9 @@ scheduler_events = {
 		# orders. Does nothing and logs nothing until Carrier Tracking Settings has a carrier switched on with
 		# credentials. At most 25 packages and 120 s a run, each package at most every 2 h, never-checked then
 		# oldest-checked first; delivered, Other/unknown-carrier and stale rows are not polled. A carrier that
-		# refused us, said "too many requests", failed at its token endpoint or gave an error that is not a
-		# documented package code is skipped for the rest of the run, and no package is counted for it. Each
+		# refused us, said "too many requests", failed at its token endpoint or gave an account- or request-wide
+		# error is skipped for the rest of the run, and no package is counted for it; a refusal that may be
+		# about one number is compared with the run's other packages before it counts (tracking.Round). Each
 		# answer is committed on its own and a row whose save fails is set aside (one bad row cannot stop the
 		# run), so a deploy's FLUSHDB costs one run and the next picks up. Never raises.
 		# See carrier_tracking/tracking.py and poll_rules.py.

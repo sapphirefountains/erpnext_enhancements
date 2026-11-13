@@ -43,8 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `carriers.mask`, which removes the id, the secret, the token and anything shaped like an
     `Authorization` header or a token field, before it is returned.
   - **Carrier Tracking Settings**, a new Single (System Manager only): a master switch, and per carrier
-    a switch, Sandbox or Production, a client id and a client secret (Password). **Everything is off**,
-    and the feature does nothing until a carrier has its switch, both credentials and the master switch.
+    a switch, Sandbox or Production, a client id and a client secret (Password). **Everything is off.**
+    The master switch decides whether the feature exists at all: off, the order form shows nothing and
+    nothing can be added. On, tracking numbers can be recorded and shown (carrier *Other* needs no
+    credentials), and a carrier is asked only once it also has its own switch and both credentials.
     A small Single of its own rather than four more fields on the 193-field ERPNext Enhancements
     Settings, and nothing in the app ever writes to it: health is read from the tracked packages, so no
     "last checked" stamp can make the first write that blanks a never-saved Single (CLAUDE.md).
@@ -156,6 +158,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     has every carrier-written field reset, so it cannot forge a status or skip polling.
   - **One bad row cannot stop the poller**: each package is checked in its own `try`, rolled back and set
     to the back of the line if its save fails, and logged once per run.
+- **Before release: what review round 2 changed.**
+  - **A refusal about one number stops that number, not the carrier.** A carrier's refusal that is not one
+    of its package codes now says whether it is clearly the account or our request (`scope` carrier: a
+    login or account code, UPS's missing-header codes, a wrong path, any status but 400 or 404) or may be
+    about the number (`scope` number: a 400 or 404 with a code we cannot place). The poller tells the
+    second kind apart by comparing packages in the same run: two different numbers refused means the
+    carrier, counted for neither; another number answered means it was this number's. A package that only
+    ever gets that refusal is stopped after three days with "check that the number and the carrier are
+    right" (a mistyped number on a carrier picked by hand was retried for 90 days, about 866 checks), and
+    one package's refusal no longer skips the carrier for the rest of the run.
+  - **Share-only access lists only the shared orders' packages.** A person whose only way to Purchase
+    Orders is a share (Stock Manager here) could list every package, because Frappe's match conditions
+    come back empty on that branch; the list condition is now the shared orders, or nothing.
+  - **A guessed FedEx number shows where it is going.** The new *Going To* field holds the destination
+    from the carrier's answer; a guessed row keeps "(guessed)", shows it, and says how to correct a wrong
+    guess.
+  - Smaller: a Refresh refused by the per-person limit says so and when to try again; that counter is an
+    atomic Redis increment; a 200 that is not JSON is the carrier being unavailable, not a package
+    failure; an amendment moves packages only when the person can read the canceled order.
 
 ## [1.818.0] - 2026-11-13
 

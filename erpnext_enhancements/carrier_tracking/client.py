@@ -120,10 +120,42 @@ UNAVAILABLE = "unavailable"
 BAD_RESPONSE = "bad_response"
 NOT_CONFIGURED = "not_configured"
 UNSUPPORTED = "unsupported"
-#: The carrier refused the request for a reason that is not about the package: an account lock,
-#: "log in again", a request it calls malformed, an error code we do not know. Never read as
-#: "invalid number" or "not found", which stop a package for good.
+#: The carrier refused the request with an error that is not one of its documented package codes.
+#: Never read as "invalid number" or "not found", which stop a package for good. Every REJECTED
+#: result carries a ``scope``:
+#:
+#: * ``"carrier"``: clearly not about one number: an account or login code, a code naming our
+#:   request as a whole, a wrong path, an HTTP status other than 400 or 404, a body that is not JSON.
+#:   The poller skips the carrier for the rest of the run and counts nothing against the package.
+#: * ``"number"``: ambiguous, a 400 or 404 with a code we cannot place. It may be this number (a
+#:   mistyped one, on a carrier picked by hand) or our request (then every number gets it). The
+#:   poller tells the two apart by comparing packages in the same run (``tracking``), and
+#:   ``poll_rules`` stops a package that only ever gets this answer after a few days.
 REJECTED = "rejected"
+SCOPE_CARRIER = "carrier"
+SCOPE_NUMBER = "number"
+
+#: FedEx error codes about the account or the request as a whole (prefixes, then exact codes).
+#: From Track-Common-ErrorMapping.json and the Track spec's error examples.
+FEDEX_CARRIER_CODE_PREFIXES = (
+	"CUSTOMER.",
+	"USER.",
+	"ACCOUNT.",
+	"NOT.AUTHORIZED",
+	"UNAUTHORIZED",
+	"FORBIDDEN",
+	"SERVICE.",
+	"INTERNAL.",
+	"SYSTEM.",
+)
+FEDEX_CARRIER_CODES = frozenset({"NOT.FOUND.ERROR"})
+#: UPS error codes about the login or the request as a whole: missing transId / transactionSrc
+#: (VSS002, VSS004), invalid or expired token (UJ0001, 250002, 251004) and the gateway's client,
+#: merchant and quota codes (10401, 10403, 10429, 10004). From developer.ups.com's Tracking errors
+#: and Get Started troubleshooting pages.
+UPS_CARRIER_CODES = frozenset(
+	{"VSS002", "VSS004", "UJ0001", "250002", "251004", "10401", "10403", "10429", "10004"}
+)
 
 #: Our words for each outcome, stored in a row's Last Problem field and shown on the banner. The
 #: carrier's own error code and message are appended where it sent one.
@@ -158,9 +190,39 @@ def _result(config, number, now, outcome, error="", retry_after=None, **fields):
 		"checked_at": now.replace(microsecond=0).isoformat(sep=" "),
 		"error": error,
 		"retry_after": retry_after,
+		"scope": None,
+		"destination": "",
 	}
 	result.update(fields)
 	return result
+
+
+def rejected_scope(carrier, status, codes):
+	"""``SCOPE_CARRIER`` or ``SCOPE_NUMBER`` for a REJECTED answer (see ``REJECTED``)."""
+	codes = [str(code or "").strip().upper() for code in codes]
+	if status not in (400, 404):
+		return SCOPE_CARRIER
+	if carrier == C.FEDEX and any(
+		code in FEDEX_CARRIER_CODES or code.startswith(FEDEX_CARRIER_CODE_PREFIXES) for code in codes
+	):
+		return SCOPE_CARRIER
+	if carrier == C.UPS and any(code in UPS_CARRIER_CODES for code in codes):
+		return SCOPE_CARRIER
+	if status == 404 and not codes:
+		return SCOPE_CARRIER  # a 404 outside the carrier's error envelope is a wrong path
+	return SCOPE_NUMBER
+
+
+def _rejected(config, number, now, status, body, says, token):
+	codes = [code for code, _ in _carrier_errors(body)]
+	return _result(
+		config,
+		number,
+		now,
+		REJECTED,
+		_message(REJECTED, config, says or f"HTTP {status}", token),
+		scope=rejected_scope(config.carrier, status, codes),
+	)
 
 
 def _secrets(config, token=None):
@@ -452,10 +514,25 @@ def _interpret(config, number, response, token, cache, now):
 		_cache_delete(cache, _key(config, "token"))
 		return _result(config, number, now, "auth_failed", _message("auth_failed", config, says, token))
 	if body is None:
-		# A 200 we cannot read is "could not check" for this package. Any other status with a body
-		# that is not JSON (an error page from a proxy, a wrong path) is the request, not the package.
-		outcome = BAD_RESPONSE if status == 200 else REJECTED
-		return _result(config, number, now, outcome, _message(outcome, config, f"HTTP {status}", token))
+		# A body that is not JSON is never about one package: a 200 with an HTML page is the carrier
+		# (or a proxy in front of it) not working, and any other status is a wrong path or an error
+		# page. Neither may count against a package (review round 2).
+		if status == 200:
+			return _result(
+				config,
+				number,
+				now,
+				UNAVAILABLE,
+				_message(UNAVAILABLE, config, "a page that is not JSON", token),
+			)
+		return _result(
+			config,
+			number,
+			now,
+			REJECTED,
+			_message(REJECTED, config, f"HTTP {status}", token),
+			scope=SCOPE_CARRIER,
+		)
 
 	if config.carrier == C.FEDEX:
 		return _interpret_fedex(config, number, status, body, says, token, now)
@@ -490,7 +567,9 @@ def _interpret_fedex(config, number, status, body, says, token, now):
 		# Only FedEx's documented package-level codes say anything about the package. Every other
 		# error (CUSTOMER.USAGE.LOCKED, USER.RELOGIN.REQUIRED, NOT.FOUND.ERROR for a wrong path, a
 		# locale or size code) is the carrier turning the request down.
-		outcome = _from_codes(code for code, _ in _carrier_errors(body)) or REJECTED
+		outcome = _from_codes(code for code, _ in _carrier_errors(body))
+		if not outcome:
+			return _rejected(config, number, now, status, body, says, token)
 		return _result(
 			config, number, now, outcome, _message(outcome, config, says or f"HTTP {status}", token)
 		)
@@ -525,9 +604,7 @@ def _interpret_ups(config, number, status, body, says, token, now):
 	if status == 404 and _carrier_errors(body):
 		return _result(config, number, now, NOT_FOUND, _message(NOT_FOUND, config, says, token))
 	if status != 200:
-		return _result(
-			config, number, now, REJECTED, _message(REJECTED, config, says or f"HTTP {status}", token)
-		)
+		return _rejected(config, number, now, status, body, says, token)
 	track_response = body.get("trackResponse") if isinstance(body.get("trackResponse"), dict) else {}
 	shipments = track_response.get("shipment")
 	shipment = (
