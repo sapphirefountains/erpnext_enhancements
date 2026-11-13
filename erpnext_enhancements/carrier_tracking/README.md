@@ -75,6 +75,40 @@ when it clears. "Could not check" never changes a stored status. Each answer is 
 own, so a deploy that flushes the queue costs one run; the next run picks up where it left off. The
 reasoning for each number is in `poll_rules.py`.
 
+## On the Purchase Order
+
+`public/js/po_package_tracking.js` puts a compact banner at the top of the order (draft or
+submitted, never new or canceled): each tracking number with the carrier's status in plain words,
+the carrier's estimated arrival beside the purchaser's own *Expected Delivery Date*, when it was
+last checked, a link to the carrier's tracking page (a new tab), and *Remove* for those who may.
+*Add tracking number* opens a small dialog (number, carrier Auto/FedEx/UPS/Other, and a link for
+Other). *Refresh* asks the carriers now. When live status is off, the banner says so and the links
+still work. Nothing on the banner writes to the order, so the form never turns "Not Saved", and
+nothing changes the route, so Back and Forward behave.
+
+**Integrations Health** has a tile for each carrier: not configured, switched off, Sandbox (amber:
+test data) or Production, the carrier's last answer and its age, and the last problem (masked).
+
+## Later: what this data model leaves open (checked, not built)
+
+* **Arrivals calendar** (the warehouse lead's second ask). Tracked Package is a DocType of its own,
+  so a Frappe calendar view needs only a `tracked_package_calendar.js` mapping `start` and `end` to
+  `estimated_delivery` (falling back to `delivered_on`) and the title to the number and supplier.
+  `supplier` is copied onto each row for exactly this; filtering by project would read the order's
+  `project` through `reference_name`. Rows without an estimate (Other, not checked yet) would need
+  the purchaser's *Expected Delivery Date* from the order as a fallback, which a calendar endpoint
+  can join. Nothing in the model has to change.
+* **Procurement Tracker** (the Project form). Worth showing: it already lists each order's lines and
+  their stage. `api/package_tracking.get_packages` is per order; the tracker would want one query
+  for all the project's orders (`reference_name in (...)`, the newest row per order) and a status
+  chip beside the order. Small, but it touches the tracker's bundle and its level guard
+  (`REQUIRED_LOGIC_LEVEL`), so it is its own change.
+* **Receive Items** (`public/js/po_receive_items.js`). Worth a line at the top of the dialog
+  ("UPS says delivered today at 2:14 PM") and nothing more: the receiver is looking at the boxes, and
+  the carrier's word must never pre-fill a received quantity.
+* **Package Dispatch and Supplier Return** can call `config.track(carrier, number)` for their own
+  outbound numbers; Tracked Package's `reference_doctype` would then allow them.
+
 ## What was checked in the carriers' documentation (2026-11-13)
 
 Nobody has credentials yet, so **no request has been made to either carrier**. Every endpoint,

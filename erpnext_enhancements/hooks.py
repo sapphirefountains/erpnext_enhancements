@@ -381,6 +381,11 @@ doctype_js = {
 		"public/js/supplier_finder_buttons.js",
 		# v1.807.0 -- Supplier Returns: Create > Return to Supplier, once something was received.
 		"public/js/supplier_return_start.js",
+		# v1.819.0 -- package tracking (ER-2026-1333277): a banner at the top of the order with each
+		# tracking number, the carrier's status and estimated arrival beside the purchaser's own date,
+		# Add tracking number and Refresh (api/package_tracking.py). A plain script, not a bundle, so it
+		# needs no level guard; it never writes frm.doc, so the form never turns "Not Saved".
+		"public/js/po_package_tracking.js",
 	],
 	# v1.807.0 -- Supplier Returns (Nik, 2026-11-12). One file under five doctypes: Create >
 	# Return to Supplier on a submitted receipt (the ticked rows, or every line that can still go

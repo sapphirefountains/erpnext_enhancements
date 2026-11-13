@@ -90,6 +90,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tests: `tests/test_carrier_tracking_poller.py` (own frappe stub): the permission rule against the
     DocType's JSON and the endpoints, POST-only writes, the poller's selection, limits and silence while
     off, every stop reason, and a masked log line when something unexpected breaks.
+- **The packages on the Purchase Order form, and FedEx and UPS on Integrations Health**
+  (TASK-2026-03206).
+  - **A banner at the top of the order** (`public/js/po_package_tracking.js`): each tracking number with
+    the carrier's status in plain words ("On its way", "Out for delivery today", "Delivered Nov 12 at
+    14:14"), the carrier's estimated arrival beside the purchaser's own *Expected Delivery Date*, when it
+    was last checked, any problem or the reason it is no longer checked, and a link that opens the
+    carrier's own tracking page in a new tab. *Add tracking number* (a small dialog: the number, the
+    carrier, and a link for Other) and *Refresh* sit under it, for the people allowed to use them. It
+    wraps to one line per package on a phone. It writes nothing to the order, so the form never turns
+    "Not Saved", and changes no route, so Back and Forward behave. A plain `doctype_js` script rather
+    than a `frappe.require` bundle: it travels with the form's meta, so it has no bundle to fall out of
+    step with across a deploy and needs no level guard. Shown on draft and submitted orders, never on a
+    new or canceled one, and not at all to someone who cannot see tracking.
+  - **Integrations Health** gains a tile for each carrier: not configured, switched off, Sandbox (amber,
+    because the sandbox answers with test data) or Production, the carrier's last answer and its age,
+    and the last problem, masked, all read from the Tracked Package rows; the secret only as "is it
+    there".
+  - **Checked, not built** (see `carrier_tracking/README.md`, *Later*): the arrivals calendar needs no
+    change to this data model (a calendar view over `estimated_delivery`, falling back to the order's
+    date); the Procurement Tracker could show a status chip per order with one query, as its own change
+    because it touches the tracker's bundle level; Receive Items could show one line of the carrier's
+    word and must never pre-fill a quantity from it.
+  - Tests: `tests/test_carrier_tracking_banner.py` runs `scripts/test_po_package_tracking.js` (the real
+    script under node against a stubbed Desk) and the two health tiles on a frappe stub.
 
 ## [1.818.0] - 2026-11-13
 
