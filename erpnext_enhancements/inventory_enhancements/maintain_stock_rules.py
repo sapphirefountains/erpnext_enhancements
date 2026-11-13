@@ -37,9 +37,11 @@ them except one: the receipts.
     that projected quantity and the open lines themselves, so it needs nothing of its own.
   - *A line with no warehouse.* A non-stock line may leave it empty; a stock line may not
     (``buying.utils.validate_stock_item_warehouse``), and ``get_purchase_order_qty`` counts a line
-    only at its warehouse. The switch writes the item's default warehouse (else Stock Settings')
-    onto such a line and says so on the order. With no default to use, the check refuses and says
-    what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
+    only at its warehouse. The switch writes onto such a line the warehouse ERPNext would give a
+    new line for the item (the item's default, its group's, its brand's, then the Company's
+    default; ``maintain_stock._fill_warehouses``, corrected in v1.817.0: it read Stock Settings'
+    default, which ERPNext never does) and says so on the order. With none to use, the check
+    refuses and says what to set. Production had 15 open lines on 13 non-stock items on 2026-11-12; every one named
     a warehouse.
   - *A partly received line.* ``received_qty`` already holds what came in while the item kept no
     stock, so only the rest is on order (``qty - received_qty``), and only the rest enters stock
@@ -359,12 +361,18 @@ def open_orders_detail(groups, plan):
 
 
 def open_orders_stuck_detail(plan):
-	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it."""
+	"""Why the open-orders check fails: a line needs a warehouse and there is none to give it.
+
+	The advice names the item's own default and nothing else (v1.817.0). It used to offer Stock
+	Settings' Default Warehouse as well; ERPNext copies that into every new item, so setting it
+	to get one item switched gives every later item the same default warehouse.
+	"""
 	return (
 		f"{_first_upper(_order_rows(plan['stuck']))} "
 		f"{'has' if len(plan['stuck']) == 1 else 'have'} no warehouse, and a stock item's order line "
-		"needs one. Set a default warehouse on the item (its Item Defaults table) or in Stock "
-		"Settings, then run this again."
+		"needs one. Neither the item nor the company has a default warehouse to give it. Set the "
+		"item's Default Warehouse (its Item Defaults table) to the bin it is kept in, then run "
+		"this again."
 	)
 
 
@@ -629,12 +637,29 @@ def delivery_refusal(lines):
 	)
 
 
-def next_steps(item_code, account, account_is_company_default):
-	"""What to do after the switch, in words. ``account`` may be ``None``."""
+def next_steps(item_code, account, account_is_company_default, count_at=None, not_at=None):
+	"""What to do after the switch, in words. ``account`` may be ``None``.
+
+	``not_at`` is what the Project Shelf is called on a site that has one (v1.817.0), and
+	``count_at`` the location the first count will open on there, if the item has one. With a
+	shelf the text says where to count the item and where not to: the item's old default
+	warehouse is the shelf on most items this switch is for, and a count there would take the
+	stock out of the shop's. With no ``not_at`` the text is what it was.
+	"""
 	text = (
 		f"Maintain Stock is on for {item_code}. It has no cost yet, so put its first stock in "
 		"with a Stock Reconciliation that gives a quantity and a valuation rate."
 	)
+	if not_at and count_at:
+		text += (
+			f" Count it where it is kept: the form opens on {count_at}, so change that if it is "
+			f"somewhere else. Not on {not_at}, which is only for parts bought for a job."
+		)
+	elif not_at:
+		text += (
+			" It has no bin yet, so choose the location it is kept in on the form. "
+			f"Not {not_at}, which is only for parts bought for a job."
+		)
 	if account and not account_is_company_default:
 		text += (
 			f" Pick {account} as its Difference Account: the company has no default Stock "

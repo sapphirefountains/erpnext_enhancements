@@ -262,10 +262,15 @@ def _parents(tree):
 	return parents
 
 
+#: The tests a warehouse may be written under: one place for the whole receipt (the scan), or
+#: (v1.817.0) the places the dialog named line by line.
+ASKED_FOR = ("target", "places", "item.purchase_order_item in places")
+
+
 def _inside_if_target(node, parents):
 	child, parent = node, parents.get(node)
 	while parent is not None:
-		if isinstance(parent, ast.If) and ast.unparse(parent.test) == "target" and child in parent.body:
+		if isinstance(parent, ast.If) and ast.unparse(parent.test) in ASKED_FOR and child in parent.body:
 			return True
 		child, parent = parent, parents.get(parent)
 	return False
@@ -273,7 +278,10 @@ def _inside_if_target(node, parents):
 
 def test_the_warehouse_is_only_changed_when_one_was_asked_for():
 	"""Outside ``if target`` the dialog's receipts would land in ``None``, or in the last
-	scanned bin, instead of the order line's warehouse."""
+	scanned bin, instead of the order line's warehouse.
+
+	Since v1.817.0 the dialog may name a place per line (``places``); that is the only other
+	branch a warehouse is written in, and a line it does not name keeps the order line's own."""
 	fn = _endpoint()
 	parents = _parents(fn)
 	writes = [

@@ -246,23 +246,70 @@ def _usable_warehouse(warehouse, company):
 	return row.name
 
 
+def _erpnext_line_warehouse(item_code, company):
+	"""The warehouse ERPNext itself puts on a new line for this item in this company when neither
+	the row nor the document names one, or ``None``. ERPNext's own function is asked
+	(``get_item_details.get_item_warehouse_``), never a copy of its order, which at 16.54.0 is:
+	the item's default, its item group's, its brand's, then the Company's default warehouse. It
+	does not read Stock Settings. Never raises: on a version where that function has moved, or
+	for a user whose warehouse permissions hide the answer, this is ``None`` and
+	:func:`_fill_warehouses` goes on to what it can read itself.
+	"""
+	try:
+		from erpnext.stock.get_item_details import get_item_warehouse_
+
+		return (
+			get_item_warehouse_(
+				frappe._dict(company=company, warehouse=None, set_warehouse=None),
+				frappe._dict(name=item_code),
+				True,
+			)
+			or None
+		)
+	except Exception:
+		return None
+
+
+def _company_default_warehouse(company):
+	try:
+		return frappe.get_cached_value("Company", company, "default_warehouse") or None
+	except Exception:
+		return None
+
+
 def _fill_warehouses(item_code, lines):
 	"""``{company: warehouse}`` for the companies whose open lines lack a warehouse.
 
-	The item's own default for that company, else Stock Settings' default: the order ERPNext's
-	``get_item_warehouse`` falls back in. A company with neither is left out, and the check fails.
+	**What a new line for the item would be given** (v1.817.0): ERPNext's own answer
+	(:func:`_erpnext_line_warehouse`), then the item's own default, then the Company's default
+	warehouse, the first of them that is a real, enabled, non-group warehouse of that company. A
+	company with none is left out, and the check fails.
+
+	Until v1.817.0 this read the item's default and then Stock Settings' default warehouse, and
+	said that was ERPNext's order. It is not: ERPNext never reads Stock Settings there, and ends
+	on the Company's default. The difference began to matter with the Project Shelf patch, which
+	blanks the default warehouse of every non-stock item that named the shelf: such an item with
+	a warehouse-less open line would have been refused here, where ERPNext gives the same line
+	the Company's default without a word. Stock Settings' default is not a fallback to offer
+	anyone either: ERPNext copies it into every new item (``Item.update_defaults_from_item_group``),
+	which is how 774 items came to name one warehouse.
+
+	The fill is one warehouse a company, not one a line: a line's project is not read here. On a
+	site with a Project Shelf an Overhead line may so be given the shelf, as ERPNext would give
+	it; it is moved to the item's own bin when it is received, like every open Overhead line that
+	already names the shelf (``procurement_project.default_receipt_warehouses``).
 	"""
 	out = {}
 	for company in sorted({line["company"] for line in lines if not line["warehouse"] and line["company"]}):
-		warehouse = _usable_warehouse(_default_warehouse(item_code, company), company)
-		if not warehouse:
-			try:
-				fallback = frappe.db.get_single_value("Stock Settings", "default_warehouse")
-			except Exception:
-				fallback = None
-			warehouse = _usable_warehouse(fallback, company)
-		if warehouse:
-			out[company] = warehouse
+		for candidate in (
+			_erpnext_line_warehouse(item_code, company),
+			_default_warehouse(item_code, company),
+			_company_default_warehouse(company),
+		):
+			warehouse = _usable_warehouse(candidate, company)
+			if warehouse:
+				out[company] = warehouse
+				break
 	return out
 
 
@@ -421,6 +468,54 @@ def _default_warehouse(item_code, company):
 		return None
 
 
+def first_count_warehouse(item_code, company):
+	"""Where the item's first count opens: the warehouse the result's ``warehouse`` carries and
+	*Open a Stock Reconciliation* puts on the new form's row. ``None`` leaves the row's
+	location empty, so the person has to choose it.
+
+	**Never the Project Shelf and never a job site** (v1.817.0;
+	``project_shelf_rules.first_count_warehouse`` has the rule and why). On a site with a
+	Project Shelf it is the item's own bin (``procurement_project.item_own_bin``), else the
+	Overhead receiving warehouse, else nothing. On a site with no shelf set up it is the
+	item's default warehouse, as it was before. It is not what an open order line with no
+	warehouse is given (:func:`_fill_warehouses`): a line's right place depends on its project.
+	Never raises. On a site with a shelf a failure answers ``None`` (the person chooses: the
+	item's default there is most likely the shelf itself). Whether there is a shelf is asked
+	first and by itself, so a site with none depends on nothing else here.
+	"""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf, project_shelf_rules
+
+		has_shelf = bool(project_shelf.warehouse())
+		not_shop = project_shelf.not_shop_warehouses()
+	except Exception:
+		return _default_warehouse(item_code, company)
+	if not has_shelf:
+		return project_shelf_rules.first_count_warehouse(
+			False, default=_default_warehouse(item_code, company), not_bins=not_shop
+		)
+	try:
+		from erpnext_enhancements import procurement_project
+
+		return project_shelf_rules.first_count_warehouse(
+			True,
+			own=procurement_project.item_own_bin(item_code, company),
+			fallback=project_shelf.fallback_warehouse(),
+		)
+	except Exception:
+		return None
+
+
+def _shelf_label():
+	"""What the Project Shelf is called here, or ``None`` on a site that has none. Never raises."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		return project_shelf.label()
+	except Exception:
+		return None
+
+
 def _fill_order_warehouses(item_code, plan, full_name):
 	"""Give each open order line that has no warehouse the one the plan chose, and say so on the
 	order. A direct column write, like the flag: the line is submitted, and ERPNext offers no way
@@ -541,8 +636,12 @@ def turn_on(item_code, relax_sales_invoices=False, user=None, via=None):
 		"company": company,
 		"account": account,
 		"account_is_company_default": is_default,
-		"warehouse": _default_warehouse(item_code, company),
-		"next_steps": rules.next_steps(item_code, account, is_default),
+		# Where the first count opens (v1.817.0): never the Project Shelf or a job site. The
+		# item's old default warehouse is the shelf on most items this switch is for.
+		"warehouse": (count_at := first_count_warehouse(item_code, company)),
+		"next_steps": rules.next_steps(
+			item_code, account, is_default, count_at=count_at, not_at=_shelf_label()
+		),
 		# What the bulk page records: the invoices the relaxed rule let through.
 		"invoices_before_switch": invoices,
 		"open_orders_recounted": sum(cint(g.get("count")) for g in open_groups.values()),

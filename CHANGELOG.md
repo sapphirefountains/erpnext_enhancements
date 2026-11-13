@@ -7,6 +7,280 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.817.0] - 2026-11-13
+
+### Added
+- **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
+  counting as stock the shop has.** Nikolas, 2026-11-12: "If we are doing an item in a PO and
+  receiving it have it default warehouse to Stores, but then change Stores to Project Shelf. So
+  everything is received for Project Shelf by default but Parker can then change what location
+  the item is going to if he'd like upon receiving it. So everything but overhead items should
+  default to Project Shelf. … when it hits the project shelf it should be removed from QTY in
+  inventory. … I want to keep a historical record of each projects items and what was ordered
+  for them." Every judgement is in `inventory_enhancements/project_shelf_rules.py` (no Frappe);
+  `project_shelf.py` reads the database. The whole design is in
+  `inventory_enhancements/README.md`, *The Project Shelf*.
+  - **The location.** `patches/rename_stores_to_project_shelf` renames the warehouse `Stores` to
+    `Project Shelf` with Frappe's own `rename_doc`, so every Link follows it: Item Defaults,
+    Putaway Rules, on-hand and Stock Ledger rows, purchase order, receipt and material request
+    lines, and the Company's default warehouse. The shelf is named by one new setting,
+    `Inventory Scanner Settings.project_shelf_warehouse`, never by its name; blank switches the
+    feature off. A second new setting, `overhead_receiving_warehouse`, is where an Overhead
+    purchase lands when its item has no bin yet (the patch fills it with `Inventory Room`).
+  - **Two things about that rename that are not obvious.** ERPNext 16.54.0's Warehouse is not
+    renameable from the Desk (`allow_rename` is not set), so the patch passes `force`; and the
+    same version has **no rename hook on Warehouse** and no autoname field, so `rename_doc`
+    changes the docname and leaves `warehouse_name` saying "Stores". The patch sets it. Both
+    were read from the v16.54.0 tag, not from the `develop` checkout.
+  - **Where it sits.** It stays where `Stores` was, directly under the company's root group,
+    beside `Inventory - SF` and `Job Sites - SF`. Not under `Job Sites` (that group refuses bins
+    and everything in it reads as a job site) and not under `Inventory` (ERPNext's own reports and
+    23 of production's reorder rules read that group as the shop's stock, and no code of ours
+    runs inside them).
+  - **Receiving defaults.** A purchase order line for a project that is not an Overhead project
+    defaults to the shelf. A line for an Overhead project defaults to the item's own bin (the bin
+    it is assigned to, else its Item Default, else the warehouse a reorder rule asks for; never
+    the shelf, a job site or the Boneyard), and to the Overhead receiving warehouse when the item
+    has no bin yet. It is applied on the Purchase Order form as a line is filled in (once per line
+    and per item-and-project pair, never to a line that was already there or that came from a
+    Material Request), on a save with no form (`procurement_project.default_line_warehouses`,
+    blank warehouses only, and in `cascade_project_to_items` for a line whose project it fills),
+    in the order's Receive Items dialog (a new *Put in* column per line, editable), and in the
+    document-intake receipt drafts. A scan at a bin in Stock Scan still means "put it here" and
+    still wins; each open order line there now says which job it is for.
+  - **An Overhead line never sits on the shelf, and the server holds that, not the form.** After
+    the rename the Company's default warehouse and the stock items' Item Defaults name the shelf,
+    so ERPNext itself fills the shelf into every new line, Overhead ones included. The form's
+    script corrects that when it runs in time; a duplicated order, one mapped from a Supplier
+    Quotation or a Material Request, and a REST save that sends a warehouse never run it. Shop
+    supplies received
+    onto the shelf would leave the shop's stock under a project that is not a job, and a take
+    there would then demand one. So an Overhead line that names the shelf is moved to the item's
+    own bin on every save of a draft order (`default_line_warehouses`), on a row added to a
+    submitted order with Update Items (`default_new_order_line`, which also gives that row the
+    header's project: ERPNext sets none and the field is mandatory here; it shares Purchase Order
+    Item's `before_insert` with v1.816.3's `fill_new_line_project`, one entry and a list, the
+    project rule first and this second, so a row whose project comes from the order's lines is
+    placed by that project), and on a receipt saved
+    for the first time, which is the Desk's Create > Purchase Receipt
+    (`default_receipt_warehouses`; never a return, and never when a person has just said where
+    the lines go). Any other warehouse a person picked is left alone.
+  - **A job's part added with Update Items goes to the shelf too, not into the item's own bin.**
+    Found on the production mirror on 2026-11-13, before the merge: Update Items on a submitted
+    order for a job, adding a stock item that has a bin of its own, ordered the part into that
+    bin, which is shop stock. That row never arrives blank. The dialog pre-fills its warehouse
+    column when the item is picked, and for a row sent without one ERPNext fills the same value
+    itself (`accounts_controller.get_new_child_item_warehouse`, read at erpnext v16.54.0):
+    the order's own target warehouse, else the item's Item Default, its item group's default,
+    its brand's default, else the Company's default warehouse. `default_new_order_line` left
+    any location that was already there alone, unless it was an Overhead line on the shelf. A
+    non-stock item, and a stock item with no default, arrived with the Company's default (the
+    shelf) and were right; 297 enabled stock items on production have a default that is not.
+    - **Now a job's row at a location nobody chose is placed by the rule, which is the shelf**
+      (`project_shelf_rules.added_row_may_default`). "Nobody chose" is exactly what ERPNext
+      fills for the item by itself, and ERPNext's own function is asked for it
+      (`get_item_warehouse_`, without the order's header), so all four of its defaults are
+      covered in its own order and with the user's Warehouse permissions, and none of that
+      order is copied here. Only on a version where that function cannot be called are the
+      Item Default and the Company's default read instead; a group's or a brand's default is
+      not covered on that fallback.
+    - **What stays:** a location typed in the dialog (anything that is not ERPNext's own
+      fill), and the order's own target warehouse (Set Target Warehouse), which is a person's
+      choice for the whole order even when it is also the item's default.
+    - **Known limit.** A person who deliberately picks the item's own default bin for a job's
+      line in that dialog cannot be told apart from ERPNext's default: the same value arrives
+      either way. That row goes to the shelf. The location can still be changed when the line
+      is received.
+    - **An Overhead row is not touched by this.** Off the shelf it keeps the location it
+      arrives with, exactly as before. The project rule of v1.816.3 still runs first, and a
+      draft order's lines are placed as they were.
+  - **Receiving, with the price rule of v1.809.0.** `receive_items` checks the places the dialog
+    sent, then runs the price step, then builds the receipt. A line the price step holds back is
+    not received, and it is given no place either: its place is dropped with it, so nothing of
+    an unpriced line reaches the shelf, and a place sent only for such a line does not switch the
+    receipt's own rule off. The Receive Items dialog asks both questions when it opens (which
+    lines need a price, then where each line goes), opens if either fails, and shows the price
+    columns and *Put in* together. A scan at a bin in Stock Scan still decides the place, at the
+    shelf too, and still meets the price question first.
+  - **On the form, a warehouse picked by hand stays when the line's project changes.** The server
+    tells the form which is which (`keep`): when a line gets its item, ERPNext has just filled the
+    warehouse, so only ERPNext's own values are replaced; when only the project changes, only the
+    rule's own earlier value is. The warehouse field's change event cannot be used for this:
+    ERPNext fires it itself after its item lookup (`transaction.js` at v16.54.0).
+  - **The order lines that were already open** all named `Stores`, so after the rename all of them
+    name the shelf, Overhead ones included (10 submitted lines on production on 2026-11-12). They
+    are not rewritten. The Receive Items dialog, a new receipt and the intake drafts send an
+    Overhead line that names the shelf to the item's own bin instead, and the dialog says so.
+  - **Shelf stock is not shop stock.** `project_shelf.not_shop_warehouses()` is every job site
+    plus the shelf, the one set every total reads. Stock Scan's search total leaves the shelf out
+    and shows it beside the total ("N for jobs"); the item card names it on its own line with its
+    jobs, never under "Also at"; and the Reorder Board leaves shelf stock and orders on their way
+    to it out of a rule's projected quantity at every group above the shelf. The 29 reorder rules
+    that roll up at `All Warehouses - SF` are not rewritten: it is the board's reading that leaves
+    the shelf out, as it already leaves job sites out. The shelf shows as its own place, not as a
+    job site, and stays a location that can be received to, counted and moved from.
+  - **Every unit on the shelf belongs to a job, and the Stock Ledger says which.** A receipt
+    carries its order line's project (ERPNext does that; checked at v16.54.0 and on production,
+    where 26 of the 28 ledger rows at `Stores` carry one). A take at the shelf must name a job
+    whatever *Require a Job for Every Take* says. Stock added there without an order must name
+    one, and **offsets to the Added Without PO account, not to the job's Parts Taken account**:
+    away from the shelf a job on an add means the parts came back from it, but at the shelf it is
+    the job they are set aside for, and crediting it would cancel the charge its later take makes,
+    so the job would carry no cost for parts it used. A move from the shelf to a job site carries
+    that site's job; a move from the shelf to a bin or the Boneyard carries the job it was bought
+    for (the one named, or the only job that holds the item when the tags account for every unit
+    of it; refused otherwise); a move from a bin onto the shelf carries the job it is set aside
+    for. A store run is refused at the shelf, because its
+    receipt carries no project on purpose. `move_here`, `bin_assignments.move_to` and
+    `send_to_boneyard` take an optional `project` for this.
+  - **`project_shelf.shelf_stock(project=None, item_code=None)`** answers both "what is on the
+    shelf for project X" and "which projects have stock on the shelf", from the ledger. The new
+    reports and the Procurement Tracker call it, and a test pins its signature and return keys.
+    **Its numbers are derived from tags, and it says where they fall short:** a movement with no
+    project (a count, a Desk transfer) is listed in `untagged_movements`, the gap between what is
+    on hand and what the tags add up to is in `untagged` per item, and `exact` is true only when
+    none of that is there.
+  - **A job's figure is never more than is physically on the shelf.** `rows[].qty` is the job's
+    tag balance capped by what is on hand, so it is never negative and an item's rows never add
+    up to more than its on-hand. The uncapped balance is `rows[].tagged` (a negative one is
+    kept), and what the cap took off is `over_tagged`. When tags claim more than is there, what
+    remains goes to the jobs that received most recently first. And "the only job that holds it"
+    is assumed only where an item's tags are exact; otherwise the move asks.
+  - **The 13 units production starts with.** Two items, 6 and 7 units, were received into `Stores`
+    for a Design job in September, put away to two shelf bins on 2026-09-23 by a Desk transfer
+    with no project, and have since been used up: neither has stock anywhere. The ledger at the
+    shelf still tags 13 to that job. The function reports them as `tagged` 13, `qty` 0,
+    `over_tagged` 13, and that job is never offered as holding anything.
+  - **The shelf is never an item's bin.** The 774 Item Defaults and 54 enabled Putaway Rules that
+    named `Stores` name the shelf after the rename. The rules, and the defaults of items that
+    maintain stock, are not deleted and not rewritten (the defaults of items that do not are
+    blanked, next point). The shelf's list (`api.stock_scan._items_at`) shows what is there or
+    on its way and nothing else, `procurement_project.item_own_bin` skips the shelf, and *Put on
+    this bin* and *Make … this item's bin* are refused there. A leftover rule or default goes away
+    when its stock is moved
+    off the shelf with *Make … this item's bin* ticked. A new item's bin is never the shelf or a
+    job site (`_quick_item`).
+  - **Items that do not maintain stock lose the shelf as their default warehouse.** Nikolas,
+    2026-11-12: "Blank the 705". ERPNext gave every new item an Item Default naming `Stores`,
+    so after the rename about 700 items that are bought and never stocked would say their
+    default warehouse is the Project Shelf. The patch's sixth step blanks `default_warehouse`
+    on every Item Default row that names the shelf **where the item has Maintain Stock off**,
+    a disabled item included, and on nothing else. Why this and not all 774: the code already
+    skips the shelf wherever it reads an item's bin, but the review found one reader that did
+    not (the first count, next point), and a default that is simply gone cannot be misread by
+    the next one. Why not the stock items: 26 of the 68 have a real bin and 42 have none, and
+    some are physically on the shelf, so which of them belongs where is a person's call.
+    - **The rule is read when the step runs**, never from a list or a count. The bulk Maintain
+      Stock switch (v1.809.0) may be applied before or after this deploys: an item switched
+      before is a stock item by then and keeps its row. No number is expected and none is a
+      warning; the step prints how many rows it blanked, how many of those are on disabled
+      items, and how many rows on stock items it left. It never names an item.
+    - **Only the one field.** The row and its other defaults (supplier, price list, accounts)
+      stay, so ERPNext adds no new default row at the item's next save
+      (`Item.update_defaults_from_item_group` adds one only where there is none). NULL is
+      written, not an empty text. The item's `modified` does not move and its cached copy is
+      dropped. It is the same write the Bin Manager's *Remove from this bin* has made since
+      v1.692.0.
+    - **A blank is legal and nothing here expects a value.** At ERPNext 16.54.0
+      `Item Default.default_warehouse` is not required, `validate_item_default_company_links`
+      checks a warehouse only when one is there, and `get_item_warehouse_` goes on down its
+      order: the document's own warehouse, the item's default (now blank), its item group's, its
+      brand's, the row's own, and last the Company's default, which is the shelf. None of these
+      items is in a group or a brand that has a default (production has three group defaults
+      and no brand default), so ERPNext's own forms offer the same warehouse for them after the
+      step as before it. An item whose group or brand is given a default later gets that
+      instead, ahead of the Company's. In this app every reader
+      asks either for a set value or for an exact warehouse (`item_own_bin`, Stock Scan's
+      location list, bin assignments, Location Contents, the other reports, Maintain Stock);
+      the Reorder Board reads the default supplier from that table and never the warehouse. A
+      purchase line for one of these items defaults exactly as it did, because the shelf was
+      already skipped as an item's bin. `TestAnItemWithNoDefaultWarehouse` pins each.
+    - **The Maintain Stock switch gives a warehouse-less open line what ERPNext would
+      (fixed here, found by review).** When an item is switched and has an open order or
+      request line with no warehouse, the switch (v1.809.0, single and bulk) writes one onto
+      the line. It took the item's default, else Stock Settings' default, and its docstring
+      called that ERPNext's order. It is not: ERPNext never reads Stock Settings for a line and
+      ends on the Company's default. With the item's default blanked by the step above and
+      Stock Settings' default unset, such an item would have answered "can't switch yet", where
+      ERPNext gives a new line for it the shelf without a word. `maintain_stock._fill_warehouses`
+      now asks ERPNext's own `get_item_details.get_item_warehouse_` (never a copy of its
+      order), then reads the item's default and the Company's default itself, for a version
+      where that function has moved or a user whose warehouse permissions hide its answer, and
+      takes the first that is a real, enabled, non-group warehouse of the company. The fill is
+      one warehouse a company and does not read a line's project: an Overhead line may be given
+      the shelf, as ERPNext would give it, and is moved to the item's own bin when it is
+      received, like every open Overhead line that already names the shelf. **The refusal no
+      longer says to set a default in Stock Settings:** ERPNext copies that one into every new
+      item, which is how 774 items came to name one warehouse. It now says to set the item's
+      own Default Warehouse to the bin it is kept in. Production has no open line without a
+      warehouse today, so nothing there changes; the bulk switch of several hundred items is
+      what would have met it.
+    - **Undoing it, and running it again.** On the day it was decided no non-stock item had a
+      blank default warehouse, so right after the deploy "blank, on an item that does not
+      maintain stock" is the list of what the step changed. That wears out: the Bin Manager's
+      *Remove from this bin* and new items add rows that match. And a run by hand weeks later
+      is not a no-op: it applies the rule again, so a non-stock item somebody has since
+      pointed at the shelf on purpose is blanked again.
+  - **An item's first count never opens on the shelf.** Maintain Stock's switch (v1.809.0) ends
+    on *Open a Stock Reconciliation*, with the item and a warehouse already on the row. The
+    warehouse was the item's Item Default (`maintain_stock._default_warehouse`), and the switch
+    is for items that were bought and never stocked, which are the items whose only default is
+    the one ERPNext handed out by itself: over 700 of the 774 defaults that name the shelf are on
+    non-stock items. Left alone, the first count of a shop consumable would have opened on the
+    shelf, and saving it would have put the stock where the shop reads zero of it, tagged to no
+    job, at a place where a take asks which job it is for. `maintain_stock.first_count_warehouse`
+    now answers the item's own bin (`procurement_project.item_own_bin`), else the Overhead
+    receiving warehouse, else nothing, and with nothing the row's location is empty and the
+    person has to choose it: ERPNext 16.54.0's Stock Reconciliation fills a row's warehouse
+    only from the form's own *Default Warehouse*, never from the item. The message after the
+    switch says where the form opens and that the shelf is only for parts bought for a job. On
+    a site with no Project Shelf set up the suggestion is the item's default as before, except
+    that it is never a job site, and the message is word for word what it was. The bulk page
+    (*Switch Items to Maintain Stock*) opens no count and suggests no place, so nothing changed
+    there. Left as it was on purpose: the switch still gives an open order line that has no
+    warehouse the item's default (`_fill_warehouses`), because a line's right place depends on
+    its project, and production has no such line.
+  - **The stock KPIs say which stock they mean.** *Stocked Items Below Reorder*, *Stocked Items
+    Out of Stock* and *Out-of-Stock Sellable Items* now mean **shop stock** and leave out job
+    sites and the shelf (they summed every bin, so parts on a job site already counted as on
+    hand). *Inventory Stock Value* and *Stock at Placeholder Cost* mean **all stock**, unchanged.
+  - **A QR label printed for `Stores` still opens the shelf.**
+  - **People's saved list filters follow the rename.** Frappe 16.56.0's `rename_doc` means to
+    rewrite a saved filter that names the renamed record, but it searches `__UserSettings` with
+    `LIKE '<old name>'` and no wildcards, which matches nothing. A list somebody last filtered to
+    `Stores - SF` would open on a warehouse that no longer exists and show no rows. The patch
+    replaces the quoted old name with the new one in those rows and drops their cached copies.
+    Its report gives the number of rows and of people, never who they are: the migrate output
+    lands in the build log, and a user id is a sign-in address.
+  - **The patch cannot raise and says what it did.** Six steps (the rename, the search index,
+    the saved filters, the two settings, the non-stock items' defaults), each in its own
+    savepoint, each answering done, already, skipped or failed, followed by counts of what now
+    points at the shelf. A clean run writes no
+    Error Log row; a run with a skipped or failed step writes one, "Project Shelf patch
+    (rename_stores_to_project_shelf): finish these steps by hand". **A site that never had the
+    warehouse is not a failure:** with no shop group `Inventory - SF`, or no `Stores` and no
+    `Project Shelf`, every step answers "not needed here" and no Error Log row is written. It
+    merges nothing where both names exist, moves no stock, disables no Putaway Rule, changes
+    no stock item's default, and never writes over a stored setting. On a never-saved Single it
+    writes every declared default before the field, so the others keep reading as they did.
+  - **With the releases that merged first.** The Procurement Tracker (v1.811.0), the Bin
+    Manager's views (v1.812.0) and the inventory reports (v1.805.0) each read the shelf through
+    this module, behind an import that was guarded until it existed. It exists from this release,
+    so the Bin Manager now asks which job a move onto or off the shelf is for
+    (`bin_views.shelf_job_moves`), and all three show a job's capped figure. Their suites stood
+    in for "the module is not installed" by removing a stand-in from `sys.modules`; with the real
+    file on disk that import succeeds, so `tests/test_project_stock.py` and
+    `tests/test_bin_views.py` now block the import instead. No assertion in either changed.
+    `tests/test_project_shelf.py` runs each of the three against the real module.
+  - **Not built:** moving a part on the shelf from one job to another without it leaving the
+    shelf; and non-stock items, which never reach stock.
+
+### Changed
+- `tests/test_job_sites`, `tests/test_bin_assignments`, `tests/test_stock_scan_surface` and
+  `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
+  shared set, and the one more branch `receive_items` writes a warehouse in.
+  `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
+
 ## [1.816.4] - 2026-11-13
 
 ### Fixed

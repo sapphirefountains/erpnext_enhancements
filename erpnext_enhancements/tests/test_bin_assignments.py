@@ -1605,8 +1605,10 @@ def _calls(fn):
 ENDPOINTS = {
 	"assign": ["item_code", "warehouse", "client_ref"],
 	"unassign": ["item_code", "warehouse", "client_ref"],
-	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home"],
-	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref"],
+	# ``project`` (v1.817.0): the job a move onto or off the Project Shelf carries
+	# (tests/test_project_shelf.py has its behaviour).
+	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home", "project"],
+	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref", "project"],
 	"set_count": ["item_code", "warehouse", "qty", "client_ref", "rate"],
 	# v1.693.0, the Bin Manager page's New item (tests/test_bin_manager.py has its behaviour).
 	"create_and_assign": ["warehouse", "client_ref", "item_code", "item_name", "item_group", "stock_uom"],

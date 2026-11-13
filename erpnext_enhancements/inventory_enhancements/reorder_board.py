@@ -45,7 +45,7 @@ from frappe import _
 from frappe.utils import add_days, cint, get_url, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.inventory_enhancements import job_site_rules as site_rules
-from erpnext_enhancements.inventory_enhancements import job_sites
+from erpnext_enhancements.inventory_enhancements import project_shelf
 from erpnext_enhancements.inventory_enhancements import reorder_rules as rules
 from erpnext_enhancements.inventory_enhancements.doctype.reorder_watch.reorder_watch import watch_name
 
@@ -245,7 +245,9 @@ def read_tracking(rule_rows, ancestors, today, sites=()):
 	Only lines some rule counts are kept: the rule's warehouse, or any warehouse under its
 	``warehouse_group`` (:func:`reorder_rules.in_scope`). A line headed for a job site
 	(``sites``, v1.801.0) is never one of them: an order delivered to a site restocks that job,
-	not the shelf the rule watches.
+	not the shelf the rule watches. Since v1.817.0 ``sites`` holds the Project Shelf as well: an
+	order on its way there was bought for a job. An order made from one of the board's own
+	requests is still tracked wherever it lands (it is matched by its request, below).
 	"""
 	by_item = {}
 	for r in rule_rows:
@@ -357,7 +359,11 @@ def build_board(include_rates=False, now=None):
 	# roll up at the company's root group, which a site sits under, so without this material
 	# sent to a job would keep its item off the board while the shelf stood empty. The rules
 	# themselves are left as they are: it is the board's reading that leaves sites out.
-	sites = job_sites.site_warehouses()
+	#
+	# The Project Shelf is left out the same way (v1.817.0): parts on it, and orders on their way
+	# to it, were bought for a job. ``not_shop_warehouses`` is every job site plus the shelf, the
+	# one set Stock Scan's totals read too.
+	sites = project_shelf.not_shop_warehouses()
 	projected_map = site_rules.without_sites(projected_map, sites, ancestors)
 	tracked = read_tracking(rule_rows, ancestors, today, sites)
 	watches = read_watches()

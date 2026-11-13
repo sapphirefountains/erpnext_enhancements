@@ -23,6 +23,29 @@
  *
  * erpnext_enhancements.procurement_project repeats the fill server-side for the
  * REST API / data-import paths that never load a form script.
+ *
+ * Where a line is received (v1.817.0, Nik 2026-11-12). The same project decides the line's
+ * Warehouse: a line for a job defaults to the Project Shelf, a line for an Overhead project
+ * to the item's own bin (the rule is the server's, `procurement_project.line_warehouses`).
+ * It is a default, not a lock:
+ *
+ *   - it is asked for when a line first has both its item and its project, and again when
+ *     either changes;
+ *   - **a warehouse a person picked by hand stays.** The server says which that is (`keep`):
+ *     when a line gets its item, ERPNext has just filled the warehouse itself, so only one
+ *     of ERPNext's own values (the shelf, the item's default, the Company's default) is
+ *     replaced; when only the project changes, only the rule's own earlier value is
+ *     replaced. This file sends what the rule last set on the line (`applied`) and the item
+ *     and project the line had before, and does not decide anything itself;
+ *   - a line that came from a Material Request keeps the request's warehouse.
+ *
+ * ERPNext fills the Warehouse from the Item Default when an item is picked, in the same
+ * event. Its handler runs after this file's (form-script handlers run before the
+ * controller's), so the rule waits for that request to come back before it writes.
+ *
+ * Nothing here is needed for the result to be right. The one thing that must hold, an
+ * Overhead line never saved on the Project Shelf, is enforced by the server on every save
+ * (`procurement_project.default_line_warehouses`). This file only shows it sooner.
  */
 frappe.provide("erpnext_enhancements.procurement");
 
@@ -40,14 +63,108 @@ erpnext_enhancements.procurement.fill_blank_line_projects = function (frm) {
 	if (changed) frm.refresh_field("items");
 };
 
+const LINE_WAREHOUSES = "erpnext_enhancements.procurement_project.line_warehouses";
+
+/** What a line's default location depends on; null until the line has both. */
+function line_key(row) {
+	return row && row.item_code && row.project ? { item_code: row.item_code, project: row.project } : null;
+}
+
+function same_key(a, b) {
+	return !!a && !!b && a.item_code === b.item_code && a.project === b.project;
+}
+
+/**
+ * Take every line on the form as it stands: its item and project are the ones its location
+ * was decided for. Called when a document opens and after each save (a save renames new
+ * rows, so their memory has to be taken again). What the rule set before is forgotten with
+ * it; for such a line the server works out the rule's earlier value from the line's
+ * previous project.
+ */
+function remember_line_warehouses(frm) {
+	const keys = {};
+	(frm.doc.items || []).forEach((row) => {
+		const key = line_key(row);
+		if (key) keys[row.name] = key;
+	});
+	frm._ee_line_keys = keys;
+	frm._ee_line_applied = {};
+	frm._ee_line_doc = frm.doc.name;
+}
+
+/**
+ * Ask the server for the default location of each line whose item or project has just
+ * changed, and set it unless the server says the line's location is a person's pick.
+ * Returns a promise that never rejects: a failed lookup leaves the line as it is, and the
+ * server still moves an Overhead line off the Project Shelf on save.
+ */
+erpnext_enhancements.procurement.apply_line_warehouses = function (frm) {
+	if (frm.doc.docstatus !== 0) return Promise.resolve();
+	if (frm._ee_line_doc !== frm.doc.name || !frm._ee_line_keys) remember_line_warehouses(frm);
+	const keys = frm._ee_line_keys;
+	const applied = frm._ee_line_applied;
+	const todo = (frm.doc.items || []).filter((row) => {
+		const key = line_key(row);
+		return key && !same_key(keys[row.name], key) && !row.material_request_item;
+	});
+	if (!todo.length) return Promise.resolve();
+	return frappe
+		.call({
+			method: LINE_WAREHOUSES,
+			args: {
+				rows: todo.map((row) => {
+					const was = keys[row.name] || {};
+					return {
+						key: row.name,
+						item_code: row.item_code,
+						project: row.project,
+						warehouse: row.warehouse || "",
+						was_item_code: was.item_code || "",
+						was_project: was.project || "",
+						applied: applied[row.name] || "",
+					};
+				}),
+				company: frm.doc.company,
+			},
+		})
+		.then((r) => {
+			const answers = (r && r.message) || {};
+			todo.forEach((row) => {
+				const live = (locals[row.doctype] || {})[row.name];
+				const answer = answers[row.name];
+				// The line was removed or changed while the request was out: its next event asks again.
+				if (!live || !answer || answer.item_code !== live.item_code || answer.project !== live.project) return;
+				keys[live.name] = line_key(live);
+				// A place a person picked stays (the server's call), and so does a line the rule has no place for.
+				if (answer.keep || !answer.warehouse) return;
+				applied[live.name] = answer.warehouse;
+				if (live.warehouse !== answer.warehouse) {
+					frappe.model.set_value(live.doctype, live.name, "warehouse", answer.warehouse);
+				}
+			});
+		})
+		.catch(() => {});
+};
+
+/** Apply the rule once the requests an event started (ERPNext's item details) have come back. */
+function apply_line_warehouses_later(frm) {
+	clearTimeout(frm._ee_line_timer);
+	frm._ee_line_timer = setTimeout(() => {
+		frappe.after_ajax(() => erpnext_enhancements.procurement.apply_line_warehouses(frm));
+	}, 300);
+}
+
 frappe.ui.form.on("Purchase Order", {
 	refresh: function (frm) {
 		show_overhead_hint(frm);
+		// A document that has just opened, or just been saved: every line it has is decided.
+		if (frm._ee_line_doc !== frm.doc.name || !frm.is_dirty()) remember_line_warehouses(frm);
 	},
 
 	project: function (frm) {
 		erpnext_enhancements.procurement.fill_blank_line_projects(frm);
 		show_overhead_hint(frm);
+		apply_line_warehouses_later(frm);
 	},
 
 	// Parent-level event: fires when a row is added to the `items` grid.
@@ -58,6 +175,22 @@ frappe.ui.form.on("Purchase Order", {
 
 	validate: function (frm) {
 		erpnext_enhancements.procurement.fill_blank_line_projects(frm);
+		// The last sweep, awaited by the save: a line an event missed still gets its default.
+		return erpnext_enhancements.procurement.apply_line_warehouses(frm);
+	},
+
+	after_save: function (frm) {
+		remember_line_warehouses(frm);
+	},
+});
+
+frappe.ui.form.on("Purchase Order Item", {
+	item_code: function (frm) {
+		apply_line_warehouses_later(frm);
+	},
+
+	project: function (frm) {
+		apply_line_warehouses_later(frm);
 	},
 });
 

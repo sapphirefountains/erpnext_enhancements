@@ -4151,6 +4151,18 @@ jobs:
       # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
       - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
+      # The Project Shelf (v1.817.0, the owner's 2026-11-12 decision: everything ordered for a project is received
+      # onto one shared shelf, and stock there is not shop stock). If this fails, a purchase line for a job could
+      # default somewhere other than the shelf (or an Overhead line onto it), parts bought for a job could read as
+      # stock the shop has (the search total, "Also at", a reorder rule that rolls up at the company's root), a
+      # take or a move could leave the shelf with no job on its ledger row so the by-job numbers drift unseen,
+      # the function the reports and the Procurement Tracker call could change shape or hide what its tags do not
+      # explain, an item could be given the shelf as its bin, or the rename patch could merge two warehouses,
+      # write over a Stock Manager's setting, abort the deploy, or skip a step without the one Error Log row that
+      # says so. project_shelf_rules.py runs directly; project_shelf.py, api/stock_scan.py, bin_assignments.py and
+      # procurement_project.py run on test_job_sites' frappe stub (reused, so its own step). unittest classes.
+      - name: The Project Shelf (received for a job, out of shop availability, by job) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
       # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
       # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
       # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push
