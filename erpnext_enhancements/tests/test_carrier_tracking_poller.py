@@ -108,7 +108,9 @@ def _make_frappe():
 
 	def get_value(doctype, name, fields, as_dict=False):
 		source = frappe.orders if doctype == "Purchase Order" else frappe.packages
-		row = source.get(name) or {}
+		row = source.get(name)
+		if row is None:
+			return None  # what frappe.db.get_value returns for a missing row
 		if as_dict:
 			return types.SimpleNamespace(**{f: row.get(f) for f in fields})
 		return tuple(row.get(f) for f in fields)
@@ -414,6 +416,14 @@ class TestEndpointPermissions(unittest.TestCase):
 		self.allow(("Purchase Order", "read"))
 		api.remove_tracking_number("tp-9")
 		self.assertEqual(FRAPPE.deleted, ["tp-9"])
+
+	def test_remove_a_number_already_gone_is_a_sentence_not_a_crash(self):
+		self.allow(("Tracked Package", "delete"), ("Purchase Order", "read"))
+		with self.assertRaises(DoesNotExist):
+			api.remove_tracking_number("tp-gone")
+		with self.assertRaises(DoesNotExist):
+			api.remove_tracking_number("")
+		self.assertEqual(FRAPPE.deleted, [])
 
 	def test_get_packages_is_empty_for_someone_without_tracking(self):
 		self.allow(("Purchase Order", "read"))

@@ -124,14 +124,18 @@ def add_tracking_number(purchase_order, tracking_number, carrier="Auto", link_ur
 def remove_tracking_number(name):
 	"""Delete one tracking number. The caller needs delete on Tracked Package and read on its order."""
 	_require("delete")
-	if not name or not frappe.db.exists(DOCTYPE, name):
-		frappe.throw(_("That tracking number is no longer there."), frappe.DoesNotExistError)
-	reference_doctype, purchase_order = frappe.db.get_value(
-		DOCTYPE, name, ["reference_doctype", "reference_name"]
+	# as_dict and a guard: get_value returns None for a row deleted a moment ago (two people removing
+	# the same number), and a tuple-unpack of None would be a TypeError instead of a sentence.
+	row = (
+		frappe.db.get_value(DOCTYPE, name, ["reference_doctype", "reference_name"], as_dict=True)
+		if name
+		else None
 	)
-	if reference_doctype != "Purchase Order":
+	if not row:
+		frappe.throw(_("That tracking number is no longer there."), frappe.DoesNotExistError)
+	if row.reference_doctype != "Purchase Order":
 		frappe.throw(_("That tracking number does not belong to a Purchase Order."), frappe.PermissionError)
-	order = _order(purchase_order)
+	order = _order(row.reference_name)
 	frappe.delete_doc(DOCTYPE, name)
 	return _payload(order.name)
 
