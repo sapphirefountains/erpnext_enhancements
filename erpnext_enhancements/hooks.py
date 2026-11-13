@@ -1156,6 +1156,18 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
+	# v1.816.3 (ER-2026-1333210): a row added to a SUBMITTED order with Update Items.
+	# ERPNext inserts that row ON ITS OWN (accounts_controller.update_child_qty_rate calls
+	# child_item.insert() before parent.save()), so the order's before_validate hooks above never
+	# see it, and it arrives with no project -- mandatory here -- which refused the row with
+	# "Value missing for: Project" in a dialog that has no Project column. before_insert on the
+	# child is the earliest hook that fires for that insert and runs ahead of the mandatory check
+	# (frappe Document.insert: before_insert, then _validate). The row takes the order's header
+	# project, else the one project its lines share; several projects and no header is refused in
+	# words rather than guessed. Never overwrites a project that is set.
+	"Purchase Order Item": {
+		"before_insert": "erpnext_enhancements.procurement_line_project.fill_new_line_project",
+	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is
 	# approval, not the act of placing it with a supplier -- but full receipt is a fact
