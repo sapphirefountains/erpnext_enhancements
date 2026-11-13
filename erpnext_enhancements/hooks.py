@@ -790,7 +790,15 @@ doc_events = {
 			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
 			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
 		],
-		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
+		"after_insert": [
+			"erpnext_enhancements.process_steps.announce_seeded_steps",
+			# Project ID (v1.816.4): the Project's name in custom_project_id, for a Project created
+			# with flags.ignore_validate (the Opportunity hand-off job), where the validate entry
+			# below never runs. Never raises. See project_enhancements/project_id.py.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_on_insert",
+		],
+		# Project ID (v1.816.4): a renamed Project's custom_project_id follows at once.
+		"after_rename": "erpnext_enhancements.project_enhancements.project_id.follow_rename",
 		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines
 		# exist, the project total from them. It does nothing and costs nothing on a project with
 		# no budget lines, which is every project on prod today. Appended into THIS dict rather
@@ -807,6 +815,9 @@ doc_events = {
 			# once, never block. ERPNext's expected_*/actual_* pairs are validated by core.
 			# See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+			# Project ID (v1.816.4): every save carries the Project's own name in custom_project_id,
+			# which the report "Active Projects w/ TL and PM" shows. Never raises.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_project_id",
 		],
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",

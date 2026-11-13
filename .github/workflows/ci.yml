@@ -430,6 +430,12 @@ jobs:
       # node against a stubbed Desk that dirties like frappe.model.set_value.
       - name: Project ID mirror does not dirty the form (executed under node)
         run: python -m unittest erpnext_enhancements.tests.test_project_id_mirror -v
+      # Project ID kept true on the server (v1.816.4): the backfill patch (selects by the byte-exact rule so a case or
+      # trailing-space difference is corrected, never touches modified, logs counts not names, safe twice, cannot raise) and the
+      # validate / after_insert / after_rename hooks, plus their wiring in hooks.py and patches.txt. Own step: it installs
+      # its own frappe stub.
+      - name: Project ID backfill patch and hooks (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_backfill -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a
