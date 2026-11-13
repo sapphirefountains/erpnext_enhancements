@@ -25,7 +25,55 @@ one of those modules importing the other. Wiring them up is not part of this rel
 | `normalize.py` | One FedEx `trackResults[]` entry or one UPS `package[]` entry into our shape: status, the carrier's words, estimated delivery, delivered at, last location. Times stay in the carrier's local time. The status tables cite the carriers' code lists |
 | `client.py` | The HTTP half, `requests` only: the OAuth client-credentials token (cached in Redis for five minutes less than its life, never in the database, never logged), the Track call, one token refresh and one retry on a 401, back-off on a 429, and an outcome for every failure. **Never raises.** Every URL and header cites the carrier page it was read from |
 | `config.py` | Carrier Tracking Settings read for the client (`carrier_config` is `None` unless the master switch, the carrier's switch and both credentials are there), Redis as the token cache, and `track(carrier, number)` |
+| `package_rules.py` | Adding a number: cleaning it, the carrier choice (Auto, FedEx, UPS, Other), the tracking page, and for Other or an unknown carrier the "recorded, not checked" state. `MANAGE_ROLES`, the permission rule below. No Frappe |
+| `poll_rules.py` | When a package is checked and what an answer does to it: due rows and their order, the limits (constants, each explained), the two kinds of failure, and every reason polling stops. No Frappe |
+| `tracking.py` | The hourly `poll` (bounded, silent while off, never raises), `refresh_order` (a person's Refresh, once a minute per order), and the single writer of a row's carrier fields (`db.set_value`, no `modified` bump) |
+| `doctype/tracked_package/` | **Tracked Package**: one tracking number on a Purchase Order (`reference_doctype` / `reference_name`), the carrier chosen and used, the tracking page, and what the carrier last said: status, its words, estimated delivery, delivered on, last location, last checked, last answer, last problem, and whether and why it is no longer checked |
 | `doctype/carrier_tracking_settings/` | **Carrier Tracking Settings**, a Single: the master switch, and per carrier a switch, Sandbox or Production, a client id and a client secret (Password). System Manager only. Nothing in the app writes to it |
+
+## A record of its own, not a child table of Purchase Order
+
+The request suggested a shipment child table on the order. Tracked Package is a DocType of its own
+with a Dynamic Link to the order instead, because:
+
+* **Adding a number must not edit the order.** Adding a child row to a submitted order needs the
+  field set allow-on-submit *and* the person to hold submit on Purchase Order. On this site only PO
+  Creator does; purchasing (Purchase User, Purchase Manager) and the warehouse (Stock User, Stock
+  Manager) read orders and cannot change them, and they are the people who know the tracking number.
+* **An open order form would erase it.** Frappe deletes, on save, every child row the form did not
+  load. A number added from the banner, or a status written by the poller, while someone has the
+  order open would be wiped by their next save.
+* **It can be calendared later.** Frappe's calendar, list and report views need a DocType of their
+  own; a child table has none of them.
+
+### Who may add or remove a tracking number
+
+*create* (to add) or *delete* (to remove) on Tracked Package **and** *read* on the order. The
+DocType grants create, delete and read to PO Creator, Purchase User, Purchase Manager, Stock User,
+Stock Manager and System Manager (`package_rules.MANAGE_ROLES`, held equal to the JSON by a test).
+Nobody but System Manager holds *write*, so nobody can type a status. Neither right touches the
+order: no write, no submit, no allow-on-submit field, so nobody's rights over the order itself are
+widened. External Contractor reads orders and sees no tracking.
+
+### The purchaser's date is never overwritten
+
+Purchase Order already has *Expected Delivery Date* (`custom_expected_delivery_date`), the
+purchaser's own date. The carrier's estimate lives on the Tracked Package and is shown beside it;
+nothing here writes to the order.
+
+### Polling
+
+Hourly (`tracking.poll`), and only while the feature and at least one carrier are on with
+credentials; otherwise it does nothing and logs nothing. A run checks at most 25 packages in at most
+120 seconds, each at most every 2 hours, never-checked first, then oldest-checked first, on
+submitted orders that are not Closed, Completed, Canceled, Delivered (drop-ship) or fully received.
+It stops polling a package that is delivered, Other or of unknown carrier, invalid, "not found" for
+a week without ever being found, unreadable 12 times in a row, unchanged for 21 days, or tracked
+for 90 days. A failure about the carrier (refused login, "too many requests", down) never counts
+against a package: that carrier is skipped for the rest of the run, and every package carries on
+when it clears. "Could not check" never changes a stored status. Each answer is committed on its
+own, so a deploy that flushes the queue costs one run; the next run picks up where it left off. The
+reasoning for each number is in `poll_rules.py`.
 
 ## What was checked in the carriers' documentation (2026-11-13)
 

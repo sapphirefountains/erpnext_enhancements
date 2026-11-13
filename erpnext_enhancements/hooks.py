@@ -2325,6 +2325,14 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# carrier_tracking (v1.819.0, ER-2026-1333277): ask FedEx and UPS about the packages on open purchase
+		# orders. Does nothing and logs nothing until Carrier Tracking Settings has a carrier switched on with
+		# credentials. At most 25 packages and 120 s a run, each package at most every 2 h, never-checked then
+		# oldest-checked first; delivered, Other/unknown-carrier and stale rows are not polled. A carrier that
+		# refused us or said "too many requests" is skipped for the rest of the run. Each answer is committed on
+		# its own, so a deploy's FLUSHDB costs one run and the next picks up. Never raises.
+		# See carrier_tracking/tracking.py and poll_rules.py.
+		"erpnext_enhancements.carrier_tracking.tracking.poll",
 		# inventory (v1.730.0): the Reorder Board's Reorder Watch rows -- a row for each item and
 		# warehouse that went at or below its reorder point (below_since, to the hour), snoozes that ran
 		# out cleared for the next digest, rows for what recovered deleted. ~116 rules, reads with

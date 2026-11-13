@@ -55,6 +55,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as arguments): detection, token caching and refresh on 401, every error path, normalization from
     invented payloads shaped like each carrier's documented response, and secrets echoed back by a
     carrier never reaching a result.
+- **Tracking numbers on purchase orders, and the hourly check** (TASK-2026-03205).
+  - **Tracked Package**, a new DocType: one tracking number on a Purchase Order, the carrier picked
+    (Auto, FedEx, UPS or Other) and the one used, the carrier's tracking page, and what the carrier last
+    said: status, its own words, estimated delivery, delivered on, last location, last checked, last
+    answer, last problem (masked), and whether and why it is no longer checked. **A record of its own
+    with a link to the order, not a child table of Purchase Order**, which the request suggested: adding a
+    child row to a *submitted* order needs submit permission (only PO Creator has it here), and Frappe
+    deletes on save every child row a form did not load, so a number added from the banner, or a status
+    the poller wrote, while someone had the order open would be wiped by their next save. A DocType of its
+    own can also have the calendar view the arrivals calendar will need.
+  - **Who may add or remove a tracking number on a submitted order:** *create* (add) or *delete* (remove)
+    on Tracked Package, granted to PO Creator, Purchase User, Purchase Manager, Stock User, Stock Manager
+    and System Manager, **plus read on the order**. No write or submit on the order is needed or granted,
+    so nobody's rights over the order itself are widened. Only System Manager may *write* a Tracked
+    Package, so nobody can type a status.
+  - **Carriers that are not FedEx or UPS** (a marketplace's own delivery service, for instance) are
+    recorded with Other, the number and an optional link: no error, no polling. A number whose carrier
+    cannot be told from its format is kept as "not tracked" with a note to pick the carrier.
+  - **The purchaser's Expected Delivery Date is never touched.** The carrier's estimate is its own field,
+    shown beside it.
+  - **Endpoints** (`api/package_tracking.py`): `get_packages`; `add_tracking_number`,
+    `remove_tracking_number` and `refresh_order`, POST only. Adding a number checks it with the carrier
+    straight away when that carrier is live; Refresh asks at most once a minute per order.
+  - **The hourly poller** (`carrier_tracking.tracking.poll`) does nothing and logs nothing until a carrier
+    is set up. Each run checks at most 25 packages in at most 120 seconds, each at most every two hours,
+    never-checked then oldest-checked first, on submitted orders that are not closed, completed,
+    canceled, drop-shipped or fully received. It stops polling a package that is delivered, invalid,
+    unknown for a week, unreadable twelve times running, unchanged for three weeks or tracked for 90
+    days. A refused login, a 429 or an outage is about the carrier, not the package: that carrier is
+    skipped for the rest of the run and no package is marked failed. "Could not check" never changes a
+    stored status. Each answer is committed on its own, so a deploy's queue flush costs one run, and the
+    poller never raises into the scheduler.
+  - Tests: `tests/test_carrier_tracking_poller.py` (own frappe stub): the permission rule against the
+    DocType's JSON and the endpoints, POST-only writes, the poller's selection, limits and silence while
+    off, every stop reason, and a masked log line when something unexpected breaks.
 
 ## [1.818.0] - 2026-11-13
 

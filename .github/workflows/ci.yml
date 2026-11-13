@@ -4369,6 +4369,17 @@ jobs:
       # HTTP and cache as arguments. unittest.
       - name: Carrier tracking client (FedEx and UPS tokens, errors, normalization, secrets; bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_client -v
+      # Package tracking, tracked packages on Purchase Orders and the hourly poller (v1.819.0,
+      # carrier_tracking/poll_rules.py, tracking.py, package_rules.py, api/package_tracking.py). Fails the build if
+      # adding or removing a tracking number ever needs write or submit on the order, or works without read on the
+      # order and the Tracked Package right; if anyone but System Manager can write a Tracked Package (and so type a
+      # status); if a write endpoint accepts GET; if the poller asks a carrier, writes a row or logs a line while the
+      # feature or every carrier is off; if a run can exceed 25 packages or its time budget, or keeps asking a
+      # carrier that refused us; if "could not check" changes a stored status or stops a package; if a delivered,
+      # invalid, never-found, stale or 90-day-old package keeps being polled; or if poll() can raise into the
+      # scheduler or log a token. Own frappe stub, so its own step. unittest.
+      - name: Carrier tracking poller and endpoints (permission rule, limits, silence while off; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_poller -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the
