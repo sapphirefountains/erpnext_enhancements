@@ -4358,6 +4358,38 @@ jobs:
       # canceled receipt leaves its return with no way out. Own frappe stub, so its own step.
       - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
+      # Package tracking, the carrier client (v1.819.0, carrier_tracking/client.py, normalize.py, carriers.py).
+      # Fails the build if a FedEx or UPS URL, header or login drifts from what the carriers document; if a token
+      # is fetched for every package (UPS's token endpoint is throttled far below Track, and FedEx's answers 403 for
+      # ten minutes) or cached for its whole life; if a 401 is retried more than once; if a 429, a 5xx, a timeout or
+      # a body that is not JSON raises, or comes back with a status that would overwrite what the carrier said
+      # last; if "not found" and "invalid" are confused with "could not check"; if a carrier's error that echoes
+      # the client secret, the client id or the access token reaches the result unmasked; or if the settings stop
+      # being off by default or the backfill writes over a stored switch. No frappe needed: the client takes its
+      # HTTP and cache as arguments. unittest.
+      - name: Carrier tracking client (FedEx and UPS tokens, errors, normalization, secrets; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_client -v
+      # Package tracking, tracked packages on Purchase Orders and the hourly poller (v1.819.0,
+      # carrier_tracking/poll_rules.py, tracking.py, package_rules.py, api/package_tracking.py). Fails the build if
+      # adding or removing a tracking number ever needs write or submit on the order, or works without read on the
+      # order and the Tracked Package right; if anyone but System Manager can write a Tracked Package (and so type a
+      # status); if a write endpoint accepts GET; if the poller asks a carrier, writes a row or logs a line while the
+      # feature or every carrier is off; if a run can exceed 25 packages or its time budget, or keeps asking a
+      # carrier that refused us; if "could not check" changes a stored status or stops a package; if a delivered,
+      # invalid, never-found, stale or 90-day-old package keeps being polled; or if poll() can raise into the
+      # scheduler or log a token. Own frappe stub, so its own step. unittest.
+      - name: Carrier tracking poller and endpoints (permission rule, limits, silence while off; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_poller -v
+      # Package tracking, the Purchase Order banner and the carrier health tiles (v1.819.0,
+      # public/js/po_package_tracking.js, api/integrations_health.py). Runs the real banner script under node
+      # (scripts/test_po_package_tracking.js) and fails the build if it dirties the form (the order would open as
+      # "Not Saved" and leaving it would ask "Leave site?"), writes frm.doc, changes the route (Back would stop
+      # where it should not), draws a javascript: link or an unescaped tracking number, replaces the purchaser's
+      # Expected Delivery Date with the carrier's, or shows Add, Remove or Refresh to someone the server refused;
+      # or if the FedEx or UPS health tile reads the secret as more than a boolean or shows a last problem
+      # unmasked. Own frappe stub for the tiles, so its own step. unittest.
+      - name: Carrier tracking banner and health tiles (form stays clean, links safe; bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_banner -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

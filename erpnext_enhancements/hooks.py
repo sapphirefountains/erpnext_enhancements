@@ -381,6 +381,13 @@ doctype_js = {
 		"public/js/supplier_finder_buttons.js",
 		# v1.807.0 -- Supplier Returns: Create > Return to Supplier, once something was received.
 		"public/js/supplier_return_start.js",
+		# v1.819.0 -- package tracking (ER-2026-1333277): a banner at the top of the order with each
+		# tracking number, the carrier's status and estimated arrival beside the purchaser's own date,
+		# Add tracking number and Refresh (api/package_tracking.py). Draws nothing while the master switch is
+		# off; a canceled order's packages read-only; on an order with none, only a small Add button while a
+		# package can still be on its way. A plain script, not a bundle, so it needs no level guard; it never
+		# writes frm.doc, so the form never turns "Not Saved".
+		"public/js/po_package_tracking.js",
 	],
 	# v1.807.0 -- Supplier Returns (Nik, 2026-11-12). One file under five doctypes: Create >
 	# Return to Supplier on a submitted receipt (the ticked rows, or every line that can still go
@@ -1178,6 +1185,15 @@ doc_events = {
 		],
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		# carrier_tracking (v1.819.0): a tracked package never blocks deleting an order. Frappe's
+		# delete_doc runs on_trash before its Dynamic Link check (v16.56.0 delete_doc.py:177 vs 184-185),
+		# so this removes the order's Tracked Packages first; a draft amendment hands them back to the
+		# order it amended. Returns at once without the table, never raises (logs).
+		"on_trash": "erpnext_enhancements.carrier_tracking.purchase_order_hooks.on_trash",
+		# carrier_tracking (v1.819.0): an amendment of a canceled order takes its packages with it
+		# (the same boxes), at the moment the amendment exists. A second run moves nothing; a number
+		# already on the amendment is not doubled. Never raises (logs).
+		"after_insert": "erpnext_enhancements.carrier_tracking.purchase_order_hooks.after_insert",
 	},
 	# A row added to a SUBMITTED order with Update Items. ONE entry for the doctype, two rules in
 	# a list, and the order is the point: a second "Purchase Order Item" key further down would
@@ -2325,6 +2341,17 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# carrier_tracking (v1.819.0, ER-2026-1333277): ask FedEx and UPS about the packages on open purchase
+		# orders. Does nothing and logs nothing until Carrier Tracking Settings has a carrier switched on with
+		# credentials. At most 25 packages and 120 s a run, each package at most every 2 h, never-checked then
+		# oldest-checked first; delivered, Other/unknown-carrier and stale rows are not polled. A carrier that
+		# refused us, said "too many requests", failed at its token endpoint or gave an account- or request-wide
+		# error is skipped for the rest of the run, and no package is counted for it; a refusal that may be
+		# about one number is compared with the run's other packages before it counts (tracking.Round). Each
+		# answer is committed on its own and a row whose save fails is set aside (one bad row cannot stop the
+		# run), so a deploy's FLUSHDB costs one run and the next picks up. Never raises.
+		# See carrier_tracking/tracking.py and poll_rules.py.
+		"erpnext_enhancements.carrier_tracking.tracking.poll",
 		# inventory (v1.730.0): the Reorder Board's Reorder Watch rows -- a row for each item and
 		# warehouse that went at or below its reorder point (below_since, to the hour), snoozes that ran
 		# out cleared for the next digest, rows for what recovered deleted. ~116 rules, reads with
@@ -2853,6 +2880,10 @@ after_migrate = [
 	# patches.txt; here as the backstop for a site whose Patch Log already has the entry.
 	# Idempotent, fills missing rows only, and must never raise.
 	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
+	# carrier_tracking (v1.819.0): the same fill-missing-rows backfill for Carrier Tracking Settings, the FedEx and
+	# UPS credentials Single. New in this release, so today it only materializes the off switches and the Sandbox
+	# choices; on every later migrate it gives a newly added field its default. Never raises.
+	"erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults.backfill_carrier_tracking_settings_defaults",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
 	# water_engineering: the aquatic-equipment catalog (filters, heaters, chem feed,
 	# controllers, skimmers, VGB drains, therapy jets, gauges) — Item custom spec
@@ -3460,6 +3491,10 @@ override_doctype_dashboards = {
 # owners only; Travel Coordinator / HR Manager / System Manager see all.
 permission_query_conditions = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.get_permission_query_conditions",
+	# carrier_tracking (v1.819.0): Tracked Package lists and reports show only packages on a Purchase
+	# Order the person can read, using Frappe's own match conditions for Purchase Order (User
+	# Permissions, owner rules, shares). Fails closed; System Manager unscoped.
+	"Tracked Package": "erpnext_enhancements.carrier_tracking.permissions.query_conditions",
 	# Managed Device: employees see only the device assigned to them (BYOD privacy)
 	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
 	# Sapphire Maintenance Record: portal customers see only their own submitted visits
@@ -3572,6 +3607,8 @@ permission_query_conditions = {
 }
 
 has_permission = {
+	# carrier_tracking (v1.819.0): one Tracked Package is visible only with read on its Purchase Order.
+	"Tracked Package": "erpnext_enhancements.carrier_tracking.permissions.has_permission",
 	# The single-document counterpart of the KPI Snapshot query condition above.
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.

@@ -17,7 +17,9 @@ module is the desk pages, the settings doctype, and the workspace.
 ## Integrations Health
 
 System-Manager-only. It reports QuickBooks token state, CDC status and failed syncs; Google
-Drive configuration and sync-log failures; Triton/Twilio, Gemini, GA4/GSC; scheduler
+Drive configuration and sync-log failures; Triton/Twilio, Gemini, GA4/GSC; FedEx and UPS package
+tracking (v1.819.0: configured or not, switched on or off, Sandbox or Production, the carrier's
+last answer, and the last problem, masked, all read from the Tracked Package rows); scheduler
 liveness; and a 24-hour Error Log digest.
 
 The page is drawn by the shared health board, `public/js/health_board.bundle.js` (v1.651.0),
