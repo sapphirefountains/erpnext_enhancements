@@ -1,0 +1,160 @@
+{
+  "_comment": "The Procurement Tracker's saved views (v1.816.0): the columns each grouping can show, the limits a stored view is held to, and the views that ship with the app. ONE file read by both sides: procurement_view_rules.py (the server validates every stored view against it) and scripts/test_procurement_tracker.mjs (which holds the browser's column registry, public/js/procurement_tracker/logic.js, to the same keys, so the two cannot drift). Every figure and word here is made up or generic; the repo is public.",
+  "limits": {
+    "max_views_per_user": 50,
+    "max_name_length": 60,
+    "max_layout_bytes": 8000,
+    "max_rules": 12,
+    "max_text_length": 120,
+    "max_choices": 25,
+    "max_choice_length": 140
+  },
+  "modes": {
+    "documents": {
+      "label": "By document",
+      "columns": [
+        {"key": "item", "label": "Item", "filter": "text"},
+        {"key": "where", "label": "Where it is now", "filter": "choice"},
+        {"key": "requested", "label": "Requested", "filter": "number"},
+        {"key": "ordered", "label": "Ordered", "filter": "number"},
+        {"key": "received", "label": "Received", "filter": "number"},
+        {"key": "to_order", "label": "Still to order", "filter": "number"},
+        {"key": "waiting", "label": "Still to arrive", "filter": "number"},
+        {"key": "rate", "label": "Rate", "filter": "number", "price": true},
+        {"key": "amount", "label": "Amount", "filter": "number", "price": true},
+        {"key": "status", "label": "Status", "filter": "choice"},
+        {"key": "due", "label": "Due", "filter": "date"},
+        {"key": "supplier", "label": "Supplier", "filter": "choice"},
+        {"key": "received_at", "label": "Received at", "filter": "text"},
+        {"key": "unit", "label": "Unit", "filter": "text"},
+        {"key": "doc_chain", "label": "Doc Chain", "filter": "text", "sortable": false}
+      ]
+    },
+    "items": {
+      "label": "By item",
+      "columns": [
+        {"key": "item", "label": "Item", "filter": "text"},
+        {"key": "requested", "label": "Requested", "filter": "number"},
+        {"key": "ordered", "label": "Ordered", "filter": "number"},
+        {"key": "received", "label": "Received", "filter": "number"},
+        {"key": "to_order", "label": "Still to order", "filter": "number"},
+        {"key": "waiting", "label": "Still to arrive", "filter": "number"},
+        {"key": "unit_price", "label": "Unit price", "filter": "number", "price": true},
+        {"key": "spent", "label": "Spent", "filter": "number", "price": true},
+        {"key": "received_value", "label": "Received value", "filter": "number", "price": true},
+        {"key": "no_price", "label": "Lines with no price", "filter": "number", "price": true},
+        {"key": "status", "label": "Status", "filter": "choice"},
+        {"key": "where", "label": "Where it is now", "filter": "choice"},
+        {"key": "due", "label": "Due", "filter": "date"},
+        {"key": "supplier", "label": "Supplier", "filter": "choice"},
+        {"key": "documents", "label": "Documents", "filter": "text", "sortable": false},
+        {"key": "received_at", "label": "Received at", "filter": "text"},
+        {"key": "unit", "label": "Unit", "filter": "text"},
+        {"key": "lines", "label": "Lines on this job", "filter": "number"}
+      ]
+    }
+  },
+  "operators": {
+    "text": ["contains", "blank", "not_blank"],
+    "choice": ["any_of", "contains", "blank", "not_blank"],
+    "number": ["between", "blank", "not_blank"],
+    "date": ["between", "blank", "not_blank"]
+  },
+  "presets": [
+    {
+      "id": "std-documents",
+      "name": "Standard",
+      "mode": "documents",
+      "description": "The tracker as it has always been: every document with its lines.",
+      "layout": {
+        "columns": ["item", "where", "requested", "ordered", "received", "rate", "amount", "status", "doc_chain"],
+        "sort": null,
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": false, "rules": []}
+      }
+    },
+    {
+      "id": "std-items",
+      "name": "Standard",
+      "mode": "items",
+      "description": "The tracker as it has always been: one row per item.",
+      "layout": {
+        "columns": ["item", "requested", "ordered", "received", "unit_price", "spent", "status", "where", "due", "supplier", "documents"],
+        "sort": null,
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": false, "rules": []}
+      }
+    },
+    {
+      "id": "location-audit",
+      "name": "Location audit",
+      "mode": "items",
+      "description": "Where each item is now, set against what was received and what is still on its way, most urgent first.",
+      "layout": {
+        "columns": ["item", "unit", "received", "waiting", "where", "received_at", "status", "due"],
+        "sort": {"key": "status", "dir": "asc"},
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": false, "rules": []}
+      }
+    },
+    {
+      "id": "location-gaps",
+      "name": "Items with no place recorded",
+      "mode": "items",
+      "description": "Items that arrived and that no stock record places anywhere. Nothing is listed when every item is accounted for.",
+      "layout": {
+        "columns": ["item", "unit", "received", "where", "received_at", "status"],
+        "sort": null,
+        "filters": {
+          "location": "",
+          "status": "",
+          "supplier": "",
+          "action": false,
+          "noprice": false,
+          "rules": [{"column": "where", "op": "contains", "value": "no place recorded"}]
+        }
+      }
+    },
+    {
+      "id": "money-items",
+      "name": "Money (by item)",
+      "mode": "items",
+      "description": "What was ordered and what arrived, per item, with the supplier and the lines that have no price.",
+      "layout": {
+        "columns": ["item", "ordered", "received", "unit_price", "spent", "received_value", "no_price", "supplier", "status"],
+        "sort": null,
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": false, "rules": []}
+      }
+    },
+    {
+      "id": "money-documents",
+      "name": "Money (by document)",
+      "mode": "documents",
+      "description": "Each document's lines with their rate and amount, and the supplier.",
+      "layout": {
+        "columns": ["item", "ordered", "received", "rate", "amount", "supplier", "status"],
+        "sort": null,
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": false, "rules": []}
+      }
+    },
+    {
+      "id": "missing-prices",
+      "name": "Missing prices",
+      "mode": "items",
+      "description": "Items with an order line that has no price: what purchasing has to fix.",
+      "layout": {
+        "columns": ["item", "ordered", "received", "unit_price", "no_price", "supplier", "documents"],
+        "sort": null,
+        "filters": {"location": "", "status": "", "supplier": "", "action": false, "noprice": true, "rules": []}
+      }
+    },
+    {
+      "id": "to-chase",
+      "name": "To chase",
+      "mode": "items",
+      "description": "Items still waiting on an order or a delivery, most urgent first, with the supplier and the due date.",
+      "layout": {
+        "columns": ["item", "ordered", "received", "waiting", "status", "due", "supplier", "documents"],
+        "sort": {"key": "status", "dir": "asc"},
+        "filters": {"location": "", "status": "", "supplier": "", "action": true, "noprice": false, "rules": []}
+      }
+    }
+  ]
+}

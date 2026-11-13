@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.815.0] - 2026-11-12
+## [1.818.0] - 2026-11-13
 
 ### Added
 - **A map of the warehouse.** Nikolas, 2026-11-12: "we need a map for the location bins and a way to
@@ -121,6 +121,461 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the User Permission case above. Each has a test that fails without its fix.
 - Tested bench-free (`tests/test_warehouse_map.py`, 104 tests on its own frappe stub, and
   `scripts/test_warehouse_map.mjs`, 179 checks under node), both in CI. Not run on a bench.
+
+## [1.817.0] - 2026-11-13
+
+### Added
+- **The Project Shelf: parts bought for a job are received onto one shared shelf, and stop
+  counting as stock the shop has.** Nikolas, 2026-11-12: "If we are doing an item in a PO and
+  receiving it have it default warehouse to Stores, but then change Stores to Project Shelf. So
+  everything is received for Project Shelf by default but Parker can then change what location
+  the item is going to if he'd like upon receiving it. So everything but overhead items should
+  default to Project Shelf. … when it hits the project shelf it should be removed from QTY in
+  inventory. … I want to keep a historical record of each projects items and what was ordered
+  for them." Every judgement is in `inventory_enhancements/project_shelf_rules.py` (no Frappe);
+  `project_shelf.py` reads the database. The whole design is in
+  `inventory_enhancements/README.md`, *The Project Shelf*.
+  - **The location.** `patches/rename_stores_to_project_shelf` renames the warehouse `Stores` to
+    `Project Shelf` with Frappe's own `rename_doc`, so every Link follows it: Item Defaults,
+    Putaway Rules, on-hand and Stock Ledger rows, purchase order, receipt and material request
+    lines, and the Company's default warehouse. The shelf is named by one new setting,
+    `Inventory Scanner Settings.project_shelf_warehouse`, never by its name; blank switches the
+    feature off. A second new setting, `overhead_receiving_warehouse`, is where an Overhead
+    purchase lands when its item has no bin yet (the patch fills it with `Inventory Room`).
+  - **Two things about that rename that are not obvious.** ERPNext 16.54.0's Warehouse is not
+    renameable from the Desk (`allow_rename` is not set), so the patch passes `force`; and the
+    same version has **no rename hook on Warehouse** and no autoname field, so `rename_doc`
+    changes the docname and leaves `warehouse_name` saying "Stores". The patch sets it. Both
+    were read from the v16.54.0 tag, not from the `develop` checkout.
+  - **Where it sits.** It stays where `Stores` was, directly under the company's root group,
+    beside `Inventory - SF` and `Job Sites - SF`. Not under `Job Sites` (that group refuses bins
+    and everything in it reads as a job site) and not under `Inventory` (ERPNext's own reports and
+    23 of production's reorder rules read that group as the shop's stock, and no code of ours
+    runs inside them).
+  - **Receiving defaults.** A purchase order line for a project that is not an Overhead project
+    defaults to the shelf. A line for an Overhead project defaults to the item's own bin (the bin
+    it is assigned to, else its Item Default, else the warehouse a reorder rule asks for; never
+    the shelf, a job site or the Boneyard), and to the Overhead receiving warehouse when the item
+    has no bin yet. It is applied on the Purchase Order form as a line is filled in (once per line
+    and per item-and-project pair, never to a line that was already there or that came from a
+    Material Request), on a save with no form (`procurement_project.default_line_warehouses`,
+    blank warehouses only, and in `cascade_project_to_items` for a line whose project it fills),
+    in the order's Receive Items dialog (a new *Put in* column per line, editable), and in the
+    document-intake receipt drafts. A scan at a bin in Stock Scan still means "put it here" and
+    still wins; each open order line there now says which job it is for.
+  - **An Overhead line never sits on the shelf, and the server holds that, not the form.** After
+    the rename the Company's default warehouse and the stock items' Item Defaults name the shelf,
+    so ERPNext itself fills the shelf into every new line, Overhead ones included. The form's
+    script corrects that when it runs in time; a duplicated order, one mapped from a Supplier
+    Quotation or a Material Request, and a REST save that sends a warehouse never run it. Shop
+    supplies received
+    onto the shelf would leave the shop's stock under a project that is not a job, and a take
+    there would then demand one. So an Overhead line that names the shelf is moved to the item's
+    own bin on every save of a draft order (`default_line_warehouses`), on a row added to a
+    submitted order with Update Items (`default_new_order_line`, which also gives that row the
+    header's project: ERPNext sets none and the field is mandatory here; it shares Purchase Order
+    Item's `before_insert` with v1.816.3's `fill_new_line_project`, one entry and a list, the
+    project rule first and this second, so a row whose project comes from the order's lines is
+    placed by that project), and on a receipt saved
+    for the first time, which is the Desk's Create > Purchase Receipt
+    (`default_receipt_warehouses`; never a return, and never when a person has just said where
+    the lines go). Any other warehouse a person picked is left alone.
+  - **A job's part added with Update Items goes to the shelf too, not into the item's own bin.**
+    Found on the production mirror on 2026-11-13, before the merge: Update Items on a submitted
+    order for a job, adding a stock item that has a bin of its own, ordered the part into that
+    bin, which is shop stock. That row never arrives blank. The dialog pre-fills its warehouse
+    column when the item is picked, and for a row sent without one ERPNext fills the same value
+    itself (`accounts_controller.get_new_child_item_warehouse`, read at erpnext v16.54.0):
+    the order's own target warehouse, else the item's Item Default, its item group's default,
+    its brand's default, else the Company's default warehouse. `default_new_order_line` left
+    any location that was already there alone, unless it was an Overhead line on the shelf. A
+    non-stock item, and a stock item with no default, arrived with the Company's default (the
+    shelf) and were right; 297 enabled stock items on production have a default that is not.
+    - **Now a job's row at a location nobody chose is placed by the rule, which is the shelf**
+      (`project_shelf_rules.added_row_may_default`). "Nobody chose" is exactly what ERPNext
+      fills for the item by itself, and ERPNext's own function is asked for it
+      (`get_item_warehouse_`, without the order's header), so all four of its defaults are
+      covered in its own order and with the user's Warehouse permissions, and none of that
+      order is copied here. Only on a version where that function cannot be called are the
+      Item Default and the Company's default read instead; a group's or a brand's default is
+      not covered on that fallback.
+    - **What stays:** a location typed in the dialog (anything that is not ERPNext's own
+      fill), and the order's own target warehouse (Set Target Warehouse), which is a person's
+      choice for the whole order even when it is also the item's default.
+    - **Known limit.** A person who deliberately picks the item's own default bin for a job's
+      line in that dialog cannot be told apart from ERPNext's default: the same value arrives
+      either way. That row goes to the shelf. The location can still be changed when the line
+      is received.
+    - **An Overhead row is not touched by this.** Off the shelf it keeps the location it
+      arrives with, exactly as before. The project rule of v1.816.3 still runs first, and a
+      draft order's lines are placed as they were.
+  - **Receiving, with the price rule of v1.809.0.** `receive_items` checks the places the dialog
+    sent, then runs the price step, then builds the receipt. A line the price step holds back is
+    not received, and it is given no place either: its place is dropped with it, so nothing of
+    an unpriced line reaches the shelf, and a place sent only for such a line does not switch the
+    receipt's own rule off. The Receive Items dialog asks both questions when it opens (which
+    lines need a price, then where each line goes), opens if either fails, and shows the price
+    columns and *Put in* together. A scan at a bin in Stock Scan still decides the place, at the
+    shelf too, and still meets the price question first.
+  - **On the form, a warehouse picked by hand stays when the line's project changes.** The server
+    tells the form which is which (`keep`): when a line gets its item, ERPNext has just filled the
+    warehouse, so only ERPNext's own values are replaced; when only the project changes, only the
+    rule's own earlier value is. The warehouse field's change event cannot be used for this:
+    ERPNext fires it itself after its item lookup (`transaction.js` at v16.54.0).
+  - **The order lines that were already open** all named `Stores`, so after the rename all of them
+    name the shelf, Overhead ones included (10 submitted lines on production on 2026-11-12). They
+    are not rewritten. The Receive Items dialog, a new receipt and the intake drafts send an
+    Overhead line that names the shelf to the item's own bin instead, and the dialog says so.
+  - **Shelf stock is not shop stock.** `project_shelf.not_shop_warehouses()` is every job site
+    plus the shelf, the one set every total reads. Stock Scan's search total leaves the shelf out
+    and shows it beside the total ("N for jobs"); the item card names it on its own line with its
+    jobs, never under "Also at"; and the Reorder Board leaves shelf stock and orders on their way
+    to it out of a rule's projected quantity at every group above the shelf. The 29 reorder rules
+    that roll up at `All Warehouses - SF` are not rewritten: it is the board's reading that leaves
+    the shelf out, as it already leaves job sites out. The shelf shows as its own place, not as a
+    job site, and stays a location that can be received to, counted and moved from.
+  - **Every unit on the shelf belongs to a job, and the Stock Ledger says which.** A receipt
+    carries its order line's project (ERPNext does that; checked at v16.54.0 and on production,
+    where 26 of the 28 ledger rows at `Stores` carry one). A take at the shelf must name a job
+    whatever *Require a Job for Every Take* says. Stock added there without an order must name
+    one, and **offsets to the Added Without PO account, not to the job's Parts Taken account**:
+    away from the shelf a job on an add means the parts came back from it, but at the shelf it is
+    the job they are set aside for, and crediting it would cancel the charge its later take makes,
+    so the job would carry no cost for parts it used. A move from the shelf to a job site carries
+    that site's job; a move from the shelf to a bin or the Boneyard carries the job it was bought
+    for (the one named, or the only job that holds the item when the tags account for every unit
+    of it; refused otherwise); a move from a bin onto the shelf carries the job it is set aside
+    for. A store run is refused at the shelf, because its
+    receipt carries no project on purpose. `move_here`, `bin_assignments.move_to` and
+    `send_to_boneyard` take an optional `project` for this.
+  - **`project_shelf.shelf_stock(project=None, item_code=None)`** answers both "what is on the
+    shelf for project X" and "which projects have stock on the shelf", from the ledger. The new
+    reports and the Procurement Tracker call it, and a test pins its signature and return keys.
+    **Its numbers are derived from tags, and it says where they fall short:** a movement with no
+    project (a count, a Desk transfer) is listed in `untagged_movements`, the gap between what is
+    on hand and what the tags add up to is in `untagged` per item, and `exact` is true only when
+    none of that is there.
+  - **A job's figure is never more than is physically on the shelf.** `rows[].qty` is the job's
+    tag balance capped by what is on hand, so it is never negative and an item's rows never add
+    up to more than its on-hand. The uncapped balance is `rows[].tagged` (a negative one is
+    kept), and what the cap took off is `over_tagged`. When tags claim more than is there, what
+    remains goes to the jobs that received most recently first. And "the only job that holds it"
+    is assumed only where an item's tags are exact; otherwise the move asks.
+  - **The 13 units production starts with.** Two items, 6 and 7 units, were received into `Stores`
+    for a Design job in September, put away to two shelf bins on 2026-09-23 by a Desk transfer
+    with no project, and have since been used up: neither has stock anywhere. The ledger at the
+    shelf still tags 13 to that job. The function reports them as `tagged` 13, `qty` 0,
+    `over_tagged` 13, and that job is never offered as holding anything.
+  - **The shelf is never an item's bin.** The 774 Item Defaults and 54 enabled Putaway Rules that
+    named `Stores` name the shelf after the rename. The rules, and the defaults of items that
+    maintain stock, are not deleted and not rewritten (the defaults of items that do not are
+    blanked, next point). The shelf's list (`api.stock_scan._items_at`) shows what is there or
+    on its way and nothing else, `procurement_project.item_own_bin` skips the shelf, and *Put on
+    this bin* and *Make … this item's bin* are refused there. A leftover rule or default goes away
+    when its stock is moved
+    off the shelf with *Make … this item's bin* ticked. A new item's bin is never the shelf or a
+    job site (`_quick_item`).
+  - **Items that do not maintain stock lose the shelf as their default warehouse.** Nikolas,
+    2026-11-12: "Blank the 705". ERPNext gave every new item an Item Default naming `Stores`,
+    so after the rename about 700 items that are bought and never stocked would say their
+    default warehouse is the Project Shelf. The patch's sixth step blanks `default_warehouse`
+    on every Item Default row that names the shelf **where the item has Maintain Stock off**,
+    a disabled item included, and on nothing else. Why this and not all 774: the code already
+    skips the shelf wherever it reads an item's bin, but the review found one reader that did
+    not (the first count, next point), and a default that is simply gone cannot be misread by
+    the next one. Why not the stock items: 26 of the 68 have a real bin and 42 have none, and
+    some are physically on the shelf, so which of them belongs where is a person's call.
+    - **The rule is read when the step runs**, never from a list or a count. The bulk Maintain
+      Stock switch (v1.809.0) may be applied before or after this deploys: an item switched
+      before is a stock item by then and keeps its row. No number is expected and none is a
+      warning; the step prints how many rows it blanked, how many of those are on disabled
+      items, and how many rows on stock items it left. It never names an item.
+    - **Only the one field.** The row and its other defaults (supplier, price list, accounts)
+      stay, so ERPNext adds no new default row at the item's next save
+      (`Item.update_defaults_from_item_group` adds one only where there is none). NULL is
+      written, not an empty text. The item's `modified` does not move and its cached copy is
+      dropped. It is the same write the Bin Manager's *Remove from this bin* has made since
+      v1.692.0.
+    - **A blank is legal and nothing here expects a value.** At ERPNext 16.54.0
+      `Item Default.default_warehouse` is not required, `validate_item_default_company_links`
+      checks a warehouse only when one is there, and `get_item_warehouse_` goes on down its
+      order: the document's own warehouse, the item's default (now blank), its item group's, its
+      brand's, the row's own, and last the Company's default, which is the shelf. None of these
+      items is in a group or a brand that has a default (production has three group defaults
+      and no brand default), so ERPNext's own forms offer the same warehouse for them after the
+      step as before it. An item whose group or brand is given a default later gets that
+      instead, ahead of the Company's. In this app every reader
+      asks either for a set value or for an exact warehouse (`item_own_bin`, Stock Scan's
+      location list, bin assignments, Location Contents, the other reports, Maintain Stock);
+      the Reorder Board reads the default supplier from that table and never the warehouse. A
+      purchase line for one of these items defaults exactly as it did, because the shelf was
+      already skipped as an item's bin. `TestAnItemWithNoDefaultWarehouse` pins each.
+    - **The Maintain Stock switch gives a warehouse-less open line what ERPNext would
+      (fixed here, found by review).** When an item is switched and has an open order or
+      request line with no warehouse, the switch (v1.809.0, single and bulk) writes one onto
+      the line. It took the item's default, else Stock Settings' default, and its docstring
+      called that ERPNext's order. It is not: ERPNext never reads Stock Settings for a line and
+      ends on the Company's default. With the item's default blanked by the step above and
+      Stock Settings' default unset, such an item would have answered "can't switch yet", where
+      ERPNext gives a new line for it the shelf without a word. `maintain_stock._fill_warehouses`
+      now asks ERPNext's own `get_item_details.get_item_warehouse_` (never a copy of its
+      order), then reads the item's default and the Company's default itself, for a version
+      where that function has moved or a user whose warehouse permissions hide its answer, and
+      takes the first that is a real, enabled, non-group warehouse of the company. The fill is
+      one warehouse a company and does not read a line's project: an Overhead line may be given
+      the shelf, as ERPNext would give it, and is moved to the item's own bin when it is
+      received, like every open Overhead line that already names the shelf. **The refusal no
+      longer says to set a default in Stock Settings:** ERPNext copies that one into every new
+      item, which is how 774 items came to name one warehouse. It now says to set the item's
+      own Default Warehouse to the bin it is kept in. Production has no open line without a
+      warehouse today, so nothing there changes; the bulk switch of several hundred items is
+      what would have met it.
+    - **Undoing it, and running it again.** On the day it was decided no non-stock item had a
+      blank default warehouse, so right after the deploy "blank, on an item that does not
+      maintain stock" is the list of what the step changed. That wears out: the Bin Manager's
+      *Remove from this bin* and new items add rows that match. And a run by hand weeks later
+      is not a no-op: it applies the rule again, so a non-stock item somebody has since
+      pointed at the shelf on purpose is blanked again.
+  - **An item's first count never opens on the shelf.** Maintain Stock's switch (v1.809.0) ends
+    on *Open a Stock Reconciliation*, with the item and a warehouse already on the row. The
+    warehouse was the item's Item Default (`maintain_stock._default_warehouse`), and the switch
+    is for items that were bought and never stocked, which are the items whose only default is
+    the one ERPNext handed out by itself: over 700 of the 774 defaults that name the shelf are on
+    non-stock items. Left alone, the first count of a shop consumable would have opened on the
+    shelf, and saving it would have put the stock where the shop reads zero of it, tagged to no
+    job, at a place where a take asks which job it is for. `maintain_stock.first_count_warehouse`
+    now answers the item's own bin (`procurement_project.item_own_bin`), else the Overhead
+    receiving warehouse, else nothing, and with nothing the row's location is empty and the
+    person has to choose it: ERPNext 16.54.0's Stock Reconciliation fills a row's warehouse
+    only from the form's own *Default Warehouse*, never from the item. The message after the
+    switch says where the form opens and that the shelf is only for parts bought for a job. On
+    a site with no Project Shelf set up the suggestion is the item's default as before, except
+    that it is never a job site, and the message is word for word what it was. The bulk page
+    (*Switch Items to Maintain Stock*) opens no count and suggests no place, so nothing changed
+    there. Left as it was on purpose: the switch still gives an open order line that has no
+    warehouse the item's default (`_fill_warehouses`), because a line's right place depends on
+    its project, and production has no such line.
+  - **The stock KPIs say which stock they mean.** *Stocked Items Below Reorder*, *Stocked Items
+    Out of Stock* and *Out-of-Stock Sellable Items* now mean **shop stock** and leave out job
+    sites and the shelf (they summed every bin, so parts on a job site already counted as on
+    hand). *Inventory Stock Value* and *Stock at Placeholder Cost* mean **all stock**, unchanged.
+  - **A QR label printed for `Stores` still opens the shelf.**
+  - **People's saved list filters follow the rename.** Frappe 16.56.0's `rename_doc` means to
+    rewrite a saved filter that names the renamed record, but it searches `__UserSettings` with
+    `LIKE '<old name>'` and no wildcards, which matches nothing. A list somebody last filtered to
+    `Stores - SF` would open on a warehouse that no longer exists and show no rows. The patch
+    replaces the quoted old name with the new one in those rows and drops their cached copies.
+    Its report gives the number of rows and of people, never who they are: the migrate output
+    lands in the build log, and a user id is a sign-in address.
+  - **The patch cannot raise and says what it did.** Six steps (the rename, the search index,
+    the saved filters, the two settings, the non-stock items' defaults), each in its own
+    savepoint, each answering done, already, skipped or failed, followed by counts of what now
+    points at the shelf. A clean run writes no
+    Error Log row; a run with a skipped or failed step writes one, "Project Shelf patch
+    (rename_stores_to_project_shelf): finish these steps by hand". **A site that never had the
+    warehouse is not a failure:** with no shop group `Inventory - SF`, or no `Stores` and no
+    `Project Shelf`, every step answers "not needed here" and no Error Log row is written. It
+    merges nothing where both names exist, moves no stock, disables no Putaway Rule, changes
+    no stock item's default, and never writes over a stored setting. On a never-saved Single it
+    writes every declared default before the field, so the others keep reading as they did.
+  - **With the releases that merged first.** The Procurement Tracker (v1.811.0), the Bin
+    Manager's views (v1.812.0) and the inventory reports (v1.805.0) each read the shelf through
+    this module, behind an import that was guarded until it existed. It exists from this release,
+    so the Bin Manager now asks which job a move onto or off the shelf is for
+    (`bin_views.shelf_job_moves`), and all three show a job's capped figure. Their suites stood
+    in for "the module is not installed" by removing a stand-in from `sys.modules`; with the real
+    file on disk that import succeeds, so `tests/test_project_stock.py` and
+    `tests/test_bin_views.py` now block the import instead. No assertion in either changed.
+    `tests/test_project_shelf.py` runs each of the three against the real module.
+  - **Not built:** moving a part on the shelf from one job to another without it leaving the
+    shelf; and non-stock items, which never reach stock.
+
+### Changed
+- `tests/test_job_sites`, `tests/test_bin_assignments`, `tests/test_stock_scan_surface` and
+  `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
+  shared set, and the one more branch `receive_items` writes a warehouse in.
+  `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
+
+## [1.816.4] - 2026-11-13
+
+### Fixed
+- **The report "Active Projects w/ TL and PM" showed a blank Project ID for most Projects.** On production
+  on 2026-11-13 `custom_project_id` ("Project ID") was empty on 451 of 671 Projects, equal to the name on
+  220 and different on none. It was only ever filled by the browser (`public/js/project.js`), and only on a
+  form someone then saved, so a Project created by the Opportunity hand-off job, or never saved after
+  opening, kept the blank. Nothing in Python or JS reads the stored value; that report is its only reader.
+  - **The server now owns it.** `project_enhancements/project_id.py`: a `validate` hook puts the Project's
+    own name in the field on every save; an `after_insert` hook does the same for a Project created with
+    `flags.ignore_validate` (the hand-off job, which creates most Projects, and where `validate` never
+    runs); an `after_rename` hook makes a renamed Project's ID follow at once. The two that write after the
+    row exists use one bound-parameter `UPDATE` that leaves `modified` / `modified_by` alone, so the mirror
+    never reads as an edit. All three return quietly when the column is absent (`doc_events` fire during
+    ERPNext's own test bootstrap) and cannot raise. The browser mirror from 1.816.2 is unchanged.
+  - **This release writes production data on migrate.** The new post-model-sync patch `backfill_project_id`
+    sets `custom_project_id` to the Project's name wherever it is NULL or not byte-for-byte the name: 451
+    Project rows today (all the blank ones), one field, `modified` and `modified_by` untouched, no hooks, no
+    Version rows. It is keyed on that rule rather than on emptiness, and compares with `BINARY` because the
+    default collation is case-insensitive and PAD SPACE: a plain `<>` would call `prj-1` and `PRJ-1 ` equal to
+    `PRJ-1` and leave them wrong. It checks the column first, wraps its work so a failure logs one Error Log
+    row instead of failing the deploy, prints counts only (never names), and is safe to run twice.
+  - New bench-free suite `tests/test_project_id_backfill.py` (patch selection, idempotence, never raising;
+    the three hooks; their wiring and the patches.txt / README entries), with its own CI step.
+
+## [1.816.3] - 2026-11-13
+
+### Fixed
+- **Update Items on a submitted Purchase Order refused a new line with "Error: Purchase Order Item Row #5:
+  Value missing for: Project", in a dialog that has no Project column.** Reported by the warehouse lead
+  (feedback request ER-2026-1333210; Task TASK-2026-03201). `Purchase Order Item.project` is mandatory
+  here (Property Setter fixture `Purchase Order Item-project-reqd`), and a new row never had one.
+  - **Why the order-level fix could not reach it.** ERPNext's Update Items
+    (`accounts_controller.update_child_qty_rate`, read at erpnext v16.54.0) builds each new row with
+    `set_order_defaults` (no project on it) and then calls `child_item.insert()` **on the row by itself**,
+    before the order is saved. Frappe's mandatory check runs on that insert. The app's existing fix for
+    blank line projects, `procurement_project.cascade_project_to_items`, is a `before_validate` hook on
+    the **Purchase Order**, which does not run for that insert; and a fix in the order's validate or
+    `on_update_after_submit` would be later still, because the row has already failed. The task's own
+    suggestion (fix it in the order's validate path) would not have worked.
+  - **The fix is on the row.** New `procurement_line_project.fill_new_line_project`, a `before_insert`
+    hook on **Purchase Order Item** (`hooks.py`, `doc_events["Purchase Order Item"]`). In frappe v16.56.0
+    `Document.insert` runs `before_insert` (`document.py` line 718) before `run_before_save_methods` (724)
+    and `_validate` (725), whose first step is `_validate_mandatory`; `run_method` applies the `doc_events`
+    of the row's own doctype, so the hook fires for a child inserted alone. (`before_validate` would also
+    fire, since `check_if_latest` sets `_action = "save"`, but `before_insert` is earlier and says what it
+    means.) The row takes the order's header project; with no header, the one project the order's lines
+    share. If there is no header and the lines name more than one project, nothing is guessed: the row is
+    refused with a plain message that says why and what to do (put the item on its own order, or have
+    purchasing amend this one). A project already on the row is never overwritten. If the order cannot be
+    read the hook steps aside and Frappe's own mandatory error stands.
+  - **Checked and left alone.** Sales Order's Update Items shares `update_child_qty_rate` and would hit
+    the same insert, but this app makes nothing on `Sales Order Item` mandatory (no required Custom Field
+    or Property Setter), so it is unaffected. `inventory_enhancements/receipt_price.py` calls
+    `update_child_qty_rate` with existing rows only (`receipt_price_rules.price_changes`), which are saved,
+    never inserted. A Project column in the Update Items dialog was not added: the dialog's fields are
+    built inside core `erpnext.utils.update_child_items` with no extension point, and the server ignores
+    any extra field, so it would need a copy of core JS and still not reach the row.
+  - Nothing is written on migrate. New bench-free suite `tests/test_po_line_project.py` (own CI step,
+    unittest). Not proven on a real bench: that Frappe fires the hook for this insert is read from source.
+
+## [1.816.2] - 2026-11-13
+
+### Fixed
+- **A Project could open as "Not Saved" with nothing edited, and reloading or leaving it asked "Leave
+  site? There are unsaved changes".** Seen on PRJ-00746 and PRJ-00747, the Overhead projects. The cause
+  was one line in `public/js/project.js`: on every refresh of a saved Project it ran
+  `frm.set_value("custom_project_id", frm.doc.name)` to show the name in the read-only Project ID
+  field. `frm.set_value` goes through `frappe.model.set_value`, which is a no-op when the value is
+  already equal but, when the stored value is empty (older Projects) or differs (a renamed Project),
+  writes it and calls `frm.dirty()`. That marks the form "Not Saved" and registers the `beforeunload`
+  listener behind "Leave site?". It matters more since 1.816.1, whose "Reload this page" button on the
+  Procurement Tracker would hit that prompt on a form nobody had touched.
+  - The script now writes `frm.doc.custom_project_id` directly and redraws the field with
+    `frm.refresh_field`, only when it differs. That does not dirty the form. A person's real edits
+    still do, and the value still travels on whatever save they make next (the field is read-only
+    on the client only; the server accepts it). Nothing is written to the database by opening a
+    Project, so a Project nobody saves keeps its old stored value. No Python or JS reads that stored value;
+    the only reader is the Report Builder report "Active Projects w/ TL and PM".
+  - The other Project form scripts were checked for the same pattern (a `set_value` on refresh or
+    onload of a saved doc without the person doing anything); none has it. Their `set_value` calls sit
+    in field-change handlers, buttons and dialogs.
+  - New bench-free test `tests/test_project_id_mirror.py` runs the real script under node
+    (`scripts/test_project_id_mirror.js`) against a stubbed form that dirties like
+    `frappe.model.set_value` does, and fails on the old code.
+
+## [1.816.1] - 2026-11-13
+
+### Fixed
+- **Opening a Project in a Desk tab that was already open when 1.816.0 deployed raised a dialog,
+  "Error inside procurement tracker callback: pt.merge_views is not a function".** The new form
+  script ran against the old tracker logic. The two reach a tab by different roads:
+  `project_enhancements.js` is `doctype_js`, so it travels inside the form's meta, and the first time
+  a stale tab opens a Project it fetches the *new* script (its cached meta is cleared when any other
+  tab loads the new build). The logic is a bundle, and `frappe.require("procurement_tracker.bundle.js")`
+  resolves it through that tab's `frappe.boot.assets_json`, which is as old as the tab: it names the
+  *old* hashed file. Or `window.sf_procurement_tracker` was already installed before the deploy. Either
+  way the new script called `pt.merge_views` on logic that did not have it. A fresh tab was never
+  affected, and nothing on the server was wrong. The same mix can happen to any `doctype_js` +
+  `frappe.require` pair after any deploy that adds an export the script starts to call.
+  - The logic now has an **API level**: `VERSION` in `procurement_tracker.bundle.js` goes from 1 to 2,
+    and the form script names the level it needs (`REQUIRED_LOGIC_LEVEL`). Before it mounts anything it
+    checks the level, and `merge_views` and `fallback_views` as functions, belt and braces. A logic that is
+    too old is not an error: the tracker's place on the form shows "The Procurement Tracker was updated.
+    Reload this page to use it." with a **Reload** button, and the rest of the Project form works as it
+    always did. The bundle's header says to bump `VERSION` whenever the form script starts calling a new
+    export; a newer bundle now also replaces an older copy installed in the same window, which `VERSION = 1`
+    could never do.
+  - A failure while mounting the tracker no longer raises a dialog. It leaves the console line and the
+    red "Error: ..." text in the tracker's place; a side widget should not interrupt every open of a
+    Project. (The "Server Error in get_procurement_overview" dialog is unchanged.)
+  - Reloading the tab is the whole cure for anyone already stuck: it reloads `frappe.boot`, so
+    `assets_json` names the new bundle.
+
+### Tests
+- `scripts/test_procurement_tracker.mjs` (already a CI step): the level the form script requires equals
+  the bundle's `VERSION`; the form script's own check, lifted out of the file and run, calls the old
+  bundle (level 1, no `merge_views`) "old", nothing installed "missing", and the logic as the bundle
+  installs it fine; an old logic draws the note before anything is mounted, and the mount's catch raises
+  no dialog. 68 tests, 651 checks.
+
+## [1.816.0] - 2026-11-12
+
+### Added
+- **Saved views for the Procurement Tracker: presets, your own, a column picker, and filters on
+  columns.** Nikolas, 2026-11-12: "allow users to create special views and columns they see. That
+  would let them create a view for auditing location of bins, or seeing financial information. These
+  views should have some default presets, but everyone should be able to make custom views just for
+  them and the browser remembers the last used layout. Column picking and filtering should be a
+  thing." A **view** is a named layout for By item or By document: which columns show and in what
+  order, the sort, the five toolbar filters, and any number of filters on a column.
+  - **Eight views ship with the app** and cannot be changed, only copied (*Save as a new view*):
+    **Standard** for each grouping (the tracker exactly as it was, so nothing changes for anyone who
+    never touches this), **Location audit**, **Items with no place recorded**, **Money (by item)**,
+    **Money (by document)** (Rate and Amount exist only by document, Unit price and Spent only by item),
+    **Missing prices** and **To chase**. They are in `data/procurement_tracker_views.json`.
+  - **Your own views** are `Procurement Tracker View` records, one person's, private to them (a System Manager can open the DocType's list), the
+    same on every project and on every device. **Not Frappe's user settings:** on this site those are
+    served from Redis, which every deploy flushes. The DocType gives no role but System Manager any
+    permission, so nothing reaches another person's views through `/api/resource`; the four endpoints in
+    `procurement_views.py` (`get_views`, `save_view`, `rename_view`, `delete_view`) are the only way in.
+    They need Project read, check the owner before every read of a record, change and delete (a
+    stranger's view reads as "not found", exactly like one that does not exist), validate the layout
+    (known column keys only, a test that suits the column, at most 50 views of 60-character names,
+    12 filters, 8,000 bytes) and write only the caller's own records. A view that is out of date or
+    damaged comes back repaired instead of breaking the tracker.
+  - **Column picker:** show, hide and reorder (up and down buttons) every column of the two tables, plus
+    fields the feed already returned: Still to order, Still to arrive, Unit, Received at, Lines on this
+    job, Received value, Lines with no price, and Due and Supplier by document. No new query. A "Sort by"
+    in the same panel sets the view's sort.
+  - **Filters on columns:** on any column that makes sense, *contains* (text), *is any of* (status, place,
+    supplier), *is between* (a number or a date), *is blank / not blank*. They join the five toolbar filters
+    as part of the view. A line under the toolbar says what is filtering and how many rows it hides, with
+    one **Clear filters** button.
+  - **The browser remembers the last layout** per person and grouping (`localStorage`, every access in
+    try/catch), with unsaved changes on top of it, and the address still wins: `pt_layout` names the view
+    in a link (absent for Standard), a filter turned off that the view has on is written as off, so a
+    reload does not bring it back, and the filters on columns are written too (`pt_rules`, only where they
+    differ from the view's own and only when short enough for an address). **A link shows its sender's
+    rows:** when the address names a view or a filter, every toolbar filter and every filter on a column
+    comes from the address, never from the recipient's browser memory (which still supplies the columns and
+    the sort, which cannot hide a row, when it is the same view). Without an address, the memory is the
+    whole answer. Back and Forward are untouched (`history.replaceState`, never a new
+    entry), and nothing here changes the Project form, so it is never marked as changed.
+  - **Who may see what has not changed.** A layout is a list of names, not data: the price columns are not in
+    the response for anybody who may not read Purchase Orders (v1.814.0), so a view that names them has
+    nothing to draw. A money view opened by such a person shows the columns it can and says which are
+    missing and why; their filters on price columns are set aside the same way.
+  - Also: switching By item / By document carries every toolbar filter across as it stands, an unticked one
+    included; the printed list's "Showing:" line names the filters on columns; the tracker waits at most four
+    seconds for the saved views and then draws without them; a saved view that is no longer there falls back
+    to Standard with a note, and one that merely could not be looked up keeps its place.
+  - Not in this change: sharing a personal view; the by-item Print list still prints its own columns; the
+    picker has no drag-to-reorder; a very long set of filters on columns is not written to the address (a
+    reload then goes back to the view's own).
+  - New bench-free suite `tests/test_procurement_view_rules.py` (layout rules, repair, owner checks on the
+    endpoints and the controller, the DocType's permissions) in its own `ci.yml` step, and the node suite
+    grew from 39 to 64 tests: the browser's column registries are held to the server's catalog key for key,
+    every preset is accepted, applying a view, column order, each filter test, the fallback for a bad stored
+    view, and the address against the remembered layout. See `docs/procurement-tracker-map.md`.
 
 ## [1.814.0] - 2026-11-12
 

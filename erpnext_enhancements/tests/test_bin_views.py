@@ -62,6 +62,7 @@ _MODULES = (
 STATE = {}
 views = None
 _ORIGINAL = {}
+_SHELF_MODULE = "erpnext_enhancements.inventory_enhancements.project_shelf"
 
 
 class _Row(dict):
@@ -330,6 +331,9 @@ def setUpModule():
 	global views
 	for name in _MODULES:
 		_ORIGINAL[name] = sys.modules.pop(name, None)
+	# The suite starts as a site whose code has no Project Shelf module (see _unfake).
+	_ORIGINAL[_SHELF_MODULE] = sys.modules.get(_SHELF_MODULE)
+	_unfake("project_shelf")
 	_reset()
 	_install()
 	import importlib
@@ -352,6 +356,10 @@ def tearDownModule():
 		sys.modules.pop(name, None)
 		if _ORIGINAL.get(name) is not None:
 			sys.modules[name] = _ORIGINAL[name]
+	# Unblocked here, so a suite that runs after this one in the same process can import it.
+	_unfake("project_shelf", block=False)
+	if _ORIGINAL.get(_SHELF_MODULE) is not None:
+		sys.modules[_SHELF_MODULE] = _ORIGINAL[_SHELF_MODULE]
 
 
 def _boot_bins():
@@ -490,13 +498,21 @@ def _fake(name, **functions):
 	setattr(package, name, module)
 
 
-def _unfake(*names):
+def _unfake(*names, block=True):
+	"""Take a stand-in out again. For the Project Shelf's module that now means blocking the
+	import, not just forgetting the stand-in: the real module shipped in v1.817.0, so with
+	nothing in ``sys.modules`` the ``import`` would succeed and run it on this suite's small
+	stub. A ``None`` entry makes ``import`` raise ImportError, which is the site these tests
+	mean by "the Project Shelf release is not installed"."""
 	import erpnext_enhancements.inventory_enhancements as package
 
 	for name in names:
-		sys.modules.pop(f"erpnext_enhancements.inventory_enhancements.{name}", None)
+		dotted = f"erpnext_enhancements.inventory_enhancements.{name}"
+		sys.modules.pop(dotted, None)
 		if hasattr(package, name):
 			delattr(package, name)
+		if block and dotted == _SHELF_MODULE:
+			sys.modules[dotted] = None
 
 
 class TestShelfJobMoves(_Base):
@@ -633,8 +649,7 @@ class TestProjectView(_Base):
 			self.assertEqual([(r["project"], r["item_code"], r["qty"]) for r in finished], [(DONE, "ELBOW", 5.0)])
 			self.assertEqual(asked, [BUILD, None, None])
 		finally:
-			sys.modules.pop(module.__name__, None)
-			delattr(package, "project_shelf")
+			_unfake("project_shelf")
 
 	def test_a_job_with_no_site_yet_can_still_be_sent_to_when_it_is_a_build(self):
 		STATE["site_map"] = {}

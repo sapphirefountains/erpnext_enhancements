@@ -792,7 +792,15 @@ doc_events = {
 			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
 			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
 		],
-		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
+		"after_insert": [
+			"erpnext_enhancements.process_steps.announce_seeded_steps",
+			# Project ID (v1.816.4): the Project's name in custom_project_id, for a Project created
+			# with flags.ignore_validate (the Opportunity hand-off job), where the validate entry
+			# below never runs. Never raises. See project_enhancements/project_id.py.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_on_insert",
+		],
+		# Project ID (v1.816.4): a renamed Project's custom_project_id follows at once.
+		"after_rename": "erpnext_enhancements.project_enhancements.project_id.follow_rename",
 		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines
 		# exist, the project total from them. It does nothing and costs nothing on a project with
 		# no budget lines, which is every project on prod today. Appended into THIS dict rather
@@ -809,6 +817,9 @@ doc_events = {
 			# once, never block. ERPNext's expected_*/actual_* pairs are validated by core.
 			# See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+			# Project ID (v1.816.4): every save carries the Project's own name in custom_project_id,
+			# which the report "Active Projects w/ TL and PM" shows. Never raises.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_project_id",
 		],
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
@@ -1106,6 +1117,16 @@ doc_events = {
 		# the REST API, data import and Material-Request-mapped documents.
 		"before_validate": [
 			"erpnext_enhancements.procurement_project.cascade_project_to_items",
+			# The Project Shelf (v1.817.0, Nik 2026-11-12): a draft line with a project and no
+			# location gets the project's default place -- the Project Shelf for a job, the
+			# item's own bin for an Overhead project. After the cascade (it needs the project)
+			# and before ERPNext's set_missing_values, which would fill the blank from the Item
+			# Default. A location that is there is left alone, with one exception held on every
+			# save of a draft: an Overhead line on the Project Shelf goes to the item's own bin
+			# (ERPNext puts it there by itself; the Company's default warehouse is the shelf).
+			# Never raises. The Desk form does the same sooner, as the line is typed
+			# (public/js/purchase_order_project.js); correctness does not depend on it.
+			"erpnext_enhancements.procurement_project.default_line_warehouses",
 			# ER-2026-362239: push the header's expected delivery date into item rows
 			# that have none. NOT the Required By cascade -- ERPNext already does that
 			# one in buying_controller.validate_schedule_date(), and does more than
@@ -1158,6 +1179,42 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
+	# A row added to a SUBMITTED order with Update Items. ONE entry for the doctype, two rules in
+	# a list, and the order is the point: a second "Purchase Order Item" key further down would
+	# silently replace this one (a repeated key in a dict literal is not an error), and the
+	# location rule needs the project the first rule fills.
+	"Purchase Order Item": {
+		"before_insert": [
+			# v1.816.3 (ER-2026-1333210): a row added to a SUBMITTED order with Update Items.
+			# ERPNext inserts that row ON ITS OWN (accounts_controller.update_child_qty_rate calls
+			# child_item.insert() before parent.save()), so the order's before_validate hooks above never
+			# see it, and it arrives with no project -- mandatory here -- which refused the row with
+			# "Value missing for: Project" in a dialog that has no Project column. before_insert on the
+			# child is the earliest hook that fires for that insert and runs ahead of the mandatory check
+			# (frappe Document.insert: before_insert, then _validate). The row takes the order's header
+			# project, else the one project its lines share; several projects and no header is refused in
+			# words rather than guessed. Never overwrites a project that is set.
+			"erpnext_enhancements.procurement_line_project.fill_new_line_project",
+			# The Project Shelf (v1.817.0): the same row's LOCATION. ERPNext inserts that row on its
+			# own (accounts_controller.update_child_qty_rate), so the order's before_validate hooks
+			# never see it, and it arrives with the Company's default warehouse, which is the shelf.
+			# This gives it its location by the rule: an Overhead line on the shelf goes to the
+			# item's own bin, a line with no location gets its project's default place, and a JOB's
+			# line at a location nobody chose goes to the shelf. "Nobody chose" is exactly what
+			# ERPNext fills for the item by itself (its own function is asked: the item's, its
+			# group's or its brand's default, else the Company's), which for a stock item with a
+			# bin is that bin, in shop stock. A location typed in the dialog, and the order's own
+			# target warehouse, are left alone. Known limit: the item's own default picked on
+			# purpose in the dialog cannot be told from ERPNext's fill, and goes to the shelf too.
+			# SECOND, after the project rule above: it places the row
+			# by the project that rule has just filled (the header's, else the one the lines
+			# share). When that rule refuses the row (several jobs, no header) this never runs. It
+			# still fills a blank project from the header itself, which does nothing while the rule
+			# above runs first and keeps the row whole if that rule is ever unhooked. Rows saved
+			# with their order never fire it. Never raises.
+			"erpnext_enhancements.procurement_project.default_new_order_line",
+		],
+	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is
 	# approval, not the act of placing it with a supplier -- but full receipt is a fact
@@ -1200,6 +1257,12 @@ doc_events = {
 	# be the reason a receipt cannot be submitted. It reads by name and does nothing when no
 	# Supplier Return names this document, which is every receipt today.
 	"Purchase Receipt": {
+		# The Project Shelf (v1.817.0): a receipt saved for the first time puts each order line
+		# in its default receiving place. It is what covers the Desk's Create > Purchase Receipt,
+		# which copies the order line's warehouse: an Overhead line that names the Project Shelf
+		# goes to the item's own bin. First save only, never a return, and never when a person
+		# has just said where the lines go (Receive Items, a scan at a bin). Never raises.
+		"before_validate": "erpnext_enhancements.procurement_project.default_receipt_warehouses",
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
 			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",

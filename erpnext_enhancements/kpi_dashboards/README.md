@@ -99,7 +99,16 @@ trigger test, `reorder_level or reorder_qty`: a rule reordering at 0 counts (v1.
 that only a level above 0 did, which dropped every item reordered "when it runs out".
 `snapshots.STOCKED_RULE_SQL` is the one definition the three stock KPIs share (four queries).
 
-**These KPIs are not the Reorder Board's list.** They test *actual* qty summed over every bin; the
+**"On hand" means the shop's, for the three KPIs that ask whether the shop has a part**
+(v1.817.0): *Stocked Items Below Reorder*, *Stocked Items Out of Stock* and *Out-of-Stock Sellable
+Items* sum actual qty over every bin **except job sites and the Project Shelf**
+(`snapshots._shop_on_hand_sql`, the set from `project_shelf.not_shop_warehouses()`). Parts across
+town, or bought for a job and waiting for it, do not stock the shop's shelf, and the Reorder Board
+already reads it that way. *Inventory Stock Value* and *Stock at Placeholder Cost* still mean **all
+stock**: they are about what the books carry and whether it is costed, wherever it sits. With
+neither a job site nor a shelf set up, the three count every bin as before.
+
+**These KPIs are not the Reorder Board's list.** They test *actual* qty summed over the shop's bins; the
 board tests *projected* qty (open orders counted) per warehouse or group, so an item can be on the
 board and not below reorder here, and the other way round. *Below reorder* is `on hand < level`, or
 `on hand <= 0` for a rule at level 0 ("reorder when out"): `<=` for every rule added 30 prod items

@@ -156,6 +156,23 @@ def _typed_quantities(rows):
     return typed
 
 
+def _typed_warehouses(rows):
+    """``rows`` as the dialog posts them -> ``{row name: warehouse}`` for the lines that say
+    where they were put (v1.817.0). A line that names no place is left out and keeps the order
+    line's own."""
+    if isinstance(rows, str):
+        rows = frappe.parse_json(rows)
+    places = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        name = (raw.get("purchase_order_item") or "").strip()
+        warehouse = (raw.get("warehouse") or "").strip()
+        if name and warehouse:
+            places[name] = warehouse
+    return places
+
+
 def _typed_prices(rows, no_charge_reason=None):
     """``rows`` as the dialog posts them -> ``{row name: {"rate", "no_charge", "reason"}}`` for
     the rows that carry a price or a "no charge". Only an unpriced stock line's answer is ever
@@ -326,6 +343,11 @@ def receive_items(
       ``purchase_receipt`` is ``None``; that is an answer, not an error, so the ToDo is kept.
       ``hold_unpriced=0`` (the Stock Scan page, which receives one line and has already asked)
       refuses instead. The receipt's own ``before_submit`` refusal is the backstop for all of it.
+    * **A row may name its own ``warehouse``** (v1.817.0): the Receive Items dialog shows where
+      each line goes (the Project Shelf for a job's line, the item's bin for an Overhead one,
+      ``procurement_project.receiving_defaults``) and the person receiving can change it per
+      line. It is checked like the single ``warehouse`` above and grants nothing more. The
+      single ``warehouse`` wins when both are sent: a scan at a bin means "put it here".
     """
     from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_receipt
 
@@ -365,6 +387,16 @@ def receive_items(
         frappe.throw(_("Nothing to receive: every line is at 0."))
 
     wanted = {line["purchase_order_item"]: line["qty"] for line in lines}
+    # Where each line was put, when the dialog said (v1.817.0). Checked before a document exists.
+    places = (
+        {}
+        if target
+        else {
+            name: _receiving_warehouse(place, po.company)
+            for name, place in _typed_warehouses(rows).items()
+            if name in wanted
+        }
+    )
     from erpnext_enhancements.inventory_enhancements import receipt_price
 
     settled = receipt_price.settle_before_receipt(
@@ -388,9 +420,21 @@ def receive_items(
             {"purchase_receipt": None, "received": [], "per_received": po.per_received, "status": po.status},
             **held,
         )
+    # A line held back for a price is not received, so it is given no place either (v1.817.0):
+    # nothing about it reaches this receipt, on the Project Shelf or anywhere else.
+    places = {name: place for name, place in places.items() if name in wanted}
     receipt = make_purchase_receipt(po.name, args={"filtered_children": list(wanted)})
+    # Where these lines go was said by a person (a scan at a bin, or the dialog's Put in column),
+    # so the receipt's own default-place hook stands aside (procurement_project
+    # .default_receipt_warehouses). With neither, that hook places them: an Overhead line that
+    # names the Project Shelf goes to the item's own bin.
+    receipt.flags.receiving_places_chosen = bool(target or places)
     if target:
         receipt.set_warehouse = target
+    elif places:
+        # The lines no longer share one place, so the header must not name one: ERPNext never
+        # pushes it into the rows on the server, and a stale one would only mislead.
+        receipt.set_warehouse = None
     for item in receipt.items:
         # Accepted quantity is what was typed; nothing rejected. The receipt's own validate
         # recomputes stock_qty, received_stock_qty and every amount from these.
@@ -399,6 +443,8 @@ def receive_items(
         item.rejected_qty = 0
         if target:
             item.warehouse = target
+        elif item.purchase_order_item in places:
+            item.warehouse = places[item.purchase_order_item]
         if item.purchase_order_item in free:
             item.allow_zero_valuation_rate = 1
     if remarks:

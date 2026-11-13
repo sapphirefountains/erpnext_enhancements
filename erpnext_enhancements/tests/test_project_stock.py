@@ -161,6 +161,8 @@ def setUpModule():
 	global stock
 	for name in _MODULES:
 		_ORIGINAL[name] = sys.modules.pop(name, None)
+	# The suite starts as a site whose code has no Project Shelf module (see _remove_module).
+	_remove_module("project_shelf")
 	_reset()
 	_install_frappe_stub()
 	import importlib
@@ -180,18 +182,30 @@ def _install_module(name, **functions):
 	return module
 
 
-def _remove_module(name):
+#: Modules that are in the app now, and that this suite still has to see as "not installed yet".
+#: The Project Shelf's own module shipped in v1.817.0. Before that, taking the stand-in out of
+#: ``sys.modules`` was enough to make ``import`` fail; now the real file is on disk and would be
+#: imported onto this suite's small stub. A ``None`` entry in ``sys.modules`` makes ``import``
+#: raise ImportError, which is exactly the site the fallback path is for.
+_BLOCKED_WHEN_REMOVED = ("project_shelf",)
+
+
+def _remove_module(name, block=True):
 	import erpnext_enhancements.inventory_enhancements as package
 
-	sys.modules.pop(f"erpnext_enhancements.inventory_enhancements.{name}", None)
+	dotted = f"erpnext_enhancements.inventory_enhancements.{name}"
+	sys.modules.pop(dotted, None)
 	if hasattr(package, name):
 		delattr(package, name)
+	if block and name in _BLOCKED_WHEN_REMOVED:
+		sys.modules[dotted] = None
 
 
 def tearDownModule():
 	import erpnext_enhancements.inventory_enhancements as package
 
-	_remove_module("project_shelf")
+	# Unblocked here, so a suite that runs after this one in the same process can import it.
+	_remove_module("project_shelf", block=False)
 	_remove_module("supplier_returns")
 	if _ORIGINAL.get("job_sites_attr") is None:
 		if hasattr(package, "job_sites"):

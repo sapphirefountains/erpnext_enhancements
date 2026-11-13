@@ -1644,6 +1644,11 @@ erpnext_enhancements.patches.backfill_triton_widget_mode
 # site whose stored rows are as new as the files. Each import in its own savepoint; a failure is logged and rolled
 # back, never raised. Writes no business data. Safe twice.
 erpnext_enhancements.patches.inventory_reports_hub_links
+# Project ID backfill (v1.816.4, Nik 2026-11-13: "Yes do that"). WRITES PRODUCTION DATA: sets Project.custom_project_id to
+# the Project's name wherever it is NULL or not byte-for-byte the name (451 of 671 Projects on prod, all blank), in one
+# UPDATE that leaves modified / modified_by alone and runs no hook. Keyed on the rule, BINARY compare (the default collation
+# ignores case and trailing spaces). Logs counts only. Guarded on the column, cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_project_id
 # Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
 # return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
 # back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a
@@ -1658,3 +1663,22 @@ erpnext_enhancements.patches.supplier_returns_hub_links
 # already run on every existing site, so the ninth template it now lists never reaches one without this. Insert-only
 # (a `warranty` template already there is left as it is), only that key, prints what it did. Cannot raise, safe twice.
 erpnext_enhancements.patches.seed_warranty_certificate_template
+# The Project Shelf (v1.817.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
+# and stock there is not shop stock). Six steps, each logged and none able to stop the next: rename the warehouse
+# "Stores" to "Project Shelf" with Frappe's own rename_doc (force, because ERPNext 16.54.0's Warehouse is not
+# renameable from the Desk; every Link follows: Item Defaults, Putaway Rules, on-hand and ledger rows, order and
+# request lines, the Company's default warehouse) and set warehouse_name, which that ERPNext version has no rename
+# hook to do; index the Warehouse names again for the Desk's search; rewrite the quoted old name in people's saved
+# list filters (__UserSettings; Frappe 16.56.0's rename looks for them with LIKE and no wildcards, so it rewrites
+# none) and drop their cached copies, reporting how many rows and people but never who; fill Inventory Scanner Settings
+# .project_shelf_warehouse and .overhead_receiving_warehouse ("Inventory Room") ONLY where tabSingles has no row
+# for the field (on a never-saved Single every declared default is written first); blank default_warehouse on the
+# Item Default rows that name the shelf WHERE THE ITEM HAS MAINTAIN STOCK OFF (Nik 2026-11-12: "Blank the 705"; the
+# rule is read at run time, never a list or a count, so an item switched to Maintain Stock first keeps its row; a
+# disabled item is included; only that field, the row stays; counts printed, never an item). On a site with no shop group
+# "Inventory - SF", or with no Stores and no Project Shelf, every step answers "not needed here" and NO Error Log
+# row is written. Nothing is merged where both names exist. Moves no stock, rewrites no order line, disables no
+# Putaway Rule, changes no stock item's default; prints how many of each still point at the shelf. Cannot raise, safe twice. Each
+# step answers done / already / skipped / failed; when any did not finish, ONE Error Log row "Project Shelf patch
+# (rename_stores_to_project_shelf): finish these steps by hand" lists them with the by-hand fix.
+erpnext_enhancements.patches.rename_stores_to_project_shelf

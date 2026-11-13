@@ -424,6 +424,18 @@ jobs:
       # real shared script against a fake DOM; node is on PATH in this job.
       - name: Project form hides (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
+      # Project ID mirror (v1.816.2): project.js shows the name in custom_project_id on every refresh.
+      # It used to use frm.set_value, which dirties the form whenever the stored value differs, so
+      # Projects opened as "Not Saved" and a reload asked "Leave site?". Runs the real script under
+      # node against a stubbed Desk that dirties like frappe.model.set_value.
+      - name: Project ID mirror does not dirty the form (executed under node)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_mirror -v
+      # Project ID kept true on the server (v1.816.4): the backfill patch (selects by the byte-exact rule so a case or
+      # trailing-space difference is corrected, never touches modified, logs counts not names, safe twice, cannot raise) and the
+      # validate / after_insert / after_rename hooks, plus their wiring in hooks.py and patches.txt. Own step: it installs
+      # its own frappe stub.
+      - name: Project ID backfill patch and hooks (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_backfill -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a
@@ -3666,6 +3678,13 @@ jobs:
       # sys.modules and must not cross-talk with the other stubbed suites.
       - name: Procurement project cascade (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_procurement_project -v
+      # ER-2026-1333210: the project a row added with Update Items takes. ERPNext inserts that
+      # row by itself before saving the order, so the cascade above cannot reach it; this suite
+      # holds the rule (header, else the one shared line project, else refuse in words), the
+      # defensive paths, and that hooks.py registers it on Purchase Order Item.before_insert.
+      # unittest, with its own frappe stub installed in setUpModule, so its own step.
+      - name: Purchase Order Update Items line project (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_line_project -v
       # The guard that found both of the above: every bench-free suite must be named
       # in this file. A suite absent from it is not skipped, it is INVISIBLE -- and
       # the existing in-file "am I wired into CI" idiom cannot catch that, because a
@@ -3961,9 +3980,21 @@ jobs:
       # and its filters round-trip through the address and never become a history entry, the filters
       # narrow lines, documents and items alike, blanks sort last both ways, a half-done status never
       # takes a finished one's colour, names are never read as markup (table and printed list), and the
-      # form script calls only what exists.
+      # form script calls only what exists. And (v1.816.1) the form script's required logic level equals the
+      # bundle's VERSION, and a logic that is too old draws a reload note instead of throwing.
       - name: Procurement Tracker filters, address and sorting (node)
         run: node scripts/test_procurement_tracker.mjs
+      # The Procurement Tracker's saved views (v1.816.0): procurement_view_rules.py is pure, and the
+      # endpoints (procurement_views.py) and the DocType controller run on a frappe stand-in of this
+      # file's own with an in-memory table, so this is plain pytest with its own step (a unittest step
+      # would collect nothing and pass, and the stand-in must not leak into another suite). Fails the
+      # build if a view stored with an unknown column, a filter that does not suit its column, or more
+      # than the size limit is ever accepted, if a broken or outdated stored view fails to come back
+      # repaired, and the safety rule: if anybody but a view's owner can read, change, rename or delete
+      # it, or tell from the answer whether it exists, or if any role but System Manager gets a
+      # permission on the DocType (which would open every person's views through /api/resource).
+      - name: Procurement Tracker saved views, layout rules and owner checks (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_view_rules.py -q
       # The tracker's "returned to the supplier" against the REAL Supplier Return module (v1.807.0), not
       # a stand-in: supplier_returns.returned_lines on test_supplier_returns' own stub (real SQL on
       # SQLite, returns made through that module's own functions), read through project_stock._returns
@@ -4120,6 +4151,18 @@ jobs:
       # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
       - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
+      # The Project Shelf (v1.817.0, the owner's 2026-11-12 decision: everything ordered for a project is received
+      # onto one shared shelf, and stock there is not shop stock). If this fails, a purchase line for a job could
+      # default somewhere other than the shelf (or an Overhead line onto it), parts bought for a job could read as
+      # stock the shop has (the search total, "Also at", a reorder rule that rolls up at the company's root), a
+      # take or a move could leave the shelf with no job on its ledger row so the by-job numbers drift unseen,
+      # the function the reports and the Procurement Tracker call could change shape or hide what its tags do not
+      # explain, an item could be given the shelf as its bin, or the rename patch could merge two warehouses,
+      # write over a Stock Manager's setting, abort the deploy, or skip a step without the one Error Log row that
+      # says so. project_shelf_rules.py runs directly; project_shelf.py, api/stock_scan.py, bin_assignments.py and
+      # procurement_project.py run on test_job_sites' frappe stub (reused, so its own step). unittest classes.
+      - name: The Project Shelf (received for a job, out of shop availability, by job) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
       # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
       # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
       # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push

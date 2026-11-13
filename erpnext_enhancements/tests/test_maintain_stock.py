@@ -224,7 +224,7 @@ SCHEMA = (
 	"create table `tabItem` (name text primary key, item_name text, item_group text, "
 	"is_stock_item int default 0, disabled int default 0, "
 	"is_fixed_asset int default 0, variant_of text, has_variants int default 0, modified text)",
-	"create table `tabCompany` (name text primary key, stock_adjustment_account text)",
+	"create table `tabCompany` (name text primary key, stock_adjustment_account text, default_warehouse text)",
 	"create table `tabAccount` (name text primary key, company text, is_group int default 0, "
 	"disabled int default 0, account_type text)",
 	"create table `tabStock Ledger Entry` (name text, item_code text, voucher_type text, voucher_no text, "
@@ -522,6 +522,30 @@ def install_stubs():
 	item_module = sys.modules["erpnext.stock.doctype.item.item"]
 	item_module.Item = StubItem
 	item_module.get_item_defaults = lambda item_code, company: STATE["item_defaults"].get(item_code) or {}
+
+	# ERPNext's own answer to "which warehouse does a new line for this item get" (v1.817.0). The
+	# order below is 16.54.0's, read at the tag: the header's warehouse, the item's default, its
+	# item group's, its brand's, the row's own, then the Company's default. Never Stock Settings.
+	details = types.ModuleType("erpnext.stock.get_item_details")
+
+	def get_item_warehouse_(ctx, item, overwrite_warehouse, defaults=None):
+		STATE["calls"].append(("get_item_warehouse_", item.name, ctx.company, bool(overwrite_warehouse)))
+		if STATE.get("erpnext_line_fails"):
+			raise RuntimeError("get_item_warehouse_ has moved")
+		if STATE.get("erpnext_line_hidden"):
+			return None  # the user's Warehouse permissions hide every candidate
+		return (
+			ctx.set_warehouse
+			or (STATE["item_defaults"].get(item.name) or {}).get("default_warehouse")
+			or STATE.get("group_default")
+			or STATE.get("brand_default")
+			or ctx.warehouse
+			or frappe.db.get_value("Company", ctx.company, "default_warehouse")
+		)
+
+	details.get_item_warehouse_ = get_item_warehouse_
+	sys.modules["erpnext.stock.get_item_details"] = details
+	sys.modules["erpnext.stock"].get_item_details = details
 
 
 def reset_state(**overrides):
@@ -1959,7 +1983,10 @@ class OpenOrderRulesTest(unittest.TestCase):
 		check = by_key(rules.evaluate(facts))["open_orders_ready"]
 		self.assertFalse(check["ok"])
 		self.assertIn("Material Request MR-T-1 row 1 has no warehouse", check["detail"])
-		self.assertIn("Set a default warehouse on the item", check["detail"])
+		self.assertIn("Neither the item nor the company has a default warehouse to give it", check["detail"])
+		self.assertIn("Set the item's Default Warehouse (its Item Defaults table) to the bin it is kept in", check["detail"])
+		# Stock Settings' Default Warehouse is copied into every new item: never the advice.
+		self.assertNotIn("Stock Settings", check["detail"])
 
 	def test_nothing_open_says_nothing(self):
 		self.assertEqual(by_key(rules.evaluate(passing_facts()))["open_orders_ready"]["detail"], "")
@@ -2051,16 +2078,99 @@ class OpenOrderSwitchTest(unittest.TestCase):
 		self.assertEqual(on_order[0][1], "PO-T-BLANK")
 		self.assertIn(f"row 1 was given {MAIN}", on_order[0][3])
 
-	def test_stock_settings_default_is_the_fallback(self):
+	# --- a line with no warehouse gets what ERPNext gives a new line (v1.817.0) --------------
+
+	def _line_warehouse(self, name="PO-T-BLANK-1", table="Purchase Order Item"):
+		return CONN.execute(f"select warehouse from `tab{table}` where name = ?", (name,)).fetchone()[0]
+
+	def _company_default(self, warehouse):
+		CONN.execute("update `tabCompany` set default_warehouse = ? where name = ?", (warehouse, COMPANY))
+
+	def test_a_blank_item_default_takes_the_companys_default_as_a_new_line_would(self):
+		"""The Project Shelf patch blanks the default warehouse of every non-stock item that named
+		the shelf. Such an item with a warehouse-less open line must still switch: ERPNext gives a
+		new line for it the Company's default, and so does the switch."""
+		add_open_po(name="PO-T-BLANK", warehouse=None)
+		STATE["item_defaults"][ITEM] = {"default_warehouse": None}  # the row is there, blanked
+		self._company_default(STORES)
+		self.assertTrue(ms.run_checks(ITEM)["can_switch"])
+		ms.turn_on(ITEM)
+		self.assertEqual(stock_flag(), 1)
+		self.assertEqual(self._line_warehouse(), STORES)
+		self.assertIn(("get_item_warehouse_", ITEM, COMPANY, True), STATE["calls"])
+		self.assertIn(("update_bin_qty", ITEM, STORES, {"ordered_qty": 0}), STATE["calls"])
+		on_order = [c for c in STATE["comments"] if c[0] == "Purchase Order"]
+		self.assertEqual(len(on_order), 1)
+		self.assertIn(f"row 1 was given {STORES}", on_order[0][3])
+
+	def test_a_request_line_with_no_warehouse_takes_it_too(self):
+		add_open_request(name="MR-T-BLANK", warehouse=None)
+		STATE["item_defaults"][ITEM] = {"default_warehouse": None}
+		self._company_default(STORES)
+		ms.turn_on(ITEM)
+		self.assertEqual(self._line_warehouse("MR-T-BLANK-1", "Material Request Item"), STORES)
+
+	def test_the_items_group_and_brand_come_before_the_company(self):
+		"""ERPNext's order, asked of ERPNext: item, item group, brand, Company."""
+		self._company_default(STORES)
+		lines = [{"company": COMPANY, "warehouse": ""}]
+		STATE["brand_default"] = MAIN
+		self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: MAIN})
+		add_warehouse("Group Default - TC")
+		STATE["group_default"] = "Group Default - TC"
+		self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: "Group Default - TC"})
+		STATE["item_defaults"][ITEM] = {"default_warehouse": MAIN}
+		self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: MAIN})
+
+	def test_stock_settings_default_is_never_read(self):
+		"""It was the fallback until v1.817.0, and the docstring called that ERPNext's order.
+		ERPNext never reads it for a line, and copies it into every new item."""
 		add_open_po(name="PO-T-BLANK", warehouse="")
 		STATE["singles"][("Stock Settings", "default_warehouse")] = STORES
-		ms.turn_on(ITEM)
-		self.assertEqual(
-			CONN.execute(
-				"select warehouse from `tabPurchase Order Item` where name = 'PO-T-BLANK-1'"
-			).fetchone()[0],
-			STORES,
-		)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			ms.turn_on(ITEM)
+		self.assertIn("Purchase Order PO-T-BLANK row 1 has no warehouse", str(caught.exception))
+		self.assertNotIn("Stock Settings", str(caught.exception))
+		self.assertEqual(stock_flag(), 0)
+		source = (APP / "inventory_enhancements" / "maintain_stock.py").read_text(encoding="utf-8")
+		self.assertNotIn('get_single_value("Stock Settings", "default_warehouse")', source)
+
+	def test_without_erpnexts_function_the_item_then_the_company_are_read(self):
+		"""A version where the function has moved, or a user whose warehouse permissions hide
+		its answer: the order line is not that user's document, and it still needs a warehouse."""
+		lines = [{"company": COMPANY, "warehouse": ""}]
+		self._company_default(STORES)
+		for how in ("erpnext_line_fails", "erpnext_line_hidden"):
+			with self.subTest(how):
+				STATE[how] = True
+				STATE["item_defaults"].pop(ITEM, None)
+				self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: STORES})
+				STATE["item_defaults"][ITEM] = {"default_warehouse": MAIN}
+				self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: MAIN})
+				del STATE[how]
+
+	def test_an_unusable_answer_falls_through_to_the_next(self):
+		add_warehouse("Old - TC", disabled=1)
+		self._company_default(STORES)
+		STATE["item_defaults"][ITEM] = {"default_warehouse": "Old - TC"}
+		self.assertEqual(ms._fill_warehouses(ITEM, [{"company": COMPANY, "warehouse": ""}]), {COMPANY: STORES})
+		# And a Company default that cannot hold stock is not used either.
+		self._company_default("Old - TC")
+		self.assertEqual(ms._fill_warehouses(ITEM, [{"company": COMPANY, "warehouse": ""}]), {})
+
+	def test_a_line_that_names_a_warehouse_asks_nothing(self):
+		self.assertEqual(ms._fill_warehouses(ITEM, [{"company": COMPANY, "warehouse": STORES}]), {})
+		self.assertNotIn("get_item_warehouse_", [c[0] for c in STATE["calls"]])
+
+	def test_the_bulk_switch_fills_the_same_way(self):
+		add_open_po(name="PO-T-BLANK", warehouse=None)
+		STATE["item_defaults"][ITEM] = {"default_warehouse": None}
+		self._company_default(STORES)
+		source = (APP / "inventory_enhancements" / "maintain_stock_bulk.py").read_text(encoding="utf-8")
+		self.assertIn("maintain_stock._fill_warehouses(code, lines)", source)
+		lines = bulk._open_lines().get(ITEM) or []
+		self.assertEqual([line["warehouse"] for line in lines], [""])
+		self.assertEqual(ms._fill_warehouses(ITEM, lines), {COMPANY: STORES})
 
 	def test_no_warehouse_to_take_refuses_and_writes_nothing(self):
 		add_open_po(name="PO-T-BLANK", warehouse=None)

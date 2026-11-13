@@ -1,0 +1,64 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:PTV-{#####}",
+ "creation": "2026-11-12 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "view_name",
+  "mode",
+  "layout"
+ ],
+ "fields": [
+  {
+   "description": "One person's saved layout for the Procurement Tracker on the Project form. Only its owner reads or changes it, through the tracker's own endpoints (procurement_views.py); this form is for an administrator tidying up.",
+   "fieldname": "view_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "View name",
+   "length": 60,
+   "reqd": 1
+  },
+  {
+   "fieldname": "mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Grouping",
+   "options": "documents\nitems",
+   "reqd": 1
+  },
+  {
+   "description": "The columns, sort and filters, as JSON. Checked against data/procurement_tracker_views.json on every save.",
+   "fieldname": "layout",
+   "fieldtype": "Long Text",
+   "label": "Layout",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Procurement Tracker View",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 0,
+   "export": 0,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

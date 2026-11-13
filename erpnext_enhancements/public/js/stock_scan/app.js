@@ -54,6 +54,7 @@ import {
 	makeHomeDefault,
 	mapUrl,
 	mayHaveSaved,
+	moveJobMode,
 	mintRef,
 	mintRunId,
 	money,
@@ -74,7 +75,10 @@ import {
 	runOffered,
 	runSummary,
 	saveKey,
+	shelfJobsText,
+	soleShelfJob,
 	splitPlaces,
+	takeNeedsJob,
 	takeProject,
 	saveLabel,
 	scanFailure,
@@ -249,7 +253,7 @@ function firstName(full) {
 	return String(full || "").trim().split(/\s+/)[0] || "someone";
 }
 
-/** "Stores - SF · 12 on hand" pieces for a place an item is recorded. */
+/** "Bin A1-1-1 · 12 on hand" pieces for a place an item is recorded. */
 function placeAmount(place, uom) {
 	const onHand = `${plain(place.on_hand)} ${uom || ""}`.trim();
 	if (place.available !== undefined && place.available !== null && place.available < place.on_hand) {
@@ -862,6 +866,7 @@ export class StockScanApp {
 		append(view, this.backLink(), el("h1", "ee-ss-h1", head.warehouse_name));
 		if (loc && loc.trail) view.appendChild(el("p", "ee-ss-trail", loc.trail));
 		if (loc && loc.job_site) view.appendChild(this.siteNote(loc.job_site));
+		if (loc && loc.project_shelf) view.appendChild(this.shelfNote());
 		// A job's site is not in the building, so the map has nothing to show for it.
 		if (loc && !loc.job_site) append(view, this.mapLink({ w: loc.warehouse }, "Show this place on the map"));
 		if (!loc) {
@@ -888,6 +893,10 @@ export class StockScanApp {
 			const sub = append(el("span", "ee-ss-row-sub"), item.item_code);
 			if (item.on_order > 0) append(sub, " ", el("span", "ee-ss-badge", "on order"));
 			if (item.undecided) append(sub, " ", el("span", "ee-ss-badge", "not assigned"));
+			// On the Project Shelf (v1.817.0): the jobs the item is held for, from the ledger.
+			const heldFor = loc.project_shelf ? shelfJobsText(item.jobs) : "";
+			if (heldFor) append(sub, " · ", `for ${heldFor}`);
+			else if (loc.project_shelf && item.on_hand > 0) append(sub, " ", el("span", "ee-ss-badge", "no job on record"));
 			const row = button(
 				[
 					thumb(item),
@@ -955,6 +964,12 @@ export class StockScanApp {
 		}
 		view.appendChild(onHand);
 		if (item.job_site) view.appendChild(this.siteNote(item.job_site));
+		if (item.project_shelf) {
+			view.appendChild(this.shelfNote());
+			const heldFor = shelfJobsText(item.shelf_jobs, 6);
+			if (heldFor) view.appendChild(el("p", "ee-ss-also ee-ss-also-shelf", `Held here for: ${heldFor}`));
+			else if (item.on_hand > 0) view.appendChild(el("p", "ee-ss-also ee-ss-also-shelf", "No job is on record for what is here. Say which job when you move or take it."));
+		}
 
 		if (item.blocked) {
 			const notice = el("p", "ee-ss-notice", item.blocked);
@@ -994,6 +1009,17 @@ export class StockScanApp {
 			return `${shown.join(", ")}${list.length > 3 ? `, and ${list.length - 3} more` : ""}`;
 		};
 		if (places.shop.length) view.appendChild(el("p", "ee-ss-also", `Also at: ${placesText(places.shop)}`));
+		// On the Project Shelf (v1.817.0): in the building, bought for a job. Named with its jobs.
+		for (const place of places.shelf) {
+			const heldFor = shelfJobsText(place.jobs);
+			view.appendChild(
+				el(
+					"p",
+					"ee-ss-also ee-ss-also-shelf",
+					`On ${place.warehouse_name}, bought for a job: ${plain(place.on_hand)}${heldFor ? ` (${heldFor})` : ""}`
+				)
+			);
+		}
 		if (places.sites.length) {
 			view.appendChild(el("p", "ee-ss-also ee-ss-also-sites", `On job sites, not in the shop: ${placesText(places.sites)}`));
 		}
@@ -1186,6 +1212,88 @@ export class StockScanApp {
 		return note;
 	}
 
+	/** What the Project Shelf is called (Inventory Scanner Settings), for a sentence. */
+	shelfName() {
+		return this.settings.project_shelf_name || "the Project Shelf";
+	}
+
+	/** The line the Project Shelf carries, on its own screen and on an item opened there (v1.817.0). */
+	shelfNote() {
+		const note = el("p", "ee-ss-note ee-ss-shelf-note", "Parts here were bought for a job. They are not counted as shop stock, and a take here names the job.");
+		note.setAttribute("role", "note");
+		return note;
+	}
+
+	/**
+	 * The job a move onto or off the Project Shelf carries (v1.817.0), as a block for a move
+	 * sheet. Whose stock is on the shelf is read from the job on each movement, so a move that
+	 * releases stock to a bin says which job it was bought for ("off"), and a move that sets
+	 * stock aside on the shelf says which job it is for ("onto"). `set(mode, jobs)` shows the
+	 * question, or hides it for a move that asks nothing; `value()` is the job picked.
+	 *
+	 * "off" lists the jobs that hold the item on the shelf (`jobs`) and starts on the only one
+	 * when there is only one AND those jobs account for every unit there (`exact`): where they
+	 * do not, part of what is on the shelf has no job on record, so nothing is picked for the
+	 * person. "onto" starts on the run's job, when one is picked. Either can pick any other
+	 * job; that pick is this move's alone and is not remembered as the run's job.
+	 */
+	shelfJobLine(onChange) {
+		const box = el("div", "ee-ss-shelf-job");
+		box.hidden = true;
+		let mode = "";
+		let jobs = [];
+		let picked = null;
+		const pick = (job) => {
+			picked = job && job.project ? { project: job.project, project_name: job.project_name || job.project } : null;
+			draw();
+			if (onChange) onChange();
+		};
+		const draw = () => {
+			fill(box);
+			box.hidden = !mode;
+			if (!mode) return;
+			box.appendChild(el("h3", "ee-ss-group-title", mode === "off" ? "Bought for which job?" : "Set aside for which job?"));
+			const list = el("ul", "ee-ss-list");
+			const offered = jobs.slice();
+			if (picked && !offered.some((job) => job.project === picked.project)) offered.unshift(picked);
+			for (const job of offered) {
+				const current = !!(picked && picked.project === job.project);
+				const sub = Number(job.qty) > 0 ? `${plain(job.qty)} here for this job · ${job.project}` : job.project;
+				const row = button(
+					[
+						append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", job.project_name || job.project), el("span", "ee-ss-row-sub", sub)),
+						current ? glyph("✓", "ee-ss-row-check") : null,
+					],
+					`ee-ss-row${current ? " is-current" : ""}`,
+					() => pick(job)
+				);
+				row.setAttribute("aria-pressed", current ? "true" : "false");
+				list.appendChild(append(el("li"), row));
+			}
+			box.appendChild(list);
+			box.appendChild(
+				button(offered.length ? "Another job…" : "Pick the job…", "ee-ss-linkbtn ee-ss-shelf-job-other", () =>
+					this.pickJob({ reason: "shelf", onPick: (job) => pick(job) })
+				)
+			);
+		};
+		return {
+			node: box,
+			mode: () => mode,
+			value: () => (mode && picked ? picked.project : undefined),
+			set: (nextMode, nextJobs, exact) => {
+				const held = (Array.isArray(nextJobs) ? nextJobs : []).filter((job) => job && job.project && Number(job.qty) > 0);
+				if (nextMode === mode) return;
+				mode = nextMode || "";
+				jobs = mode === "off" ? held : [];
+				picked = null;
+				if (mode === "off") picked = soleShelfJob(held, exact);
+				else if (mode === "onto" && this.job) picked = { project: this.job.project, project_name: this.job.project_name || this.job.project };
+				draw();
+			},
+		};
+	}
+
 	/**
 	 * Move to… is a plain stock movement: `bin_assignments.move_to` without make-home needs only
 	 * Stock Entry create and submit, exactly as a take or Move here does, and the page shows those
@@ -1219,6 +1327,8 @@ export class StockScanApp {
 		if (!this.canManage() || !item || !item.warehouse) return false;
 		// A job site is nobody's bin (v1.801.0): there is nothing to take the item off.
 		if (item.job_site) return false;
+		// Nor is the Project Shelf (v1.817.0): parts wait there for their job.
+		if (item.project_shelf) return false;
 		const stocked = (Number(item.on_hand) || 0) > 0;
 		if (item.blocked && stocked) return false;
 		const why = (row) => !!(row && (row.assigned || row.is_default || row.undecided));
@@ -1284,11 +1394,13 @@ export class StockScanApp {
 		};
 		const error = errorLine("ee-ss-field-error");
 		const showError = (text, action) => error.show(text, action);
+		// The job the move carries when one end is the Project Shelf (v1.817.0); hidden otherwise.
+		const jobLine = this.shelfJobLine(() => showError(""));
 
 		/** The box: shown with `can_manage` once a place is picked, never for the boneyard. */
 		const refreshHome = () => {
 			const r = current();
-			const offered = !!(manage && dest && dest.warehouse !== boneyard && !dest.job_site);
+			const offered = !!(manage && dest && dest.warehouse !== boneyard && !dest.job_site && !dest.project_shelf);
 			homeRow.hidden = !offered;
 			if (!offered) home.checked = false;
 			else if (!touched) home.checked = makeHomeDefault(r.qty, onHand);
@@ -1305,6 +1417,10 @@ export class StockScanApp {
 				note = "The Boneyard is never an item's bin.";
 			} else if (dest && dest.job_site) {
 				note = "It leaves the shop's stock and waits at the job. It is charged to the job when it is taken there.";
+			} else if (dest && dest.project_shelf) {
+				note = `It leaves the shop's stock and waits on ${dest.warehouse_name} for its job.`;
+			} else if (dest && item.project_shelf) {
+				note = "It goes back into the shop's stock, and comes off that job's count.";
 			}
 			homeNote.textContent = note;
 			homeNote.hidden = !note;
@@ -1324,6 +1440,7 @@ export class StockScanApp {
 		const relabel = () => {
 			drawGo();
 			refreshHome();
+			jobLine.set(dest ? moveJobMode(item, dest) : "", item.shelf_jobs, item.shelf_jobs_exact);
 			showError("");
 		};
 		const choose = (place) => {
@@ -1337,6 +1454,7 @@ export class StockScanApp {
 				warehouse_name: place.warehouse_name || place.warehouse,
 				trail: place.trail || "",
 				job_site: !!place.job_site,
+				project_shelf: !!place.project_shelf,
 			};
 			drawDest();
 			relabel();
@@ -1470,6 +1588,9 @@ export class StockScanApp {
 						: `Only ${plain(free)} ${uom} can be moved from ${here}.`
 				);
 			}
+			if (jobLine.mode() && !jobLine.value()) {
+				return showError(jobLine.mode() === "off" ? "Pick the job these were bought for." : "Pick the job these are being set aside for.");
+			}
 			this.post(
 				v,
 				BIN.MOVE_TO,
@@ -1480,6 +1601,7 @@ export class StockScanApp {
 					to_warehouse: dest.warehouse,
 					qty: r.qty,
 					make_home: !homeRow.hidden && home.checked ? 1 : 0,
+					project: jobLine.value(),
 				},
 				{
 					button: goBtn,
@@ -1524,6 +1646,7 @@ export class StockScanApp {
 					destBox,
 					homeRow,
 					homeNote,
+					jobLine.node,
 					error.node
 				),
 			actions: [],
@@ -1917,7 +2040,8 @@ export class StockScanApp {
 		if (d.verb === "take") {
 			// At a job site the take is that job's (v1.801.0): no picker, whatever the chip says.
 			const project = takeProject(item, this.job);
-			if (Number(this.settings.require_project_for_take) && !project) {
+			// On the Project Shelf every take names its job (v1.817.0), whatever the setting says.
+			if (takeNeedsJob(item, this.settings.require_project_for_take, project)) {
 				this.pickJob({ reason: "take", then: () => this.save() });
 				return;
 			}
@@ -1931,8 +2055,16 @@ export class StockScanApp {
 			});
 			return;
 		}
-		const storeRun = this.storeRunReady() && item.store_run_ok !== false;
-		if ((item.open_orders && item.open_orders.length) || this.job || storeRun) this.askWhereFrom(v, qty);
+		// Not on the Project Shelf (v1.817.0): a store run's receipt names no job, and the server
+		// refuses one there.
+		const storeRun = this.storeRunReady() && item.store_run_ok !== false && !item.project_shelf;
+		const hasOrders = !!(item.open_orders && item.open_orders.length);
+		if (item.project_shelf && !this.job && !hasOrders) {
+			// Stock added to the shelf with no order says which job it is for.
+			this.pickJob({ reason: "take", then: () => this.save() });
+			return;
+		}
+		if (hasOrders || this.job || storeRun) this.askWhereFrom(v, qty);
 		else this.confirmWithoutOrder(v, qty);
 	}
 
@@ -1954,7 +2086,7 @@ export class StockScanApp {
 		const uom = item.stock_uom;
 		const job = this.job;
 		const orders = item.open_orders || [];
-		const storeRun = this.storeRunReady() && item.store_run_ok !== false;
+		const storeRun = this.storeRunReady() && item.store_run_ok !== false && !item.project_shelf;
 		const runs = storeRun ? this.offeredRuns().slice(0, 3) : [];
 		const send = (extra) =>
 			this.post(
@@ -1997,6 +2129,14 @@ export class StockScanApp {
 						el("span", "ee-ss-row-title", `${line.purchase_order} · ${line.supplier_name || line.supplier}`),
 						el("span", "ee-ss-row-sub", `${plain(line.pending_stock_qty)} of ${plain(ordered)} ${uom} still to come${due ? ` · due ${due}` : ""}`),
 					];
+					// Whose order it is, and where it was ordered for (v1.817.0). The bin on screen still
+					// decides where this receipt goes: scanning a bin means "put it here".
+					if (line.project_name) parts.push(el("span", "ee-ss-row-sub", `For ${line.project_name}`));
+					if (line.for_project_shelf && !item.project_shelf) {
+						parts.push(
+							el("span", "ee-ss-row-sub", `Ordered for ${line.project_shelf_name || this.shelfName()}. Receiving it here puts it at ${item.warehouse_name || "this location"} instead.`)
+						);
+					}
 					if (qty > line.pending_stock_qty + 1e-9) {
 						parts.push(el("span", "ee-ss-row-warn", `More than is still to come on this order.`));
 					}
@@ -2016,14 +2156,23 @@ export class StockScanApp {
 				}
 				if (job) {
 					list.appendChild(
-						choice(handle, `Returned from ${job.project_name || job.project}`, `Parts back from this job · ${job.project}`, {
-							without_po: 1,
-							project: job.project,
-						})
+						item.project_shelf
+							? choice(handle, `For ${job.project_name || job.project}`, `Not on a purchase order · held here for this job · ${job.project}`, {
+									without_po: 1,
+									project: job.project,
+								})
+							: choice(handle, `Returned from ${job.project_name || job.project}`, `Parts back from this job · ${job.project}`, {
+									without_po: 1,
+									project: job.project,
+								})
 					);
 				}
-				list.appendChild(choice(handle, "Not on a purchase order", "Found, or not from a job", { without_po: 1 }));
+				// Nothing lands on the Project Shelf without a job (v1.817.0), so there is no "found" choice there.
+				if (!item.project_shelf) list.appendChild(choice(handle, "Not on a purchase order", "Found, or not from a job", { without_po: 1 }));
 				body.appendChild(list);
+				if (item.project_shelf && !job) {
+					body.appendChild(el("p", "ee-ss-note", "To add parts here that are not on an order, pick their job at the top of the page first."));
+				}
 				body.appendChild(el("p", "ee-ss-note", "Anything added without a purchase order is reviewed: store runs by Purchasing, the rest by a stock manager."));
 			},
 			actions: [{ label: "Cancel", kind: "ghost" }],
@@ -2455,16 +2604,23 @@ export class StockScanApp {
 			less.setAttribute("aria-label", "One less");
 			const more = button("+", "ee-ss-mini-step", () => step(1));
 			more.setAttribute("aria-label", "One more");
+			// The job the move carries when one end is the Project Shelf (v1.817.0); hidden otherwise.
+			const jobLine = this.shelfJobLine(() => showError(""));
+			jobLine.set(moveJobMode(place, item), place.jobs, place.jobs_exact);
 			fill(
 				body,
 				el("p", "ee-ss-sheet-text", `${placeAmount(place, uom)} there. How many are on this shelf now?`),
 				append(el("div", "ee-ss-qty-row"), less, field, more, el("span", "ee-ss-qty-unit", uom)),
+				jobLine.node,
 				error.node
 			);
 			const go = () => {
 				const r = current();
 				if (r.problem) return showError(r.problem);
 				if (r.qty > free + 1e-9) return showError(`Only ${plain(free)} ${uom} can be moved from ${place.warehouse_name}.`);
+				if (jobLine.mode() && !jobLine.value()) {
+					return showError(jobLine.mode() === "off" ? "Pick the job these were bought for." : "Pick the job these are being set aside for.");
+				}
 				this.post(
 					v,
 					M.MOVE,
@@ -2474,6 +2630,7 @@ export class StockScanApp {
 						warehouse: item.warehouse,
 						from_warehouse: place.warehouse,
 						qty: r.qty,
+						project: jobLine.value(),
 						scanned_code: v.scannedCode || undefined,
 					},
 					{ button: moveBtn(), showError, isOpen: () => !closed, onDone: () => handle.close("action"), keepChange: true }
@@ -2595,12 +2752,15 @@ export class StockScanApp {
 	 * `opts.reason` "job_site" (v1.801.0): Move to…'s "A job site". The pick goes to
 	 * `opts.onPick` and is NOT remembered as the run's job: sending pipe to one job says nothing
 	 * about which job the next take is for. Only jobs that keep material on site are listed.
+	 * `opts.reason` "shelf" (v1.817.0): the job a move onto or off the Project Shelf carries.
+	 * Like "job_site" the pick goes to `opts.onPick` and is not remembered; every open job is listed.
 	 */
 	pickJob(opts) {
 		if (this.reportBusy()) return;
 		const o = opts || {};
 		const forSite = o.reason === "job_site";
-		const required = o.reason === "take" || o.reason === "store_run" || forSite;
+		const forShelf = o.reason === "shelf";
+		const required = o.reason === "take" || o.reason === "store_run" || forSite || forShelf;
 		const search = input({ placeholder: "Search jobs", label: "Search jobs", enterkeyhint: "search", type: "search" });
 		const status = el("p", "ee-ss-search-status");
 		status.setAttribute("role", "status");
@@ -2610,7 +2770,7 @@ export class StockScanApp {
 		let timer = null;
 
 		const choose = (job) => {
-			if (forSite) {
+			if (forSite || forShelf) {
 				handle.close("action");
 				if (job && o.onPick) o.onPick(job);
 				return;
@@ -2630,7 +2790,7 @@ export class StockScanApp {
 			);
 			if (!required) list.appendChild(append(el("li"), none));
 			for (const row of rows) {
-				const current = !forSite && this.job && this.job.project === row.project;
+				const current = !forSite && !forShelf && this.job && this.job.project === row.project;
 				const b = button(
 					[
 						append(
@@ -2674,7 +2834,7 @@ export class StockScanApp {
 		});
 
 		handle = sheet({
-			title: forSite ? "Which job is it going to?" : o.reason === "store_run" ? "Which job were these bought for?" : required ? "Which job are these parts for?" : "Which job?",
+			title: forSite ? "Which job is it going to?" : forShelf ? "Which job?" : o.reason === "store_run" ? "Which job were these bought for?" : required ? "Which job are these parts for?" : "Which job?",
 			full: true,
 			// Do not raise the keyboard over the list: most runs pick a recent job with one tap.
 			initialFocus: "sheet",
@@ -3842,6 +4002,8 @@ export class StockScanApp {
 			if (!row.is_stock_item) append(sub, " ", el("span", "ee-ss-badge", "not tracked"));
 			// The total is the shop's (v1.801.0); what is out on jobs is said beside it.
 			if (!here && Number(row.on_job_sites) > 0) append(sub, " ", el("span", "ee-ss-badge", `${plain(row.on_job_sites)} on job sites`));
+			// ... and what is on the Project Shelf, bought for a job (v1.817.0).
+			if (!here && Number(row.on_project_shelf) > 0) append(sub, " ", el("span", "ee-ss-badge", `${plain(row.on_project_shelf)} for jobs`));
 			return append(
 				el("li"),
 				button(
@@ -3985,7 +4147,13 @@ export class StockScanApp {
 				const row = button(
 					[
 						icon("pin", "ee-ss-row-icon"),
-						append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", place.warehouse_name), el("span", "ee-ss-row-sub", placeAmount(place, item.stock_uom))),
+						append(
+							el("span", "ee-ss-row-main"),
+							el("span", "ee-ss-row-title", place.warehouse_name),
+							el("span", "ee-ss-row-sub", placeAmount(place, item.stock_uom)),
+							// Not the shop's (v1.817.0): bought for a job, and which.
+							place.project_shelf ? el("span", "ee-ss-row-sub", `Bought for a job${shelfJobsText(place.jobs) ? `: ${shelfJobsText(place.jobs)}` : ""}`) : null
+						),
 						icon("next", "ee-ss-row-go"),
 					],
 					"ee-ss-row",

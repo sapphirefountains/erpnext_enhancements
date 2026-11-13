@@ -62,6 +62,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `route_slots.py` | C3: the route view's own clock times for every stop of a person's day (`route_payload`'s two passes), keyed by stop; leave-by = arrival less the drive. Pure core, one engine call per range | `day_slots`, `stop_key`, `first_slot`, `compute` | `calendar_sync.timing`, `leave_by` |
 | `leave_by.py` | C3: the opt-in leave-by ping, every five minutes, **off until Project Planner Settings → *Leave-by pings*** and each person's *Ping me at leave-by time*. Bell, then text, else email; once per person per stop per day (`Planner Ping Log`); no Google request | `send_leave_by_pings`, `select`, `due`, `message` | `scheduler_events` cron `4-59/5` |
 | `doctype/planner_ping_log/` | `user|date|stop` claim (unique) that keeps a leave-by ping to once per person per stop per day across workers and deploys | `PlannerPingLog` | `leave_by` |
+| `doctype/procurement_tracker_view/` | One person's saved layout for the Procurement Tracker (v1.816.0): a name, a grouping and a JSON layout, owned by whoever made it. **No role but System Manager has a permission on it**; people reach their own views only through `procurement_views.py`, which checks the owner every time. `validate` holds the layout to `procurement_view_rules.validate_layout` whoever writes the record | `ProcurementTrackerView` | `procurement_views.get_views` / `save_view` / `rename_view` / `delete_view`; the tracker widget |
 | `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, the near window for timed route stops (`timed_days_ahead`, 14), colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
 | `doctype/calendar_sync_link/` | One Google event ERPNext owns: source (`doctype|name|key`, unique), calendar, event id, content hash, Google etag of our last write, last synced, last error | `CalendarSyncLink` | written only by `calendar_sync.engine` |
 | `doctype/calendar_time_off_review/` | C4: an event on the vacations calendar the time-off read could not put on one person. `CTOR-.#####`, one per Google event id (unique). The schedulers pick a person, Everyone or Ignored, optionally for every event with the same title | `CalendarTimeOffReview` (queues `time_off.apply_review` after commit) | made by `calendar_sync.time_off` |
@@ -1058,6 +1059,23 @@ Buying), which is unrelated and not in this repo.
   it is only this job's lines. The keys are on the rows **only for a person who may read Purchase
   Orders** (`_price_access`): the endpoints themselves ask only for Project read. See
   [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md).
+- **Saved views (v1.816.0).** A view is a named layout for By item or By document: the columns and
+  their order, the sort, the five toolbar filters and any filters on a column. Eight views ship
+  with the app (`data/procurement_tracker_views.json`: Standard for each grouping, Location audit,
+  Items with no place recorded, Money by item and by document, Missing prices, To chase) and cannot
+  be changed, only copied. A person's own views are `Procurement Tracker View` records
+  (`doctype/procurement_tracker_view/`), reached **only** through
+  [`procurement_views.py`](../procurement_views.py) (`get_views`, `save_view`, `rename_view`,
+  `delete_view`), which checks the owner on every call; the DocType gives no role but System
+  Manager any permission. Not Frappe's user settings: those are served from Redis, which every
+  deploy flushes. What a layout may hold, the repair of an outdated one and the owner rules are
+  [`procurement_view_rules.py`](../procurement_view_rules.py) (pure). A layout names columns and
+  carries no data, so it cannot reveal a price column: the server leaves prices out of the feed for
+  a person who may not read Purchase Orders, and the tracker says which columns of the view are
+  missing and why. The browser remembers the last layout per person and grouping
+  (`localStorage`, in try/catch); the address names the view (`pt_layout`) and wins.
+  [`tests/test_procurement_view_rules.py`](../tests/test_procurement_view_rules.py) and the node
+  suite hold it. See [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md).
 - **Printing (v1.517.0):** every document row has **Print** (Frappe's print view, new tab) and
   every group header has **Print**, which prints the group as one PDF — **All**, or **Open**
   where the doctype has one (Material Request, Purchase Order, Purchase Invoice). "Open" is
@@ -1072,6 +1090,29 @@ Anything beyond a passing change here wants
 [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md) first — it maps the
 render path, the chain SQL and its `OR`-join fan-out, the three separate things called "status",
 and the production data volumes.
+
+### A project for the row Update Items adds (v1.816.3, ER-2026-1333210)
+
+`Purchase Order Item.project` is mandatory, and `procurement_project.cascade_project_to_items`
+(a `before_validate` hook on the **Purchase Order**) fills blank lines from the header. That hook
+cannot help a row added to a *submitted* order: ERPNext's *Update Items*
+(`accounts_controller.update_child_qty_rate`) builds the new `Purchase Order Item` without a
+project and calls `child_item.insert()` **on the row by itself**, before the order is saved, so the
+mandatory check refused it ("Value missing for: Project") in a dialog with no Project column.
+
+`procurement_line_project.fill_new_line_project` is a `before_insert` hook on **Purchase Order
+Item** (`hooks.py`, `doc_events["Purchase Order Item"]`). It runs ahead of Frappe's mandatory check
+and gives the row: the order's header project; else the one project the order's lines share. An
+order with no header project whose lines name *several* projects is not guessed at: the row is
+refused in plain words (put the item on its own order, or have purchasing amend the order). A
+project already on the row is never touched. If the order cannot be read the hook steps aside and
+Frappe's own mandatory error stands. The stock dialog stays as it is: its field list is built
+inside `erpnext.utils.update_child_items`, and the server ignores any extra column, so a Project
+column would need a copy of core JS and would not reach the server anyway.
+
+The Sales Order's *Update Items* shares that code and is not affected: this app makes nothing on
+`Sales Order Item` mandatory. `inventory_enhancements/receipt_price.py` calls
+`update_child_qty_rate` with existing rows only, which never insert.
 
 ## Pick Routing Map (v1.190.0)
 
