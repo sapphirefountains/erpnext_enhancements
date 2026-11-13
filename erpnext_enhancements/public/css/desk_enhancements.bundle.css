@@ -850,6 +850,232 @@ mark {
     color: #fff8e1;
 }
 
+/* Saved views (v1.816.0): the view menu, the column picker, the column filters, and the filter bar.
+   Each panel opens under its button and closes on Escape or a click elsewhere. */
+.procurement-tracker .pt-menu-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.procurement-tracker .pt-view-btn b {
+    font-weight: 600;
+}
+
+.procurement-tracker .pt-changed {
+    color: var(--text-muted, #6c7680);
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-count {
+    display: inline-block;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-color, #1f272e);
+    font-size: 11px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.procurement-tracker .pt-menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 280px;
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+    overflow: auto;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--fg-color, #fff);
+    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+    text-align: left;
+}
+
+.procurement-tracker .pt-menu--wide {
+    width: 420px;
+}
+
+.procurement-tracker .pt-menu-head {
+    padding: 6px 8px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-menu-note {
+    margin: 2px 8px 6px;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-menu-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color, #1f272e);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.procurement-tracker .pt-menu-item small {
+    color: var(--text-muted, #6c7680);
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-menu-item:hover,
+.procurement-tracker .pt-menu-item:focus-visible {
+    background: var(--control-bg, #f3f3f3);
+}
+
+.procurement-tracker .pt-menu-item.current {
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--btn-primary, #171717);
+}
+
+.procurement-tracker .pt-menu-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 8px 4px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .pt-colist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.procurement-tracker .pt-colist li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 8px;
+}
+
+.procurement-tracker .pt-colist li.off {
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-colist label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-weight: normal;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.procurement-tracker .pt-colist input {
+    margin: 0;
+}
+
+.procurement-tracker .pt-colmove {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.procurement-tracker .pt-sortrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 4px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color, #d1d8dd);
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-sortrow label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.procurement-tracker .pt-sortrow select {
+    width: auto;
+    height: 28px;
+}
+
+.procurement-tracker .pt-rule {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border-color, #ebeef0);
+}
+
+.procurement-tracker .pt-rule select,
+.procurement-tracker .pt-rule input[type="text"],
+.procurement-tracker .pt-rule input[type="number"],
+.procurement-tracker .pt-rule input[type="date"] {
+    width: auto;
+    min-width: 0;
+    height: 28px;
+    max-width: 150px;
+}
+
+.procurement-tracker .pt-rule-range,
+.procurement-tracker .pt-rule-choices {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-rule-choices label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.procurement-tracker .pt-filterbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--control-bg, #f3f3f3);
+    font-size: 12px;
+    color: var(--text-color, #1f272e);
+}
+
+.procurement-tracker .pt-note {
+    margin: 0 0 8px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--fg-color, #fff);
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
 .procurement-tracker .pt-empty {
     padding: 20px;
 }
@@ -1027,6 +1253,29 @@ mark {
     .procurement-tracker .pt-summary {
         margin-left: 0;
         flex: 1 1 100%;
+    }
+    /* The panels fill the width: a 280px box under a button near the right edge would run off the screen. */
+    .procurement-tracker .pt-menu-wrap {
+        position: static;
+    }
+
+    .procurement-tracker .pt-menu,
+    .procurement-tracker .pt-menu--wide {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        top: 12vh;
+        width: auto;
+        max-width: none;
+        max-height: 76vh;
+    }
+
+    .procurement-tracker .pt-rule select,
+    .procurement-tracker .pt-rule input[type="text"],
+    .procurement-tracker .pt-rule input[type="number"],
+    .procurement-tracker .pt-rule input[type="date"] {
+        flex: 1 1 40%;
+        max-width: none;
     }
 
     .procurement-tracker .group-content {
