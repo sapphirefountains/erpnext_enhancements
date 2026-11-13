@@ -616,7 +616,7 @@ test("the form script draws the price columns from the registries, behind the se
 	check("the colspan is the columns on screen", code.includes(':colspan="cols.length"'), true);
 });
 
-// ------------------------------------------------------------------ saved views (v1.815.0)
+// ------------------------------------------------------------------ saved views (v1.816.0)
 
 const CATALOG = JSON.parse(fs.readFileSync(path.join(APP, "data/procurement_tracker_views.json"), "utf8"));
 const VIEWS_PY = fs.readFileSync(path.join(APP, "procurement_views.py"), "utf8");
@@ -1073,6 +1073,21 @@ test("L5 and L6: no claim that nobody else can see a view, and a column move doe
 	const layout_watch = code.slice(code.indexOf("layout: {\n\t\t\t\tdeep: true"), code.indexOf('"layout.rules"'));
 	check("the layout watcher does not open folders", layout_watch.includes("expandMatches"), false);
 	check("the column filters' watcher does", /"layout\.rules": \{[\s\S]*?expandMatches\(\)/.test(code), true);
+});
+
+test("round 2: a link that cannot carry the column filters says so, a late answer is ignored, the total has a label", () => {
+	const code = SCRIPT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+	const huge = new Array(12).fill({ column: "item", op: "contains", value: "x".repeat(120) });
+	const small = [{ column: "received", op: "between", min: 1, max: null }];
+	check("short filters fit", pt.rules_fit_address(small, [], "items"), true);
+	check("filters the view already has always fit: nothing is written", pt.rules_fit_address(huge, huge, "items"), true);
+	check("too long and different from the view's own: they do not", pt.rules_fit_address(huge, [], "items"), false);
+	check("what is said and where", [pt.LINK_RULES_NOTE.includes("will not carry them"), code.includes('<small v-if="linkNote"'), code.includes("pt.rules_fit_address(this.layout.rules, this.currentView.layout.filters.rules, this.mode)")], [true, true, true]);
+	check("it agrees with what the address writes", [pt.write_view_query("", Object.assign(pt.default_state(), { view: "items" }), "std-items", pt.standard_layout("items").filters, huge).includes("pt_rules"), pt.rules_fit_address(huge, [], "items")], [false, false]);
+	check("a late answer to a save, rename or delete is dropped", code.includes("let late = false;") && code.includes("late = true;") && code.includes("if (!late && r && r.message) done(r.message);"), true);
+	check("the built-in views come with the catalog even when the person's own could not be read", code.includes("saved && saved.catalog ? pt.merge_views(saved.catalog, saved.mine || []) : pt.fallback_views()"), true);
+	check("the unavailable answer still disables saving", code.includes("!saved.unavailable"), true);
+	check("the total is labelled when Spent is the first column", code.includes('<small v-if="spentIndex === 0" class="pt-where-note">Total spent on these items'), true);
 });
 
 // ------------------------------------------------------------------ run

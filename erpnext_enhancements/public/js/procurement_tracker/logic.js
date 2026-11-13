@@ -1214,6 +1214,18 @@ export function address_names_view(search) {
  * view itself has it on: without that, a reload would bring a cleared filter back from the saved view.
  * `base` is the view's own filters ({ location, status, supplier, action, noprice }).
  */
+// Whether a link to the page can carry this person's filters on columns: they travel in the address only up to
+// RULES_ADDRESS_LIMIT characters, and only where they differ from the view's own. The widget says so when not,
+// because the address is what a person copies, and the person they send it to would otherwise see more rows.
+export function rules_fit_address(rules, base_rules, mode) {
+	const now = JSON.stringify(ready_rules(rules, mode));
+	const was = JSON.stringify(ready_rules(base_rules, mode));
+	return now === was || now.length <= RULES_ADDRESS_LIMIT;
+}
+
+export const LINK_RULES_NOTE =
+	"These column filters are too long to fit in a link, so a link to this page will not carry them: whoever you send it to will see more rows.";
+
 export function write_view_query(search, state, layout_id, base, rules) {
 	const params = new URLSearchParams(write_query(search, state));
 	const s = Object.assign(default_state(), state || {});

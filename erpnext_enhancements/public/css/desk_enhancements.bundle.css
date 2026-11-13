@@ -850,7 +850,7 @@ mark {
     color: #fff8e1;
 }
 
-/* Saved views (v1.815.0): the view menu, the column picker, the column filters, and the filter bar.
+/* Saved views (v1.816.0): the view menu, the column picker, the column filters, and the filter bar.
    Each panel opens under its button and closes on Escape or a click elsewhere. */
 .procurement-tracker .pt-menu-wrap {
     position: relative;

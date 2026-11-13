@@ -306,7 +306,9 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 	// SAVED VIEWS (v1.816.0). `saved` is get_views' answer ({ catalog, mine, user }), or null when it could not
 	// be fetched: the tracker then draws from the two standard views and offers no saving.
 	const savedOk = !!(saved && saved.catalog && !saved.unavailable);
-	const viewList = savedOk ? pt.merge_views(saved.catalog, saved.mine) : pt.fallback_views();
+	// The built-in views come with the catalog even when the person's own could not be read (the server answered
+	// "unavailable"); with no answer at all (a timeout) only the two standard views are known here.
+	const viewList = saved && saved.catalog ? pt.merge_views(saved.catalog, saved.mine || []) : pt.fallback_views();
 	// What this browser remembers of the last layouts, per person. Storage can be missing or refuse
 	// (a private window, blocked site data): everything works without it, only the memory is lost.
 	const memoryKey = pt.storage_key(frappe.session.user);
@@ -488,6 +490,10 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 			},
 			// The total under the by-item table, over the items it is showing: it follows every filter.
 			// Only when the Spent column is on screen.
+			// The person's filters on columns do not all fit in a link: say so, since the address is what they copy.
+			linkNote() {
+				return pt.rules_fit_address(this.layout.rules, this.currentView.layout.filters.rules, this.mode) ? "" : pt.LINK_RULES_NOTE;
+			},
 			spentSummary() {
 				return this.hasPrices && this.spentIndex >= 0 ? pt.spent_summary(this.filteredItems, this.currency) : null;
 			},
@@ -630,8 +636,11 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 			callViews(method, args, done) {
 				this.busy = true;
 				// frappe never calls `error` for a query timeout or a deadlock (it only shows a dialog), so a call that
-				// never answers must not leave Save, Rename and Delete disabled until the page is reloaded.
+				// never answers must not leave Save, Rename and Delete disabled until the page is reloaded. An answer
+				// that comes after that release is ignored: the person has moved on and may have changed the view.
+				let late = false;
 				const release = setTimeout(() => {
+					late = true;
 					this.busy = false;
 				}, 30000);
 				const finish = () => {
@@ -644,7 +653,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 					args: args,
 					callback: (r) => {
 						finish();
-						if (r && r.message) done(r.message);
+						if (!late && r && r.message) done(r.message);
 					},
 					error: finish,
 				});
@@ -1246,7 +1255,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 
 				<!-- What is filtering and how many rows it hides, with the one control that clears them all. -->
 				<div v-if="filterBar" class="pt-filterbar" role="status">
-					<span class="pt-filterbar-text">Filtered: {{ filterBar }}</span>
+					<span class="pt-filterbar-text">Filtered: {{ filterBar }}<small v-if="linkNote" class="pt-where-note"> {{ linkNote }}</small></span>
 					<button type="button" class="btn btn-default btn-xs pt-clear" @click="clearFilters">Clear filters</button>
 				</div>
 				<!-- Why a column or a filter of the view is missing: the person may not see it. -->
@@ -1328,7 +1337,7 @@ function mountProcurementTracker(frm, el, pt, data, keep, saved) {
 							<tfoot v-if="spentSummary">
 								<tr class="pt-total">
 									<td v-if="spentIndex > 0" :colspan="spentIndex" data-label="Total">Total spent on these items <small class="pt-where-note">Ordered, not billed or paid</small></td>
-									<td class="money-col" data-label="Spent"><div class="pt-money-cell">{{ spentSummary.text }}
+									<td class="money-col" data-label="Spent"><div class="pt-money-cell"><small v-if="spentIndex === 0" class="pt-where-note">Total spent on these items (ordered, not billed or paid)</small>{{ spentSummary.text }}
 										<small v-for="n in spentSummary.notes" :key="n" class="pt-where-note">{{ n }}</small>
 									</div></td>
 									<td v-if="cols.length - spentIndex - 1 > 0" :colspan="cols.length - spentIndex - 1"></td>
