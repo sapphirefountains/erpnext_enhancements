@@ -128,12 +128,20 @@ matched exactly, and UPS's 404 in its documented error envelope. A UPS 400 is do
 (`tracking.Round`): if a second package of the same carrier gets it too, it is the carrier's and
 counts for neither (the carrier is skipped for the rest of the run); if another package gets a real
 answer, it was that number's. A package that only ever gets this refusal, with no answer ever, is
-stopped after 3 days with "Check that the number and the carrier are right", the typical case being
-a mistyped number on a carrier picked by hand. One package's refusal no longer costs the carrier the
-rest of the run. The ambiguous case left is a carrier with a single package due in the run: that
-refusal is taken as about the number, and a person's Refresh restarts the package if the carrier
-then answers. A 200 whose body is not JSON is the carrier being unavailable, never a package
-failure.
+stopped with "Check that the number and the carrier are right" (the typical case being a mistyped
+number on a carrier picked by hand) only when both are true:
+
+* three days have passed **since its first refusal** (`first_refused_on`, cleared by any answer about
+  the package), never since it was created, so a package older than three days when its carrier is
+  first switched on gets its full three days;
+* **the same carrier has given a real answer to some package since that first refusal** (the newest
+  `last_success` among that carrier's packages, read once per run, or an answer earlier in the same
+  run). A carrier that answers nobody is refusing our requests, and nothing is stopped, however few
+  packages it has. That is the first day a carrier is switched on, where comparing packages within a
+  run cannot help.
+
+One package's refusal no longer costs the carrier the rest of the run. A 200 whose body is not JSON
+is the carrier being unavailable, never a package failure.
 
 "Could not check" never changes a stored status. Each answer is committed on its own, and a row
 whose check or save fails is rolled back, stamped as checked (so it goes to the back of the line)
@@ -143,7 +151,8 @@ costs one run. The reasoning for each number is in `poll_rules.py`.
 A person's Refresh, and the first check after Add, run inside the web request, so they are capped:
 at most 5 packages and 25 seconds per request (the rest are the poller's), one round per order per
 minute shared by Add and Refresh (adding and removing a number cannot get round it), and 30 carrier
-calls per person per 10 minutes, counted with an atomic Redis increment. A Refresh refused by that
+calls per person per 10 minutes, counted with an atomic Redis increment whose expiry is set again by
+any call that finds it missing (so a lost `EXPIRE` cannot lock anyone out until the next deploy). A Refresh refused by that
 limit says so and says how many minutes to wait.
 
 ## On the Purchase Order

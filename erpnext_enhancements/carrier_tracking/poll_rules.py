@@ -24,15 +24,23 @@ returns. Keeping the decisions here means every limit below is tested on plain d
   not a FedEx number at all, so the row says so and stops.
 * ``REJECTED_GIVE_UP_DAYS = 3``. A package whose every answer is an ambiguous refusal (a 400 or
   404 with a code we cannot place, ``client.SCOPE_NUMBER``) and that has never had a real answer is
-  stopped after three days, with a sentence telling the person to check the number and the carrier.
-  The typical case is a mistyped number on a carrier picked by hand: UPS answers 400. Three days
-  rides out a carrier's bad weekend, and is long after a real label would have been scanned. **How
-  this keeps carrier trouble from counting against packages:** a refusal that is clearly about the
-  account, the login or our request (``client.SCOPE_CARRIER``) never counts; and when two different
-  packages of one carrier get the ambiguous refusal in the same run, ``tracking`` treats it as the
-  carrier's and counts it for neither. The ambiguous case left is a carrier with a single package
-  due in the run: that refusal is taken as being about the number. If the carrier was in fact at
-  fault, a person's Refresh restarts the package as soon as the carrier answers.
+  stopped three days **after its first refusal** (``first_refused_on``, never ``creation``: a package
+  older than three days when its carrier is first switched on gets its full three days), with a
+  sentence telling the person to check the number and the carrier. The typical case is a mistyped
+  number on a carrier picked by hand: UPS answers 400. Three days rides out a carrier's bad weekend,
+  and is long after a real label would have been scanned. **How this keeps carrier trouble from
+  counting against packages**, in three layers:
+
+  1. a refusal that is clearly about the account, the login or our request
+     (``client.SCOPE_CARRIER``) never counts;
+  2. when two different packages of one carrier get the ambiguous refusal in the same run,
+     ``tracking.Round`` treats it as the carrier's and records it for neither;
+  3. **a package is stopped by this rule only if the same carrier has given a real answer to some
+     package since this package's first refusal** (``carrier_answered_at``: the newest
+     ``last_success`` of that carrier's packages, read once per run, and any answer in the run
+     itself). A carrier that answers nobody is refusing our requests, and nothing is stopped. That
+     covers the first day a carrier is switched on with one or two packages, where (2) cannot
+     help (review round 3).
 * ``MAX_ROW_FAILURES = 12`` answers in a row that were about this package and were not usable
   ("not found" after the carrier had answered before, or a response for this package we could not
   read). At one check every two hours that is at least a day.
@@ -156,11 +164,13 @@ def pick(rows, now, limit=BATCH_SIZE):
 	return due[:limit]
 
 
-def apply_result(row, result, now, manual=False):
+def apply_result(row, result, now, manual=False, carrier_answered_at=None):
 	"""The field updates for ``row`` after the client returned ``result``. Pure.
 
 	``manual`` is a person's Refresh: an answer that shows the package still moving starts
 	polling again on a row the poller had stopped (but never one that was delivered).
+	``carrier_answered_at`` is when this carrier last gave a real answer about any package (see
+	``REJECTED_GIVE_UP_DAYS``); ``None`` means never, and then an ambiguous refusal stops nothing.
 	Returns a dict of Tracked Package fields to write; never includes a field that should keep
 	its value.
 	"""
@@ -168,6 +178,9 @@ def apply_result(row, result, now, manual=False):
 	outcome = result.get("outcome") or BAD_RESPONSE
 	updates = {"last_checked": now}
 	failures = int(row.get("failure_count") or 0)
+	if outcome not in CARRIER_LEVEL and row.get("first_refused_on"):
+		# Any answer about the package ends a run of refusals.
+		updates["first_refused_on"] = None
 
 	if outcome == OK:
 		status = C.STATUS_LABELS.get(result.get("status"), C.STATUS_LABELS[C.UNKNOWN_STATUS])
@@ -208,10 +221,17 @@ def apply_result(row, result, now, manual=False):
 		# Never counted and never a reason to stop, except the 90-day cap (a carrier that has
 		# refused us for three months is not going to answer about this package) and an ambiguous
 		# refusal for a package that has never had an answer (REJECTED_GIVE_UP_DAYS).
+		first_refused = _dt(row.get("first_refused_on"))
+		answered = _dt(carrier_answered_at)
+		if is_number_rejection(result) and first_refused is None:
+			updates["first_refused_on"] = now
 		if (
 			is_number_rejection(result)
 			and not row.get("last_success")
-			and _older_than(row.get("creation"), now, days=REJECTED_GIVE_UP_DAYS)
+			and first_refused is not None
+			and now - first_refused > timedelta(days=REJECTED_GIVE_UP_DAYS)
+			and answered is not None
+			and answered > first_refused
 		):
 			updates.update({"polling_stopped": 1, "stop_reason": STOP_REJECTED})
 		elif _older_than(row.get("creation"), now, days=MAX_TRACKING_DAYS):

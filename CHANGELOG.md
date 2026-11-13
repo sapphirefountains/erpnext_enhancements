@@ -177,6 +177,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Smaller: a Refresh refused by the per-person limit says so and when to try again; that counter is an
     atomic Redis increment; a 200 that is not JSON is the carrier being unavailable, not a package
     failure; an amendment moves packages only when the person can read the canceled order.
+- **Before release: what review round 3 changed.**
+  - **The three-day refusal stop needs evidence about the number.** It counts from the package's first
+    refusal (new read-only *First Refused On*, cleared by any answer about the package), not from when
+    the package was created, and it stops a package only if the same carrier has given a real answer to
+    some package since that first refusal. A carrier refusing every request with one or two packages due
+    (the first day it is switched on) stopped them in the reviewer's simulation, and a package older than
+    three days was stopped by its first refusal; now neither is stopped, while a mistyped number beside
+    packages the carrier answers still stops after three days.
+  - **The per-person counter's expiry is repaired** by any call that finds the key without one, so a lost
+    `EXPIRE` cannot lock someone out of Refresh until the next deploy.
 
 ## [1.818.0] - 2026-11-13
 

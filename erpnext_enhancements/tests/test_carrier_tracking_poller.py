@@ -1022,7 +1022,7 @@ class TestWebRequestBounds(_Endpoint):
 		)
 		tracking.live_carriers = lambda settings=None: [C.UPS]
 		tracking.client.track = lambda cfg, number, cache, http=None, now=None: calls.append(number) or ok()
-		tracking.apply = lambda row, result, now, manual=False: {}
+		tracking.apply = lambda row, result, now, manual=False, **k: {}
 		try:
 			rows = [row(name=f"r{i}", tracking_number=f"1Z00000000000{i:05d}") for i in range(12)]
 			self.assertEqual(tracking.check_rows(rows)["checked"], tracking.WEB_MAX_CHECKS)
@@ -1335,10 +1335,10 @@ class TestOneBadRow(unittest.TestCase):
 	def test_the_run_goes_on_and_the_row_goes_to_the_back(self):
 		original = tracking.apply
 
-		def apply(row_, result, now, manual=False):
+		def apply(row_, result, now, manual=False, **k):
 			if row_["name"] == "bad":
 				raise RuntimeError("Bearer abcdef0123456789 broke")
-			return original(row_, result, now, manual)
+			return original(row_, result, now, manual, **k)
 
 		tracking.apply = apply
 		FRAPPE.state["traceback"] = "RuntimeError: Bearer abcdef0123456789 broke"
@@ -1368,14 +1368,33 @@ class TestRejectedAboutOneNumber(unittest.TestCase):
 	number counts for none of them; one package's refusal does not cost the carrier the run."""
 
 	def test_rule_stops_only_a_number_rejection_with_no_answer_ever(self):
-		old = row(creation=NOW - timedelta(days=R.REJECTED_GIVE_UP_DAYS, hours=1))
-		self.assertEqual(R.apply_result(old, rejected("number"), NOW)["stop_reason"], R.STOP_REJECTED)
-		young = row(creation=NOW - timedelta(days=1))
-		self.assertNotIn("polling_stopped", R.apply_result(young, rejected("number"), NOW))
-		answered = row(creation=NOW - timedelta(days=10), last_success=NOW - timedelta(days=5))
-		self.assertNotIn("polling_stopped", R.apply_result(answered, rejected("number"), NOW))
-		self.assertNotIn("polling_stopped", R.apply_result(old, rejected("carrier"), NOW))
-		self.assertNotIn("failure_count", R.apply_result(old, rejected("number"), NOW))
+		first = NOW - timedelta(days=R.REJECTED_GIVE_UP_DAYS, hours=1)
+		carrier_answered = NOW - timedelta(hours=2)
+		old = row(creation=first, first_refused_on=first)
+		self.assertEqual(
+			R.apply_result(old, rejected("number"), NOW, carrier_answered_at=carrier_answered)["stop_reason"],
+			R.STOP_REJECTED,
+		)
+		young = row(creation=NOW - timedelta(days=1), first_refused_on=NOW - timedelta(days=1))
+		self.assertNotIn(
+			"polling_stopped",
+			R.apply_result(young, rejected("number"), NOW, carrier_answered_at=carrier_answered),
+		)
+		answered = row(
+			creation=NOW - timedelta(days=10), first_refused_on=first, last_success=NOW - timedelta(days=5)
+		)
+		self.assertNotIn(
+			"polling_stopped",
+			R.apply_result(answered, rejected("number"), NOW, carrier_answered_at=carrier_answered),
+		)
+		self.assertNotIn(
+			"polling_stopped",
+			R.apply_result(old, rejected("carrier"), NOW, carrier_answered_at=carrier_answered),
+		)
+		self.assertNotIn(
+			"failure_count",
+			R.apply_result(old, rejected("number"), NOW, carrier_answered_at=carrier_answered),
+		)
 
 	def test_blocks_carrier(self):
 		self.assertFalse(R.blocks_carrier(rejected("number")))
@@ -1452,20 +1471,170 @@ class TestRejectedAboutOneNumber(unittest.TestCase):
 		self.assertEqual(out["skipped_carriers"], [])
 		self.assertEqual(len(FRAPPE.writes), 4)
 
-	def test_a_mistyped_ups_number_stops_after_three_days_at_the_real_cadence(self):
-		state = row(creation=NOW)
+	def run_refusals(self, days, carrier_answers, **start):
+		"""Hourly runs, the real 2-hour recheck, every answer a number-scoped refusal for this package.
+		``carrier_answers(moment)`` says whether the carrier answered other packages that hour."""
+		state = row(**start)
 		moment = NOW
 		checks = 0
-		while moment <= NOW + timedelta(days=30) and not state.get("polling_stopped"):
+		answered_at = None
+		while moment <= NOW + timedelta(days=days) and not state.get("polling_stopped"):
+			if carrier_answers(moment):
+				answered_at = moment
 			if R.is_due(state, moment):
 				checks += 1
-				state.update(R.apply_result(state, rejected("number"), moment))
+				state.update(
+					R.apply_result(state, rejected("number"), moment, carrier_answered_at=answered_at)
+				)
 			moment += timedelta(hours=1)
+		return state, moment, checks
+
+	def test_a_lone_package_under_a_carrier_wide_refusal_is_never_stopped(self):
+		# Round 3: the carrier refuses everything and has one package (its first day switched on).
+		state, _, checks = self.run_refusals(30, lambda m: False, creation=NOW)
+		self.assertFalse(state.get("polling_stopped"))
+		self.assertEqual(state["failure_count"], 0)
+		self.assertGreater(checks, 300)
+
+	def test_an_old_package_is_not_stopped_by_its_first_refusal(self):
+		# Created long before its carrier was configured: its first refusal starts the three days.
+		old = row(creation=NOW - timedelta(days=20))
+		updates = R.apply_result(old, rejected("number"), NOW, carrier_answered_at=NOW)
+		self.assertNotIn("polling_stopped", updates)
+		self.assertEqual(updates["first_refused_on"], NOW)
+		state, moment, _ = self.run_refusals(10, lambda m: True, creation=NOW - timedelta(days=20))
+		self.assertEqual(state["stop_reason"], R.STOP_REJECTED)
+		self.assertGreaterEqual(moment - NOW, timedelta(days=R.REJECTED_GIVE_UP_DAYS))
+
+	def test_an_answer_ends_a_run_of_refusals(self):
+		refused = row(first_refused_on=NOW - timedelta(days=2))
+		self.assertIsNone(R.apply_result(refused, ok(), NOW)["first_refused_on"])
+		self.assertIsNone(R.apply_result(refused, failed("not_found"), NOW)["first_refused_on"])
+		self.assertNotIn("first_refused_on", R.apply_result(refused, failed("unavailable"), NOW))
+		self.assertIn("first_refused_on", package_rules.CARRIER_FIELD_DEFAULTS)
+
+	def test_answers_older_than_the_first_refusal_do_not_count(self):
+		first = NOW - timedelta(days=4)
+		state = row(creation=first, first_refused_on=first)
+		updates = R.apply_result(
+			state, rejected("number"), NOW, carrier_answered_at=first - timedelta(hours=1)
+		)
+		self.assertNotIn("polling_stopped", updates)
+
+	def test_a_mistyped_ups_number_stops_after_three_days_at_the_real_cadence(self):
+		# Beside other UPS packages that UPS answers every hour.
+		state, moment, checks = self.run_refusals(30, lambda m: True, creation=NOW)
 		self.assertEqual(state["stop_reason"], R.STOP_REJECTED)
 		# The loop's clock moves one hour past the check that stopped it.
 		self.assertLessEqual(moment - NOW, timedelta(days=R.REJECTED_GIVE_UP_DAYS, hours=3))
 		self.assertLess(checks, 40)
 		self.assertEqual(state["failure_count"], 0)
+
+
+class TestRefusalsWithinARun(unittest.TestCase):
+	"""Round 3: the poller passes when the carrier last answered, from the database and from the run."""
+
+	def setUp(self):
+		FRAPPE.writes.clear()
+		self.saved = (
+			tracking.config._settings,
+			tracking.config.feature_enabled,
+			tracking.config.carrier_config,
+			tracking.due_rows,
+			tracking.client.track,
+			tracking.last_answers,
+			tracking.apply,
+		)
+		tracking.config._settings = lambda: object()
+		tracking.config.feature_enabled = lambda settings=None: True
+		tracking.config.carrier_config = lambda carrier, settings=None: tracking.client.Config(
+			carrier, "Sandbox", "i", "s"
+		)
+		self.seen = {}
+		original = tracking.apply
+
+		def apply(row_, result, now, manual=False, carrier_answered_at=None):
+			self.seen[row_["name"]] = carrier_answered_at
+			return original(row_, result, now, manual, carrier_answered_at=carrier_answered_at)
+
+		tracking.apply = apply
+
+	def tearDown(self):
+		(
+			tracking.config._settings,
+			tracking.config.feature_enabled,
+			tracking.config.carrier_config,
+			tracking.due_rows,
+			tracking.client.track,
+			tracking.last_answers,
+			tracking.apply,
+		) = self.saved
+
+	def run_with(self, rows_, answers, stored):
+		tracking.due_rows = lambda carriers, now, limit: list(rows_)
+		tracking.client.track = lambda cfg, number, cache, http=None, now=None: answers[number]
+		tracking.last_answers = lambda carriers: dict(stored)
+		return tracking.run_poll()
+
+	def test_an_answer_in_the_same_run_lets_the_held_refusal_stop(self):
+		first = NOW - timedelta(days=4)
+		rows_ = [
+			row(name="typo", tracking_number="1Z0000000000000001", creation=first, first_refused_on=first),
+			row(name="good", tracking_number="1Z0000000000000002"),
+		]
+		self.run_with(rows_, {"1Z0000000000000001": rejected("number"), "1Z0000000000000002": ok()}, {})
+		self.assertEqual(self.seen["typo"], NOW)
+		stopped = dict(FRAPPE.writes)["typo"]
+		self.assertEqual(stopped["stop_reason"], R.STOP_REJECTED)
+
+	def test_no_answer_from_the_carrier_stops_nothing(self):
+		first = NOW - timedelta(days=4)
+		rows_ = [
+			row(name="typo", tracking_number="1Z0000000000000001", creation=first, first_refused_on=first)
+		]
+		self.run_with(rows_, {"1Z0000000000000001": rejected("number")}, {})
+		self.assertIsNone(self.seen["typo"])
+		self.assertNotIn("polling_stopped", dict(FRAPPE.writes)["typo"])
+
+	def test_stored_answers_count(self):
+		first = NOW - timedelta(days=4)
+		rows_ = [
+			row(name="typo", tracking_number="1Z0000000000000001", creation=first, first_refused_on=first)
+		]
+		self.run_with(rows_, {"1Z0000000000000001": rejected("number")}, {C.UPS: NOW - timedelta(hours=3)})
+		self.assertEqual(dict(FRAPPE.writes)["typo"]["stop_reason"], R.STOP_REJECTED)
+
+	def test_last_answers_never_raises(self):
+		original = FRAPPE.db.sql
+		FRAPPE.db.sql = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db"))
+		try:
+			self.assertEqual(self.saved[5]([C.UPS]), {})
+		finally:
+			FRAPPE.db.sql = original
+		self.assertEqual(self.saved[5]([]), {})
+
+
+class TestCounterExpiryRepair(unittest.TestCase):
+	"""Round 3: a key left without an expiry gets one on the next call."""
+
+	def test_a_key_without_a_ttl_is_repaired(self):
+		FRAPPE.cache_store.clear()
+		key = tracking._user_key()
+		FRAPPE.cache_store["site|" + key] = 5  # opened earlier; its EXPIRE was lost
+		original = FRAPPE.cache.ttl
+		FRAPPE.cache.ttl = lambda k: -1
+		try:
+			self.assertTrue(tracking._take_user_call())
+		finally:
+			FRAPPE.cache.ttl = original
+		self.assertEqual(FRAPPE.cache_store["ttl:" + key], tracking.USER_WINDOW_SECONDS)
+
+	def test_a_key_with_a_ttl_is_left_alone(self):
+		FRAPPE.cache_store.clear()
+		key = tracking._user_key()
+		FRAPPE.cache_store["site|" + key] = 5
+		self.assertTrue(tracking._take_user_call())  # stub ttl is 240
+		self.assertNotIn("ttl:" + key, FRAPPE.cache_store)
 
 
 class TestShareOnlyListAccess(_Endpoint):

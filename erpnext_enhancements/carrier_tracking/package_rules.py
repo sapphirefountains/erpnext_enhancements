@@ -40,6 +40,7 @@ CARRIER_FIELD_DEFAULTS = {
 	"last_checked": None,
 	"last_success": None,
 	"last_change": None,
+	"first_refused_on": None,
 	"failure_count": 0,
 	"last_error": "",
 	"polling_stopped": 0,

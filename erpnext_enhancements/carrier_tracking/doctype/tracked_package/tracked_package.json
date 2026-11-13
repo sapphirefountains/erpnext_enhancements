@@ -29,6 +29,7 @@
   "last_checked",
   "last_success",
   "last_change",
+  "first_refused_on",
   "failure_count",
   "last_error",
   "polling_stopped",
@@ -200,6 +201,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "first_refused_on",
+   "fieldtype": "Datetime",
+   "label": "First Refused On",
+   "read_only": 1,
+   "description": "When the carrier first turned this number down with an error it does not explain. Cleared by any answer about the package."
+  },
+  {
    "default": "0",
    "fieldname": "failure_count",
    "fieldtype": "Int",
@@ -230,7 +238,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-13 21:00:00.000000",
+ "modified": "2026-11-13 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Carrier Tracking",
  "name": "Tracked Package",

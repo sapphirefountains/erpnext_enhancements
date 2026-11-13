@@ -70,6 +70,7 @@ ROW_FIELDS = (
 	"last_checked",
 	"last_success",
 	"last_change",
+	"first_refused_on",
 	"failure_count",
 	"polling_stopped",
 	"stop_reason",
@@ -109,9 +110,9 @@ def _installed():
 # ---------------------------------------------------------------------------- writing
 
 
-def apply(row, result, now, manual=False):
+def apply(row, result, now, manual=False, carrier_answered_at=None):
 	"""Write the carrier's answer for one row. Returns the updates written."""
-	updates = R.apply_result(row, result, now, manual=manual)
+	updates = R.apply_result(row, result, now, manual=manual, carrier_answered_at=carrier_answered_at)
 	frappe.db.set_value(DOCTYPE, row["name"], updates, update_modified=False)
 	return updates
 
@@ -188,12 +189,17 @@ def run_poll(clock=time.monotonic):
 	checked = 0
 	broken = []
 
+	answered = last_answers(configs)
+
 	def write(row, result):
 		# One row must not stop the run, nor be picked first for ever: undo it, stamp it checked
 		# with a plain note, and go on. The traceback is logged once, after the loop.
+		carrier = row.get("resolved_carrier")
 		try:
-			apply(row, result, now)
+			apply(row, result, now, carrier_answered_at=answered.get(carrier))
 			frappe.db.commit()
+			if result.get("outcome") == R.OK:
+				answered[carrier] = now
 		except Exception:
 			broken.append((row.get("name"), C.mask(frappe.get_traceback(), limit=1500)))
 			_mark_broken(row, now)
@@ -253,16 +259,37 @@ class Round:
 			for held_row, held_result in (first, (row, result)):
 				self.write(held_row, dict(held_result, scope=client.SCOPE_CARRIER))
 			return True
+		held = None
 		if carrier in self.pending and result.get("outcome") not in R.CARRIER_LEVEL:
-			held_row, held_result = self.pending.pop(carrier)
-			self.write(held_row, held_result)
+			held = self.pending.pop(carrier)
+		# This answer is written first, so a held refusal is judged knowing the carrier just answered.
 		self.write(row, result)
+		if held:
+			self.write(*held)
 		return R.blocks_carrier(result)
 
 	def flush(self):
 		for held_row, held_result in list(self.pending.values()):
 			self.write(held_row, held_result)
 		self.pending.clear()
+
+
+def last_answers(carriers):
+	"""``{carrier: newest last_success}`` over all of each carrier's packages: when the carrier last
+	gave a real answer about anything. One query per round. ``{}`` if it cannot be read, which makes
+	the ambiguous-refusal rule stop nothing (``poll_rules.REJECTED_GIVE_UP_DAYS``)."""
+	carriers = sorted(c for c in carriers if c in C.TRACKABLE)
+	if not carriers:
+		return {}
+	try:
+		rows = frappe.db.sql(
+			f"select resolved_carrier, max(last_success) from `tab{DOCTYPE}` "
+			"where resolved_carrier in %(carriers)s and last_success is not null group by resolved_carrier",
+			{"carriers": tuple(carriers)},
+		)
+		return {carrier: moment for carrier, moment in rows or [] if moment}
+	except Exception:
+		return {}
 
 
 def _mark_broken(row, now):
@@ -331,7 +358,15 @@ def check_rows(rows, manual=True, clock=time.monotonic):
 	cache = config.cache()
 	started = clock()
 	blocked = set()
-	round_ = Round(lambda row, result: apply(row, result, now, manual=manual))
+	answered = last_answers(configs)
+
+	def write(row, result):
+		carrier = row.get("resolved_carrier")
+		apply(row, result, now, manual=manual, carrier_answered_at=answered.get(carrier))
+		if result.get("outcome") == R.OK:
+			answered[carrier] = now
+
+	round_ = Round(write)
 	for row in rows:
 		if outcome["checked"] >= WEB_MAX_CHECKS or clock() - started > WEB_BUDGET_SECONDS:
 			break
@@ -358,14 +393,18 @@ def _take_user_call():
 	"""Count one carrier call against the person's window; ``False`` once the window is full.
 
 	Atomic: Redis ``INCR`` on the site-namespaced key (``frappe.cache.make_key``, the same prefix
-	Frappe's own ``set_value`` uses), and the window's expiry is set by the call that opens it. So
-	parallel requests cannot go over the limit. If Redis cannot be reached the call is allowed: the
-	order's cooldown and the request's own cap still bound it.
+	Frappe's own ``set_value`` uses), so parallel requests cannot go over the limit. The window's
+	expiry is set by the call that opens it **and by any call that finds the key without one**
+	(``ttl`` negative): if the opening call's ``EXPIRE`` was lost (``expire_key`` swallows a dropped
+	connection, or the worker died between the two commands), the next call repairs it instead of
+	locking the person out until Redis is flushed (review round 3). If Redis cannot be reached the
+	call is allowed: the order's cooldown and the request's own cap still bound it.
 	"""
 	try:
 		key = _user_key()
-		used = int(frappe.cache.incrby(frappe.cache.make_key(key), 1))
-		if used == 1:
+		redis_key = frappe.cache.make_key(key)
+		used = int(frappe.cache.incrby(redis_key, 1))
+		if used == 1 or int(frappe.cache.ttl(redis_key)) < 0:
 			frappe.cache.expire_key(key, USER_WINDOW_SECONDS)
 		return used <= USER_CALLS_PER_WINDOW
 	except Exception:
