@@ -52,6 +52,7 @@ import {
 	keptRef,
 	logHeadline,
 	makeHomeDefault,
+	mapUrl,
 	mayHaveSaved,
 	moveJobMode,
 	mintRef,
@@ -866,6 +867,8 @@ export class StockScanApp {
 		if (loc && loc.trail) view.appendChild(el("p", "ee-ss-trail", loc.trail));
 		if (loc && loc.job_site) view.appendChild(this.siteNote(loc.job_site));
 		if (loc && loc.project_shelf) view.appendChild(this.shelfNote());
+		// A job's site is not in the building, so the map has nothing to show for it.
+		if (loc && !loc.job_site) append(view, this.mapLink({ w: loc.warehouse }, "Show this place on the map"));
 		if (!loc) {
 			view.appendChild(el("p", "ee-ss-note ee-ss-loading-note", "Loading what is kept here…"));
 			return view;
@@ -918,6 +921,22 @@ export class StockScanApp {
 			button([glyph("+"), el("span", null, "Add another item here")], "ee-ss-linkbtn", () => this.openSearch({ addHere: true }))
 		);
 		return view;
+	}
+
+	/**
+	 * "Show on map" (v1.818.0): a link to the Warehouse Map (a Desk page) on a location or an
+	 * item, or nothing when the site has no map (`settings.warehouse_map`). A real link in a NEW
+	 * tab, never a route of this page: the run's job, its draft and the camera's permission all
+	 * live in this tab, and the phone's Back from the map closes that tab and lands here as it was.
+	 */
+	mapLink(target, words) {
+		const url = this.settings.warehouse_map ? mapUrl(target) : "";
+		if (!url) return null;
+		const node = el("a", "ee-ss-linkbtn ee-ss-map-link", words);
+		node.setAttribute("href", url);
+		node.setAttribute("target", "_blank");
+		node.setAttribute("rel", "noopener");
+		return node;
 	}
 
 	// --- Item at a location -------------------------------------------------------------
@@ -1004,6 +1023,7 @@ export class StockScanApp {
 		if (places.sites.length) {
 			view.appendChild(el("p", "ee-ss-also ee-ss-also-sites", `On job sites, not in the shop: ${placesText(places.sites)}`));
 		}
+		append(view, this.mapLink({ item: item.item_code }, "Show where this is on the map"));
 		if (this.canRemove(item)) {
 			view.appendChild(
 				button([icon("close"), el("span", null, "Remove from this bin")], "ee-ss-linkbtn ee-ss-remove-btn", () => this.openRemove())

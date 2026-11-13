@@ -2885,6 +2885,9 @@ def boot_payload(args=None):
 			# there is none and the page is as it was.
 			"project_shelf_warehouse": project_shelf.warehouse(),
 			"project_shelf_name": project_shelf.label(),
+			# Whether "Show on map" is offered (v1.818.0): a Warehouse Floor Map that is not hidden
+			# exists. 0 hides the link, and the page is as it was.
+			"warehouse_map": 1 if _has_warehouse_map() else 0,
 		},
 		"recent": _recent(),
 		"initial": initial,
@@ -2895,6 +2898,16 @@ def boot_payload(args=None):
 		"now": str(now_datetime()),
 		"store_run": _store_run_boot(),
 	}
+
+
+def _has_warehouse_map():
+	"""Whether there is a Warehouse Floor Map to show (v1.818.0, ``api/warehouse_map.py``). **Never
+	raises**, for the reason ``_store_run_boot`` gives: this runs inside the page's own boot, and
+	between a deploy's code and its migrate the table is not there yet."""
+	try:
+		return bool(frappe.db.exists("Warehouse Floor Map", {"disabled": 0}))
+	except Exception:
+		return False
 
 
 def _store_run_boot():

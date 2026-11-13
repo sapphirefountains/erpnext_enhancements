@@ -38,6 +38,21 @@ frappe.query_reports["Where Is This Item"] = {
 		},
 	],
 
+	// "Show on map" (v1.818.0): the Warehouse Map page with the chosen Item lit up. A Desk route,
+	// so Back returns to this report with its filters.
+	onload(report) {
+		// Offered once a map exists (frappe.boot.ee_warehouse_map, boot.py).
+		if (!frappe.boot.ee_warehouse_map) return;
+		report.page.add_inner_button(__("Show on map"), () => {
+			const item = report.get_filter_value("item_code");
+			if (!item) {
+				frappe.show_alert({ message: __("Choose an Item first, then Show on map."), indicator: "orange" }, 6);
+				return;
+			}
+			frappe.set_route("warehouse-map", { item });
+		});
+	},
+
 	formatter(value, row, column, data, default_formatter) {
 		const face = window.erpnext_enhancements?.report_face;
 		const formatted = face?.format

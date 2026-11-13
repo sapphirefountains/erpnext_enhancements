@@ -28,6 +28,20 @@ from erpnext_enhancements.setup.workspace_tweaks import drop_unreadable_sidebar_
 from erpnext_enhancements.utils.normalize_hook import desk_registry
 
 
+def _warehouse_map_flag():
+	"""``frappe.boot.ee_warehouse_map`` (v1.818.0): 1 when a Warehouse Map that is not hidden
+	exists. Every "Show on map" door in the Desk reads it (the Bin Manager, the Item and Warehouse
+	forms, two reports), so none of them is offered where it would lead to an empty page; Stock
+	Scan reads the same fact in its own boot. Cosmetic: the page and its endpoints check
+	permission themselves. Imported and asked here so that nothing about it can break the boot."""
+	try:
+		from erpnext_enhancements.inventory_enhancements.warehouse_map_files import has_visible_map
+
+		return 1 if has_visible_map() else 0
+	except Exception:
+		return 0
+
+
 def boot_session(bootinfo):
 	"""Ship the live-collab doctype allowlist and feature flags to the desk client.
 
@@ -147,6 +161,7 @@ def boot_session(bootinfo):
 	if normalize_registry:
 		bootinfo.sf_normalize = normalize_registry
 	bootinfo.sf_field_help = _field_help_doctypes()
+	bootinfo.ee_warehouse_map = _warehouse_map_flag()
 	bootinfo.sf_guided = _guided_doctypes()
 	drop_unreadable_sidebar_links(bootinfo)
 	trim_home_grid(bootinfo)

@@ -1,0 +1,132 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:map_name",
+ "creation": "2026-11-12 16:00:00.000000",
+ "description": "One floor or area of the building as the Warehouse Map page draws it: a floor plan picture kept as a private file, and the boxes placed over it, each tied to a Warehouse. Edited on the Warehouse Map page by people with the Warehouse Map Editor role. It never creates, renames or moves a Warehouse and never touches stock.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "map_name",
+  "sort_order",
+  "disabled",
+  "column_break_main",
+  "background",
+  "width",
+  "height",
+  "shapes_section",
+  "shapes"
+ ],
+ "fields": [
+  {
+   "fieldname": "map_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Map Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "description": "Lower numbers come first in the list of floors.",
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sort Order"
+  },
+  {
+   "default": "0",
+   "description": "A disabled map is left off the Warehouse Map page for everyone but its editors. This list still shows it to anyone who can read maps.",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The floor plan picture drawn behind the boxes. Uploaded on the Warehouse Map page (Edit map), always as a private file: a public file or a web address is refused.",
+   "fieldname": "background",
+   "fieldtype": "Attach Image",
+   "label": "Floor Plan Picture",
+   "read_only": 1
+  },
+  {
+   "default": "1200",
+   "description": "The drawing's width in map units. With a picture, the picture's width in pixels.",
+   "fieldname": "width",
+   "fieldtype": "Float",
+   "label": "Width",
+   "non_negative": 1
+  },
+  {
+   "default": "800",
+   "fieldname": "height",
+   "fieldtype": "Float",
+   "label": "Height",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "shapes_section",
+   "fieldtype": "Section Break",
+   "label": "Boxes"
+  },
+  {
+   "fieldname": "shapes",
+   "fieldtype": "Table",
+   "label": "Boxes",
+   "options": "Warehouse Floor Map Shape"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-12 16:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Warehouse Floor Map",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Warehouse Map Editor",
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Stock Manager"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Stock User"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Inventory Clerk"
+  }
+ ],
+ "sort_field": "sort_order",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}
