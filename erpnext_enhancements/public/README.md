@@ -58,7 +58,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `performance_fixes.js` | desk `<head>` | Strips redundant icon-sprite preload links | app_include_js |
 | `process_document.js` | Process Document | Lazy-load Mermaid.js; brand-themed diagram preview + the **Visual Builder** dialog (split-pane live editor, snippet insertion incl. the SF style pack, zoom, SVG export, mermaid.live link) | doctype_js |
 | `procurement_links.js` | Purchase Order / Material Request | Per-item supplier purchase links | doctype_js |
-| `project.js` | Project | Mirror name → `custom_project_id` (one of several Project scripts) | doctype_js |
+| `project.js` | Project | Show name in `custom_project_id` without dirtying the form (v1.816.2), plus the Maintenance Contract button (one of several Project scripts) | doctype_js |
 | `project_enhancements.js` | Project | Comments App + Vue Procurement Tracker + `custom_btn_*` doc creators | doctype_js |
 | `supplier_return_start.js` | Purchase Receipt, Purchase Order, Purchase Invoice, Payment Entry, Project | Supplier Returns (v1.807.0): Create > Return to Supplier on a receipt and an order, the launcher the Procurement Tracker's Return buttons call, and a line at the top of a Purchase Return, Debit Note or refund payment naming its Supplier Return | doctype_js |
 | `project_merge.js` | Project | "Merge Project" tool (dry-run stats + execute) | doctype_js |

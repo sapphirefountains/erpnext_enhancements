@@ -424,6 +424,12 @@ jobs:
       # real shared script against a fake DOM; node is on PATH in this job.
       - name: Project form hides (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
+      # Project ID mirror (v1.816.2): project.js shows the name in custom_project_id on every refresh.
+      # It used to use frm.set_value, which dirties the form whenever the stored value differs, so
+      # Projects opened as "Not Saved" and a reload asked "Leave site?". Runs the real script under
+      # node against a stubbed Desk that dirties like frappe.model.set_value.
+      - name: Project ID mirror does not dirty the form (executed under node)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_mirror -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a

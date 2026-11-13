@@ -249,6 +249,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared set, and the one more branch `receive_items` writes a warehouse in.
   `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
 
+## [1.816.2] - 2026-11-13
+
+### Fixed
+- **A Project could open as "Not Saved" with nothing edited, and reloading or leaving it asked "Leave
+  site? There are unsaved changes".** Seen on PRJ-00746 and PRJ-00747, the Overhead projects. The cause
+  was one line in `public/js/project.js`: on every refresh of a saved Project it ran
+  `frm.set_value("custom_project_id", frm.doc.name)` to show the name in the read-only Project ID
+  field. `frm.set_value` goes through `frappe.model.set_value`, which is a no-op when the value is
+  already equal but, when the stored value is empty (older Projects) or differs (a renamed Project),
+  writes it and calls `frm.dirty()`. That marks the form "Not Saved" and registers the `beforeunload`
+  listener behind "Leave site?". It matters more since 1.816.1, whose "Reload this page" button on the
+  Procurement Tracker would hit that prompt on a form nobody had touched.
+  - The script now writes `frm.doc.custom_project_id` directly and redraws the field with
+    `frm.refresh_field`, only when it differs. That does not dirty the form. A person's real edits
+    still do, and the value still travels on whatever save they make next (the field is read-only
+    on the client only; the server accepts it). Nothing is written to the database by opening a
+    Project, so a Project nobody saves keeps its old stored value. No Python or JS reads that stored value;
+    the only reader is the Report Builder report "Active Projects w/ TL and PM".
+  - The other Project form scripts were checked for the same pattern (a `set_value` on refresh or
+    onload of a saved doc without the person doing anything); none has it. Their `set_value` calls sit
+    in field-change handlers, buttons and dialogs.
+  - New bench-free test `tests/test_project_id_mirror.py` runs the real script under node
+    (`scripts/test_project_id_mirror.js`) against a stubbed form that dirties like
+    `frappe.model.set_value` does, and fails on the old code.
+
 ## [1.816.1] - 2026-11-13
 
 ### Fixed
