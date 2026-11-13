@@ -272,9 +272,9 @@ class TestWiring(unittest.TestCase):
 
 	def test_the_hook_is_registered_on_the_row_before_insert(self):
 		events = self._doc_events()
-		for key, value in zip(events.keys, events.values):
+		for key, value in zip(events.keys, events.values, strict=True):
 			if isinstance(key, ast.Constant) and key.value == "Purchase Order Item":
-				for hook_key, hook_value in zip(value.keys, value.values):
+				for hook_key, hook_value in zip(value.keys, value.values, strict=True):
 					if hook_key.value == "before_insert":
 						names = (
 							[e.value for e in hook_value.elts]
