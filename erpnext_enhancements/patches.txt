@@ -1640,6 +1640,11 @@ erpnext_enhancements.patches.backfill_triton_widget_mode
 # site whose stored rows are as new as the files. Each import in its own savepoint; a failure is logged and rolled
 # back, never raised. Writes no business data. Safe twice.
 erpnext_enhancements.patches.inventory_reports_hub_links
+# Project ID backfill (v1.816.4, Nik 2026-11-13: "Yes do that"). WRITES PRODUCTION DATA: sets Project.custom_project_id to
+# the Project's name wherever it is NULL or not byte-for-byte the name (451 of 671 Projects on prod, all blank), in one
+# UPDATE that leaves modified / modified_by alone and runs no hook. Keyed on the rule, BINARY compare (the default collation
+# ignores case and trailing spaces). Logs counts only. Guarded on the column, cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_project_id
 # Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
 # return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
 # back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a

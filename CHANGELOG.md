@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.816.4] - 2026-11-13
+
+### Fixed
+- **The report "Active Projects w/ TL and PM" showed a blank Project ID for most Projects.** On production
+  on 2026-11-13 `custom_project_id` ("Project ID") was empty on 451 of 671 Projects, equal to the name on
+  220 and different on none. It was only ever filled by the browser (`public/js/project.js`), and only on a
+  form someone then saved, so a Project created by the Opportunity hand-off job, or never saved after
+  opening, kept the blank. Nothing in Python or JS reads the stored value; that report is its only reader.
+  - **The server now owns it.** `project_enhancements/project_id.py`: a `validate` hook puts the Project's
+    own name in the field on every save; an `after_insert` hook does the same for a Project created with
+    `flags.ignore_validate` (the hand-off job, which creates most Projects, and where `validate` never
+    runs); an `after_rename` hook makes a renamed Project's ID follow at once. The two that write after the
+    row exists use one bound-parameter `UPDATE` that leaves `modified` / `modified_by` alone, so the mirror
+    never reads as an edit. All three return quietly when the column is absent (`doc_events` fire during
+    ERPNext's own test bootstrap) and cannot raise. The browser mirror from 1.816.2 is unchanged.
+  - **This release writes production data on migrate.** The new post-model-sync patch `backfill_project_id`
+    sets `custom_project_id` to the Project's name wherever it is NULL or not byte-for-byte the name: 451
+    Project rows today (all the blank ones), one field, `modified` and `modified_by` untouched, no hooks, no
+    Version rows. It is keyed on that rule rather than on emptiness, and compares with `BINARY` because the
+    default collation is case-insensitive and PAD SPACE: a plain `<>` would call `prj-1` and `PRJ-1 ` equal to
+    `PRJ-1` and leave them wrong. It checks the column first, wraps its work so a failure logs one Error Log
+    row instead of failing the deploy, prints counts only (never names), and is safe to run twice.
+  - New bench-free suite `tests/test_project_id_backfill.py` (patch selection, idempotence, never raising;
+    the three hooks; their wiring and the patches.txt / README entries), with its own CI step.
+
 ## [1.816.3] - 2026-11-13
 
 ### Fixed
