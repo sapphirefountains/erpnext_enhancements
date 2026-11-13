@@ -24,8 +24,13 @@
  * - **A plain doctype_js script, not a bundle.** It travels with the form's meta, so a tab open
  *   across a deploy gets this file and its endpoints together; there is no `frappe.require` bundle
  *   for it to be out of step with, and so no level guard is needed (CLAUDE.md).
- * - **Quiet when there is nothing to say.** No banner for someone who cannot see tracking, or on a
- *   new or canceled order; one short line inviting a number for someone who may add one.
+ * - **Off means off.** While Carrier Tracking Settings' master switch is off the server answers
+ *   `enabled: false` and nothing is drawn at all.
+ * - **Quiet when there is nothing to say.** An order with packages always shows them (a canceled
+ *   order read-only, so what was on its way stays visible). An order with none shows only a small
+ *   "Add tracking number" button, and only while it can still have a package on its way and the
+ *   person may add one (the server decides: `can_add`). Nothing on a new order, nothing for someone
+ *   who cannot see tracking.
  */
 frappe.provide("erpnext_enhancements.package_tracking");
 
@@ -85,13 +90,20 @@ frappe.provide("erpnext_enhancements.package_tracking");
 		return /^https?:\/\/[^\s"'<>]+$/i.test(url || "") ? url : "";
 	}
 
+	function carrier_label(row) {
+		if (row.resolved_carrier === "Unknown") return __("Carrier unknown");
+		// A bare 12- or 15-digit number is probably FedEx; say it is a guess (carriers.detect).
+		if (row.carrier_guessed) return __("{0} (guessed)", [row.resolved_carrier]);
+		return row.resolved_carrier || "";
+	}
+
 	/** The pieces of one package's line, as plain values. Exposed for the node harness. */
 	ns.describe = function (row, live_carriers) {
 		const status = STATUS[row.status] || STATUS.Unknown;
 		const live = (live_carriers || []).includes(row.resolved_carrier);
 		const delivered = row.status === "Delivered";
 		const parts = {
-			carrier: row.resolved_carrier === "Unknown" ? __("Carrier unknown") : row.resolved_carrier || "",
+			carrier: carrier_label(row),
 			number: row.tracking_number || "",
 			url: safe_url(row.tracking_url),
 			status: status.words,
@@ -118,9 +130,17 @@ frappe.provide("erpnext_enhancements.package_tracking");
 
 	/** The banner's HTML for an answer from get_packages. Exposed for the node harness. */
 	ns.banner_html = function (data, doc) {
-		const rows = (data && data.packages) || [];
-		const live = (data && data.live_carriers) || [];
-		if (!rows.length && !(data && data.can_add)) return "";
+		if (!data || data.enabled === false) return "";
+		const rows = data.packages || [];
+		const live = data.live_carriers || [];
+		if (!rows.length) {
+			// No card and no "nothing here" sentence: one small button, only where a number can go.
+			return data.can_add
+				? `<div class="ee-pkg-addline"><button type="button" class="btn btn-default btn-xs ee-pkg-add">${esc(
+						__("Add tracking number")
+				  )}</button></div>`
+				: "";
+		}
 
 		const head = [`<span class="ee-pkg-title">${esc(__("Packages on their way"))}</span>`];
 		if (doc && doc.custom_expected_delivery_date) {
@@ -169,12 +189,9 @@ frappe.provide("erpnext_enhancements.package_tracking");
 						__("Live status from FedEx and UPS is switched off. The tracking links still open the carrier's page.")
 				  )}</div>`
 				: "";
-		const empty = rows.length ? "" : `<div class="ee-pkg-muted">${esc(__("No tracking numbers yet."))}</div>`;
-
 		return (
 			`<div class="ee-pkg-card">` +
 			`<div class="ee-pkg-head">${head.join(" ")}</div>` +
-			empty +
 			lines.join("") +
 			off_note +
 			(actions.length ? `<div class="ee-pkg-actions">${actions.join(" ")}</div>` : "") +
@@ -189,6 +206,7 @@ frappe.provide("erpnext_enhancements.package_tracking");
 		style.textContent = `
 			.${SLOT_CLASS} { margin: 0 0 var(--margin-md, 12px); }
 			.${SLOT_CLASS}:empty { display: none; }
+			.ee-pkg-addline .btn { min-height: 28px; }
 			.ee-pkg-card { border: 1px solid var(--border-color, #e2e6e9); border-radius: var(--border-radius-md, 8px);
 				padding: 8px 12px; background: var(--card-bg, #fff); font-size: var(--text-sm, 13px); max-width: 100%; }
 			.ee-pkg-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 4px; }
@@ -334,10 +352,12 @@ frappe.provide("erpnext_enhancements.package_tracking");
 		refresh(frm) {
 			const $slot = slot(frm);
 			if (!$slot) return;
-			if (frm.is_new() || frm.doc.docstatus === 2) {
+			if (frm.is_new()) {
 				$slot.empty();
 				return;
 			}
+			// A canceled order is asked too: its packages stay readable (the server offers no Add,
+			// Remove or Refresh on it). An amended one has had them moved to the amendment.
 			load(frm);
 		},
 	});

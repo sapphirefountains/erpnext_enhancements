@@ -20,9 +20,10 @@ The status tables were read from the carriers' published code lists on 2026-11-1
 * FedEx: "Tracking Event Codes for Basic Integrated Visibility API (formerly Track API)", the API
   Reference tables at https://developer.fedex.com/api/en-us/guides/api-reference.html (data file
   https://developer.fedex.com/wirc/json/api_groups/API_Reference_Guide.json). FedEx does not say in
-  so many words that these are the values of ``latestStatusDetail.code``; its own examples use them
-  that way, and ``derivedCode`` is read first because it is FedEx's own rollup. A code missing from
-  the table is ``unknown`` with the carrier's words beside it, never an error.
+  so many words that these are the values of ``latestStatusDetail.code``, and it documents no
+  values for ``derivedCode`` at all. So ``code`` is read first and ``derivedCode`` only when
+  ``code`` is not in the table: a label-only shipment (``code`` OC) must read "label created", never
+  "on its way". A code missing from the table is ``unknown`` with the carrier's words beside it.
 * UPS: the activity types and the numeric status table in the Tracking API appendix,
   https://developer.ups.com/api/reference/tracking/appendix (``UPS_TYPES``, ``UPS_STATUS_CODES``).
 """
@@ -72,10 +73,9 @@ def fedex_package(track_result):
 	"""Normalize one ``output.completeTrackResults[].trackResults[]`` entry (no ``error`` key)."""
 	result = track_result if isinstance(track_result, dict) else {}
 	latest = _dict(result.get("latestStatusDetail"))
-	code = latest.get("derivedCode") or latest.get("code")
-	status = fedex_status(code)
-	if status == C.UNKNOWN_STATUS and latest.get("code") and latest.get("code") != code:
-		status = fedex_status(latest.get("code"))
+	status = fedex_status(latest.get("code"))
+	if status == C.UNKNOWN_STATUS:
+		status = fedex_status(latest.get("derivedCode"))
 
 	moments = {}
 	for item in _list(result.get("dateAndTimes")):
@@ -118,14 +118,21 @@ def fedex_package(track_result):
 	}
 
 
+#: The only FedEx codes that say something about the package itself: the two tracking-number codes
+#: of Track-Common-ErrorMapping.json and the "data not found" alert of the Track spec. Matched
+#: exactly. ``TRACKING.LOCALE.INVALID``, ``NOT.FOUND.ERROR`` (a wrong path) or an account code are
+#: about the request, and a substring match once read them as "invalid number" and stopped the
+#: package for good.
+FEDEX_PACKAGE_CODES = {
+	"TRACKING.TRACKINGNUMBER.NOTFOUND": "not_found",
+	"TRACKING.DATA.NOTFOUND": "not_found",
+	"TRACKING.TRACKINGNUMBER.INVALID": "invalid",
+}
+
+
 def fedex_error_outcome(code):
-	"""``not_found``, ``invalid`` or ``None`` for a FedEx error code."""
-	code = str(code or "").upper()
-	if "NOTFOUND" in code or "NOT.FOUND" in code:
-		return "not_found"
-	if "INVALID" in code or code.endswith(".EMPTY"):
-		return "invalid"
-	return None
+	"""``not_found``, ``invalid`` or ``None`` for a FedEx error code (exact match only)."""
+	return FEDEX_PACKAGE_CODES.get(str(code or "").strip().upper())
 
 
 # ------------------------------------------------------------------------------- UPS
@@ -163,15 +170,39 @@ UPS_STATUS_CODES = {
 }
 
 
-def ups_status(type_code, status_code=None):
-	"""Our status code from UPS's numeric ``statusCode`` if we know it, else its ``type`` letter."""
+_UPS_OUT_FOR_DELIVERY_CODES = frozenset(
+	n for n, code in UPS_STATUS_CODES.items() if code == C.OUT_FOR_DELIVERY
+)
+
+
+def ups_status(type_code, status_code=None, words=""):
+	"""Our status code from UPS's ``type`` letter, refined by its numeric ``statusCode``.
+
+	The numeric table could not be checked by a second reader (developer.ups.com refuses automated
+	fetches), and 037 may be a return leg rather than a delivery run. So the two claims that matter
+	most need the carrier's own words to agree: **out for delivery** only when the words say "out for
+	delivery", and **delivered** only from the letter D or from 011 with the words saying delivered.
+	Otherwise the letter decides, which can only under-state progress, never over-state it.
+	"""
+	letter = UPS_TYPES.get(str(type_code or "").strip().upper(), C.UNKNOWN_STATUS)
 	try:
 		number = int(str(status_code).strip())
 	except (TypeError, ValueError):
 		number = None
-	if number in UPS_STATUS_CODES:
+	text = str(words or "").lower()
+	if "out for delivery" in text and (number in _UPS_OUT_FOR_DELIVERY_CODES or letter == C.IN_TRANSIT):
+		return C.OUT_FOR_DELIVERY
+	if letter == C.DELIVERED:
+		return C.DELIVERED
+	if number == 11 and "delivered" in text:
+		return C.DELIVERED
+	if number in (13, 34):
+		return C.EXCEPTION
+	if letter != C.UNKNOWN_STATUS:
+		return letter
+	if number in UPS_STATUS_CODES and UPS_STATUS_CODES[number] in (C.LABEL_CREATED, C.IN_TRANSIT):
 		return UPS_STATUS_CODES[number]
-	return UPS_TYPES.get(str(type_code or "").strip().upper(), C.UNKNOWN_STATUS)
+	return C.UNKNOWN_STATUS
 
 
 #: ``deliveryDate[].type`` values: DEL delivered, SDD scheduled, RDD rescheduled.
@@ -186,9 +217,12 @@ def ups_package(package):
 	newest = activities[0] if activities else {}
 	newest_status = _dict(newest.get("status"))
 
-	status = ups_status(current.get("type"), current.get("statusCode"))
+	current_words = f"{current.get('description') or ''} {current.get('simplifiedTextDescription') or ''}"
+	status = ups_status(current.get("type"), current.get("statusCode"), current_words)
 	if status == C.UNKNOWN_STATUS and newest_status:
-		status = ups_status(newest_status.get("type"), newest_status.get("statusCode"))
+		status = ups_status(
+			newest_status.get("type"), newest_status.get("statusCode"), newest_status.get("description")
+		)
 
 	dates = {}
 	for item in _list(package.get("deliveryDate")):
@@ -204,7 +238,14 @@ def ups_package(package):
 		if not delivered_at:
 			for activity in activities:
 				activity_status = _dict(activity.get("status"))
-				if ups_status(activity_status.get("type"), activity_status.get("statusCode")) == C.DELIVERED:
+				if (
+					ups_status(
+						activity_status.get("type"),
+						activity_status.get("statusCode"),
+						activity_status.get("description"),
+					)
+					== C.DELIVERED
+				):
 					delivered_at = _ups_datetime(activity.get("date"), activity.get("time"))
 					break
 

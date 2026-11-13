@@ -82,11 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is set up. Each run checks at most 25 packages in at most 120 seconds, each at most every two hours,
     never-checked then oldest-checked first, on submitted orders that are not closed, completed,
     canceled, drop-shipped or fully received. It stops polling a package that is delivered, invalid,
-    unknown for a week, unreadable twelve times running, unchanged for three weeks or tracked for 90
-    days. A refused login, a 429 or an outage is about the carrier, not the package: that carrier is
-    skipped for the rest of the run and no package is marked failed. "Could not check" never changes a
-    stored status. Each answer is committed on its own, so a deploy's queue flush costs one run, and the
-    poller never raises into the scheduler.
+    unknown for a week (two days for a guessed carrier), unusable twelve times running after the carrier
+    had answered once, unchanged for three weeks or tracked for 90 days. A refused login, a 429, an
+    outage, any failure at the token endpoint and any carrier error that is not a documented
+    package-level code are about the carrier, not the package: that carrier is skipped for the rest of
+    the run and no package is marked failed. "Could not check" never changes a stored status. Each answer
+    is committed on its own and a row that fails is set aside, so one bad row cannot stop a run, a
+    deploy's queue flush costs one run, and the poller never raises into the scheduler.
   - Tests: `tests/test_carrier_tracking_poller.py` (own frappe stub): the permission rule against the
     DocType's JSON and the endpoints, POST-only writes, the poller's selection, limits and silence while
     off, every stop reason, and a masked log line when something unexpected breaks.
@@ -101,8 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wraps to one line per package on a phone. It writes nothing to the order, so the form never turns
     "Not Saved", and changes no route, so Back and Forward behave. A plain `doctype_js` script rather
     than a `frappe.require` bundle: it travels with the form's meta, so it has no bundle to fall out of
-    step with across a deploy and needs no level guard. Shown on draft and submitted orders, never on a
-    new or canceled one, and not at all to someone who cannot see tracking.
+    step with across a deploy and needs no level guard. Nothing at all while the master switch is off.
+    With it on, an order with packages shows them (a canceled one read-only), an order with none shows
+    only a small *Add tracking number* button while it can still have a package on its way, and someone
+    who cannot see tracking sees nothing.
   - **Integrations Health** gains a tile for each carrier: not configured, switched off, Sandbox (amber,
     because the sandbox answers with test data) or Production, the carrier's last answer and its age,
     and the last problem, masked, all read from the Tracked Package rows; the secret only as "is it
@@ -114,6 +118,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     word and must never pre-fill a quantity from it.
   - Tests: `tests/test_carrier_tracking_banner.py` runs `scripts/test_po_package_tracking.js` (the real
     script under node against a stubbed Desk) and the two health tiles on a frappe stub.
+- **Before release: what review round 1 changed** (the Sapphire Manager's decisions on items 1 and 2).
+  - **Off means off.** With Carrier Tracking Settings' master switch off, the order form shows nothing
+    from this feature, `get_packages` answers "off" after one cached settings read, and adding,
+    removing and refreshing refuse with a sentence. The first version drew an empty "No tracking
+    numbers yet" box for six roles on every order from the day it deployed, closed and fully received
+    ones included, and let numbers be added with the switch off.
+  - **Which orders take a number:** a draft or submitted order that is not closed, completed, canceled,
+    drop-shipped or fully received, in the banner and in the endpoint and controller alike
+    (`package_rules.order_accepts_packages`).
+  - **A package never blocks deleting an order** (new Purchase Order `on_trash`): Frappe refuses to
+    delete a document a Dynamic Link still points at, and runs `on_trash` before that check (v16.56.0
+    `delete_doc.py` 177 vs 184-185), so the order's packages are removed first. **An amendment takes the
+    canceled order's packages** (new `after_insert`), safe to run twice; deleting the draft amendment
+    hands them back. A canceled order never amended keeps its packages, read-only.
+  - **Carrier errors are read narrowly.** Only FedEx's documented package codes
+    (`TRACKING.TRACKINGNUMBER.NOTFOUND`, `TRACKING.DATA.NOTFOUND`, `TRACKING.TRACKINGNUMBER.INVALID`),
+    matched exactly, and UPS's 404 in its documented envelope say anything about a package. A substring
+    match had read `TRACKING.LOCALE.INVALID` or an account code as "invalid number", and every UPS 400
+    (documented only as "Invalid request") the same way, which would have stopped packages for good on a
+    wrong header. Token-endpoint failures were counted against every package and retried per package;
+    they are now carrier-level and remembered for two minutes. FedEx `output.alerts` is read as the
+    documented array. Lengths follow UPS's documented 7 to 34 characters.
+  - **"Not found" before any answer** is governed by the one-week rule alone; it used to add to the
+    12-failure count, which always fired first, so the documented week could never happen.
+  - **A bare 12- or 15-digit number is a guess**: tracked as FedEx, shown as "FedEx (guessed)", given up
+    after two days of "not found". Only `1Z…` and the 22-digit `96…` barcode are certain.
+  - **Readings that cannot over-state progress**: FedEx `code` is read before the undocumented
+    `derivedCode` (a label-only shipment reads "label created"), and UPS "out for delivery" and
+    "delivered" need UPS's own words to agree. Every such assumption is listed in one place in
+    `carrier_tracking/README.md`.
+  - **Calls inside a web request are capped** (5 packages, 25 seconds, the rest left to the poller), Add
+    and Refresh share one once-a-minute throttle per order, and a person may cause 30 carrier calls per
+    10 minutes.
+  - **A package is visible only with its order**: new `has_permission` and `permission_query_conditions`
+    hooks for Tracked Package, built on Frappe's own match conditions for Purchase Order. A REST insert
+    has every carrier-written field reset, so it cannot forge a status or skip polling.
+  - **One bad row cannot stop the poller**: each package is checked in its own `try`, rolled back and set
+    to the back of the line if its save fails, and logged once per run.
 
 ## [1.818.0] - 2026-11-13
 

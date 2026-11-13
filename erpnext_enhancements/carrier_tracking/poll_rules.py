@@ -16,10 +16,15 @@ returns. Keeping the decisions here means every limit below is tested on plain d
   new. Someone waiting on a truck presses Refresh.
 * ``NOT_FOUND_GIVE_UP_DAYS = 7``. A number is often "not found" for a day or two after the label is
   printed and before the carrier scans the box. A week of that, with no answer ever, means the
-  number is wrong or the supplier never shipped.
+  number is wrong or the supplier never shipped. **Until the carrier has answered once, "not found"
+  is governed by this rule alone** and does not add to ``failure_count``: at one check every two
+  hours a week is 84 checks, and the 12-failure rule would otherwise always fire first.
+* ``NOT_FOUND_GUESS_GIVE_UP_DAYS = 2``. The same for a number whose carrier was *guessed* from its
+  length (a bare 12 or 15 digits, ``carriers.detect``): two days of "not found" and it is probably
+  not a FedEx number at all, so the row says so and stops.
 * ``MAX_ROW_FAILURES = 12`` answers in a row that were about this package and were not usable
-  (not found after an earlier answer, or a response we could not read). At one check every two
-  hours that is at least a day.
+  ("not found" after the carrier had answered before, or a response for this package we could not
+  read). At one check every two hours that is at least a day.
 * ``STALE_AFTER_DAYS = 21``. No change at all for three weeks: a lost package or a number the
   carrier stopped updating. Polling it forever helps nobody.
 * ``MAX_TRACKING_DAYS = 90``. Carriers keep tracking history for about that long.
@@ -43,6 +48,7 @@ BATCH_SIZE = 25
 RUN_BUDGET_SECONDS = 120
 RECHECK_AFTER_HOURS = 2
 NOT_FOUND_GIVE_UP_DAYS = 7
+NOT_FOUND_GUESS_GIVE_UP_DAYS = 2
 MAX_ROW_FAILURES = 12
 STALE_AFTER_DAYS = 21
 MAX_TRACKING_DAYS = 90
@@ -58,10 +64,11 @@ UNAVAILABLE = client.UNAVAILABLE
 BAD_RESPONSE = client.BAD_RESPONSE
 NOT_CONFIGURED = client.NOT_CONFIGURED
 UNSUPPORTED = client.UNSUPPORTED
+REJECTED = client.REJECTED
 OUTCOME_WORDS = client.OUTCOME_WORDS
 
 #: About the carrier or our setup, not the package: never counted, never stops a row.
-CARRIER_LEVEL = frozenset({AUTH_FAILED, RATE_LIMITED, UNAVAILABLE, NOT_CONFIGURED})
+CARRIER_LEVEL = frozenset({AUTH_FAILED, RATE_LIMITED, UNAVAILABLE, NOT_CONFIGURED, REJECTED})
 
 #: About this package: counted towards MAX_ROW_FAILURES.
 ROW_LEVEL = frozenset({NOT_FOUND, BAD_RESPONSE})
@@ -70,6 +77,10 @@ ROW_LEVEL = frozenset({NOT_FOUND, BAD_RESPONSE})
 STOP_DELIVERED = "Delivered."
 STOP_INVALID = "The carrier says this is not a valid tracking number."
 STOP_NEVER_FOUND = "The carrier has had no record of this number for a week."
+STOP_GUESS_NOT_FOUND = (
+	"FedEx has no record of this number after two days, so it is probably not a FedEx number. Remove "
+	"it and add it again with the carrier picked."
+)
 STOP_FAILING = "The carrier's answers for this number could not be used, many times in a row."
 STOP_STALE = "No news from the carrier for three weeks."
 STOP_TOO_OLD = "Tracked for 90 days."
@@ -163,18 +174,26 @@ def apply_result(row, result, now, manual=False):
 		return updates
 
 	if outcome in CARRIER_LEVEL:
+		# Never counted and never a reason to stop, except the 90-day cap: a carrier that has
+		# refused us for three months is not going to answer about this package.
+		if _older_than(row.get("creation"), now, days=MAX_TRACKING_DAYS):
+			updates.update({"polling_stopped": 1, "stop_reason": STOP_TOO_OLD})
+		return updates
+
+	if outcome == NOT_FOUND and not row.get("last_success"):
+		# Never answered yet: only the week (or two days for a guessed carrier) decides.
+		guessed = bool(row.get("carrier_guessed"))
+		days = NOT_FOUND_GUESS_GIVE_UP_DAYS if guessed else NOT_FOUND_GIVE_UP_DAYS
+		if _older_than(row.get("creation"), now, days=days):
+			updates.update(
+				{"polling_stopped": 1, "stop_reason": STOP_GUESS_NOT_FOUND if guessed else STOP_NEVER_FOUND}
+			)
 		return updates
 
 	# ROW_LEVEL, and anything unrecognized, which is treated as unreadable.
 	failures += 1
 	updates["failure_count"] = failures
-	if (
-		outcome == NOT_FOUND
-		and not row.get("last_success")
-		and _older_than(row.get("creation"), now, days=NOT_FOUND_GIVE_UP_DAYS)
-	):
-		updates.update({"polling_stopped": 1, "stop_reason": STOP_NEVER_FOUND})
-	elif failures >= MAX_ROW_FAILURES:
+	if failures >= MAX_ROW_FAILURES:
 		updates.update({"polling_stopped": 1, "stop_reason": STOP_FAILING})
 	else:
 		reason = _age_stop(row, now, updates)

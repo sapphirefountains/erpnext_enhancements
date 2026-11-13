@@ -101,6 +101,9 @@ TOKEN_FALLBACK_SECONDS = 1800
 AUTH_REFUSED_SECONDS = 600
 #: FedEx's token endpoint answers 403 for ten minutes after too many requests from one address.
 FEDEX_TOKEN_PENALTY_SECONDS = 600
+#: How long any other token failure (down, a redirect, a 404, a 200 with no token, HTML) is
+#: remembered, so the next package does not ask the token endpoint again straight away.
+TOKEN_FAILURE_SECONDS = 120
 #: Back-off after a 429 when the carrier does not say how long (FedEx says 10 seconds).
 DEFAULT_RETRY_AFTER = 60
 MAX_RETRY_AFTER = 3600
@@ -117,6 +120,10 @@ UNAVAILABLE = "unavailable"
 BAD_RESPONSE = "bad_response"
 NOT_CONFIGURED = "not_configured"
 UNSUPPORTED = "unsupported"
+#: The carrier refused the request for a reason that is not about the package: an account lock,
+#: "log in again", a request it calls malformed, an error code we do not know. Never read as
+#: "invalid number" or "not found", which stop a package for good.
+REJECTED = "rejected"
 
 #: Our words for each outcome, stored in a row's Last Problem field and shown on the banner. The
 #: carrier's own error code and message are appended where it sent one.
@@ -128,6 +135,7 @@ OUTCOME_WORDS = {
 	UNAVAILABLE: "Could not reach the carrier. It will be checked again later.",
 	BAD_RESPONSE: "The carrier's answer could not be read. It will be checked again later.",
 	NOT_CONFIGURED: "This carrier is not set up in Carrier Tracking Settings.",
+	REJECTED: "The carrier turned the request down. It will be checked again later.",
 	UNSUPPORTED: C.NOT_TRACKABLE_REASON,
 }
 
@@ -280,7 +288,9 @@ def _token(config, cache, http, now, force=False):
 	try:
 		response = http.request("POST", url, headers=headers, data=data, timeout=TIMEOUT)
 	except Exception as exc:
-		return None, {"outcome": "unavailable", "error": _message("unavailable", config, type(exc).__name__)}
+		failed = {"outcome": UNAVAILABLE, "error": _message(UNAVAILABLE, config, type(exc).__name__)}
+		_cache_set(cache, refused_key, failed, TOKEN_FAILURE_SECONDS)
+		return None, failed
 	finally:
 		headers = data = None
 
@@ -309,15 +319,11 @@ def _token(config, cache, http, now, force=False):
 		failed = {"outcome": "auth_failed", "error": _message("auth_failed", config, _says(body))}
 		_cache_set(cache, refused_key, failed, AUTH_REFUSED_SECONDS)
 		return None, failed
-	if status >= 500 or status == 0:
-		return None, {
-			"outcome": "unavailable",
-			"error": _message("unavailable", config, _says(body) or f"HTTP {status}"),
-		}
-	return None, {
-		"outcome": "bad_response",
-		"error": _message("bad_response", config, _says(body) or f"HTTP {status}"),
-	}
+	# Anything else (a 5xx, a redirect, a 404, a 200 without a token, a page that is not JSON) is
+	# the token endpoint not working, which is about the carrier and never about a package.
+	failed = {"outcome": UNAVAILABLE, "error": _message(UNAVAILABLE, config, _says(body) or f"HTTP {status}")}
+	_cache_set(cache, refused_key, failed, TOKEN_FAILURE_SECONDS)
+	return None, failed
 
 
 def forget_token(config, cache):
@@ -347,7 +353,7 @@ def track(config, number, cache, http=None, now=None):
 			return _result(config, number, now, "unsupported", _message("unsupported", config))
 		if not is_configured(config):
 			return _result(config, number, now, "not_configured", _message("not_configured", config))
-		if not C.is_plausible(number):
+		if not C.is_plausible(number, config.carrier):
 			return _result(config, number, now, "invalid", _message("invalid", config))
 
 		waiting = _cache_get(cache, backoff_key(config))
@@ -446,9 +452,10 @@ def _interpret(config, number, response, token, cache, now):
 		_cache_delete(cache, _key(config, "token"))
 		return _result(config, number, now, "auth_failed", _message("auth_failed", config, says, token))
 	if body is None:
-		return _result(
-			config, number, now, "bad_response", _message("bad_response", config, f"HTTP {status}", token)
-		)
+		# A 200 we cannot read is "could not check" for this package. Any other status with a body
+		# that is not JSON (an error page from a proxy, a wrong path) is the request, not the package.
+		outcome = BAD_RESPONSE if status == 200 else REJECTED
+		return _result(config, number, now, outcome, _message(outcome, config, f"HTTP {status}", token))
 
 	if config.carrier == C.FEDEX:
 		return _interpret_fedex(config, number, status, body, says, token, now)
@@ -463,9 +470,27 @@ def _from_codes(codes):
 	return None
 
 
+def _alert_codes(output):
+	"""``output.alerts`` as FedEx documents it: an array of ``{code, alertType, message}``.
+
+	A bare string is read too, since FedEx's own schema description shows its example that way.
+	"""
+	alerts = output.get("alerts")
+	if isinstance(alerts, str):
+		alerts = [{"code": alerts.split(" ")[0], "message": alerts}]
+	out = []
+	for alert in alerts if isinstance(alerts, list) else []:
+		if isinstance(alert, dict):
+			out.append((str(alert.get("code") or ""), str(alert.get("message") or "")))
+	return out
+
+
 def _interpret_fedex(config, number, status, body, says, token, now):
 	if status != 200:
-		outcome = _from_codes(code for code, _ in _carrier_errors(body)) or "bad_response"
+		# Only FedEx's documented package-level codes say anything about the package. Every other
+		# error (CUSTOMER.USAGE.LOCKED, USER.RELOGIN.REQUIRED, NOT.FOUND.ERROR for a wrong path, a
+		# locale or size code) is the carrier turning the request down.
+		outcome = _from_codes(code for code, _ in _carrier_errors(body)) or REJECTED
 		return _result(
 			config, number, now, outcome, _message(outcome, config, says or f"HTTP {status}", token)
 		)
@@ -477,13 +502,15 @@ def _interpret_fedex(config, number, status, body, says, token, now):
 		results[0] if isinstance(results, list) and results and isinstance(results[0], dict) else None
 	)
 	if track_result is None:
-		alerts = output.get("alerts")
-		alert_text = alerts if isinstance(alerts, str) else ""
-		outcome = _from_codes([alert_text]) or "bad_response"
-		return _result(config, number, now, outcome, _message(outcome, config, alert_text or None, token))
+		alerts = _alert_codes(output)
+		outcome = _from_codes(code for code, _ in alerts) or BAD_RESPONSE
+		text = "; ".join(f"{code} {message}".strip() for code, message in alerts[:3]) or None
+		return _result(config, number, now, outcome, _message(outcome, config, text, token))
 	error = track_result.get("error")
 	if isinstance(error, dict) and (error.get("code") or error.get("message")):
-		outcome = N.fedex_error_outcome(error.get("code")) or "bad_response"
+		# An error inside this package's own result is about the package; an unknown one is "could
+		# not check" for it, which counts towards MAX_ROW_FAILURES but never stops it at once.
+		outcome = N.fedex_error_outcome(error.get("code")) or BAD_RESPONSE
 		text = f"{error.get('code') or ''} {error.get('message') or ''}".strip()
 		return _result(config, number, now, outcome, _message(outcome, config, text, token))
 	fields = N.fedex_package(track_result)
@@ -492,17 +519,14 @@ def _interpret_fedex(config, number, status, body, says, token, now):
 
 
 def _interpret_ups(config, number, status, body, says, token, now):
-	if status == 404:
-		return _result(config, number, now, "not_found", _message("not_found", config, says, token))
-	if status == 400:
-		return _result(config, number, now, "invalid", _message("invalid", config, says, token))
+	# Tracking.yaml documents 404 as "Tracking number information not found", in its error
+	# envelope. A 404 without that envelope is a wrong path, and a 400 is documented only as
+	# "Invalid request": both are the request, not the package, so neither stops anything.
+	if status == 404 and _carrier_errors(body):
+		return _result(config, number, now, NOT_FOUND, _message(NOT_FOUND, config, says, token))
 	if status != 200:
 		return _result(
-			config,
-			number,
-			now,
-			"bad_response",
-			_message("bad_response", config, says or f"HTTP {status}", token),
+			config, number, now, REJECTED, _message(REJECTED, config, says or f"HTTP {status}", token)
 		)
 	track_response = body.get("trackResponse") if isinstance(body.get("trackResponse"), dict) else {}
 	shipments = track_response.get("shipment")
@@ -527,8 +551,9 @@ def _interpret_ups(config, number, status, body, says, token, now):
 			if isinstance(warnings, list)
 			else ""
 		)
-		outcome = "not_found" if shipment else "bad_response"
-		return _result(config, number, now, outcome, _message(outcome, config, text or None, token))
+		# UPS documents no warning codes, so a shipment with warnings and no package is "could not
+		# check", not "not found".
+		return _result(config, number, now, BAD_RESPONSE, _message(BAD_RESPONSE, config, text or None, token))
 	fields = N.ups_package(package)
 	fields["description"] = C.mask(fields["description"], _secrets(config, token), 240)
 	return _result(config, number, now, "ok", **fields)

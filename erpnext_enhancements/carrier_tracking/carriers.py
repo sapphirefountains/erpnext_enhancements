@@ -10,13 +10,16 @@ normalizers are in ``normalize.py``.
 
 Things this module is careful about:
 
-* **Detection is by format only, and "unknown" is a legal answer.** A tracking number carries
-  no reliable carrier mark except UPS's ``1Z``. FedEx numbers are 12, 15 or 22 digits (the 22-
-  digit "96" Ground barcode). Twenty- and 22-digit numbers that start ``92``-``95`` are USPS's
-  Intelligent Mail format, which FedEx Ground Economy also prints, so they are reported as
-  ``unknown`` rather than guessed. Check digits are not verified: a wrong guess here only means
-  the carrier answers "not found", while a wrongly rejected real number would never be checked
-  at all. **An explicit carrier always wins** over detection.
+* **Detection is by format only, and "unknown" is a legal answer.** Only two shapes are a
+  reliable mark: UPS's ``1Z`` plus 16, and FedEx Ground's 22-digit barcode starting ``96``. A bare
+  12- or 15-digit number is *probably* FedEx (Express and Ground use those lengths), but other
+  carriers and suppliers' own order numbers can be 12 or 15 digits too, so ``detect`` calls it
+  FedEx **as a guess**: the row says so, the banner says "FedEx (guessed)", and ``poll_rules``
+  gives up on a guess after two days of "not found" instead of a week. That beats asking the
+  person to pick a carrier for every FedEx Express number, which is most of what arrives.
+  Twenty- and 22-digit numbers starting ``92``-``95`` are USPS's format, which FedEx Ground
+  Economy also prints, so they are ``unknown``, not guessed. Check digits are not verified.
+  **An explicit carrier always wins** over detection, and is never a guess.
 * **Our status codes are a small fixed set** (``STATUSES``), so the rest of the app never
   branches on a carrier's own vocabulary. The carrier's words travel beside them as
   ``description``.
@@ -88,32 +91,51 @@ def clean_number(value):
 	return re.sub(r"[\s\-]+", "", str(value or "")).upper()
 
 
-def is_plausible(number):
-	"""Letters and digits only, 6 to 40 long. Applies to every carrier, Other included."""
-	return bool(re.fullmatch(r"[0-9A-Z]{6,40}", number or ""))
+#: Length limits. UPS documents ``inquiryNumber`` as 7 to 34 characters (Tracking.yaml). FedEx's
+#: Track spec gives no length (its examples are 12 digits), so FedEx uses the same 7 to 34, which
+#: holds every FedEx format (12, 15, 20, 22 and 34 digits). Other carriers: 6 to 40.
+LENGTHS = {UPS: (7, 34), FEDEX: (7, 34)}
+OTHER_LENGTH = (6, 40)
+
+
+def is_plausible(number, carrier=None):
+	"""Letters and digits only, within ``carrier``'s documented length (``LENGTHS``)."""
+	low, high = LENGTHS.get(carrier, OTHER_LENGTH)
+	return bool(re.fullmatch(r"[0-9A-Z]+", number or "")) and low <= len(number) <= high
+
+
+def detect(number):
+	"""``(carrier, guessed)`` from the number's shape alone. See the module docstring."""
+	number = clean_number(number)
+	if _UPS_1Z.match(number):
+		return UPS, False
+	if _DIGITS.match(number):
+		length = len(number)
+		if length == 22 and number.startswith("96"):
+			return FEDEX, False
+		if length in (12, 15):
+			return FEDEX, True
+	return UNKNOWN, False
 
 
 def detect_carrier(number):
-	"""FedEx, UPS or Unknown from the number's shape alone. See the module docstring."""
-	number = clean_number(number)
-	if _UPS_1Z.match(number):
-		return UPS
-	if _DIGITS.match(number):
-		length = len(number)
-		if length in (12, 15):
-			return FEDEX
-		if length == 22 and number.startswith("96"):
-			return FEDEX
-	return UNKNOWN
+	"""FedEx, UPS or Unknown from the number's shape alone (a guess is still a FedEx)."""
+	return detect(number)[0]
 
 
-def resolve_carrier(choice, number):
-	"""The carrier to use: an explicit FedEx, UPS or Other wins; Auto (or blank) detects."""
+def resolve(choice, number):
+	"""``(carrier, guessed)``: an explicit FedEx, UPS or Other wins and is never a guess; Auto (or
+	blank) detects."""
 	choice = (choice or AUTO).strip()
 	for known in (FEDEX, UPS, OTHER):
 		if choice.lower() == known.lower():
-			return known
-	return detect_carrier(number)
+			return known, False
+	return detect(number)
+
+
+def resolve_carrier(choice, number):
+	"""The carrier ``resolve`` picks, without whether it was a guess."""
+	return resolve(choice, number)[0]
 
 
 # ------------------------------------------------------------------- public pages

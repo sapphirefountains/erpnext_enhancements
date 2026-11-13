@@ -20,10 +20,15 @@ back exactly what ``poll_rules.apply_result`` returns, with ``db.set_value`` (no
 * **Re-drivable**: the next run picks up whatever this one did not reach, so a deploy that flushes
   the queue (CLAUDE.md: every merge to main ``FLUSHDB``s Redis) costs one hour, nothing more. Each
   package's answer is committed on its own, so a run cut short keeps what it learned.
-* **Never raises into the scheduler.** An unexpected error is logged once per run, masked.
+* **Never raises into the scheduler, and one bad row cannot stop it.** Each package is checked in
+  its own ``try``: a row whose check or write fails is rolled back, stamped as checked (so it is not
+  picked first again next hour), and the run goes on. Problems are logged once per run, masked.
 
-**Refresh (``refresh_order``)** checks every FedEx and UPS package on one order now, stopped ones
-included (a person asked), at most once a minute per order.
+**Calls made inside a web request** (a person's Refresh, or the first check after Add) are capped:
+at most ``WEB_MAX_CHECKS`` packages and ``WEB_BUDGET_SECONDS`` per request, the rest left to the
+poller; at most one such round per order per ``REFRESH_COOLDOWN_SECONDS``, shared by Add and
+Refresh so adding and removing a number cannot get round it; and at most ``USER_CALLS_PER_WINDOW``
+carrier calls per person per ``USER_WINDOW_SECONDS`` across all orders.
 """
 
 import time
@@ -31,14 +36,22 @@ import time
 import frappe
 
 from erpnext_enhancements.carrier_tracking import carriers as C
-from erpnext_enhancements.carrier_tracking import client, config
+from erpnext_enhancements.carrier_tracking import client, config, package_rules
 from erpnext_enhancements.carrier_tracking import poll_rules as R
 
 DOCTYPE = "Tracked Package"
 
-#: Purchase Order statuses whose packages are no longer polled. "Delivered" is ERPNext's status for
-#: an order delivered by the supplier straight to the customer (drop-ship).
-CLOSED_ORDER_STATUSES = ("Closed", "Completed", "Cancelled", "Delivered")
+#: Purchase Order statuses whose packages are no longer polled (``package_rules``, one list).
+CLOSED_ORDER_STATUSES = package_rules.CLOSED_ORDER_STATUSES
+
+#: A person's request waits for the carrier at most this long and for at most this many packages;
+#: whatever is left is the poller's. One slow carrier call can take TIMEOUT (5 + 15 s) for the
+#: token and again for the track call, so the budget is checked before every call.
+WEB_MAX_CHECKS = 5
+WEB_BUDGET_SECONDS = 25
+#: Carrier calls one person may cause from the Desk, across every order, per window.
+USER_CALLS_PER_WINDOW = 30
+USER_WINDOW_SECONDS = 600
 
 #: The row fields the rules read.
 ROW_FIELDS = (
@@ -47,6 +60,7 @@ ROW_FIELDS = (
 	"reference_name",
 	"tracking_number",
 	"resolved_carrier",
+	"carrier_guessed",
 	"status",
 	"status_description",
 	"estimated_delivery",
@@ -66,6 +80,7 @@ DISPLAY_FIELDS = (
 	"tracking_number",
 	"carrier",
 	"resolved_carrier",
+	"carrier_guessed",
 	"tracking_url",
 	"status",
 	"status_description",
@@ -169,19 +184,57 @@ def run_poll(clock=time.monotonic):
 	started = clock()
 	blocked = set()
 	checked = 0
+	broken = []
 	for row in rows:
 		if clock() - started > R.RUN_BUDGET_SECONDS:
 			break
 		carrier = row.get("resolved_carrier")
 		if carrier in blocked or carrier not in configs:
 			continue
-		result = client.track(configs[carrier], row.get("tracking_number"), cache, now=now)
-		apply(row, result, now)
-		frappe.db.commit()
+		try:
+			result = client.track(configs[carrier], row.get("tracking_number"), cache, now=now)
+			apply(row, result, now)
+			frappe.db.commit()
+		except Exception:
+			# One row must not stop the run, nor be picked first for ever: undo it, stamp it checked
+			# with a plain note, and go on. The traceback is logged once, after the loop.
+			broken.append((row.get("name"), C.mask(frappe.get_traceback(), limit=1500)))
+			_mark_broken(row, now)
+			continue
 		checked += 1
 		if result.get("outcome") in R.CARRIER_LEVEL:
 			blocked.add(carrier)
-	return {"checked": checked, "skipped_carriers": sorted(blocked)}
+	if broken:
+		_log_broken(broken)
+	return {"checked": checked, "skipped_carriers": sorted(blocked), "broken": [name for name, _ in broken]}
+
+
+def _mark_broken(row, now):
+	"""After a failed check: roll back, then stamp ``last_checked`` so the row goes to the back."""
+	try:
+		frappe.db.rollback()
+		frappe.db.set_value(
+			DOCTYPE,
+			row.get("name"),
+			{"last_checked": now, "last_error": "Something went wrong saving this package's status."},
+			update_modified=False,
+		)
+		frappe.db.commit()
+	except Exception:
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
+
+
+def _log_broken(broken):
+	try:
+		message = "\n\n".join(f"{name}:\n{trace}" for name, trace in broken[:5])
+		frappe.log_error(
+			title=f"Package tracking: {len(broken)} package(s) could not be saved", message=message
+		)
+	except Exception:
+		pass
 
 
 # ---------------------------------------------------------------------------- one order
@@ -205,20 +258,27 @@ def live_carriers(settings=None):
 	return [carrier for carrier in C.TRACKABLE if config.carrier_config(carrier, settings)]
 
 
-def check_rows(rows, manual=True):
-	"""Ask the carriers about ``rows`` now. Rows of a carrier that is not live are left alone."""
+def check_rows(rows, manual=True, clock=time.monotonic):
+	"""Ask the carriers about ``rows`` now, inside a web request. Rows of a carrier that is not live
+	are left alone. At most ``WEB_MAX_CHECKS`` calls and ``WEB_BUDGET_SECONDS``; the rest wait for
+	the poller. Each call also counts against the person's window (``USER_CALLS_PER_WINDOW``)."""
 	settings = config._settings()
 	configs = {carrier: config.carrier_config(carrier, settings) for carrier in live_carriers(settings)}
 	if not configs:
 		return 0
 	now = frappe.utils.now_datetime()
 	cache = config.cache()
+	started = clock()
 	blocked = set()
 	checked = 0
 	for row in rows:
+		if checked >= WEB_MAX_CHECKS or clock() - started > WEB_BUDGET_SECONDS:
+			break
 		carrier = row.get("resolved_carrier")
 		if carrier not in configs or carrier in blocked:
 			continue
+		if not _take_user_call():
+			break
 		result = client.track(configs[carrier], row.get("tracking_number"), cache, now=now)
 		apply(row, result, now, manual=manual)
 		checked += 1
@@ -227,19 +287,52 @@ def check_rows(rows, manual=True):
 	return checked
 
 
+def _user_key():
+	return f"{client.CACHE_PREFIX}:user_calls:{frappe.session.user}"
+
+
+def _take_user_call():
+	"""Count one carrier call against the person's window; ``False`` once the window is full.
+
+	Each call renews the window (a plain Redis ``SET`` without an expiry would drop it, so every write
+	carries one). If Redis cannot be read the call is allowed: the order's cooldown and the request's
+	own cap still bound it.
+	"""
+	try:
+		key = _user_key()
+		used = int(frappe.cache.get_value(key) or 0)
+		if used >= USER_CALLS_PER_WINDOW:
+			return False
+		frappe.cache.set_value(key, used + 1, expires_in_sec=USER_WINDOW_SECONDS)
+		return True
+	except Exception:
+		return True
+
+
 def refresh_cooldown_key(purchase_order):
 	return f"{client.CACHE_PREFIX}:refresh:{purchase_order}"
 
 
-def refresh_order(purchase_order):
-	"""Check every FedEx and UPS package on one order now. Returns how many were checked, or
-	``None`` when the order was refreshed less than ``REFRESH_COOLDOWN_SECONDS`` ago."""
+def claim_order_cooldown(purchase_order):
+	"""``True`` if this request may ask the carriers about this order now, and starts its cooldown.
+	Shared by Refresh and the first check after Add."""
 	key = refresh_cooldown_key(purchase_order)
 	try:
 		if frappe.cache.get_value(key):
-			return None
+			return False
 		frappe.cache.set_value(key, 1, expires_in_sec=R.REFRESH_COOLDOWN_SECONDS)
 	except Exception:
 		pass
+	return True
+
+
+def refresh_order(purchase_order):
+	"""Check the FedEx and UPS packages on one order now (capped, see ``check_rows``). Returns how
+	many were checked, or ``None`` when the order was checked less than ``REFRESH_COOLDOWN_SECONDS``
+	ago. Packages not reached are the poller's."""
+	if not claim_order_cooldown(purchase_order):
+		return None
 	rows = [row for row in rows_for_order(purchase_order) if row.get("resolved_carrier") in C.TRACKABLE]
+	# Oldest-checked first, so a second Refresh after the cap reaches the ones the first did not.
+	rows.sort(key=lambda row: (row.get("last_checked") is not None, str(row.get("last_checked") or "")))
 	return check_rows(rows, manual=True)

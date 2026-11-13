@@ -51,6 +51,15 @@ FRAPPE = None
 tracking = None
 api = None
 
+OWN_MODULES = (
+	"erpnext_enhancements.carrier_tracking.config",
+	"erpnext_enhancements.carrier_tracking.tracking",
+	"erpnext_enhancements.carrier_tracking.permissions",
+	"erpnext_enhancements.carrier_tracking.purchase_order_hooks",
+	"erpnext_enhancements.carrier_tracking.doctype.tracked_package.tracked_package",
+	"erpnext_enhancements.api.package_tracking",
+)
+
 
 class Throw(Exception):
 	pass
@@ -115,14 +124,36 @@ def _make_frappe():
 			return types.SimpleNamespace(**{f: row.get(f) for f in fields})
 		return tuple(row.get(f) for f in fields)
 
+	def set_value(doctype, name, updates, value=None, update_modified=True):
+		if not isinstance(updates, dict):
+			updates = {updates: value}
+		if frappe.state.get("fail_write_for") == name:
+			raise RuntimeError("write failed")
+		writes.append((name, dict(updates)))
+		if doctype == "Tracked Package" and name in frappe.packages:
+			frappe.packages[name].update(updates)
+
+	def exists_any(doctype, name=None):
+		if isinstance(name, dict):
+			return any(all(row.get(k) == v for k, v in name.items()) for row in frappe.packages.values())
+		return exists(doctype, name)
+
 	frappe.db = types.SimpleNamespace(
-		exists=exists,
-		get_value=get_value,
-		set_value=lambda doctype, name, updates, update_modified=True: writes.append((name, dict(updates))),
+		exists=exists_any,
+		get_value=lambda doctype, name, fields, as_dict=False: (
+			(frappe.orders.get(name) or {}).get(fields)
+			if isinstance(fields, str)
+			else get_value(doctype, name, fields, as_dict)
+		),
+		set_value=set_value,
 		commit=lambda: commits.append(1),
-		rollback=lambda: None,
+		rollback=lambda: frappe.state.setdefault("rollbacks", []).append(1),
 		sql=lambda *a, **k: [],
+		escape=lambda value: "'" + str(value).replace("'", "''") + "'",
 	)
+	frappe.session = types.SimpleNamespace(user="buyer@example.com")
+	frappe.roles = {}
+	frappe.get_roles = lambda user=None: frappe.roles.get(user or frappe.session.user, [])
 	frappe.utils = types.SimpleNamespace(
 		now_datetime=lambda: NOW,
 		add_to_date=lambda dt, hours=0, as_datetime=True: dt + timedelta(hours=hours),
@@ -137,14 +168,19 @@ def _make_frappe():
 	)
 	frappe.cache_store = cache_store
 
-	def has_permission(doctype, ptype="read", doc=None, **k):
+	def has_permission(doctype, ptype="read", doc=None, user=None, **k):
 		return frappe.perms.get((doctype, ptype, doc), frappe.perms.get((doctype, ptype), False))
 
 	frappe.has_permission = has_permission
+
+	class _Row(dict):
+		def __getattr__(self, key):
+			return self.get(key)
+
 	frappe.get_all = lambda doctype, filters=None, fields=None, **k: [
-		{f: row.get(f) for f in fields}
-		for row in frappe.packages.values()
-		if row.get("reference_name") == (filters or {}).get("reference_name")
+		_Row({f: row.get(f) for f in fields})
+		for row in list(frappe.packages.values())
+		if all(row.get(key) == value for key, value in (filters or {}).items())
 	]
 
 	inserted, deleted = [], []
@@ -164,10 +200,56 @@ def _make_frappe():
 			self.update(fields)
 			self["name"] = f"tp-{len(inserted) + 1}"
 			inserted.append(dict(self))
+			frappe.packages[self["name"]] = dict(self)
 			return self
 
 	frappe.get_doc = lambda data: Doc(data)
-	frappe.delete_doc = lambda doctype, name, **k: deleted.append(name)
+
+	def delete_doc(doctype, name, **k):
+		deleted.append(name)
+		frappe.packages.pop(name, None)
+
+	frappe.delete_doc = delete_doc
+
+	# frappe.model.document.Document, enough for TrackedPackage.validate to run.
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+
+	class Document:
+		def __init__(self, **fields):
+			self.__dict__.update(fields)
+			self.flags = types.SimpleNamespace(ignore_permissions=False)
+			self._new = True
+
+		def is_new(self):
+			return self._new
+
+		def update(self, values):
+			self.__dict__.update(values)
+
+		def get(self, key, default=None):
+			return self.__dict__.get(key, default)
+
+	document.Document = Document
+	db_query = types.ModuleType("frappe.model.db_query")
+
+	class DatabaseQuery:
+		def __init__(self, doctype, user=None):
+			self.doctype, self.user = doctype, user
+
+		def build_match_conditions(self, as_condition=True):
+			if frappe.state.get("match_raises"):
+				raise RuntimeError("no")
+			return frappe.state.get("match_conditions", "")
+
+	db_query.DatabaseQuery = DatabaseQuery
+	model.document, model.db_query = document, db_query
+	frappe.model = model
+	frappe.stub_modules = {
+		"frappe.model": model,
+		"frappe.model.document": document,
+		"frappe.model.db_query": db_query,
+	}
 	return frappe
 
 
@@ -175,11 +257,8 @@ def setUpModule():
 	global FRAPPE, tracking, api
 	FRAPPE = _make_frappe()
 	sys.modules["frappe"] = FRAPPE
-	for name in (
-		"erpnext_enhancements.carrier_tracking.config",
-		"erpnext_enhancements.carrier_tracking.tracking",
-		"erpnext_enhancements.api.package_tracking",
-	):
+	sys.modules.update(FRAPPE.stub_modules)
+	for name in OWN_MODULES:
 		sys.modules.pop(name, None)
 	import importlib
 
@@ -189,11 +268,7 @@ def setUpModule():
 
 def tearDownModule():
 	sys.modules.pop("frappe", None)
-	for name in (
-		"erpnext_enhancements.carrier_tracking.config",
-		"erpnext_enhancements.carrier_tracking.tracking",
-		"erpnext_enhancements.api.package_tracking",
-	):
+	for name in (*FRAPPE.stub_modules, *OWN_MODULES):
 		sys.modules.pop(name, None)
 
 
@@ -341,13 +416,26 @@ class TestEndpointPermissions(unittest.TestCase):
 		FRAPPE.packages.clear()
 		FRAPPE.inserted.clear()
 		FRAPPE.deleted.clear()
-		FRAPPE.orders["PO-TEST-1"] = {"name": "PO-TEST-1", "docstatus": 1, "status": "To Receive and Bill"}
-		FRAPPE.orders["PO-TEST-X"] = {"name": "PO-TEST-X", "docstatus": 2, "status": "Cancelled"}
+		FRAPPE.orders["PO-TEST-1"] = {
+			"name": "PO-TEST-1",
+			"docstatus": 1,
+			"status": "To Receive and Bill",
+			"per_received": 0,
+		}
+		FRAPPE.orders["PO-TEST-X"] = {
+			"name": "PO-TEST-X",
+			"docstatus": 2,
+			"status": "Cancelled",
+			"per_received": 0,
+		}
 		self._live = tracking.live_carriers
+		self._enabled = api.config.feature_enabled
 		tracking.live_carriers = lambda settings=None: []
+		api.config.feature_enabled = lambda settings=None: True
 
 	def tearDown(self):
 		tracking.live_carriers = self._live
+		api.config.feature_enabled = self._enabled
 
 	def allow(self, *pairs):
 		for doctype, ptype in pairs:
@@ -740,6 +828,498 @@ class TestWiring(unittest.TestCase):
 			),
 			(2, 7, 12, 21, 90, 120),
 		)
+
+
+# ----------------------------------------------------------------------------- review round 1
+
+
+class _Endpoint(unittest.TestCase):
+	"""Shared set-up: the switch on, two orders, the caller allowed what each test grants."""
+
+	def setUp(self):
+		FRAPPE.perms.clear()
+		FRAPPE.orders.clear()
+		FRAPPE.packages.clear()
+		FRAPPE.inserted.clear()
+		FRAPPE.deleted.clear()
+		FRAPPE.cache_store.clear()
+		FRAPPE.writes.clear()
+		FRAPPE.logged.clear()
+		FRAPPE.orders.update(
+			{
+				"PO-OPEN": {
+					"name": "PO-OPEN",
+					"docstatus": 1,
+					"status": "To Receive and Bill",
+					"per_received": 0,
+					"supplier": "Supplier A",
+				},
+				"PO-DONE": {"name": "PO-DONE", "docstatus": 1, "status": "To Bill", "per_received": 100},
+				"PO-CLOSED": {"name": "PO-CLOSED", "docstatus": 1, "status": "Closed", "per_received": 40},
+				"PO-CANCELED": {
+					"name": "PO-CANCELED",
+					"docstatus": 2,
+					"status": "Cancelled",
+					"per_received": 0,
+				},
+				"PO-DRAFT": {"name": "PO-DRAFT", "docstatus": 0, "status": "Draft", "per_received": 0},
+			}
+		)
+		self.saved = (api.config.feature_enabled, tracking.live_carriers, tracking.check_rows)
+		self.enabled = True
+		self.live = []
+		self.checked = []
+		api.config.feature_enabled = lambda settings=None: self.enabled
+		tracking.live_carriers = lambda settings=None: list(self.live)
+		tracking.check_rows = lambda rows, manual=True: self.checked.append([r["name"] for r in rows]) or len(
+			rows
+		)
+		for pair in (
+			("Purchase Order", "read"),
+			("Tracked Package", "read"),
+			("Tracked Package", "create"),
+			("Tracked Package", "delete"),
+		):
+			FRAPPE.perms[pair] = True
+
+	def tearDown(self):
+		api.config.feature_enabled, tracking.live_carriers, tracking.check_rows = self.saved
+
+	def package(self, name, order, number=UPS_NUMBER, carrier=C.UPS):
+		FRAPPE.packages[name] = {
+			"name": name,
+			"reference_doctype": "Purchase Order",
+			"reference_name": order,
+			"tracking_number": number,
+			"resolved_carrier": carrier,
+			"status": "In Transit",
+		}
+
+
+class TestOffMeansOff(_Endpoint):
+	"""Item 1: with the master switch off nothing shows and nothing can be written."""
+
+	def test_read_is_off_and_cheap(self):
+		self.enabled = False
+		FRAPPE.perms.clear()  # not even read on the order is consulted
+		out = api.get_packages("PO-OPEN")
+		self.assertEqual(out["enabled"], False)
+		self.assertEqual(out["packages"], [])
+		self.assertFalse(out["can_add"])
+
+	def test_writes_refuse_with_a_sentence(self):
+		self.enabled = False
+		self.package("tp-1", "PO-OPEN")
+		for call in (
+			lambda: api.add_tracking_number("PO-OPEN", UPS_NUMBER),
+			lambda: api.remove_tracking_number("tp-1"),
+			lambda: api.refresh_order("PO-OPEN"),
+		):
+			with self.assertRaises(Throw) as caught:
+				call()
+			self.assertIn("switched off", str(caught.exception))
+		self.assertEqual((FRAPPE.inserted, FRAPPE.deleted), ([], []))
+
+	def test_other_carrier_records_with_the_switch_on_and_no_credentials(self):
+		self.live = []
+		out = api.add_tracking_number("PO-OPEN", "TBA000000000000", "Other", "https://example.com/p")
+		self.assertEqual(FRAPPE.inserted[0]["resolved_carrier"], C.OTHER)
+		self.assertTrue(out["enabled"])
+		self.assertEqual(self.checked, [])
+
+
+class TestWhichOrdersTakeANumber(_Endpoint):
+	"""Item 1: Add only where a package can still be on its way."""
+
+	def test_rule(self):
+		self.assertTrue(package_rules.order_accepts_packages(0, "Draft", 0))
+		self.assertTrue(package_rules.order_accepts_packages(1, "To Receive and Bill", 99.9))
+		self.assertFalse(package_rules.order_accepts_packages(1, "To Bill", 100))
+		for status in ("Closed", "Completed", "Cancelled", "Delivered"):
+			self.assertFalse(package_rules.order_accepts_packages(1, status, 0), status)
+		self.assertFalse(package_rules.order_accepts_packages(2, "Cancelled", 0))
+		self.assertFalse(package_rules.order_accepts_packages("x", None, None))
+
+	def test_add_refused_on_closed_received_and_canceled_orders(self):
+		for order in ("PO-DONE", "PO-CLOSED", "PO-CANCELED"):
+			with self.assertRaises(Throw):
+				api.add_tracking_number(order, UPS_NUMBER)
+		self.assertEqual(FRAPPE.inserted, [])
+
+	def test_add_allowed_on_a_draft(self):
+		api.add_tracking_number("PO-DRAFT", UPS_NUMBER)
+		self.assertEqual(len(FRAPPE.inserted), 1)
+
+	def test_payload_offers_add_only_where_it_fits(self):
+		self.assertTrue(api.get_packages("PO-OPEN")["can_add"])
+		self.assertFalse(api.get_packages("PO-DONE")["can_add"])
+		self.assertFalse(api.get_packages("PO-CLOSED")["can_add"])
+
+	def test_canceled_order_keeps_its_packages_read_only(self):
+		self.package("tp-c", "PO-CANCELED")
+		self.live = [C.UPS]
+		out = api.get_packages("PO-CANCELED")
+		self.assertEqual([r["name"] for r in out["packages"]], ["tp-c"])
+		self.assertFalse(out["can_add"] or out["can_remove"] or out["can_refresh"])
+		with self.assertRaises(Throw):
+			api.remove_tracking_number("tp-c")
+		self.assertEqual(FRAPPE.deleted, [])
+		out = api.refresh_order("PO-CANCELED")
+		self.assertEqual(self.checked, [])
+		self.assertFalse(out["too_soon"])
+
+
+class TestWebRequestBounds(_Endpoint):
+	"""Item 7: Add and Refresh share one throttle; a request asks about a few packages only."""
+
+	def test_add_and_refresh_share_the_order_throttle(self):
+		self.live = [C.UPS]
+		api.add_tracking_number("PO-OPEN", UPS_NUMBER)
+		self.assertEqual(len(self.checked), 1)
+		# Remove and add again: the throttle is still held, so no second carrier call.
+		api.remove_tracking_number("tp-1")
+		api.add_tracking_number("PO-OPEN", "1Z0000000000000002")
+		self.assertEqual(len(self.checked), 1)
+		self.assertTrue(api.refresh_order("PO-OPEN")["too_soon"])
+		self.assertEqual(len(self.checked), 1)
+
+	def test_check_rows_is_capped_by_count_time_and_person(self):
+		tracking.check_rows = self.saved[2]
+		saved = (
+			tracking.config._settings,
+			tracking.config.carrier_config,
+			tracking.live_carriers,
+			tracking.client.track,
+			tracking.apply,
+		)
+		calls = []
+		tracking.config._settings = lambda: object()
+		tracking.config.carrier_config = lambda carrier, settings=None: tracking.client.Config(
+			carrier, "Sandbox", "i", "s"
+		)
+		tracking.live_carriers = lambda settings=None: [C.UPS]
+		tracking.client.track = lambda cfg, number, cache, http=None, now=None: calls.append(number) or ok()
+		tracking.apply = lambda row, result, now, manual=False: {}
+		try:
+			rows = [row(name=f"r{i}", tracking_number=f"1Z00000000000{i:05d}") for i in range(12)]
+			self.assertEqual(tracking.check_rows(rows), tracking.WEB_MAX_CHECKS)
+			calls.clear()
+			ticks = iter([0, 0, 10, 30, 40, 50])
+			self.assertEqual(tracking.check_rows(rows, clock=lambda: next(ticks)), 2)
+			FRAPPE.cache_store[tracking._user_key()] = tracking.USER_CALLS_PER_WINDOW
+			calls.clear()
+			self.assertEqual(tracking.check_rows(rows), 0)
+			self.assertEqual(calls, [])
+		finally:
+			(
+				tracking.config._settings,
+				tracking.config.carrier_config,
+				tracking.live_carriers,
+				tracking.client.track,
+				tracking.apply,
+			) = saved
+
+
+class TestRestInsert(_Endpoint):
+	"""Item 9: the controller is the last gate for a REST create."""
+
+	def make(self, **fields):
+		import importlib
+
+		module = importlib.import_module(
+			"erpnext_enhancements.carrier_tracking.doctype.tracked_package.tracked_package"
+		)
+		base = {
+			"reference_doctype": "Purchase Order",
+			"reference_name": "PO-OPEN",
+			"tracking_number": UPS_NUMBER,
+			"carrier": "Auto",
+			"link_url": "",
+		}
+		base.update(fields)
+		return module.TrackedPackage(**base)
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.config = importlib.import_module("erpnext_enhancements.carrier_tracking.config")
+		self._cfg_enabled = self.config.feature_enabled
+		self.config.feature_enabled = lambda settings=None: self.enabled
+
+	def tearDown(self):
+		self.config.feature_enabled = self._cfg_enabled
+		super().tearDown()
+
+	def test_needs_read_on_the_order(self):
+		FRAPPE.perms[("Purchase Order", "read")] = False
+		with self.assertRaises(PermissionError_):
+			self.make().validate()
+
+	def test_carrier_fields_are_reset(self):
+		doc = self.make(
+			status="Delivered",
+			status_description="forged",
+			estimated_delivery="2026-01-01",
+			delivered_on="2026-01-01 00:00:00",
+			last_location="Nowhere",
+			failure_count=99,
+			last_checked="2099-01-01 00:00:00",
+			last_success="2099-01-01 00:00:00",
+			polling_stopped=1,
+			stop_reason="x",
+			last_error="y",
+		)
+		doc.validate()
+		for field, value in package_rules.CARRIER_FIELD_DEFAULTS.items():
+			self.assertEqual(doc.get(field), value, field)
+		self.assertEqual(doc.supplier, "Supplier A")
+
+	def test_refused_while_off_and_on_a_closed_order(self):
+		self.enabled = False
+		with self.assertRaises(Throw):
+			self.make().validate()
+		self.enabled = True
+		with self.assertRaises(Throw):
+			self.make(reference_name="PO-CLOSED").validate()
+
+	def test_duplicate_refused(self):
+		self.package("tp-1", "PO-OPEN")
+		with self.assertRaises(Throw):
+			self.make().validate()
+
+
+class TestListPermissions(_Endpoint):
+	"""Item 8: a package is visible only with its order."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.perm = importlib.import_module("erpnext_enhancements.carrier_tracking.permissions")
+		FRAPPE.state.pop("match_conditions", None)
+		FRAPPE.state.pop("match_raises", None)
+
+	def test_has_permission_follows_the_order(self):
+		FRAPPE.perms[("Purchase Order", "read", "PO-OPEN")] = True
+		FRAPPE.perms[("Purchase Order", "read", "PO-DONE")] = False
+		self.assertTrue(
+			self.perm.has_permission({"reference_doctype": "Purchase Order", "reference_name": "PO-OPEN"})
+		)
+		self.assertFalse(
+			self.perm.has_permission({"reference_doctype": "Purchase Order", "reference_name": "PO-DONE"})
+		)
+		self.assertFalse(
+			self.perm.has_permission({"reference_doctype": "Sales Order", "reference_name": "SO-1"})
+		)
+
+	def test_query_uses_the_orders_own_conditions(self):
+		FRAPPE.state["match_conditions"] = "`tabPurchase Order`.`supplier` in ('Supplier A')"
+		sql = self.perm.query_conditions("buyer@example.com")
+		self.assertIn("`tabTracked Package`.`reference_name` in (select `tabPurchase Order`.`name`", sql)
+		self.assertIn("`supplier` in ('Supplier A')", sql)
+
+	def test_query_fails_closed(self):
+		FRAPPE.state["match_raises"] = True
+		self.assertEqual(self.perm.query_conditions("buyer@example.com"), "1=0")
+		FRAPPE.state.pop("match_raises")
+		FRAPPE.perms[("Purchase Order", "read")] = False
+		self.assertEqual(self.perm.query_conditions("buyer@example.com"), "1=0")
+
+	def test_system_manager_unscoped(self):
+		FRAPPE.roles["admin@example.com"] = ["System Manager"]
+		self.assertEqual(self.perm.query_conditions("admin@example.com"), "")
+
+
+class TestDeleteAndAmend(_Endpoint):
+	"""Item 2: a package never blocks deleting an order; an amendment takes the packages."""
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		self.hooks = importlib.import_module("erpnext_enhancements.carrier_tracking.purchase_order_hooks")
+		FRAPPE.orders["PO-CANCELED-1"] = {
+			"name": "PO-CANCELED-1",
+			"docstatus": 0,
+			"status": "Draft",
+			"per_received": 0,
+			"supplier": "Supplier B",
+		}
+
+	def order(self, name, amended_from=None):
+		return types.SimpleNamespace(name=name, amended_from=amended_from)
+
+	def test_delete_removes_the_packages(self):
+		self.package("tp-1", "PO-DRAFT")
+		self.package("tp-2", "PO-OPEN")
+		self.hooks.on_trash(self.order("PO-DRAFT"))
+		self.assertEqual(sorted(FRAPPE.packages), ["tp-2"])
+
+	def test_amendment_takes_them_and_twice_is_safe(self):
+		self.package("tp-1", "PO-CANCELED")
+		self.package("tp-2", "PO-CANCELED", number="1Z0000000000000002")
+		self.hooks.after_insert(self.order("PO-CANCELED-1", amended_from="PO-CANCELED"))
+		self.hooks.after_insert(self.order("PO-CANCELED-1", amended_from="PO-CANCELED"))
+		self.assertEqual({p["reference_name"] for p in FRAPPE.packages.values()}, {"PO-CANCELED-1"})
+		self.assertEqual({p["supplier"] for p in FRAPPE.packages.values()}, {"Supplier B"})
+		self.assertEqual(len(FRAPPE.packages), 2)
+
+	def test_a_number_already_on_the_amendment_is_not_doubled(self):
+		self.package("tp-1", "PO-CANCELED")
+		self.package("tp-2", "PO-CANCELED-1")
+		self.hooks.after_insert(self.order("PO-CANCELED-1", amended_from="PO-CANCELED"))
+		self.assertEqual(FRAPPE.packages["tp-1"]["reference_name"], "PO-CANCELED")
+
+	def test_deleting_a_draft_amendment_hands_them_back(self):
+		self.package("tp-1", "PO-CANCELED-1")
+		self.hooks.on_trash(self.order("PO-CANCELED-1", amended_from="PO-CANCELED"))
+		self.assertEqual(FRAPPE.packages["tp-1"]["reference_name"], "PO-CANCELED")
+
+	def test_never_raises(self):
+		self.package("tp-1", "PO-DRAFT")
+		FRAPPE.state["fail_write_for"] = "tp-1"
+		original = FRAPPE.delete_doc
+		FRAPPE.delete_doc = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked"))
+		try:
+			self.hooks.on_trash(self.order("PO-DRAFT"))
+			self.hooks.after_insert(self.order("PO-OPEN", amended_from="PO-DRAFT"))
+		finally:
+			FRAPPE.delete_doc = original
+			FRAPPE.state.pop("fail_write_for")
+		self.assertEqual(len(FRAPPE.logged), 2)
+
+	def test_wired_in_hooks(self):
+		tree = ast.parse(HOOKS.read_text(encoding="utf-8"))
+		events = next(
+			node.value
+			for node in tree.body
+			if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "doc_events"
+		)
+		po = ast.literal_eval(events)["Purchase Order"]
+		self.assertEqual(
+			po["on_trash"], "erpnext_enhancements.carrier_tracking.purchase_order_hooks.on_trash"
+		)
+		self.assertEqual(
+			po["after_insert"], "erpnext_enhancements.carrier_tracking.purchase_order_hooks.after_insert"
+		)
+		for name in ("permission_query_conditions", "has_permission"):
+			node = next(
+				n.value
+				for n in tree.body
+				if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == name
+			)
+			self.assertIn("Tracked Package", ast.literal_eval(node))
+
+
+class TestRulesTogetherAtTheRealCadence(unittest.TestCase):
+	"""Item 5: the rules run together, one check every RECHECK_AFTER_HOURS, as the poller would."""
+
+	def run_days(self, answer, days, **start):
+		state = row(creation=NOW, **start)
+		moment = NOW
+		while moment <= NOW + timedelta(days=days):
+			if R.is_due(state, moment):
+				state.update(R.apply_result(state, answer(moment), moment))
+			if state.get("polling_stopped"):
+				return state, moment
+			moment += timedelta(hours=1)
+		return state, None
+
+	def test_never_found_stops_at_a_week_not_at_twelve_failures(self):
+		state, stopped = self.run_days(lambda m: failed("not_found"), 9)
+		self.assertEqual(state["stop_reason"], R.STOP_NEVER_FOUND)
+		self.assertGreaterEqual(stopped - NOW, timedelta(days=R.NOT_FOUND_GIVE_UP_DAYS))
+		self.assertLess(stopped - NOW, timedelta(days=R.NOT_FOUND_GIVE_UP_DAYS, hours=3))
+		self.assertEqual(state["failure_count"], 0)
+
+	def test_a_guessed_carrier_gives_up_after_two_days(self):
+		state, stopped = self.run_days(
+			lambda m: failed("not_found"), 9, carrier_guessed=1, resolved_carrier=C.FEDEX
+		)
+		self.assertEqual(state["stop_reason"], R.STOP_GUESS_NOT_FOUND)
+		self.assertLess(stopped - NOW, timedelta(days=R.NOT_FOUND_GUESS_GIVE_UP_DAYS, hours=3))
+
+	def test_found_then_lost_counts_to_twelve(self):
+		first = [True]
+
+		def answer(moment):
+			if first[0]:
+				first[0] = False
+				return ok()
+			return failed("not_found")
+
+		state, stopped = self.run_days(answer, 9)
+		self.assertEqual(state["stop_reason"], R.STOP_FAILING)
+		self.assertEqual(state["failure_count"], R.MAX_ROW_FAILURES)
+
+	def test_carrier_trouble_for_weeks_stops_nothing_before_ninety_days(self):
+		for outcome in ("unavailable", "rejected", "auth_failed", "rate_limited"):
+			state, stopped = self.run_days(lambda m, o=outcome: failed(o), 30)
+			self.assertIsNone(stopped, outcome)
+			self.assertEqual(state["failure_count"], 0)
+			self.assertEqual(state["status"], C.NOT_CHECKED)
+		state = row(creation=NOW - timedelta(days=R.MAX_TRACKING_DAYS + 1))
+		self.assertEqual(R.apply_result(state, failed("rejected"), NOW)["stop_reason"], R.STOP_TOO_OLD)
+
+	def test_token_failures_are_carrier_level(self):
+		self.assertIn("unavailable", R.CARRIER_LEVEL)
+		self.assertIn("rejected", R.CARRIER_LEVEL)
+
+
+class TestOneBadRow(unittest.TestCase):
+	"""Item 10: a row whose write raises neither stops the run nor stays first in line."""
+
+	def setUp(self):
+		FRAPPE.writes.clear()
+		FRAPPE.commits.clear()
+		FRAPPE.logged.clear()
+		self.saved = (
+			tracking.config._settings,
+			tracking.config.feature_enabled,
+			tracking.config.carrier_config,
+			tracking.due_rows,
+			tracking.client.track,
+		)
+		tracking.config._settings = lambda: object()
+		tracking.config.feature_enabled = lambda settings=None: True
+		tracking.config.carrier_config = lambda carrier, settings=None: tracking.client.Config(
+			carrier, "Sandbox", "i", "s"
+		)
+		self.rows = [row(name="bad"), row(name="good-1"), row(name="good-2")]
+		tracking.due_rows = lambda carriers, now, limit: list(self.rows)
+		tracking.client.track = lambda cfg, number, cache, http=None, now=None: ok()
+
+	def tearDown(self):
+		(
+			tracking.config._settings,
+			tracking.config.feature_enabled,
+			tracking.config.carrier_config,
+			tracking.due_rows,
+			tracking.client.track,
+		) = self.saved
+
+	def test_the_run_goes_on_and_the_row_goes_to_the_back(self):
+		original = tracking.apply
+
+		def apply(row_, result, now, manual=False):
+			if row_["name"] == "bad":
+				raise RuntimeError("Bearer abcdef0123456789 broke")
+			return original(row_, result, now, manual)
+
+		tracking.apply = apply
+		FRAPPE.state["traceback"] = "RuntimeError: Bearer abcdef0123456789 broke"
+		try:
+			out = tracking.run_poll()
+		finally:
+			tracking.apply = original
+			FRAPPE.state.pop("traceback", None)
+		self.assertEqual(out["checked"], 2)
+		self.assertEqual(out["broken"], ["bad"])
+		stamped = [updates for name, updates in FRAPPE.writes if name == "bad"]
+		self.assertEqual(stamped[0]["last_checked"], NOW)
+		self.assertEqual(len(FRAPPE.logged), 1)
+		self.assertNotIn("abcdef0123456789", FRAPPE.logged[0][1])
 
 
 if __name__ == "__main__":

@@ -183,16 +183,38 @@ check("remove button", html.includes("ee-pkg-remove"), true);
 calls.length = 0;
 handlers["Purchase Order"].refresh(makeFrm({ name: "new-purchase-order-1", docstatus: 0 }, true));
 check("nothing asked on a new order", calls.length, 0);
+nextAnswer = {
+	message: {
+		enabled: true,
+		packages: [{ name: "tp-9", tracking_number: "1Z0000000000000009", resolved_carrier: "UPS", status: "In Transit" }],
+		live_carriers: ["UPS"],
+		can_add: false,
+		can_remove: false,
+		can_refresh: false,
+	},
+};
 handlers["Purchase Order"].refresh(makeFrm({ name: "PO-TEST-X", docstatus: 2 }, false));
-check("nothing asked on a canceled order", calls.length, 0);
+check("a canceled order is asked (its packages stay readable)", calls.length, 1);
+check("a canceled order's packages are shown", theSlot._html.includes("1Z0000000000000009"), true);
+check("read-only on a canceled order", /ee-pkg-(add|remove|refresh)/.test(theSlot._html), false);
+
+calls.length = 0;
+nextAnswer = { message: { enabled: false, packages: [], can_add: false } };
+handlers["Purchase Order"].refresh(makeFrm({ name: "PO-TEST-1", docstatus: 1 }, false));
+check("off means off: nothing drawn", theSlot._html, "");
 
 // --------------------------------------------------------------------------- banner_html
 
 check("nothing for someone who may not add and has no rows", ns.banner_html({ packages: [], can_add: false }, {}), "");
+const invite = ns.banner_html({ enabled: true, packages: [], can_add: true }, {});
+check("an order with none: one small Add button", invite.includes("ee-pkg-add") && invite.includes("btn-xs"), true);
+check("an order with none: no empty box", invite.includes("ee-pkg-card") || invite.includes("No tracking numbers yet"), false);
+check("an order that cannot take one: nothing", ns.banner_html({ enabled: true, packages: [], can_add: false }, {}), "");
+check("feature off: nothing even with rows", ns.banner_html({ enabled: false, packages: [{ name: "x" }], can_add: true }, {}), "");
 check(
-	"an invitation for someone who may add",
-	ns.banner_html({ packages: [], can_add: true }, {}).includes("No tracking numbers yet."),
-	true
+	"a guessed carrier says so",
+	ns.describe({ status: "Not Checked Yet", resolved_carrier: "FedEx", carrier_guessed: 1 }, ["FedEx"]).carrier,
+	"FedEx (guessed)"
 );
 
 const hostile = ns.banner_html(

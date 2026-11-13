@@ -29,7 +29,7 @@ from frappe.model.document import Document
 
 class TrackedPackage(Document):
 	def validate(self):
-		from erpnext_enhancements.carrier_tracking import package_rules
+		from erpnext_enhancements.carrier_tracking import config, package_rules
 
 		if self.reference_doctype != "Purchase Order":
 			frappe.throw(_("A tracking number can only be added to a Purchase Order for now."))
@@ -37,23 +37,33 @@ class TrackedPackage(Document):
 		if not self.is_new():
 			return
 
+		# Off means off, for a REST insert as much as for the banner's endpoint.
+		if not self.flags.ignore_permissions and not config.feature_enabled():
+			frappe.throw(_("Package tracking is switched off in Carrier Tracking Settings."))
+
+		# Every carrier-written field comes from here, at its starting value, whatever the request
+		# sent (package_rules.CARRIER_FIELD_DEFAULTS): a create cannot arrive already "Delivered", with
+		# a made-up estimate, or with a future last_checked the poller would skip.
 		fields, problem = package_rules.new_package_fields(self.tracking_number, self.carrier, self.link_url)
 		if problem:
 			frappe.throw(_(problem))
 
 		order = frappe.db.get_value(
-			"Purchase Order", self.reference_name, ["name", "docstatus", "supplier"], as_dict=True
+			"Purchase Order",
+			self.reference_name,
+			["name", "docstatus", "status", "per_received", "supplier"],
+			as_dict=True,
 		)
 		if not order:
 			frappe.throw(_("Purchase Order {0} was not found.").format(self.reference_name))
-		if order.docstatus == 2:
-			frappe.throw(_("Purchase Order {0} is canceled.").format(order.name))
 		# The right to add a number is this DocType's create permission plus read on the order. The
 		# endpoint checks both before inserting; this repeats the order half for a REST insert.
 		if not self.flags.ignore_permissions and not frappe.has_permission(
 			"Purchase Order", "read", doc=order.name
 		):
 			frappe.throw(_("You cannot see Purchase Order {0}.").format(order.name), frappe.PermissionError)
+		if not package_rules.order_accepts_packages(order.docstatus, order.status, order.per_received):
+			frappe.throw(_("Purchase Order {0} is canceled, closed or fully received.").format(order.name))
 
 		if frappe.db.exists(
 			"Tracked Package",

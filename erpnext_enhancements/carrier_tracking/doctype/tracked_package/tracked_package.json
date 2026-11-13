@@ -15,6 +15,7 @@
   "tracking_number",
   "carrier",
   "resolved_carrier",
+  "carrier_guessed",
   "link_url",
   "tracking_url",
   "status_section",
@@ -100,6 +101,14 @@
    "read_only": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "carrier_guessed",
+   "fieldtype": "Check",
+   "label": "Carrier Guessed From the Number",
+   "read_only": 1,
+   "description": "A 12- or 15-digit number is probably FedEx but could be another carrier's. A guess that FedEx does not recognize within two days stops being checked."
   },
   {
    "fieldname": "link_url",
@@ -213,7 +222,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-13 12:00:00.000000",
+ "modified": "2026-11-13 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Carrier Tracking",
  "name": "Tracked Package",

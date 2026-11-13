@@ -227,6 +227,24 @@ class TestDetection(unittest.TestCase):
 		self.assertEqual(C.resolve_carrier("Auto", UPS_NUMBER), C.UPS)
 		self.assertEqual(C.resolve_carrier("", "1" * 15), C.FEDEX)
 
+	def test_a_bare_12_or_15_digit_number_is_a_guess(self):
+		self.assertEqual(C.detect("1" * 12), (C.FEDEX, True))
+		self.assertEqual(C.detect("1" * 15), (C.FEDEX, True))
+		self.assertEqual(C.detect("96" + "1" * 20), (C.FEDEX, False))
+		self.assertEqual(C.detect(UPS_NUMBER), (C.UPS, False))
+		self.assertEqual(C.resolve("FedEx", "1" * 12), (C.FEDEX, False))
+
+	def test_lengths_follow_the_carriers(self):
+		# UPS documents inquiryNumber as 7 to 34 characters.
+		self.assertFalse(C.is_plausible("1" * 6, C.UPS))
+		self.assertTrue(C.is_plausible("1" * 7, C.UPS))
+		self.assertTrue(C.is_plausible("1" * 34, C.UPS))
+		self.assertFalse(C.is_plausible("1" * 35, C.UPS))
+		self.assertFalse(C.is_plausible("1" * 35, C.FEDEX))
+		self.assertTrue(C.is_plausible("1" * 40, C.OTHER))
+		result = client.track(config(C.UPS), "1" * 35, FakeCache(), FakeHTTP(), NOW)
+		self.assertEqual(result["outcome"], "invalid")
+
 	def test_clean_number(self):
 		self.assertEqual(C.clean_number(" 1z-000 000 "), "1Z000000")
 
@@ -368,13 +386,29 @@ class TestTokens(unittest.TestCase):
 		result = client.track(config(C.UPS), UPS_NUMBER, FakeCache(), FakeHTTP(FakeResponse(403, {})), NOW)
 		self.assertEqual(result["outcome"], "auth_failed")
 
-	def test_token_endpoint_down(self):
-		result = client.track(config(), FEDEX_NUMBER, FakeCache(), FakeHTTP(FakeResponse(503, "busy")), NOW)
-		self.assertEqual(result["outcome"], "unavailable")
-		result = client.track(config(), FEDEX_NUMBER, FakeCache(), FakeHTTP(TimeoutError("slow")), NOW)
-		self.assertEqual(result["outcome"], "unavailable")
-		result = client.track(config(), FEDEX_NUMBER, FakeCache(), FakeHTTP(FakeResponse(200, "<html>")), NOW)
-		self.assertEqual(result["outcome"], "bad_response")
+	def test_token_endpoint_failures_are_about_the_carrier(self):
+		# Review r1 item 3: a token answer that is not a token used to be "bad_response", which counts
+		# against every package. Every one of these is the carrier, not the package.
+		for answer in (
+			FakeResponse(503, "busy"),
+			TimeoutError("slow"),
+			FakeResponse(200, "<html>"),
+			FakeResponse(200, {"token_type": "bearer"}),
+			FakeResponse(404, {}),
+			FakeResponse(302, ""),
+		):
+			result = client.track(config(), FEDEX_NUMBER, FakeCache(), FakeHTTP(answer), NOW)
+			self.assertEqual(result["outcome"], "unavailable", answer)
+			self.assertIn(result["outcome"], ("unavailable", "auth_failed", "rate_limited", "rejected"))
+
+	def test_a_token_failure_is_not_retried_per_package(self):
+		cache = FakeCache()
+		http = FakeHTTP(FakeResponse(200, "<html>"))
+		for _ in range(5):
+			self.assertEqual(client.track(config(), FEDEX_NUMBER, cache, http, NOW)["outcome"], "unavailable")
+		self.assertEqual(len(http.calls), 1)
+		refused_key = next(k for k in cache.data if ":refused:" in k)
+		self.assertEqual(cache.ttl[refused_key], client.TOKEN_FAILURE_SECONDS)
 
 
 class TestErrorPaths(unittest.TestCase):
@@ -410,21 +444,82 @@ class TestErrorPaths(unittest.TestCase):
 		http400 = FakeResponse(400, {"errors": [{"code": "TRACKING.TRACKINGNUMBER.INVALID"}]})
 		self.assertEqual(self.run_track(http400)[0]["outcome"], "invalid")
 
-	def test_fedex_404_not_found(self):
+	def test_fedex_generic_404_is_not_a_package_answer(self):
+		# NOT.FOUND.ERROR is a wrong path, not "this number is unknown".
 		result, _, _ = self.run_track(FakeResponse(404, {"errors": [{"code": "NOT.FOUND.ERROR"}]}))
-		self.assertEqual(result["outcome"], "not_found")
+		self.assertEqual(result["outcome"], "rejected")
 
-	def test_ups_404_and_400(self):
+	def test_fedex_request_and_account_errors_are_carrier_level(self):
+		for code in (
+			"TRACKING.LOCALE.INVALID",
+			"CUSTOMER.SIZE.INVALID",
+			"TRACKING.ACCOUNTNUMBER.EMPTY",
+			"INVALID.INPUT.EXCEPTION",
+			"CUSTOMER.USAGE.LOCKED",
+		):
+			result, _, _ = self.run_track(FakeResponse(400, {"errors": [{"code": code}]}))
+			self.assertEqual(result["outcome"], "rejected", code)
+		result, _, _ = self.run_track(
+			[
+				FakeResponse(401, {"errors": [{"code": "USER.RELOGIN.REQUIRED"}]}),
+				token_ok(TOKEN_2),
+				FakeResponse(401, {"errors": [{"code": "USER.RELOGIN.REQUIRED"}]}),
+			]
+		)
+		self.assertEqual(result["outcome"], "auth_failed")
+
+	def test_fedex_exact_codes_only(self):
+		self.assertEqual(N.fedex_error_outcome("TRACKING.TRACKINGNUMBER.NOTFOUND"), "not_found")
+		self.assertEqual(N.fedex_error_outcome("TRACKING.DATA.NOTFOUND"), "not_found")
+		self.assertEqual(N.fedex_error_outcome("tracking.trackingnumber.invalid"), "invalid")
+		for code in (
+			"TRACKING.REFERENCENUMBER.NOTFOUND",
+			"TRACKING.LOCALE.INVALID",
+			"NOT.FOUND.ERROR",
+			"X.EMPTY",
+		):
+			self.assertIsNone(N.fedex_error_outcome(code), code)
+
+	def test_fedex_unknown_error_in_the_packages_own_result_is_could_not_check(self):
+		body = fedex_body({"error": {"code": "TRACKING.AUTHENTICATEDDELIVERY.ERROR", "message": "x"}})
+		self.assertEqual(self.run_track(FakeResponse(200, body))[0]["outcome"], "bad_response")
+
+	def test_fedex_alerts_are_an_array(self):
+		# Review r1 item 6: the spec declares output.alerts an array of {code, alertType, message}.
+		body = {
+			"output": {
+				"alerts": [
+					{
+						"code": "TRACKING.DATA.NOTFOUND",
+						"alertType": "WARNING",
+						"message": "Tracking data unavailable",
+					}
+				]
+			}
+		}
+		result, _, _ = self.run_track(FakeResponse(200, body))
+		self.assertEqual(result["outcome"], "not_found")
+		self.assertIn("TRACKING.DATA.NOTFOUND", result["error"])
+		body = {"output": {"alerts": [{"code": "SOMETHING.ELSE", "alertType": "NOTE"}]}}
+		self.assertEqual(self.run_track(FakeResponse(200, body))[0]["outcome"], "bad_response")
+
+	def test_ups_404_in_its_envelope_is_not_found(self):
 		body = {
 			"response": {"errors": [{"code": "151044", "message": "Tracking number information not found"}]}
 		}
 		result, _, _ = self.run_track(FakeResponse(404, body), C.UPS, UPS_NUMBER)
 		self.assertEqual(result["outcome"], "not_found")
 		self.assertIn("151044", result["error"])
+
+	def test_ups_400_and_bare_404_are_the_request_not_the_number(self):
+		# Review r1 item 4: Tracking.yaml documents 400 only as "Invalid request". Reading it as
+		# "invalid number" would stop every UPS package on a wrong header.
 		result, _, _ = self.run_track(
-			FakeResponse(400, {"response": {"errors": [{"code": "x"}]}}), C.UPS, UPS_NUMBER
+			FakeResponse(400, {"response": {"errors": [{"code": "VSS002"}]}}), C.UPS, UPS_NUMBER
 		)
-		self.assertEqual(result["outcome"], "invalid")
+		self.assertEqual(result["outcome"], "rejected")
+		result, _, _ = self.run_track(FakeResponse(404, "<html>Not Found</html>"), C.UPS, UPS_NUMBER)
+		self.assertEqual(result["outcome"], "rejected")
 
 	def test_ups_warning_without_package(self):
 		body = {
@@ -438,7 +533,8 @@ class TestErrorPaths(unittest.TestCase):
 			}
 		}
 		result, _, _ = self.run_track(FakeResponse(200, body), C.UPS, UPS_NUMBER)
-		self.assertEqual(result["outcome"], "not_found")
+		# UPS documents no warning codes: could not check, not "not found".
+		self.assertEqual(result["outcome"], "bad_response")
 
 	def test_429_backs_off_for_retry_after(self):
 		result, _, cache = self.run_track(
@@ -582,6 +678,13 @@ class TestNormalizeFedEx(unittest.TestCase):
 		self.assertEqual(out["estimated_delivery"], "2026-11-19")
 		self.assertEqual(out["last_location"], "OGDEN, UT")
 
+	def test_label_only_shipment_is_never_on_its_way(self):
+		# FedEx documents the code table, not derivedCode: code is read first.
+		out = N.fedex_package({"latestStatusDetail": {"code": "OC", "derivedCode": "IT"}})
+		self.assertEqual(out["status"], C.LABEL_CREATED)
+		out = N.fedex_package({"latestStatusDetail": {"code": "ZZ", "derivedCode": "DL"}})
+		self.assertEqual(out["status"], C.DELIVERED)
+
 	def test_status_table(self):
 		self.assertEqual(N.fedex_status("OD"), C.OUT_FOR_DELIVERY)
 		self.assertEqual(N.fedex_status("DE"), C.EXCEPTION)
@@ -638,6 +741,27 @@ class TestNormalizeUPS(unittest.TestCase):
 	def test_out_for_delivery_is_an_I_with_its_status_code(self):
 		_, package = ups_package(type="I", statusCode="021", description="Out For Delivery Today")
 		self.assertEqual(N.ups_package(package)["status"], C.OUT_FOR_DELIVERY)
+
+	def test_out_for_delivery_needs_the_carriers_words(self):
+		# 037 may be a return leg; without "out for delivery" in UPS's words it is not shown as one.
+		_, package = ups_package(
+			type="I", statusCode="037", description="Returning to Sender", simplifiedTextDescription=""
+		)
+		self.assertEqual(N.ups_package(package)["status"], C.IN_TRANSIT)
+		_, package = ups_package(
+			type="I", statusCode="021", description="On the Way", simplifiedTextDescription=""
+		)
+		self.assertEqual(N.ups_package(package)["status"], C.IN_TRANSIT)
+
+	def test_delivered_needs_the_letter_or_the_words(self):
+		_, package = ups_package(
+			type="I", statusCode="011", description="Arriving today", simplifiedTextDescription=""
+		)
+		self.assertEqual(N.ups_package(package)["status"], C.IN_TRANSIT)
+		_, package = ups_package(
+			type="", statusCode="011", description="Delivered", simplifiedTextDescription=""
+		)
+		self.assertEqual(N.ups_package(package)["status"], C.DELIVERED)
 
 	def test_rescheduled_beats_scheduled(self):
 		_, package = ups_package()
