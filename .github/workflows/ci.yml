@@ -3672,6 +3672,13 @@ jobs:
       # sys.modules and must not cross-talk with the other stubbed suites.
       - name: Procurement project cascade (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_procurement_project -v
+      # ER-2026-1333210: the project a row added with Update Items takes. ERPNext inserts that
+      # row by itself before saving the order, so the cascade above cannot reach it; this suite
+      # holds the rule (header, else the one shared line project, else refuse in words), the
+      # defensive paths, and that hooks.py registers it on Purchase Order Item.before_insert.
+      # unittest, with its own frappe stub installed in setUpModule, so its own step.
+      - name: Purchase Order Update Items line project (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_line_project -v
       # The guard that found both of the above: every bench-free suite must be named
       # in this file. A suite absent from it is not skipped, it is INVISIBLE -- and
       # the existing in-file "am I wired into CI" idiom cannot catch that, because a

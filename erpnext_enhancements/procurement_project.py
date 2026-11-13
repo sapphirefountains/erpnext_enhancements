@@ -279,6 +279,15 @@ def default_new_order_line(doc, method=None):
 	* **its location by the rule** when it has none, or when it is an Overhead line on the
 	  Project Shelf (ERPNext fills the Company's default warehouse, which is the shelf).
 
+	**It runs second on that hook.** ``procurement_line_project.fill_new_line_project``
+	(v1.816.3) is listed before it in ``hooks.py`` and owns the project: the header's, else the
+	one project the order's lines share, and a refusal in words when the lines name several
+	jobs and the header none. So the project is normally there when this picks the location,
+	and a row whose project came from the lines is placed by that project. The header fill
+	below is kept: it does nothing after that rule, and keeps the row whole without it. When
+	that rule refuses the row, this never runs; when it leaves the project blank (nothing to
+	go on, or the insert ignores mandatory fields), the row keeps the location it has.
+
 	Rows saved with their order are not inserted on their own and never reach this. Never
 	raises: a row it cannot place is left as ERPNext made it.
 	"""

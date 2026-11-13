@@ -71,6 +71,7 @@ SETTINGS = "Inventory Scanner Settings"
 _OWN_MODULES = (
 	"erpnext_enhancements.inventory_enhancements.project_shelf",
 	"erpnext_enhancements.procurement_project",
+	"erpnext_enhancements.procurement_line_project",
 	"erpnext_enhancements.patches.rename_stores_to_project_shelf",
 	"erpnext_enhancements.api.procurement",
 	"erpnext_enhancements.inventory_enhancements.receipt_price",
@@ -1520,9 +1521,119 @@ class TestPurchaseLines(_Base):
 		self.assertEqual([row.warehouse for row in placed.items], [SHELF, SHELF], "a scan at the shelf still wins")
 		procurement.default_receipt_warehouses(None)
 
+	# --- the same hook, shared with the project rule of v1.816.3 -------------------------------
+
+	def _before_insert(self):
+		"""What ``hooks.py`` registers on Purchase Order Item's ``before_insert``, in order."""
+		tree = ast.parse(HOOKS.read_text(encoding="utf-8"))
+		events = next(
+			n.value for n in tree.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "doc_events"
+		)
+		keys = [k.value for k in events.keys if isinstance(k, ast.Constant)]
+		self.assertEqual(keys.count("Purchase Order Item"), 1, "a repeated key silently drops the first entry")
+		entry = events.values[[getattr(k, "value", None) for k in events.keys].index("Purchase Order Item")]
+		hooked = dict(zip([k.value for k in entry.keys], entry.values, strict=True))["before_insert"]
+		self.assertIsInstance(hooked, ast.List, "two rules share this hook: it must be a list")
+		return [e.value for e in hooked.elts]
+
+	def _run_before_insert(self, row):
+		"""Run the registered functions on ``row`` in the registered order, as Frappe does."""
+		import importlib
+
+		for path in self._before_insert():
+			module, name = path.rsplit(".", 1)
+			getattr(importlib.import_module(module), name)(row, "before_insert")
+		return row
+
+	def _order_with_lines(self, header, line_projects):
+		base._table("Purchase Order")["PUR-ORD-0010"] = {
+			"name": "PUR-ORD-0010",
+			"project": header,
+			"company": COMPANY,
+			"docstatus": 1,
+		}
+		lines = base._table("Purchase Order Item")
+		for name in [name for name, line in lines.items() if line.get("parent") == "PUR-ORD-0010"]:
+			del lines[name]
+		for n, project in enumerate(line_projects, start=1):
+			lines[f"PUR-ORD-0010-{n}"] = {
+				"name": f"PUR-ORD-0010-{n}",
+				"parent": "PUR-ORD-0010",
+				"parenttype": "Purchase Order",
+				"project": project,
+			}
+
+	def _added_row(self, **values):
+		return base.Doc(
+			"Purchase Order Item",
+			{"parenttype": "Purchase Order", "parent": "PUR-ORD-0010", "item_code": ITEM, **values},
+		)
+
+	def test_the_project_rule_runs_first_and_the_location_rule_second(self):
+		self.assertEqual(
+			self._before_insert(),
+			[
+				"erpnext_enhancements.procurement_line_project.fill_new_line_project",
+				"erpnext_enhancements.procurement_project.default_new_order_line",
+			],
+		)
+
+	def test_a_row_whose_project_comes_from_the_lines_is_placed_by_that_project(self):
+		"""No header project, every line on one Overhead project: the first rule gives the new row
+		that project, and the second moves it off the shelf ERPNext filled in. Alone, the second
+		rule reads only the header and would have left this row with no project and on the shelf."""
+		base._rule(ITEM, BIN_B)
+		self._order_with_lines(None, [OVERHEAD, OVERHEAD])
+		row = self._run_before_insert(self._added_row(warehouse=SHELF))
+		self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_B))
+		alone = self._added_row(warehouse=SHELF)
+		procurement.default_new_order_line(alone)
+		self.assertEqual((alone.project, alone.warehouse), (None, SHELF))
+
+	def test_a_job_row_from_the_lines_stays_on_the_shelf_and_a_blank_one_gets_it(self):
+		self._order_with_lines("", [JOB_A])
+		row = self._run_before_insert(self._added_row(warehouse=SHELF))
+		self.assertEqual((row.project, row.warehouse), (JOB_A, SHELF))
+		row = self._run_before_insert(self._added_row(warehouse=None))
+		self.assertEqual((row.project, row.warehouse), (JOB_A, SHELF))
+
+	def test_with_a_header_project_both_rules_agree(self):
+		"""The header wins in both, so the second rule's own header fill has nothing left to do."""
+		base._rule(ITEM, BIN_B)
+		self._order_with_lines(OVERHEAD, [JOB_A, JOB_B])
+		row = self._run_before_insert(self._added_row(warehouse=SHELF))
+		self.assertEqual((row.project, row.warehouse), (OVERHEAD, BIN_B))
+
+	def test_a_project_already_on_the_row_is_kept_by_both(self):
+		self._order_with_lines(OVERHEAD, [OVERHEAD])
+		row = self._run_before_insert(self._added_row(project=JOB_A, warehouse=BIN_A))
+		self.assertEqual((row.project, row.warehouse), (JOB_A, BIN_A))
+
+	def test_a_row_the_project_rule_refuses_is_never_placed(self):
+		"""Several jobs on the lines and none on the header: the first rule refuses the row in
+		words, and the location rule does not run, does not throw, and changes nothing."""
+		self._order_with_lines(None, [JOB_A, JOB_B])
+		row = self._added_row(warehouse=SHELF)
+		with self.assertRaises(FRAPPE.ValidationError) as caught:
+			self._run_before_insert(row)
+		self.assertIn("more than one job", str(caught.exception))
+		self.assertEqual((row.project, row.warehouse), (None, SHELF))
+
+	def test_a_row_left_without_a_project_keeps_the_location_it_has(self):
+		"""Nothing to go on, or an insert that ignores mandatory fields: the first rule leaves the
+		project blank, and the second has no project to place the row by."""
+		self._order_with_lines(None, [])
+		row = self._run_before_insert(self._added_row(warehouse=SHELF))
+		self.assertEqual((row.project, row.warehouse), (None, SHELF))
+		self._order_with_lines(None, [JOB_A, JOB_B])
+		row = self._added_row(warehouse=SHELF)
+		row.flags.ignore_mandatory = True
+		self._run_before_insert(row)
+		self.assertEqual((row.project, row.warehouse), (None, SHELF))
+
 	def test_the_new_hooks_are_wired(self):
 		hooks = HOOKS.read_text(encoding="utf-8")
-		self.assertIn('"before_insert": "erpnext_enhancements.procurement_project.default_new_order_line"', hooks)
+		self.assertIn("erpnext_enhancements.procurement_project.default_new_order_line", self._before_insert())
 		self.assertIn('"before_validate": "erpnext_enhancements.procurement_project.default_receipt_warehouses"', hooks)
 		receive = ast.unparse(
 			next(n for n in ast.walk(ast.parse(RECEIVE.read_text(encoding="utf-8"))) if isinstance(n, ast.FunctionDef) and n.name == "receive_items")

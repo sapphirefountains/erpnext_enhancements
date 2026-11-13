@@ -786,7 +786,12 @@ the shelf and the item has somewhere better to go, it is moved, on every path:
 - **A row added to a submitted order with Update Items**
   (`procurement_project.default_new_order_line`, `before_insert` on Purchase Order Item). ERPNext
   inserts that row on its own, with no project (mandatory here) and the Company's default
-  warehouse; the hook gives it the header's project and its place by the rule.
+  warehouse; the hook gives it the header's project and its place by the rule. It is the second
+  of two rules on that hook: `procurement_line_project.fill_new_line_project` (v1.816.3) runs
+  first and owns the project (the header's, else the one the order's lines share, else a refusal
+  in words), so this one places the row by whichever project that rule filled. `hooks.py` holds
+  both in one `"Purchase Order Item"` entry, as a list; a second entry would silently drop the
+  first.
 - **A receipt saved for the first time** (`procurement_project.default_receipt_warehouses`,
   `before_validate` on Purchase Receipt): the Desk's Create > Purchase Receipt copies the order
   line's warehouse. First save only, so a place the receiver picks afterwards stays; never a

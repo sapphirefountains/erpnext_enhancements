@@ -1166,13 +1166,35 @@ doc_events = {
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
-	# The Project Shelf (v1.817.0): a row added to a SUBMITTED order with Update Items. ERPNext
-	# inserts that row on its own (accounts_controller.update_child_qty_rate), so the order's
-	# before_validate hooks never see it, and it arrives with no project (mandatory here) and
-	# the Company's default warehouse, which is the shelf. This gives it the header's project
-	# and its location by the rule. Rows saved with their order never fire it. Never raises.
+	# A row added to a SUBMITTED order with Update Items. ONE entry for the doctype, two rules in
+	# a list, and the order is the point: a second "Purchase Order Item" key further down would
+	# silently replace this one (a repeated key in a dict literal is not an error), and the
+	# location rule needs the project the first rule fills.
 	"Purchase Order Item": {
-		"before_insert": "erpnext_enhancements.procurement_project.default_new_order_line",
+		"before_insert": [
+			# v1.816.3 (ER-2026-1333210): a row added to a SUBMITTED order with Update Items.
+			# ERPNext inserts that row ON ITS OWN (accounts_controller.update_child_qty_rate calls
+			# child_item.insert() before parent.save()), so the order's before_validate hooks above never
+			# see it, and it arrives with no project -- mandatory here -- which refused the row with
+			# "Value missing for: Project" in a dialog that has no Project column. before_insert on the
+			# child is the earliest hook that fires for that insert and runs ahead of the mandatory check
+			# (frappe Document.insert: before_insert, then _validate). The row takes the order's header
+			# project, else the one project its lines share; several projects and no header is refused in
+			# words rather than guessed. Never overwrites a project that is set.
+			"erpnext_enhancements.procurement_line_project.fill_new_line_project",
+			# The Project Shelf (v1.817.0): the same row's LOCATION. ERPNext inserts that row on its
+			# own (accounts_controller.update_child_qty_rate), so the order's before_validate hooks
+			# never see it, and it arrives with the Company's default warehouse, which is the shelf.
+			# This gives it its location by the rule: an Overhead line on the shelf goes to the
+			# item's own bin, a line with no location gets its project's default place, and any
+			# other location is left alone. SECOND, after the project rule above: it places the row
+			# by the project that rule has just filled (the header's, else the one the lines
+			# share). When that rule refuses the row (several jobs, no header) this never runs. It
+			# still fills a blank project from the header itself, which does nothing while the rule
+			# above runs first and keeps the row whole if that rule is ever unhooked. Rows saved
+			# with their order never fire it. Never raises.
+			"erpnext_enhancements.procurement_project.default_new_order_line",
+		],
 	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is

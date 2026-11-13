@@ -58,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     there would then demand one. So an Overhead line that names the shelf is moved to the item's
     own bin on every save of a draft order (`default_line_warehouses`), on a row added to a
     submitted order with Update Items (`default_new_order_line`, which also gives that row the
-    header's project: ERPNext sets none and the field is mandatory here), and on a receipt saved
+    header's project: ERPNext sets none and the field is mandatory here; it shares Purchase Order
+    Item's `before_insert` with v1.816.3's `fill_new_line_project`, one entry and a list, the
+    project rule first and this second, so a row whose project comes from the order's lines is
+    placed by that project), and on a receipt saved
     for the first time, which is the Desk's Create > Purchase Receipt
     (`default_receipt_warehouses`; never a return, and never when a person has just said where
     the lines go). Any other warehouse a person picked is left alone.
@@ -248,6 +251,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_po_receive_items` pin the new optional `project` parameter, the Reorder Board's
   shared set, and the one more branch `receive_items` writes a warehouse in.
   `tests/test_reorder_rule_counts` pins which stock KPI means shop stock and which means all.
+
+## [1.816.3] - 2026-11-13
+
+### Fixed
+- **Update Items on a submitted Purchase Order refused a new line with "Error: Purchase Order Item Row #5:
+  Value missing for: Project", in a dialog that has no Project column.** Reported by the warehouse lead
+  (feedback request ER-2026-1333210; Task TASK-2026-03201). `Purchase Order Item.project` is mandatory
+  here (Property Setter fixture `Purchase Order Item-project-reqd`), and a new row never had one.
+  - **Why the order-level fix could not reach it.** ERPNext's Update Items
+    (`accounts_controller.update_child_qty_rate`, read at erpnext v16.54.0) builds each new row with
+    `set_order_defaults` (no project on it) and then calls `child_item.insert()` **on the row by itself**,
+    before the order is saved. Frappe's mandatory check runs on that insert. The app's existing fix for
+    blank line projects, `procurement_project.cascade_project_to_items`, is a `before_validate` hook on
+    the **Purchase Order**, which does not run for that insert; and a fix in the order's validate or
+    `on_update_after_submit` would be later still, because the row has already failed. The task's own
+    suggestion (fix it in the order's validate path) would not have worked.
+  - **The fix is on the row.** New `procurement_line_project.fill_new_line_project`, a `before_insert`
+    hook on **Purchase Order Item** (`hooks.py`, `doc_events["Purchase Order Item"]`). In frappe v16.56.0
+    `Document.insert` runs `before_insert` (`document.py` line 718) before `run_before_save_methods` (724)
+    and `_validate` (725), whose first step is `_validate_mandatory`; `run_method` applies the `doc_events`
+    of the row's own doctype, so the hook fires for a child inserted alone. (`before_validate` would also
+    fire, since `check_if_latest` sets `_action = "save"`, but `before_insert` is earlier and says what it
+    means.) The row takes the order's header project; with no header, the one project the order's lines
+    share. If there is no header and the lines name more than one project, nothing is guessed: the row is
+    refused with a plain message that says why and what to do (put the item on its own order, or have
+    purchasing amend this one). A project already on the row is never overwritten. If the order cannot be
+    read the hook steps aside and Frappe's own mandatory error stands.
+  - **Checked and left alone.** Sales Order's Update Items shares `update_child_qty_rate` and would hit
+    the same insert, but this app makes nothing on `Sales Order Item` mandatory (no required Custom Field
+    or Property Setter), so it is unaffected. `inventory_enhancements/receipt_price.py` calls
+    `update_child_qty_rate` with existing rows only (`receipt_price_rules.price_changes`), which are saved,
+    never inserted. A Project column in the Update Items dialog was not added: the dialog's fields are
+    built inside core `erpnext.utils.update_child_items` with no extension point, and the server ignores
+    any extra field, so it would need a copy of core JS and still not reach the row.
+  - Nothing is written on migrate. New bench-free suite `tests/test_po_line_project.py` (own CI step,
+    unittest). Not proven on a real bench: that Frappe fires the hook for this insert is read from source.
 
 ## [1.816.2] - 2026-11-13
 

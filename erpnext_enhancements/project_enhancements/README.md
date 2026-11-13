@@ -1091,6 +1091,29 @@ Anything beyond a passing change here wants
 render path, the chain SQL and its `OR`-join fan-out, the three separate things called "status",
 and the production data volumes.
 
+### A project for the row Update Items adds (v1.816.3, ER-2026-1333210)
+
+`Purchase Order Item.project` is mandatory, and `procurement_project.cascade_project_to_items`
+(a `before_validate` hook on the **Purchase Order**) fills blank lines from the header. That hook
+cannot help a row added to a *submitted* order: ERPNext's *Update Items*
+(`accounts_controller.update_child_qty_rate`) builds the new `Purchase Order Item` without a
+project and calls `child_item.insert()` **on the row by itself**, before the order is saved, so the
+mandatory check refused it ("Value missing for: Project") in a dialog with no Project column.
+
+`procurement_line_project.fill_new_line_project` is a `before_insert` hook on **Purchase Order
+Item** (`hooks.py`, `doc_events["Purchase Order Item"]`). It runs ahead of Frappe's mandatory check
+and gives the row: the order's header project; else the one project the order's lines share. An
+order with no header project whose lines name *several* projects is not guessed at: the row is
+refused in plain words (put the item on its own order, or have purchasing amend the order). A
+project already on the row is never touched. If the order cannot be read the hook steps aside and
+Frappe's own mandatory error stands. The stock dialog stays as it is: its field list is built
+inside `erpnext.utils.update_child_items`, and the server ignores any extra column, so a Project
+column would need a copy of core JS and would not reach the server anyway.
+
+The Sales Order's *Update Items* shares that code and is not affected: this app makes nothing on
+`Sales Order Item` mandatory. `inventory_enhancements/receipt_price.py` calls
+`update_child_qty_rate` with existing rows only, which never insert.
+
 ## Pick Routing Map (v1.190.0)
 
 A job's material sits at several vendors' will-call counters at once, and nothing in Desk answered "what is still out there, and what is the shortest way round to collect it?". The **Pick Routing Map** button in the Budget tab's *Material Pickup* section now does.
