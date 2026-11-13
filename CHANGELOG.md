@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.819.0] - 2026-11-13
+
+### Added
+- **Package tracking on purchase orders: the FedEx and UPS client and its settings** (ER-2026-1333277,
+  TASK-2026-03204). The warehouse lead, 2026-11-13: put a package's tracking number on the purchase
+  order it belongs to and have ERPNext ask FedEx or UPS for its status and arrival date, so nobody
+  has to go to the carrier's website. This entry is the part that talks to the carriers; the
+  shipments on the order, the poller and the form follow below.
+  - **A new module, Carrier Tracking** (`carrier_tracking/`), not `package_dispatch/`: that module is
+    the *outbound* Package Dispatch form, with its own role and switch, and inbound tracking is a
+    different job for different people. A module of its own also lets Package Dispatch and Supplier
+    Return use the same client later without importing each other.
+  - **The client** (`carrier_tracking/client.py`) talks to both carriers' OAuth2 REST APIs with
+    `requests` alone, because the host cannot pip-install packages (the same reason `stripe_payments`
+    has no SDK). It gets a client-credentials token, caches it in Redis for five minutes less than its
+    life (never in the database, never logged), calls the Track endpoint, and answers in one shape:
+    our status (*label created*, *in transit*, *out for delivery*, *delivered*, *delivery problem*,
+    *unknown*), the carrier's own words, the estimated delivery, when it was delivered, the last
+    location and when it was checked. **It never raises.** Not found and invalid are answers about
+    the package; a 401 gets one new token and one retry; a 429 backs the carrier off for as long as it
+    asks (and FedEx's token endpoint, which locks an address out for ten minutes when hit too often, is
+    remembered as such); 5xx, timeouts and a body that is not JSON are "could not check", which the
+    poller treats as no news rather than as a status. Carrier is worked out from the number's format,
+    an explicit choice always wins, and "unknown" is a legal answer (USPS-format numbers, which FedEx
+    Ground Economy also prints, are not guessed).
+  - **Written from the carriers' current documentation, not from memory**, because an earlier build
+    here shipped provider clients with wrong endpoints. Every host, path, header and field is cited in
+    `client.py`'s docstring (FedEx's API catalog and its spec files, UPS's OpenAPI files on GitHub and
+    developer.ups.com, all read 2026-11-13). **No request has been made to either carrier**: nobody
+    has credentials yet. Three things the documentation left open are listed in the module README, and
+    each would be a one-line change.
+  - **Secrets stay out of every log line.** The client secret goes only into the token request and the
+    access token only into the Track header and Redis; every error message passes through
+    `carriers.mask`, which removes the id, the secret, the token and anything shaped like an
+    `Authorization` header or a token field, before it is returned.
+  - **Carrier Tracking Settings**, a new Single (System Manager only): a master switch, and per carrier
+    a switch, Sandbox or Production, a client id and a client secret (Password). **Everything is off**,
+    and the feature does nothing until a carrier has its switch, both credentials and the master switch.
+    A small Single of its own rather than four more fields on the 193-field ERPNext Enhancements
+    Settings, and nothing in the app ever writes to it: health is read from the tracked packages, so no
+    "last checked" stamp can make the first write that blanks a never-saved Single (CLAUDE.md).
+    `patches/backfill_carrier_tracking_settings_defaults` (also on `after_migrate`) writes each declared
+    default only where `tabSingles` has no row, never over a stored value, the shape of
+    `backfill_marketing_settings_defaults`, rather than seeding with `set_single_value` over the top.
+  - Tests: `tests/test_carrier_tracking_client.py` (no frappe needed; the client takes its HTTP and cache
+    as arguments): detection, token caching and refresh on 401, every error path, normalization from
+    invented payloads shaped like each carrier's documented response, and secrets echoed back by a
+    carrier never reaching a result.
+
 ## [1.818.0] - 2026-11-13
 
 ### Added

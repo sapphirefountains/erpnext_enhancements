@@ -2853,6 +2853,10 @@ after_migrate = [
 	# patches.txt; here as the backstop for a site whose Patch Log already has the entry.
 	# Idempotent, fills missing rows only, and must never raise.
 	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
+	# carrier_tracking (v1.819.0): the same fill-missing-rows backfill for Carrier Tracking Settings, the FedEx and
+	# UPS credentials Single. New in this release, so today it only materializes the off switches and the Sandbox
+	# choices; on every later migrate it gives a newly added field its default. Never raises.
+	"erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults.backfill_carrier_tracking_settings_defaults",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
 	# water_engineering: the aquatic-equipment catalog (filters, heaters, chem feed,
 	# controllers, skimmers, VGB drains, therapy jets, gauges) — Item custom spec

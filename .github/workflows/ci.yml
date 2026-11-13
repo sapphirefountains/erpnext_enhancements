@@ -4358,6 +4358,17 @@ jobs:
       # canceled receipt leaves its return with no way out. Own frappe stub, so its own step.
       - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
+      # Package tracking, the carrier client (v1.819.0, carrier_tracking/client.py, normalize.py, carriers.py).
+      # Fails the build if a FedEx or UPS URL, header or login drifts from what the carriers document; if a token
+      # is fetched for every package (UPS's token endpoint is throttled far below Track, and FedEx's answers 403 for
+      # ten minutes) or cached for its whole life; if a 401 is retried more than once; if a 429, a 5xx, a timeout or
+      # a body that is not JSON raises, or comes back with a status that would overwrite what the carrier said
+      # last; if "not found" and "invalid" are confused with "could not check"; if a carrier's error that echoes
+      # the client secret, the client id or the access token reaches the result unmasked; or if the settings stop
+      # being off by default or the backfill writes over a stored switch. No frappe needed: the client takes its
+      # HTTP and cache as arguments. unittest.
+      - name: Carrier tracking client (FedEx and UPS tokens, errors, normalization, secrets; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_client -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

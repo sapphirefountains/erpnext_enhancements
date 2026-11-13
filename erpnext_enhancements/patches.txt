@@ -1682,3 +1682,7 @@ erpnext_enhancements.patches.seed_warranty_certificate_template
 # step answers done / already / skipped / failed; when any did not finish, ONE Error Log row "Project Shelf patch
 # (rename_stores_to_project_shelf): finish these steps by hand" lists them with the by-hand fix.
 erpnext_enhancements.patches.rename_stores_to_project_shelf
+# v1.819.0 -- Carrier Tracking Settings (FedEx and UPS package tracking): write each declared default that has no
+# tabSingles row, never over a stored value. A brand-new Single, so this mostly guards the future: a field added later
+# gets its default, and a later write of one field cannot blank the switches. Also on after_migrate. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults
