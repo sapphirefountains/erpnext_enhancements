@@ -7,6 +7,187 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.819.0] - 2026-11-13
+
+### Added
+- **Package tracking on purchase orders: the FedEx and UPS client and its settings** (ER-2026-1333277,
+  TASK-2026-03204). The warehouse lead, 2026-11-13: put a package's tracking number on the purchase
+  order it belongs to and have ERPNext ask FedEx or UPS for its status and arrival date, so nobody
+  has to go to the carrier's website. This entry is the part that talks to the carriers; the
+  shipments on the order, the poller and the form follow below.
+  - **A new module, Carrier Tracking** (`carrier_tracking/`), not `package_dispatch/`: that module is
+    the *outbound* Package Dispatch form, with its own role and switch, and inbound tracking is a
+    different job for different people. A module of its own also lets Package Dispatch and Supplier
+    Return use the same client later without importing each other.
+  - **The client** (`carrier_tracking/client.py`) talks to both carriers' OAuth2 REST APIs with
+    `requests` alone, because the host cannot pip-install packages (the same reason `stripe_payments`
+    has no SDK). It gets a client-credentials token, caches it in Redis for five minutes less than its
+    life (never in the database, never logged), calls the Track endpoint, and answers in one shape:
+    our status (*label created*, *in transit*, *out for delivery*, *delivered*, *delivery problem*,
+    *unknown*), the carrier's own words, the estimated delivery, when it was delivered, the last
+    location and when it was checked. **It never raises.** Not found and invalid are answers about
+    the package; a 401 gets one new token and one retry; a 429 backs the carrier off for as long as it
+    asks (and FedEx's token endpoint, which locks an address out for ten minutes when hit too often, is
+    remembered as such); 5xx, timeouts and a body that is not JSON are "could not check", which the
+    poller treats as no news rather than as a status. Carrier is worked out from the number's format,
+    an explicit choice always wins, and "unknown" is a legal answer (USPS-format numbers, which FedEx
+    Ground Economy also prints, are not guessed).
+  - **Written from the carriers' current documentation, not from memory**, because an earlier build
+    here shipped provider clients with wrong endpoints. Every host, path, header and field is cited in
+    `client.py`'s docstring (FedEx's API catalog and its spec files, UPS's OpenAPI files on GitHub and
+    developer.ups.com, all read 2026-11-13). **No request has been made to either carrier**: nobody
+    has credentials yet. Three things the documentation left open are listed in the module README, and
+    each would be a one-line change.
+  - **Secrets stay out of every log line.** The client secret goes only into the token request and the
+    access token only into the Track header and Redis; every error message passes through
+    `carriers.mask`, which removes the id, the secret, the token and anything shaped like an
+    `Authorization` header or a token field, before it is returned.
+  - **Carrier Tracking Settings**, a new Single (System Manager only): a master switch, and per carrier
+    a switch, Sandbox or Production, a client id and a client secret (Password). **Everything is off.**
+    The master switch decides whether the feature exists at all: off, the order form shows nothing and
+    nothing can be added. On, tracking numbers can be recorded and shown (carrier *Other* needs no
+    credentials), and a carrier is asked only once it also has its own switch and both credentials.
+    A small Single of its own rather than four more fields on the 193-field ERPNext Enhancements
+    Settings, and nothing in the app ever writes to it: health is read from the tracked packages, so no
+    "last checked" stamp can make the first write that blanks a never-saved Single (CLAUDE.md).
+    `patches/backfill_carrier_tracking_settings_defaults` (also on `after_migrate`) writes each declared
+    default only where `tabSingles` has no row, never over a stored value, the shape of
+    `backfill_marketing_settings_defaults`, rather than seeding with `set_single_value` over the top.
+  - Tests: `tests/test_carrier_tracking_client.py` (no frappe needed; the client takes its HTTP and cache
+    as arguments): detection, token caching and refresh on 401, every error path, normalization from
+    invented payloads shaped like each carrier's documented response, and secrets echoed back by a
+    carrier never reaching a result.
+- **Tracking numbers on purchase orders, and the hourly check** (TASK-2026-03205).
+  - **Tracked Package**, a new DocType: one tracking number on a Purchase Order, the carrier picked
+    (Auto, FedEx, UPS or Other) and the one used, the carrier's tracking page, and what the carrier last
+    said: status, its own words, estimated delivery, delivered on, last location, last checked, last
+    answer, last problem (masked), and whether and why it is no longer checked. **A record of its own
+    with a link to the order, not a child table of Purchase Order**, which the request suggested: adding a
+    child row to a *submitted* order needs submit permission (only PO Creator has it here), and Frappe
+    deletes on save every child row a form did not load, so a number added from the banner, or a status
+    the poller wrote, while someone had the order open would be wiped by their next save. A DocType of its
+    own can also have the calendar view the arrivals calendar will need.
+  - **Who may add or remove a tracking number on a submitted order:** *create* (add) or *delete* (remove)
+    on Tracked Package, granted to PO Creator, Purchase User, Purchase Manager, Stock User, Stock Manager
+    and System Manager, **plus read on the order**. No write or submit on the order is needed or granted,
+    so nobody's rights over the order itself are widened. Only System Manager may *write* a Tracked
+    Package, so nobody can type a status.
+  - **Carriers that are not FedEx or UPS** (a marketplace's own delivery service, for instance) are
+    recorded with Other, the number and an optional link: no error, no polling. A number whose carrier
+    cannot be told from its format is kept as "not tracked" with a note to pick the carrier.
+  - **The purchaser's Expected Delivery Date is never touched.** The carrier's estimate is its own field,
+    shown beside it.
+  - **Endpoints** (`api/package_tracking.py`): `get_packages`; `add_tracking_number`,
+    `remove_tracking_number` and `refresh_order`, POST only. Adding a number checks it with the carrier
+    straight away when that carrier is live; Refresh asks at most once a minute per order.
+  - **The hourly poller** (`carrier_tracking.tracking.poll`) does nothing and logs nothing until a carrier
+    is set up. Each run checks at most 25 packages in at most 120 seconds, each at most every two hours,
+    never-checked then oldest-checked first, on submitted orders that are not closed, completed,
+    canceled, drop-shipped or fully received. It stops polling a package that is delivered, invalid,
+    unknown for a week (two days for a guessed carrier), unusable twelve times running after the carrier
+    had answered once, unchanged for three weeks or tracked for 90 days. A refused login, a 429, an
+    outage, any failure at the token endpoint and any carrier error that is not a documented
+    package-level code are about the carrier, not the package: that carrier is skipped for the rest of
+    the run and no package is marked failed. "Could not check" never changes a stored status. Each answer
+    is committed on its own and a row that fails is set aside, so one bad row cannot stop a run, a
+    deploy's queue flush costs one run, and the poller never raises into the scheduler.
+  - Tests: `tests/test_carrier_tracking_poller.py` (own frappe stub): the permission rule against the
+    DocType's JSON and the endpoints, POST-only writes, the poller's selection, limits and silence while
+    off, every stop reason, and a masked log line when something unexpected breaks.
+- **The packages on the Purchase Order form, and FedEx and UPS on Integrations Health**
+  (TASK-2026-03206).
+  - **A banner at the top of the order** (`public/js/po_package_tracking.js`): each tracking number with
+    the carrier's status in plain words ("On its way", "Out for delivery today", "Delivered Nov 12 at
+    14:14"), the carrier's estimated arrival beside the purchaser's own *Expected Delivery Date*, when it
+    was last checked, any problem or the reason it is no longer checked, and a link that opens the
+    carrier's own tracking page in a new tab. *Add tracking number* (a small dialog: the number, the
+    carrier, and a link for Other) and *Refresh* sit under it, for the people allowed to use them. It
+    wraps to one line per package on a phone. It writes nothing to the order, so the form never turns
+    "Not Saved", and changes no route, so Back and Forward behave. A plain `doctype_js` script rather
+    than a `frappe.require` bundle: it travels with the form's meta, so it has no bundle to fall out of
+    step with across a deploy and needs no level guard. Nothing at all while the master switch is off.
+    With it on, an order with packages shows them (a canceled one read-only), an order with none shows
+    only a small *Add tracking number* button while it can still have a package on its way, and someone
+    who cannot see tracking sees nothing.
+  - **Integrations Health** gains a tile for each carrier: not configured, switched off, Sandbox (amber,
+    because the sandbox answers with test data) or Production, the carrier's last answer and its age,
+    and the last problem, masked, all read from the Tracked Package rows; the secret only as "is it
+    there".
+  - **Checked, not built** (see `carrier_tracking/README.md`, *Later*): the arrivals calendar needs no
+    change to this data model (a calendar view over `estimated_delivery`, falling back to the order's
+    date); the Procurement Tracker could show a status chip per order with one query, as its own change
+    because it touches the tracker's bundle level; Receive Items could show one line of the carrier's
+    word and must never pre-fill a quantity from it.
+  - Tests: `tests/test_carrier_tracking_banner.py` runs `scripts/test_po_package_tracking.js` (the real
+    script under node against a stubbed Desk) and the two health tiles on a frappe stub.
+- **Before release: what review round 1 changed** (the Sapphire Manager's decisions on items 1 and 2).
+  - **Off means off.** With Carrier Tracking Settings' master switch off, the order form shows nothing
+    from this feature, `get_packages` answers "off" after one cached settings read, and adding,
+    removing and refreshing refuse with a sentence. The first version drew an empty "No tracking
+    numbers yet" box for six roles on every order from the day it deployed, closed and fully received
+    ones included, and let numbers be added with the switch off.
+  - **Which orders take a number:** a draft or submitted order that is not closed, completed, canceled,
+    drop-shipped or fully received, in the banner and in the endpoint and controller alike
+    (`package_rules.order_accepts_packages`).
+  - **A package never blocks deleting an order** (new Purchase Order `on_trash`): Frappe refuses to
+    delete a document a Dynamic Link still points at, and runs `on_trash` before that check (v16.56.0
+    `delete_doc.py` 177 vs 184-185), so the order's packages are removed first. **An amendment takes the
+    canceled order's packages** (new `after_insert`), safe to run twice; deleting the draft amendment
+    hands them back. A canceled order never amended keeps its packages, read-only.
+  - **Carrier errors are read narrowly.** Only FedEx's documented package codes
+    (`TRACKING.TRACKINGNUMBER.NOTFOUND`, `TRACKING.DATA.NOTFOUND`, `TRACKING.TRACKINGNUMBER.INVALID`),
+    matched exactly, and UPS's 404 in its documented envelope say anything about a package. A substring
+    match had read `TRACKING.LOCALE.INVALID` or an account code as "invalid number", and every UPS 400
+    (documented only as "Invalid request") the same way, which would have stopped packages for good on a
+    wrong header. Token-endpoint failures were counted against every package and retried per package;
+    they are now carrier-level and remembered for two minutes. FedEx `output.alerts` is read as the
+    documented array. Lengths follow UPS's documented 7 to 34 characters.
+  - **"Not found" before any answer** is governed by the one-week rule alone; it used to add to the
+    12-failure count, which always fired first, so the documented week could never happen.
+  - **A bare 12- or 15-digit number is a guess**: tracked as FedEx, shown as "FedEx (guessed)", given up
+    after two days of "not found". Only `1Z…` and the 22-digit `96…` barcode are certain.
+  - **Readings that cannot over-state progress**: FedEx `code` is read before the undocumented
+    `derivedCode` (a label-only shipment reads "label created"), and UPS "out for delivery" and
+    "delivered" need UPS's own words to agree. Every such assumption is listed in one place in
+    `carrier_tracking/README.md`.
+  - **Calls inside a web request are capped** (5 packages, 25 seconds, the rest left to the poller), Add
+    and Refresh share one once-a-minute throttle per order, and a person may cause 30 carrier calls per
+    10 minutes.
+  - **A package is visible only with its order**: new `has_permission` and `permission_query_conditions`
+    hooks for Tracked Package, built on Frappe's own match conditions for Purchase Order. A REST insert
+    has every carrier-written field reset, so it cannot forge a status or skip polling.
+  - **One bad row cannot stop the poller**: each package is checked in its own `try`, rolled back and set
+    to the back of the line if its save fails, and logged once per run.
+- **Before release: what review round 2 changed.**
+  - **A refusal about one number stops that number, not the carrier.** A carrier's refusal that is not one
+    of its package codes now says whether it is clearly the account or our request (`scope` carrier: a
+    login or account code, UPS's missing-header codes, a wrong path, any status but 400 or 404) or may be
+    about the number (`scope` number: a 400 or 404 with a code we cannot place). The poller tells the
+    second kind apart by comparing packages in the same run: two different numbers refused means the
+    carrier, counted for neither; another number answered means it was this number's. A package that only
+    ever gets that refusal is stopped after three days with "check that the number and the carrier are
+    right" (a mistyped number on a carrier picked by hand was retried for 90 days, about 866 checks), and
+    one package's refusal no longer skips the carrier for the rest of the run.
+  - **Share-only access lists only the shared orders' packages.** A person whose only way to Purchase
+    Orders is a share (Stock Manager here) could list every package, because Frappe's match conditions
+    come back empty on that branch; the list condition is now the shared orders, or nothing.
+  - **A guessed FedEx number shows where it is going.** The new *Going To* field holds the destination
+    from the carrier's answer; a guessed row keeps "(guessed)", shows it, and says how to correct a wrong
+    guess.
+  - Smaller: a Refresh refused by the per-person limit says so and when to try again; that counter is an
+    atomic Redis increment; a 200 that is not JSON is the carrier being unavailable, not a package
+    failure; an amendment moves packages only when the person can read the canceled order.
+- **Before release: what review round 3 changed.**
+  - **The three-day refusal stop needs evidence about the number.** It counts from the package's first
+    refusal (new read-only *First Refused On*, cleared by any answer about the package), not from when
+    the package was created, and it stops a package only if the same carrier has given a real answer to
+    some package since that first refusal. A carrier refusing every request with one or two packages due
+    (the first day it is switched on) stopped them in the reviewer's simulation, and a package older than
+    three days was stopped by its first refusal; now neither is stopped, while a mistyped number beside
+    packages the carrier answers still stops after three days.
+  - **The per-person counter's expiry is repaired** by any call that finds the key without one, so a lost
+    `EXPIRE` cannot lock someone out of Refresh until the next deploy.
+
 ## [1.818.0] - 2026-11-13
 
 ### Added

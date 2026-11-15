@@ -2,7 +2,8 @@
 app depends on is configured, connected, and not failing.
 
 This app talks to a lot of third parties (QuickBooks Online, Google Drive,
-Twilio/"Triton", the Gemini Enterprise Agent Platform, Google Analytics 4 / Search Console) and
+Twilio/"Triton", the Gemini Enterprise Agent Platform, Google Analytics 4 / Search Console, and since
+v1.819.0 FedEx and UPS for package tracking) and
 each fails *quietly* in its own corner: a QuickBooks token lapses, the Drive
 service account was never pasted in, an hourly sync errors into the Error Log.
 ``get_health`` rolls all of that — plus scheduler liveness and a 24 h error
@@ -330,6 +331,81 @@ def _check_ga4(key, label, route):
 		configured=True, metrics=metrics, links=links)
 
 
+
+def _carrier_tile(key, label, route, carrier):
+	"""FedEx or UPS package tracking (v1.819.0): configured or not, the last answer the carrier gave,
+	and the last problem, read from the Tracked Package rows.
+
+	Nothing is stored on Carrier Tracking Settings for this (no "last checked" stamp: a scheduler
+	writing one field of a never-saved Single blanks the rest, CLAUDE.md), so the rows are the record.
+	The secret is read as a boolean and the error was masked by the client when it was written; it is
+	masked again here on the way out, in case a row predates a masking rule.
+	"""
+	from erpnext_enhancements.carrier_tracking import carriers as C
+	from erpnext_enhancements.carrier_tracking import config as carrier_config
+
+	links = [
+		{"label": "Settings", "route": route},
+		{"label": "Tracked Packages", "route": "/desk/tracked-package"},
+	]
+	master = carrier_config.feature_enabled()
+	switched_on, has_credentials, environment = carrier_config.carrier_state(carrier)
+	if not has_credentials:
+		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
+			notes=[f"Add the {carrier} API client id and secret in Carrier Tracking Settings, then switch "
+				f"{carrier} and package tracking on. Until then tracking numbers are recorded and link to "
+				f"{carrier}'s page, but {carrier} is never asked."])
+	if not switched_on:
+		reason = "the master switch" if not master else f"Use {carrier}"
+		return _tile(key, label, "neutral", "Switched off", configured=True, links=links,
+			notes=[f"Credentials are entered but {reason} is off, so {carrier} is not being asked."])
+
+	tones, metrics, notes = [], [], []
+	metrics.append(_metric("Environment", environment, "amber" if environment != "Production" else "green"))
+	if environment != "Production":
+		tones.append("amber")
+		notes.append(f"{carrier}'s sandbox answers with test data, not your real packages.")
+
+	active = _count("Tracked Package", {"resolved_carrier": carrier, "polling_stopped": 0})
+	metrics.append(_metric("Packages being checked", active))
+
+	last_success = None
+	last_problem = None
+	try:
+		if frappe.db.exists("DocType", "Tracked Package"):
+			rows = frappe.get_all("Tracked Package", filters={"resolved_carrier": carrier, "last_success": ("is", "set")},
+				fields=["last_success"], order_by="last_success desc", limit_page_length=1)
+			last_success = rows[0].last_success if rows else None
+			rows = frappe.get_all("Tracked Package", filters={"resolved_carrier": carrier, "last_error": ("is", "set")},
+				fields=["last_error", "last_checked"], order_by="last_checked desc", limit_page_length=1)
+			if rows and rows[0].last_error and (
+				not last_success or get_datetime(rows[0].last_checked) > get_datetime(last_success)
+			):
+				last_problem = rows[0].last_error
+	except Exception:
+		pass
+
+	secs = _seconds_since(last_success)
+	success_tone = age_tone(secs, amber_after=6 * 3600, red_after=24 * 3600) if active else "neutral"
+	tones.append(success_tone)
+	metrics.append(_metric("Last answer from " + carrier, humanize_age(secs), success_tone))
+	if last_problem:
+		tones.append("amber")
+		notes.append("Last problem: " + C.mask(last_problem, limit=300))
+
+	tone = worst_tone(tones) if tones else "green"
+	headline = "Checking" if not last_problem else "Checking, with problems"
+	return _tile(key, label, tone, headline, configured=True, metrics=metrics, links=links, notes=notes)
+
+
+def _check_fedex(key, label, route):
+	return _carrier_tile(key, label, route, "FedEx")
+
+
+def _check_ups(key, label, route):
+	return _carrier_tile(key, label, route, "UPS")
+
+
 # ----------------------------------------------------------- scheduler & errors
 
 
@@ -473,6 +549,8 @@ _INTEGRATIONS = [
 	("ga4", "Analytics (GA4 / Search Console)", "/desk/ga4-settings", _check_ga4),
 	("miradore", "MDM — Miradore (mobile)", "/desk/mdm-settings", _check_miradore),
 	("action1", "RMM — Action1 (computers)", "/desk/mdm-settings", _check_action1),
+	("fedex", "Package Tracking — FedEx", "/desk/carrier-tracking-settings", _check_fedex),
+	("ups", "Package Tracking — UPS", "/desk/carrier-tracking-settings", _check_ups),
 ]
 
 

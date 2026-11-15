@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "creation": "2026-11-13 12:00:00.000000",
+ "description": "Credentials for asking FedEx and UPS where a package is. Everything here is off until a System Manager fills it in and turns it on.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "general_section",
+  "enabled",
+  "general_help",
+  "fedex_section",
+  "fedex_enabled",
+  "fedex_environment",
+  "column_break_fedex",
+  "fedex_client_id",
+  "fedex_client_secret",
+  "ups_section",
+  "ups_enabled",
+  "ups_environment",
+  "column_break_ups",
+  "ups_client_id",
+  "ups_client_secret"
+ ],
+ "fields": [
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break",
+   "label": "Package Tracking"
+  },
+  {
+   "default": "0",
+   "description": "When on, ERPNext asks FedEx and UPS for the status of the tracking numbers on purchase orders: about every two hours on its own, and whenever someone presses Refresh. Off: tracking numbers can still be added and their carrier links still work, but nobody asks the carriers anything.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Ask Carriers for Package Status"
+  },
+  {
+   "fieldname": "general_help",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Each carrier also needs its own switch on and an API client from its developer site: <a href=\"https://developer.fedex.com/\" target=\"_blank\" rel=\"noopener noreferrer\">developer.fedex.com</a> (a project with the Track API) and <a href=\"https://developer.ups.com/\" target=\"_blank\" rel=\"noopener noreferrer\">developer.ups.com</a> (an app with the Tracking product). Start on Sandbox, then switch to Production with the production keys. See <code>carrier_tracking/README.md</code>.</p>"
+  },
+  {
+   "fieldname": "fedex_section",
+   "fieldtype": "Section Break",
+   "label": "FedEx"
+  },
+  {
+   "default": "0",
+   "fieldname": "fedex_enabled",
+   "fieldtype": "Check",
+   "label": "Use FedEx"
+  },
+  {
+   "default": "Sandbox",
+   "description": "Sandbox keys only work on Sandbox, and production keys only on Production.",
+   "fieldname": "fedex_environment",
+   "fieldtype": "Select",
+   "label": "FedEx Environment",
+   "options": "Sandbox\nProduction"
+  },
+  {
+   "fieldname": "column_break_fedex",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The project's API Key on developer.fedex.com.",
+   "fieldname": "fedex_client_id",
+   "fieldtype": "Data",
+   "label": "FedEx API Key (Client ID)"
+  },
+  {
+   "description": "The project's Secret Key. Stored encrypted.",
+   "fieldname": "fedex_client_secret",
+   "fieldtype": "Password",
+   "label": "FedEx Secret Key (Client Secret)"
+  },
+  {
+   "fieldname": "ups_section",
+   "fieldtype": "Section Break",
+   "label": "UPS"
+  },
+  {
+   "default": "0",
+   "fieldname": "ups_enabled",
+   "fieldtype": "Check",
+   "label": "Use UPS"
+  },
+  {
+   "default": "Sandbox",
+   "description": "Sandbox is UPS's Customer Integration Environment (CIE). Its keys and production keys are the same app, but CIE answers with test data.",
+   "fieldname": "ups_environment",
+   "fieldtype": "Select",
+   "label": "UPS Environment",
+   "options": "Sandbox\nProduction"
+  },
+  {
+   "fieldname": "column_break_ups",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The app's Client ID on developer.ups.com.",
+   "fieldname": "ups_client_id",
+   "fieldtype": "Data",
+   "label": "UPS Client ID"
+  },
+  {
+   "description": "The app's Client Secret. Stored encrypted.",
+   "fieldname": "ups_client_secret",
+   "fieldtype": "Password",
+   "label": "UPS Client Secret"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Carrier Tracking",
+ "name": "Carrier Tracking Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

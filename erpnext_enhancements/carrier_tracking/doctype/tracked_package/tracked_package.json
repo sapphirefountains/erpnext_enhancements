@@ -1,0 +1,311 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-11-13 12:00:00.000000",
+ "description": "A carrier tracking number for a package on its way to us, and what the carrier last said about it. Added and removed from the Purchase Order form; the status is written by ERPNext, never by hand.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "package_section",
+  "reference_doctype",
+  "reference_name",
+  "supplier",
+  "column_break_package",
+  "tracking_number",
+  "carrier",
+  "resolved_carrier",
+  "carrier_guessed",
+  "link_url",
+  "tracking_url",
+  "status_section",
+  "status",
+  "status_description",
+  "estimated_delivery",
+  "delivered_on",
+  "last_location",
+  "destination",
+  "column_break_status",
+  "last_checked",
+  "last_success",
+  "last_change",
+  "first_refused_on",
+  "failure_count",
+  "last_error",
+  "polling_stopped",
+  "stop_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "package_section",
+   "fieldtype": "Section Break",
+   "label": "Package"
+  },
+  {
+   "default": "Purchase Order",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "For",
+   "options": "DocType",
+   "reqd": 1,
+   "set_only_once": 1,
+   "description": "Only Purchase Order for now."
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Order",
+   "options": "reference_doctype",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "Copied from the order when the number is added."
+  },
+  {
+   "fieldname": "column_break_package",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tracking_number",
+   "fieldtype": "Data",
+   "label": "Tracking Number",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "search_index": 1,
+   "length": 40,
+   "description": "Spaces and dashes are removed."
+  },
+  {
+   "default": "Auto",
+   "fieldname": "carrier",
+   "fieldtype": "Select",
+   "label": "Carrier",
+   "options": "Auto\nFedEx\nUPS\nOther",
+   "set_only_once": 1,
+   "description": "Auto works out FedEx or UPS from the number. Pick Other for any other delivery service; it is recorded but not checked."
+  },
+  {
+   "fieldname": "resolved_carrier",
+   "fieldtype": "Select",
+   "label": "Carrier Used",
+   "options": "FedEx\nUPS\nOther\nUnknown",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "carrier_guessed",
+   "fieldtype": "Check",
+   "label": "Carrier Guessed From the Number",
+   "read_only": 1,
+   "description": "A 12- or 15-digit number is probably FedEx but could be another carrier's. A guess that FedEx does not recognize within two days stops being checked."
+  },
+  {
+   "fieldname": "link_url",
+   "fieldtype": "Data",
+   "label": "Tracking Link (Other Carriers)",
+   "options": "URL",
+   "set_only_once": 1,
+   "length": 500,
+   "description": "For a carrier other than FedEx or UPS: the page where the package can be followed."
+  },
+  {
+   "fieldname": "tracking_url",
+   "fieldtype": "Data",
+   "label": "Carrier Tracking Page",
+   "options": "URL",
+   "read_only": 1,
+   "length": 500
+  },
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Carrier Status"
+  },
+  {
+   "default": "Not Checked Yet",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Not Checked Yet\nLabel Created\nIn Transit\nOut for Delivery\nDelivered\nDelivery Problem\nUnknown\nNot Tracked",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "status_description",
+   "fieldtype": "Data",
+   "label": "Carrier's Words",
+   "read_only": 1,
+   "length": 240
+  },
+  {
+   "fieldname": "estimated_delivery",
+   "fieldtype": "Date",
+   "label": "Carrier's Estimated Delivery",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "The carrier's estimate. The purchaser's own Expected Delivery Date on the order is never changed by it."
+  },
+  {
+   "fieldname": "delivered_on",
+   "fieldtype": "Datetime",
+   "label": "Delivered On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_location",
+   "fieldtype": "Data",
+   "label": "Last Location",
+   "read_only": 1
+  },
+  {
+   "fieldname": "destination",
+   "fieldtype": "Data",
+   "label": "Going To",
+   "read_only": 1,
+   "description": "Where the carrier says the package is going, when its answer says. Shown on the order for a carrier guessed from the number."
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_checked",
+   "fieldtype": "Datetime",
+   "label": "Last Checked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_success",
+   "fieldtype": "Datetime",
+   "label": "Last Answer From the Carrier",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_change",
+   "fieldtype": "Datetime",
+   "label": "Last Change",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_refused_on",
+   "fieldtype": "Datetime",
+   "label": "First Refused On",
+   "read_only": 1,
+   "description": "When the carrier first turned this number down with an error it does not explain. Cleared by any answer about the package."
+  },
+  {
+   "default": "0",
+   "fieldname": "failure_count",
+   "fieldtype": "Int",
+   "label": "Unusable Answers in a Row",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Problem",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "polling_stopped",
+   "fieldtype": "Check",
+   "label": "No Longer Checked Automatically",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stop_reason",
+   "fieldtype": "Data",
+   "label": "Why",
+   "read_only": 1,
+   "depends_on": "polling_stopped"
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-13 23:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Carrier Tracking",
+ "name": "Tracked Package",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "PO Creator"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase User"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Purchase Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock User"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "tracking_number",
+ "show_title_field_in_link": 1
+}
