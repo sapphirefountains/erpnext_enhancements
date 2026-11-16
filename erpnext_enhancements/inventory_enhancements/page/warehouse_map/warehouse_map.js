@@ -1461,10 +1461,14 @@ class WarehouseMapPage {
 			return `<div class="wm-order"><h5>${this.esc(__("Order as you face it"))}</h5><p class="wm-muted">${this.esc(__("Reading the shelves…"))}</p></div>`;
 		}
 		const rows = wm.level_rows(s, ed.names, {});
-		const makes = make
-			? `<div class="wm-make-acts"><button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="shelf" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a shelf"))}</button>
-				${rows.length ? "" : `<button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="bin" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a bin"))}</button>`}</div>`
-			: "";
+		// Only what the server would accept here (warehouse_map_rules.placement_problem).
+		const shelf_ok = make && wm.takes(ed.warehouses, s.warehouse, wm.KIND_SHELF);
+		const bin_ok = make && !rows.length && wm.takes(ed.warehouses, s.warehouse, wm.KIND_BIN);
+		const makes =
+			shelf_ok || bin_ok
+				? `<div class="wm-make-acts">${shelf_ok ? `<button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="shelf" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a shelf"))}</button>` : ""}
+				${bin_ok ? `<button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="bin" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a bin"))}</button>` : ""}</div>`
+				: "";
 		if (!rows.length) {
 			return make
 				? `<div class="wm-order"><h5>${this.esc(__("Shelves and bins"))}</h5><p class="wm-muted">${this.esc(__("Nothing is in this box yet."))}</p>${makes}</div>`
@@ -1477,10 +1481,11 @@ class WarehouseMapPage {
 					? `<span class="wm-order-arrows"><button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="-1" aria-label="${this.esc(__("Move {0} up", [row.label]))}">&#9650;</button>
 						<button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="1" aria-label="${this.esc(__("Move {0} down", [row.label]))}">&#9660;</button></span>`
 					: `<span class="wm-order-arrows"></span>`;
-				const plus = make
-					? `<button type="button" class="wm-ochip wm-make-chip" data-act="make" data-kind="bin" data-parent="${this.esc(row.warehouse)}"
+				const plus =
+					make && wm.takes(ed.warehouses, row.warehouse, wm.KIND_BIN)
+						? `<button type="button" class="wm-ochip wm-make-chip" data-act="make" data-kind="bin" data-parent="${this.esc(row.warehouse)}"
 						title="${this.esc(__("Make a bin here"))}" aria-label="${this.esc(__("Make a bin on {0}", [row.label || wm.shape_label(s)]))}">+</button>`
-					: "";
+						: "";
 				const bins =
 					row.bins
 						.map(
@@ -1852,6 +1857,13 @@ class WarehouseMapPage {
 			is_group: !!answer.is_group,
 			parent: answer.parent || "",
 			outside: false,
+			takes_group: !!answer.is_group,
+			takes_bin: !!answer.is_group,
+		});
+		// What the parent and the new places take now: the buttons follow at once.
+		Object.keys(answer.places || {}).forEach((name) => {
+			const row = ed.warehouses.find((w) => w.name === name);
+			if (row) Object.assign(row, answer.places[name]);
 		});
 		if (kind === wm.KIND_BAY) {
 			const unit = answer.unit || {};

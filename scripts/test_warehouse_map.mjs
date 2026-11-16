@@ -426,6 +426,18 @@ check(
 	]
 );
 check("not in a bin, not in a van, not in nothing", L.bay_parents(null), []);
+check(
+	"nor in a group that holds only single places (a shelf of bins)",
+	L.bay_parents(MAKE_PLACES.concat([{ name: "Shelf K1-2 - ZZ", warehouse_name: "Shelf K1-2", trail: "Stock", is_group: true, outside: false, takes_group: false }])).map((c) => c.value),
+	["Lane 7 - ZZ", BAY]
+);
+check("what the editor offers where", [
+	L.takes([{ name: "S", takes_group: false, takes_bin: true }], "S", "bin"),
+	L.takes([{ name: "S", takes_group: false, takes_bin: true }], "S", "shelf"),
+	L.takes([{ name: "R", takes_group: true, takes_bin: false }], "R", "bin"),
+	L.takes([], "unknown", "bin"),
+], [true, false, false, true]);
+truthy("the page asks before it offers a shelf or a bin", PAGE_JS.includes("wm.takes(ed.warehouses, s.warehouse, wm.KIND_SHELF)") && PAGE_JS.includes("wm.takes(ed.warehouses, row.warehouse, wm.KIND_BIN)"));
 check("New bay starts on the row the picked bay is in", L.default_bay_parent({ warehouse: BAY, is_group: true }, MAKE_PLACES), "Lane 7 - ZZ");
 check("a picked room starts it on nothing", L.default_bay_parent({ warehouse: "Parts Room - ZZ" }, MAKE_PLACES), "");
 check("so does nothing picked", L.default_bay_parent(null, MAKE_PLACES), "");
