@@ -188,7 +188,7 @@ class WarehouseMapPage {
 		if (!this.showing() || !this.target) return;
 		let state;
 		if (this.target.screen === "floor") state = { item: this.item, bin: this.bin, view: this.mode };
-		else if (this.target.screen === "walk") state = { blind: this.blind };
+		else if (this.target.screen === "walk") state = { view: this.mode, blind: this.blind };
 		else return;
 		const query = this.wm.query_string(state);
 		try {
@@ -232,8 +232,7 @@ class WarehouseMapPage {
 		// In the editor, Refresh loads the stored map again. That is how an editor whose save was
 		// refused (someone else saved first) gets their version; boxes not saved are asked about.
 		if (this.target.screen === "walk") {
-			delete this.walks[name];
-			this.open_walk(name);
+			this.open_walk(name, true);
 			return;
 		}
 		if (this.target.screen === "edit") {
@@ -288,6 +287,12 @@ class WarehouseMapPage {
 			this.open_editor(target.map);
 			return;
 		}
+		if (left_editor && this.edit_dirty()) {
+			frappe.show_alert(
+				{ message: __("Your changes to {0} are not saved yet. Open the editor again to save them.", [this.esc(this.edit.map.title)]), indicator: "orange" },
+				8
+			);
+		}
 		if (target.screen === "walk") {
 			if (!this.can_space()) {
 				this.navigate({ screen: "floor", map: target.map }, {}, true);
@@ -297,12 +302,6 @@ class WarehouseMapPage {
 			this.blind = options.blind;
 			this.open_walk(target.map);
 			return;
-		}
-		if (left_editor && this.edit_dirty()) {
-			frappe.show_alert(
-				{ message: __("Your changes to {0} are not saved yet. Open the editor again to save them.", [this.edit.map.title]), indicator: "orange" },
-				8
-			);
 		}
 		this.item = options.item;
 		this.bin = options.bin;
@@ -584,7 +583,7 @@ class WarehouseMapPage {
 				<button type="button" class="btn btn-xs btn-default" data-act="zoom-fit">${this.esc(__("Fit"))}</button>
 			</div>
 			${this.svg_html(map, data.shapes, { view, hits: this.hits(), open: this.target.shape, free: this.mode === this.wm.VIEW_FREE })}
-			${this.mode === this.wm.VIEW_FREE && !data.kinds_read ? `<p class="wm-notice">${this.esc(__("What kind of place each bin is could not be read just now, so no bin is shown as free. Choose Refresh to try again."))}</p>` : ""}
+			${this.mode === this.wm.VIEW_FREE && !data.kinds_read ? `<p class="wm-notice">${this.esc(__("Free space could not be worked out just now, so no bin is shown as free. Choose Refresh to try again; if it stays, tell a System Manager."))}</p>` : ""}
 			${this.legend_html()}${empty}</div>`;
 	}
 
@@ -665,22 +664,41 @@ class WarehouseMapPage {
 
 	// ------------------------------------------------------------------ the walk for a count (slice 3)
 
-	open_walk(name) {
-		const held = this.walks[name];
-		if (held && (held.data || held.loading)) {
+	// The walk is kept per floor and per blind-or-not, and read again once it is a minute old (the same
+	// rule as the floor's counts), on Refresh, after Save and after a place is made (review S4). Each
+	// request carries a number; an answer that is not the latest for its key is dropped.
+	walk_key(name) {
+		return `${name}\n${this.blind === "1" ? 1 : 0}`;
+	}
+
+	walk_held() {
+		return (this.target && this.walks[this.walk_key(this.target.map)]) || {};
+	}
+
+	open_walk(name, force) {
+		const key = this.walk_key(name);
+		const held = this.walks[key];
+		const fresh = held && held.at && Date.now() - held.at < WM_STALE_MS;
+		if (held && (held.loading || (held.data && fresh)) && !force) {
 			this.render_walk();
 			return;
 		}
-		this.walks[name] = { loading: true };
+		this.walk_seq = (this.walk_seq || 0) + 1;
+		const seq = this.walk_seq;
+		this.walks[key] = { data: held && held.data, at: held && held.at, loading: true, seq };
 		this.render_walk();
-		this.call("walk", { name }, true).then(
+		const showing = () => this.target && this.target.screen === "walk" && this.walk_key(this.target.map) === key;
+		this.call("walk", { name, blind: this.blind === "1" ? 1 : 0 }, true).then(
 			(data) => {
-				this.walks[name] = { data };
-				if (this.target && this.target.screen === "walk" && this.target.map === name) this.render_walk();
+				if (!this.walks[key] || this.walks[key].seq !== seq) return;
+				this.walks[key] = { data, at: Date.now() };
+				if (showing()) this.render_walk();
 			},
 			(err) => {
-				this.walks[name] = { error: (err && err.message) || __("The walk could not be loaded.") };
-				if (this.target && this.target.screen === "walk" && this.target.map === name) this.render_walk();
+				if (!this.walks[key] || this.walks[key].seq !== seq) return;
+				const was = this.walks[key];
+				this.walks[key] = was.data ? { data: was.data, at: was.at } : { error: (err && err.message) || __("The walk could not be loaded.") };
+				if (showing()) this.render_walk();
 			}
 		);
 	}
@@ -688,7 +706,7 @@ class WarehouseMapPage {
 	render_walk() {
 		if (!this.target || this.target.screen !== "walk") return;
 		const wm = this.wm;
-		const held = this.walks[this.target.map] || {};
+		const held = this.walk_held();
 		const data = held.data;
 		const blind = this.blind === "1";
 		let body;
@@ -749,8 +767,7 @@ class WarehouseMapPage {
 
 	// The walk as a sheet to carry: every bin with its items, a blank for what is counted.
 	print_walk() {
-		const held = this.walks[this.target.map] || {};
-		const data = held.data;
+		const data = this.walk_held().data;
 		if (!data) return;
 		const wm = this.wm;
 		const blind = this.blind === "1";
@@ -939,13 +956,14 @@ class WarehouseMapPage {
 			const shape = String($el.data("shape") || "");
 			const bin = String($el.data("bin") || "");
 			this.navigate({ screen: "floor", map: t.map, shape }, { item: this.item, bin: bin !== shape ? bin : "", view: this.mode });
-		} else if (act === "walk") this.navigate({ screen: "walk", map: t.map }, {});
-		else if (act === "walk-floor") this.navigate({ screen: "walk", map: String($el.data("map")) }, { blind: this.blind });
+		} else if (act === "walk") this.navigate({ screen: "walk", map: t.map }, { view: this.mode });
+		else if (act === "walk-floor") this.navigate({ screen: "walk", map: String($el.data("map")) }, { view: this.mode, blind: this.blind });
 		else if (act === "walk-back") this.navigate({ screen: "floor", map: t.map }, { view: this.mode });
 		else if (act === "blind") {
 			this.blind = this.blind === "1" ? "" : "1";
 			this.write_query();
-			this.render_walk();
+			// The server leaves the quantities out (and lists the items by name), so this is read again.
+			this.open_walk(t.map);
 		} else if (act === "walk-print") this.print_walk();
 		else if (act === "count-desk") frappe.set_route("count-desk");
 		else if (act === "zoom-in" || act === "zoom-out" || act === "zoom-fit") this.zoom(act);
@@ -1840,6 +1858,7 @@ class WarehouseMapPage {
 		const ed = this.edit;
 		const wm = this.wm;
 		this.maps = {};
+		this.walks = {};
 		$(document).trigger("sf-warehouses-changed", [answer.created || []]);
 		const name = this.esc(answer.warehouse_name || answer.warehouse || "");
 		const more = Math.max(0, (answer.created || []).length - 1);
@@ -1906,6 +1925,8 @@ class WarehouseMapPage {
 				const renamed = saved.name !== ed.name;
 				delete this.maps[ed.name];
 				delete this.maps[saved.name];
+				// The walk follows the boxes and their order: read again on the next visit.
+				this.walks = {};
 				if (renamed) {
 					this.views[saved.name] = this.views[ed.name];
 					ed.name = saved.name;

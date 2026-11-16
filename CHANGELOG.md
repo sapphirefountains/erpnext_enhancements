@@ -21,13 +21,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is the Bin Manager's own door.
   - **The walk for a count** (`/desk/warehouse-map/<map>/walk`) lists a floor's bins in walk
     order with the items expected in each, for a phone, and prints as a sheet with blank
-    *Counted* and *Note* columns. *Hide quantities* (`?blind=1`) makes it a blind count, and
-    *Next floor* goes on through the floors in order.
+    *Counted* and *Note* columns. *Hide quantities* (`?blind=1`) leaves every quantity out of the
+    answer, and *Next floor* goes on through the floors in order.
   - **Walk order for counts** in the editor: the boxes as they will be walked, with arrows. The
     order is stored as each box's new `walk_order`.
 - `api.warehouse_map.walk` (GET). `get_map` now gives each bin its `space`, and each box its
   `space` summary and walk position.
 - `Warehouse Floor Map Shape.walk_order` (Int, default 0: walk the box by where it stands).
+
+### Review round 1
+
+- **A save from an older page keeps the stored walk (S1).** A box that arrives without
+  `walk_order` keeps the place stored for it. The bundle from before this version sends none, and
+  read as 0 it would have wiped every stored order on its next save of anything.
+- **A tall box does not turn the walk round, and a room's racks are walked inside it (S2, found on
+  the mirror).** A box more than twice the usual height forms no row of its own; it joins the row
+  nearest its middle. A box drawn inside a bigger room box belongs to that room: the room is one
+  stop, and the racks inside it are walked as their own snake before the walk leaves the room.
+  Nikolas's map has large room boxes beside racks, and his bays will most likely be drawn inside
+  the Inventory Room's box.
+- **Never free with stock on order or a negative balance (S3).** On order to a bin makes it kept
+  for an item; a negative balance makes it in use. Two reads of Bin, through `get_all`.
+- **The walk is not kept for the life of the page (S4).** It is read again once it is a minute
+  old, on Refresh, after Save and after a place is made, and a late answer never replaces a newer
+  one.
+- **Hide quantities is done by the server (S5).** No quantity in the answer and the items by name.
+  It keeps a number from leading the counter; it is not a control, since the same people can open
+  Stock Scan.
+- **One walk rule on both sides (S6).** The editor's list orders boxes without a stored place by
+  the server's walk, so the first arrow press no longer re-orders boxes nobody touched.
+- **Kinds that failed quietly (S7).** When the Project Shelf the settings name, or a place under
+  the job-sites group, comes back as a shop bin, or the extra reads fail, nothing is called free
+  and the page says so.
+- **Small page points (S9).** The walk keeps the view it came from, there and back; the
+  unsaved-changes alert also shows when the editor is left for the walk.
 
 ### Why it is built this way
 

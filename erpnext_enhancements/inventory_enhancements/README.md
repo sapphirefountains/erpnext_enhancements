@@ -1509,7 +1509,8 @@ each is its own address (`?view=free`), so Back returns to the other.
 
 | Asked (the manager's defaults, 2026-11-16) | Built |
 |---|---|
-| What free means | A bin is **free** when nothing is on hand and no enabled Putaway Rule points at it, **kept for an item** when an item is assigned and none is on hand, otherwise **in use** (`warehouse_map_rules.space_state`). Read from the Bin Manager's own two reads (`bin_assignments._bin_rows` and `bin_views.decorate`), the same counts its *Empty* and *Assigned items missing* filters use. The Bin Manager has no word for "free", so the map's words are new and its numbers are not |
+| What free means | A bin is **free** when nothing is on hand, nothing is on order to it, its balance is not negative and no enabled Putaway Rule points at it; **kept for an item** when an item is assigned or on order to it and none is on hand; otherwise **in use**, a negative balance included (`warehouse_map_rules.space_state`). Read from the Bin Manager's own two reads (`bin_assignments._bin_rows` and `bin_views.decorate`), the same counts its *Empty* and *Assigned items missing* filters use, plus two reads of Bin for on order (`ordered_qty > 0`) and below zero (`actual_qty < 0`). The Bin Manager has no word for "free", so the map's words are new and its numbers are not |
+| When free space is not worked out | When the kinds cannot be trusted (`decorate` failed; the Project Shelf the settings name came back as a shop bin; a place under the job-sites group came back as a shop bin) or the on-order and below-zero reads fail, no bin is called free and the page says so |
 | What is never free | Only a **shop bin** is space to fill. The Project Shelf, the boneyard, a vehicle and a job site never show as free, whatever their counts (`decorate` sets assigned items to 0 at the shelf, which alone would make an empty shelf look free; the kind is asked first). A bin whose kind could not be read is not counted, and the page says so |
 | Boxes | Roll up: "6 of 14 bins free · 3 kept for an item", colored by whether any bin inside is free |
 | The list | *Free bins on this floor* beside the map, in walk order, each a link to its box with the bin picked |
@@ -1519,12 +1520,16 @@ each is its own address (`?view=free`), so Back returns to the other.
 **The walk for a count** is a screen: `/desk/warehouse-map/<map>/walk` (*Walk for a count* on the
 floor). It lists that floor's bins in walk order with the items expected in each, for a phone,
 and *Print* gives the same as a sheet with blank *Counted* and *Note* columns. *Hide quantities*
-(`?blind=1`) is a blind count. A *Next floor* button goes on in the floors' order.
+(`?blind=1`) asks the server for the walk without any quantity and with the items by name (Stock
+Scan's own order, what is on hand first, would give it away). It keeps a number from leading the
+counter; it is not a control, since the same people can open Stock Scan. A *Next floor* button goes
+on in the floors' order. The walk is read again once it is a minute old, on Refresh, after Save and
+after a place is made.
 
 | Asked | Built |
 |---|---|
 | The order | Floors by their sort order, then boxes, then each box as a person facing it reads it: top shelf first, left bin first (or as the box says, `shelves_from` / `bins_from`). A bin shown by two boxes is walked once |
-| The boxes' default order | From where they stand (`warehouse_map_rules.auto_walk`): rows of boxes top to bottom, **each row the other way** from the one before, so nobody walks back down an aisle empty. A row is the boxes whose middles are within half the boxes' usual (median) height |
+| The boxes' default order | From where they stand (`warehouse_map_rules.auto_walk`): rows of boxes top to bottom, **each row the other way** from the one before, so nobody walks back down an aisle empty. A row is the boxes whose middles are within half the boxes' usual (median) height. **A box more than twice the usual height forms no row** (review S2): it joins the row nearest its middle, at its place along it, so a big room beside rows of racks never turns the walk round. **A room's box holds what is drawn inside it**: a box whose middle is inside a bigger room box belongs to the smallest such room, the room is one stop, and the racks inside it are walked as their own snake before the walk leaves the room. A room box with no warehouse is not walked, but what is inside it is walked where it stands |
 | An editor's order | *Walk order for counts* in the editor's side panel: the boxes as they will be walked, with arrows. Moving one stores every box's place (`Warehouse Floor Map Shape.walk_order`, Int, from 1); a box added later is walked last; *Use where the boxes stand* puts them all back to 0 |
 | The new field | `walk_order` defaults to 0 on a normal (child) table, so the `ALTER` that adds it writes 0 into every existing row, and 0 means "by where it stands". The maps already drawn on production need nothing and get no patch |
 | The items | Stock Scan's own list for a bin, uncapped (`api.stock_scan._items_at(limit=None)`), the one the Count Desk's sheet is made from |

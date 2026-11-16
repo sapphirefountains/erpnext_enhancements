@@ -692,6 +692,48 @@ class TestFreeSpaceAndTheWalkRules(unittest.TestCase):
 		# The top row left to right, the next row right to left; the label is not walked.
 		self.assertEqual(names, ["a", "b", "c", "e", "d", "f"])
 
+	def test_a_tall_box_does_not_turn_the_walk_round(self):
+		"""S2, found on the mirror: a room drawn 300 high beside rows of 80-high racks."""
+
+		def rack(x, y, name):
+			return {"shape_type": "Rack", "warehouse": name, "x": x, "y": y, "w": 40, "h": 80}
+
+		shapes = [
+			{"shape_type": "Room", "warehouse": "room", "x": 0, "y": 0, "w": 150, "h": 300},
+			rack(300, 0, "a1"),
+			rack(400, 0, "a2"),
+			rack(300, 110, "b1"),
+			rack(400, 110, "b2"),
+			rack(300, 220, "c1"),
+			rack(400, 220, "c2"),
+		]
+		names = [shapes[i]["warehouse"] for i in rules.walk_order(shapes)]
+		# The room joins the row nearest its middle (the second); the rows still alternate.
+		self.assertEqual(names, ["a1", "a2", "b2", "b1", "room", "c1", "c2"])
+
+	def test_racks_inside_a_room_are_walked_before_the_walk_leaves_it(self):
+		"""S2: the bays drawn inside the Inventory Room's box are walked as their own snake, right
+		after the room, before the walk goes on to the next box outside it."""
+
+		def rack(x, y, name):
+			return {"shape_type": "Rack", "warehouse": name, "x": x, "y": y, "w": 40, "h": 80}
+
+		shapes = [
+			{"shape_type": "Room", "warehouse": "parts room", "x": 0, "y": 0, "w": 400, "h": 300},
+			rack(20, 20, "a1"),
+			rack(120, 20, "a2"),
+			rack(20, 150, "b1"),
+			rack(120, 150, "b2"),
+			rack(600, 20, "outside1"),
+			{"shape_type": "Room", "label": "Atrium", "x": 0, "y": 400, "w": 300, "h": 200},
+			rack(50, 450, "in atrium"),
+			{"shape_type": "Label", "label": "Door", "x": 500, "y": 400, "w": 60, "h": 20},
+		]
+		names = [shapes[i].get("warehouse") for i in rules.walk_order(shapes)]
+		# The room, then its racks snaking, then on; the Atrium has no warehouse and is not walked, but
+		# the rack inside it is walked where the Atrium stands.
+		self.assertEqual(names, ["parts room", "a1", "a2", "b2", "b1", "outside1", "in atrium"])
+
 	def test_an_editors_order_comes_first_and_a_new_box_last(self):
 		shapes = [
 			{"shape_type": "Rack", "warehouse": "a", "x": 0, "y": 0, "w": 40, "h": 100, "walk_order": 2},
@@ -799,6 +841,8 @@ def _reset():
 			"sites_fail": False,
 			"db_duplicate": False,
 			"shelf": None,
+			# Slice 3, review round 1: Bin rows on order or below zero (warehouse, item, ordered, actual).
+			"bin_extra": [],
 			# Slice 3: what Stock Scan lists in a bin.
 			"expected": {
 				BIN1: [{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "on_hand": 2.0, "assigned": True}],
@@ -855,6 +899,11 @@ def _install():
 			return [row["name"] for row in rows] if pluck == "name" else rows
 		if doctype == MAP:
 			return [_Row({key: stored.get(key) for key in fields}) for stored in STATE["maps"].values()]
+		if doctype == "Bin":
+			(column, (op, value)), = filters.items()
+			rows = [dict(zip(("warehouse", "item_code", "ordered_qty", "actual_qty"), row)) for row in STATE["bin_extra"]]
+			keep = (lambda r: r[column] > value) if op == ">" else (lambda r: r[column] < value)
+			return [_Row(warehouse=r["warehouse"], item_code=r["item_code"]) for r in rows if keep(r)]
 		if doctype == "File":
 			want = (filters["file_url"], filters["is_private"], filters["attached_to_doctype"], filters["attached_to_name"])
 			return [_Row(name=f"file{n}") for n, row in enumerate(STATE["files"]) if tuple(row) == want]
@@ -1038,6 +1087,14 @@ def _install():
 	frappe.rename_doc = rename_doc
 	frappe.delete_doc = delete_doc
 	frappe.db = types.SimpleNamespace(exists=exists, set_value=set_value)
+
+	def get_single_value(doctype, field):
+		assert (doctype, field) == ("Inventory Scanner Settings", "project_shelf_warehouse"), (doctype, field)
+		if STATE.get("settings_fail"):
+			raise RuntimeError("the settings could not be read")
+		return STATE["shelf"]
+
+	frappe.db.get_single_value = get_single_value
 
 	def get_cached_value(doctype, name, field):
 		assert (doctype, field) == ("Company", "abbr"), (doctype, field)
@@ -2062,6 +2119,65 @@ class TestFreeSpaceAndTheWalk(_Base):
 			api.WALK_LIMIT = limit
 		self.assertEqual((answer["bins"], answer["truncated"]), (3, True))
 
+	# ---- review round 1
+
+	def test_on_order_keeps_a_bin_and_below_zero_uses_it(self):
+		"""S3: never free with stock on its way or a negative balance."""
+		self.shop_floor()
+		STATE["bin_extra"] = [(BIN10, "TEE", 4.0, 0.0), (BIN9, "ELBOW", 0.0, 1.0), ("Bin K1-2-1 - ZZ", "X", 0.0, -2.0)]
+		STATE["bins"][BIN10] = {"on_hand_items": 0, "assigned_items": 0}
+		STATE["tree"]["Bin K1-2-11 - ZZ"] = {"name": "Bin K1-2-11 - ZZ", "warehouse_name": "Bin K1-2-11", "parent_warehouse": SHELF2, "is_group": 0, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		STATE["bin_extra"].append(("Bin K1-2-11 - ZZ", "NUT", 0.0, -1.0))
+		data = api.get_map("Shop Floor")
+		self.assertEqual((data["bins"][BIN10]["space"], data["bins"][BIN10]["on_order_items"]), ("kept", 1))
+		self.assertEqual((data["bins"]["Bin K1-2-11 - ZZ"]["space"], data["bins"]["Bin K1-2-11 - ZZ"]["negative_items"]), ("in_use", 1))
+		self.assertEqual(rules.space_state({"kind": "shop_bin", "on_order_items": 1}), "kept")
+		self.assertEqual(rules.space_state({"kind": "shop_bin", "negative_items": 1, "assigned_items": 2}), "in_use")
+
+	def test_free_space_is_not_worked_out_on_kinds_that_failed_quietly(self):
+		"""S7: the settings name a Project Shelf that came back as a shop bin, or a place under the
+		job-sites group came back as a shop bin: nothing is called free, and the page is told."""
+		self.shop_floor()
+		STATE["shelf"] = ROOM
+		data = api.get_map("Shop Floor")
+		self.assertFalse(data["kinds_read"])
+		self.assertEqual({row["space"] for row in data["bins"].values()}, {""})
+		STATE["shelf"] = None
+		STATE["bins"][SITE] = {"on_hand_items": 0}  # a job site that came back as a shop bin
+		self.assertFalse(api.get_map("Shop Floor")["kinds_read"])
+		STATE["bins"][SITE] = {"on_hand_items": 0, "kind": "job_site"}
+		STATE["settings_fail"] = True
+		self.assertFalse(api.get_map("Shop Floor")["kinds_read"])
+		STATE["settings_fail"] = False
+		self.assertTrue(api.get_map("Shop Floor")["kinds_read"])
+
+	def test_a_save_from_an_older_page_keeps_the_stored_walk(self):
+		"""S1: a box sent without walk_order (the bundle before v1.821.0 sends none) keeps its place."""
+		_seed("Shop Floor", [_box(warehouse=BAY, walk_order=2), _box(shape_type="Room", warehouse=ROOM, x=300, w=150, h=120, walk_order=1)])
+		self.as_editor()
+		data = api.get_map("Shop Floor")
+		old = [{k: v for k, v in shape.items() if k in api._SHAPE_FIELDS and k != "walk_order"} for shape in data["shapes"]]
+		api.save_map(json.dumps({"map_name": "Shop Floor", "shapes": old}), name="Shop Floor", modified=data["map"]["modified"])
+		self.assertEqual({row["warehouse"]: row["walk_order"] for row in STATE["maps"]["Shop Floor"]["shapes"]}, {BAY: 2, ROOM: 1})
+		# Sent, it is what is stored, 0 included.
+		data = api.get_map("Shop Floor")
+		sent = [dict({k: v for k, v in shape.items() if k in api._SHAPE_FIELDS}, walk_order=0) for shape in data["shapes"]]
+		api.save_map(json.dumps({"map_name": "Shop Floor", "shapes": sent}), name="Shop Floor", modified=data["map"]["modified"])
+		self.assertEqual({row["warehouse"]: row["walk_order"] for row in STATE["maps"]["Shop Floor"]["shapes"]}, {BAY: 0, ROOM: 0})
+
+	def test_a_blind_walk_carries_no_quantity(self):
+		"""S5: no quantity and items by name, from the server."""
+		self.shop_floor()
+		STATE["expected"][BIN1] = [
+			{"item_code": "ZED", "item_name": "ZED PART", "stock_uom": "Unit", "on_hand": 9.0, "assigned": True},
+			{"item_code": "ABE", "item_name": "ABE PART", "stock_uom": "Unit", "on_hand": 0.0, "assigned": True},
+		]
+		items = api.walk("Shop Floor", blind=1)["stops"][0]["rows"][0]["bins"][0]["items"]
+		self.assertEqual([i["item_code"] for i in items], ["ABE", "ZED"])
+		self.assertTrue(all(set(i) == {"item_code", "item_name", "stock_uom"} for i in items))
+		self.assertTrue(api.walk("Shop Floor", blind="1")["blind"])
+		self.assertEqual(api.walk("Shop Floor")["stops"][0]["rows"][0]["bins"][0]["items"][0]["on_hand"], 9.0)
+
 	def test_the_box_order_field_reaches_every_existing_row_as_zero(self):
 		path = APP / "inventory_enhancements" / "doctype" / "warehouse_floor_map_shape" / "warehouse_floor_map_shape.json"
 		doctype = json.loads(path.read_text(encoding="utf-8"))
@@ -2165,8 +2281,16 @@ class TestTheFiles(unittest.TestCase):
 				self.assertIsInstance(first, ast.Name, f"line {node.lineno}: a write on something other than MAP")
 				self.assertEqual(first.id, "MAP", f"line {node.lineno}")
 		source = API_SOURCE.read_text(encoding="utf-8")
-		for doctype in ("Putaway Rule", "Stock Entry", "Stock Reconciliation", "Bin"):
+		for doctype in ("Putaway Rule", "Stock Entry", "Stock Reconciliation"):
 			self.assertNotIn(f'"{doctype}"', source, doctype)
+		# Bin is read for free space (on order, below zero), and only ever through get_all.
+		bins = [
+			node
+			for node in ast.walk(tree)
+			if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "Bin"
+		]
+		self.assertTrue(bins)
+		self.assertEqual({getattr(node.func, "attr", "") for node in bins}, {"get_all"})
 
 	def test_the_doctype_gives_looking_to_the_stock_roles_and_changing_to_the_editors(self):
 		doctype = json.loads((CONTROLLER_SOURCE.parent / "warehouse_floor_map.json").read_text(encoding="utf-8"))

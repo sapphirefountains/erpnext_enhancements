@@ -505,6 +505,8 @@ check("what a bay says", L.space_text({ is_group: true, space: { bins: 14, free:
 check("a room that is one free bin", L.space_text({ is_group: false, space: { bins: 1, free: 1, kept: 0, in_use: 0 } }), "Free");
 check("a box with nothing to fill", L.space_text({ is_group: false, space: { bins: 0, free: 0, kept: 0, in_use: 0 } }), "No bins to fill");
 check("a kept bin's sentence", L.space_sentence({ space: "kept", assigned_items: 2 }), "Kept for an item: 2 items are assigned here, none on hand.");
+check("kept by an order", L.space_sentence({ space: "kept", on_order_items: 1 }), "Kept for an item: 1 item is on order to here, none on hand.");
+check("in use below zero", L.space_sentence({ space: "in_use", negative_items: 1 }), "In use: the records show less than nothing here, so it is not counted as free.");
 truthy("the Project Shelf's sentence never says free", L.space_sentence({ space: "" }).startsWith("Not a bin to fill"));
 
 const FREE_DATA = {
@@ -552,6 +554,16 @@ const WALK_SHAPES = [
 	{ warehouse: "gone", shape_type: "Rack", missing: true, walk: 0 },
 ];
 check("the editor lists the server's walk, a new box last", L.walk_list(WALK_SHAPES), [1, 0, 3]);
+// S6: once one box has a stored place, the others still follow the server's order, not the array's.
+check(
+	"one rule on both sides",
+	L.walk_list([
+		{ warehouse: "x", shape_type: "Rack", walk: 3, walk_order: 0 },
+		{ warehouse: "y", shape_type: "Rack", walk: 1, walk_order: 1 },
+		{ warehouse: "z", shape_type: "Rack", walk: 2, walk_order: 0 },
+	]),
+	[1, 2, 0]
+);
 const walk_moved = L.move_walk(WALK_SHAPES, 2, -1);
 check("moving one stores the whole list", walk_moved.map((x) => x.walk_order), [3, 1, undefined, 2, undefined]);
 check("and the list follows what is stored", L.walk_list(walk_moved), [1, 3, 0]);
@@ -561,9 +573,12 @@ check("Save sends the place in the walk", L.save_payload({ map: MAP, shapes: [{ 
 
 truthy("the bundle is the third copy", /const VERSION = 3;/.test(BUNDLE_JS));
 truthy("the page asks for it before the Free space view and the walk", /Number\(this\.wm\.version\) >= 3/.test(PAGE_JS));
-check("the walk is read in one call", (PAGE_JS.match(/"walk", \{ name \}/g) || []).length, 1);
+check("the walk is read in one call, and asks the server to leave the quantities out", (PAGE_JS.match(/this\.call\("walk", \{ name, blind:/g) || []).length, 1);
+truthy("the walk is read again once a minute old, and a late answer is dropped", PAGE_JS.includes("Date.now() - held.at < WM_STALE_MS") && PAGE_JS.includes("this.walks[key].seq !== seq"));
+truthy("a save and a made place clear the walks", (PAGE_JS.match(/this\.walks = \{\};/g) || []).length >= 2);
+truthy("the walk keeps the view it came from", PAGE_JS.includes('this.navigate({ screen: "walk", map: t.map }, { view: this.mode })'));
 truthy("a free bin goes to the Bin Manager's own door", PAGE_JS.includes('__("Assign an item in the Bin Manager")') && PAGE_JS.includes('frappe.set_route(this.wm.BIN_MANAGER'));
-const walk_block = PAGE_JS.slice(PAGE_JS.indexOf("open_walk(name) {"), PAGE_JS.indexOf("\toff_map_html(data) {"));
+const walk_block = PAGE_JS.slice(PAGE_JS.indexOf("walk_key(name) {"), PAGE_JS.indexOf("\toff_map_html(data) {"));
 truthy("the walk code is found", walk_block.length > 1000);
 truthy("and it posts nothing", !/create_location|save_map|post_count|start_count|"POST"/.test(walk_block));
 

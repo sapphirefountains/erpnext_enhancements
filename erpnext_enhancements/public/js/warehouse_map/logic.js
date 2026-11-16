@@ -371,8 +371,18 @@ export function space_text(shape) {
 export function space_sentence(bin) {
 	const space = bin_space(bin);
 	if (space === "free") return "Free: nothing is on hand and no item is assigned here.";
-	if (space === "kept") return `Kept for an item: ${count_word(num((bin || {}).assigned_items, 0), "item is", "items are")} assigned here, none on hand.`;
-	if (space === "in_use") return "In use: something is on hand here.";
+	if (space === "kept") {
+		const b = bin || {};
+		const parts = [];
+		if (num(b.assigned_items, 0) > 0) parts.push(`${count_word(num(b.assigned_items, 0), "item is", "items are")} assigned here`);
+		if (num(b.on_order_items, 0) > 0) parts.push(`${count_word(num(b.on_order_items, 0), "item is", "items are")} on order to here`);
+		return `Kept for an item: ${parts.join(", ") || "it is spoken for"}, none on hand.`;
+	}
+	if (space === "in_use") {
+		return num((bin || {}).negative_items, 0) > 0 && !(num((bin || {}).on_hand_items, 0) > 0)
+			? "In use: the records show less than nothing here, so it is not counted as free."
+			: "In use: something is on hand here.";
+	}
 	return "Not a bin to fill: nothing is kept here as an item's bin.";
 }
 
@@ -466,13 +476,18 @@ export function is_walkable(shape) {
 	return !!text(s.warehouse) && s.shape_type !== LABEL && !s.missing;
 }
 
-// The positions in `shapes` of the boxes that are walked, in walk order.
+// The positions in `shapes` of the boxes that are walked, in walk order: the server's rule
+// (warehouse_map_rules.walk_order). Boxes with a stored place come first, in that order; every other
+// box follows in the order the server walked it (`walk`, which for those boxes is the order of where
+// they stand); a box the server has not seen yet (added since the editor opened) is last. One rule on
+// both sides, so the first arrow press stores the order the person was looking at (review S6).
 export function walk_list(shapes) {
 	const list = (shapes || []).map((s, i) => ({ s, i })).filter(({ s }) => is_walkable(s));
-	const set = list.some(({ s }) => num(s.walk_order, 0) > 0);
 	const rank = ({ s, i }) => {
-		const own = set ? num(s.walk_order, 0) : num(s.walk, 0);
-		return [own > 0 ? 0 : 1, own > 0 ? own : 0, i];
+		const own = num(s.walk_order, 0);
+		const seen = num(s.walk, 0);
+		if (own > 0) return [0, own, i];
+		return seen > 0 ? [1, seen, i] : [2, 0, i];
 	};
 	return list
 		.map((x) => ({ x, r: rank(x) }))
