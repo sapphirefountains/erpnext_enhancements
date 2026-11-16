@@ -707,7 +707,7 @@ class WarehouseMapPage {
 										? `<ul class="wm-walk-items">${b.items
 												.map((i) => {
 													const want = wm.expected_text(i, blind);
-													return `<li><span>${this.esc(i.item_name)}</span> <span class="wm-muted">${this.esc(i.item_code)}</span>${want ? `<span class="wm-walk-qty">${this.esc(__(want))}</span>` : ""}</li>`;
+													return `<li><span>${this.esc(i.item_name)}</span> <span class="wm-muted">${this.esc(i.item_code)}</span>${want ? `<span class="wm-walk-qty">${this.esc(want)}</span>` : ""}</li>`;
 												})
 												.join("")}</ul>`
 										: `<p class="wm-muted">${this.esc(__("Nothing is expected here."))}</p>`;
@@ -764,7 +764,7 @@ class WarehouseMapPage {
 						b.items.forEach((i, k) =>
 							rows.push(
 								`<tr><td>${k ? "" : this.esc(where)}</td><td>${this.esc(i.item_name)}<br><small>${this.esc(i.item_code)}</small></td>${
-									blind ? "" : `<td>${this.esc(__(wm.expected_text(i, false)))}</td>`
+									blind ? "" : `<td>${this.esc(wm.expected_text(i, false))}</td>`
 								}<td class="blank"></td><td class="blank"></td></tr>`
 							)
 						);
@@ -891,7 +891,7 @@ class WarehouseMapPage {
 		// From a free or kept bin, the Bin Manager's own door for assigning an item: the map has no second way.
 		const open_label = space === "free" || space === "kept" ? __("Assign an item in the Bin Manager") : __("Open in Bin Manager");
 		return `<div class="wm-bininfo"><div class="wm-bininfo-head"><div><strong>${this.esc(bin.warehouse_name || warehouse)}</strong>
-			<span class="wm-muted">${this.esc(free ? __(this.wm.space_sentence(bin)) : this.wm.bin_text(bin))}</span></div>
+			<span class="wm-muted">${this.esc(free ? this.wm.space_sentence(bin) : this.wm.bin_text(bin))}</span></div>
 			<div class="wm-bininfo-acts">
 				<button type="button" class="btn btn-xs btn-default" data-act="open-bin" data-bin="${this.esc(warehouse)}">${this.esc(open_label)}</button>
 				<a class="btn btn-xs btn-default" href="/stock-scan?w=${encodeURIComponent(warehouse)}">${this.esc(__("Open in Stock Scan"))}</a>

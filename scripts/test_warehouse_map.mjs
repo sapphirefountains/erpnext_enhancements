@@ -454,7 +454,7 @@ truthy("one shelf, one bin", L.make_note("shelf", "Bay K1", 1).includes("the she
 // passed through __() as if it were a sentence to translate.
 truthy("the Select's labels are escaped", PAGE_JS.includes("label: this.esc(c.label)"));
 truthy("the made sentence is translated with the name as an argument", PAGE_JS.includes('__("{0} made", [name])') && PAGE_JS.includes("const name = this.esc(answer.warehouse_name"));
-truthy("no dynamic text goes through __()", !/__\(wm\.(make_note|made_text)/.test(PAGE_JS));
+truthy("no dynamic text goes through __()", !/__\((this\.)?wm\.(make_note|made_text|space_sentence|expected_text)|__\(want\)/.test(PAGE_JS));
 truthy("an answer is added only to the editor that asked", PAGE_JS.includes("const asked = this.edit;") && PAGE_JS.includes("ed !== asked"));
 
 // The page offers making only on a bundle that has the words for it, and only through the endpoint.
