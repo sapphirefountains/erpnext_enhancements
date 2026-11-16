@@ -887,6 +887,28 @@ def rows_as_seen(levels, shelves_from=TOP, bins_from=LEFT):
 	return list(reversed(rows)) if shelves_from == BOTTOM else rows
 
 
+def owned_leaves(shape_warehouses, tree, kids):
+	"""``{warehouse: [bins]}`` for every box's warehouse on one map: the bins under it that no
+	other box on the same map, drawn for a warehouse inside it, already shows (review R2-S1).
+
+	A room box whose warehouse is the parent of the bays drawn inside it would otherwise list every
+	bay's bins as its own, and the bays' boxes, walked after it, would have nothing left: their
+	bins would come out in tree order under the room instead of as the racks' snake. With this the
+	room keeps what is directly its own (its own bins, and any shelf no box shows), and each bay
+	takes its bins at its own stop. It holds wherever the inner box is drawn, inside the room's box
+	or not. A box with nothing of its own has no stop. The free-space sums use it too, so a room and
+	the racks inside it never count a bin twice."""
+	placed = [w for w in dict.fromkeys(shape_warehouses or []) if w and w in tree]
+	out = {}
+	for warehouse in placed:
+		taken = set()
+		for other in placed:
+			if other != warehouse and warehouse in ancestors(other, tree):
+				taken.update(leaves_under(other, tree, kids))
+		out[warehouse] = [leaf for leaf in leaves_under(warehouse, tree, kids) if leaf not in taken]
+	return out
+
+
 def walk_number(value):
 	"""A box's stored place in the walk: a whole number from 1, or 0 for "where it stands"."""
 	return max(0, min(int(number(value, 0) or 0), MAX_SHAPES))
@@ -920,9 +942,20 @@ def _geometry(shapes):
 				"cx": x + w / 2,
 				"cy": y + h / 2,
 				"room": text(_get(shape, "shape_type")) == SHAPE_ROOM,
+				"turn": (number(_get(shape, "rotation"), 0.0) or 0.0) % 360.0,
 			}
 		)
 	return out
+
+
+def _holds(room, x, y):
+	"""Whether the point ``(x, y)`` is inside ``room``'s rectangle as drawn, turned about its middle
+	when the box sits at an angle (``rotation``)."""
+	dx, dy = x - room["cx"], y - room["cy"]
+	if room["turn"]:
+		angle = math.radians(-room["turn"])
+		dx, dy = dx * math.cos(angle) - dy * math.sin(angle), dx * math.sin(angle) + dy * math.cos(angle)
+	return abs(dx) <= room["w"] / 2 and abs(dy) <= room["h"] / 2
 
 
 def _container(box, boxes):
@@ -931,7 +964,7 @@ def _container(box, boxes):
 	for other in boxes:
 		if other is box or not other["room"] or other["w"] * other["h"] <= box["w"] * box["h"]:
 			continue
-		if other["x"] <= box["cx"] <= other["x"] + other["w"] and other["y"] <= box["cy"] <= other["y"] + other["h"]:
+		if _holds(other, box["cx"], box["cy"]):
 			if best is None or other["w"] * other["h"] < best["w"] * best["h"]:
 				best = other
 	return best

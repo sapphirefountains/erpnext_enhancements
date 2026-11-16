@@ -734,6 +734,24 @@ class TestFreeSpaceAndTheWalkRules(unittest.TestCase):
 		# the rack inside it is walked where the Atrium stands.
 		self.assertEqual(names, ["parts room", "a1", "a2", "b2", "b1", "outside1", "in atrium"])
 
+	def test_a_turned_room_holds_what_is_inside_its_turned_rectangle(self):
+		"""A room box turned 90 degrees about its middle: a rack inside the turned shape belongs to it,
+		one inside only the unturned rectangle does not."""
+		room = {"shape_type": "Room", "warehouse": "room", "x": 0, "y": 100, "w": 400, "h": 100, "rotation": 90}
+		inside = {"shape_type": "Rack", "warehouse": "inside", "x": 190, "y": 0, "w": 20, "h": 20}
+		outside = {"shape_type": "Rack", "warehouse": "outside", "x": 20, "y": 140, "w": 20, "h": 20}
+		boxes = rules._geometry([room, inside, outside])
+		self.assertIs(rules._container(boxes[1], boxes), boxes[0])
+		self.assertIsNone(rules._container(boxes[2], boxes))
+
+	def test_each_box_holds_what_no_box_inside_it_shows(self):
+		tree = _tree()
+		kids = rules.children_index(tree)
+		owned = rules.owned_leaves([INV, BAY, ROOM], tree, kids)
+		self.assertEqual(owned[BAY], [BIN1, BIN2, BIN9, BIN10])
+		self.assertEqual(owned[INV], [BONEYARD])
+		self.assertEqual(owned[ROOM], [ROOM])
+
 	def test_an_editors_order_comes_first_and_a_new_box_last(self):
 		shapes = [
 			{"shape_type": "Rack", "warehouse": "a", "x": 0, "y": 0, "w": 40, "h": 100, "walk_order": 2},
@@ -899,6 +917,9 @@ def _install():
 			return [row["name"] for row in rows] if pluck == "name" else rows
 		if doctype == MAP:
 			return [_Row({key: stored.get(key) for key in fields}) for stored in STATE["maps"].values()]
+		if doctype == "Item":
+			assert filters.get("disabled") == 0 and filters.get("is_stock_item") == 1, filters
+			return [code for code in filters["name"][1] if code not in STATE.get("items_off", set())]
 		if doctype == "Bin":
 			(column, (op, value)), = filters.items()
 			rows = [dict(zip(("warehouse", "item_code", "ordered_qty", "actual_qty"), row)) for row in STATE["bin_extra"]]
@@ -2097,10 +2118,12 @@ class TestFreeSpaceAndTheWalk(_Base):
 		self.assertEqual([b["warehouse"] for b in bins], [BIN10, BIN9, BIN2, BIN1])
 
 	def test_a_bin_shown_twice_is_walked_once(self):
+		"""A bay's box and a box for one of its shelves: the shelf's box holds the shelf's bins (R2-S1),
+		the bay's box has nothing else of its own and so no stop, and each bin is walked once."""
 		_seed("Shop Floor", [_box(warehouse=BAY), _box(warehouse=SHELF2, x=400)])
 		answer = api.walk("Shop Floor")
 		self.assertEqual(answer["bins"], 4)
-		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [BAY])
+		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [SHELF2])
 
 	def test_the_walk_goes_on_to_the_next_floor(self):
 		self.shop_floor()
@@ -2133,6 +2156,48 @@ class TestFreeSpaceAndTheWalk(_Base):
 		self.assertEqual((data["bins"]["Bin K1-2-11 - ZZ"]["space"], data["bins"]["Bin K1-2-11 - ZZ"]["negative_items"]), ("in_use", 1))
 		self.assertEqual(rules.space_state({"kind": "shop_bin", "on_order_items": 1}), "kept")
 		self.assertEqual(rules.space_state({"kind": "shop_bin", "negative_items": 1, "assigned_items": 2}), "in_use")
+
+	def test_an_order_for_a_disabled_or_non_stock_item_keeps_nothing(self):
+		self.shop_floor()
+		STATE["bins"][BIN10] = {"on_hand_items": 0, "assigned_items": 0}
+		STATE["bin_extra"] = [(BIN10, "OLD", 3.0, 0.0)]
+		STATE["items_off"] = {"OLD"}
+		data = api.get_map("Shop Floor")
+		self.assertEqual((data["bins"][BIN10]["space"], data["bins"][BIN10]["on_order_items"]), ("free", 0))
+
+	def test_a_room_over_the_bays_drawn_inside_it(self):
+		"""R2-S1: the room's own warehouse is the parent of the bays drawn inside its box. The room's
+		stop keeps only what is directly its own, each bay takes its bins at its own stop, no bin is
+		walked twice, and the free-space sums count each bin once."""
+		_seed(
+			"Shop Floor",
+			[
+				_box(shape_type="Room", warehouse=INV, x=0, y=0, w=600, h=400),
+				_box(warehouse=BAY, x=40, y=40, w=40, h=100),
+			],
+		)
+		answer = api.walk("Shop Floor")
+		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [INV, BAY])
+		room_bins = [b["warehouse"] for row in answer["stops"][0]["rows"] for b in row["bins"]]
+		bay_bins = [b["warehouse"] for row in answer["stops"][1]["rows"] for b in row["bins"]]
+		self.assertEqual(room_bins, [BONEYARD, ROOM])
+		self.assertEqual(bay_bins, [BIN1, BIN2, BIN9, BIN10])
+		data = api.get_map("Shop Floor")
+		space = {shape["warehouse"]: shape["space"]["bins"] for shape in data["shapes"]}
+		# Stock's own: the Parts Room (the boneyard is never a bin to fill); the bay's four are the bay's.
+		self.assertEqual(space, {INV: 1, BAY: 4})
+
+	def test_a_room_with_nothing_of_its_own_has_no_stop(self):
+		_seed(
+			"Shop Floor",
+			[
+				_box(shape_type="Room", warehouse=ROW2, x=0, y=0, w=600, h=400),
+				_box(warehouse=BAY, x=40, y=40, w=40, h=100),
+			],
+		)
+		answer = api.walk("Shop Floor")
+		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [BAY])
+		self.assertEqual(answer["bins"], 4)
 
 	def test_free_space_is_not_worked_out_on_kinds_that_failed_quietly(self):
 		"""S7: the settings name a Project Shelf that came back as a shop bin, or a place under the

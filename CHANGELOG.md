@@ -56,6 +56,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Small page points (S9).** The walk keeps the view it came from, there and back; the
   unsaved-changes alert also shows when the editor is left for the walk.
 
+### Review round 2
+
+- **A room over the bays drawn inside it (R2-S1).** When a room box's own warehouse is the
+  parent of bays drawn as boxes of their own, the room's stop listed every bay's bins, and the
+  bays had nothing left to walk, so their bins came out in tree order under the room. Each box
+  now holds only the bins no box drawn for a warehouse inside it shows
+  (`warehouse_map_rules.owned_leaves`): the room keeps what is directly its own (no stop at all
+  if that is nothing) and each bay takes its bins at its own stop. The free-space sums use the
+  same rule, so a room and the racks inside it no longer count a bin twice. It shows the first
+  time bays are made inside a group room (the Atrium, the Build Room, the Lagoon) and drawn
+  inside its box; production's Inventory Room is a single place, which is why the mirror did not
+  show it.
+- An order left open for a disabled or non-stock item no longer keeps a bin from being free: only
+  the items the walk and Stock Scan list count. A turned room box holds what is inside its
+  turned shape.
+
 ### Why it is built this way
 
 - **Free space is the Bin Manager's numbers, and only shop bins.** A bin's state comes from the

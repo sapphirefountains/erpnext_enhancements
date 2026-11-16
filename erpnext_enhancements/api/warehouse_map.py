@@ -213,11 +213,21 @@ def _space_extras():
 	(``tabBin.ordered_qty > 0``) and items whose balance there is negative. Free space needs both:
 	a bin with stock on its way, or with a negative balance, is not a bin to fill (review S3). Two
 	reads of Bin; nothing is written."""
-	found = {}
+	found, codes = {}, set()
 	for key, filters in (("on_order_items", {"ordered_qty": [">", 0]}), ("negative_items", {"actual_qty": ["<", 0]})):
 		for row in frappe.get_all("Bin", filters=filters, fields=["warehouse", "item_code"]):
 			found.setdefault(row.warehouse, {}).setdefault(key, set()).add(row.item_code)
-	return {warehouse: {key: len(items) for key, items in counts.items()} for warehouse, counts in found.items()}
+			codes.add(row.item_code)
+	# Only stock items that are not disabled count, the items the walk and Stock Scan list: a Bin row
+	# left on order for a disabled or non-stock item does not keep a bin.
+	live = set(
+		frappe.get_all("Item", filters={"name": ["in", sorted(codes)], "disabled": 0, "is_stock_item": 1}, pluck="name")
+		if codes
+		else []
+	)
+	return {
+		warehouse: {key: len(items & live) for key, items in counts.items()} for warehouse, counts in found.items()
+	}
 
 
 def _kinds_trusted(bin_rows, tree):
@@ -358,6 +368,11 @@ def get_map(name):
 			space_ok = False
 
 	shapes, bins = [], {}
+	# The bins each box holds itself, not those of a box drawn for a warehouse inside it (R2-S1): the
+	# free-space sums count a bin once, at the box that shows it most closely.
+	owned = rules.owned_leaves(
+		[row.warehouse for row in doc.get("shapes") or [] if rules.usable(tree.get(row.warehouse))], tree, kids
+	)
 	for row in doc.get("shapes") or []:
 		warehouse = row.warehouse or None
 		node = tree.get(warehouse) if warehouse else None
@@ -392,7 +407,9 @@ def get_map(name):
 			leaves = rules.leaves_under(warehouse, tree, kids)
 			shape["levels"] = rules.levels(warehouse, tree, kids, shape["bin_order"])
 			shape["summary"] = rules.summarize([bin_rows.get(leaf) or {} for leaf in leaves])
-			shape["space"] = rules.space_summary([bin_rows.get(leaf) or {} for leaf in leaves] if space_ok else [])
+			shape["space"] = rules.space_summary(
+				[bin_rows.get(leaf) or {} for leaf in owned.get(warehouse, leaves)] if space_ok else []
+			)
 			for leaf in leaves:
 				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree, space_ok)
 		shapes.append(shape)
@@ -839,6 +856,9 @@ def walk(name, blind=0):
 	tree = _tree()
 	kids = rules.children_index(tree)
 	rows = list(doc.get("shapes") or [])
+	# Each box's stop lists only the bins it holds itself (review R2-S1): a room box over the bays
+	# drawn inside it leaves their bins to their own stops, which follow it in the walk.
+	owned = rules.owned_leaves([row.warehouse for row in rows if rules.usable(tree.get(row.warehouse))], tree, kids)
 	stops, seen, count, truncated = [], set(), 0, False
 	for index in rules.walk_order(rows):
 		row = rows[index]
@@ -847,6 +867,8 @@ def walk(name, blind=0):
 			continue
 		if rules.is_group(node):
 			levels = rules.levels(row.warehouse, tree, kids, rules.clean_order(row.get("bin_order")) or None)
+			mine = set(owned.get(row.warehouse, []))
+			levels = [dict(level, bins=[leaf for leaf in level["bins"] if leaf in mine]) for level in levels]
 			seen_rows = rules.rows_as_seen(levels, row.shelves_from or rules.TOP, row.bins_from or rules.LEFT)
 		else:
 			seen_rows = [{"warehouse": row.warehouse, "label": "", "bins": [row.warehouse]}]
