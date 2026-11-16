@@ -408,6 +408,63 @@ check("the list has a limit", L.filter_warehouses(WAREHOUSES, "b", 2).length, 2)
 check("nothing typed lists from the top", L.filter_warehouses(WAREHOUSES, "", 30).length, 3);
 check("not a list", L.filter_warehouses(null, "b", 30), []);
 
+// ------------------------------------------------------------------ making a location (slice 2)
+
+const MAKE_PLACES = [
+	{ name: "Lane 7 - ZZ", warehouse_name: "Lane 7", trail: "Stock", is_group: true, parent: "Stock - ZZ", outside: false },
+	{ name: BAY, warehouse_name: "Bay K1", trail: "Stock › Lane 7", is_group: true, parent: "Lane 7 - ZZ", outside: false },
+	{ name: "Parts Room - ZZ", warehouse_name: "Parts Room", trail: "Stock", is_group: false, parent: "Stock - ZZ", outside: false },
+	{ name: "Delivery Van - ZZ", warehouse_name: "Delivery Van", trail: "", is_group: true, parent: "All - ZZ", outside: true },
+];
+
+check(
+	"a bay can go in a group in the building, labelled by its trail",
+	L.bay_parents(MAKE_PLACES),
+	[
+		{ value: "Lane 7 - ZZ", label: "Stock › Lane 7" },
+		{ value: BAY, label: "Stock › Lane 7 › Bay K1" },
+	]
+);
+check("not in a bin, not in a van, not in nothing", L.bay_parents(null), []);
+check("New bay starts on the row the picked bay is in", L.default_bay_parent({ warehouse: BAY, is_group: true }, MAKE_PLACES), "Lane 7 - ZZ");
+check("a picked room starts it on nothing", L.default_bay_parent({ warehouse: "Parts Room - ZZ" }, MAKE_PLACES), "");
+check("so does nothing picked", L.default_bay_parent(null, MAKE_PLACES), "");
+check("a group outside the building is never where it starts", L.default_bay_parent({ warehouse: "Van Bay - ZZ" }, MAKE_PLACES.concat([{ name: "Van Bay - ZZ", is_group: true, parent: "Delivery Van - ZZ" }])), "");
+
+check("how many to make with it", [L.child_count(3, "bay"), L.child_count(99, "shelf"), L.child_count(-2, "bay"), L.child_count("x", "bay"), L.child_count(4.7, "shelf")], [3, 30, 0, 0, 4]);
+check("a bin is made alone", L.child_count(5, "bin"), 0);
+
+check("only a group that is drawn can have places made in it", [
+	L.can_make_inside({ warehouse: BAY, is_group: true, shape_type: "Rack" }),
+	L.can_make_inside({ warehouse: "Parts Room - ZZ", is_group: false, shape_type: "Room" }),
+	L.can_make_inside({ warehouse: BAY, is_group: true, missing: true }),
+	L.can_make_inside({ shape_type: "Label", label: "Door" }),
+	L.can_make_inside(null),
+], [true, false, false, false, false]);
+
+const bay_note = L.make_note("bay", "Lane 7", 3);
+truthy("a bay's note says it is made at once", bay_note.includes("in ERPNext as soon as you choose Make it"));
+truthy("and what is made, and where", bay_note.includes("the bay and 3 shelves in it in Lane 7"));
+truthy("and that the box needs Save", bay_note.includes("choose Save"));
+truthy("and that leaving without saving keeps the bay", bay_note.includes("the bay is still made and waits under Not on a map yet"));
+const bin_note = L.make_note("bin", "Shelf K1-2", 0);
+check("a bin's note", bin_note, "This makes the bin in Shelf K1-2 in ERPNext as soon as you choose Make it. It shows in this box's front view at once; the map does not need saving for it.");
+truthy("one shelf, one bin", L.make_note("shelf", "Bay K1", 1).includes("the shelf and 1 bin in it"));
+check("what is said once it is made", [L.made_text({ warehouse_name: "Bin K1-2-11", created: ["x"] }), L.made_text({ warehouse_name: "Bay K3", created: ["a", "b", "c"] })], ["Bin K1-2-11 made", "Bay K3 made, with 2 more inside it"]);
+
+// The page offers making only on a bundle that has the words for it, and only through the endpoint.
+const BUNDLE_JS = fs.readFileSync(path.join(APP, "public/js/warehouse_map.bundle.js"), "utf8");
+truthy("the bundle says it is the second copy", /const VERSION = 2;/.test(BUNDLE_JS));
+truthy("the page asks for the second copy before it offers making", /Number\(this\.wm\.version\) >= 2/.test(PAGE_JS));
+check("the page makes a place in one call", (PAGE_JS.match(/"create_location"/g) || []).length, 1);
+check("and asks for its name in one", (PAGE_JS.match(/"suggest_location"/g) || []).length, 1);
+truthy("and tells the Bin Manager", PAGE_JS.includes('$(document).trigger("sf-warehouses-changed"'));
+const BIN_MANAGER_JS = fs.readFileSync(path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js"), "utf8");
+truthy("which listens", BIN_MANAGER_JS.includes('$(document).on("sf-warehouses-changed"') && BIN_MANAGER_JS.includes("boot_stale = true"));
+const make_block = PAGE_JS.slice(PAGE_JS.indexOf("make(kind, parent) {"), PAGE_JS.indexOf("\tsave() {"));
+truthy("the making code is found", make_block.length > 500);
+truthy("and shows nothing in Frappe's own message box", !make_block.includes("msgprint"));
+
 // ------------------------------------------------------------------ the doors
 
 // The page draws the Bin Manager's tabs so it reads as one more of its views. They are written out

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.820.0] - 2026-11-16
+
+### Added
+
+- **Warehouse Map, slice 2: make a bay, a shelf or a bin from the map's editor.** Nikolas,
+  2026-11-12, when the map was planned: "Editor can also create bins"; 2026-11-16: "build map
+  slices 2 and 3". The editor's bar has **New bay**, and the picked box's *Order as you face it*
+  has a **+** at the end of each shelf and **Add a shelf**. Each opens a dialog that shows the
+  name first, says the place is made in ERPNext at once, and makes nothing until *Make it*. A bay
+  or a shelf can be made with up to 30 shelves or bins in the same step. A new bay gets its box
+  in the middle of the map (it needs *Save*, like any box; the dialog says that a bay left
+  unsaved still exists, under *Not on a map yet*). A new shelf or bin shows in the box's front
+  view at once.
+- `api.warehouse_map.create_location` (POST) and `suggest_location` (GET); `box_levels` takes the
+  box's own `order`, so a bin made in a box with its own order is read back at the end of its
+  shelf, where the floor shows it.
+
+### Why it is built this way
+
+- **The map editor's rule is the permission, and only the permission is skipped.** On production
+  only Item Manager may create a Warehouse. Nikolas's pick means a map editor can make a bin
+  without that role, so `create_location` checks the editor's rule (the Stock Scan gate, read on
+  the map, the map's own write and create) and read on the parent, and then inserts with
+  `frappe.get_doc({...}).insert(ignore_permissions=True)`. ERPNext's own `Warehouse.validate`
+  (the parent must be a group of the same company; the stock account must resolve, read at
+  erpnext v16.54.0), its nested-set update, this app's `doc_events` and every Link check still
+  run. No raw SQL and no background job: a deploy `FLUSHDB`s the queue. It is one request, so a
+  refusal part way through a bay with shelves leaves nothing half made.
+- **The name follows its siblings, by number, not by text.** `warehouse_map_rules.suggest_name`
+  takes the stem most of the places already there share and the highest number plus one. A
+  shelf on production holds sixteen bins, and as text `Bin C2-3-16` sorts before `Bin C2-3-9`,
+  so "the last name plus one" would have proposed a bin that exists. A note in brackets at the
+  end of a name (`(Boneyard)`) is not part of the number. Names with nothing to count
+  (`Alcove 1 Left`) are left for the person to type rather than guessed.
+- **Nothing is made inside one place.** A room that is one bin, the Project Shelf and the
+  boneyard are refused in a sentence, not converted to groups: ERPNext refuses that change once a
+  place has held stock, and done from a map it would leave every item assigned there without a
+  bin. Vehicles, job sites, disabled and Transit warehouses are refused too. A name with the
+  characters that break an address, and a name any warehouse already has (disabled ones
+  included, without regard to case), are refused before anything is written.
+- **Make only.** Nothing renames, moves, disables or deletes a warehouse. A place made by mistake
+  is deleted in the Desk by an Item Manager while nothing has been kept in it.
+- **The Bin Manager hears about it.** Nothing on the server caches the tree, but the Bin Manager
+  keeps its list of bins while it is open. The map sends `sf-warehouses-changed` and the Bin
+  Manager marks its list stale, as after one of its own saves.
+- **A tab open across this deploy** can hold the new page script over the old bundle. The bundle
+  is version 2 and the page offers making only on version 2, so such a tab shows the editor as
+  before until it is reloaded.
+
+### Tests
+
+- `tests/test_warehouse_map.py`: the name rule on production-shaped made-up names; where nothing
+  can be made; on the stub, that a viewer, a person outside the stock roles and an editor without
+  read on the parent make nothing; that the editor makes a bin with no create on Warehouse,
+  through `get_doc({...}).insert` with exactly five fields and the one flag; a bay with its
+  shelves and a shelf with its bins; every refusal before any insert; ERPNext's own refusal
+  reaching the person; and the new bin in the bay's front view and the editor's list. The file
+  checks now allow exactly one `ignore_permissions`, on that insert in `_insert`, and still no
+  raw SQL, no `enqueue`, no Putaway Rule and no stock.
+- `scripts/test_warehouse_map.mjs`: where a bay can go, where *New bay* starts, the count held to
+  0 to 30, the dialog's sentences, and that the page makes a place only through the endpoint and
+  only on bundle version 2.
+
 ## [1.819.0] - 2026-11-13
 
 ### Added

@@ -23,11 +23,14 @@ Reads (GET):
   show it ("Show on map" from the Item form and Stock Scan, and the page's own search).
 * :func:`editor_data` -- what the editor offers: the boxes worth placing and where each already
   is, and every warehouse for the picker.
-* :func:`box_levels` -- one warehouse's front view in the automatic order, for a box the editor
-  has just tied (the stored map does not hold it yet).
+* :func:`box_levels` -- one warehouse's front view, for a box the editor has just tied or just
+  made something in (the stored map does not describe it yet), in the box's own order when it has
+  one.
+* :func:`suggest_location` -- the name a new bay, shelf or bin would take there (v1.820.0).
 
-Writes (POST): :func:`save_map` and :func:`delete_map`. Nothing else is written, and neither
-touches a Warehouse, a Putaway Rule or stock.
+Writes (POST): :func:`save_map` and :func:`delete_map` write the map's own record and nothing
+else. :func:`create_location` (v1.820.0, slice 2) makes a bay, a shelf or a bin: a Warehouse, and
+nothing else (no Putaway Rule, no stock, no map record).
 
 Things this module is careful about:
 
@@ -50,6 +53,16 @@ Things this module is careful about:
   (``document.py`` ``_save``, read at v16.56.0), so a box tied to a deleted warehouse would be
   refused as "Could not find Row #3: Warehouse", and a ``warehouse`` that is not text would trip
   an ``assert``. :func:`save_map` therefore cleans the boxes with the rules first.
+* **Making a location is the map editor's right, and goes through the Warehouse itself.**
+  Nikolas, 2026-11-12, asked that the editor "can also create bins". On production only Item
+  Manager may create a Warehouse, so :func:`create_location` checks the map editor's rule (the
+  same one every save checks) and read on the parent warehouse, and then inserts with
+  ``frappe.get_doc({...}).insert(ignore_permissions=True)``: the permission is the only thing
+  skipped. ERPNext's own ``Warehouse.validate`` (the parent must be a group of the same company,
+  the stock account must resolve), its nested-set update, every ``doc_event`` of this app and
+  every Link check still run. No raw SQL and no background job (a deploy empties the queue). It
+  only makes: nothing here renames, moves, disables or deletes a warehouse; a location made by
+  mistake is deleted in the Desk by an Item Manager while nothing has been kept in it.
 * **Only named fields are written.** The editor's payload is a dict from the browser; the keys
   in :data:`_MAP_FIELDS` are read out of it and each box is rebuilt by
   ``warehouse_map_rules.clean_shape``. Nothing else in the payload reaches the record.
@@ -134,7 +147,7 @@ def _tree():
 	"""``{warehouse: row}`` for every warehouse. One read."""
 	rows = frappe.get_all(
 		"Warehouse",
-		fields=["name", "warehouse_name", "parent_warehouse", "is_group", "disabled", "warehouse_type"],
+		fields=["name", "warehouse_name", "parent_warehouse", "is_group", "disabled", "warehouse_type", "company"],
 	)
 	return {row.name: row for row in rows}
 
@@ -417,7 +430,8 @@ def editor_data():
 	tree = _tree()
 	kids = rules.children_index(tree)
 	placed = _placed([row.name for row in _map_rows(True)])
-	units = rules.units(tree, skip=_not_in_building(tree))
+	outside = _not_in_building(tree)
+	units = rules.units(tree, skip=outside)
 	for unit in units:
 		unit["trail"] = rules.trail(unit["warehouse"], tree)
 		shown = rules.shown_by(unit["warehouse"], placed, tree, kids) or {}
@@ -429,6 +443,10 @@ def editor_data():
 			"warehouse_name": row.warehouse_name or name,
 			"trail": rules.trail(name, tree),
 			"is_group": rules.is_group(row),
+			# For "New bay" (v1.820.0): where the warehouse hangs, and whether it is somewhere a
+			# place can be made from the map at all (not a vehicle or a job site).
+			"parent": row.parent_warehouse or "",
+			"outside": name in outside,
 		}
 		for name, row in tree.items()
 		if rules.usable(row)
@@ -438,23 +456,189 @@ def editor_data():
 
 
 @frappe.whitelist(methods=["GET"])
-def box_levels(warehouse):
-	"""One warehouse's front view in the automatic order (``warehouse_map_rules.levels`` with no
-	order of the box's own): ``{"is_group", "levels", "names"}``, ``names`` each row's and bin's
-	plain name. For the editor, which shows a box's shelves and bins so they can be put in order
-	by hand, and which may have tied the box a moment ago."""
+def box_levels(warehouse, order=None):
+	"""One warehouse's front view (``warehouse_map_rules.levels``): ``{"is_group", "levels",
+	"names"}``, ``names`` each row's and bin's plain name. For the editor, which shows a box's
+	shelves and bins so they can be put in order by hand, and which may have tied the box, or made
+	a shelf or a bin in it, a moment ago.
+
+	``order`` is the box's own order as the editor holds it (one warehouse a line), or nothing for
+	the automatic order. Since v1.820.0: a bin made in a box that has its own order is read back
+	in that order, the new bin at the end of its shelf, as the floor will show it."""
 	_require_edit()
 	warehouse = cstr(warehouse).strip()
 	tree = _tree()
 	if warehouse not in tree:
 		frappe.throw(_("There is no location called {0}.").format(warehouse or _("that")))
-	levels = rules.levels(warehouse, tree, rules.children_index(tree))
+	levels = rules.levels(warehouse, tree, rules.children_index(tree), rules.clean_order(order) or None)
+	return _levels_answer(warehouse, tree, levels)
+
+
+def _levels_answer(warehouse, tree, levels):
 	names = {}
 	for level in levels:
 		names[level["warehouse"]] = rules._name_of(tree, level["warehouse"])
 		for leaf in level["bins"]:
 			names[leaf] = rules._name_of(tree, leaf)
 	return {"is_group": rules.is_group(tree[warehouse]), "levels": levels, "names": names}
+
+
+# ---------------------------------------------------------------------------
+# Making a location (v1.820.0, slice 2)
+# ---------------------------------------------------------------------------
+
+
+def _suffix(company):
+	"""The suffix ERPNext's ``Warehouse.autoname`` puts on a name: `` - <abbr>`` of the company."""
+	company = cstr(company).strip()
+	if not company:
+		return ""
+	abbr = cstr(frappe.get_cached_value("Company", company, "abbr")).strip()
+	return f" - {abbr}" if abbr else ""
+
+
+def _kind(kind):
+	kind = cstr(kind).strip().lower()
+	if kind not in rules.KINDS:
+		frappe.throw(_("A new location is a bay, a shelf or a bin."))
+	return kind
+
+
+def _parent_problem(parent, tree):
+	row = tree.get(parent)
+	return row, rules.parent_problem(row, parent, _not_in_building(tree) if row is not None else ())
+
+
+@frappe.whitelist(methods=["GET"])
+def suggest_location(parent, kind):
+	"""The name a new ``kind`` (bay, shelf or bin) inside ``parent`` would take
+	(``warehouse_map_rules.suggest_name``): ``{"parent", "parent_name", "kind", "warehouse_name",
+	"suffix", "problem"}``. ``warehouse_name`` is ``""`` where the places already there have no
+	number to follow. ``problem`` is the sentence that says why nothing can be made there, and the
+	name is then empty: the editor shows it in place of the name rather than as an error."""
+	_require_edit()
+	kind = _kind(kind)
+	tree = _tree()
+	parent = cstr(parent).strip()
+	row, problem = _parent_problem(parent, tree)
+	out = {"parent": parent, "parent_name": rules._name_of(tree, parent), "kind": kind, "warehouse_name": "", "suffix": "", "problem": ""}
+	if problem:
+		out["problem"] = _(problem)
+		return out
+	spec = rules.KINDS[kind]
+	out["suffix"] = _suffix(row.company)
+	out["warehouse_name"] = rules.suggest_name(
+		rules.siblings_of(parent, tree, rules.children_index(tree), spec["is_group"]),
+		rules._name_of(tree, parent),
+		spec["word"],
+		taken=tree.keys(),
+		suffix=out["suffix"],
+	)
+	return out
+
+
+def _insert(warehouse_name, parent, is_group, company):
+	"""One Warehouse, through the document. The map editor's rule is the permission (the caller
+	has checked it); nothing else is skipped: not validate, not the Links, not a hook."""
+	doc = frappe.get_doc(
+		{
+			"doctype": "Warehouse",
+			"warehouse_name": warehouse_name,
+			"parent_warehouse": parent,
+			"is_group": 1 if is_group else 0,
+			"company": company,
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	return doc.name
+
+
+@frappe.whitelist(methods=["POST"])
+def create_location(parent, kind, warehouse_name, children=0):
+	"""Make a bay, a shelf or a bin (``kind``) called ``warehouse_name`` inside ``parent``, and
+	with it ``children`` shelves (for a bay) or bins (for a shelf), named in turn by the same rule.
+
+	Answers ``{"warehouse", "warehouse_name", "parent", "is_group", "trail", "created", "unit",
+	"levels", "names"}``: ``unit`` is the new place as the editor's list of things to place shows
+	one, and ``levels``/``names`` its front view, so a new bay's box is drawn with its shelves at
+	once.
+
+	Who: the map editor's rule (``_require_edit``: the Stock Scan gate, read on the map, and the
+	map's own write and create) and read on ``parent``. Not create on Warehouse: that is the point
+	of the editor making bins (Nikolas, 2026-11-12). What: new Warehouses, through
+	``Document.insert``, so ERPNext's and this app's rules all hold. Each is the company of
+	``parent``; nothing else is copied from it.
+
+	Refused, in the app's own sentence, before anything is written: a ``parent`` nothing can be
+	made inside (``warehouse_map_rules.parent_problem``), a name the rules refuse
+	(``location_name_problem``) and a name any warehouse already has, disabled ones included. It
+	is all one request, so a refusal from ERPNext part way through (the stock account, say) rolls
+	the whole request back and leaves nothing half made.
+	"""
+	_require_edit()
+	kind = _kind(kind)
+	tree = _tree()
+	parent = cstr(parent).strip()
+	row, problem = _parent_problem(parent, tree)
+	if problem:
+		frappe.throw(_(problem))
+	if not frappe.has_permission("Warehouse", "read", parent):
+		frappe.throw(
+			_("You are not permitted to see {0}.").format(rules._name_of(tree, parent)), frappe.PermissionError
+		)
+	company = cstr(row.company).strip()
+	suffix = _suffix(company)
+	name = rules.bare_name(warehouse_name, suffix)
+	problem = rules.location_name_problem(name)
+	if problem:
+		frappe.throw(_(problem))
+	taken = {key.lower() for key in tree}
+	if f"{name}{suffix}".lower() in taken or name.lower() in taken:
+		frappe.throw(_("There is already a location called {0}.").format(f"{name}{suffix}"))
+	spec = rules.KINDS[kind]
+	count = max(0, min(cint(children), rules.MAX_CHILDREN)) if spec["children"] else 0
+
+	made = _insert(name, parent, spec["is_group"], company)
+	created = [made]
+	if count:
+		child = rules.KINDS[spec["children"]]
+		names, used = [], set(tree) | {made}
+		for _n in range(count):
+			child_name = rules.suggest_name(names, name, child["word"], taken=used, suffix=suffix)
+			if not child_name:
+				break
+			done = _insert(child_name, made, child["is_group"], company)
+			names.append(child_name)
+			used.add(done)
+			created.append(done)
+
+	tree = _tree()
+	kids = rules.children_index(tree)
+	is_group = bool(spec["is_group"])
+	shown = rules._name_of(tree, made) if made in tree else name
+	answer = _levels_answer(made, tree, rules.levels(made, tree, kids)) if made in tree else {}
+	trail = rules.trail(made, tree) if made in tree else ""
+	return {
+		"warehouse": made,
+		"warehouse_name": shown,
+		"parent": parent,
+		"is_group": is_group,
+		"trail": trail,
+		"created": created,
+		"unit": {
+			"warehouse": made,
+			"warehouse_name": shown,
+			"is_group": is_group,
+			"bins": len(rules.leaves_under(made, tree, kids)) if is_group else 1,
+			# A new bay is a rack whatever is in it yet; ``units`` would call an empty group a room.
+			"suggested_type": rules.SHAPE_RACK if kind == rules.KIND_BAY else rules.SHAPE_ROOM,
+			"trail": trail,
+			"on_map": None,
+			"via": [],
+		},
+		"levels": answer.get("levels") or [],
+		"names": answer.get("names") or {},
+	}
 
 
 # ---------------------------------------------------------------------------

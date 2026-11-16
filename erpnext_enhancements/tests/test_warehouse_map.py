@@ -27,7 +27,11 @@ What is fenced:
   drawn (disabled) reads as "no such map" to everyone but its editors;
 * a save needs the DocType's own write and create (never ``ignore_permissions``), refuses a
   record changed since the editor opened, and writes nothing the payload merely happens to carry;
-* nothing here writes a Warehouse, a Putaway Rule or stock.
+* nothing here writes a Putaway Rule or stock, and the one Warehouse write (v1.820.0, slice 2:
+  the editor makes a bay, a shelf or a bin) is an insert through the Warehouse document, allowed
+  by the map editor's rule and nothing else: a viewer makes nothing, nothing is made inside one
+  place, a name follows its siblings (the highest number plus one) and is refused in the app's own
+  sentence when the rules or an existing warehouse say no.
 
 Run: python -m unittest erpnext_enhancements.tests.test_warehouse_map -v
 """
@@ -94,6 +98,7 @@ VAN_BIN = "Van Shelf - ZZ"
 SITES = "Job Sites - ZZ"
 SITE = "Job Site PRJ-90001 Water Wall - ZZ"
 TRANSIT = "Goods In Transit - ZZ"
+COMPANY = "Zeta Works"
 
 
 def _tree_rows():
@@ -149,6 +154,7 @@ def _tree(disabled=()):
 			"is_group": group,
 			"disabled": int(name in disabled),
 			"warehouse_type": "Transit" if name == TRANSIT else "",
+			"company": COMPANY,
 		}
 		for name, label, parent, group in _tree_rows()
 	}
@@ -480,6 +486,73 @@ class TestColors(unittest.TestCase):
 		self.assertEqual(rules.summarize([])["status"], "empty")
 
 
+class TestNamingANewLocation(unittest.TestCase):
+	"""Slice 2: the name a new bay, shelf or bin takes, and where nothing can be made."""
+
+	SUFFIX = " - ZZ"
+
+	def test_the_highest_number_plus_one_not_the_last_in_text_order(self):
+		siblings = [f"Bin K1-2-{n}" for n in (1, 2, 9, 10, 16, 3)]
+		self.assertEqual(rules.suggest_name(siblings, "Shelf K1-2", "Bin", suffix=self.SUFFIX), "Bin K1-2-17")
+		self.assertEqual(rules.suggest_name(["Bay K1", "Bay K2"], "Lane 7", "Bay"), "Bay K3")
+		self.assertEqual(rules.suggest_name(["Red-1", "Red-12"], "Red Row", "Bin"), "Red-13")
+
+	def test_a_note_in_brackets_is_not_part_of_the_number(self):
+		siblings = ["Bin K1-2-1 (Scrap)", "Bin K1-2-2"]
+		self.assertEqual(rules.suggest_name(siblings, "Shelf K1-2", "Bin"), "Bin K1-2-3")
+
+	def test_with_nothing_to_follow_the_parents_code_then_one(self):
+		self.assertEqual(rules.suggest_name([], "Shelf K3-1", "Bin"), "Bin K3-1-1")
+		self.assertEqual(rules.suggest_name([], "Bay K3", "Shelf"), "Shelf K3-1")
+		self.assertEqual(rules.suggest_name([], "Stock", "Bay"), "Bay 1")
+
+	def test_names_with_no_number_to_follow_are_left_to_the_person(self):
+		self.assertEqual(rules.suggest_name(["Nook 1 Left", "Nook 1 Center"], "Nook Row 1", "Bin"), "")
+
+	def test_the_stem_most_siblings_share(self):
+		siblings = ["Bin K1-2-1", "Bin K1-2-2", "Bin K1-2-3", "Odd 40"]
+		self.assertEqual(rules.suggest_name(siblings, "Shelf K1-2", "Bin"), "Bin K1-2-4")
+
+	def test_a_name_in_use_anywhere_is_passed_over(self):
+		taken = ["Bin K1-2-3 - ZZ", "bin k1-2-4 - zz", "Bin K1-2-5"]
+		self.assertEqual(
+			rules.suggest_name(["Bin K1-2-1", "Bin K1-2-2"], "Shelf K1-2", "Bin", taken=taken, suffix=self.SUFFIX),
+			"Bin K1-2-6",
+		)
+
+	def test_a_typed_suffix_is_taken_off(self):
+		self.assertEqual(rules.bare_name("  Bin K1-2-7 - zz ", self.SUFFIX), "Bin K1-2-7")
+		self.assertEqual(rules.bare_name("Bin K1-2-7", self.SUFFIX), "Bin K1-2-7")
+		self.assertEqual(rules.bare_name("Bin K1-2-7 - ZZ", ""), "Bin K1-2-7 - ZZ")
+
+	def test_a_name_that_could_not_be_part_of_an_address(self):
+		self.assertIsNone(rules.location_name_problem("Bin K1-2-7"))
+		for bad in ("", "   ", "a/b", "a?b", 'a"b', "a#b", "a%b", "..", "x" * 101, "a\tb"):
+			self.assertTrue(rules.location_name_problem(bad), repr(bad))
+
+	def test_where_nothing_can_be_made(self):
+		tree = _tree(disabled={BAY2})
+		self.assertIsNone(rules.parent_problem(tree[SHELF2], SHELF2))
+		self.assertIn("one place", rules.parent_problem(tree[ROOM], ROOM))
+		self.assertIn("disabled", rules.parent_problem(tree[BAY2], BAY2))
+		self.assertIn("Transit", rules.parent_problem(tree[TRANSIT], TRANSIT))
+		self.assertIn("not in the building", rules.parent_problem(tree[VANS], VANS, outside={VANS}))
+		self.assertIn("no location called", rules.parent_problem(None, "Nowhere - ZZ"))
+
+	def test_siblings_are_the_same_kind_disabled_ones_included(self):
+		tree = _tree(disabled={BIN9})
+		kids = rules.children_index(tree)
+		self.assertEqual(rules.siblings_of(SHELF2, tree, kids, 0), ["Bin K1-2-1", "Bin K1-2-2", "Bin K1-2-9", "Bin K1-2-10"])
+		self.assertEqual(rules.siblings_of(BAY, tree, kids, 1), ["Shelf K1-1", "Shelf K1-2"])
+		self.assertEqual(rules.siblings_of(BAY, tree, kids, 0), [])
+
+	def test_each_kind_says_what_it_is(self):
+		self.assertEqual({k: v["is_group"] for k, v in rules.KINDS.items()}, {"bay": 1, "shelf": 1, "bin": 0})
+		self.assertEqual(rules.KINDS["bay"]["children"], "shelf")
+		self.assertEqual(rules.KINDS["shelf"]["children"], "bin")
+		self.assertIsNone(rules.KINDS["bin"]["children"])
+
+
 # ---------------------------------------------------------------------------
 # The endpoints and the controller, on a stub
 # ---------------------------------------------------------------------------
@@ -558,6 +631,10 @@ def _reset():
 			# Every key the code asked the cache to drop, and whether Redis is answering.
 			"cache_cleared": [],
 			"redis_down": False,
+			# Slice 2: every Warehouse insert, as asked, and the companies' abbreviations.
+			"inserts": [],
+			"companies": {COMPANY: "ZZ"},
+			"insert_fails": "",
 		}
 	)
 
@@ -706,7 +783,46 @@ def _install():
 			self.on_update()
 			return self
 
-	def get_doc(doctype, name):
+	class WarehouseDoc:
+		"""A new Warehouse, as ERPNext's document takes it (``warehouse.py`` at v16.54.0): the
+		create permission unless told to ignore it, ``validate_parent_warehouse`` (a group of the
+		same company), ``autoname`` (the company's suffix, not added twice) and a name used once."""
+
+		def __init__(self, data):
+			self.data = dict(data)
+			self.name = None
+
+		def insert(self, **kwargs):
+			STATE["inserts"].append({"data": dict(self.data), "kwargs": dict(kwargs)})
+			if not kwargs.get("ignore_permissions") and not has_permission("Warehouse", "create"):
+				raise _Denied("No create permission for Warehouse")
+			if STATE["insert_fails"]:
+				raise _Throw(STATE["insert_fails"])
+			data = self.data
+			parent = STATE["tree"].get(data.get("parent_warehouse"))
+			if not parent or not parent["is_group"] or parent.get("company") != data.get("company"):
+				raise _Throw(f"Parent Warehouse {data.get('parent_warehouse')} must be a group warehouse")
+			suffix = " - " + STATE["companies"][data["company"]]
+			label = data["warehouse_name"]
+			name = label if label.endswith(suffix) else label + suffix
+			if name in STATE["tree"]:
+				raise _Throw(f"Duplicate name {name}")
+			STATE["tree"][name] = {
+				"name": name,
+				"warehouse_name": label,
+				"parent_warehouse": data["parent_warehouse"],
+				"is_group": int(data["is_group"]),
+				"disabled": 0,
+				"warehouse_type": "",
+				"company": data["company"],
+			}
+			self.name = name
+			return self
+
+	def get_doc(doctype, name=None):
+		if isinstance(doctype, dict):
+			assert doctype.get("doctype") == "Warehouse", doctype
+			return WarehouseDoc(doctype)
 		assert doctype == MAP, doctype
 		stored = STATE["maps"][name]
 		data = dict(stored)
@@ -749,6 +865,12 @@ def _install():
 	frappe.delete_doc = delete_doc
 	frappe.db = types.SimpleNamespace(exists=exists, set_value=set_value)
 
+	def get_cached_value(doctype, name, field):
+		assert (doctype, field) == ("Company", "abbr"), (doctype, field)
+		return STATE["companies"].get(name)
+
+	frappe.get_cached_value = get_cached_value
+
 	def delete_key(key):
 		if STATE["redis_down"]:
 			raise TimeoutError("redis did not answer")
@@ -761,7 +883,14 @@ def _install():
 	frappe.PermissionError = _Denied
 	frappe.TimestampMismatchError = _Stale
 	utils = types.ModuleType("frappe.utils")
-	utils.cint = lambda v: int(v or 0)
+	def cint(v):
+		# As Frappe's: anything that is not a whole number is 0.
+		try:
+			return int(float(v or 0))
+		except (TypeError, ValueError):
+			return 0
+
+	utils.cint = cint
 	utils.cstr = lambda v: "" if v is None else str(v)
 	utils.flt = lambda v, precision=None: float(v or 0)
 	frappe.utils = utils
@@ -921,6 +1050,7 @@ class TestWhoMayLook(_Base):
 		("find_item", ("ELBOW",)),
 		("editor_data", ()),
 		("box_levels", (BAY,)),
+		("suggest_location", (SHELF2, "bin")),
 	)
 
 	def test_every_read_asks_the_gate_before_it_reads_anything(self):
@@ -1336,6 +1466,182 @@ class TestSaving(_Base):
 # ---------------------------------------------------------------------------
 
 
+class TestMakingALocation(_Base):
+	"""Slice 2 (v1.820.0): the editor makes a bay, a shelf or a bin. The map editor's rule is the
+	permission, the insert goes through the Warehouse document, and the app's own sentence comes
+	before anything is written."""
+
+	MAKER = EDITOR | {("Warehouse", "read")}
+
+	def as_maker(self):
+		STATE["perms"] = set(self.MAKER)
+
+	def made(self):
+		return [row["data"]["warehouse_name"] for row in STATE["inserts"]]
+
+	def test_a_viewer_makes_nothing(self):
+		for perms in (VIEWER, VIEWER | {("Warehouse", "read"), ("Warehouse", "create")}):
+			STATE["perms"] = set(perms)
+			with self.assertRaises(_Denied):
+				api.create_location(SHELF2, "bin", "Bin K1-2-11")
+			with self.assertRaises(_Denied):
+				api.suggest_location(SHELF2, "bin")
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_no_stock_role_makes_nothing(self):
+		self.as_maker()
+		STATE["access"] = False
+		with self.assertRaises(_Denied):
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_the_editor_makes_a_bin_without_create_on_warehouse(self):
+		self.as_maker()
+		self.assertNotIn(("Warehouse", "create"), STATE["perms"])
+		answer = api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertEqual(answer["warehouse"], "Bin K1-2-11 - ZZ")
+		self.assertEqual(answer["created"], ["Bin K1-2-11 - ZZ"])
+		self.assertFalse(answer["is_group"])
+		self.assertEqual(answer["parent"], SHELF2)
+		self.assertEqual(answer["trail"], "Stock › Lane 7 › Bay K1 › Shelf K1-2")
+		# Through the document, with the one flag, and exactly these fields.
+		self.assertEqual(
+			STATE["inserts"],
+			[
+				{
+					"data": {
+						"doctype": "Warehouse",
+						"warehouse_name": "Bin K1-2-11",
+						"parent_warehouse": SHELF2,
+						"is_group": 0,
+						"company": COMPANY,
+					},
+					"kwargs": {"ignore_permissions": True},
+				}
+			],
+		)
+		# Nothing else was written: no map, no rule, no stock.
+		self.assertEqual(STATE["writes"], [])
+
+	def test_read_on_the_parent_is_asked(self):
+		STATE["perms"] = set(EDITOR)
+		with self.assertRaises(_Denied):
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_the_name_it_would_take(self):
+		self.as_maker()
+		answer = api.suggest_location(SHELF2, "bin")
+		self.assertEqual((answer["warehouse_name"], answer["suffix"], answer["problem"]), ("Bin K1-2-11", " - ZZ", ""))
+		self.assertEqual(api.suggest_location(BAY, "shelf")["warehouse_name"], "Shelf K1-3")
+		self.assertEqual(api.suggest_location(ROW2, "bay")["warehouse_name"], "Bay K3")
+		self.assertEqual(api.suggest_location(NOOK_ROW, "bin")["warehouse_name"], "")
+		self.assertEqual(api.suggest_location(BAY2, "shelf")["warehouse_name"], "Shelf K2-1")
+		# Asking is not making.
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_where_nothing_can_be_made_is_said_not_thrown_when_asking(self):
+		self.as_maker()
+		for parent, words in ((ROOM, "one place"), (VANS, "not in the building"), (TRANSIT, "Transit"), ("Nowhere - ZZ", "no location")):
+			answer = api.suggest_location(parent, "bin")
+			self.assertIn(words, answer["problem"], parent)
+			self.assertEqual(answer["warehouse_name"], "", parent)
+
+	def test_nothing_is_made_inside_one_place(self):
+		self.as_maker()
+		for parent in (ROOM, BONEYARD, VAN_BIN, SITE, VANS, SITES, TRANSIT, "Nowhere - ZZ"):
+			with self.assertRaises(_Throw, msg=parent):
+				api.create_location(parent, "bin", "Bin X-1")
+		STATE["tree"][BAY2]["disabled"] = 1
+		with self.assertRaises(_Throw):
+			api.create_location(BAY2, "shelf", "Shelf K2-1")
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_a_name_in_use_is_refused_in_the_apps_own_words(self):
+		self.as_maker()
+		STATE["tree"][BIN9]["disabled"] = 1
+		for typed in ("Bin K1-2-9", "bin k1-2-9", "Bin K1-2-9 - ZZ", "Bin K1-2-10"):
+			with self.assertRaises(_Throw) as caught:
+				api.create_location(SHELF2, "bin", typed)
+			self.assertIn("There is already a location called", str(caught.exception), typed)
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_a_name_the_rules_refuse(self):
+		self.as_maker()
+		for typed in ("", "a/b", 'Bin "7"', "..", "x" * 101):
+			with self.assertRaises(_Throw, msg=typed):
+				api.create_location(SHELF2, "bin", typed)
+		with self.assertRaises(_Throw):
+			api.create_location(SHELF2, "rack", "Bin K1-2-11")
+		self.assertEqual(STATE["inserts"], [])
+
+	def test_a_typed_suffix_is_not_stored_twice(self):
+		self.as_maker()
+		answer = api.create_location(SHELF2, "bin", "Bin K1-2-20 - ZZ")
+		self.assertEqual(answer["warehouse"], "Bin K1-2-20 - ZZ")
+		self.assertEqual(self.made(), ["Bin K1-2-20"])
+
+	def test_a_bay_with_its_shelves(self):
+		self.as_maker()
+		answer = api.create_location(ROW2, "bay", "Bay K3", children=3)
+		self.assertEqual(answer["created"], ["Bay K3 - ZZ", "Shelf K3-1 - ZZ", "Shelf K3-2 - ZZ", "Shelf K3-3 - ZZ"])
+		self.assertEqual([row["data"]["is_group"] for row in STATE["inserts"]], [1, 1, 1, 1])
+		self.assertEqual([row["data"]["parent_warehouse"] for row in STATE["inserts"]], [ROW2] + ["Bay K3 - ZZ"] * 3)
+		unit = answer["unit"]
+		self.assertEqual((unit["warehouse"], unit["suggested_type"], unit["is_group"], unit["on_map"]), ("Bay K3 - ZZ", "Rack", True, None))
+		self.assertEqual([level["label"] for level in answer["levels"]], ["Shelf K3-1", "Shelf K3-2", "Shelf K3-3"])
+		self.assertEqual(answer["names"]["Shelf K3-2 - ZZ"], "Shelf K3-2")
+
+	def test_a_shelf_with_its_bins(self):
+		self.as_maker()
+		answer = api.create_location(BAY, "shelf", "Shelf K1-3", children=2)
+		self.assertEqual(answer["created"], ["Shelf K1-3 - ZZ", "Bin K1-3-1 - ZZ", "Bin K1-3-2 - ZZ"])
+		self.assertEqual([row["data"]["is_group"] for row in STATE["inserts"]], [1, 0, 0])
+
+	def test_a_bin_has_nothing_made_inside_it_and_the_count_is_held(self):
+		self.as_maker()
+		api.create_location(SHELF2, "bin", "Bin K1-2-11", children=5)
+		self.assertEqual(len(STATE["inserts"]), 1)
+		STATE["inserts"].clear()
+		api.create_location(BAY, "shelf", "Shelf K1-3", children="lots")
+		self.assertEqual(len(STATE["inserts"]), 1)
+		STATE["inserts"].clear()
+		api.create_location(BAY, "shelf", "Shelf K1-4", children=99)
+		self.assertEqual(len(STATE["inserts"]), 1 + rules.MAX_CHILDREN)
+
+	def test_a_refusal_from_erpnext_reaches_the_person(self):
+		self.as_maker()
+		STATE["insert_fails"] = "Please set Account in Warehouse or Default Inventory Account in Company"
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertIn("Default Inventory Account", str(caught.exception))
+
+	def test_a_new_bin_shows_in_its_bays_front_view_and_the_editors_list(self):
+		self.as_maker()
+		api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.shop_floor()
+		data = api.get_map("Shop Floor")
+		bay = next(shape for shape in data["shapes"] if shape["warehouse"] == BAY)
+		self.assertEqual(bay["levels"][1]["bins"][-1], "Bin K1-2-11 - ZZ")
+		self.assertIn("Bin K1-2-11 - ZZ", data["bins"])
+		self.assertIn("Bin K1-2-11 - ZZ", [row["name"] for row in api.editor_data()["warehouses"]])
+
+	def test_the_editor_reads_a_box_back_in_its_own_order(self):
+		self.as_maker()
+		order = "\n".join([SHELF2, SHELF1, BIN10, BIN9])
+		answer = api.box_levels(BAY, order=order)
+		self.assertEqual([level["warehouse"] for level in answer["levels"]], [SHELF2, SHELF1])
+		self.assertEqual(answer["levels"][0]["bins"], [BIN10, BIN9, BIN1, BIN2])
+		self.assertEqual([level["warehouse"] for level in api.box_levels(BAY)["levels"]], [SHELF1, SHELF2])
+
+	def test_the_editor_knows_where_a_bay_can_go(self):
+		self.as_maker()
+		rows = {row["name"]: row for row in api.editor_data()["warehouses"]}
+		self.assertEqual((rows[BAY]["parent"], rows[BAY]["outside"]), (ROW2, False))
+		self.assertTrue(rows[VANS]["outside"])
+		self.assertTrue(rows[SITES]["outside"])
+
+
 def _calls_with_keyword(source, keyword):
 	return [
 		node.lineno
@@ -1363,28 +1669,70 @@ class TestTheFiles(unittest.TestCase):
 				"find_item": [["GET"]],
 				"editor_data": [["GET"]],
 				"box_levels": [["GET"]],
+				"suggest_location": [["GET"]],
 				"save_map": [["POST"]],
 				"delete_map": [["POST"]],
+				"create_location": [["POST"]],
 			},
 		)
 
 	def test_nothing_is_written_past_permissions(self):
+		"""The controller never skips a permission. The endpoint file skips one, once: the
+		Warehouse insert that makes a location, whose permission is the map editor's rule
+		(Nikolas, 2026-11-12: "Editor can also create bins"). Nothing skips a Link check."""
+		self.assertEqual(_calls_with_keyword(CONTROLLER_SOURCE.read_text(encoding="utf-8"), "ignore_permissions"), [])
+		source = API_SOURCE.read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		skips = [
+			(fn.name, node)
+			for fn in tree.body
+			if isinstance(fn, ast.FunctionDef)
+			for node in ast.walk(fn)
+			if isinstance(node, ast.Call) and any(kw.arg == "ignore_permissions" for kw in node.keywords)
+		]
+		self.assertEqual([name for name, _node in skips], ["_insert"])
+		call = skips[0][1]
+		self.assertEqual(getattr(call.func, "attr", ""), "insert")
+		self.assertEqual([(kw.arg, ast.literal_eval(kw.value)) for kw in call.keywords], [("ignore_permissions", True)])
 		for path in (API_SOURCE, CONTROLLER_SOURCE):
-			source = path.read_text(encoding="utf-8")
-			self.assertEqual(_calls_with_keyword(source, "ignore_permissions"), [], path.name)
-			self.assertEqual(_calls_with_keyword(source, "ignore_links"), [], path.name)
+			text = path.read_text(encoding="utf-8")
+			self.assertEqual(_calls_with_keyword(text, "ignore_links"), [], path.name)
+			for flag in ("ignore_validate", "ignore_mandatory", "ignore_links", "ignore_inventory_account_validation"):
+				self.assertNotIn(f"flags.{flag}", text, path.name)
 
 	def test_the_map_writes_no_warehouse_rule_or_stock(self):
-		"""Every write in the endpoint file is on the map's own record."""
+		"""Every write in the endpoint file is on the map's own record, but one: ``_insert``, which
+		makes a Warehouse through its document (``frappe.get_doc({...}).insert``). No raw SQL, no
+		background job, no Putaway Rule, no stock."""
 		tree = ast.parse(API_SOURCE.read_text(encoding="utf-8"))
-		writers = {"new_doc", "get_doc", "delete_doc", "rename_doc", "set_value", "sql", "insert"}
-		for node in ast.walk(tree):
-			if not isinstance(node, ast.Call) or getattr(node.func, "attr", "") not in writers:
+		writers = {"new_doc", "get_doc", "delete_doc", "rename_doc", "set_value", "sql", "insert", "enqueue"}
+		for fn in tree.body:
+			if not isinstance(fn, ast.FunctionDef):
 				continue
-			self.assertTrue(node.args, f"line {node.lineno}")
-			first = node.args[0]
-			self.assertIsInstance(first, ast.Name, f"line {node.lineno}: a write on something other than MAP")
-			self.assertEqual(first.id, "MAP", f"line {node.lineno}")
+			for node in ast.walk(fn):
+				if not isinstance(node, ast.Call) or getattr(node.func, "attr", "") not in writers:
+					continue
+				attr = node.func.attr
+				self.assertNotIn(attr, ("sql", "enqueue"), f"line {node.lineno}")
+				if fn.name == "_insert":
+					if attr == "get_doc":
+						data = node.args[0]
+						self.assertIsInstance(data, ast.Dict, f"line {node.lineno}")
+						fields = {k.value: v for k, v in zip(data.keys, data.values)}
+						self.assertEqual(ast.literal_eval(fields["doctype"]), "Warehouse")
+						self.assertEqual(
+							set(fields), {"doctype", "warehouse_name", "parent_warehouse", "is_group", "company"}
+						)
+					else:
+						self.assertEqual(attr, "insert", f"line {node.lineno}")
+					continue
+				self.assertTrue(node.args, f"line {node.lineno}")
+				first = node.args[0]
+				self.assertIsInstance(first, ast.Name, f"line {node.lineno}: a write on something other than MAP")
+				self.assertEqual(first.id, "MAP", f"line {node.lineno}")
+		source = API_SOURCE.read_text(encoding="utf-8")
+		for doctype in ("Putaway Rule", "Stock Entry", "Stock Reconciliation", "Bin"):
+			self.assertNotIn(f'"{doctype}"', source, doctype)
 
 	def test_the_doctype_gives_looking_to_the_stock_roles_and_changing_to_the_editors(self):
 		doctype = json.loads((CONTROLLER_SOURCE.parent / "warehouse_floor_map.json").read_text(encoding="utf-8"))

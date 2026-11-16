@@ -585,6 +585,82 @@ export function unit_lists(units, shapes, map_name) {
 	return out;
 }
 
+// ------------------------------------------------------------------ making a location (slice 2)
+//
+// v1.820.0. Nikolas, 2026-11-12: "Editor can also create bins". The editor makes a bay on the floor,
+// a shelf in a bay, a bin on a shelf. The server makes it (api.warehouse_map.create_location, through
+// the Warehouse document) and says what the name would be (suggest_location); these decide what the
+// editor offers and what it says before anything is made.
+
+export const KIND_BAY = "bay";
+export const KIND_SHELF = "shelf";
+export const KIND_BIN = "bin";
+
+export const MAKE = {
+	bay: { title: "New bay", noun: "bay", children: "Shelves to make in it", child: "shelf", children_noun: "shelves" },
+	shelf: { title: "New shelf", noun: "shelf", children: "Bins to make on it", child: "bin", children_noun: "bins" },
+	bin: { title: "New bin", noun: "bin", children: "", child: "", children_noun: "" },
+};
+
+export const MAX_CHILDREN = 30;
+
+// Whether a box can have shelves and bins made inside it: it stands for a group that is drawn. A box
+// that is one place (a room that is one bin, the Project Shelf) cannot; the server says why.
+export function can_make_inside(shape) {
+	const s = shape || {};
+	return !!text(s.warehouse) && s.shape_type !== LABEL && !s.missing && !!s.is_group;
+}
+
+// Where "New bay" can put a bay: every drawn group that is in the building, as the dialog's choices
+// ({ value, label }), in the server's order (by trail).
+export function bay_parents(warehouses) {
+	return (Array.isArray(warehouses) ? warehouses : [])
+		.filter((w) => w && w.is_group && !w.outside)
+		.map((w) => ({ value: w.name, label: text(w.trail) ? `${w.trail} › ${w.warehouse_name}` : text(w.warehouse_name) || w.name }));
+}
+
+// The group "New bay" starts on: the one the picked box's bay hangs in (a new bay is most often the
+// next one along the same row), when that is a place a bay can go. Otherwise nothing, and the person
+// picks.
+export function default_bay_parent(shape, warehouses) {
+	const s = shape || {};
+	const list = Array.isArray(warehouses) ? warehouses : [];
+	const own = list.find((w) => w.name === text(s.warehouse));
+	if (!own || !own.is_group || !own.parent) return "";
+	return bay_parents(list).some((c) => c.value === own.parent) ? own.parent : "";
+}
+
+// How many shelves or bins to make with it, held to what the server accepts.
+export function child_count(value, kind) {
+	if (!MAKE[kind] || !MAKE[kind].child) return 0;
+	const n = Math.floor(num(value, 0));
+	return Math.max(0, Math.min(n, MAX_CHILDREN));
+}
+
+// The sentence the dialog shows before anything is made: what is made, where, now, and what happens
+// to a new bay's box if the editor is left without saving.
+export function make_note(kind, parent_name, children) {
+	const m = MAKE[kind] || MAKE.bin;
+	const n = child_count(children, kind);
+	const what = n ? `the ${m.noun} and ${count_word(n, m.child, m.children_noun)} in it` : `the ${m.noun}`;
+	const where = text(parent_name) ? ` in ${text(parent_name)}` : "";
+	if (kind === KIND_BAY) {
+		return (
+			`This makes ${what}${where} in ERPNext as soon as you choose Make it, and puts its box in the middle of the map. ` +
+			"Drag the box to where the bay stands and choose Save. If you leave without saving, the bay is still made and waits under Not on a map yet."
+		);
+	}
+	return `This makes ${what}${where} in ERPNext as soon as you choose Make it. It shows in this box's front view at once; the map does not need saving for it.`;
+}
+
+// What is said once it is made.
+export function made_text(answer) {
+	const a = answer || {};
+	const created = Array.isArray(a.created) ? a.created.length : 0;
+	const name = text(a.warehouse_name) || text(a.warehouse);
+	return created > 1 ? `${name} made, with ${created - 1} more inside it` : `${name} made`;
+}
+
 // The warehouses the picker offers whose name or trail holds every word typed.
 export function filter_warehouses(warehouses, query, limit) {
 	const want = text(query).toLowerCase().split(/\s+/).filter(Boolean);
