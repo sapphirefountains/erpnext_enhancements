@@ -620,13 +620,14 @@ def location_name_problem(name):
 	return None
 
 
-def parent_problem(row, name, outside=()):
+def parent_problem(row, name, outside=(), shelf=None):
 	"""Why nothing can be made inside the warehouse ``name`` (its tree ``row``), or ``None``.
 
 	Only a group holds other places. A bin (a room that is one place, the Project Shelf, the
 	boneyard) is refused rather than turned into a group: ERPNext refuses that change once a
 	place has ever held stock, and doing it from a map would move every item assigned there.
-	``outside`` names the vehicles and job sites, whose places are made where they are managed.
+	``outside`` names the vehicles and job sites, whose places are made where they are managed;
+	``shelf`` is the Project Shelf's warehouse, which gets a sentence of its own.
 	"""
 	label = _name_of({name: row}, name) if row is not None else text(name)
 	if row is None:
@@ -638,6 +639,8 @@ def parent_problem(row, name, outside=()):
 		return f"{label} is a Transit warehouse, so nothing can be made inside it."
 	if name in set(outside or ()):
 		return f"{label} is not in the building, so its places are not made from the map."
+	if shelf and name == shelf:
+		return f"{label} is the Project Shelf, the shared shelf where parts wait for their jobs. Nothing is made inside it."
 	if not is_group(row):
 		return (
 			f"{label} is one place, not a group of places, so nothing can be made inside it. "
@@ -647,8 +650,9 @@ def parent_problem(row, name, outside=()):
 
 
 def _numbered(name):
+	"""``(stem, number, digits)`` for a name that ends in a number, or ``None``."""
 	found = _NUMBERED.match(_NOTE.sub("", text(name)))
-	return (found.group(1), int(found.group(2))) if found else None
+	return (found.group(1), int(found.group(2)), found.group(2)) if found else None
 
 
 def _code_of(name):
@@ -670,19 +674,26 @@ def suggest_name(siblings, parent_name, word, taken=(), suffix=""):
 	* No siblings: ``word`` and the parent's code, then ``-1``: ``Shelf A3-1`` in ``Bay A3``,
 	  ``Bin A3-1-1`` on ``Shelf A3-1``.
 
+	A number written with leading zeros keeps its width (``Bin A1-3-07`` and ``-08`` give ``-09``).
+
 	A name already used (``taken``: every warehouse's name; ``suffix`` is the company's ``" - XX"``,
 	and both the bare and the suffixed name are compared, without regard to case, as the database
 	compares) is passed over for the next number.
 	"""
 	names = [text(n) for n in siblings or () if text(n)]
-	stems = {}
+	stems, widths = {}, {}
 	for n in names:
 		found = _numbered(n)
 		if found:
 			stems.setdefault(found[0], []).append(found[1])
+			# A number written with leading zeros (``07``) keeps its width: the next is ``09``, not ``9``.
+			if found[2].startswith("0") and len(found[2]) > 1:
+				widths[found[0]] = max(widths.get(found[0], 0), len(found[2]))
+	width = 0
 	if stems:
 		stem = max(stems, key=lambda s: (len(stems[s]), max(stems[s]), s))
 		number = max(stems[stem]) + 1
+		width = widths.get(stem, 0)
 	elif names:
 		return ""
 	else:
@@ -690,7 +701,7 @@ def suggest_name(siblings, parent_name, word, taken=(), suffix=""):
 		stem, number = (f"{word} {code}-" if code else f"{word} "), 1
 	used = {text(t).lower() for t in taken or ()}
 	for _ in range(1000):
-		candidate = f"{stem}{number}"
+		candidate = f"{stem}{number:0{width}d}" if width else f"{stem}{number}"
 		full = f"{candidate}{suffix or ''}"
 		if candidate.lower() not in used and full.lower() not in used:
 			return candidate

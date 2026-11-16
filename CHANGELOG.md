@@ -128,6 +128,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A tab open across this deploy** can hold the new page script over the old bundle. The bundle
   is version 2 and the page offers making only on version 2, so such a tab shows the editor as
   before until it is reloaded.
+- **Review round 1.** The vehicle and job-site lookup is strict when something is to be made: if
+  it fails, nothing is made and the person is told, where an empty answer would have let a bin be
+  made under a van. Read on the parent warehouse itself is asked first, before anything is said
+  about it, and also when a name is suggested, so a person who cannot see a place is shown no
+  suggestion for it. A clash names the location that exists, in its own capitals, and a clash only
+  the database sees (two people at once, accents) gets the same sentence instead of Frappe's. The
+  Project Shelf has its own refusal sentence. A number written with leading zeros keeps its width
+  (`-07`, `-08`, then `-09`). Warehouse names are escaped before Frappe's Select and `show_alert`
+  write them as HTML, and never go through `__()`. An answer that arrives after the person opened
+  another map's editor is not added to it. The Count Desk, like the Bin Manager, reads its list of
+  locations again after a place is made on the map.
 
 ### Tests
 

@@ -223,10 +223,14 @@ def _bin_payload(row, name, tree):
 	}
 
 
-def _not_in_building(tree):
+def _not_in_building(tree, strict=False):
 	"""Every warehouse that is a vehicle or a job site, with everything under them: they are
 	listed beside the map and never suggested as a box. Each part is read on its own, so one
-	that cannot be read leaves the other."""
+	that cannot be read leaves the other.
+
+	``strict`` (v1.820.0, for making a location): a lookup that fails raises instead of leaving
+	its part out, because there an empty answer would let a place be made under a vehicle or a job
+	site. The listing beside the map keeps the forgiving form."""
 	out = set()
 	try:
 		from erpnext_enhancements.inventory_enhancements import job_sites
@@ -236,7 +240,8 @@ def _not_in_building(tree):
 		if group:
 			out.add(group.name)
 	except Exception:
-		pass
+		if strict:
+			raise
 	try:
 		from erpnext_enhancements.inventory_enhancements import bin_views
 
@@ -246,7 +251,8 @@ def _not_in_building(tree):
 			)
 		)
 	except Exception:
-		pass
+		if strict:
+			raise
 	return out
 
 
@@ -526,9 +532,39 @@ def _kind(kind):
 	return kind
 
 
+#: Said when the vehicles and job sites could not be looked up: nothing is made on a guess.
+_LOOKUP_FAILED = "Whether {0} is a vehicle or a job site could not be checked just now, so nothing can be made there. Try again."
+
+
+def _shelf_warehouse():
+	"""The Project Shelf's warehouse, for its own refusal sentence; ``None`` when there is none or it
+	cannot be read (it is a bin either way, and refused as one)."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		return project_shelf.warehouse()
+	except Exception:
+		return None
+
+
+def _may_read(parent, tree):
+	"""Read on the warehouse itself (its own row, so a User Permission on Warehouse counts). Asked
+	before anything is said about it. A name that is not a warehouse is answered by the rules."""
+	return parent not in tree or bool(frappe.has_permission("Warehouse", "read", parent))
+
+
 def _parent_problem(parent, tree):
+	"""``(row, problem)``. The vehicles and job sites are looked up strictly: a failed lookup is a
+	problem of its own, never an empty list."""
 	row = tree.get(parent)
-	return row, rules.parent_problem(row, parent, _not_in_building(tree) if row is not None else ())
+	if row is None:
+		return row, rules.parent_problem(row, parent)
+	try:
+		outside = _not_in_building(tree, strict=True)
+	except Exception:
+		frappe.log_error(title="Warehouse Map: vehicles and job sites could not be looked up")
+		return row, _LOOKUP_FAILED.format(rules._name_of(tree, parent))
+	return row, rules.parent_problem(row, parent, outside, shelf=_shelf_warehouse())
 
 
 @frappe.whitelist(methods=["GET"])
@@ -542,8 +578,13 @@ def suggest_location(parent, kind):
 	kind = _kind(kind)
 	tree = _tree()
 	parent = cstr(parent).strip()
-	row, problem = _parent_problem(parent, tree)
 	out = {"parent": parent, "parent_name": rules._name_of(tree, parent), "kind": kind, "warehouse_name": "", "suffix": "", "problem": ""}
+	# Read on the parent first, so nothing is said about a place the caller may not see, and the
+	# editor shows no suggestion for one it would refuse at Make it.
+	if not _may_read(parent, tree):
+		out["problem"] = _("You are not permitted to see {0}.").format(parent)
+		return out
+	row, problem = _parent_problem(parent, tree)
 	if problem:
 		out["problem"] = _(problem)
 		return out
@@ -571,7 +612,12 @@ def _insert(warehouse_name, parent, is_group, company):
 			"company": company,
 		}
 	)
-	doc.insert(ignore_permissions=True)
+	try:
+		doc.insert(ignore_permissions=True)
+	except frappe.DuplicateEntryError:
+		# A clash only the database sees (two people at once, or names the database counts as the
+		# same, as with accents): the request rolls back whole, and the person reads the app's sentence.
+		frappe.throw(_("There is already a location called {0}.").format(warehouse_name))
 	return doc.name
 
 
@@ -601,22 +647,22 @@ def create_location(parent, kind, warehouse_name, children=0):
 	kind = _kind(kind)
 	tree = _tree()
 	parent = cstr(parent).strip()
+	if not _may_read(parent, tree):
+		frappe.throw(_("You are not permitted to see {0}.").format(parent), frappe.PermissionError)
 	row, problem = _parent_problem(parent, tree)
 	if problem:
 		frappe.throw(_(problem))
-	if not frappe.has_permission("Warehouse", "read", parent):
-		frappe.throw(
-			_("You are not permitted to see {0}.").format(rules._name_of(tree, parent)), frappe.PermissionError
-		)
 	company = cstr(row.company).strip()
 	suffix = _suffix(company)
 	name = rules.bare_name(warehouse_name, suffix)
 	problem = rules.location_name_problem(name)
 	if problem:
 		frappe.throw(_(problem))
-	taken = {key.lower() for key in tree}
-	if f"{name}{suffix}".lower() in taken or name.lower() in taken:
-		frappe.throw(_("There is already a location called {0}.").format(f"{name}{suffix}"))
+	taken = {key.lower(): key for key in tree}
+	clash = taken.get(f"{name}{suffix}".lower()) or taken.get(name.lower())
+	if clash:
+		# The record that exists, in its own capitals, not what was typed.
+		frappe.throw(_("There is already a location called {0}.").format(clash))
 	spec = rules.KINDS[kind]
 	count = max(0, min(cint(children), rules.MAX_CHILDREN)) if spec["children"] else 0
 
@@ -624,7 +670,7 @@ def create_location(parent, kind, warehouse_name, children=0):
 	created = [made]
 	if count:
 		child = rules.KINDS[spec["children"]]
-		names, used = [], set(tree) | {made}
+		names, used = [], set(taken.values()) | {made}
 		for _n in range(count):
 			child_name = rules.suggest_name(names, name, child["word"], taken=used, suffix=suffix)
 			if not child_name:

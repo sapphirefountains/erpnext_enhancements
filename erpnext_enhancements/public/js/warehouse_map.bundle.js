@@ -18,7 +18,7 @@
 import * as logic from "./warehouse_map/logic.js";
 
 // 2 (v1.820.0): making a bay, a shelf or a bin from the editor (KIND_*, MAKE, make_note ...). The page asks
-// for 2 before it offers those buttons, so a tab holding the older copy says to reload instead.
+// for 2 before it offers those buttons, so a tab holding the older copy leaves them out until it is reloaded.
 // 3 (v1.821.0): the Free space view and the walk for a count (SPACE, free_bins, walk_list ...).
 const VERSION = 3;
 

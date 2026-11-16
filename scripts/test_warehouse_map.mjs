@@ -450,7 +450,12 @@ truthy("and that leaving without saving keeps the bay", bay_note.includes("the b
 const bin_note = L.make_note("bin", "Shelf K1-2", 0);
 check("a bin's note", bin_note, "This makes the bin in Shelf K1-2 in ERPNext as soon as you choose Make it. It shows in this box's front view at once; the map does not need saving for it.");
 truthy("one shelf, one bin", L.make_note("shelf", "Bay K1", 1).includes("the shelf and 1 bin in it"));
-check("what is said once it is made", [L.made_text({ warehouse_name: "Bin K1-2-11", created: ["x"] }), L.made_text({ warehouse_name: "Bay K3", created: ["a", "b", "c"] })], ["Bin K1-2-11 made", "Bay K3 made, with 2 more inside it"]);
+// A warehouse's name is data: escaped before Frappe's Select or show_alert writes it as HTML, and never
+// passed through __() as if it were a sentence to translate.
+truthy("the Select's labels are escaped", PAGE_JS.includes("label: this.esc(c.label)"));
+truthy("the made sentence is translated with the name as an argument", PAGE_JS.includes('__("{0} made", [name])') && PAGE_JS.includes("const name = this.esc(answer.warehouse_name"));
+truthy("no dynamic text goes through __()", !/__\(wm\.(make_note|made_text)/.test(PAGE_JS));
+truthy("an answer is added only to the editor that asked", PAGE_JS.includes("const asked = this.edit;") && PAGE_JS.includes("ed !== asked"));
 
 // The page offers making only on a bundle that has the words for it, and only through the endpoint.
 const BUNDLE_JS = fs.readFileSync(path.join(APP, "public/js/warehouse_map.bundle.js"), "utf8");

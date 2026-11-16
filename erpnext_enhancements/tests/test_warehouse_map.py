@@ -519,6 +519,11 @@ class TestNamingANewLocation(unittest.TestCase):
 		siblings = ["Bin K1-2-1 (Scrap)", "Bin K1-2-2"]
 		self.assertEqual(rules.suggest_name(siblings, "Shelf K1-2", "Bin"), "Bin K1-2-3")
 
+	def test_leading_zeros_keep_their_width(self):
+		self.assertEqual(rules.suggest_name(["Bin K1-3-07", "Bin K1-3-08"], "Shelf K1-3", "Bin"), "Bin K1-3-09")
+		self.assertEqual(rules.suggest_name(["Bin K1-3-07", "Bin K1-3-10"], "Shelf K1-3", "Bin"), "Bin K1-3-11")
+		self.assertEqual(rules.suggest_name(["Bin K1-3-1", "Bin K1-3-2"], "Shelf K1-3", "Bin"), "Bin K1-3-3")
+
 	def test_with_nothing_to_follow_the_parents_code_then_one(self):
 		self.assertEqual(rules.suggest_name([], "Shelf K3-1", "Bin"), "Bin K3-1-1")
 		self.assertEqual(rules.suggest_name([], "Bay K3", "Shelf"), "Shelf K3-1")
@@ -556,6 +561,9 @@ class TestNamingANewLocation(unittest.TestCase):
 		self.assertIn("Transit", rules.parent_problem(tree[TRANSIT], TRANSIT))
 		self.assertIn("not in the building", rules.parent_problem(tree[VANS], VANS, outside={VANS}))
 		self.assertIn("no location called", rules.parent_problem(None, "Nowhere - ZZ"))
+		shelf = rules.parent_problem(tree[ROOM], ROOM, shelf=ROOM)
+		self.assertIn("is the Project Shelf", shelf)
+		self.assertNotIn("Item Manager", shelf)
 
 	def test_siblings_are_the_same_kind_disabled_ones_included(self):
 		tree = _tree(disabled={BIN9})
@@ -645,6 +653,7 @@ _MODULES = (
 	"erpnext_enhancements.api.stock_scan",
 	"erpnext_enhancements.api.warehouse_map",
 	"erpnext_enhancements.inventory_enhancements.job_sites",
+	"erpnext_enhancements.inventory_enhancements.project_shelf",
 	"erpnext_enhancements.inventory_enhancements.bin_assignments",
 	"erpnext_enhancements.inventory_enhancements.bin_views",
 	"erpnext_enhancements.inventory_enhancements.doctype.warehouse_floor_map.warehouse_floor_map",
@@ -652,7 +661,7 @@ _MODULES = (
 	# The one place this app clears the Desk's cached boot data; the map reuses it, for real.
 	"erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings",
 )
-_PACKAGE_ATTRS = ("job_sites", "bin_assignments", "bin_views", "warehouse_map_files")
+_PACKAGE_ATTRS = ("job_sites", "project_shelf", "bin_assignments", "bin_views", "warehouse_map_files")
 
 STATE = {}
 _ORIGINAL = {}
@@ -677,6 +686,10 @@ class _Denied(Exception):
 
 
 class _Stale(Exception):
+	pass
+
+
+class _Duplicate(Exception):
 	pass
 
 
@@ -714,6 +727,12 @@ def _reset():
 			"inserts": [],
 			"companies": {COMPANY: "ZZ"},
 			"insert_fails": "",
+			# Review round 1: one warehouse a person may not read, a lookup that fails, a clash only the
+			# database sees, and the Project Shelf.
+			"refused": set(),
+			"sites_fail": False,
+			"db_duplicate": False,
+			"shelf": None,
 			# Slice 3: what Stock Scan lists in a bin.
 			"expected": {
 				BIN1: [{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "on_hand": 2.0, "assigned": True}],
@@ -757,6 +776,9 @@ def _install():
 		raise (exc or _Throw)(message)
 
 	def has_permission(doctype, ptype="read", doc=None):
+		# A record of its own can be refused (a User Permission, say) while the doctype is allowed.
+		if doc is not None and (doctype, ptype, doc) in STATE["refused"]:
+			return False
 		return (doctype, ptype) in STATE["perms"]
 
 	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
@@ -882,6 +904,8 @@ def _install():
 				raise _Denied("No create permission for Warehouse")
 			if STATE["insert_fails"]:
 				raise _Throw(STATE["insert_fails"])
+			if STATE["db_duplicate"]:
+				raise _Duplicate("Duplicate entry for key 'PRIMARY'")
 			data = self.data
 			parent = STATE["tree"].get(data.get("parent_warehouse"))
 			if not parent or not parent["is_group"] or parent.get("company") != data.get("company"):
@@ -966,6 +990,7 @@ def _install():
 	frappe.log_error = lambda *a, **kw: STATE["calls"].append(("log_error", kw.get("title")))
 	frappe.PermissionError = _Denied
 	frappe.TimestampMismatchError = _Stale
+	frappe.DuplicateEntryError = _Duplicate
 	utils = types.ModuleType("frappe.utils")
 	def cint(v):
 		# As Frappe's: anything that is not a whole number is 0.
@@ -1058,10 +1083,24 @@ def _install():
 	bin_views._vehicle_leaves = lambda tree: {VANS, VAN_BIN}
 
 	sites = types.ModuleType("erpnext_enhancements.inventory_enhancements.job_sites")
-	sites.site_warehouses = lambda: {SITE}
+
+	def site_warehouses():
+		if STATE["sites_fail"]:
+			raise RuntimeError("the job sites could not be read")
+		return {SITE}
+
+	sites.site_warehouses = site_warehouses
 	sites.group = lambda: _Row(name=SITES)
 
-	for attr, module in (("bin_assignments", assignments), ("bin_views", bin_views), ("job_sites", sites)):
+	shelf = types.ModuleType("erpnext_enhancements.inventory_enhancements.project_shelf")
+	shelf.warehouse = lambda: STATE["shelf"]
+
+	for attr, module in (
+		("bin_assignments", assignments),
+		("bin_views", bin_views),
+		("job_sites", sites),
+		("project_shelf", shelf),
+	):
 		sys.modules[f"erpnext_enhancements.inventory_enhancements.{attr}"] = module
 		_ORIGINAL[f"attr:{attr}"] = getattr(package, attr, None)
 		setattr(package, attr, module)
@@ -1679,6 +1718,62 @@ class TestMakingALocation(_Base):
 		with self.assertRaises(_Throw):
 			api.create_location(SHELF2, "rack", "Bin K1-2-11")
 		self.assertEqual(STATE["inserts"], [])
+
+	def test_the_sentence_names_the_location_that_exists(self):
+		self.as_maker()
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(SHELF2, "bin", "bin k1-2-9")
+		self.assertEqual(str(caught.exception), "There is already a location called Bin K1-2-9 - ZZ.")
+
+	def test_a_clash_only_the_database_sees_gets_the_apps_sentence(self):
+		self.as_maker()
+		STATE["db_duplicate"] = True
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertIn("There is already a location called", str(caught.exception))
+
+	def test_a_failed_vehicle_or_job_site_lookup_makes_nothing(self):
+		"""F1: the refusal of a vehicle or a job site must not switch off when its lookup fails."""
+		self.as_maker()
+		STATE["sites_fail"] = True
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertIn("could not be checked", str(caught.exception))
+		self.assertIn("could not be checked", api.suggest_location(SHELF2, "bin")["problem"])
+		self.assertEqual(STATE["inserts"], [])
+		# The listing beside the map keeps the forgiving form.
+		self.shop_floor()
+		self.assertTrue(api.get_map("Shop Floor")["shapes"])
+
+	def test_read_on_this_parent_is_asked_not_only_on_warehouse(self):
+		"""F3: the read check names the parent itself, so a person refused one warehouse (a User
+		Permission) makes nothing in it, though they may read warehouses."""
+		self.as_maker()
+		STATE["refused"] = {("Warehouse", "read", SHELF2)}
+		with self.assertRaises(_Denied):
+			api.create_location(SHELF2, "bin", "Bin K1-2-11")
+		self.assertEqual(STATE["inserts"], [])
+		api.create_location(BAY, "shelf", "Shelf K1-3")
+		self.assertEqual(len(STATE["inserts"]), 1)
+
+	def test_read_on_the_parent_comes_before_anything_is_said_about_it(self):
+		"""F4: asked when the name is suggested too, and before the parent's own sentence."""
+		self.as_maker()
+		STATE["refused"] = {("Warehouse", "read", ROOM)}
+		answer = api.suggest_location(ROOM, "bin")
+		self.assertIn("not permitted", answer["problem"])
+		self.assertNotIn("one place", answer["problem"])
+		self.assertEqual(answer["warehouse_name"], "")
+		with self.assertRaises(_Denied):
+			api.create_location(ROOM, "bin", "Bin X-1")
+
+	def test_the_project_shelf_has_its_own_sentence(self):
+		self.as_maker()
+		STATE["shelf"] = ROOM
+		self.assertIn("is the Project Shelf", api.suggest_location(ROOM, "bin")["problem"])
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(ROOM, "bin", "Bin X-1")
+		self.assertIn("Nothing is made inside it", str(caught.exception))
 
 	def test_a_typed_suffix_is_not_stored_twice(self):
 		self.as_maker()
