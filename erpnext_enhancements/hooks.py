@@ -53,8 +53,8 @@ app_include_js = [
 	# globals exist before any bundled consumer runs.
 	"/assets/erpnext_enhancements/js/vue.global.js",
 	"/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js",
-	# Kanban patch suite (hold-to-drag, Opportunity styling, leak hotfix for
-	# frappe/frappe#24156, drag-to-scroll perf fix). See public/js/ee_kanban.bundle.js
+	# Kanban patch suite (hold-to-drag, Opportunity styling, drag-to-scroll
+	# perf fix). See public/js/ee_kanban.bundle.js
 	# for the imports and each file's removal conditions.
 	#
 	# The "ee_" prefix is load-bearing (v1.574.2). assets.json is ONE flat map keyed by
