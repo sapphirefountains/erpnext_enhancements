@@ -62,6 +62,17 @@ class TestEngineHooks(unittest.TestCase):
 		self.assertIn("args.with_comment_count = 0;", src)
 		self.assertIn("proto.get_like_html = function ()", src)
 
+	def test_the_saved_card_order_is_ignored_and_never_written(self):
+		src = code(MODULE)
+		# the four engine methods that carry it (kanban_view.js at v16.56.0)
+		self.assertIn('["get_board", "apply_kanban_board_doc"].forEach((method) => {', src)
+		self.assertIn("proto.map_kanban_board_columns = function ()", src)
+		self.assertIn("proto.render_list = function ()", src)
+		self.assertIn('column.order = "";', src)
+		# a client-side change only: the board is never saved from this file
+		for writer in ("update_order", "set_value", "frappe.db."):
+			self.assertNotIn(writer, src)
+
 	def test_the_navy_fill_is_gone(self):
 		# v1.779.0 restored the dark card on deals over 4000; Nikolas found it unreadable and
 		# v1.794.0 withdrew it. Neither the class nor the threshold may come back by accident.

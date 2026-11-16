@@ -4,6 +4,7 @@
  * - The customer's name on a card is a link to the Customer (or Lead) form (v1.779.0)
  * - One contact row: the Full Name with the contact's mobile number after it (v1.794.0)
  * - No tag pills, no comment count, no like heart on a card (v1.794.0)
+ * - The newest Opportunity first in every column: the board's saved card order is ignored (v1.822.0)
  *
  * Targets: the "Opportunity" Kanban board (board name "Opportunity") only.
  * Loaded via: ee_kanban.bundle.js (hooks.py `app_include_js`, global desk script).
@@ -91,6 +92,32 @@
  * phone without a name is dropped with it. The rows are found by label, like the customer field.
  * The board's own field list still decides what is drawn: take `primary_contact` off the board
  * and there is no contact row to merge into, and nothing is invented.
+ *
+ * NEWEST FIRST (v1.822.0). Nik, 2026-11-16: the newest Opportunity should be at the top of its column,
+ * not the bottom. Read at frappe v16.56.0 (kanban_view.js, kanban_board.bundle.js, kanban_pagination.js):
+ * the server already pages each column `creation desc` (the board hides the sort selector, so the
+ * query carries no order_by, and Opportunity's own sort_field is creation DESC). The order a column
+ * is DRAWN in is not the server's: `get_column_display_order` puts the names in the column's saved
+ * `Kanban Board Column.order` first and every card that order does not list after them, in arrival
+ * order. And the saved order only ever grows at the end: every board open calls `update_order` with
+ * "saved order plus loaded cards not in it yet" (`get_column_full_order`), which saves the new deal
+ * after the old ones, and a drag rewrites the whole list. Prod's saved orders on 2026-11-16 show it:
+ * Qualification ran ...00062, 00192, 00211, 00212 — the newest last. So a deal's place is where
+ * the board first saw it, not when it was created.
+ *
+ * The fix is client-side and writes nothing. For the Opportunity board the saved order is dropped
+ * from every board doc the view reads (`get_board`, `apply_kanban_board_doc`, and the columns
+ * `map_kanban_board_columns` hands to a realtime sync): "" parses to an empty order, so the engine
+ * falls through to the cards' own order, which is the server's, newest created first. `render_list`
+ * — where a deal created while the board is open lands, at the END of `this.data` — sorts
+ * `this.data` newest first before the engine reads it. The saved order is still written (the
+ * engine's `update_order` on every open, a drag's `update_order_for_single_card`) and still
+ * published to other tabs; this file just stops reading it. What that costs: a card dragged to a
+ * place INSIDE a column stays there for that tab until the next refresh, and then goes back to
+ * its place by creation date. Dragging to ANOTHER column still changes the deal's status, as
+ * before. Nobody's saved order was deleted, so taking this file out restores the old behaviour.
+ * The "Opportunity Pipeline" board (use_kanban_v2) has no saved card order — its provider asks
+ * for `modified desc` — so it is not affected by this and not touched by this.
  *
  * NO FILL. v1.779.0 (#1413) restored the navy fill on deals over 4000 that the pre-16.50 file had
  * drawn. Nik, 2026-11-03, on the live board: "I want the dark blue removed since it makes it
@@ -203,6 +230,97 @@
         };
     } else {
         warn("frappe.views.KanbanView has no get_like_html; the like stays");
+    }
+
+    // ---- 3b. newest first: the board's saved card order is ignored ---------------------------
+    // See "NEWEST FIRST" in the header. `Kanban Board Column.order` is dropped from every board
+    // doc the view reads, so the engine falls through to the order of the cards themselves; the
+    // cards are held newest-created first.
+    function creation_of(row) {
+        return String((row && row.creation) || "");
+    }
+
+    // Stable, newest `creation` first, in place. `creation` is "YYYY-MM-DD HH:MM:SS.ffffff", so
+    // the strings compare as dates. A row without one (never the case: set_fields always asks
+    // for it) keeps its place at the end.
+    function sort_newest_first(view) {
+        if (!view || !Array.isArray(view.data) || view.data.length < 2) return;
+        const keyed = view.data.map((row, index) => ({ row, index, created: creation_of(row) }));
+        keyed.sort((a, b) => (a.created === b.created ? a.index - b.index : a.created < b.created ? 1 : -1));
+        keyed.forEach((entry, i) => {
+            view.data[i] = entry.row;
+        });
+    }
+
+    // The saved order of every column on a board doc, cleared. "" parses to an empty order in
+    // both kanban_board.bundle.js and kanban_pagination.js. The doc is the view's own copy
+    // (`frappe.db.get_doc` hands back a fresh object), so this changes nothing on the server.
+    function forget_saved_order(board) {
+        if (!board || !Array.isArray(board.columns)) return;
+        board.columns.forEach((column) => {
+            if (column) column.order = "";
+        });
+    }
+
+    ["get_board", "apply_kanban_board_doc"].forEach((method) => {
+        const original = proto[method];
+        if (typeof original !== "function") {
+            warn("frappe.views.KanbanView has no " + method + "; the saved card order stays");
+            return;
+        }
+        proto[method] = function () {
+            const result = original.apply(this, arguments);
+            try {
+                if (is_opportunity_board(this)) {
+                    // get_board returns a promise (`this.board` is set when it resolves);
+                    // apply_kanban_board_doc sets `this.board` at once.
+                    if (result && typeof result.then === "function") {
+                        return result.then((value) => {
+                            forget_saved_order(this.board);
+                            return value;
+                        });
+                    }
+                    forget_saved_order(this.board);
+                }
+            } catch (error) {
+                warn("could not drop the saved card order", error);
+            }
+            return result;
+        };
+    });
+
+    // The columns a realtime or board refresh hands to `sync_from_realtime`.
+    const original_map_columns = proto.map_kanban_board_columns;
+    if (typeof original_map_columns === "function") {
+        proto.map_kanban_board_columns = function () {
+            const columns = original_map_columns.apply(this, arguments);
+            try {
+                if (is_opportunity_board(this) && Array.isArray(columns)) {
+                    return columns.map((column) => Object.assign({}, column, { order: "" }));
+                }
+            } catch (error) {
+                warn("could not drop the saved card order", error);
+            }
+            return columns;
+        };
+    } else {
+        warn("frappe.views.KanbanView has no map_kanban_board_columns; the saved card order stays");
+    }
+
+    // `render_list` is where a realtime update lands: process_document_refreshes pushes a card the
+    // view has not seen (a deal someone just created) onto the END of `this.data` and calls it.
+    const original_render_list = proto.render_list;
+    if (typeof original_render_list === "function") {
+        proto.render_list = function () {
+            try {
+                if (is_opportunity_board(this)) sort_newest_first(this);
+            } catch (error) {
+                warn("could not sort the cards", error);
+            }
+            return original_render_list.apply(this, arguments);
+        };
+    } else {
+        warn("frappe.views.KanbanView has no render_list; a card created while the board is open lands last");
     }
 
     // ---- 4. the value streams, fetched per card, batched per tick ---------------------------

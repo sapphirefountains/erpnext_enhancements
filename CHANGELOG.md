@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.822.0] - 2026-11-16
+
+### Changed
+
+- **The Opportunity Kanban shows the newest Opportunity at the top of its column.** Nikolas,
+  2026-11-16: "newest Opportunity at the top of each column, not the bottom." This is the classic
+  board at `/desk/crm/opportunity/view/kanban/Opportunity`.
+  - **Why new ones were at the bottom** (read at frappe v16.56.0). The server already pages every
+    column `creation desc` (the board hides the sort selector, so no `order_by` is sent, and
+    Opportunity's own sort is creation DESC). The order a column is *drawn* in is another thing:
+    `get_column_display_order` puts the names in the column's saved `Kanban Board Column.order`
+    first and then every card that order does not list. That saved order only grows at the end.
+    Each board open calls `update_order` with "saved order plus loaded cards not in it yet", which
+    saves a new deal after the old ones, and a drag rewrites the list. A deal's place was where the
+    board first saw it, not when it was created. Production's saved order for Qualification on
+    2026-11-16 ended `...00062, 00192, 00211, 00212`: the newest last.
+  - **The fix is in `kanban_customization.js` and is client-side only.** For the Opportunity
+    board the saved order is dropped from every board doc the view reads (`get_board`,
+    `apply_kanban_board_doc`, and the columns `map_kanban_board_columns` hands to a realtime
+    sync), so the engine falls through to the server's order, newest created first. `render_list`
+    sorts `this.data` by `creation` desc, because a deal created while the board is open arrives
+    at the end of it. Nothing is written by the change, and there is no patch: the saved orders in
+    the database are left as they are (the engine still rewrites them on every open, as before).
+  - **What it does to manual ordering, plainly: it overrides it.** A card dragged to a place
+    *inside* a column stays where it was dropped in that tab until the next refresh, then goes
+    back to its place by creation date. Dragging a card to *another* column still changes the
+    deal's status exactly as before. Taking `kanban_customization.js` out, or reverting this
+    version, brings back the old saved order, since none was deleted.
+  - **The "Opportunity Pipeline" board (Kanban v2) is not changed.** It has no saved card order;
+    its provider asks for `modified desc`, so a new card is already at the top there (an edited
+    older one also moves up, which is "last touched", not "newest").
+  - **Not in this file:** the 90-day window on Closed Won and Lost and the column order
+    (v1.688.0) belong to the custom Opportunity Board page, not to this classic board, so they
+    are neither touched nor needed here; this board's Closed Won and Lost still list every deal,
+    50 at a time, newest created first.
+- `scripts/test_kanban_customization.js` now models `get_column_display_order` and pins the new
+  order: the saved order wins on another board and is ignored on this one, a refresh and a
+  realtime sync carry no order, a deal created while the board is open lands first, a tie keeps
+  its arrival order, and the file never writes the board.
+
 ## [1.821.0] - 2026-11-16
 
 ### Added
