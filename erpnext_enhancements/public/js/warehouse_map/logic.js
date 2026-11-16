@@ -12,6 +12,9 @@
  *   front view a box's shelves and bins as a person facing it sees them (shelf 1 at the top and
  *              bin 1 at the left unless the box says otherwise)
  *   editor     moving, sizing and turning a box, held inside the drawing; what is sent on Save
+ *   slice 2    making a bay, a shelf or a bin from the editor (v1.820.0)
+ *   slice 3    the Free space view (?view=free) and the walk for a count (/<map>/walk, ?blind=1)
+ *              (v1.821.0)
  *
  * The numbers, the colors' meaning and the warehouse tree are the server's
  * (api/warehouse_map.py); the words are the page's.
@@ -22,6 +25,11 @@ export const API = "erpnext_enhancements.api.warehouse_map.";
 export const SCAN = "erpnext_enhancements.api.stock_scan.";
 export const BIN_MANAGER = "bin-manager";
 export const SEGMENT_EDIT = "edit";
+// The walk for a count (v1.821.0). Like "edit", never a warehouse's name: those end in their company's
+// abbreviation.
+export const SEGMENT_WALK = "walk";
+// The map's two views: stock (the default, no query) and free space.
+export const VIEW_FREE = "free";
 
 export const RACK = "Rack";
 export const ROOM = "Room";
@@ -56,6 +64,7 @@ export function parse_route(route) {
 	// A warehouse whose name holds a slash arrives as more than one part.
 	const rest = parts.slice(2).map(text).filter(Boolean).join("/");
 	if (rest === SEGMENT_EDIT) return { screen: "edit", map, shape: "" };
+	if (rest === SEGMENT_WALK) return { screen: "walk", map, shape: "" };
 	return { screen: "floor", map, shape: rest };
 }
 
@@ -64,6 +73,7 @@ export function build_route(target) {
 	const map = text(t.map);
 	if (!map) return [PAGE];
 	if (t.screen === "edit") return [PAGE, map, SEGMENT_EDIT];
+	if (t.screen === "walk") return [PAGE, map, SEGMENT_WALK];
 	return text(t.shape) ? [PAGE, map, text(t.shape)] : [PAGE, map];
 }
 
@@ -72,18 +82,28 @@ export function route_key(target) {
 }
 
 // What the address's query (frappe.route_options) carries: `w` asks where a warehouse is, `item`
-// is the item being looked for, `bin` the bin picked in the open box.
+// is the item being looked for, `bin` the bin picked in the open box. Since v1.821.0 `view=free` is
+// the Free space view and `blind=1` hides the quantities on the walk; any other value is dropped.
 export function read_options(options) {
 	const o = options && typeof options === "object" ? options : {};
-	return { w: text(o.w), item: text(o.item), bin: text(o.bin) };
+	return {
+		w: text(o.w),
+		item: text(o.item),
+		bin: text(o.bin),
+		view: text(o.view) === VIEW_FREE ? VIEW_FREE : "",
+		blind: ["1", "true"].includes(text(o.blind).toLowerCase()) ? "1" : "",
+	};
 }
 
-// The query a screen keeps: blanks left out, so the same screen always writes the same address.
+// The query a screen keeps: blanks left out, so the same screen always writes the same address. The
+// keys are in the order query_string writes them.
 export function options_for(state) {
 	const s = state || {};
 	const out = {};
 	if (text(s.item)) out.item = text(s.item);
 	if (text(s.bin)) out.bin = text(s.bin);
+	if (text(s.view) === VIEW_FREE) out.view = VIEW_FREE;
+	if (text(s.blind) === "1") out.blind = "1";
 	return out;
 }
 
@@ -93,8 +113,9 @@ export function options_for(state) {
 // router's "%20", and going to the screen already on show would add a second history entry.
 export function query_string(options) {
 	const parts = [];
-	["item", "bin"].forEach((key) => {
-		const value = text((options || {})[key]);
+	const kept = options_for(options);
+	["item", "bin", "view", "blind"].forEach((key) => {
+		const value = text(kept[key]);
 		if (value) parts.push(`${key}=${encodeURIComponent(value)}`);
 	});
 	return parts.length ? `?${parts.join("&")}` : "";
@@ -299,6 +320,186 @@ export function shape_bins(shape) {
 	(s.levels || []).forEach((level) => (level.bins || []).forEach((w) => out.push(w)));
 	return out;
 }
+
+// ------------------------------------------------------------------ free space (slice 3)
+//
+// v1.821.0. Nikolas's purpose for it (2026-11-12): "plan where stock goes". A bin is FREE when nothing is
+// on hand and no enabled Putaway Rule points at it, KEPT when an item is assigned and none is on hand, IN
+// USE when something is on hand. Only a shop bin is space to fill: the Project Shelf, the boneyard, a
+// vehicle and a job site never are (the server says which, warehouse_map_rules.space_state, from the Bin
+// Manager's own counts).
+
+export const SPACE = {
+	free: { key: "free", label: "Free" },
+	kept: { key: "kept", label: "Kept for an item" },
+	in_use: { key: "in_use", label: "In use" },
+	none: { key: "none", label: "Not a bin to fill" },
+};
+
+export function bin_space(bin) {
+	const space = text((bin || {}).space);
+	return SPACE[space] && space !== "none" ? space : "none";
+}
+
+// A box's color in the Free space view: it has free bins, it is full, or it holds nothing to fill.
+export function space_status(shape) {
+	const s = shape || {};
+	if (s.missing) return "missing";
+	const sum = s.space;
+	if (!sum || !num(sum.bins, 0)) return "none";
+	return num(sum.free, 0) > 0 ? "free" : "full";
+}
+
+// "6 of 14 bins free · 3 kept for an item"
+export function space_text(shape) {
+	const s = shape || {};
+	if (s.missing) return missing_words(s).sentence;
+	const sum = s.space;
+	if (!sum) return "";
+	if (!num(sum.bins, 0)) return "No bins to fill";
+	if (!s.is_group) {
+		if (num(sum.free, 0)) return SPACE.free.label;
+		if (num(sum.kept, 0)) return SPACE.kept.label;
+		return SPACE.in_use.label;
+	}
+	const parts = [`${sum.free} of ${count_word(sum.bins, "bin", "bins")} free`];
+	if (num(sum.kept, 0)) parts.push(`${sum.kept} kept for an item`);
+	return parts.join(" · ");
+}
+
+// What one bin says in the Free space view.
+export function space_sentence(bin) {
+	const space = bin_space(bin);
+	if (space === "free") return "Free: nothing is on hand and no item is assigned here.";
+	if (space === "kept") return `Kept for an item: ${count_word(num((bin || {}).assigned_items, 0), "item is", "items are")} assigned here, none on hand.`;
+	if (space === "in_use") return "In use: something is on hand here.";
+	return "Not a bin to fill: nothing is kept here as an item's bin.";
+}
+
+// The boxes in the order they are walked: the server numbers each one it walks (`walk`, from 1); a box
+// it does not walk (a label, a box whose warehouse is gone) has 0 and is left out.
+export function walked_shapes(shapes) {
+	return (shapes || [])
+		.filter((s) => s && num(s.walk, 0) > 0)
+		.slice()
+		.sort((a, b) => num(a.walk, 0) - num(b.walk, 0));
+}
+
+/**
+ * Every free bin on a map, in the order they are walked (the boxes in walk order, each box's rows as
+ * a person facing it reads them): [{ warehouse, name, label, shape, box }]. `data` is get_map's answer.
+ */
+export function free_bins(data) {
+	const d = data || {};
+	const bins = d.bins || {};
+	const out = [];
+	const seen = {};
+	walked_shapes(d.shapes).forEach((s) => {
+		const rows = s.is_group ? level_rows(s, bins, {}) : [{ label: "", bins: [{ warehouse: s.warehouse, name: (bins[s.warehouse] || {}).warehouse_name || s.warehouse, label: "" }] }];
+		rows.forEach((row) =>
+			row.bins.forEach((b) => {
+				if (seen[b.warehouse] || bin_space(bins[b.warehouse]) !== "free") return;
+				seen[b.warehouse] = true;
+				out.push({ warehouse: b.warehouse, name: b.name, label: b.label, shape: s.warehouse, box: shape_label(s) });
+			})
+		);
+	});
+	return out;
+}
+
+// ------------------------------------------------------------------ the walk for a count (slice 3)
+//
+// Nikolas's purpose for it (2026-11-12): "walk a count or train". The server lists one floor's bins in
+// walk order with the items expected in each (api.warehouse_map.walk); these decide what the page says
+// about it. Nothing here counts or posts: a count is recorded in the Count Desk or with Stock Scan.
+
+export function floor_place(floors, map_name) {
+	const list = Array.isArray(floors) ? floors : [];
+	const at = list.findIndex((f) => f && f.name === map_name);
+	return {
+		n: at + 1,
+		of: list.length,
+		next: at >= 0 && at + 1 < list.length ? list[at + 1] : null,
+		previous: at > 0 ? list[at - 1] : null,
+	};
+}
+
+export function walk_counts(answer) {
+	const stops = (answer && answer.stops) || [];
+	let bins = 0;
+	let items = 0;
+	stops.forEach((stop) =>
+		(stop.rows || []).forEach((row) =>
+			(row.bins || []).forEach((b) => {
+				bins += 1;
+				items += (b.items || []).length;
+			})
+		)
+	);
+	return { stops: stops.length, bins, items };
+}
+
+// "Bin K1-2-10" on "Shelf K1-2" reads "10", as in the front view; a row with no name keeps the name.
+export function walk_bin_label(bin, row) {
+	const name = text((bin || {}).warehouse_name) || text((bin || {}).warehouse);
+	return text((row || {}).label) ? short_bin_label(name, row.label) : name.replace(/^bin\s+/i, "") || name;
+}
+
+// What a walk says is expected of one item: nothing at all on a blind walk.
+export function expected_text(item, blind) {
+	if (blind) return "";
+	const i = item || {};
+	const qty = num(i.on_hand, 0);
+	if (qty > 0) return `${Math.round(qty * 1000) / 1000}${text(i.stock_uom) ? ` ${text(i.stock_uom)}` : ""}`;
+	return i.assigned ? "its bin, none on hand" : "none on hand";
+}
+
+// ---- the editor's walk order
+//
+// The boxes are walked in the order an editor gives them (stored as each box's `walk_order`, from 1),
+// else in the server's order from where they stand. The editor lists them as they will be walked: the
+// server's numbers for boxes it has seen, and boxes added since at the end. Moving one stores the whole
+// list as it then stands; "Use where the boxes stand" puts every box back to 0.
+
+export function is_walkable(shape) {
+	const s = shape || {};
+	return !!text(s.warehouse) && s.shape_type !== LABEL && !s.missing;
+}
+
+// The positions in `shapes` of the boxes that are walked, in walk order.
+export function walk_list(shapes) {
+	const list = (shapes || []).map((s, i) => ({ s, i })).filter(({ s }) => is_walkable(s));
+	const set = list.some(({ s }) => num(s.walk_order, 0) > 0);
+	const rank = ({ s, i }) => {
+		const own = set ? num(s.walk_order, 0) : num(s.walk, 0);
+		return [own > 0 ? 0 : 1, own > 0 ? own : 0, i];
+	};
+	return list
+		.map((x) => ({ x, r: rank(x) }))
+		.sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1] || a.r[2] - b.r[2])
+		.map(({ x }) => x.i);
+}
+
+// The boxes with the one at `at` (a place in walk_list) moved one place earlier (-1) or later (+1), and
+// every walked box numbered as the list then stands. The same boxes back when it cannot move.
+export function move_walk(shapes, at, delta) {
+	const order = walk_list(shapes);
+	const to = at + delta;
+	if (at < 0 || to < 0 || at >= order.length || to >= order.length) return shapes;
+	const moved = order.slice();
+	moved[at] = order[to];
+	moved[to] = order[at];
+	const out = (shapes || []).slice();
+	moved.forEach((i, n) => {
+		out[i] = Object.assign({}, out[i], { walk_order: n + 1 });
+	});
+	return out;
+}
+
+export function clear_walk(shapes) {
+	return (shapes || []).map((s) => (num(s.walk_order, 0) ? Object.assign({}, s, { walk_order: 0 }) : s));
+}
+
 
 // ------------------------------------------------------------------ an item being looked for
 
@@ -530,7 +731,7 @@ export function check_shapes(shapes) {
 	return null;
 }
 
-const SHAPE_FIELDS = ["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"];
+const SHAPE_FIELDS = ["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order", "walk_order"];
 
 // What Save sends: the map's own fields and the whole list of boxes, nothing the editor only
 // uses to draw.
@@ -553,6 +754,8 @@ export function save_payload(edit) {
 			out.label = text(s.label).slice(0, MAX_LABEL);
 			// The box's own order, one warehouse per line; nothing when it follows the automatic one.
 			out.bin_order = out.warehouse && Array.isArray(s.bin_order) ? s.bin_order.map(text).filter(Boolean).join("\n") : "";
+			// Its place in the walk (v1.821.0); 0 walks it by where it stands.
+			out.walk_order = out.warehouse ? Math.max(0, Math.round(num(s.walk_order, 0))) : 0;
 			return out;
 		}),
 	};

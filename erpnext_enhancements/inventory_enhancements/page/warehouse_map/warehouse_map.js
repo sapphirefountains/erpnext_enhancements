@@ -13,6 +13,17 @@
 //   /desk/warehouse-map/<map>              one floor
 //   /desk/warehouse-map/<map>/<warehouse>  that floor with one box open
 //   /desk/warehouse-map/<map>/edit         the editor (Warehouse Map Editor, System Manager)
+//   /desk/warehouse-map/<map>/walk         the walk for a count: that floor's bins in walk order, with
+//                                          the items expected in each, for a phone or a printed sheet
+//                                          (v1.821.0, slice 3)
+//
+// Since v1.821.0 the floor has two views: Stock (the colors above) and FREE SPACE (?view=free): a bin is
+// free (nothing on hand, no item assigned), kept for an item (assigned, none on hand), or in use; a box
+// says "6 of 14 bins free"; a list beside the map gives the free bins in walk order. Only shop bins are
+// space to fill: the Project Shelf, the boneyard, vehicles and job sites never are (the server decides,
+// warehouse_map_rules.space_state). Switching view is a screen (Back returns to the other view); the walk's
+// "Hide quantities" (?blind=1) is rewritten in place like a picked bin. The walk counts nothing and posts
+// nothing: a count is recorded in the Count Desk or with Stock Scan, as before.
 //
 // What is being looked for rides in the address's query and is carried from screen to screen:
 // ?item=<code> lights up where an item is, ?bin=<warehouse> is the bin picked in the open box. Picking
@@ -104,6 +115,9 @@ class WarehouseMapPage {
 		this.found = null; // { item_code, answer | error | loading }
 		this.bin = ""; // the bin picked in the open box
 		this.bin_items = {}; // warehouse -> { rows, error, loading }
+		this.mode = ""; // the floor's view: "" (stock) or "free" (free space), from ?view= (not this.view: that is the drawing's zoom)
+		this.blind = ""; // "1" hides the walk's quantities, from ?blind=
+		this.walks = {}; // map name -> { data, error, loading }, the walk for a count
 		this.views = {}; // map name -> the SVG viewBox
 		this.notice = ""; // one sentence above the map (a warehouse no map shows)
 		this.search = { query: "", rows: null, loading: false, seq: 0 };
@@ -152,7 +166,13 @@ class WarehouseMapPage {
 	}
 
 	carry() {
-		return { item: this.item, bin: "" };
+		return { item: this.item, bin: "", view: this.mode };
+	}
+
+	// Whether this tab's copy of the bundle has the Free space view and the walk (version 3, v1.821.0).
+	// A tab holding an older copy shows the map as it was until it is reloaded.
+	can_space() {
+		return !!(this.wm && Number(this.wm.version) >= 3 && typeof this.wm.free_bins === "function");
 	}
 
 	// Whether this tab's copy of the page's bundle knows how to make a location. A tab open across the
@@ -165,8 +185,12 @@ class WarehouseMapPage {
 
 	// The query of the screen on show, rewritten in place: picking a bin or an item is not a screen.
 	write_query() {
-		if (!this.showing() || !this.target || this.target.screen !== "floor") return;
-		const query = this.wm.query_string({ item: this.item, bin: this.bin });
+		if (!this.showing() || !this.target) return;
+		let state;
+		if (this.target.screen === "floor") state = { item: this.item, bin: this.bin, view: this.mode };
+		else if (this.target.screen === "walk") state = { blind: this.blind };
+		else return;
+		const query = this.wm.query_string(state);
 		try {
 			window.history.replaceState(window.history.state, "", window.location.pathname + query + window.location.hash);
 		} catch (e) {
@@ -207,6 +231,11 @@ class WarehouseMapPage {
 		const name = this.target.map;
 		// In the editor, Refresh loads the stored map again. That is how an editor whose save was
 		// refused (someone else saved first) gets their version; boxes not saved are asked about.
+		if (this.target.screen === "walk") {
+			delete this.walks[name];
+			this.open_walk(name);
+			return;
+		}
 		if (this.target.screen === "edit") {
 			const again = () => {
 				this.edit = null;
@@ -254,9 +283,19 @@ class WarehouseMapPage {
 		// A box just opened is brought into view: on a phone its front view is below the map.
 		this.reveal = target.screen === "floor" && !!target.shape && !(this.target && this.target.map === target.map && this.target.shape === target.shape);
 		this.target = target;
-		this.page.set_title(target.screen === "edit" ? __("Edit Warehouse Map") : __("Warehouse Map"));
+		this.page.set_title(target.screen === "edit" ? __("Edit Warehouse Map") : target.screen === "walk" ? __("Walk for a Count") : __("Warehouse Map"));
 		if (target.screen === "edit") {
 			this.open_editor(target.map);
+			return;
+		}
+		if (target.screen === "walk") {
+			if (!this.can_space()) {
+				this.navigate({ screen: "floor", map: target.map }, {}, true);
+				return;
+			}
+			this.mode = options.view;
+			this.blind = options.blind;
+			this.open_walk(target.map);
 			return;
 		}
 		if (left_editor && this.edit_dirty()) {
@@ -267,6 +306,7 @@ class WarehouseMapPage {
 		}
 		this.item = options.item;
 		this.bin = options.bin;
+		this.mode = this.can_space() ? options.view : "";
 		if (this.item && !(this.found && this.found.item_code === this.item)) this.load_item(this.item);
 		if (!this.item) this.found = null;
 		this.load_map(target.map);
@@ -414,10 +454,11 @@ class WarehouseMapPage {
 
 	floors_html() {
 		const maps = (this.boot && this.boot.maps) || [];
+		const act = this.target && this.target.screen === "walk" ? "walk-floor" : "floor";
 		const buttons = maps
 			.map(
 				(m) =>
-					`<button type="button" class="wm-floor ${m.name === this.target.map ? "is-on" : ""}" data-act="floor" data-map="${this.esc(m.name)}"
+					`<button type="button" class="wm-floor ${m.name === this.target.map ? "is-on" : ""}" data-act="${act}" data-map="${this.esc(m.name)}"
 					aria-pressed="${m.name === this.target.map}">${this.esc(m.title)}${m.disabled ? ` <span class="wm-muted">(${this.esc(__("hidden"))})</span>` : ""}</button>`
 			)
 			.join("");
@@ -425,6 +466,11 @@ class WarehouseMapPage {
 	}
 
 	legend_html() {
+		if (this.mode === this.wm.VIEW_FREE) {
+			return `<div class="wm-legend" aria-label="${this.esc(__("What the colors mean"))}">${["free", "kept", "in_use", "none"]
+				.map((k) => `<span class="wm-key"><span class="wm-swatch wm-s-${k}"></span>${this.esc(__(this.wm.SPACE[k].label))}</span>`)
+				.join("")}</div>`;
+		}
 		const keys = ["stock", "empty", "problem"];
 		return `<div class="wm-legend" aria-label="${this.esc(__("What the colors mean"))}">${keys
 			.map((k) => `<span class="wm-key"><span class="wm-swatch wm-s-${k}"></span>${this.esc(__(this.wm.STATUS[k].label))}</span>`)
@@ -494,7 +540,9 @@ class WarehouseMapPage {
 		this.$root.html(
 			`${this.tabs_html()}
 			<div class="wm-bar">${this.floors_html()}${this.search_html()}
+				${data && this.can_space() ? this.views_html() : ""}
 				<div class="wm-actions">
+					${data && this.can_space() ? `<button type="button" class="btn btn-sm btn-default" data-act="walk">${this.esc(__("Walk for a count"))}</button>` : ""}
 					${data ? `<button type="button" class="btn btn-sm btn-default" data-act="print">${this.esc(__("Print"))}</button>` : ""}
 					${can && data ? `<button type="button" class="btn btn-sm btn-default" data-act="edit">${this.esc(__("Edit map"))}</button>` : ""}
 					${can ? `<button type="button" class="btn btn-sm btn-default" data-act="new-map">${this.esc(__("New map"))}</button>` : ""}
@@ -503,6 +551,7 @@ class WarehouseMapPage {
 			${this.item_html()}
 			${body}
 			<div class="wm-detail-host"></div>
+			${data && this.mode === this.wm.VIEW_FREE ? this.free_html(data) : ""}
 			${data ? this.off_map_html(data) : ""}`
 		);
 		if (active) {
@@ -534,7 +583,8 @@ class WarehouseMapPage {
 				<button type="button" class="btn btn-xs btn-default" data-act="zoom-out" aria-label="${this.esc(__("Zoom out"))}">&minus;</button>
 				<button type="button" class="btn btn-xs btn-default" data-act="zoom-fit">${this.esc(__("Fit"))}</button>
 			</div>
-			${this.svg_html(map, data.shapes, { view, hits: this.hits(), open: this.target.shape })}
+			${this.svg_html(map, data.shapes, { view, hits: this.hits(), open: this.target.shape, free: this.mode === this.wm.VIEW_FREE })}
+			${this.mode === this.wm.VIEW_FREE && !data.kinds_read ? `<p class="wm-notice">${this.esc(__("What kind of place each bin is could not be read just now, so no bin is shown as free. Choose Refresh to try again."))}</p>` : ""}
 			${this.legend_html()}${empty}</div>`;
 	}
 
@@ -559,7 +609,7 @@ class WarehouseMapPage {
 	shape_svg(s, i, scale, o) {
 		const wm = this.wm;
 		const kind = s.shape_type === wm.ROOM ? "room" : s.shape_type === wm.LABEL ? "label" : "rack";
-		const status = o.edit ? (s.missing ? "missing" : "none") : wm.shape_status(s);
+		const status = o.edit ? (s.missing ? "missing" : "none") : o.free ? wm.space_status(s) : wm.shape_status(s);
 		const hit = !o.edit && o.hits && s.warehouse && o.hits.shapes[s.warehouse];
 		const open = !o.edit && o.open && s.warehouse === o.open;
 		const picked = o.edit && o.selected === i;
@@ -569,7 +619,7 @@ class WarehouseMapPage {
 		const turn = s.rotation ? ` transform="rotate(${s.rotation} ${cx} ${cy})"` : "";
 		const can_open = !o.edit && !!s.warehouse && !s.missing;
 		const name = wm.shape_label(s);
-		const said = [name, o.edit ? "" : wm.summary_text(s)].filter(Boolean).join(": ");
+		const said = [name, o.edit ? "" : o.free ? wm.space_text(s) : wm.summary_text(s)].filter(Boolean).join(": ");
 		let label;
 		if (kind === "room") {
 			// A room's name sits in its top-left corner, out of the way of what is inside it.
@@ -586,6 +636,164 @@ class WarehouseMapPage {
 		return `<g class="wm-shape wm-${kind} wm-s-${status} ${hit ? "is-hit" : ""} ${open ? "is-open" : ""} ${picked ? "is-picked" : ""} ${can_open || o.edit ? "is-live" : ""}"
 			data-shape="${i}"${turn} ${can_open || o.edit ? 'tabindex="0" role="button"' : ""} aria-label="${this.esc(said)}">
 			<title>${this.esc(said)}</title>${box}${label}${handle}</g>`;
+	}
+
+	// Stock or Free space. Each is a screen of its own, so Back returns to the other.
+	views_html() {
+		const free = this.mode === this.wm.VIEW_FREE;
+		return `<div class="wm-views" role="group" aria-label="${this.esc(__("What the colors show"))}">
+			<button type="button" class="wm-floor ${free ? "" : "is-on"}" data-act="view" data-view="" aria-pressed="${!free}">${this.esc(__("Stock"))}</button>
+			<button type="button" class="wm-floor ${free ? "is-on" : ""}" data-act="view" data-view="free" aria-pressed="${free}">${this.esc(__("Free space"))}</button></div>`;
+	}
+
+	// The free bins on this floor, in walk order, each a link to its box with the bin picked.
+	free_html(data) {
+		const list = this.wm.free_bins(data);
+		const shown = list.slice(0, 120);
+		const body = shown.length
+			? `<ul class="wm-free-list">${shown
+					.map(
+						(f) =>
+							`<li><button type="button" class="wm-linkbtn" data-act="go-free" data-shape="${this.esc(f.shape)}" data-bin="${this.esc(f.warehouse)}">${this.esc(f.name)}</button>
+							<span class="wm-muted">${this.esc(f.box)}</span></li>`
+					)
+					.join("")}</ul>${list.length > shown.length ? `<p class="wm-muted">${this.esc(__("and {0} more", [list.length - shown.length]))}</p>` : ""}`
+			: `<p class="wm-muted">${this.esc(__("No bin on this floor is free."))}</p>`;
+		return `<section class="wm-free"><h3>${this.esc(__("Free bins on this floor ({0})", [list.length]))}</h3>
+			<p class="wm-muted">${this.esc(__("Nothing on hand and no item assigned. Pick one to see it on the map; assign an item to it in the Bin Manager."))}</p>${body}</section>`;
+	}
+
+	// ------------------------------------------------------------------ the walk for a count (slice 3)
+
+	open_walk(name) {
+		const held = this.walks[name];
+		if (held && (held.data || held.loading)) {
+			this.render_walk();
+			return;
+		}
+		this.walks[name] = { loading: true };
+		this.render_walk();
+		this.call("walk", { name }, true).then(
+			(data) => {
+				this.walks[name] = { data };
+				if (this.target && this.target.screen === "walk" && this.target.map === name) this.render_walk();
+			},
+			(err) => {
+				this.walks[name] = { error: (err && err.message) || __("The walk could not be loaded.") };
+				if (this.target && this.target.screen === "walk" && this.target.map === name) this.render_walk();
+			}
+		);
+	}
+
+	render_walk() {
+		if (!this.target || this.target.screen !== "walk") return;
+		const wm = this.wm;
+		const held = this.walks[this.target.map] || {};
+		const data = held.data;
+		const blind = this.blind === "1";
+		let body;
+		if (held.error) body = `<p class="wm-error">${this.esc(held.error)}</p>`;
+		else if (!data) body = `<p class="wm-muted">${this.esc(__("Reading the bins and what is expected in them…"))}</p>`;
+		else {
+			const counts = wm.walk_counts(data);
+			const place = wm.floor_place(data.floors, data.map.name);
+			const stops = data.stops
+				.map((stop, n) => {
+					const rows = stop.rows
+						.map((row) => {
+							const bins = row.bins
+								.map((b) => {
+									const items = b.items.length
+										? `<ul class="wm-walk-items">${b.items
+												.map((i) => {
+													const want = wm.expected_text(i, blind);
+													return `<li><span>${this.esc(i.item_name)}</span> <span class="wm-muted">${this.esc(i.item_code)}</span>${want ? `<span class="wm-walk-qty">${this.esc(__(want))}</span>` : ""}</li>`;
+												})
+												.join("")}</ul>`
+										: `<p class="wm-muted">${this.esc(__("Nothing is expected here."))}</p>`;
+									return `<div class="wm-walk-bin"><div class="wm-walk-bin-head"><strong>${this.esc(wm.walk_bin_label(b, row))}</strong>
+										<span class="wm-muted">${this.esc(b.warehouse_name)}</span>
+										<a class="btn btn-xs btn-default" href="/stock-scan?w=${encodeURIComponent(b.warehouse)}">${this.esc(__("Stock Scan"))}</a></div>${items}</div>`;
+								})
+								.join("");
+							return `<div class="wm-walk-row">${row.label ? `<h4>${this.esc(row.label)}</h4>` : ""}${bins}</div>`;
+						})
+						.join("");
+					return `<section class="wm-walk-stop"><h3>${n + 1}. ${this.esc(stop.label || stop.warehouse_name)} <span class="wm-muted">${this.esc(stop.trail)}</span></h3>${rows}</section>`;
+				})
+				.join("");
+			const next = place.next
+				? `<p><button type="button" class="btn btn-sm btn-default" data-act="walk-floor" data-map="${this.esc(place.next.name)}">${this.esc(__("Next floor: {0}", [place.next.title]))}</button></p>`
+				: "";
+			body = `<p class="wm-muted">${this.esc(
+				__("Floor {0} of {1}: {2} stops, {3} bins, {4} items expected.", [place.n, place.of, counts.stops, counts.bins, counts.items])
+			)}</p>
+				${data.truncated ? `<p class="wm-notice">${this.esc(__("This floor has more bins than one walk lists; the rest are left off the end."))}</p>` : ""}
+				${stops || `<p class="wm-muted">${this.esc(__("Nothing on this floor has bins to walk. Place the bays and rooms in the editor first."))}</p>`}${next}`;
+		}
+		this.$root.html(
+			`${this.tabs_html()}
+			<div class="wm-bar">${this.floors_html()}
+				<div class="wm-actions">
+					<button type="button" class="btn btn-sm btn-default" data-act="walk-back">${this.esc(__("Back to the map"))}</button>
+					<button type="button" class="btn btn-sm btn-default" data-act="blind" aria-pressed="${blind}">${this.esc(blind ? __("Show quantities") : __("Hide quantities"))}</button>
+					${data ? `<button type="button" class="btn btn-sm btn-default" data-act="walk-print">${this.esc(__("Print"))}</button>` : ""}
+					<button type="button" class="btn btn-sm btn-default" data-act="count-desk">${this.esc(__("Count Desk"))}</button>
+				</div></div>
+			<div class="wm-walk"><h3>${this.esc(data ? data.map.title : this.target.map)}</h3>
+				<p class="wm-muted">${this.esc(
+					__("Shelf by shelf, top shelf first and left bin first, with the items expected in each bin. Nothing here is saved: record the count in the Count Desk or with Stock Scan.")
+				)}</p>${body}</div>`
+		);
+	}
+
+	// The walk as a sheet to carry: every bin with its items, a blank for what is counted.
+	print_walk() {
+		const held = this.walks[this.target.map] || {};
+		const data = held.data;
+		if (!data) return;
+		const wm = this.wm;
+		const blind = this.blind === "1";
+		const stops = data.stops
+			.map((stop, n) => {
+				const rows = [];
+				stop.rows.forEach((row) =>
+					row.bins.forEach((b) => {
+						const where = [row.label, wm.walk_bin_label(b, row)].filter(Boolean).join(" · ");
+						if (!b.items.length) rows.push(`<tr><td>${this.esc(where)}</td><td class="none" colspan="${blind ? 2 : 3}">${this.esc(__("Nothing expected"))}</td><td></td></tr>`);
+						b.items.forEach((i, k) =>
+							rows.push(
+								`<tr><td>${k ? "" : this.esc(where)}</td><td>${this.esc(i.item_name)}<br><small>${this.esc(i.item_code)}</small></td>${
+									blind ? "" : `<td>${this.esc(__(wm.expected_text(i, false)))}</td>`
+								}<td class="blank"></td><td class="blank"></td></tr>`
+							)
+						);
+					})
+				);
+				return `<h2>${n + 1}. ${this.esc(stop.label || stop.warehouse_name)}</h2><table><thead><tr><th>${this.esc(__("Bin"))}</th><th>${this.esc(__("Item"))}</th>${
+					blind ? "" : `<th>${this.esc(__("Expected"))}</th>`
+				}<th>${this.esc(__("Counted"))}</th><th>${this.esc(__("Note"))}</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+			})
+			.join("");
+		const html = `<!doctype html><html><head><meta charset="utf-8"><title>${this.esc(__("Walk for a count: {0}", [data.map.title]))}</title><style>
+			@page { margin: 12mm; } body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; font-size: 9pt; }
+			h1 { font-size: 16pt; margin: 0 0 2mm; } h2 { font-size: 11pt; margin: 5mm 0 1mm; break-after: avoid; } p.when { color: #555; margin: 0 0 3mm; }
+			table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #999; padding: 1mm 1.5mm; text-align: left; vertical-align: top; }
+			tr { break-inside: avoid; } td.blank { width: 22mm; } td.none { color: #666; } small { color: #555; }
+			</style></head><body><h1>${this.esc(__("Walk for a count: {0}", [data.map.title]))}</h1>
+			<p class="when">${this.esc(__("Printed {0}", [frappe.datetime.str_to_user(frappe.datetime.get_today())]))}${blind ? ` · ${this.esc(__("quantities hidden"))}` : ""}</p>${stops}</body></html>`;
+		const win = window.open("", "_blank");
+		if (!win) {
+			frappe.show_alert({ message: __("The browser blocked the print window. Allow pop-ups for this site and try again."), indicator: "orange" }, 8);
+			return;
+		}
+		win.document.open();
+		win.document.write(html);
+		win.document.close();
+		setTimeout(() => {
+			win.focus();
+			win.print();
+		}, 50);
 	}
 
 	off_map_html(data) {
@@ -626,6 +834,7 @@ class WarehouseMapPage {
 		const wm = this.wm;
 		const hits = this.hits();
 		const rows = wm.level_rows(shape, data.bins, hits.bins);
+		const free = this.mode === wm.VIEW_FREE;
 		// A box that is one bin (a room) has nothing inside to pick: it is the bin.
 		const single = !shape.is_group ? shape.warehouse : "";
 		const picked = single || this.bin;
@@ -635,7 +844,7 @@ class WarehouseMapPage {
 					? row.bins
 							.map(
 								(b) =>
-									`<button type="button" class="wm-bin wm-s-${b.status} ${b.hit ? "is-hit" : ""} ${b.warehouse === picked ? "is-on" : ""}" data-act="bin"
+									`<button type="button" class="wm-bin wm-s-${free ? wm.bin_space(data.bins[b.warehouse]) : b.status} ${b.hit ? "is-hit" : ""} ${b.warehouse === picked ? "is-on" : ""}" data-act="bin"
 									data-bin="${this.esc(b.warehouse)}" title="${this.esc(b.name)}" aria-pressed="${b.warehouse === picked}">${this.esc(b.label)}</button>`
 							)
 							.join("")
@@ -647,7 +856,7 @@ class WarehouseMapPage {
 			`<section class="wm-detail" aria-label="${this.esc(wm.shape_label(shape))}">
 				<header class="wm-detail-head">
 					<div><h3>${this.esc(shape.warehouse_name || wm.shape_label(shape))}</h3>
-					<p class="wm-muted">${this.esc([shape.trail, wm.summary_text(shape)].filter(Boolean).join(" · "))}</p></div>
+					<p class="wm-muted">${this.esc([shape.trail, free ? wm.space_text(shape) : wm.summary_text(shape)].filter(Boolean).join(" · "))}</p></div>
 					<button type="button" class="btn btn-sm btn-default" data-act="close-shape">${this.esc(__("Close"))}</button>
 				</header>
 				${rows.length ? `<p class="wm-muted wm-facing">${this.esc(__("As you face it"))}</p><div class="wm-levels">${levels}</div>` : ""}
@@ -677,10 +886,14 @@ class WarehouseMapPage {
 				})
 				.join("")}</ul>${held.truncated ? `<p class="wm-muted">${this.esc(__("There are more; open the bin to see them all."))}</p>` : ""}`;
 		}
+		const free = this.mode === this.wm.VIEW_FREE;
+		const space = free ? this.wm.bin_space(bin) : "";
+		// From a free or kept bin, the Bin Manager's own door for assigning an item: the map has no second way.
+		const open_label = space === "free" || space === "kept" ? __("Assign an item in the Bin Manager") : __("Open in Bin Manager");
 		return `<div class="wm-bininfo"><div class="wm-bininfo-head"><div><strong>${this.esc(bin.warehouse_name || warehouse)}</strong>
-			<span class="wm-muted">${this.esc(this.wm.bin_text(bin))}</span></div>
+			<span class="wm-muted">${this.esc(free ? __(this.wm.space_sentence(bin)) : this.wm.bin_text(bin))}</span></div>
 			<div class="wm-bininfo-acts">
-				<button type="button" class="btn btn-xs btn-default" data-act="open-bin" data-bin="${this.esc(warehouse)}">${this.esc(__("Open in Bin Manager"))}</button>
+				<button type="button" class="btn btn-xs btn-default" data-act="open-bin" data-bin="${this.esc(warehouse)}">${this.esc(open_label)}</button>
 				<a class="btn btn-xs btn-default" href="/stock-scan?w=${encodeURIComponent(warehouse)}">${this.esc(__("Open in Stock Scan"))}</a>
 			</div></div>${list}</div>`;
 	}
@@ -721,7 +934,21 @@ class WarehouseMapPage {
 			const shape = String($el.data("shape") || "");
 			const bin = String($el.data("bin") || "");
 			this.navigate({ screen: "floor", map: String($el.data("map")), shape }, { item: this.item, bin: shape && bin !== shape ? bin : "" });
-		} else if (act === "zoom-in" || act === "zoom-out" || act === "zoom-fit") this.zoom(act);
+		} else if (act === "view") this.navigate({ screen: "floor", map: t.map, shape: t.shape }, { item: this.item, bin: this.bin, view: String($el.data("view") || "") });
+		else if (act === "go-free") {
+			const shape = String($el.data("shape") || "");
+			const bin = String($el.data("bin") || "");
+			this.navigate({ screen: "floor", map: t.map, shape }, { item: this.item, bin: bin !== shape ? bin : "", view: this.mode });
+		} else if (act === "walk") this.navigate({ screen: "walk", map: t.map }, {});
+		else if (act === "walk-floor") this.navigate({ screen: "walk", map: String($el.data("map")) }, { blind: this.blind });
+		else if (act === "walk-back") this.navigate({ screen: "floor", map: t.map }, { view: this.mode });
+		else if (act === "blind") {
+			this.blind = this.blind === "1" ? "" : "1";
+			this.write_query();
+			this.render_walk();
+		} else if (act === "walk-print") this.print_walk();
+		else if (act === "count-desk") frappe.set_route("count-desk");
+		else if (act === "zoom-in" || act === "zoom-out" || act === "zoom-fit") this.zoom(act);
 		else if (act === "print") this.print();
 		else if (act === "edit") this.navigate({ screen: "edit", map: t.map });
 		else if (act === "new-map") this.new_map();
@@ -1154,8 +1381,35 @@ class WarehouseMapPage {
 			: "";
 		host.html(
 			`${s ? this.box_form(s, ed.selected) : `<p class="wm-muted">${this.esc(__("Pick a box to change it, or add one from the list below."))}</p>`}
-			<h4>${this.esc(__("Not on a map yet"))}</h4>${todo}${elsewhere}${map_fields}`
+			<h4>${this.esc(__("Not on a map yet"))}</h4>${todo}${elsewhere}${this.walk_panel_html()}${map_fields}`
 		);
+	}
+
+	// "Walk order for counts" (v1.821.0): the boxes as a count walks them, with arrows. Nothing is stored
+	// until something is moved; then every box keeps its place, and a box added later is walked last.
+	walk_panel_html() {
+		const ed = this.edit;
+		const wm = this.wm;
+		if (!this.can_space()) return "";
+		const order = wm.walk_list(ed.shapes);
+		if (!order.length) return "";
+		const set = ed.shapes.some((x) => Number(x.walk_order) > 0);
+		const rows = order
+			.map((i, n) => {
+				const x = ed.shapes[i];
+				return `<li><span class="wm-walk-n">${n + 1}.</span> <span class="wm-walk-name">${this.esc(wm.shape_label(x))}</span>
+					<span class="wm-order-arrows"><button type="button" class="btn btn-xs btn-default" data-act="walk-move" data-at="${n}" data-dir="-1" aria-label="${this.esc(__("Walk {0} earlier", [wm.shape_label(x)]))}" ${n ? "" : "disabled"}>&#9650;</button>
+					<button type="button" class="btn btn-xs btn-default" data-act="walk-move" data-at="${n}" data-dir="1" aria-label="${this.esc(__("Walk {0} later", [wm.shape_label(x)]))}" ${n + 1 < order.length ? "" : "disabled"}>&#9660;</button></span></li>`;
+			})
+			.join("");
+		return `<details class="wm-walkorder"><summary>${this.esc(__("Walk order for counts"))}</summary>
+			<p class="wm-muted">${this.esc(
+				set
+					? __("The order you set. A box added later is walked last.")
+					: __("By where the boxes stand: rows in turn, each the other way. It follows the boxes as saved; a box not saved yet is walked last.")
+			)}</p>
+			<ol class="wm-walkorder-list">${rows}</ol>
+			${set ? `<button type="button" class="btn btn-xs btn-default" data-act="walk-auto">${this.esc(__("Use where the boxes stand"))}</button>` : ""}</details>`;
 	}
 
 	box_form(s, index) {
@@ -1425,6 +1679,17 @@ class WarehouseMapPage {
 			this.render_panel();
 			this.paint_edit_status();
 		} else if (act === "make" && this.can_make()) this.make(String($el.data("kind")), String($el.data("parent") || ""));
+		else if (act === "walk-move" && this.can_space()) {
+			ed.shapes = this.wm.move_walk(ed.shapes, Number($el.data("at")), Number($el.data("dir")));
+			this.render_panel();
+			this.$root.find(".wm-walkorder").attr("open", "open");
+			this.paint_edit_status();
+		} else if (act === "walk-auto" && this.can_space()) {
+			ed.shapes = this.wm.clear_walk(ed.shapes);
+			this.render_panel();
+			this.$root.find(".wm-walkorder").attr("open", "open");
+			this.paint_edit_status();
+		}
 		else if (act === "save") this.save();
 		else if (act === "upload") this.upload();
 		else if (act === "remove-picture") {

@@ -27,6 +27,13 @@ Reads (GET):
   made something in (the stored map does not describe it yet), in the box's own order when it has
   one.
 * :func:`suggest_location` -- the name a new bay, shelf or bin would take there (v1.820.0).
+* :func:`walk` -- one floor's walk for a count (v1.821.0, slice 3): its boxes in walk order, each
+  box's rows as a person facing it reads them, and the items expected in each bin (Stock Scan's
+  own ``_items_at``, the Count Desk's list). It counts nothing and posts nothing.
+
+Free space (v1.821.0, slice 3) is not an endpoint of its own: :func:`get_map` gives each bin its
+``space`` (``warehouse_map_rules.space_state``: free, kept for an item, in use, or not a bin to
+fill) and each box its ``space`` summary, from the Bin Manager's own counts.
 
 Writes (POST): :func:`save_map` and :func:`delete_map` write the map's own record and nothing
 else. :func:`create_location` (v1.820.0, slice 2) makes a bay, a shelf or a bin: a Warehouse, and
@@ -104,6 +111,7 @@ _SHAPE_FIELDS = (
 	"shelves_from",
 	"bins_from",
 	"bin_order",
+	"walk_order",
 )
 
 #: Kinds of place that are not in the building: listed beside the map, never drawn on it.
@@ -210,6 +218,8 @@ def _bin_payload(row, name, tree):
 		"missing_items": cint(row.get("missing_items")),
 		"unassigned_items": cint(row.get("unassigned_items")),
 		"status": rules.bin_status(row),
+		# Free space (v1.821.0): free, kept, in_use, or "" for a place that is not a bin to fill.
+		"space": rules.space_state(row),
 	}
 
 
@@ -315,14 +325,22 @@ def get_map(name):
 			"trail": rules.trail(warehouse, tree) if node else "",
 			"levels": [],
 			"summary": None,
+			"space": None,
+			# Its stored place in the walk (0: by where it stands), and the place it is walked in.
+			"walk_order": rules.walk_number(row.get("walk_order")),
+			"walk": 0,
 		}
 		if node and rules.usable(node):
 			leaves = rules.leaves_under(warehouse, tree, kids)
 			shape["levels"] = rules.levels(warehouse, tree, kids, shape["bin_order"])
 			shape["summary"] = rules.summarize([bin_rows.get(leaf) or {} for leaf in leaves])
+			shape["space"] = rules.space_summary([bin_rows.get(leaf) or {} for leaf in leaves])
 			for leaf in leaves:
 				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree)
 		shapes.append(shape)
+	walked = [i for i in rules.walk_order(shapes) if not shapes[i]["missing"]]
+	for n, i in enumerate(walked, 1):
+		shapes[i]["walk"] = n
 
 	off_map = [
 		{
@@ -347,10 +365,14 @@ def get_map(name):
 			"sort_order": cint(doc.sort_order),
 			"disabled": bool(cint(doc.disabled)),
 			"modified": cstr(doc.modified),
+			# Whether an editor has put the boxes' walk in order, rather than where they stand.
+			"walk_set": any(shape["walk_order"] for shape in shapes),
 		},
 		"shapes": shapes,
 		"bins": bins,
 		"off_map": off_map,
+		# Whether the bins' kinds were read: without them nothing can be called free space.
+		"kinds_read": any(row.get("kind") for row in bin_rows.values()),
 	}
 
 
@@ -638,6 +660,99 @@ def create_location(parent, kind, warehouse_name, children=0):
 		},
 		"levels": answer.get("levels") or [],
 		"names": answer.get("names") or {},
+	}
+
+
+# ---------------------------------------------------------------------------
+# The walk for a count (v1.821.0, slice 3)
+# ---------------------------------------------------------------------------
+
+#: The most bins one floor's walk lists. Past this the walk says it was cut. The Count Desk takes 400
+#: bins in one count; a floor here has about 220.
+WALK_LIMIT = 600
+
+
+def _walk_items(row):
+	"""The items expected in one bin: Stock Scan's own list (``api.stock_scan._items_at``, uncapped,
+	the list the Count Desk's sheet is made from), in the few words a walk needs."""
+	listing = scan._items_at(row, limit=None)[0]
+	return [
+		{
+			"item_code": item.get("item_code"),
+			"item_name": item.get("item_name") or item.get("item_code"),
+			"stock_uom": item.get("stock_uom") or "",
+			"on_hand": flt(item.get("on_hand")),
+			"assigned": bool(item.get("assigned")),
+		}
+		for item in listing or []
+	]
+
+
+@frappe.whitelist(methods=["GET"])
+def walk(name):
+	"""One floor's walk for a count, bin by bin.
+
+	``{"map", "floors", "stops", "bins", "truncated"}``: ``floors`` is every map the caller may
+	see, in the page's order, so the walk goes on to the next floor; ``stops`` is the floor's boxes
+	in walk order (``warehouse_map_rules.walk_order``: an editor's order, else rows in turn, each
+	the other way), each with its ``rows`` as a person facing the box reads them (top row first,
+	left bin first, or as the box says) and every bin with the items expected there. A bin shown by
+	two boxes is walked once, at the first.
+
+	Who: the same as the map (the Stock Scan gate, read on the map). What it shows is what Stock
+	Scan already shows those roles about a bin. It writes nothing: a count is recorded in the Count
+	Desk or on the phone, as before.
+	"""
+	_check_read()
+	doc = _map_doc(name)
+	tree = _tree()
+	kids = rules.children_index(tree)
+	rows = list(doc.get("shapes") or [])
+	stops, seen, count, truncated = [], set(), 0, False
+	for index in rules.walk_order(rows):
+		row = rows[index]
+		node = tree.get(row.warehouse)
+		if not rules.usable(node):
+			continue
+		if rules.is_group(node):
+			levels = rules.levels(row.warehouse, tree, kids, rules.clean_order(row.get("bin_order")) or None)
+			seen_rows = rules.rows_as_seen(levels, row.shelves_from or rules.TOP, row.bins_from or rules.LEFT)
+		else:
+			seen_rows = [{"warehouse": row.warehouse, "label": "", "bins": [row.warehouse]}]
+		out_rows = []
+		for level in seen_rows:
+			bins = []
+			for leaf in level["bins"]:
+				if leaf in seen or leaf not in tree:
+					continue
+				if count >= WALK_LIMIT:
+					truncated = True
+					break
+				seen.add(leaf)
+				count += 1
+				bins.append({"warehouse": leaf, "warehouse_name": rules._name_of(tree, leaf), "items": _walk_items(tree[leaf])})
+			if bins:
+				out_rows.append({"warehouse": level["warehouse"], "label": level["label"], "bins": bins})
+			if truncated:
+				break
+		if out_rows:
+			stops.append(
+				{
+					"warehouse": row.warehouse,
+					"warehouse_name": rules._name_of(tree, row.warehouse),
+					"label": row.label or "",
+					"trail": rules.trail(row.warehouse, tree),
+					"rows": out_rows,
+				}
+			)
+		if truncated:
+			break
+	return {
+		"map": {"name": doc.name, "title": doc.map_name or doc.name},
+		"floors": [{"name": m.name, "title": m.map_name or m.name} for m in _map_rows(can_edit())],
+		"stops": stops,
+		"bins": count,
+		"truncated": truncated,
 	}
 
 

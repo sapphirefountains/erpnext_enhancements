@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.821.0] - 2026-11-16
+
+### Added
+
+- **Warehouse Map, slice 3: the Free space view and the walk for a count.** Nikolas's purposes,
+  2026-11-12: "plan where stock goes" and "walk a count or train"; 2026-11-16: "build map slices
+  2 and 3".
+  - **Free space** is a view of the map (`?view=free`, its own history entry). A bin is free
+    (nothing on hand, no item assigned), kept for an item (assigned, none on hand) or in use. A
+    box says "6 of 14 bins free". *Free bins on this floor* lists them beside the map in walk
+    order, each a link to its box. From a free or kept bin, *Assign an item in the Bin Manager*
+    is the Bin Manager's own door.
+  - **The walk for a count** (`/desk/warehouse-map/<map>/walk`) lists a floor's bins in walk
+    order with the items expected in each, for a phone, and prints as a sheet with blank
+    *Counted* and *Note* columns. *Hide quantities* (`?blind=1`) makes it a blind count, and
+    *Next floor* goes on through the floors in order.
+  - **Walk order for counts** in the editor: the boxes as they will be walked, with arrows. The
+    order is stored as each box's new `walk_order`.
+- `api.warehouse_map.walk` (GET). `get_map` now gives each bin its `space`, and each box its
+  `space` summary and walk position.
+- `Warehouse Floor Map Shape.walk_order` (Int, default 0: walk the box by where it stands).
+
+### Why it is built this way
+
+- **Free space is the Bin Manager's numbers, and only shop bins.** A bin's state comes from the
+  same two reads the Bin Manager makes (`bin_assignments._bin_rows` and `bin_views.decorate`), so
+  the two pages cannot disagree about a bin. The kind is asked first. `decorate` sets assigned
+  items to 0 at the Project Shelf (its leftover rules are not assignments), so on counts alone an
+  empty Project Shelf would look free. The Project Shelf, the boneyard, vehicles and job sites are
+  never space to fill. Follow-up R3-1 (`item_locations` calling the shelf an item's bin) is not
+  touched: no function here reads `item_locations`, and the walk's item list (`_items_at`)
+  already marks nothing as assigned at the shelf.
+- **The default walk snakes.** Boxes are grouped into rows by where their middles stand (within
+  half the boxes' median height of a row's first box, so one tall room does not swallow a row of
+  racks). The rows run top to bottom, each the other way from the one before, so nobody walks
+  back down an aisle empty. Each box is read as a person facing it reads it: top shelf first,
+  left bin first, or as the box says.
+- **`walk_order` needs no patch, and none is written.** It is a new Int field with default 0 on
+  a normal child table. Adding the column is one `ALTER`, and MariaDB writes 0 into every existing
+  row (the opposite of a Single, see CLAUDE.md). 0 means "by where it stands", so the two maps
+  already drawn on production keep walking by position until an editor sets an order.
+- **The walk counts nothing.** Its items are Stock Scan's own list for a bin, uncapped (the one
+  the Count Desk's sheet is made from). It creates no Stock Reconciliation and posts nothing.
+- **It stops at a list and a sheet.** The Count Desk sorts a count's bins and its sheet's lines by
+  name (`count_desk_rules.expand_scope` and the sheet's sort). Taking the walk order would need a
+  `walk_order` on the Count Session, `expand_scope` keeping a given order, the sheet sorting by
+  it, and a way to start a count from the map. That is a change to another module, written up in
+  the inventory README.
+- The page's bundle is version 3. The page offers the Free space view and the walk only on
+  version 3, so a tab left open across the deploy shows the map as before until it is reloaded.
+  The page's view state is `this.mode`, not `this.view`, which is the drawing's zoom.
+
+### Tests
+
+- `tests/test_warehouse_map.py`:
+  - The rules: a bin's space, only a shop bin is fillable, a box's sum, rows as a person facing
+    the box reads them, the snaking walk, an editor's order first and a new box last, and the
+    stored place clamped.
+  - On the stub: every bin and box says its space; the Project Shelf and the boneyard are never
+    free; nothing is free when the kinds could not be read; boxes numbered in walk order; an
+    editor's order stored and followed by `walk`.
+  - The walk bin by bin, with Stock Scan's uncapped list, an empty shelf left out, a box read as
+    it faces, a bin walked once, the next floor, a long floor cut and saying so, and nothing
+    written.
+  - The new field: Int, default `"0"`, `non_negative`, the DocType's `modified` moved on, and no
+    patch for it.
+  - `walk` and `suggest_location` joined the reads that must ask the gate first.
+- `scripts/test_warehouse_map.mjs`: the walk's route, `view`/`blind` in the query in the router's
+  order, the Free space words and colors, the free list in walk order with each box read as it
+  faces, the walk's counts and labels, blind quantities, the editor's walk list (the server's
+  order, a new box last, a move storing the whole list, back to "where they stand"), Save
+  sending `walk_order`, and the page asking for bundle version 3.
+
 ## [1.820.0] - 2026-11-16
 
 ### Added

@@ -77,8 +77,8 @@ for (const target of [
 check("no map is the bare page, whatever else is asked", L.build_route({ screen: "edit", map: "" }), ["warehouse-map"]);
 truthy("each screen has its own key", new Set([{ map: "A" }, { map: "A", shape: BAY }, { map: "A", screen: "edit" }, { map: "B" }].map(L.route_key)).size === 4);
 
-check("the query's three keys, trimmed", L.read_options({ w: " Bin 1 ", item: "ELBOW", bin: null, other: "x" }), { w: "Bin 1", item: "ELBOW", bin: "" });
-check("no options at all", L.read_options(null), { w: "", item: "", bin: "" });
+check("the query's keys, trimmed", L.read_options({ w: " Bin 1 ", item: "ELBOW", bin: null, other: "x" }), { w: "Bin 1", item: "ELBOW", bin: "", view: "", blind: "" });
+check("no options at all", L.read_options(null), { w: "", item: "", bin: "", view: "", blind: "" });
 check("blanks are never carried", L.options_for({ item: "", bin: "  " }), {});
 check("what a screen keeps", L.options_for({ item: "ELBOW", bin: "Bin 1", w: "never" }), { item: "ELBOW", bin: "Bin 1" });
 check("the query in a fixed order", L.query_string({ bin: "Bin K1-2-1 - ZZ", item: "A&B" }), "?item=A%26B&bin=Bin%20K1-2-1%20-%20ZZ");
@@ -358,7 +358,7 @@ check("Save sends the map's own fields", [payload.map_name, payload.sort_order, 
 check(
 	"and each box as its stored fields only",
 	Object.keys(payload.shapes[0]).sort(),
-	["bin_order", "bins_from", "h", "label", "rotation", "shape_type", "shelves_from", "w", "warehouse", "x", "y"]
+	["bin_order", "bins_from", "h", "label", "rotation", "shape_type", "shelves_from", "w", "walk_order", "warehouse", "x", "y"]
 );
 check("a box with no order of its own sends none", payload.shapes[0].bin_order, "");
 check(
@@ -454,7 +454,7 @@ check("what is said once it is made", [L.made_text({ warehouse_name: "Bin K1-2-1
 
 // The page offers making only on a bundle that has the words for it, and only through the endpoint.
 const BUNDLE_JS = fs.readFileSync(path.join(APP, "public/js/warehouse_map.bundle.js"), "utf8");
-truthy("the bundle says it is the second copy", /const VERSION = 2;/.test(BUNDLE_JS));
+truthy("the bundle is at least the second copy", /const VERSION = [2-9];/.test(BUNDLE_JS));
 truthy("the page asks for the second copy before it offers making", /Number\(this\.wm\.version\) >= 2/.test(PAGE_JS));
 check("the page makes a place in one call", (PAGE_JS.match(/"create_location"/g) || []).length, 1);
 check("and asks for its name in one", (PAGE_JS.match(/"suggest_location"/g) || []).length, 1);
@@ -464,6 +464,91 @@ truthy("which listens", BIN_MANAGER_JS.includes('$(document).on("sf-warehouses-c
 const make_block = PAGE_JS.slice(PAGE_JS.indexOf("make(kind, parent) {"), PAGE_JS.indexOf("\tsave() {"));
 truthy("the making code is found", make_block.length > 500);
 truthy("and shows nothing in Frappe's own message box", !make_block.includes("msgprint"));
+
+// ------------------------------------------------------------------ free space and the walk (slice 3)
+
+check("the walk is a screen", L.parse_route(["warehouse-map", "Shop Floor", "walk"]), { screen: "walk", map: "Shop Floor", shape: "" });
+check("and its route", L.build_route({ screen: "walk", map: "Shop Floor" }), ["warehouse-map", "Shop Floor", "walk"]);
+check("the views and the blind walk ride in the query", L.read_options({ view: "free", blind: "1" }), { w: "", item: "", bin: "", view: "free", blind: "1" });
+check("anything else is dropped", L.read_options({ view: "map", blind: "yes" }), { w: "", item: "", bin: "", view: "", blind: "" });
+check("the query a screen keeps", L.options_for({ item: "E1", view: "free", blind: "" }), { item: "E1", view: "free" });
+check("written in the router's order", L.query_string({ view: "free", item: "A B", bin: "X" }), "?item=A%20B&bin=X&view=free");
+check("a blind walk", L.query_string({ blind: "1" }), "?blind=1");
+check("the stock view is no query", L.query_string({ view: "" }), "");
+
+check("a bin's space", ["free", "kept", "in_use", "", "odd", undefined].map((space) => L.bin_space({ space })), ["free", "kept", "in_use", "none", "none", "none"]);
+check("a box's color in the Free space view", [
+	L.space_status({ space: { bins: 4, free: 1, kept: 0, in_use: 3 } }),
+	L.space_status({ space: { bins: 4, free: 0, kept: 1, in_use: 3 } }),
+	L.space_status({ space: { bins: 0, free: 0, kept: 0, in_use: 0 } }),
+	L.space_status({ missing: true }),
+	L.space_status({}),
+], ["free", "full", "none", "missing", "none"]);
+check("what a bay says", L.space_text({ is_group: true, space: { bins: 14, free: 6, kept: 3, in_use: 5 } }), "6 of 14 bins free · 3 kept for an item");
+check("a room that is one free bin", L.space_text({ is_group: false, space: { bins: 1, free: 1, kept: 0, in_use: 0 } }), "Free");
+check("a box with nothing to fill", L.space_text({ is_group: false, space: { bins: 0, free: 0, kept: 0, in_use: 0 } }), "No bins to fill");
+check("a kept bin's sentence", L.space_sentence({ space: "kept", assigned_items: 2 }), "Kept for an item: 2 items are assigned here, none on hand.");
+truthy("the Project Shelf's sentence never says free", L.space_sentence({ space: "" }).startsWith("Not a bin to fill"));
+
+const FREE_DATA = {
+	shapes: [
+		{ warehouse: "Bay K2 - ZZ", shape_type: "Rack", is_group: true, walk: 2, levels: [{ warehouse: "Shelf K2-1 - ZZ", label: "Shelf K2-1", bins: ["Bin K2-1-1 - ZZ", "Bin K2-1-2 - ZZ"] }] },
+		{ warehouse: BAY, shape_type: "Rack", is_group: true, walk: 1, bins_from: "Right", levels: [{ warehouse: "Shelf K1-1 - ZZ", label: "Shelf K1-1", bins: ["Bin K1-1-1 - ZZ", "Bin K1-1-2 - ZZ"] }] },
+		{ warehouse: "Parts Room - ZZ", shape_type: "Room", is_group: false, walk: 3 },
+		{ shape_type: "Label", label: "Door", walk: 0 },
+	],
+	bins: {
+		"Bin K1-1-1 - ZZ": { warehouse_name: "Bin K1-1-1", space: "free" },
+		"Bin K1-1-2 - ZZ": { warehouse_name: "Bin K1-1-2", space: "free" },
+		"Bin K2-1-1 - ZZ": { warehouse_name: "Bin K2-1-1", space: "in_use" },
+		"Bin K2-1-2 - ZZ": { warehouse_name: "Bin K2-1-2", space: "free" },
+		"Parts Room - ZZ": { warehouse_name: "Parts Room", space: "free" },
+	},
+};
+check(
+	"the free bins in walk order, each box read as it faces",
+	L.free_bins(FREE_DATA).map((f) => f.warehouse),
+	["Bin K1-1-2 - ZZ", "Bin K1-1-1 - ZZ", "Bin K2-1-2 - ZZ", "Parts Room - ZZ"]
+);
+check("each says its box", L.free_bins(FREE_DATA)[0].shape, BAY);
+check("no map, no free bins", L.free_bins(null), []);
+
+const FLOORS = [{ name: "Shop Floor", title: "Shop Floor" }, { name: "Upstairs", title: "Upstairs" }];
+check("where a floor comes", L.floor_place(FLOORS, "Shop Floor"), { n: 1, of: 2, next: FLOORS[1], previous: null });
+check("the last floor has no next", L.floor_place(FLOORS, "Upstairs").next, null);
+const WALK = { stops: [{ rows: [{ label: "Shelf K1-2", bins: [{ warehouse: "Bin K1-2-10 - ZZ", warehouse_name: "Bin K1-2-10", items: [{}, {}] }, { warehouse_name: "Bin K1-2-9", items: [] }] }] }, { rows: [{ label: "", bins: [{ warehouse_name: "Parts Room", items: [{}] }] }] }] };
+check("what a walk covers", L.walk_counts(WALK), { stops: 2, bins: 3, items: 3 });
+check("a bin on a shelf reads as its position", L.walk_bin_label(WALK.stops[0].rows[0].bins[0], WALK.stops[0].rows[0]), "10");
+check("a room keeps its name", L.walk_bin_label({ warehouse_name: "Parts Room" }, { label: "" }), "Parts Room");
+check("what is expected", [
+	L.expected_text({ on_hand: 2, stock_uom: "Unit" }),
+	L.expected_text({ on_hand: 0, assigned: true }),
+	L.expected_text({ on_hand: 0 }),
+	L.expected_text({ on_hand: 5, stock_uom: "Unit" }, true),
+], ["2 Unit", "its bin, none on hand", "none on hand", ""]);
+
+const WALK_SHAPES = [
+	{ warehouse: "a", shape_type: "Rack", walk: 2, walk_order: 0 },
+	{ warehouse: "b", shape_type: "Rack", walk: 1, walk_order: 0 },
+	{ shape_type: "Label", label: "Door" },
+	{ warehouse: "c", shape_type: "Rack" },
+	{ warehouse: "gone", shape_type: "Rack", missing: true, walk: 0 },
+];
+check("the editor lists the server's walk, a new box last", L.walk_list(WALK_SHAPES), [1, 0, 3]);
+const walk_moved = L.move_walk(WALK_SHAPES, 2, -1);
+check("moving one stores the whole list", walk_moved.map((x) => x.walk_order), [3, 1, undefined, 2, undefined]);
+check("and the list follows what is stored", L.walk_list(walk_moved), [1, 3, 0]);
+check("a move past the end changes nothing", L.move_walk(WALK_SHAPES, 0, -1), WALK_SHAPES);
+check("back to where the boxes stand", L.clear_walk(walk_moved).map((x) => x.walk_order || 0), [0, 0, 0, 0, 0]);
+check("Save sends the place in the walk", L.save_payload({ map: MAP, shapes: [{ shape_type: "Rack", warehouse: BAY, x: 1, y: 1, w: 9, h: 9, walk_order: 3 }, { shape_type: "Label", label: "Door", x: 1, y: 1, w: 9, h: 9, walk_order: 2 }] }).shapes.map((x) => x.walk_order), [3, 0]);
+
+truthy("the bundle is the third copy", /const VERSION = 3;/.test(BUNDLE_JS));
+truthy("the page asks for it before the Free space view and the walk", /Number\(this\.wm\.version\) >= 3/.test(PAGE_JS));
+check("the walk is read in one call", (PAGE_JS.match(/"walk", \{ name \}/g) || []).length, 1);
+truthy("a free bin goes to the Bin Manager's own door", PAGE_JS.includes('__("Assign an item in the Bin Manager")') && PAGE_JS.includes('frappe.set_route(this.wm.BIN_MANAGER'));
+const walk_block = PAGE_JS.slice(PAGE_JS.indexOf("open_walk(name) {"), PAGE_JS.indexOf("\toff_map_html(data) {"));
+truthy("the walk code is found", walk_block.length > 1000);
+truthy("and it posts nothing", !/create_location|save_map|post_count|start_count|"POST"/.test(walk_block));
 
 // ------------------------------------------------------------------ the doors
 
@@ -486,7 +571,7 @@ check("a place wins over an item", scan.mapUrl({ w: "X", item: "Y" }), "/desk/wa
 check("nothing to point at is no link", [scan.mapUrl({}), scan.mapUrl(null), scan.mapUrl({ w: "  " })], ["", "", ""]);
 truthy("the link's page is this page", scan.mapUrl({ w: "X" }).startsWith(`/desk/${L.PAGE}?`));
 // The keys Stock Scan's link writes are the ones this page reads.
-check("and its keys are read here", L.read_options({ w: "X", item: "Y" }), { w: "X", item: "Y", bin: "" });
+check("and its keys are read here", L.read_options({ w: "X", item: "Y" }), { w: "X", item: "Y", bin: "", view: "", blind: "" });
 
 console.log(`${checks - failures} of ${checks} checks passed`);
 if (failures) process.exit(1);

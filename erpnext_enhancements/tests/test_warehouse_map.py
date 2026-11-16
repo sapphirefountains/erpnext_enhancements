@@ -31,7 +31,12 @@ What is fenced:
   the editor makes a bay, a shelf or a bin) is an insert through the Warehouse document, allowed
   by the map editor's rule and nothing else: a viewer makes nothing, nothing is made inside one
   place, a name follows its siblings (the highest number plus one) and is refused in the app's own
-  sentence when the rules or an existing warehouse say no.
+  sentence when the rules or an existing warehouse say no;
+* slice 3 (v1.821.0): a bin is free, kept for an item or in use from the Bin Manager's own counts,
+  and only a shop bin is ever space to fill (never the Project Shelf, the boneyard, a vehicle or a
+  job site); the walk takes the boxes in an editor's order, else rows in turn each the other way,
+  reads each box as a person facing it does, lists Stock Scan's own expected items, walks a bin
+  once, and writes nothing.
 
 Run: python -m unittest erpnext_enhancements.tests.test_warehouse_map -v
 """
@@ -177,7 +182,20 @@ class TestShapes(unittest.TestCase):
 		self.assertEqual(
 			sorted(shape),
 			sorted(
-				["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"]
+				[
+					"shape_type",
+					"warehouse",
+					"label",
+					"x",
+					"y",
+					"w",
+					"h",
+					"rotation",
+					"shelves_from",
+					"bins_from",
+					"bin_order",
+					"walk_order",
+				]
 			),
 		)
 		self.assertEqual((shape["shape_type"], shape["warehouse"], shape["label"]), ("Rack", BAY, None))
@@ -553,6 +571,67 @@ class TestNamingANewLocation(unittest.TestCase):
 		self.assertIsNone(rules.KINDS["bin"]["children"])
 
 
+class TestFreeSpaceAndTheWalkRules(unittest.TestCase):
+	"""Slice 3: the rules for free space and the walk."""
+
+	def test_a_bins_space(self):
+		shop = {"kind": "shop_bin"}
+		self.assertEqual(rules.space_state({**shop, "on_hand_items": 0, "assigned_items": 0}), "free")
+		self.assertEqual(rules.space_state({**shop, "on_hand_items": 0, "assigned_items": 2}), "kept")
+		self.assertEqual(rules.space_state({**shop, "on_hand_items": 3, "assigned_items": 0}), "in_use")
+		self.assertEqual(rules.space_state({**shop, "on_hand_items": 3, "assigned_items": 3}), "in_use")
+
+	def test_only_a_shop_bin_is_space_to_fill(self):
+		for kind in ("project_shelf", "boneyard", "vehicle", "job_site", "other_site", "", None):
+			self.assertEqual(rules.space_state({"kind": kind, "on_hand_items": 0, "assigned_items": 0}), "", kind)
+
+	def test_a_boxs_space(self):
+		rows = [
+			{"kind": "shop_bin"},
+			{"kind": "shop_bin", "assigned_items": 1},
+			{"kind": "shop_bin", "on_hand_items": 4},
+			{"kind": "project_shelf"},
+		]
+		self.assertEqual(rules.space_summary(rows), {"bins": 3, "free": 1, "kept": 1, "in_use": 1})
+		self.assertEqual(rules.space_summary([]), {"bins": 0, "free": 0, "kept": 0, "in_use": 0})
+
+	def test_rows_as_a_person_facing_the_box_reads_them(self):
+		levels = [{"warehouse": "S1", "label": "S1", "bins": ["a", "b"]}, {"warehouse": "S2", "label": "S2", "bins": ["c"]}]
+		self.assertEqual([r["bins"] for r in rules.rows_as_seen(levels)], [["a", "b"], ["c"]])
+		self.assertEqual([r["warehouse"] for r in rules.rows_as_seen(levels, rules.BOTTOM)], ["S2", "S1"])
+		self.assertEqual(rules.rows_as_seen(levels, rules.TOP, rules.RIGHT)[0]["bins"], ["b", "a"])
+
+	def test_the_walk_snakes_row_by_row(self):
+		def rack(x, y, name):
+			return {"shape_type": "Rack", "warehouse": name, "x": x, "y": y, "w": 40, "h": 100}
+
+		shapes = [
+			rack(300, 400, "d"),
+			rack(100, 20, "a"),
+			{"shape_type": "Label", "label": "Door", "x": 0, "y": 0, "w": 50, "h": 20},
+			rack(500, 25, "c"),
+			rack(100, 410, "f"),
+			rack(300, 10, "b"),
+			rack(500, 400, "e"),
+		]
+		names = [shapes[i]["warehouse"] for i in rules.walk_order(shapes)]
+		# The top row left to right, the next row right to left; the label is not walked.
+		self.assertEqual(names, ["a", "b", "c", "e", "d", "f"])
+
+	def test_an_editors_order_comes_first_and_a_new_box_last(self):
+		shapes = [
+			{"shape_type": "Rack", "warehouse": "a", "x": 0, "y": 0, "w": 40, "h": 100, "walk_order": 2},
+			{"shape_type": "Rack", "warehouse": "b", "x": 100, "y": 0, "w": 40, "h": 100, "walk_order": 1},
+			{"shape_type": "Rack", "warehouse": "c", "x": 50, "y": 0, "w": 40, "h": 100, "walk_order": 0},
+		]
+		self.assertEqual([shapes[i]["warehouse"] for i in rules.walk_order(shapes)], ["b", "a", "c"])
+
+	def test_a_stored_place_is_a_whole_number_from_zero(self):
+		self.assertEqual([rules.walk_number(v) for v in (None, "", "x", -3, 2.7, "4", 99999)], [0, 0, 0, 0, 2, 4, rules.MAX_SHAPES])
+		self.assertEqual(rules.clean_shape(_box(walk_order=3), 1200, 800)["walk_order"], 3)
+		self.assertEqual(rules.clean_shape(_box(shape_type="Label", label="Door", walk_order=3), 1200, 800)["walk_order"], 0)
+
+
 # ---------------------------------------------------------------------------
 # The endpoints and the controller, on a stub
 # ---------------------------------------------------------------------------
@@ -635,6 +714,11 @@ def _reset():
 			"inserts": [],
 			"companies": {COMPANY: "ZZ"},
 			"insert_fails": "",
+			# Slice 3: what Stock Scan lists in a bin.
+			"expected": {
+				BIN1: [{"item_code": "ELBOW", "item_name": "FITTING, ELBOW", "stock_uom": "Unit", "on_hand": 2.0, "assigned": True}],
+				BIN2: [{"item_code": "TEE", "item_name": "FITTING, TEE", "stock_uom": "Unit", "on_hand": 0.0, "assigned": True}],
+			},
 		}
 	)
 
@@ -914,6 +998,13 @@ def _install():
 
 	scan._check_access = _check_access
 	scan.get_settings = lambda: {"boneyard_warehouse": BONEYARD}
+
+	def _items_at(row, limit=None):
+		# The walk asks for every item (limit None), as the Count Desk's sheet does.
+		STATE["calls"].append(("items_at", row["name"], limit))
+		return list(STATE["expected"].get(row["name"], [])), False
+
+	scan._items_at = _items_at
 	package_api.stock_scan = scan
 	sys.modules["erpnext_enhancements.api"] = package_api
 	sys.modules["erpnext_enhancements.api.stock_scan"] = scan
@@ -1051,6 +1142,7 @@ class TestWhoMayLook(_Base):
 		("editor_data", ()),
 		("box_levels", (BAY,)),
 		("suggest_location", (SHELF2, "bin")),
+		("walk", ("Shop Floor",)),
 	)
 
 	def test_every_read_asks_the_gate_before_it_reads_anything(self):
@@ -1279,7 +1371,20 @@ class TestSaving(_Base):
 		self.assertEqual(
 			sorted(k for k in stored["shapes"][0] if k != "name"),
 			sorted(
-				["shape_type", "warehouse", "label", "x", "y", "w", "h", "rotation", "shelves_from", "bins_from", "bin_order"]
+				[
+					"shape_type",
+					"warehouse",
+					"label",
+					"x",
+					"y",
+					"w",
+					"h",
+					"rotation",
+					"shelves_from",
+					"bins_from",
+					"bin_order",
+					"walk_order",
+				]
 			),
 		)
 
@@ -1642,6 +1747,115 @@ class TestMakingALocation(_Base):
 		self.assertTrue(rows[SITES]["outside"])
 
 
+class TestFreeSpaceAndTheWalk(_Base):
+	"""Slice 3 (v1.821.0) on the stub."""
+
+	def test_each_bin_says_its_space_and_each_box_sums_it(self):
+		self.shop_floor()
+		data = api.get_map("Shop Floor")
+		self.assertEqual(data["bins"][BIN1]["space"], "in_use")
+		self.assertEqual(data["bins"][BIN2]["space"], "kept")
+		self.assertEqual(data["bins"][BIN10]["space"], "free")
+		bay = next(shape for shape in data["shapes"] if shape["warehouse"] == BAY)
+		self.assertEqual(bay["space"], {"bins": 4, "free": 1, "kept": 1, "in_use": 2})
+		self.assertTrue(data["kinds_read"])
+
+	def test_the_project_shelf_and_the_boneyard_are_never_free(self):
+		STATE["bins"][ROOM] = {"on_hand_items": 0, "assigned_items": 0, "kind": "project_shelf"}
+		_seed("Shop Floor", [_box(shape_type="Room", warehouse=ROOM), _box(shape_type="Room", warehouse=BONEYARD, x=500)])
+		data = api.get_map("Shop Floor")
+		self.assertEqual(data["bins"][ROOM]["space"], "")
+		self.assertEqual(data["bins"][BONEYARD]["space"], "")
+		for shape in data["shapes"]:
+			self.assertEqual(shape["space"]["free"], 0, shape["warehouse"])
+
+	def test_nothing_is_free_when_the_kinds_could_not_be_read(self):
+		self.shop_floor()
+		STATE["decorate_fails"] = True
+		data = api.get_map("Shop Floor")
+		self.assertFalse(data["kinds_read"])
+		self.assertEqual({row["space"] for row in data["bins"].values()}, {""})
+
+	def test_the_boxes_are_numbered_in_walk_order(self):
+		self.shop_floor()
+		data = api.get_map("Shop Floor")
+		walk = {shape["label"] or shape["warehouse"]: shape["walk"] for shape in data["shapes"]}
+		# The bay (top left) then the room; the label is not walked.
+		self.assertEqual(walk, {"K1": 1, ROOM: 2, "Dock door": 0})
+		self.assertFalse(data["map"]["walk_set"])
+
+	def test_an_editors_walk_order_is_stored_and_followed(self):
+		self.shop_floor()
+		self.as_editor()
+		data = api.get_map("Shop Floor")
+		payload = {"map_name": "Shop Floor", "shapes": [dict(shape, walk_order={BAY: 2, ROOM: 1}.get(shape["warehouse"], 0)) for shape in data["shapes"]]}
+		api.save_map(json.dumps(payload), name="Shop Floor", modified=data["map"]["modified"])
+		stored = {row["warehouse"]: row["walk_order"] for row in STATE["maps"]["Shop Floor"]["shapes"]}
+		self.assertEqual(stored, {BAY: 2, ROOM: 1, None: 0})
+		again = api.get_map("Shop Floor")
+		self.assertEqual({s["warehouse"]: s["walk"] for s in again["shapes"] if s["warehouse"]}, {ROOM: 1, BAY: 2})
+		self.assertTrue(again["map"]["walk_set"])
+		self.assertEqual([stop["warehouse"] for stop in api.walk("Shop Floor")["stops"]], [ROOM, BAY])
+
+	def test_the_walk_bin_by_bin(self):
+		self.shop_floor()
+		answer = api.walk("Shop Floor")
+		self.assertEqual(answer["map"], {"name": "Shop Floor", "title": "Shop Floor"})
+		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [BAY, ROOM])
+		bay = answer["stops"][0]
+		# Shelf 1 first; the empty shelf has no bins to walk and is left out.
+		self.assertEqual([row["label"] for row in bay["rows"]], ["Shelf K1-2"])
+		self.assertEqual([b["warehouse"] for b in bay["rows"][0]["bins"]], [BIN1, BIN2, BIN9, BIN10])
+		self.assertEqual(bay["rows"][0]["bins"][0]["items"][0]["item_code"], "ELBOW")
+		self.assertEqual(bay["rows"][0]["bins"][2]["items"], [])
+		room = answer["stops"][1]
+		self.assertEqual(room["rows"], [{"warehouse": ROOM, "label": "", "bins": [{"warehouse": ROOM, "warehouse_name": "Parts Room", "items": []}]}])
+		self.assertEqual((answer["bins"], answer["truncated"]), (5, False))
+		# Every bin's items are Stock Scan's own list, uncapped, as the Count Desk's sheet asks.
+		self.assertTrue(all(call[2] is None for call in STATE["calls"] if call[0] == "items_at"))
+		self.assertEqual(STATE["writes"], [])
+
+	def test_the_walk_reads_a_box_as_it_faces(self):
+		_seed("Shop Floor", [_box(warehouse=BAY, bins_from="Right")])
+		bins = api.walk("Shop Floor")["stops"][0]["rows"][0]["bins"]
+		self.assertEqual([b["warehouse"] for b in bins], [BIN10, BIN9, BIN2, BIN1])
+
+	def test_a_bin_shown_twice_is_walked_once(self):
+		_seed("Shop Floor", [_box(warehouse=BAY), _box(warehouse=SHELF2, x=400)])
+		answer = api.walk("Shop Floor")
+		self.assertEqual(answer["bins"], 4)
+		self.assertEqual([stop["warehouse"] for stop in answer["stops"]], [BAY])
+
+	def test_the_walk_goes_on_to_the_next_floor(self):
+		self.shop_floor()
+		_seed("Upstairs", [_box(warehouse=NOOK)], sort_order=2)
+		_seed("Hidden", [], sort_order=3, disabled=1)
+		self.assertEqual([f["name"] for f in api.walk("Shop Floor")["floors"]], ["Shop Floor", "Upstairs"])
+		self.assertEqual([stop["warehouse"] for stop in api.walk("Upstairs")["stops"]], [NOOK])
+
+	def test_a_long_floor_is_cut_and_says_so(self):
+		self.shop_floor()
+		limit = api.WALK_LIMIT
+		try:
+			api.WALK_LIMIT = 3
+			answer = api.walk("Shop Floor")
+		finally:
+			api.WALK_LIMIT = limit
+		self.assertEqual((answer["bins"], answer["truncated"]), (3, True))
+
+	def test_the_box_order_field_reaches_every_existing_row_as_zero(self):
+		path = APP / "inventory_enhancements" / "doctype" / "warehouse_floor_map_shape" / "warehouse_floor_map_shape.json"
+		doctype = json.loads(path.read_text(encoding="utf-8"))
+		field = next(f for f in doctype["fields"] if f["fieldname"] == "walk_order")
+		# A normal table: the ALTER that adds the column writes the default into every existing row,
+		# and 0 is "by where it stands", so the maps already drawn need no patch and get none.
+		self.assertEqual((field["fieldtype"], field["default"], field.get("non_negative")), ("Int", "0", 1))
+		self.assertIn("walk_order", doctype["field_order"])
+		self.assertGreaterEqual(doctype["modified"], "2026-11-16")
+		patches = (APP / "patches.txt").read_text(encoding="utf-8")
+		self.assertNotIn("walk_order", patches)
+
+
 def _calls_with_keyword(source, keyword):
 	return [
 		node.lineno
@@ -1670,6 +1884,7 @@ class TestTheFiles(unittest.TestCase):
 				"editor_data": [["GET"]],
 				"box_levels": [["GET"]],
 				"suggest_location": [["GET"]],
+				"walk": [["GET"]],
 				"save_map": [["POST"]],
 				"delete_map": [["POST"]],
 				"create_location": [["POST"]],

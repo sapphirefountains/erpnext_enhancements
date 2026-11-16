@@ -36,6 +36,11 @@ What is decided here:
 * :func:`bin_status` / :func:`summarize` -- a bin's color, from the same three counts the Bin
   Manager shows: a problem (an assigned item with none on hand, or stock nobody assigned),
   else has stock, else empty.
+* Slice 2 (v1.820.0): :func:`suggest_name`, :func:`parent_problem`, :func:`location_name_problem`
+  -- making a bay, a shelf or a bin from the editor.
+* Slice 3 (v1.821.0): :func:`space_state` / :func:`space_summary` -- free space (free, kept for an
+  item, in use), for shop bins only; :func:`walk_order` / :func:`auto_walk` / :func:`rows_as_seen`
+  -- the order a count is walked in.
 
 The floor plan picture is a real building's layout and this app's code is public, so the picture
 is site data: :func:`background_problem` accepts a private file on this site and nothing else.
@@ -258,6 +263,8 @@ def clean_shape(raw, width, height, index=0):
 		"bins_from": RIGHT if text(_get(raw, "bins_from")) == RIGHT else LEFT,
 		# Only a box that stands for a warehouse has anything inside it to put in order.
 		"bin_order": "\n".join(clean_order(_get(raw, "bin_order"))) or None if warehouse else None,
+		# Its place in the walk for a count (v1.821.0): 0 follows where the boxes stand.
+		"walk_order": walk_number(_get(raw, "walk_order")) if warehouse else 0,
 	}
 
 
@@ -746,3 +753,120 @@ def summarize(rows):
 		"items": sum(_count(row, "on_hand_items") for row in rows),
 		"status": STATUS_PROBLEM if problem else STATUS_STOCK if stock else STATUS_EMPTY,
 	}
+
+
+# ---------------------------------------------------------------------------
+# Free space and the walk (v1.821.0, slice 3)
+# ---------------------------------------------------------------------------
+
+#: A bin's space, for the map's *Free space* view. Free: nothing on hand and no enabled Putaway Rule
+#: points at it. Kept: an item is assigned there and none is on hand (the place is spoken for).
+#: In use: something is on hand.
+SPACE_FREE = "free"
+SPACE_KEPT = "kept"
+SPACE_IN_USE = "in_use"
+
+#: The only kind of place that is space to fill: a shop bin (``project_stock_rules.KIND_BIN``, the
+#: Bin Manager's word). The Project Shelf, the boneyard, a vehicle and a job site are never free
+#: space, whatever their counts say: nothing is kept on them as an item's bin. A bin whose kind could
+#: not be read is not counted either, rather than guessed at.
+FILLABLE_KINDS = ("shop_bin",)
+
+
+def space_state(row):
+	"""``free``, ``kept`` or ``in_use`` for a shop bin; ``""`` for anything that is not a bin to fill.
+
+	Read from the Bin Manager's own counts for the bin (``on_hand_items``: items with stock on hand;
+	``assigned_items``: items with an enabled Putaway Rule there), so the map and the Bin Manager
+	cannot disagree about a bin. ``bin_views.decorate`` sets ``assigned_items`` to 0 at the Project
+	Shelf, which would make an empty shelf look free; the kind test comes first for that reason.
+	"""
+	if text(_get(row, "kind")) not in FILLABLE_KINDS:
+		return ""
+	if _count(row, "on_hand_items") > 0:
+		return SPACE_IN_USE
+	if _count(row, "assigned_items") > 0:
+		return SPACE_KEPT
+	return SPACE_FREE
+
+
+def space_summary(rows):
+	"""A box's space from its bins' rows: ``{"bins", "free", "kept", "in_use"}``, ``bins`` counting
+	only the bins to fill. "6 of 14 bins free" is ``free`` of ``bins``."""
+	states = [space_state(row) for row in rows or []]
+	return {
+		"bins": sum(1 for state in states if state),
+		"free": states.count(SPACE_FREE),
+		"kept": states.count(SPACE_KEPT),
+		"in_use": states.count(SPACE_IN_USE),
+	}
+
+
+def rows_as_seen(levels, shelves_from=TOP, bins_from=LEFT):
+	"""A box's rows as a person facing it reads them: top row first, left bin first. The stored
+	front view is in the tree's order (shelf 1 first, bin 1 first); a box whose shelf 1 is at the
+	bottom has its rows turned over, one whose bin 1 is at the right has each row turned around.
+	The same reading as the page's ``level_rows``."""
+	rows = [
+		{
+			"warehouse": _get(level, "warehouse"),
+			"label": text(_get(level, "label")),
+			"bins": list(reversed(_get(level, "bins") or [])) if bins_from == RIGHT else list(_get(level, "bins") or []),
+		}
+		for level in levels or []
+	]
+	return list(reversed(rows)) if shelves_from == BOTTOM else rows
+
+
+def walk_number(value):
+	"""A box's stored place in the walk: a whole number from 1, or 0 for "where it stands"."""
+	return max(0, min(int(number(value, 0) or 0), MAX_SHAPES))
+
+
+def _median(values):
+	values = sorted(values)
+	if not values:
+		return 0.0
+	mid = len(values) // 2
+	return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+
+def auto_walk(shapes):
+	"""The boxes in the order a person walks them when nobody has said otherwise: rows of boxes in
+	turn, top of the drawing first, and **each row the other way from the one before**, so the walk
+	snakes and nobody walks back down an aisle empty-handed. Returns the positions in ``shapes``.
+
+	A row is the boxes whose middles are within half a box's usual height of the first box of that
+	row (the median height of the boxes, so one tall room does not swallow a row of racks)."""
+	items = []
+	for index, shape in enumerate(shapes or []):
+		x, y = number(_get(shape, "x"), 0.0), number(_get(shape, "y"), 0.0)
+		w, h = number(_get(shape, "w"), 0.0), number(_get(shape, "h"), 0.0)
+		items.append((y + h / 2, x + w / 2, index, h))
+	if not items:
+		return []
+	tolerance = max(_median([item[3] for item in items]) / 2, 1.0)
+	bands = []
+	for item in sorted(items, key=lambda it: (it[0], it[1], it[2])):
+		if bands and abs(item[0] - bands[-1][0][0]) <= tolerance:
+			bands[-1].append(item)
+		else:
+			bands.append([item])
+	out = []
+	for n, band in enumerate(bands):
+		band.sort(key=lambda it: (it[1], it[2]), reverse=bool(n % 2))
+		out.extend(item[2] for item in band)
+	return out
+
+
+def walk_order(shapes):
+	"""The order the walk takes one map's boxes in, as positions in ``shapes``: boxes an editor put
+	in order (``walk_order`` from 1) first, in that order, then every other box in the order of
+	:func:`auto_walk`. Only boxes that stand for a warehouse are walked: a label has nothing to count.
+	A box added after the order was set (``walk_order`` 0) is walked at the end."""
+	walkable = [
+		i for i, shape in enumerate(shapes or []) if text(_get(shape, "warehouse")) and text(_get(shape, "shape_type")) != SHAPE_LABEL
+	]
+	placed = sorted((i for i in walkable if walk_number(_get(shapes[i], "walk_order"))), key=lambda i: (walk_number(_get(shapes[i], "walk_order")), i))
+	rest = [i for i in walkable if not walk_number(_get(shapes[i], "walk_order"))]
+	return placed + [rest[k] for k in auto_walk([shapes[i] for i in rest])]
