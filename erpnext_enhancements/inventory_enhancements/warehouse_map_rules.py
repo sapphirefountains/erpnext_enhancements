@@ -125,9 +125,9 @@ KIND_BAY = "bay"
 KIND_SHELF = "shelf"
 KIND_BIN = "bin"
 KINDS = {
-	KIND_BAY: {"is_group": 1, "word": "Bay", "children": KIND_SHELF},
-	KIND_SHELF: {"is_group": 1, "word": "Shelf", "children": KIND_BIN},
-	KIND_BIN: {"is_group": 0, "word": "Bin", "children": None},
+	KIND_BAY: {"is_group": 1, "word": "Bay", "noun": "bay", "children": KIND_SHELF},
+	KIND_SHELF: {"is_group": 1, "word": "Shelf", "noun": "shelf", "children": KIND_BIN},
+	KIND_BIN: {"is_group": 0, "word": "Bin", "noun": "bin", "children": None},
 }
 #: The most shelves or bins one step makes: more than any rack here has.
 MAX_CHILDREN = 30
@@ -640,6 +640,61 @@ def parent_problem(row, name, outside=(), shelf=None):
 			"Only an Item Manager can turn it into a group, in ERPNext, and only while nothing has ever been kept there."
 		)
 	return None
+
+
+def is_top_level(name, tree):
+	"""Whether ``name`` sits directly under the top of the warehouse tree: its parent is the root
+	group, the one with no parent of its own (ERPNext's ``All Warehouses - XX``). Taken from the
+	tree, never from a name."""
+	row = tree.get(name)
+	parent = text(_get(row, "parent_warehouse"))
+	return bool(parent) and parent in tree and not text(_get(tree[parent], "parent_warehouse"))
+
+
+def _some(names, tree):
+	shown = ", ".join(_name_of(tree, n) for n in names[:3])
+	return shown + (", and more" if len(names) > 3 else "")
+
+
+def placement_problem(parent, kind, tree, kids):
+	"""Why a ``kind`` (bay, shelf or bin) cannot go inside ``parent`` given what it holds today, or
+	``None``. Decided by the shape of the tree, never by names (production's upstairs has word names
+	and mixed parents). The manager's rule, 2026-11-16:
+
+	* **A bin is refused in a group whose children are all groups** (a row that holds bays, a bay
+	  that holds shelves, ``Upstairs Storage`` that holds two areas): a bin goes on one of those.
+	* **A bay or a shelf is refused in a group whose children are all bins** (a shelf of bins), with
+	  one exception: **a group directly under the top of the tree is a room or an area, and a bay or
+	  shelving unit can always go in it**, whatever it holds today. That is the Lagoon, which holds
+	  only the Cage and the Equipment Room and is exactly where a new rack would stand.
+	* **An empty group, and one that already mixes groups and bins, take either.**
+
+	Every child counts, disabled ones included: they are part of how the place is arranged.
+	"""
+	spec = KINDS.get(kind)
+	children = list(kids.get(parent, []))
+	if not spec or not children or parent not in tree:
+		return None
+	groups = [c for c in children if is_group(tree[c])]
+	leaves = [c for c in children if not is_group(tree[c])]
+	label = _name_of(tree, parent)
+	if not spec["is_group"] and not leaves:
+		return (
+			f"{label} holds only groups of places ({_some(groups, tree)}), so a bin cannot go directly in it. "
+			"Put it on a shelf inside one of them."
+		)
+	if spec["is_group"] and not groups and not is_top_level(parent, tree):
+		return f"{label} holds only single places ({_some(leaves, tree)}), so a {spec['noun']} cannot go inside it."
+	return None
+
+
+def takes(parent, tree, kids):
+	"""What ``parent`` can have made inside it today, for the editor's buttons:
+	``{"takes_group", "takes_bin"}``. The server asks :func:`placement_problem` again at Make it."""
+	return {
+		"takes_group": placement_problem(parent, KIND_SHELF, tree, kids) is None,
+		"takes_bin": placement_problem(parent, KIND_BIN, tree, kids) is None,
+	}
 
 
 def _numbered(name):

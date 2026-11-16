@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write them as HTML, and never go through `__()`. An answer that arrives after the person opened
   another map's editor is not added to it. The Count Desk, like the Bin Manager, reads its list of
   locations again after a place is made on the map.
+- **Where each kind may go (review round 1, F2)**, by the shape of the tree, not by names, on the
+  server and in what the editor offers. A bin is refused where every child is a group (a row of
+  bays); a bay or shelf is refused where every child is a bin (a shelf of bins), except in a group
+  directly under the top of the tree, which is a room or an area and can always take a rack. That
+  exception exists because of the Lagoon, which holds only the Cage and the Equipment Room and is
+  exactly where a new rack would stand. An empty or mixed group takes either.
 
 ### Tests
 

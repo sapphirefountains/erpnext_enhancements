@@ -453,6 +453,8 @@ def editor_data():
 			# place can be made from the map at all (not a vehicle or a job site).
 			"parent": row.parent_warehouse or "",
 			"outside": name in outside,
+			# What can be made inside it today (warehouse_map_rules.takes), for the editor's buttons.
+			**(rules.takes(name, tree, kids) if rules.is_group(row) else {"takes_group": False, "takes_bin": False}),
 		}
 		for name, row in tree.items()
 		if rules.usable(row)
@@ -531,9 +533,10 @@ def _may_read(parent, tree):
 	return parent not in tree or bool(frappe.has_permission("Warehouse", "read", parent))
 
 
-def _parent_problem(parent, tree):
-	"""``(row, problem)``. The vehicles and job sites are looked up strictly: a failed lookup is a
-	problem of its own, never an empty list."""
+def _parent_problem(parent, tree, kind):
+	"""``(row, problem)``: whether anything can be made in ``parent``, then whether a ``kind`` can
+	go there given what it holds (``warehouse_map_rules.placement_problem``). The vehicles and job
+	sites are looked up strictly: a failed lookup is a problem of its own, never an empty list."""
 	row = tree.get(parent)
 	if row is None:
 		return row, rules.parent_problem(row, parent)
@@ -542,7 +545,10 @@ def _parent_problem(parent, tree):
 	except Exception:
 		frappe.log_error(title="Warehouse Map: vehicles and job sites could not be looked up")
 		return row, _LOOKUP_FAILED.format(rules._name_of(tree, parent))
-	return row, rules.parent_problem(row, parent, outside, shelf=_shelf_warehouse())
+	problem = rules.parent_problem(row, parent, outside, shelf=_shelf_warehouse())
+	if problem:
+		return row, problem
+	return row, rules.placement_problem(parent, kind, tree, rules.children_index(tree))
 
 
 @frappe.whitelist(methods=["GET"])
@@ -562,7 +568,7 @@ def suggest_location(parent, kind):
 	if not _may_read(parent, tree):
 		out["problem"] = _("You are not permitted to see {0}.").format(parent)
 		return out
-	row, problem = _parent_problem(parent, tree)
+	row, problem = _parent_problem(parent, tree, kind)
 	if problem:
 		out["problem"] = _(problem)
 		return out
@@ -627,7 +633,7 @@ def create_location(parent, kind, warehouse_name, children=0):
 	parent = cstr(parent).strip()
 	if not _may_read(parent, tree):
 		frappe.throw(_("You are not permitted to see {0}.").format(parent), frappe.PermissionError)
-	row, problem = _parent_problem(parent, tree)
+	row, problem = _parent_problem(parent, tree, kind)
 	if problem:
 		frappe.throw(_(problem))
 	company = cstr(row.company).strip()
@@ -663,6 +669,9 @@ def create_location(parent, kind, warehouse_name, children=0):
 	is_group = bool(spec["is_group"])
 	shown = rules._name_of(tree, made) if made in tree else name
 	answer = _levels_answer(made, tree, rules.levels(made, tree, kids)) if made in tree else {}
+	# What the new places and the parent can take now, so the editor's buttons follow at once (an empty
+	# group that has just had a shelf made in it no longer takes a bin).
+	places = {name: rules.takes(name, tree, kids) for name in [parent, *created] if name in tree and rules.is_group(tree[name])}
 	trail = rules.trail(made, tree) if made in tree else ""
 	return {
 		"warehouse": made,
@@ -684,6 +693,7 @@ def create_location(parent, kind, warehouse_name, children=0):
 		},
 		"levels": answer.get("levels") or [],
 		"names": answer.get("names") or {},
+		"places": places,
 	}
 
 

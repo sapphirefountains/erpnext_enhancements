@@ -554,6 +554,60 @@ class TestNamingANewLocation(unittest.TestCase):
 		self.assertEqual(rules.siblings_of(BAY, tree, kids, 1), ["Shelf K1-1", "Shelf K1-2"])
 		self.assertEqual(rules.siblings_of(BAY, tree, kids, 0), [])
 
+	# ---- F2 (review round 1): where each kind may go, by the shape of the tree.
+
+	def _with_lagoon(self):
+		"""The test tree plus a room directly under the top that holds only single places, as
+		production's Lagoon holds the Cage and the Equipment Room."""
+		tree = _tree()
+		tree["Pond Room - ZZ"] = {"name": "Pond Room - ZZ", "warehouse_name": "Pond Room", "parent_warehouse": ROOT, "is_group": 1, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		tree["Pump Cage - ZZ"] = {"name": "Pump Cage - ZZ", "warehouse_name": "Pump Cage", "parent_warehouse": "Pond Room - ZZ", "is_group": 0, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		return tree, rules.children_index(tree)
+
+	def test_a_leaf_only_top_level_group_takes_a_bay(self):
+		tree, kids = self._with_lagoon()
+		self.assertTrue(rules.is_top_level("Pond Room - ZZ", tree))
+		self.assertIsNone(rules.placement_problem("Pond Room - ZZ", "bay", tree, kids))
+		self.assertIsNone(rules.placement_problem("Pond Room - ZZ", "shelf", tree, kids))
+		self.assertIsNone(rules.placement_problem("Pond Room - ZZ", "bin", tree, kids))
+
+	def test_a_leaf_only_shelf_refuses_one(self):
+		tree, kids = self._with_lagoon()
+		self.assertFalse(rules.is_top_level(SHELF2, tree))
+		problem = rules.placement_problem(SHELF2, "shelf", tree, kids)
+		self.assertIn("holds only single places (Bin K1-2-1, Bin K1-2-2, Bin K1-2-9, and more)", problem)
+		self.assertIn("a shelf cannot go inside it", problem)
+		self.assertIn("a bay cannot", rules.placement_problem(SHELF2, "bay", tree, kids))
+		self.assertIsNone(rules.placement_problem(SHELF2, "bin", tree, kids))
+
+	def test_an_empty_group_takes_either(self):
+		tree, kids = self._with_lagoon()
+		for kind in ("bay", "shelf", "bin"):
+			self.assertIsNone(rules.placement_problem(SHELF1, kind, tree, kids), kind)
+
+	def test_a_mixed_group_takes_either(self):
+		tree, kids = self._with_lagoon()
+		# Stock holds a lane (a group) and two rooms that are one place each.
+		for kind in ("bay", "shelf", "bin"):
+			self.assertIsNone(rules.placement_problem(INV, kind, tree, kids), kind)
+
+	def test_a_group_only_parent_refuses_a_bin(self):
+		tree, kids = self._with_lagoon()
+		self.assertIn("holds only groups of places (Bay K1, Bay K2)", rules.placement_problem(ROW2, "bin", tree, kids))
+		self.assertIsNone(rules.placement_problem(ROW2, "bay", tree, kids))
+		# Directly under the top too: the exception is for bays and shelves only.
+		self.assertTrue(rules.is_top_level(UP, tree))
+		self.assertIn("so a bin cannot go directly in it", rules.placement_problem(UP, "bin", tree, kids))
+
+	def test_the_root_is_read_from_the_tree_not_a_name(self):
+		tree, kids = self._with_lagoon()
+		renamed = {name: dict(row) for name, row in tree.items()}
+		renamed[ROOT]["warehouse_name"] = "Everything"
+		self.assertTrue(rules.is_top_level("Pond Room - ZZ", renamed))
+		self.assertFalse(rules.is_top_level(ROOT, renamed))
+		self.assertEqual(rules.takes(SHELF2, tree, kids), {"takes_group": False, "takes_bin": True})
+		self.assertEqual(rules.takes(ROW2, tree, kids), {"takes_group": True, "takes_bin": False})
+
 	def test_each_kind_says_what_it_is(self):
 		self.assertEqual({k: v["is_group"] for k, v in rules.KINDS.items()}, {"bay": 1, "shelf": 1, "bin": 0})
 		self.assertEqual(rules.KINDS["bay"]["children"], "shelf")
@@ -1692,6 +1746,33 @@ class TestMakingALocation(_Base):
 		answer = api.create_location(BAY, "shelf", "Shelf K1-3", children=2)
 		self.assertEqual(answer["created"], ["Shelf K1-3 - ZZ", "Bin K1-3-1 - ZZ", "Bin K1-3-2 - ZZ"])
 		self.assertEqual([row["data"]["is_group"] for row in STATE["inserts"]], [1, 0, 0])
+
+	def test_where_each_kind_may_go_is_held_at_make_it(self):
+		"""F2 on the endpoints: refused before any insert, said when a name is asked for."""
+		self.as_maker()
+		with self.assertRaises(_Throw) as caught:
+			api.create_location(ROW2, "bin", "Bin K-1")
+		self.assertIn("holds only groups of places", str(caught.exception))
+		with self.assertRaises(_Throw):
+			api.create_location(SHELF2, "shelf", "Shelf K1-2-A")
+		self.assertIn("holds only single places", api.suggest_location(SHELF2, "bay")["problem"])
+		self.assertEqual(STATE["inserts"], [])
+		# A room directly under the top that holds only single places takes a bay.
+		STATE["tree"]["Pond Room - ZZ"] = {"name": "Pond Room - ZZ", "warehouse_name": "Pond Room", "parent_warehouse": ROOT, "is_group": 1, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		STATE["tree"]["Pump Cage - ZZ"] = {"name": "Pump Cage - ZZ", "warehouse_name": "Pump Cage", "parent_warehouse": "Pond Room - ZZ", "is_group": 0, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		answer = api.create_location("Pond Room - ZZ", "bay", "Pond Rack 1", children=1)
+		self.assertEqual(answer["created"], ["Pond Rack 1 - ZZ", "Shelf Rack 1-1 - ZZ"])
+
+	def test_the_editor_is_told_what_each_group_takes(self):
+		self.as_maker()
+		rows = {row["name"]: row for row in api.editor_data()["warehouses"]}
+		self.assertEqual((rows[ROW2]["takes_group"], rows[ROW2]["takes_bin"]), (True, False))
+		self.assertEqual((rows[SHELF2]["takes_group"], rows[SHELF2]["takes_bin"]), (False, True))
+		self.assertEqual((rows[SHELF1]["takes_group"], rows[SHELF1]["takes_bin"]), (True, True))
+		self.assertEqual((rows[ROOM]["takes_group"], rows[ROOM]["takes_bin"]), (False, False))
+		# And after a shelf is made in an empty bay, the bay no longer takes a bin.
+		answer = api.create_location(BAY2, "shelf", "Shelf K2-1")
+		self.assertEqual(answer["places"][BAY2], {"takes_group": True, "takes_bin": False})
 
 	def test_a_bin_has_nothing_made_inside_it_and_the_count_is_held(self):
 		self.as_maker()

@@ -615,8 +615,18 @@ export function can_make_inside(shape) {
 // ({ value, label }), in the server's order (by trail).
 export function bay_parents(warehouses) {
 	return (Array.isArray(warehouses) ? warehouses : [])
-		.filter((w) => w && w.is_group && !w.outside)
+		.filter((w) => w && w.is_group && !w.outside && w.takes_group !== false)
 		.map((w) => ({ value: w.name, label: text(w.trail) ? `${w.trail} › ${w.warehouse_name}` : text(w.warehouse_name) || w.name }));
+}
+
+// Whether the editor offers making `kind` inside `warehouse` (the server's takes_group / takes_bin,
+// warehouse_map_rules.placement_problem): a bin goes where there are bins or nothing yet, a bay or shelf
+// where there are groups or nothing yet, and always in a room or area directly under the top of the
+// tree. A warehouse the editor knows nothing about is offered, and the server decides at Make it.
+export function takes(warehouses, warehouse, kind) {
+	const row = (Array.isArray(warehouses) ? warehouses : []).find((w) => w && w.name === text(warehouse));
+	if (!row) return true;
+	return kind === KIND_BIN ? row.takes_bin !== false : row.takes_group !== false;
 }
 
 // The group "New bay" starts on: the one the picked box's bay hangs in (a new bay is most often the
