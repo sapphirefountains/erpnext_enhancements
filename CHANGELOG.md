@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the items the walk and Stock Scan list count. A turned room box holds what is inside its
   turned shape.
 
+### Review round 3
+
+- **The Free space list and a room's panel follow the same rule (R3-S1).** `get_map` sends each
+  box the bins it holds itself (`owned`). In the Free space view the list gives a bay's free bins
+  at the bay, in walk order, and a room drawn over the bays inside it shows only its own bins, the
+  ones its "2 of 3 bins free" counts. The stock view's front view is unchanged.
+
 ### Why it is built this way
 
 - **Free space is the Bin Manager's numbers, and only shop bins.** A bin's state comes from the

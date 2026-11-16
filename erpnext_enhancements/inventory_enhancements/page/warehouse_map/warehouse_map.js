@@ -850,8 +850,10 @@ class WarehouseMapPage {
 		}
 		const wm = this.wm;
 		const hits = this.hits();
-		const rows = wm.level_rows(shape, data.bins, hits.bins);
 		const free = this.mode === wm.VIEW_FREE;
+		// In the Free space view a box shows the bins it holds itself, the ones its sum counts: a room
+		// over the bays drawn inside it leaves their bins to the bays (review R3-S1).
+		const rows = free && typeof wm.owned_rows === "function" ? wm.owned_rows(shape, data.bins, hits.bins) : wm.level_rows(shape, data.bins, hits.bins);
 		// A box that is one bin (a room) has nothing inside to pick: it is the bin.
 		const single = !shape.is_group ? shape.warehouse : "";
 		const picked = single || this.bin;

@@ -2184,6 +2184,8 @@ class TestFreeSpaceAndTheWalk(_Base):
 		self.assertEqual(bay_bins, [BIN1, BIN2, BIN9, BIN10])
 		data = api.get_map("Shop Floor")
 		space = {shape["warehouse"]: shape["space"]["bins"] for shape in data["shapes"]}
+		# R3-S1: the page is told which bins each box holds itself.
+		self.assertEqual({shape["warehouse"]: shape["owned"] for shape in data["shapes"]}, {INV: [BONEYARD, ROOM], BAY: [BIN1, BIN2, BIN9, BIN10]})
 		# Stock's own: the Parts Room (the boneyard is never a bin to fill); the bay's four are the bay's.
 		self.assertEqual(space, {INV: 1, BAY: 4})
 

@@ -532,6 +532,34 @@ check(
 check("each says its box", L.free_bins(FREE_DATA)[0].shape, BAY);
 check("no map, no free bins", L.free_bins(null), []);
 
+// R3-S1: a room drawn over the bays inside it. The room's levels hold every bin under it; the server
+// says which it holds itself. The bay's free bins are listed at the bay, in walk order, not under the room.
+const ROOM_DATA = {
+	shapes: [
+		{
+			warehouse: "Stock - ZZ",
+			shape_type: "Room",
+			is_group: true,
+			walk: 1,
+			owned: ["Parts Room - ZZ"],
+			levels: [
+				{ warehouse: "Stock - ZZ", label: "", bins: ["Parts Room - ZZ"] },
+				{ warehouse: "Bay K1 - ZZ", label: "Bay K1", bins: ["Bin K1-2-1 - ZZ", "Bin K1-2-2 - ZZ"] },
+			],
+		},
+		{ warehouse: BAY, shape_type: "Rack", is_group: true, walk: 2, owned: ["Bin K1-2-1 - ZZ", "Bin K1-2-2 - ZZ"], levels: [{ warehouse: "Shelf K1-2 - ZZ", label: "Shelf K1-2", bins: ["Bin K1-2-1 - ZZ", "Bin K1-2-2 - ZZ"] }] },
+	],
+	bins: {
+		"Parts Room - ZZ": { warehouse_name: "Parts Room", space: "free" },
+		"Bin K1-2-1 - ZZ": { warehouse_name: "Bin K1-2-1", space: "free" },
+		"Bin K1-2-2 - ZZ": { warehouse_name: "Bin K1-2-2", space: "in_use" },
+	},
+};
+check("a bay's free bin is listed at the bay", L.free_bins(ROOM_DATA).map((f) => [f.warehouse, f.shape]), [["Parts Room - ZZ", "Stock - ZZ"], ["Bin K1-2-1 - ZZ", BAY]]);
+check("the room's panel shows only its own bins", L.owned_rows(ROOM_DATA.shapes[0], ROOM_DATA.bins, {}).map((r) => r.bins.map((b) => b.warehouse)), [["Parts Room - ZZ"]]);
+check("a box with no owned list keeps every bin", L.owned_rows({ levels: ROOM_DATA.shapes[0].levels }, ROOM_DATA.bins, {}).length, 2);
+truthy("the page's Free space panel builds from the owned rows", PAGE_JS.includes("wm.owned_rows(shape, data.bins, hits.bins)"));
+
 const FLOORS = [{ name: "Shop Floor", title: "Shop Floor" }, { name: "Upstairs", title: "Upstairs" }];
 check("where a floor comes", L.floor_place(FLOORS, "Shop Floor"), { n: 1, of: 2, next: FLOORS[1], previous: null });
 check("the last floor has no next", L.floor_place(FLOORS, "Upstairs").next, null);

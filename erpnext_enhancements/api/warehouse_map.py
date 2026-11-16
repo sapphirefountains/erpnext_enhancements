@@ -399,6 +399,10 @@ def get_map(name):
 			"levels": [],
 			"summary": None,
 			"space": None,
+			# The bins this box holds itself (warehouse_map_rules.owned_leaves, R2-S1): the Free space
+			# view's list and panel use them, so a room over the bays drawn inside it leaves their bins
+			# to the bays (review R3-S1). None for a box that is not drawn.
+			"owned": None,
 			# Its stored place in the walk (0: by where it stands), and the place it is walked in.
 			"walk_order": rules.walk_number(row.get("walk_order")),
 			"walk": 0,
@@ -407,8 +411,9 @@ def get_map(name):
 			leaves = rules.leaves_under(warehouse, tree, kids)
 			shape["levels"] = rules.levels(warehouse, tree, kids, shape["bin_order"])
 			shape["summary"] = rules.summarize([bin_rows.get(leaf) or {} for leaf in leaves])
+			shape["owned"] = owned.get(warehouse, leaves)
 			shape["space"] = rules.space_summary(
-				[bin_rows.get(leaf) or {} for leaf in owned.get(warehouse, leaves)] if space_ok else []
+				[bin_rows.get(leaf) or {} for leaf in shape["owned"]] if space_ok else []
 			)
 			for leaf in leaves:
 				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree, space_ok)

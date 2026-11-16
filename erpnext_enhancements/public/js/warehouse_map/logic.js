@@ -396,6 +396,23 @@ export function walked_shapes(shapes) {
 }
 
 /**
+ * A box's rows as level_rows gives them, keeping only the bins the box holds itself (`owned`, from the
+ * server: warehouse_map_rules.owned_leaves) and leaving out a row that is then empty. In a room drawn
+ * over the bays inside it, the bays' bins belong to the bays (review R3-S1). A box the server sent no
+ * `owned` for keeps every bin.
+ */
+export function owned_rows(shape, bins, hits) {
+	const s = shape || {};
+	const rows = level_rows(s, bins, hits);
+	if (!Array.isArray(s.owned)) return rows;
+	const mine = {};
+	s.owned.forEach((w) => {
+		mine[w] = true;
+	});
+	return rows.map((row) => Object.assign({}, row, { bins: row.bins.filter((b) => mine[b.warehouse]) })).filter((row) => row.bins.length);
+}
+
+/**
  * Every free bin on a map, in the order they are walked (the boxes in walk order, each box's rows as
  * a person facing it reads them): [{ warehouse, name, label, shape, box }]. `data` is get_map's answer.
  */
@@ -405,7 +422,7 @@ export function free_bins(data) {
 	const out = [];
 	const seen = {};
 	walked_shapes(d.shapes).forEach((s) => {
-		const rows = s.is_group ? level_rows(s, bins, {}) : [{ label: "", bins: [{ warehouse: s.warehouse, name: (bins[s.warehouse] || {}).warehouse_name || s.warehouse, label: "" }] }];
+		const rows = s.is_group ? owned_rows(s, bins, {}) : [{ label: "", bins: [{ warehouse: s.warehouse, name: (bins[s.warehouse] || {}).warehouse_name || s.warehouse, label: "" }] }];
 		rows.forEach((row) =>
 			row.bins.forEach((b) => {
 				if (seen[b.warehouse] || bin_space(bins[b.warehouse]) !== "free") return;
