@@ -157,8 +157,8 @@ class WarehouseMapPage {
 
 	// Whether this tab's copy of the page's bundle knows how to make a location. A tab open across the
 	// deploy that brought slice 2 can hold this script over the older bundle (CLAUDE.md, "a doctype_js
-	// file and the bundle it requires can reach a Desk tab from two different deploys"); it then says to
-	// reload instead of offering buttons whose words it does not have.
+	// file and the bundle it requires can reach a Desk tab from two different deploys"); it then leaves
+	// those buttons out until the page is reloaded, rather than offer ones whose words it does not have.
 	can_make() {
 		return !!(this.wm && Number(this.wm.version) >= 2 && typeof this.wm.make_note === "function");
 	}
@@ -1451,7 +1451,8 @@ class WarehouseMapPage {
 				fieldname: "parent",
 				fieldtype: "Select",
 				label: __("Inside"),
-				options: [{ value: "", label: "" }].concat(wm.bay_parents(ed.warehouses)),
+				// Frappe's Select writes each label as HTML: a warehouse's name is escaped first.
+				options: [{ value: "", label: "" }].concat(wm.bay_parents(ed.warehouses).map((c) => ({ value: c.value, label: this.esc(c.label) }))),
 				default: start,
 				reqd: 1,
 				change: () => {
@@ -1525,7 +1526,7 @@ class WarehouseMapPage {
 		else if (state.parent) {
 			if (state.blank) lines.push(`<p class="text-muted">${this.esc(__("The places already here have no number to follow, so type the name."))}</p>`);
 			if (state.suffix) lines.push(`<p class="text-muted">${this.esc(__('ERPNext puts "{0}" at the end of the name.', [state.suffix.trim()]))}</p>`);
-			lines.push(`<p>${this.esc(__(wm.make_note(kind, parent_name, d.get_value("children"))))}</p>`);
+			lines.push(`<p>${this.esc(wm.make_note(kind, parent_name, d.get_value("children")))}</p>`);
 		}
 		if (state.error) lines.push(`<p class="text-danger" role="alert">${this.esc(state.error)}</p>`);
 		d.fields_dict.note.$wrapper.html(lines.join(""));
@@ -1537,6 +1538,9 @@ class WarehouseMapPage {
 		if (state.saving || state.problem) return;
 		const parent = kind === wm.KIND_BAY ? values.parent || "" : state.parent;
 		if (!parent) return;
+		// The editor this was asked from: an answer that arrives after the person opened another map's
+		// editor is not added to that one.
+		const asked = this.edit;
 		state.saving = true;
 		state.error = "";
 		this.make_paint(d, kind, state, __("Making it…"));
@@ -1549,7 +1553,7 @@ class WarehouseMapPage {
 			(answer) => {
 				state.saving = false;
 				d.hide();
-				this.made(kind, answer || {});
+				this.made(kind, answer || {}, asked);
 			},
 			(err) => {
 				state.saving = false;
@@ -1562,13 +1566,16 @@ class WarehouseMapPage {
 	// A place was made. The stored maps are read again (a floor's front view shows it), the Bin Manager is
 	// told its list is old, and the editor learns the new warehouses. A new bay gets its box; a shelf or a
 	// bin is read back into the picked box's order.
-	made(kind, answer) {
+	made(kind, answer, asked) {
 		const ed = this.edit;
 		const wm = this.wm;
 		this.maps = {};
 		$(document).trigger("sf-warehouses-changed", [answer.created || []]);
-		frappe.show_alert({ message: __(wm.made_text(answer)), indicator: "green" }, 5);
-		if (!ed) return;
+		const name = this.esc(answer.warehouse_name || answer.warehouse || "");
+		const more = Math.max(0, (answer.created || []).length - 1);
+		frappe.show_alert({ message: more ? __("{0} made, with {1} more inside it", [name, more]) : __("{0} made", [name]), indicator: "green" }, 5);
+		// Made, whatever happens next; the editor learns about it only if it is still the one that asked.
+		if (!ed || ed !== asked) return;
 		Object.keys(answer.names || {}).forEach((key) => {
 			ed.names[key] = { warehouse_name: answer.names[key] };
 		});

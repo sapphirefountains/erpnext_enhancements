@@ -653,14 +653,6 @@ export function make_note(kind, parent_name, children) {
 	return `This makes ${what}${where} in ERPNext as soon as you choose Make it. It shows in this box's front view at once; the map does not need saving for it.`;
 }
 
-// What is said once it is made.
-export function made_text(answer) {
-	const a = answer || {};
-	const created = Array.isArray(a.created) ? a.created.length : 0;
-	const name = text(a.warehouse_name) || text(a.warehouse);
-	return created > 1 ? `${name} made, with ${created - 1} more inside it` : `${name} made`;
-}
-
 // The warehouses the picker offers whose name or trail holds every word typed.
 export function filter_warehouses(warehouses, query, limit) {
 	const want = text(query).toLowerCase().split(/\s+/).filter(Boolean);
