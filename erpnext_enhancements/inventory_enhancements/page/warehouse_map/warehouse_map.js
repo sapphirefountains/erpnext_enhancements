@@ -25,7 +25,16 @@
 // never location.search. Moves between screens are frappe.set_route(...parts, options): an array AND an
 // options object as two arguments is not a form the router unwraps.
 //
-// THE EDITOR changes one Warehouse Floor Map record and nothing else: no Warehouse, no Putaway Rule, no stock.
+// THE EDITOR changes one Warehouse Floor Map record: no Putaway Rule, no stock. Since v1.820.0 (slice 2) it
+// can also MAKE a bay, a shelf or a bin (Nikolas, 2026-11-12: "Editor can also create bins"): "New bay" on the
+// bar, "Add a shelf" and a + on each shelf in the picked box's "Order as you face it". Each opens a dialog
+// that shows the name first (api.warehouse_map.suggest_location, the siblings' pattern) and says the place is
+// made at once; "Make it" calls api.warehouse_map.create_location, which inserts the Warehouse through the
+// document. That is a Warehouse, not the map: it is made whether or not the map is saved after, and a new
+// bay's box (placed for it in the editor) needs Save like any other box. Nothing here renames, moves or
+// deletes a warehouse. The new place reaches the floor's front view (the stored maps are read again) and the
+// Bin Manager (told by the "sf-warehouses-changed" event that its list of bins is old).
+//
 // Save sends the whole list of boxes (api.warehouse_map.save_map) with the `modified` stamp it was
 // opened with, so two people editing cannot silently overwrite each other. Leaving with unsaved boxes is
 // not blocked (that would break Back): the boxes are kept while the Desk stays open, the page says so,
@@ -144,6 +153,14 @@ class WarehouseMapPage {
 
 	carry() {
 		return { item: this.item, bin: "" };
+	}
+
+	// Whether this tab's copy of the page's bundle knows how to make a location. A tab open across the
+	// deploy that brought slice 2 can hold this script over the older bundle (CLAUDE.md, "a doctype_js
+	// file and the bundle it requires can reach a Desk tab from two different deploys"); it then leaves
+	// those buttons out until the page is reloaded, rather than offer ones whose words it does not have.
+	can_make() {
+		return !!(this.wm && Number(this.wm.version) >= 2 && typeof this.wm.make_note === "function");
 	}
 
 	// The query of the screen on show, rewritten in place: picking a bin or an item is not a screen.
@@ -1026,6 +1043,7 @@ class WarehouseMapPage {
 				<button type="button" class="btn btn-sm btn-default" data-act="add" data-kind="Rack">${this.esc(__("Add rack"))}</button>
 				<button type="button" class="btn btn-sm btn-default" data-act="add" data-kind="Room">${this.esc(__("Add room"))}</button>
 				<button type="button" class="btn btn-sm btn-default" data-act="add" data-kind="Label">${this.esc(__("Add label"))}</button>
+				${this.can_make() ? `<button type="button" class="btn btn-sm btn-default" data-act="make" data-kind="bay">${this.esc(__("New bay"))}</button>` : ""}
 				<button type="button" class="btn btn-sm btn-default" data-act="upload">${this.esc(map.background ? __("Change floor plan picture") : __("Upload floor plan picture"))}</button>
 				<span class="wm-editbar-gap"></span>
 				<span class="wm-dirty" role="status"></span>
@@ -1179,13 +1197,29 @@ class WarehouseMapPage {
 	order_html(s) {
 		const wm = this.wm;
 		const ed = this.edit;
-		if (!s.warehouse || s.shape_type === wm.LABEL || s.missing || !s.is_group) return "";
+		if (!s.warehouse || s.shape_type === wm.LABEL || s.missing) return "";
+		const make = this.can_make();
+		if (!s.is_group) {
+			return make ? `<p class="wm-muted wm-make-none">${this.esc(__("This box is one place, so no shelf or bin can be made inside it."))}</p>` : "";
+		}
 		if (!Array.isArray(s.levels) || s.order_loading) {
 			this.load_levels(s.warehouse);
 			return `<div class="wm-order"><h5>${this.esc(__("Order as you face it"))}</h5><p class="wm-muted">${this.esc(__("Reading the shelves…"))}</p></div>`;
 		}
 		const rows = wm.level_rows(s, ed.names, {});
-		if (!rows.length) return "";
+		// Only what the server would accept here (warehouse_map_rules.placement_problem).
+		const shelf_ok = make && wm.takes(ed.warehouses, s.warehouse, wm.KIND_SHELF);
+		const bin_ok = make && !rows.length && wm.takes(ed.warehouses, s.warehouse, wm.KIND_BIN);
+		const makes =
+			shelf_ok || bin_ok
+				? `<div class="wm-make-acts">${shelf_ok ? `<button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="shelf" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a shelf"))}</button>` : ""}
+				${bin_ok ? `<button type="button" class="btn btn-xs btn-default" data-act="make" data-kind="bin" data-parent="${this.esc(s.warehouse)}">${this.esc(__("Add a bin"))}</button>` : ""}</div>`
+				: "";
+		if (!rows.length) {
+			return make
+				? `<div class="wm-order"><h5>${this.esc(__("Shelves and bins"))}</h5><p class="wm-muted">${this.esc(__("Nothing is in this box yet."))}</p>${makes}</div>`
+				: "";
+		}
 		const body = rows
 			.map((row, i) => {
 				const shelf = row.warehouse !== s.warehouse;
@@ -1193,13 +1227,19 @@ class WarehouseMapPage {
 					? `<span class="wm-order-arrows"><button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="-1" aria-label="${this.esc(__("Move {0} up", [row.label]))}">&#9650;</button>
 						<button type="button" class="btn btn-xs btn-default" data-act="order-row" data-row="${i}" data-dir="1" aria-label="${this.esc(__("Move {0} down", [row.label]))}">&#9660;</button></span>`
 					: `<span class="wm-order-arrows"></span>`;
-				const bins = row.bins
-					.map(
-						(b) =>
-							`<button type="button" class="wm-ochip ${b.warehouse === ed.order_pick ? "is-on" : ""}" data-act="order-pick" data-row="${i}" data-bin="${this.esc(b.warehouse)}"
-							aria-pressed="${b.warehouse === ed.order_pick}" title="${this.esc(b.name)}">${this.esc(b.label)}</button>`
-					)
-					.join("");
+				const plus =
+					make && wm.takes(ed.warehouses, row.warehouse, wm.KIND_BIN)
+						? `<button type="button" class="wm-ochip wm-make-chip" data-act="make" data-kind="bin" data-parent="${this.esc(row.warehouse)}"
+						title="${this.esc(__("Make a bin here"))}" aria-label="${this.esc(__("Make a bin on {0}", [row.label || wm.shape_label(s)]))}">+</button>`
+						: "";
+				const bins =
+					row.bins
+						.map(
+							(b) =>
+								`<button type="button" class="wm-ochip ${b.warehouse === ed.order_pick ? "is-on" : ""}" data-act="order-pick" data-row="${i}" data-bin="${this.esc(b.warehouse)}"
+								aria-pressed="${b.warehouse === ed.order_pick}" title="${this.esc(b.name)}">${this.esc(b.label)}</button>`
+						)
+						.join("") + plus;
 				return `<div class="wm-orow">${arrows}<span class="wm-orow-name">${this.esc(row.label || __("(no shelf)"))}</span><div class="wm-ochips">${bins}</div></div>`;
 			})
 			.join("");
@@ -1211,7 +1251,7 @@ class WarehouseMapPage {
 				<button type="button" class="btn btn-xs btn-default" data-act="order-bin" data-dir="-1" ${picked ? "" : "disabled"}>&#9664; ${this.esc(__("Move bin left"))}</button>
 				<button type="button" class="btn btn-xs btn-default" data-act="order-bin" data-dir="1" ${picked ? "" : "disabled"}>${this.esc(__("Move bin right"))} &#9654;</button>
 				${(s.bin_order || []).length ? `<button type="button" class="btn btn-xs btn-default" data-act="order-auto">${this.esc(__("Use the automatic order"))}</button>` : ""}
-			</div></div>`;
+			</div>${makes}</div>`;
 	}
 
 	// The shelves and bins of a warehouse in the automatic order, for a box the stored map does not
@@ -1227,7 +1267,11 @@ class WarehouseMapPage {
 			ed.shapes[at] = Object.assign({}, ed.shapes[at], patch, { order_loading: false });
 			if (this.target.screen === "edit" && ed.selected === at) this.render_panel();
 		};
-		this.call("box_levels", { warehouse }, true).then(
+		// In the box's own order when it has one, so a bin just made shows where the floor will show it:
+		// at the end of its shelf.
+		const box = ed.shapes.find((x) => x.warehouse === warehouse);
+		const order = box && Array.isArray(box.bin_order) ? box.bin_order.filter(Boolean).join("\n") : "";
+		this.call("box_levels", order ? { warehouse, order } : { warehouse }, true).then(
 			(answer) => {
 				Object.keys((answer && answer.names) || {}).forEach((key) => {
 					ed.names[key] = { warehouse_name: answer.names[key] };
@@ -1385,12 +1429,194 @@ class WarehouseMapPage {
 			ed.order_pick = "";
 			this.render_panel();
 			this.paint_edit_status();
-		} else if (act === "save") this.save();
+		} else if (act === "make" && this.can_make()) this.make(String($el.data("kind")), String($el.data("parent") || ""));
+		else if (act === "save") this.save();
 		else if (act === "upload") this.upload();
 		else if (act === "remove-picture") {
 			ed.map.background = "";
 			this.render_editor();
 		} else if (act === "delete-map") this.delete_map();
+	}
+
+	// ------------------------------------------------------------------ making a location (slice 2)
+
+	// The dialog: where (for a bay), the name, how many shelves or bins to make with it, and the sentence
+	// that says it is made at once. Nothing is made until "Make it".
+	make(kind, parent) {
+		const ed = this.edit;
+		const wm = this.wm;
+		const m = wm.MAKE[kind];
+		if (!ed || !m) return;
+		const picked = ed.shapes[ed.selected];
+		const start = kind === wm.KIND_BAY ? parent || wm.default_bay_parent(picked, ed.warehouses) : parent;
+		const state = { parent: start, suggested: "", suffix: "", problem: "", error: "", saving: false, seq: 0 };
+		const fields = [];
+		if (kind === wm.KIND_BAY) {
+			fields.push({
+				fieldname: "parent",
+				fieldtype: "Select",
+				label: __("Inside"),
+				// Frappe's Select writes each label as HTML: a warehouse's name is escaped first.
+				options: [{ value: "", label: "" }].concat(wm.bay_parents(ed.warehouses).map((c) => ({ value: c.value, label: this.esc(c.label) }))),
+				default: start,
+				reqd: 1,
+				change: () => {
+					state.parent = d.get_value("parent") || "";
+					this.make_suggest(d, kind, state);
+				},
+			});
+		}
+		fields.push({ fieldname: "warehouse_name", fieldtype: "Data", label: __("Name"), reqd: 1 });
+		if (m.child) {
+			fields.push({
+				fieldname: "children",
+				fieldtype: "Int",
+				label: __(m.children),
+				default: 0,
+				description: __("Up to {0}, named in turn.", [wm.MAX_CHILDREN]),
+				change: () => this.make_paint(d, kind, state),
+			});
+		}
+		fields.push({ fieldname: "note", fieldtype: "HTML" });
+		const d = new frappe.ui.Dialog({
+			title: __(m.title),
+			fields,
+			primary_action_label: __("Make it"),
+			primary_action: (values) => this.make_go(d, kind, state, values),
+		});
+		d.show();
+		this.make_suggest(d, kind, state);
+	}
+
+	// The name it would take, from the server (the siblings' pattern). A name the person has typed over
+	// the last suggestion is left alone.
+	make_suggest(d, kind, state) {
+		state.seq += 1;
+		const seq = state.seq;
+		state.problem = "";
+		state.error = "";
+		if (!state.parent) {
+			state.suffix = "";
+			this.make_paint(d, kind, state);
+			return;
+		}
+		this.make_paint(d, kind, state, __("Working out the name…"));
+		this.call("suggest_location", { parent: state.parent, kind }, true).then(
+			(answer) => {
+				if (seq !== state.seq) return;
+				const a = answer || {};
+				const typed = d.get_value("warehouse_name") || "";
+				if (!typed || typed === state.suggested) d.set_value("warehouse_name", a.warehouse_name || "");
+				state.suggested = a.warehouse_name || "";
+				state.suffix = a.suffix || "";
+				state.parent_name = a.parent_name || state.parent;
+				state.problem = a.problem || "";
+				state.blank = !a.problem && !a.warehouse_name;
+				this.make_paint(d, kind, state);
+			},
+			(err) => {
+				if (seq !== state.seq) return;
+				state.error = (err && err.message) || __("The name could not be worked out. Type it.");
+				this.make_paint(d, kind, state);
+			}
+		);
+	}
+
+	make_paint(d, kind, state, busy) {
+		const wm = this.wm;
+		const parent_name = state.parent_name || ((this.edit.warehouses || []).find((w) => w.name === state.parent) || {}).warehouse_name || state.parent;
+		const lines = [];
+		if (busy) lines.push(`<p class="text-muted">${this.esc(busy)}</p>`);
+		if (state.problem) lines.push(`<p class="text-danger">${this.esc(state.problem)}</p>`);
+		else if (state.parent) {
+			if (state.blank) lines.push(`<p class="text-muted">${this.esc(__("The places already here have no number to follow, so type the name."))}</p>`);
+			if (state.suffix) lines.push(`<p class="text-muted">${this.esc(__('ERPNext puts "{0}" at the end of the name.', [state.suffix.trim()]))}</p>`);
+			lines.push(`<p>${this.esc(wm.make_note(kind, parent_name, d.get_value("children")))}</p>`);
+		}
+		if (state.error) lines.push(`<p class="text-danger" role="alert">${this.esc(state.error)}</p>`);
+		d.fields_dict.note.$wrapper.html(lines.join(""));
+		d.get_primary_btn().prop("disabled", !!state.saving || !!state.problem);
+	}
+
+	make_go(d, kind, state, values) {
+		const wm = this.wm;
+		if (state.saving || state.problem) return;
+		const parent = kind === wm.KIND_BAY ? values.parent || "" : state.parent;
+		if (!parent) return;
+		// The editor this was asked from: an answer that arrives after the person opened another map's
+		// editor is not added to that one.
+		const asked = this.edit;
+		state.saving = true;
+		state.error = "";
+		this.make_paint(d, kind, state, __("Making it…"));
+		this.call("create_location", {
+			parent,
+			kind,
+			warehouse_name: values.warehouse_name || "",
+			children: wm.child_count(values.children, kind),
+		}).then(
+			(answer) => {
+				state.saving = false;
+				d.hide();
+				this.made(kind, answer || {}, asked);
+			},
+			(err) => {
+				state.saving = false;
+				state.error = (err && err.message) || __("It was not made. Try again.");
+				this.make_paint(d, kind, state);
+			}
+		);
+	}
+
+	// A place was made. The stored maps are read again (a floor's front view shows it), the Bin Manager is
+	// told its list is old, and the editor learns the new warehouses. A new bay gets its box; a shelf or a
+	// bin is read back into the picked box's order.
+	made(kind, answer, asked) {
+		const ed = this.edit;
+		const wm = this.wm;
+		this.maps = {};
+		$(document).trigger("sf-warehouses-changed", [answer.created || []]);
+		const name = this.esc(answer.warehouse_name || answer.warehouse || "");
+		const more = Math.max(0, (answer.created || []).length - 1);
+		frappe.show_alert({ message: more ? __("{0} made, with {1} more inside it", [name, more]) : __("{0} made", [name]), indicator: "green" }, 5);
+		// Made, whatever happens next; the editor learns about it only if it is still the one that asked.
+		if (!ed || ed !== asked) return;
+		Object.keys(answer.names || {}).forEach((key) => {
+			ed.names[key] = { warehouse_name: answer.names[key] };
+		});
+		ed.names[answer.warehouse] = { warehouse_name: answer.warehouse_name };
+		ed.warehouses.push({
+			name: answer.warehouse,
+			warehouse_name: answer.warehouse_name,
+			trail: answer.trail || "",
+			is_group: !!answer.is_group,
+			parent: answer.parent || "",
+			outside: false,
+			takes_group: !!answer.is_group,
+			takes_bin: !!answer.is_group,
+		});
+		// What the parent and the new places take now: the buttons follow at once.
+		Object.keys(answer.places || {}).forEach((name) => {
+			const row = ed.warehouses.find((w) => w.name === name);
+			if (row) Object.assign(row, answer.places[name]);
+		});
+		if (kind === wm.KIND_BAY) {
+			const unit = answer.unit || {};
+			ed.units.push(unit);
+			const shape = wm.new_shape(wm.RACK, unit, ed.map, this.view(ed.map), ed.added);
+			ed.added += 1;
+			shape.is_group = true;
+			shape.levels = answer.levels || [];
+			ed.shapes.push(shape);
+			this.select(ed.shapes.length - 1);
+			return;
+		}
+		const at = ed.shapes.findIndex((x) => x.warehouse && wm.shape_bins(x).concat([x.warehouse]).concat((x.levels || []).map((l) => l.warehouse)).includes(answer.parent));
+		if (at >= 0) {
+			ed.shapes[at] = Object.assign({}, ed.shapes[at], { levels: undefined });
+			delete ed.levels_loading[ed.shapes[at].warehouse];
+		}
+		this.render_panel();
 	}
 
 	save() {

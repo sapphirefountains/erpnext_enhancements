@@ -731,6 +731,24 @@
 	margin-top: 6px;
 }
 
+/* Making a place from the editor (v1.820.0): a + at the end of each shelf, and the buttons under the list. */
+.wm-make-chip {
+	border-style: dashed;
+	background: transparent;
+	font-weight: 600;
+}
+
+.wm-make-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 6px;
+}
+
+.wm-make-none {
+	margin: 6px 0 var(--sf-space-10, 8px);
+}
+
 .wm-mapfields,
 .wm-elsewhere {
 	margin-top: var(--sf-space-15, 12px);

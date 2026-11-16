@@ -28,7 +28,7 @@ model, the pure rules and the label reads.
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
-| `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.818.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; it never writes a Warehouse or stock. See *The Warehouse Map* below |
+| `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.818.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; a map never writes stock, and since v1.820.0 its editor can make a bay, a shelf or a bin (a Warehouse, through the document). See *The Warehouse Map* below |
 | `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, numbers and position words in the order a person sees them, or the box's own order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
 | `warehouse_map_files.py` | The map's two doc_events on other DocTypes, and its boot flag: `refuse_public_file` (`File` `validate`: a File attached to a map is never public), `follow_warehouse_rename` (`Warehouse` `after_rename`: a box's own order follows a rename; cannot raise), `has_visible_map` (`frappe.boot.ee_warehouse_map`) and `clear_boot_cache` (drops the Desk's cached boot data when a map's visibility changes; cannot raise). Imports nothing but Frappe at load |
 | `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.818.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print |
@@ -1349,7 +1349,7 @@ nobody touching the map. The decisions that shaped it (Nik's answers the same da
 | Who edits | A new role, **Warehouse Map Editor** (and System Manager). Everyone with a Stock Scan role looks |
 | Where it opens | The Bin Manager's Map tab, a bin's *Show on map*, the Item and Warehouse forms, the Where Is This Item and Location Contents reports, Stock Scan on the phone, and a printed sheet |
 | The floor plan file | On the site only. It is a real building's layout and this repository is public |
-| Creating bins from the map | Wanted, and **not in this release**: the map only places warehouses that exist. See *Not built yet* |
+| Creating bins from the map | Nik: "Editor can also create bins". Built in v1.820.0 (slice 2): see *Making a bay, a shelf or a bin* |
 
 ### Routes
 
@@ -1474,6 +1474,32 @@ that really sits at an angle), and tied to any warehouse through the picker.
   holds it is decided in the Desk. The role adds editing to someone who already works the
   inventory; by itself it does not open the page.
 
+### Making a bay, a shelf or a bin (v1.820.0, slice 2)
+
+The editor can make the places a map shows: **New bay** on the editor's bar, and in the picked
+box's *Order as you face it* a **+** at the end of each shelf (a bin) and **Add a shelf**. Each
+opens a dialog that shows the name before anything is made, says the place is made in ERPNext at
+once, and has *Make it* as its only way on. A new bay and a new shelf can be made with their
+shelves or bins in the same step (up to 30).
+
+| Asked (the manager's defaults, 2026-11-16) | Built |
+|---|---|
+| Who may make one | Whoever may edit the map (the Warehouse Map Editor role, or System Manager), **without** create on Warehouse, which on production only Item Manager has. That is what Nik's pick means. The endpoint also asks read on the place it is made inside |
+| How | `api.warehouse_map.create_location` inserts through the Warehouse document, `frappe.get_doc({...}).insert(ignore_permissions=True)`: the permission is the only thing skipped. ERPNext's `Warehouse.validate` (the parent is a group of the same company; the stock account resolves), its nested-set update, every `doc_event` of this app and every Link check run. No raw SQL, no background job (a deploy empties the queue), nothing on migrate |
+| What it may do | Make, only. Nothing renames, moves, disables or deletes a warehouse. A place made by mistake is deleted in the Desk (Warehouse list, the place, Delete) by an **Item Manager**, which ERPNext allows while nothing has ever been kept there |
+| The name | Follows the places already there (`warehouse_map_rules.suggest_name`): the stem most of them share and **the highest number plus one**, never the last name in text order (`Bin C2-3-17` after sixteen bins). A note in brackets is not part of the number. With nothing there yet, the kind and the parent's code: `Shelf A3-1` in `Bay A3`, `Bin A3-1-1` on `Shelf A3-1`. Where the places have no number to follow (`Alcove 1 Left`), the dialog says so and the person types it. The person can change any suggestion |
+| Refused, in the app's own sentence, before anything is made | A name the map's own rule refuses (the characters that would break an address); a name any warehouse already has, disabled ones included, without regard to case; anything inside **one place** (a room that is one bin, the Project Shelf, the boneyard), a disabled or Transit warehouse, a vehicle or a job site |
+| Where each kind may go (review round 1) | By the shape of the tree, never by names (`warehouse_map_rules.placement_problem`). A **bin** is refused in a group whose children are all groups (a row of bays, a bay of shelves, an upstairs area of areas). A **bay or shelf** is refused in a group whose children are all bins (a shelf of bins), except in **a group directly under the top of the tree** (its parent is the root group, read from the tree): that is a room or an area, and a rack can always go in it, whatever it holds today. That is the Lagoon, which holds only the Cage and the Equipment Room. An empty group, and one that already mixes groups and bins, take either. The editor offers only what this allows (`editor_data`'s `takes_group` / `takes_bin`, refreshed after each make) |
+| Inside one place | Refused, not converted: ERPNext refuses turning a place into a group once it has ever held stock, and doing it from a map would leave every item assigned there without a bin. An Item Manager can do it in ERPNext |
+| A new bay's box | Placed in the middle of the map, in the same step, as the editor's other boxes are: it needs *Save*. The dialog says, before anything is made, that a bay made and then left unsaved still exists and waits under *Not on a map yet* |
+| A new shelf or bin | Shows in the box's *Order as you face it* at once (read back in the box's own order, so a bin made in a box with its own order lands at the end of its shelf, as the floor shows it), and on the floor's front view: the stored maps are read again |
+| The Bin Manager and Stock Scan | Nothing on the server caches the tree, so both read a new bin on their next request. The Bin Manager keeps its list of bins while it stays open; the map sends `sf-warehouses-changed` and the Bin Manager reads its list again the next time it is shown, as after one of its own saves. Stock Scan is a page of its own and reads everything fresh |
+| A tab open across the deploy | The page asks for the second copy of its bundle (`sf_warehouse_map.version >= 2`) before it offers any of this, so a tab holding the older copy shows the editor as it was until it is reloaded |
+
+What a new place does not get: a printed label (Warehouse Labels prints it like any other), an
+assigned item (the Bin Manager's door), or a stock account of its own (ERPNext finds the nearest
+one above it).
+
 ### The doors, and a page that is every screen a route
 
 Every *Show on map* door waits for a map: the Bin Manager's button, the Item and Warehouse
@@ -1505,9 +1531,9 @@ is in each rack as a list of shelves and bin positions.
 
 ### Not built yet
 
-Agreed with Nik as later slices: **creating a bay, shelf or bin from the editor** (the real
-Warehouse records, with the standard names); a **free-space view** for deciding where new stock
-goes; and a **walk order for counts**. Also not here: a shortcut in the Operations Hub (the Bin
+Agreed with Nik as later slices: a **free-space view** for deciding where new stock goes, and a
+**walk order for counts** (slice 3). Making a bay, a shelf or a bin is slice 2, above. Also not
+here: a shortcut in the Operations Hub (the Bin
 Manager's Map tab is the door), a real scale (feet), and which side of a rack is its front.
 
 ### Loading a site's real map

@@ -17,7 +17,9 @@
 
 import * as logic from "./warehouse_map/logic.js";
 
-const VERSION = 1;
+// 2 (v1.820.0): making a bay, a shelf or a bin from the editor (KIND_*, MAKE, make_note ...). The page asks
+// for 2 before it offers those buttons, so a tab holding the older copy leaves them out until it is reloaded.
+const VERSION = 2;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_warehouse_map && window.sf_warehouse_map.version >= VERSION)) {

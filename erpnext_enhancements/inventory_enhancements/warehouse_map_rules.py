@@ -118,6 +118,22 @@ MISSING_DELETED = "deleted"
 MISSING_DISABLED = "disabled"
 MISSING_TRANSIT = "transit"
 
+#: What the editor can make (v1.820.0, slice 2): a bay on the floor, a shelf in a bay, a bin on a
+#: shelf. ``word`` starts a name when there is nothing to follow; ``children`` is what a new one can
+#: be made with in the same step (a bay with its shelves, a shelf with its bins).
+KIND_BAY = "bay"
+KIND_SHELF = "shelf"
+KIND_BIN = "bin"
+KINDS = {
+	KIND_BAY: {"is_group": 1, "word": "Bay", "noun": "bay", "children": KIND_SHELF},
+	KIND_SHELF: {"is_group": 1, "word": "Shelf", "noun": "shelf", "children": KIND_BIN},
+	KIND_BIN: {"is_group": 0, "word": "Bin", "noun": "bin", "children": None},
+}
+#: The most shelves or bins one step makes: more than any rack here has.
+MAX_CHILDREN = 30
+#: A location's name, without the company's suffix. ERPNext allows 140 with it.
+MAX_LOCATION_NAME = 100
+
 
 class MapError(ValueError):
 	"""A map or a box the rules refuse. The message is a sentence for the person."""
@@ -557,6 +573,198 @@ def locate(warehouse, placed, tree, kids=None):
 		return None
 	best = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
 	return {"map": best, "shape": None}
+
+
+# ---------------------------------------------------------------------------
+# Making a location (slice 2)
+# ---------------------------------------------------------------------------
+
+#: A note at the end of a name, as in ``Bin D2-2-1 (Boneyard)``: not part of the number.
+_NOTE = re.compile(r"\s*\([^()]*\)\s*$")
+#: A name that ends in a number: the stem before it, and the number.
+_NUMBERED = re.compile(r"^(.*?)(\d+)$")
+
+
+def bare_name(name, suffix):
+	"""``name`` as typed, without the company's suffix (`` - XX``) when it was typed too:
+	``Bin A1-3-7 - XX`` becomes ``Bin A1-3-7``. ERPNext's ``autoname`` adds the suffix to the
+	name and keeps ``warehouse_name`` as given, so a suffix typed by hand would be stored twice
+	over in the one and once in the other."""
+	name = text(name)
+	suffix = text(suffix)
+	if suffix and name.lower().endswith(suffix.lower()):
+		name = name[: -len(suffix)].strip()
+	return name
+
+
+def location_name_problem(name):
+	"""Why ``name`` cannot be a new location's name, or ``None``. The name becomes part of
+	addresses (the map's own, ``/desk/warehouse-map/<map>/<location>``, and Stock Scan's
+	``?w=``), so it is held to the same characters as a map's name."""
+	name = text(name)
+	if not name:
+		return "Give the location a name."
+	if len(name) > MAX_LOCATION_NAME:
+		return f"A location's name can be at most {MAX_LOCATION_NAME} characters."
+	if any(ch in name for ch in _NAME_REFUSED) or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+		return "A location's name cannot contain / \\ ? # % & \" < or >."
+	if name.strip(".") == "":
+		return "A location's name cannot be only dots."
+	return None
+
+
+def parent_problem(row, name, outside=(), shelf=None):
+	"""Why nothing can be made inside the warehouse ``name`` (its tree ``row``), or ``None``.
+
+	Only a group holds other places. A bin (a room that is one place, the Project Shelf, the
+	boneyard) is refused rather than turned into a group: ERPNext refuses that change once a
+	place has ever held stock, and doing it from a map would move every item assigned there.
+	``outside`` names the vehicles and job sites, whose places are made where they are managed;
+	``shelf`` is the Project Shelf's warehouse, which gets a sentence of its own.
+	"""
+	label = _name_of({name: row}, name) if row is not None else text(name)
+	if row is None:
+		return f"There is no location called {label or 'that'}."
+	reason = missing_reason(row)
+	if reason == MISSING_DISABLED:
+		return f"{label} is disabled, so nothing can be made inside it."
+	if reason == MISSING_TRANSIT:
+		return f"{label} is a Transit warehouse, so nothing can be made inside it."
+	if name in set(outside or ()):
+		return f"{label} is not in the building, so its places are not made from the map."
+	if shelf and name == shelf:
+		return f"{label} is the Project Shelf, the shared shelf where parts wait for their jobs. Nothing is made inside it."
+	if not is_group(row):
+		return (
+			f"{label} is one place, not a group of places, so nothing can be made inside it. "
+			"Only an Item Manager can turn it into a group, in ERPNext, and only while nothing has ever been kept there."
+		)
+	return None
+
+
+def is_top_level(name, tree):
+	"""Whether ``name`` sits directly under the top of the warehouse tree: its parent is the root
+	group, the one with no parent of its own (ERPNext's ``All Warehouses - XX``). Taken from the
+	tree, never from a name."""
+	row = tree.get(name)
+	parent = text(_get(row, "parent_warehouse"))
+	return bool(parent) and parent in tree and not text(_get(tree[parent], "parent_warehouse"))
+
+
+def _some(names, tree):
+	shown = ", ".join(_name_of(tree, n) for n in names[:3])
+	return shown + (", and more" if len(names) > 3 else "")
+
+
+def placement_problem(parent, kind, tree, kids):
+	"""Why a ``kind`` (bay, shelf or bin) cannot go inside ``parent`` given what it holds today, or
+	``None``. Decided by the shape of the tree, never by names (production's upstairs has word names
+	and mixed parents). The manager's rule, 2026-11-16:
+
+	* **A bin is refused in a group whose children are all groups** (a row that holds bays, a bay
+	  that holds shelves, ``Upstairs Storage`` that holds two areas): a bin goes on one of those.
+	* **A bay or a shelf is refused in a group whose children are all bins** (a shelf of bins), with
+	  one exception: **a group directly under the top of the tree is a room or an area, and a bay or
+	  shelving unit can always go in it**, whatever it holds today. That is the Lagoon, which holds
+	  only the Cage and the Equipment Room and is exactly where a new rack would stand.
+	* **An empty group, and one that already mixes groups and bins, take either.**
+
+	Only the children the front view shows count (not disabled, not Transit), so the sentence never
+	names a place the editor cannot see; a group whose only child is disabled is empty here. (The
+	name rule, :func:`siblings_of`, still counts disabled ones: a number in use is in use.)
+	"""
+	spec = KINDS.get(kind)
+	children = [c for c in kids.get(parent, []) if c in tree and usable(tree[c])]
+	if not spec or not children or parent not in tree:
+		return None
+	groups = [c for c in children if is_group(tree[c])]
+	leaves = [c for c in children if not is_group(tree[c])]
+	label = _name_of(tree, parent)
+	if not spec["is_group"] and not leaves:
+		return (
+			f"{label} holds only groups of places ({_some(groups, tree)}), so a bin cannot go directly in it. "
+			"Put it on a shelf inside one of them."
+		)
+	if spec["is_group"] and not groups and not is_top_level(parent, tree):
+		return f"{label} holds only single places ({_some(leaves, tree)}), so a {spec['noun']} cannot go inside it."
+	return None
+
+
+def takes(parent, tree, kids):
+	"""What ``parent`` can have made inside it today, for the editor's buttons:
+	``{"takes_group", "takes_bin"}``. The server asks :func:`placement_problem` again at Make it."""
+	return {
+		"takes_group": placement_problem(parent, KIND_SHELF, tree, kids) is None,
+		"takes_bin": placement_problem(parent, KIND_BIN, tree, kids) is None,
+	}
+
+
+def _numbered(name):
+	"""``(stem, number, digits)`` for a name that ends in a number, or ``None``."""
+	found = _NUMBERED.match(_NOTE.sub("", text(name)))
+	return (found.group(1), int(found.group(2)), found.group(2)) if found else None
+
+
+def _code_of(name):
+	"""The part of a name after its first word, notes dropped: ``A1-6`` from ``Shelf A1-6``."""
+	parts = _NOTE.sub("", text(name)).split(None, 1)
+	return parts[1].strip() if len(parts) > 1 else ""
+
+
+def suggest_name(siblings, parent_name, word, taken=(), suffix=""):
+	"""The name a new location under ``parent_name`` takes, following its ``siblings`` (the names
+	of the places of the same kind already there, disabled ones included).
+
+	* Siblings that end in a number: the stem most of them share, and **the highest number plus
+	  one**, never the last name in text order (a shelf can hold more than nine bins, and
+	  ``Bin C2-3-16`` sorts before ``Bin C2-3-9`` as text). A note in brackets at the end of a
+	  name (``Bin D2-2-1 (Boneyard)``) is not part of the number.
+	* Siblings with no number to follow (``Nook 1 Left``, ``Nook 1 Center``): ``""``. A guess
+	  there would be wrong more often than right, so the person types the name.
+	* No siblings: ``word`` and the parent's code, then ``-1``: ``Shelf A3-1`` in ``Bay A3``,
+	  ``Bin A3-1-1`` on ``Shelf A3-1``.
+
+	A number written with leading zeros keeps its width (``Bin A1-3-07`` and ``-08`` give ``-09``).
+
+	A name already used (``taken``: every warehouse's name; ``suffix`` is the company's ``" - XX"``,
+	and both the bare and the suffixed name are compared, without regard to case, as the database
+	compares) is passed over for the next number.
+	"""
+	names = [text(n) for n in siblings or () if text(n)]
+	stems, widths = {}, {}
+	for n in names:
+		found = _numbered(n)
+		if found:
+			stems.setdefault(found[0], []).append(found[1])
+			# A number written with leading zeros (``07``) keeps its width: the next is ``09``, not ``9``.
+			if found[2].startswith("0") and len(found[2]) > 1:
+				widths[found[0]] = max(widths.get(found[0], 0), len(found[2]))
+	width = 0
+	if stems:
+		stem = max(stems, key=lambda s: (len(stems[s]), max(stems[s]), s))
+		number = max(stems[stem]) + 1
+		width = widths.get(stem, 0)
+	elif names:
+		return ""
+	else:
+		code = _code_of(parent_name)
+		stem, number = (f"{word} {code}-" if code else f"{word} "), 1
+	used = {text(t).lower() for t in taken or ()}
+	for _ in range(1000):
+		candidate = f"{stem}{number:0{width}d}" if width else f"{stem}{number}"
+		full = f"{candidate}{suffix or ''}"
+		if candidate.lower() not in used and full.lower() not in used:
+			return candidate
+		number += 1
+	return ""
+
+
+def siblings_of(parent, tree, kids, is_group_kind):
+	"""The names of the places directly under ``parent`` that are groups (``is_group_kind``) or
+	bins, disabled and Transit ones included: a number in use is in use."""
+	return [
+		_name_of(tree, child) for child in kids.get(parent, []) if is_group(tree[child]) == bool(is_group_kind)
+	]
 
 
 def shown_by(warehouse, placed, tree, kids):
