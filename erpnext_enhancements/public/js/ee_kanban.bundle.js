@@ -1,7 +1,7 @@
 /*
  * Kanban patch suite — single esbuild bundle (content-hashed filename).
  *
- * WHY A BUNDLE: these four scripts used to be listed individually in hooks.py
+ * WHY A BUNDLE: these scripts used to be listed individually in hooks.py
  * `app_include_js` as raw `/assets/erpnext_enhancements/js/...` paths. Raw asset
  * URLs never change between deploys, and the server (Frappe Cloud, same as the
  * stock bench nginx template) serves `/assets` with
@@ -16,12 +16,9 @@
  *
  * Import order mirrors the old hooks.py order. Each file is a self-contained
  * IIFE; see each file's header for what it patches and when it can be removed:
- *   - kanban_leak_fix.js    -> remove once upstream frappe/frappe#24156 ships
- *                              in our deployed frappe version.
  *   - kanban_scroll_perf.js -> remove once frappe core stops reading offsetLeft
  *                              on mousemove in bind_clickdrag.
  */
 import "./kanban_patches.js";
 import "./kanban_customization.js";
-import "./kanban_leak_fix.js";
 import "./kanban_scroll_perf.js";

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.821.1] - 2026-11-16
+
+### Removed
+
+- **`kanban_leak_fix.js`, the classic Kanban's filter-leak hotfix, is deleted: frappe fixed the leak
+  itself in 16.49.0, and our wrapper had stopped running at 16.50.** Found in review of #1461.
+  - **What it fixed (v0.8.x, June 2026).** `KanbanView.render()` emptied `$result` and called
+    `kanban.update()`, which sent the board back through `init()` and registered about 3 + one per
+    column Vuex `store.watch()` subscriptions on the page-long singleton store without releasing
+    the last set. Each filter change leaked those watchers and the detached board DOM, until the
+    Opportunity board's tab ran out of memory (frappe/frappe#24156). Our file wrapped
+    `KanbanView.prototype.render` so a same-board refresh took the store's `update_cards` path.
+  - **Why it was dead.** At 16.50 frappe moved the work into `render_kanban_board()`, and
+    `refresh()` calls that directly. `render()` is now a one-line passthrough that nothing calls
+    (read at v16.56.0: `kanban_view.js` has no `.render()` caller). The wrapper had been a silent
+    no-op since the 2026-10-06 upgrade, the same way the `render_card` and `get_data` patches died.
+  - **Why deleting it is safe.** At v16.49.0 `KanbanBoard.init()` calls `active_board.teardown()`
+    first, which runs every stored unwatcher, and each column keeps its own `unwatch`. v16.48.0 has
+    neither and v16.49.0 has both, so prod (frappe 16.56.0) cannot leak this way. The still-present
+    `$result.empty()` + `update()` in `render_kanban_board` now just re-runs `init()` cleanly. The
+    wrapper never ran on prod, so no behaviour changes.
+  - Removed the import from `ee_kanban.bundle.js`, the `hooks.py` and `public/README.md` mentions,
+    and reworded the `kanban_patches.js` comment that named it. `kanban_customization.js` is not
+    touched.
+
 ## [1.821.0] - 2026-11-16
 
 ### Added

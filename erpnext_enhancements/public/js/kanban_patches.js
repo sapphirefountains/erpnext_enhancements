@@ -36,7 +36,7 @@
  *   fixed [0,150,400,1000]ms timeline. On a heavy board (the Opportunity board has
  *   thousands of nodes) Vue/SortableJS finish mounting AFTER that 1s window closes,
  *   so the scan found nothing and the delay was never applied — cards still grabbed
- *   instantly. Worse, our sibling kanban_leak_fix.js short-circuits render() on
+ *   instantly. Worse, a since-removed sibling (kanban_leak_fix.js) short-circuited render() on
  *   same-board filter refreshes, so the scans were never re-scheduled either. The
  *   net effect on the live board was "no delay at all".
  *
