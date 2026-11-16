@@ -18,7 +18,8 @@
   "column_break_front",
   "shelves_from",
   "bins_from",
-  "bin_order"
+  "bin_order",
+  "walk_order"
  ],
  "fields": [
   {
@@ -104,12 +105,20 @@
    "fieldname": "bin_order",
    "fieldtype": "Small Text",
    "label": "Order As You Face It"
+  },
+  {
+   "default": "0",
+   "description": "Where this box comes in a walk for a count, from 1. 0 (the default) walks it by where it stands on the map: rows in turn, each row the other way from the one before.",
+   "fieldname": "walk_order",
+   "fieldtype": "Int",
+   "label": "Walk Order",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-11-12 16:00:00.000000",
+ "modified": "2026-11-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Warehouse Floor Map Shape",

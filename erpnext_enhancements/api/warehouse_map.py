@@ -27,6 +27,13 @@ Reads (GET):
   made something in (the stored map does not describe it yet), in the box's own order when it has
   one.
 * :func:`suggest_location` -- the name a new bay, shelf or bin would take there (v1.820.0).
+* :func:`walk` -- one floor's walk for a count (v1.821.0, slice 3): its boxes in walk order, each
+  box's rows as a person facing it reads them, and the items expected in each bin (Stock Scan's
+  own ``_items_at``, the Count Desk's list). It counts nothing and posts nothing.
+
+Free space (v1.821.0, slice 3) is not an endpoint of its own: :func:`get_map` gives each bin its
+``space`` (``warehouse_map_rules.space_state``: free, kept for an item, in use, or not a bin to
+fill) and each box its ``space`` summary, from the Bin Manager's own counts.
 
 Writes (POST): :func:`save_map` and :func:`delete_map` write the map's own record and nothing
 else. :func:`create_location` (v1.820.0, slice 2) makes a bay, a shelf or a bin: a Warehouse, and
@@ -104,6 +111,7 @@ _SHAPE_FIELDS = (
 	"shelves_from",
 	"bins_from",
 	"bin_order",
+	"walk_order",
 )
 
 #: Kinds of place that are not in the building: listed beside the map, never drawn on it.
@@ -200,7 +208,53 @@ def _bin_rows():
 	return {row["warehouse"]: row for row in bins}
 
 
-def _bin_payload(row, name, tree):
+def _space_extras():
+	"""``{warehouse: {"on_order_items", "negative_items"}}``: items on order to a bin
+	(``tabBin.ordered_qty > 0``) and items whose balance there is negative. Free space needs both:
+	a bin with stock on its way, or with a negative balance, is not a bin to fill (review S3). Two
+	reads of Bin; nothing is written."""
+	found, codes = {}, set()
+	for key, filters in (("on_order_items", {"ordered_qty": [">", 0]}), ("negative_items", {"actual_qty": ["<", 0]})):
+		for row in frappe.get_all("Bin", filters=filters, fields=["warehouse", "item_code"]):
+			found.setdefault(row.warehouse, {}).setdefault(key, set()).add(row.item_code)
+			codes.add(row.item_code)
+	# Only stock items that are not disabled count, the items the walk and Stock Scan list: a Bin row
+	# left on order for a disabled or non-stock item does not keep a bin.
+	live = set(
+		frappe.get_all("Item", filters={"name": ["in", sorted(codes)], "disabled": 0, "is_stock_item": 1}, pluck="name")
+		if codes
+		else []
+	)
+	return {
+		warehouse: {key: len(items & live) for key, items in counts.items()} for warehouse, counts in found.items()
+	}
+
+
+def _kinds_trusted(bin_rows, tree):
+	"""Whether the bins' kinds can be relied on for free space (review S7). ``decorate`` reads the
+	Project Shelf, the job sites and the vehicles quietly, so a failed read turns those places into
+	shop bins, which could then show as free. Two checks that do not trust those quiet reads: the
+	Project Shelf the settings name must have come back as the shelf, and nothing under the job-sites
+	group may have come back as a shop bin. Any failure here means the kinds are not trusted."""
+	if not any(row.get("kind") for row in bin_rows.values()):
+		return False
+	try:
+		named = cstr(frappe.db.get_single_value("Inventory Scanner Settings", "project_shelf_warehouse")).strip()
+		if named and named in bin_rows and bin_rows[named].get("kind") != "project_shelf":
+			return False
+		from erpnext_enhancements.inventory_enhancements import job_sites
+
+		group = job_sites.group()
+		if group:
+			for name in rules.descendants(group.name, tree, rules.children_index(tree)):
+				if (bin_rows.get(name) or {}).get("kind") == rules.FILLABLE_KINDS[0]:
+					return False
+	except Exception:
+		return False
+	return True
+
+
+def _bin_payload(row, name, tree, space_ok=True):
 	row = row or {}
 	return {
 		"warehouse_name": row.get("warehouse_name") or rules._name_of(tree, name),
@@ -210,6 +264,11 @@ def _bin_payload(row, name, tree):
 		"missing_items": cint(row.get("missing_items")),
 		"unassigned_items": cint(row.get("unassigned_items")),
 		"status": rules.bin_status(row),
+		"on_order_items": cint(row.get("on_order_items")),
+		"negative_items": cint(row.get("negative_items")),
+		# Free space (v1.821.0): free, kept, in_use, or "" for a place that is not a bin to fill, and ""
+		# for every bin when the kinds or the counts behind it could not be trusted.
+		"space": rules.space_state(row) if space_ok else "",
 	}
 
 
@@ -298,8 +357,22 @@ def get_map(name):
 	tree = _tree()
 	kids = rules.children_index(tree)
 	bin_rows = _bin_rows()
+	space_ok = _kinds_trusted(bin_rows, tree)
+	if space_ok:
+		try:
+			for warehouse, extra in _space_extras().items():
+				if warehouse in bin_rows:
+					bin_rows[warehouse].update(extra)
+		except Exception:
+			frappe.log_error(title="Warehouse Map: the bins on order or below zero could not be read")
+			space_ok = False
 
 	shapes, bins = [], {}
+	# The bins each box holds itself, not those of a box drawn for a warehouse inside it (R2-S1): the
+	# free-space sums count a bin once, at the box that shows it most closely.
+	owned = rules.owned_leaves(
+		[row.warehouse for row in doc.get("shapes") or [] if rules.usable(tree.get(row.warehouse))], tree, kids
+	)
 	for row in doc.get("shapes") or []:
 		warehouse = row.warehouse or None
 		node = tree.get(warehouse) if warehouse else None
@@ -325,14 +398,29 @@ def get_map(name):
 			"trail": rules.trail(warehouse, tree) if node else "",
 			"levels": [],
 			"summary": None,
+			"space": None,
+			# The bins this box holds itself (warehouse_map_rules.owned_leaves, R2-S1): the Free space
+			# view's list and panel use them, so a room over the bays drawn inside it leaves their bins
+			# to the bays (review R3-S1). None for a box that is not drawn.
+			"owned": None,
+			# Its stored place in the walk (0: by where it stands), and the place it is walked in.
+			"walk_order": rules.walk_number(row.get("walk_order")),
+			"walk": 0,
 		}
 		if node and rules.usable(node):
 			leaves = rules.leaves_under(warehouse, tree, kids)
 			shape["levels"] = rules.levels(warehouse, tree, kids, shape["bin_order"])
 			shape["summary"] = rules.summarize([bin_rows.get(leaf) or {} for leaf in leaves])
+			shape["owned"] = owned.get(warehouse, leaves)
+			shape["space"] = rules.space_summary(
+				[bin_rows.get(leaf) or {} for leaf in shape["owned"]] if space_ok else []
+			)
 			for leaf in leaves:
-				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree)
+				bins[leaf] = _bin_payload(bin_rows.get(leaf), leaf, tree, space_ok)
 		shapes.append(shape)
+	walked = [i for i in rules.walk_order(shapes) if not shapes[i]["missing"]]
+	for n, i in enumerate(walked, 1):
+		shapes[i]["walk"] = n
 
 	off_map = [
 		{
@@ -357,10 +445,15 @@ def get_map(name):
 			"sort_order": cint(doc.sort_order),
 			"disabled": bool(cint(doc.disabled)),
 			"modified": cstr(doc.modified),
+			# Whether an editor has put the boxes' walk in order, rather than where they stand.
+			"walk_set": any(shape["walk_order"] for shape in shapes),
 		},
 		"shapes": shapes,
 		"bins": bins,
 		"off_map": off_map,
+		# Whether free space can be worked out (the kinds read and trusted, and the bins on order and
+		# below zero read): without that nothing is called free, and the page says so.
+		"kinds_read": space_ok,
 	}
 
 
@@ -713,6 +806,116 @@ def create_location(parent, kind, warehouse_name, children=0):
 
 
 # ---------------------------------------------------------------------------
+# The walk for a count (v1.821.0, slice 3)
+# ---------------------------------------------------------------------------
+
+#: The most bins one floor's walk lists. Past this the walk says it was cut. The Count Desk takes 400
+#: bins in one count; a floor here has about 220.
+WALK_LIMIT = 600
+
+
+def _walk_items(row, blind=False):
+	"""The items expected in one bin: Stock Scan's own list (``api.stock_scan._items_at``, uncapped,
+	the list the Count Desk's sheet is made from), in the few words a walk needs.
+
+	``blind`` (review S5): no quantity and nothing about whether there is any, and the items by
+	name, since Stock Scan's own order (what is on hand first) would say it. It keeps a number from
+	leading the counter. It is not a control: the same people can open Stock Scan."""
+	listing = scan._items_at(row, limit=None)[0]
+	if blind:
+		items = [
+			{"item_code": item.get("item_code"), "item_name": item.get("item_name") or item.get("item_code"), "stock_uom": item.get("stock_uom") or ""}
+			for item in listing or []
+		]
+		return sorted(items, key=lambda item: (rules.natural_key(item["item_name"]), cstr(item["item_code"])))
+	return [
+		{
+			"item_code": item.get("item_code"),
+			"item_name": item.get("item_name") or item.get("item_code"),
+			"stock_uom": item.get("stock_uom") or "",
+			"on_hand": flt(item.get("on_hand")),
+			"assigned": bool(item.get("assigned")),
+		}
+		for item in listing or []
+	]
+
+
+@frappe.whitelist(methods=["GET"])
+def walk(name, blind=0):
+	"""One floor's walk for a count, bin by bin.
+
+	``{"map", "floors", "stops", "bins", "truncated"}``: ``floors`` is every map the caller may
+	see, in the page's order, so the walk goes on to the next floor; ``stops`` is the floor's boxes
+	in walk order (``warehouse_map_rules.walk_order``: an editor's order, else rows in turn, each
+	the other way), each with its ``rows`` as a person facing the box reads them (top row first,
+	left bin first, or as the box says) and every bin with the items expected there. A bin shown by
+	two boxes is walked once, at the first.
+
+	Who: the same as the map (the Stock Scan gate, read on the map). What it shows is what Stock
+	Scan already shows those roles about a bin. It writes nothing: a count is recorded in the Count
+	Desk or on the phone, as before.
+	"""
+	_check_read()
+	blind = bool(cint(blind))
+	doc = _map_doc(name)
+	tree = _tree()
+	kids = rules.children_index(tree)
+	rows = list(doc.get("shapes") or [])
+	# Each box's stop lists only the bins it holds itself (review R2-S1): a room box over the bays
+	# drawn inside it leaves their bins to their own stops, which follow it in the walk.
+	owned = rules.owned_leaves([row.warehouse for row in rows if rules.usable(tree.get(row.warehouse))], tree, kids)
+	stops, seen, count, truncated = [], set(), 0, False
+	for index in rules.walk_order(rows):
+		row = rows[index]
+		node = tree.get(row.warehouse)
+		if not rules.usable(node):
+			continue
+		if rules.is_group(node):
+			levels = rules.levels(row.warehouse, tree, kids, rules.clean_order(row.get("bin_order")) or None)
+			mine = set(owned.get(row.warehouse, []))
+			levels = [dict(level, bins=[leaf for leaf in level["bins"] if leaf in mine]) for level in levels]
+			seen_rows = rules.rows_as_seen(levels, row.shelves_from or rules.TOP, row.bins_from or rules.LEFT)
+		else:
+			seen_rows = [{"warehouse": row.warehouse, "label": "", "bins": [row.warehouse]}]
+		out_rows = []
+		for level in seen_rows:
+			bins = []
+			for leaf in level["bins"]:
+				if leaf in seen or leaf not in tree:
+					continue
+				if count >= WALK_LIMIT:
+					truncated = True
+					break
+				seen.add(leaf)
+				count += 1
+				bins.append({"warehouse": leaf, "warehouse_name": rules._name_of(tree, leaf), "items": _walk_items(tree[leaf], blind)})
+			if bins:
+				out_rows.append({"warehouse": level["warehouse"], "label": level["label"], "bins": bins})
+			if truncated:
+				break
+		if out_rows:
+			stops.append(
+				{
+					"warehouse": row.warehouse,
+					"warehouse_name": rules._name_of(tree, row.warehouse),
+					"label": row.label or "",
+					"trail": rules.trail(row.warehouse, tree),
+					"rows": out_rows,
+				}
+			)
+		if truncated:
+			break
+	return {
+		"map": {"name": doc.name, "title": doc.map_name or doc.name},
+		"floors": [{"name": m.name, "title": m.map_name or m.name} for m in _map_rows(can_edit())],
+		"stops": stops,
+		"bins": count,
+		"truncated": truncated,
+		"blind": blind,
+	}
+
+
+# ---------------------------------------------------------------------------
 # Writes
 # ---------------------------------------------------------------------------
 
@@ -786,6 +989,16 @@ def save_map(payload, name=None, modified=None):
 		# warehouse gets the app's sentence, and where a value that is not text is made text.
 		width, height = rules.canvas_size(doc.width, doc.height)
 		known = set(frappe.get_all("Warehouse", pluck="name"))
+		# A box that arrives without walk_order keeps the place stored for it (review S1). A tab still
+		# on the bundle from before v1.821.0 sends no walk_order at all; read as 0, every stored order
+		# would be wiped by its next save of anything.
+		stored_walk = {row.warehouse: rules.walk_number(row.get("walk_order")) for row in (doc.get("shapes") or []) if row.warehouse}
+		shapes = [
+			dict(shape, walk_order=stored_walk.get(rules.text(shape.get("warehouse")), 0))
+			if isinstance(shape, dict) and "walk_order" not in shape
+			else shape
+			for shape in shapes
+		]
 		try:
 			cleaned = rules.clean_shapes(
 				[shape if isinstance(shape, dict) else {} for shape in shapes], width, height, known

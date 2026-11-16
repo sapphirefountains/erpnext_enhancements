@@ -36,6 +36,11 @@ What is decided here:
 * :func:`bin_status` / :func:`summarize` -- a bin's color, from the same three counts the Bin
   Manager shows: a problem (an assigned item with none on hand, or stock nobody assigned),
   else has stock, else empty.
+* Slice 2 (v1.820.0): :func:`suggest_name`, :func:`parent_problem`, :func:`location_name_problem`
+  -- making a bay, a shelf or a bin from the editor.
+* Slice 3 (v1.821.0): :func:`space_state` / :func:`space_summary` -- free space (free, kept for an
+  item, in use), for shop bins only; :func:`walk_order` / :func:`auto_walk` / :func:`rows_as_seen`
+  -- the order a count is walked in.
 
 The floor plan picture is a real building's layout and this app's code is public, so the picture
 is site data: :func:`background_problem` accepts a private file on this site and nothing else.
@@ -258,6 +263,8 @@ def clean_shape(raw, width, height, index=0):
 		"bins_from": RIGHT if text(_get(raw, "bins_from")) == RIGHT else LEFT,
 		# Only a box that stands for a warehouse has anything inside it to put in order.
 		"bin_order": "\n".join(clean_order(_get(raw, "bin_order"))) or None if warehouse else None,
+		# Its place in the walk for a count (v1.821.0): 0 follows where the boxes stand.
+		"walk_order": walk_number(_get(raw, "walk_order")) if warehouse else 0,
 	}
 
 
@@ -814,3 +821,232 @@ def summarize(rows):
 		"items": sum(_count(row, "on_hand_items") for row in rows),
 		"status": STATUS_PROBLEM if problem else STATUS_STOCK if stock else STATUS_EMPTY,
 	}
+
+
+# ---------------------------------------------------------------------------
+# Free space and the walk (v1.821.0, slice 3)
+# ---------------------------------------------------------------------------
+
+#: A bin's space, for the map's *Free space* view. Free: nothing on hand, nothing on order to it, no
+#: negative balance and no enabled Putaway Rule points at it. Kept: an item is assigned there, or on
+#: order to it, and none is on hand (the place is spoken for). In use: something is on hand, or the
+#: balance is negative (stock the records say has left but which may well be there).
+SPACE_FREE = "free"
+SPACE_KEPT = "kept"
+SPACE_IN_USE = "in_use"
+
+#: The only kind of place that is space to fill: a shop bin (``project_stock_rules.KIND_BIN``, the
+#: Bin Manager's word). The Project Shelf, the boneyard, a vehicle and a job site are never free
+#: space, whatever their counts say: nothing is kept on them as an item's bin. A bin whose kind could
+#: not be read is not counted either, rather than guessed at.
+FILLABLE_KINDS = ("shop_bin",)
+
+
+def space_state(row):
+	"""``free``, ``kept`` or ``in_use`` for a shop bin; ``""`` for anything that is not a bin to fill.
+
+	Read from the Bin Manager's own counts for the bin (``on_hand_items``: items with stock on hand;
+	``assigned_items``: items with an enabled Putaway Rule there), so the map and the Bin Manager
+	cannot disagree about a bin. ``bin_views.decorate`` sets ``assigned_items`` to 0 at the Project
+	Shelf, which would make an empty shelf look free; the kind test comes first for that reason.
+	"""
+	if text(_get(row, "kind")) not in FILLABLE_KINDS:
+		return ""
+	if _count(row, "on_hand_items") > 0 or _count(row, "negative_items") > 0:
+		return SPACE_IN_USE
+	if _count(row, "assigned_items") > 0 or _count(row, "on_order_items") > 0:
+		return SPACE_KEPT
+	return SPACE_FREE
+
+
+def space_summary(rows):
+	"""A box's space from its bins' rows: ``{"bins", "free", "kept", "in_use"}``, ``bins`` counting
+	only the bins to fill. "6 of 14 bins free" is ``free`` of ``bins``."""
+	states = [space_state(row) for row in rows or []]
+	return {
+		"bins": sum(1 for state in states if state),
+		"free": states.count(SPACE_FREE),
+		"kept": states.count(SPACE_KEPT),
+		"in_use": states.count(SPACE_IN_USE),
+	}
+
+
+def rows_as_seen(levels, shelves_from=TOP, bins_from=LEFT):
+	"""A box's rows as a person facing it reads them: top row first, left bin first. The stored
+	front view is in the tree's order (shelf 1 first, bin 1 first); a box whose shelf 1 is at the
+	bottom has its rows turned over, one whose bin 1 is at the right has each row turned around.
+	The same reading as the page's ``level_rows``."""
+	rows = [
+		{
+			"warehouse": _get(level, "warehouse"),
+			"label": text(_get(level, "label")),
+			"bins": list(reversed(_get(level, "bins") or [])) if bins_from == RIGHT else list(_get(level, "bins") or []),
+		}
+		for level in levels or []
+	]
+	return list(reversed(rows)) if shelves_from == BOTTOM else rows
+
+
+def owned_leaves(shape_warehouses, tree, kids):
+	"""``{warehouse: [bins]}`` for every box's warehouse on one map: the bins under it that no
+	other box on the same map, drawn for a warehouse inside it, already shows (review R2-S1).
+
+	A room box whose warehouse is the parent of the bays drawn inside it would otherwise list every
+	bay's bins as its own, and the bays' boxes, walked after it, would have nothing left: their
+	bins would come out in tree order under the room instead of as the racks' snake. With this the
+	room keeps what is directly its own (its own bins, and any shelf no box shows), and each bay
+	takes its bins at its own stop. It holds wherever the inner box is drawn, inside the room's box
+	or not. A box with nothing of its own has no stop. The free-space sums use it too, so a room and
+	the racks inside it never count a bin twice."""
+	placed = [w for w in dict.fromkeys(shape_warehouses or []) if w and w in tree]
+	out = {}
+	for warehouse in placed:
+		taken = set()
+		for other in placed:
+			if other != warehouse and warehouse in ancestors(other, tree):
+				taken.update(leaves_under(other, tree, kids))
+		out[warehouse] = [leaf for leaf in leaves_under(warehouse, tree, kids) if leaf not in taken]
+	return out
+
+
+def walk_number(value):
+	"""A box's stored place in the walk: a whole number from 1, or 0 for "where it stands"."""
+	return max(0, min(int(number(value, 0) or 0), MAX_SHAPES))
+
+
+def _median(values):
+	values = sorted(values)
+	if not values:
+		return 0.0
+	mid = len(values) // 2
+	return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+
+#: A box this many times taller than the usual box is not a row of its own (S2): a room drawn 300
+#: high beside 80-high racks would otherwise be a row, and turn the walk round after it.
+TALL = 2.0
+
+
+def _geometry(shapes):
+	out = []
+	for index, shape in enumerate(shapes or []):
+		x, y = number(_get(shape, "x"), 0.0), number(_get(shape, "y"), 0.0)
+		w, h = number(_get(shape, "w"), 0.0), number(_get(shape, "h"), 0.0)
+		out.append(
+			{
+				"i": index,
+				"x": x,
+				"y": y,
+				"w": w,
+				"h": h,
+				"cx": x + w / 2,
+				"cy": y + h / 2,
+				"room": text(_get(shape, "shape_type")) == SHAPE_ROOM,
+				"turn": (number(_get(shape, "rotation"), 0.0) or 0.0) % 360.0,
+			}
+		)
+	return out
+
+
+def _holds(room, x, y):
+	"""Whether the point ``(x, y)`` is inside ``room``'s rectangle as drawn, turned about its middle
+	when the box sits at an angle (``rotation``)."""
+	dx, dy = x - room["cx"], y - room["cy"]
+	if room["turn"]:
+		angle = math.radians(-room["turn"])
+		dx, dy = dx * math.cos(angle) - dy * math.sin(angle), dx * math.sin(angle) + dy * math.cos(angle)
+	return abs(dx) <= room["w"] / 2 and abs(dy) <= room["h"] / 2
+
+
+def _container(box, boxes):
+	"""The smallest room box that holds ``box``'s middle and is bigger than it, or ``None``."""
+	best = None
+	for other in boxes:
+		if other is box or not other["room"] or other["w"] * other["h"] <= box["w"] * box["h"]:
+			continue
+		if _holds(other, box["cx"], box["cy"]):
+			if best is None or other["w"] * other["h"] < best["w"] * best["h"]:
+				best = other
+	return best
+
+
+def _snake(boxes):
+	"""Rows of boxes in turn, top first, each row the other way from the one before. A row is the
+	boxes whose middles are within half the usual height of the row's first box. A box much taller
+	than the usual (:data:`TALL`) forms no row: it joins the row whose middle is nearest its own, at
+	its place along that row, so it never turns the walk round."""
+	if not boxes:
+		return []
+	usual = _median([b["h"] for b in boxes])
+	normal = [b for b in boxes if b["h"] <= TALL * usual] or list(boxes)
+	tall = [b for b in boxes if b not in normal]
+	tolerance = max(_median([b["h"] for b in normal]) / 2, 1.0)
+	bands = []
+	for box in sorted(normal, key=lambda b: (b["cy"], b["cx"], b["i"])):
+		if bands and abs(box["cy"] - bands[-1][0]["cy"]) <= tolerance:
+			bands[-1].append(box)
+		else:
+			bands.append([box])
+	for box in sorted(tall, key=lambda b: (b["cy"], b["cx"], b["i"])):
+		middles = [sum(b["cy"] for b in band) / len(band) for band in bands]
+		nearest = min(range(len(bands)), key=lambda k: (abs(middles[k] - box["cy"]), k))
+		bands[nearest].append(box)
+	out = []
+	for n, band in enumerate(bands):
+		out.extend(sorted(band, key=lambda b: (b["cx"], b["i"]), reverse=bool(n % 2)))
+	return out
+
+
+def auto_walk(shapes):
+	"""The boxes in the order a person walks them when nobody has said otherwise. Returns the
+	positions in ``shapes``.
+
+	* **Rows in turn, each the other way** (:func:`_snake`), so nobody walks back down an aisle
+	  empty-handed. A box much taller than the usual box joins the nearest row instead of making
+	  one, so a big room beside rows of racks does not turn the walk round (review S2).
+	* **A room's box holds what is drawn inside it.** A box whose middle is inside a bigger room box
+	  belongs to the smallest such room: the room is one stop, and the racks inside it are walked as
+	  their own snake right after it, before the walk leaves the room. Nikolas's bays will most
+	  likely be drawn inside the Inventory Room's box.
+	"""
+	boxes = _geometry(shapes)
+	inside, top = {}, []
+	for box in boxes:
+		home = _container(box, boxes)
+		if home is None:
+			top.append(box)
+		else:
+			inside.setdefault(home["i"], []).append(box)
+
+	def walk(group, seen):
+		out = []
+		for box in _snake(group):
+			if box["i"] in seen:
+				continue
+			seen.add(box["i"])
+			out.append(box["i"])
+			out.extend(walk(inside.get(box["i"], []), seen))
+		return out
+
+	return walk(top, set())
+
+
+def walk_order(shapes):
+	"""The order the walk takes one map's boxes in, as positions in ``shapes``: boxes an editor put
+	in order (``walk_order`` from 1) first, in that order, then every other box in the order of
+	:func:`auto_walk`. Only boxes that stand for a warehouse are walked: a label has nothing to count.
+	A box added after the order was set (``walk_order`` 0) is walked at the end."""
+	shapes = list(shapes or [])
+	walkable = {
+		i for i, shape in enumerate(shapes) if text(_get(shape, "warehouse")) and text(_get(shape, "shape_type")) != SHAPE_LABEL
+	}
+	placed = sorted(
+		(i for i in walkable if walk_number(_get(shapes[i], "walk_order"))),
+		key=lambda i: (walk_number(_get(shapes[i], "walk_order")), i),
+	)
+	done = set(placed)
+	# Every other box but labels takes part in the shape of the walk, a room with no warehouse
+	# included: it is walked past, not counted, but what is drawn inside it is walked with it.
+	geometry = [i for i, shape in enumerate(shapes) if i not in done and text(_get(shape, "shape_type")) != SHAPE_LABEL]
+	order = [geometry[k] for k in auto_walk([shapes[i] for i in geometry])]
+	return placed + [i for i in order if i in walkable]
