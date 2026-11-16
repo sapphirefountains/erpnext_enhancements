@@ -239,6 +239,10 @@ def _not_in_building(tree, strict=False):
 		group = job_sites.group()
 		if group:
 			out.add(group.name)
+			# And everything under that group, read from the tree. site_warehouses() answers empty, not
+			# with an error, when job_sites.ready() quietly fails (it does when has_column raises), so
+			# the tree is what keeps a place from being made at a job site then.
+			out.update(rules.descendants(group.name, tree, rules.children_index(tree)))
 	except Exception:
 		if strict:
 			raise
@@ -535,7 +539,10 @@ def _kind(kind):
 
 
 #: Said when the vehicles and job sites could not be looked up: nothing is made on a guess.
-_LOOKUP_FAILED = "Whether {0} is a vehicle or a job site could not be checked just now, so nothing can be made there. Try again."
+_LOOKUP_FAILED = (
+	"Whether {0} is a vehicle or a job site could not be checked, so nothing can be made there. "
+	"Tell a System Manager: the reason is in the Error Log."
+)
 
 
 def _shelf_warehouse():
@@ -565,7 +572,9 @@ def _parent_problem(parent, tree, kind):
 	try:
 		outside = _not_in_building(tree, strict=True)
 	except Exception:
-		frappe.log_error(title="Warehouse Map: vehicles and job sites could not be looked up")
+		# Deferred: suggest_location is a GET and create_location throws next, so a row inserted in
+		# this request's own transaction would be rolled back with it and the fault would leave no trace.
+		frappe.log_error(title="Warehouse Map: vehicles and job sites could not be looked up", defer_insert=True)
 		return row, _LOOKUP_FAILED.format(rules._name_of(tree, parent))
 	problem = rules.parent_problem(row, parent, outside, shelf=_shelf_warehouse())
 	if problem:
@@ -584,12 +593,13 @@ def suggest_location(parent, kind):
 	kind = _kind(kind)
 	tree = _tree()
 	parent = cstr(parent).strip()
-	out = {"parent": parent, "parent_name": rules._name_of(tree, parent), "kind": kind, "warehouse_name": "", "suffix": "", "problem": ""}
+	out = {"parent": parent, "parent_name": parent, "kind": kind, "warehouse_name": "", "suffix": "", "problem": ""}
 	# Read on the parent first, so nothing is said about a place the caller may not see, and the
 	# editor shows no suggestion for one it would refuse at Make it.
 	if not _may_read(parent, tree):
 		out["problem"] = _("You are not permitted to see {0}.").format(parent)
 		return out
+	out["parent_name"] = rules._name_of(tree, parent)
 	row, problem = _parent_problem(parent, tree, kind)
 	if problem:
 		out["problem"] = _(problem)
@@ -622,7 +632,12 @@ def _insert(warehouse_name, parent, is_group, company):
 		doc.insert(ignore_permissions=True)
 	except frappe.DuplicateEntryError:
 		# A clash only the database sees (two people at once, or names the database counts as the
-		# same, as with accents): the request rolls back whole, and the person reads the app's sentence.
+		# same, as with accents): the request rolls back whole, and the person reads the app's sentence
+		# alone. Frappe's db_insert has already put its own "already exists" on the message log, which
+		# the page would show beside it.
+		clear = getattr(frappe, "clear_last_message", None)
+		if callable(clear):
+			clear()
 		frappe.throw(_("There is already a location called {0}.").format(warehouse_name))
 	return doc.name
 

@@ -676,10 +676,12 @@ def placement_problem(parent, kind, tree, kids):
 	  only the Cage and the Equipment Room and is exactly where a new rack would stand.
 	* **An empty group, and one that already mixes groups and bins, take either.**
 
-	Every child counts, disabled ones included: they are part of how the place is arranged.
+	Only the children the front view shows count (not disabled, not Transit), so the sentence never
+	names a place the editor cannot see; a group whose only child is disabled is empty here. (The
+	name rule, :func:`siblings_of`, still counts disabled ones: a number in use is in use.)
 	"""
 	spec = KINDS.get(kind)
-	children = list(kids.get(parent, []))
+	children = [c for c in kids.get(parent, []) if c in tree and usable(tree[c])]
 	if not spec or not children or parent not in tree:
 		return None
 	groups = [c for c in children if is_group(tree[c])]

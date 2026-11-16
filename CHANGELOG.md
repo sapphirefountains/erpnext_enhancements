@@ -144,7 +144,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bays); a bay or shelf is refused where every child is a bin (a shelf of bins), except in a group
   directly under the top of the tree, which is a room or an area and can always take a rack. That
   exception exists because of the Lagoon, which holds only the Cage and the Equipment Room and is
-  exactly where a new rack would stand. An empty or mixed group takes either.
+  exactly where a new rack would stand. An empty or mixed group takes either. Only the places
+  the front view shows count (a disabled child does not).
+- **Review round 2.** A place under the job-sites group is refused from the tree itself, because
+  `job_sites.site_warehouses()` answers empty rather than failing when its own check quietly fails.
+  A failed vehicle or job-site check is logged with `defer_insert=True`, so the row outlives the
+  request's rollback, and the sentence says to tell a System Manager instead of "try again". A
+  clash only the database sees reads as one sentence: Frappe's own is taken off the message log.
+  A parent the person may not read is not named back to them.
 
 ### Tests
 

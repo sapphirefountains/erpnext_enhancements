@@ -617,6 +617,18 @@ class TestNamingANewLocation(unittest.TestCase):
 		self.assertTrue(rules.is_top_level(UP, tree))
 		self.assertIn("so a bin cannot go directly in it", rules.placement_problem(UP, "bin", tree, kids))
 
+	def test_a_disabled_child_does_not_count(self):
+		"""R2-4: only the places the front view shows decide; a group whose only child is disabled
+		is empty here, and takes either."""
+		tree, kids = self._with_lagoon()
+		tree["Shelf K2-1 - ZZ"] = {"name": "Shelf K2-1 - ZZ", "warehouse_name": "Shelf K2-1", "parent_warehouse": BAY2, "is_group": 1, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		tree["Bin K2-1-1 - ZZ"] = {"name": "Bin K2-1-1 - ZZ", "warehouse_name": "Bin K2-1-1", "parent_warehouse": "Shelf K2-1 - ZZ", "is_group": 0, "disabled": 1, "warehouse_type": "", "company": COMPANY}
+		kids = rules.children_index(tree)
+		for kind in ("bay", "shelf", "bin"):
+			self.assertIsNone(rules.placement_problem("Shelf K2-1 - ZZ", kind, tree, kids), kind)
+		# The name rule still sees it: a number in use is in use.
+		self.assertEqual(rules.siblings_of("Shelf K2-1 - ZZ", tree, kids, 0), ["Bin K2-1-1"])
+
 	def test_the_root_is_read_from_the_tree_not_a_name(self):
 		tree, kids = self._with_lagoon()
 		renamed = {name: dict(row) for name, row in tree.items()}
@@ -1041,7 +1053,13 @@ def _install():
 	frappe.cache = types.SimpleNamespace(delete_key=delete_key)
 	frappe._ = lambda text: text
 	frappe.whitelist = lambda *a, **kw: (lambda fn: fn)
-	frappe.log_error = lambda *a, **kw: STATE["calls"].append(("log_error", kw.get("title")))
+	def log_error(*a, **kw):
+		STATE["calls"].append(("log_error", kw.get("title")))
+		if kw.get("defer_insert"):
+			STATE["calls"].append(("log_error_deferred", kw.get("title")))
+
+	frappe.log_error = log_error
+	frappe.clear_last_message = lambda: STATE["calls"].append(("clear_last_message",))
 	frappe.PermissionError = _Denied
 	frappe.TimestampMismatchError = _Stale
 	frappe.DuplicateEntryError = _Duplicate
@@ -1139,6 +1157,10 @@ def _install():
 	sites = types.ModuleType("erpnext_enhancements.inventory_enhancements.job_sites")
 
 	def site_warehouses():
+		# "raise": a fault outside the helper; "empty": how it really fails when job_sites.ready()
+		# quietly answers no.
+		if STATE["sites_fail"] == "empty":
+			return set()
 		if STATE["sites_fail"]:
 			raise RuntimeError("the job sites could not be read")
 		return {SITE}
@@ -1785,6 +1807,8 @@ class TestMakingALocation(_Base):
 		with self.assertRaises(_Throw) as caught:
 			api.create_location(SHELF2, "bin", "Bin K1-2-11")
 		self.assertIn("There is already a location called", str(caught.exception))
+		# R2-3: Frappe's own "already exists" is taken off the message log, so one sentence is read.
+		self.assertIn(("clear_last_message",), STATE["calls"])
 
 	def test_a_failed_vehicle_or_job_site_lookup_makes_nothing(self):
 		"""F1: the refusal of a vehicle or a job site must not switch off when its lookup fails."""
@@ -1793,11 +1817,28 @@ class TestMakingALocation(_Base):
 		with self.assertRaises(_Throw) as caught:
 			api.create_location(SHELF2, "bin", "Bin K1-2-11")
 		self.assertIn("could not be checked", str(caught.exception))
+		# R2-2: not "try again" for a fault that will not pass, and a record that outlives the rollback.
+		self.assertIn("Tell a System Manager", str(caught.exception))
+		self.assertNotIn("Try again", str(caught.exception))
+		self.assertIn(("log_error_deferred", "Warehouse Map: vehicles and job sites could not be looked up"), STATE["calls"])
 		self.assertIn("could not be checked", api.suggest_location(SHELF2, "bin")["problem"])
 		self.assertEqual(STATE["inserts"], [])
 		# The listing beside the map keeps the forgiving form.
 		self.shop_floor()
 		self.assertTrue(api.get_map("Shop Floor")["shapes"])
+
+	def test_a_job_site_is_refused_when_the_helper_quietly_answers_empty(self):
+		"""R2-1: site_warehouses() answers empty, not with an error, when job_sites.ready() fails; the
+		tree under the job-sites group still keeps a place from being made there."""
+		self.as_maker()
+		STATE["sites_fail"] = "empty"
+		STATE["tree"]["Site Shed - ZZ"] = {"name": "Site Shed - ZZ", "warehouse_name": "Site Shed", "parent_warehouse": SITES, "is_group": 1, "disabled": 0, "warehouse_type": "", "company": COMPANY}
+		for parent in (SITES, "Site Shed - ZZ"):
+			with self.assertRaises(_Throw, msg=parent) as caught:
+				api.create_location(parent, "bin", "Bin S-1")
+			self.assertIn("not in the building", str(caught.exception))
+			self.assertIn("not in the building", api.suggest_location(parent, "bin")["problem"])
+		self.assertEqual(STATE["inserts"], [])
 
 	def test_read_on_this_parent_is_asked_not_only_on_warehouse(self):
 		"""F3: the read check names the parent itself, so a person refused one warehouse (a User
@@ -1818,6 +1859,8 @@ class TestMakingALocation(_Base):
 		self.assertIn("not permitted", answer["problem"])
 		self.assertNotIn("one place", answer["problem"])
 		self.assertEqual(answer["warehouse_name"], "")
+		# Not even its name.
+		self.assertEqual(answer["parent_name"], ROOM)
 		with self.assertRaises(_Denied):
 			api.create_location(ROOM, "bin", "Bin X-1")
 
