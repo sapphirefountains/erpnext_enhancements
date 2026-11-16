@@ -47,6 +47,10 @@
  *      board drops the saved order at `get_board`, `apply_kanban_board_doc` and
  *      `map_kanban_board_columns`, and sorts `this.data` at `render_list` (where a deal created while
  *      the board is open arrives, last); another board keeps its saved order and its arrival order.
+ *  12b. The open path: store.init, update_order, its callback, the next draw. A user without write is
+ *      handed the board back, so the server must return it with an empty order (kanban_order.py,
+ *      mirrored here) or the first "load more" redraws new deals last; a user with write saves the first
+ *      page, newest first, over the saved order.
  *  13. An engine without those four methods: the rest of the file still works.
  */
 
@@ -666,6 +670,77 @@ const row_value = (row) => $(row).children("span").els.slice(1).map((e) => e.tex
 		}
 	}
 
+	// 12b. the whole open path (kanban_board.bundle.js, v16.56.0). The columns the board draws from are
+	// `store.columns`: set from the board doc at init, then REPLACED by the board that `update_order`
+	// returns (its callback: `prepare_columns(r.message[0].columns)`), and every "load more" or card
+	// change redraws from them. So clearing the saved order on the doc the view reads is not enough on
+	// its own: the return of update_order has to be clear too. The server half is kanban_order.py's
+	// `update_order` (pinned in tests/test_kanban_order.py); `server` below mirrors its contract.
+	{
+		const db_orders = { Qualification: ["OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"], "Closed Won": ["OPP-WON-2", "OPP-WON-1"] };
+		const db_board = () => ({
+			name: "Opportunity",
+			columns: Object.keys(db_orders).map((n) => ({ column_name: n, status: "Active", order: JSON.stringify(db_orders[n]) })),
+		});
+		const first_page = () => [
+			{ name: "OPP-NEW", status: "Qualification", creation: "2026-11-16 09:30:00.000000" },
+			{ name: "OPP-OLD-1", status: "Qualification", creation: "2026-11-10 08:00:00.000000" },
+			{ name: "OPP-OLD-2", status: "Qualification", creation: "2026-11-02 08:00:00.000000" },
+			{ name: "OPP-WON-1", status: "Closed Won", creation: "2026-10-01 08:00:00.000000" },
+		];
+		const older_page = () => [
+			{ name: "OPP-OLD-3", status: "Qualification", creation: "2026-10-20 08:00:00.000000" },
+			{ name: "OPP-WON-2", status: "Closed Won", creation: "2026-09-01 08:00:00.000000" },
+		];
+		const prepare_columns = (cols) => cols.map((c) => ({ title: c.column_name, order: c.order }));
+		// get_column_full_order: the saved order, then the loaded cards it does not list; no saved order: the loaded cards
+		const full_order = (col, cards) => display_order(col, cards, "status");
+		// kanban_order.update_order, as the client sees it
+		const server = ({ can_write, clears }) => (sent) => {
+			const board = db_board();
+			if (can_write) {
+				// saves what was sent (every name here is stored in its column) and returns it
+				board.columns.forEach((c) => (c.order = JSON.stringify(sent[c.column_name] || [])));
+				Object.keys(sent).forEach((n) => (db_orders[n] = sent[n].slice()));
+			} else if (clears) board.columns.forEach((c) => (c.order = "[]"));
+			return [board, []];
+		};
+		const open = async (opts) => {
+			const desk = makeDesk({ board_doc: db_board() });
+			const view = new desk.frappe.views.KanbanView("Opportunity", "Opportunity", first_page());
+			await view.get_board();
+			let store_columns = prepare_columns(view.board.columns); // store.init
+			const sent = {};
+			store_columns.forEach((c) => (sent[c.title] = full_order(c, view.data))); // store.update_order
+			const [board] = server(opts)(sent);
+			store_columns = prepare_columns(board.columns); // its callback
+			const draw = (title) => display_order(store_columns.find((c) => c.title === title), view.data, "status");
+			return { view, sent, draw, db: () => JSON.parse(JSON.stringify(db_orders)) };
+		};
+
+		// no write on Opportunity: handed the board back; the server clears it, so the order holds on a "load more"
+		{
+			const t = await open({ can_write: false, clears: true });
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "no write: the first draw is newest first");
+			t.view.data.push(...older_page());
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]), "no write: and so is the draw after a \"load more\"");
+			check(same(t.sent.Qualification, ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "the open-time update_order sends the first page, newest first, built from the cleared order");
+		}
+		// the same user if the server handed the saved order back, as frappe's own update_order does
+		{
+			const t = await open({ can_write: false, clears: false });
+			check(same(t.draw("Qualification"), ["OPP-OLD-1", "OPP-OLD-2", "OPP-NEW"]), "no write, saved order returned as stored: new deals are last again (why kanban_order.py clears it)");
+		}
+		// write permission: the board is saved, and what is saved is the first page, newest first
+		{
+			const t = await open({ can_write: true });
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "write: the first draw is newest first");
+			t.view.data.push(...older_page());
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]), "write: and after a \"load more\", the older deals follow");
+			check(same(t.db().Qualification, ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]) && same(t.db()["Closed Won"], ["OPP-WON-1"]), "write: the open REPLACES the saved order with the loaded first page (a manual order is not kept)");
+		}
+	}
+
 	// 11. no engine hooks: nothing patched, nothing thrown
 	{
 		const desk = makeDesk({ no_engine: true });
@@ -679,10 +754,10 @@ const row_value = (row) => $(row).children("span").els.slice(1).map((e) => e.tex
 		check(view.rendered === 1 && view.cards[0].$card.find("a.kanban-card-party-link").length === 1 && view.get_board === undefined && view.render_list === undefined, "without get_board/render_list/... the card is still decorated and nothing is invented");
 	}
 
-	// the file never writes the board or its saved order
+	// the file itself makes no write call (the engine still saves the board on open: see check 12b)
 	{
 		const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-		check(!/update_order|set_value|frappe\.db\./.test(code) && !/method:\s*["']frappe\.desk/.test(code), "the file never writes the board or its saved order");
+		check(!/update_order|set_value|frappe\.db\./.test(code) && !/method:\s*["']frappe\.desk/.test(code), "the file makes no write call of its own");
 	}
 
 	if (failures) {

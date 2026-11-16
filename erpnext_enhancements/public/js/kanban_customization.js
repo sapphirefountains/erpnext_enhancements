@@ -105,17 +105,32 @@
  * Qualification ran ...00062, 00192, 00211, 00212 — the newest last. So a deal's place is where
  * the board first saw it, not when it was created.
  *
- * The fix is client-side and writes nothing. For the Opportunity board the saved order is dropped
- * from every board doc the view reads (`get_board`, `apply_kanban_board_doc`, and the columns
- * `map_kanban_board_columns` hands to a realtime sync): "" parses to an empty order, so the engine
- * falls through to the cards' own order, which is the server's, newest created first. `render_list`
- * — where a deal created while the board is open lands, at the END of `this.data` — sorts
- * `this.data` newest first before the engine reads it. The saved order is still written (the
- * engine's `update_order` on every open, a drag's `update_order_for_single_card`) and still
- * published to other tabs; this file just stops reading it. What that costs: a card dragged to a
- * place INSIDE a column stays there for that tab until the next refresh, and then goes back to
- * its place by creation date. Dragging to ANOTHER column still changes the deal's status, as
- * before. Nobody's saved order was deleted, so taking this file out restores the old behaviour.
+ * The fix stops reading the saved order; it does not stop the engine WRITING it. For the Opportunity
+ * board the saved order is dropped from every board doc the view reads (`get_board`,
+ * `apply_kanban_board_doc`, and the columns `map_kanban_board_columns` hands to a realtime sync):
+ * "" parses to an empty order, so the engine falls through to the cards' own order, which is the
+ * server's, newest created first. `render_list` — where a deal created while the board is open
+ * lands, at the END of `this.data` — sorts `this.data` newest first before the engine reads it.
+ * The third door is server-side, in kanban_order.py: the 16.50+ client writes the board that
+ * `update_order` returns straight into its live `store.columns` (`update_order`'s callback), and
+ * those columns draw the column on the next "load more" or card change; a user without write on
+ * Opportunity is handed the board "from the db" with its saved order, so for this board that
+ * return carries an empty order (an in-memory copy, never saved).
+ *
+ * WHAT IS STILL WRITTEN, AND WHAT IT COSTS. A user with write permission still saves the board on
+ * every open: the engine's `update_order` sends `get_column_full_order` of the CLEARED columns,
+ * which is only the cards loaded so far (the first page, 50 a column), and kanban_order.py saves
+ * that over `column.order`. So every open replaces each column's saved order with at most 50
+ * names, newest first, and a drag sends full lists built from the same cleared order. A manual
+ * order is therefore LOST for good, not merely hidden, and taking this file out or reverting the
+ * version does not bring it back (what comes back is a saved order that is newest first, until
+ * someone drags). On a board with more than 200 cards loaded (LARGE_BOARD_ORDER_SYNC_LIMIT) the
+ * engine skips the open-time save, and only a drag writes.
+ * A card dragged to a place INSIDE a column goes back to its place by creation date almost at
+ * once, not at the next refresh: the drag's `update_order_for_single_card` publishes
+ * `kanban_board_update`, the listener queues a refresh during the drag, and
+ * `end_kanban_local_drag_sync` flushes it (kanban_view.js). Dragging to ANOTHER column still
+ * changes the deal's status, as before.
  * The "Opportunity Pipeline" board (use_kanban_v2) has no saved card order — its provider asks
  * for `modified desc` — so it is not affected by this and not touched by this.
  *
@@ -253,8 +268,9 @@
     }
 
     // The saved order of every column on a board doc, cleared. "" parses to an empty order in
-    // both kanban_board.bundle.js and kanban_pagination.js. The doc is the view's own copy
-    // (`frappe.db.get_doc` hands back a fresh object), so this changes nothing on the server.
+    // both kanban_board.bundle.js and kanban_pagination.js. `frappe.db.get_doc` runs
+    // `frappe.model.sync`, so the object cleared here is the copy in `locals`: nothing on the
+    // server changes, and the next get_doc replaces it.
     function forget_saved_order(board) {
         if (!board || !Array.isArray(board.columns)) return;
         board.columns.forEach((column) => {

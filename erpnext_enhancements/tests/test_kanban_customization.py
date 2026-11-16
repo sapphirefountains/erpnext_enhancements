@@ -62,16 +62,16 @@ class TestEngineHooks(unittest.TestCase):
 		self.assertIn("args.with_comment_count = 0;", src)
 		self.assertIn("proto.get_like_html = function ()", src)
 
-	def test_the_saved_card_order_is_ignored_and_never_written(self):
+	def test_the_saved_card_order_is_ignored_on_the_board_doc_paths(self):
 		src = code(MODULE)
 		# the four engine methods that carry it (kanban_view.js at v16.56.0)
 		self.assertIn('["get_board", "apply_kanban_board_doc"].forEach((method) => {', src)
 		self.assertIn("proto.map_kanban_board_columns = function ()", src)
 		self.assertIn("proto.render_list = function ()", src)
 		self.assertIn('column.order = "";', src)
-		# a client-side change only: the board is never saved from this file
-		for writer in ("update_order", "set_value", "frappe.db."):
-			self.assertNotIn(writer, src)
+		# This is what the file reads and clears, not what the engine writes: the engine's own
+		# open-time update_order still saves the board (the first page of each column), and the
+		# server half that keeps a non-writer's return cleared is tested in test_kanban_order.py.
 
 	def test_the_navy_fill_is_gone(self):
 		# v1.779.0 restored the dark card on deals over 4000; Nikolas found it unreadable and

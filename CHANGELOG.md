@@ -23,18 +23,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     saves a new deal after the old ones, and a drag rewrites the list. A deal's place was where the
     board first saw it, not when it was created. Production's saved order for Qualification on
     2026-11-16 ended `...00062, 00192, 00211, 00212`: the newest last.
-  - **The fix is in `kanban_customization.js` and is client-side only.** For the Opportunity
-    board the saved order is dropped from every board doc the view reads (`get_board`,
-    `apply_kanban_board_doc`, and the columns `map_kanban_board_columns` hands to a realtime
-    sync), so the engine falls through to the server's order, newest created first. `render_list`
-    sorts `this.data` by `creation` desc, because a deal created while the board is open arrives
-    at the end of it. Nothing is written by the change, and there is no patch: the saved orders in
-    the database are left as they are (the engine still rewrites them on every open, as before).
-  - **What it does to manual ordering, plainly: it overrides it.** A card dragged to a place
-    *inside* a column stays where it was dropped in that tab until the next refresh, then goes
-    back to its place by creation date. Dragging a card to *another* column still changes the
-    deal's status exactly as before. Taking `kanban_customization.js` out, or reverting this
-    version, brings back the old saved order, since none was deleted.
+  - **The fix stops the board reading its saved order** (`kanban_customization.js`). For the
+    Opportunity board the saved order is dropped from every board doc the view reads
+    (`get_board`, `apply_kanban_board_doc`, and the columns `map_kanban_board_columns` hands to a
+    realtime sync), so the engine falls through to the server's order, newest created first.
+    `render_list` sorts `this.data` by `creation` desc, because a deal created while the board is
+    open arrives at the end of it. A third door is server-side (`kanban_order.update_order`): the
+    client writes the board that call returns into its live columns, and a user without write on
+    Opportunity was handed the saved order back, which would have redrawn new deals last on the
+    first "load more". For the Opportunity board that return now carries an empty order (an
+    in-memory copy, never saved). There is no patch.
+  - **It still writes, and manual ordering is lost for good.** The engine saves the board on every
+    open for a user with write: `update_order` sends the order of the *cleared* columns, which is
+    only the cards loaded so far (the first page, at most 50 a column), and the server saves that
+    over each column's order. A drag sends full lists built the same way. So every open replaces
+    the saved order with the newest-first first page, a deliberate manual order does not survive
+    it, and reverting this version does not bring it back (what the revert leaves is a saved order
+    that is newest first, until someone drags). Above 200 loaded cards the engine skips the
+    open-time save and only a drag writes. Nik asked for newest first; this is the price.
+  - **A drag inside a column snaps back almost at once**, not at the next refresh: the drag's save
+    publishes `kanban_board_update`, the view queues a refresh during the drag and flushes it when
+    the drag settles. Dragging a card to *another* column still changes the deal's status exactly
+    as before.
   - **The "Opportunity Pipeline" board (Kanban v2) is not changed.** It has no saved card order;
     its provider asks for `modified desc`, so a new card is already at the top there (an edited
     older one also moves up, which is "last touched", not "newest").
@@ -45,7 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/test_kanban_customization.js` now models `get_column_display_order` and pins the new
   order: the saved order wins on another board and is ignored on this one, a refresh and a
   realtime sync carry no order, a deal created while the board is open lands first, a tie keeps
-  its arrival order, and the file never writes the board.
+  its arrival order, and the whole open path (`store.init` to `update_order` to its callback to
+  the next draw) keeps the order for a user without write, who is handed the board back, and for
+  one with write, whose saved order becomes the first page. `test_kanban_order.py` pins the
+  server half: an Opportunity-board reader gets an empty order, another board's is untouched,
+  and nothing is saved.
 
 ## [1.821.0] - 2026-11-16
 
