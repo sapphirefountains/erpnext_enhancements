@@ -41,6 +41,17 @@
  *   9. Another board on the same doctype keeps its pills, count, heart and separate rows.
  *  10. A failing value-stream fetch still draws the board, and is not retried on a redraw.
  *  11. Nothing is patched when the engine lacks the hooks.
+ *  12. Newest first (v1.822.0): kanban_view.js (v16.56.0) keeps each column's saved `order` on the
+ *      board doc, and kanban_board.bundle.js draws the saved names first and every other card after,
+ *      so a deal created later lands last. `display_order` below is that function. The Opportunity
+ *      board drops the saved order at `get_board`, `apply_kanban_board_doc` and
+ *      `map_kanban_board_columns`, and sorts `this.data` at `render_list` (where a deal created while
+ *      the board is open arrives, last); another board keeps its saved order and its arrival order.
+ *  12b. The open path: store.init, update_order, its callback, the next draw. A user without write is
+ *      handed the board back, so the server must return it with an empty order (kanban_order.py,
+ *      mirrored here) or the first "load more" redraws new deals last; a user with write saves the first
+ *      page, newest first, over the saved order.
+ *  13. An engine without those four methods: the rest of the file still works.
  */
 
 const fs = require("fs");
@@ -333,6 +344,24 @@ function makeDesk(options) {
 				const $card = this.$column.children(".kanban-card-wrapper").els.filter((e) => e.attrs["data-name"] === encodeURIComponent(doc.name));
 				return { card, $card: $($card) };
 			}
+			// kanban_view.js (v16.56.0): the board doc with every column's saved `order`, a JSON list
+			get_board() {
+				return Promise.resolve().then(() => {
+					this.board = JSON.parse(JSON.stringify(options.board_doc || { name: this.board_name, columns: [] }));
+					return this.board;
+				});
+			}
+			apply_kanban_board_doc(board) {
+				this.board = board;
+			}
+			map_kanban_board_columns(board) {
+				return ((board && board.columns) || []).map((col) => ({ title: col.column_name, status: col.status, order: col.order, indicator: "gray" }));
+			}
+			// the realtime landing: process_document_refreshes has pushed a new card onto the end of
+			// `this.data`; the engine then reads `this.data` as it stands
+			render_list() {
+				this.listed = this.data.map((d) => d.name);
+			}
 			render_kanban_board() {
 				return Promise.resolve(this.load_lib).then(() => {
 					this.rendered += 1;
@@ -340,6 +369,7 @@ function makeDesk(options) {
 				});
 			}
 		}
+		if (options.no_order_hooks) ["get_board", "apply_kanban_board_doc", "map_kanban_board_columns", "render_list"].forEach((m) => delete KanbanView.prototype[m]);
 		frappe.views.ListView = ListView;
 		frappe.views.KanbanView = KanbanView;
 	}
@@ -365,6 +395,35 @@ function makeDesk(options) {
 	vm.createContext(sandbox);
 	vm.runInContext(SOURCE, sandbox, { filename: "kanban_customization.js" });
 	return { frappe, calls, routes, sandbox, list_get_args, list_get_like_html };
+}
+
+// kanban_board.bundle.js get_column_display_order (v16.56.0), as the board draws a column: the
+// saved order first (names still in the column, once each), then every card the saved order does
+// not list, in the order the cards arrived. `data` is `this.data`.
+function display_order(column, data, field) {
+	const in_column = data.filter((d) => d[field] === column.title);
+	let saved = [];
+	try {
+		saved = column.order ? JSON.parse(column.order) : [];
+	} catch (e) {
+		saved = [];
+	}
+	const members = new Set(in_column.map((d) => d.name));
+	const seen = new Set();
+	const names = [];
+	saved.forEach((n) => {
+		if (members.has(n) && !seen.has(n)) {
+			seen.add(n);
+			names.push(n);
+		}
+	});
+	in_column.forEach((d) => {
+		if (!seen.has(d.name)) {
+			seen.add(d.name);
+			names.push(d.name);
+		}
+	});
+	return names;
 }
 
 const tick = () => new Promise((resolve) => setTimeout(() => setImmediate(resolve), 1));
@@ -537,10 +596,168 @@ const row_value = (row) => $(row).children("span").els.slice(1).map((e) => e.tex
 		check(desk.calls.length === 0 && same(view.data[0].custom_value_stream, []), "a failed fetch is marked tried, so a redraw does not ask again");
 	}
 
+	// 12. newest first. Prod's saved order for a column lists the cards in the order the board
+	// first drew them, so a deal created later sits after them, and the engine draws saved names
+	// first (Qualification on 2026-11-16: the older deals, then the three newest, oldest of those first).
+	{
+		const board_doc = {
+			name: "Opportunity",
+			columns: [
+				{ column_name: "Qualification", status: "Active", order: JSON.stringify(["OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]) },
+				{ column_name: "Closed Won", status: "Active", order: JSON.stringify(["OPP-WON-2", "OPP-WON-1"]) },
+			],
+		};
+		// the server's page, as the engine receives it: `creation desc` (Opportunity's sort_field)
+		const page = () => [
+			{ name: "OPP-NEW", status: "Qualification", creation: "2026-11-16 09:30:00.000000" },
+			{ name: "OPP-OLD-1", status: "Qualification", creation: "2026-11-10 08:00:00.000000" },
+			{ name: "OPP-OLD-2", status: "Qualification", creation: "2026-11-02 08:00:00.000000" },
+			{ name: "OPP-OLD-3", status: "Qualification", creation: "2026-10-20 08:00:00.000000" },
+			{ name: "OPP-WON-3", status: "Closed Won", creation: "2026-11-12 08:00:00.000000" },
+			{ name: "OPP-WON-1", status: "Closed Won", creation: "2026-10-01 08:00:00.000000" },
+			{ name: "OPP-WON-2", status: "Closed Won", creation: "2026-09-01 08:00:00.000000" },
+		];
+		const shown = (view, title) => {
+			const col = view.board.columns.find((c) => c.column_name === title);
+			return display_order({ title, order: col && col.order }, view.data, "status");
+		};
+
+		// the mechanism, on a board the file leaves alone: the saved order wins, the new deal is last
+		{
+			const desk = makeDesk({ board_doc: Object.assign({}, board_doc, { name: "Opportunity Pipeline" }) });
+			const view = new desk.frappe.views.KanbanView("Opportunity", "Opportunity Pipeline", page());
+			await view.get_board();
+			check(same(shown(view, "Qualification"), ["OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3", "OPP-NEW"]), "another board: the saved order is honored, so a card missing from it lands last");
+			check(view.board.columns.every((c) => c.order !== "") && view.map_kanban_board_columns(view.board).every((c) => c.order !== ""), "another board: the saved order is neither cleared nor hidden");
+			view.data.push({ name: "OPP-LATE", status: "Qualification", creation: "2026-11-17 09:00:00.000000" });
+			view.render_list();
+			check(view.listed[view.listed.length - 1] === "OPP-LATE", "another board: render_list leaves the card order alone");
+		}
+
+		// the Opportunity board: the saved order is forgotten, the cards are newest first
+		{
+			const desk = makeDesk({ board_doc });
+			const view = new desk.frappe.views.KanbanView("Opportunity", "Opportunity", page());
+			await view.get_board();
+			check(view.board.columns.every((c) => c.order === ""), "Opportunity board: get_board drops every column's saved order from the view's copy");
+			check(same(shown(view, "Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]), "Opportunity board: the newest deal is first in Qualification, not last");
+			check(same(shown(view, "Closed Won"), ["OPP-WON-3", "OPP-WON-1", "OPP-WON-2"]), "Opportunity board: Closed Won is newest first too, whatever order it was dragged into");
+			check(board_doc.columns.every((c) => c.order !== ""), "the board doc the harness holds (standing in for the server's copy) is not touched");
+
+			// a board refresh from another tab: the doc is applied, the columns mapped
+			const refreshed = { name: "Opportunity", columns: board_doc.columns.map((c) => Object.assign({}, c)) };
+			view.apply_kanban_board_doc(refreshed);
+			check(refreshed.columns.every((c) => c.order === "") && view.board === refreshed, "a refreshed board doc is cleared too, and is still the view's board");
+			const mapped = view.map_kanban_board_columns({ columns: board_doc.columns });
+			check(same(mapped.map((c) => [c.title, c.order]), [["Qualification", ""], ["Closed Won", ""]]) && mapped[0].indicator === "gray", "the columns handed to a realtime sync carry no order, and keep their title and indicator");
+			check(board_doc.columns[0].order !== "", "mapping does not write through to the doc it was given");
+
+			// a deal created while the board is open arrives at the END of this.data
+			view.data.push({ name: "OPP-LATE", status: "Qualification", creation: "2026-11-17 09:00:00.000000" });
+			view.data.push({ name: "OPP-NOKEY", status: "Qualification" });
+			view.render_list(["OPP-LATE"]);
+			check(view.listed[0] === "OPP-LATE" && view.listed[1] === "OPP-NEW" && view.listed[view.listed.length - 1] === "OPP-NOKEY", "a deal created while the board is open lands on top; a row with no creation date goes last");
+			check(same(shown(view, "Qualification"), ["OPP-LATE", "OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3", "OPP-NOKEY"]), "...and so does the column the engine draws");
+
+			// equal creation stamps keep their arrival order
+			view.data = [
+				{ name: "A", status: "Qualification", creation: "2026-11-16 09:30:00.000000" },
+				{ name: "B", status: "Qualification", creation: "2026-11-16 09:30:00.000000" },
+				{ name: "C", status: "Qualification", creation: "2026-11-16 09:31:00.000000" },
+			];
+			view.render_list();
+			check(same(view.listed, ["C", "A", "B"]), "a tie keeps the order the cards arrived in");
+		}
+	}
+
+	// 12b. the whole open path (kanban_board.bundle.js, v16.56.0). The columns the board draws from are
+	// `store.columns`: set from the board doc at init, then REPLACED by the board that `update_order`
+	// returns (its callback: `prepare_columns(r.message[0].columns)`), and every "load more" or card
+	// change redraws from them. So clearing the saved order on the doc the view reads is not enough on
+	// its own: the return of update_order has to be clear too. The server half is kanban_order.py's
+	// `update_order` (pinned in tests/test_kanban_order.py); `server` below mirrors its contract.
+	{
+		const db_orders = { Qualification: ["OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"], "Closed Won": ["OPP-WON-2", "OPP-WON-1"] };
+		const db_board = () => ({
+			name: "Opportunity",
+			columns: Object.keys(db_orders).map((n) => ({ column_name: n, status: "Active", order: JSON.stringify(db_orders[n]) })),
+		});
+		const first_page = () => [
+			{ name: "OPP-NEW", status: "Qualification", creation: "2026-11-16 09:30:00.000000" },
+			{ name: "OPP-OLD-1", status: "Qualification", creation: "2026-11-10 08:00:00.000000" },
+			{ name: "OPP-OLD-2", status: "Qualification", creation: "2026-11-02 08:00:00.000000" },
+			{ name: "OPP-WON-1", status: "Closed Won", creation: "2026-10-01 08:00:00.000000" },
+		];
+		const older_page = () => [
+			{ name: "OPP-OLD-3", status: "Qualification", creation: "2026-10-20 08:00:00.000000" },
+			{ name: "OPP-WON-2", status: "Closed Won", creation: "2026-09-01 08:00:00.000000" },
+		];
+		const prepare_columns = (cols) => cols.map((c) => ({ title: c.column_name, order: c.order }));
+		// get_column_full_order: the saved order, then the loaded cards it does not list; no saved order: the loaded cards
+		const full_order = (col, cards) => display_order(col, cards, "status");
+		// kanban_order.update_order, as the client sees it
+		const server = ({ can_write, clears }) => (sent) => {
+			const board = db_board();
+			if (can_write) {
+				// saves what was sent (every name here is stored in its column) and returns it
+				board.columns.forEach((c) => (c.order = JSON.stringify(sent[c.column_name] || [])));
+				Object.keys(sent).forEach((n) => (db_orders[n] = sent[n].slice()));
+			} else if (clears) board.columns.forEach((c) => (c.order = "[]"));
+			return [board, []];
+		};
+		const open = async (opts) => {
+			const desk = makeDesk({ board_doc: db_board() });
+			const view = new desk.frappe.views.KanbanView("Opportunity", "Opportunity", first_page());
+			await view.get_board();
+			let store_columns = prepare_columns(view.board.columns); // store.init
+			const sent = {};
+			store_columns.forEach((c) => (sent[c.title] = full_order(c, view.data))); // store.update_order
+			const [board] = server(opts)(sent);
+			store_columns = prepare_columns(board.columns); // its callback
+			const draw = (title) => display_order(store_columns.find((c) => c.title === title), view.data, "status");
+			return { view, sent, draw, db: () => JSON.parse(JSON.stringify(db_orders)) };
+		};
+
+		// no write on Opportunity: handed the board back; the server clears it, so the order holds on a "load more"
+		{
+			const t = await open({ can_write: false, clears: true });
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "no write: the first draw is newest first");
+			t.view.data.push(...older_page());
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]), "no write: and so is the draw after a \"load more\"");
+			check(same(t.sent.Qualification, ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "the open-time update_order sends the first page, newest first, built from the cleared order");
+		}
+		// the same user if the server handed the saved order back, as frappe's own update_order does
+		{
+			const t = await open({ can_write: false, clears: false });
+			check(same(t.draw("Qualification"), ["OPP-OLD-1", "OPP-OLD-2", "OPP-NEW"]), "no write, saved order returned as stored: new deals are last again (why kanban_order.py clears it)");
+		}
+		// write permission: the board is saved, and what is saved is the first page, newest first
+		{
+			const t = await open({ can_write: true });
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]), "write: the first draw is newest first");
+			t.view.data.push(...older_page());
+			check(same(t.draw("Qualification"), ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2", "OPP-OLD-3"]), "write: and after a \"load more\", the older deals follow");
+			check(same(t.db().Qualification, ["OPP-NEW", "OPP-OLD-1", "OPP-OLD-2"]) && same(t.db()["Closed Won"], ["OPP-WON-1"]), "write: the open REPLACES the saved order with the loaded first page (a manual order is not kept)");
+		}
+	}
+
 	// 11. no engine hooks: nothing patched, nothing thrown
 	{
 		const desk = makeDesk({ no_engine: true });
 		check(desk.frappe.views.KanbanView === undefined && desk.sandbox.erpnext_enhancements.kanban.installed === true, "without the hooks the file does nothing");
+	}
+
+	// 13. an engine without the new hooks: the rest of the file still works, nothing throws
+	{
+		const desk = makeDesk({ no_order_hooks: true });
+		const view = await render(desk, "Opportunity", [{ name: "OPP-9", customer_name: "Acme", party_name: "Acme", opportunity_from: "Customer", primary_contact: "Acme Contact", custom_contact_mobile_number: "555", opportunity_amount: 5000 }]);
+		check(view.rendered === 1 && view.cards[0].$card.find("a.kanban-card-party-link").length === 1 && view.get_board === undefined && view.render_list === undefined, "without get_board/render_list/... the card is still decorated and nothing is invented");
+	}
+
+	// the file itself makes no write call (the engine still saves the board on open: see check 12b)
+	{
+		const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+		check(!/update_order|set_value|frappe\.db\./.test(code) && !/method:\s*["']frappe\.desk/.test(code), "the file makes no write call of its own");
 	}
 
 	if (failures) {
