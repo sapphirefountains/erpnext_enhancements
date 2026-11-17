@@ -28,6 +28,8 @@ second run finds the warehouse and the setting's row.
 
 import frappe
 
+# The group is called Inventory Room - SF since v1.823.0 (patches/swap_inventory_room_names). This patch ran on
+# production before that and is not meant to run again, so it keeps the name it was written for.
 PARENT = "Inventory - SF"
 NAME = "Boneyard"
 SETTINGS = "Inventory Scanner Settings"

@@ -4163,6 +4163,14 @@ jobs:
       # procurement_project.py run on test_job_sites' frappe stub (reused, so its own step). unittest classes.
       - name: The Project Shelf (received for a job, out of shop availability, by job) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
+      # The Inventory Room swap (v1.823.0, patches/swap_inventory_room_names.py, the owner's 2026-11-17 decision): the leaf
+      # Inventory Room becomes Receiving, then the group Inventory becomes Inventory Room. If this fails, the group could be
+      # renamed while the room still held its name (two warehouses merged, or the room's stock, defaults and filters landing
+      # on the whole shop), a saved list filter on the room could end up on the group or a second run could send a filter
+      # on the renamed group to Receiving, a failed step could leave half a rename or abort the deploy, a person could be
+      # named in the build log, or a site without these warehouses could be alerted. Own frappe stub, so its own step.
+      - name: The Inventory Room swap (Inventory Room to Receiving, Inventory to Inventory Room) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_swap_inventory_room_names -v
       # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
       # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
       # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push

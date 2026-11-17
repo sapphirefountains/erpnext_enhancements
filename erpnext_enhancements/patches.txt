@@ -1686,3 +1686,18 @@ erpnext_enhancements.patches.rename_stores_to_project_shelf
 # tabSingles row, never over a stored value. A brand-new Single, so this mostly guards the future: a field added later
 # gets its default, and a later write of one field cannot blank the switches. Also on after_migrate. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults
+# v1.823.0 -- The Inventory Room swap (Nik 2026-11-17: "Those bays should exist in the Inventory Room, not the
+# Inventory warehouse"). WRITES PRODUCTION DATA. The leaf "Inventory Room - SF" holds stock, so ERPNext will not make it
+# the group; the names are swapped instead, in this order, each with Frappe's own rename_doc (force, because ERPNext
+# 16.54.0's Warehouse is not renameable from the Desk; every Link follows) and warehouse_name set by hand (no rename
+# hook at that version): (1) the leaf "Inventory Room - SF" becomes "Receiving - SF"; (2) people's saved list filters
+# that name it move to Receiving (__UserSettings: Frappe 16.56.0's rename looks for them with LIKE and no wildcards);
+# (3) ONLY THEN, and only when (1) and (2) answered done or already, the group "Inventory - SF" becomes
+# "Inventory Room - SF", so nothing that meant the room ends up on the whole shop; (4) filters that named the group
+# follow it; (5) Warehouse names indexed again here (the deploy clears the job queue). Nothing moves in the tree, no
+# stock moves, nothing is merged. A filter rewrite never runs while the old name belongs to a warehouse, so a second run
+# leaves filters on the renamed group alone. Counts printed, never who. The old room's QR label opens the group now and
+# must be reprinted as Receiving. On a site with no "Inventory Room - SF" leaf and no "Receiving - SF" every step
+# answers "not needed here" and NO Error Log row is written. Cannot raise, safe twice. When any step did not finish,
+# ONE Error Log row "Inventory Room patch (swap_inventory_room_names): finish these steps by hand" lists them.
+erpnext_enhancements.patches.swap_inventory_room_names

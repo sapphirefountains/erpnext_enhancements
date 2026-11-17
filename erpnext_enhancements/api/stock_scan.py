@@ -215,8 +215,14 @@ def _location_problem(row, name=""):
 		return _("There is no location called {0}.").format(name or _("that"))
 	label = row.warehouse_name or row.name
 	if row.is_group:
+		# A label is printed only for a place that holds stock (warehouse_labels.py), so a label that
+		# opens a group is out of date: its place was renamed, or made a group, after it was printed.
+		# The room's label opened the shop's group once v1.823.0 swapped the two names
+		# (patches/swap_inventory_room_names.py).
 		return _(
-			"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it."
+			"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it. "
+			"If you scanned a label stuck on a shelf or a room, the label is out of date: print a new one "
+			"from Warehouse Labels."
 		).format(label)
 	if row.disabled:
 		return _("{0} is disabled.").format(label)
