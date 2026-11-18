@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     linked quote carries anything else is treated as a job, and the tab says so.
   - **Not the Products value stream.** On prod the E-Stop deals carry Design + Build + Products and the
     control-panel jobs carry Products too: wrong both ways.
+  - **A control-panel order's project is typed Products** (`product_sale.project_type_for`). When a
+    deal's linked quote lines together are a product order with a control panel on it
+    (`product_orders.classify_lines` `needs_project`), the hand-off creates its project with
+    `project_type = "Products"`: decision pick 1 keeps those a Project of type Products, and the
+    Products tab lists them by that type. The hand-off's value-stream choice (Design, Build, Service,
+    Events) never picked Products, and left a Products-only deal blank. Fountain jobs, and a panel
+    quoted beside a fountain, keep the value-stream choice; a site without the Products type, or a
+    failed read, falls back to it.
 
 ### Fixed
 

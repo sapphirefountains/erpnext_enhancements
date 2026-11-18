@@ -608,16 +608,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			sync_contact.apply_primary_contact_details(project)
 
 			# Derive a single Project.project_type from the (possibly multiple)
-			# selected value streams, picking the highest-priority one present.
-			priority_order = ["Design", "Build", "Service", "Events"]
-			project_type_value = None
-
+			# selected value streams, picking the highest-priority one present
+			# (Design, Build, Service, Events). v1.825.0: a deal whose linked quotes
+			# are a control-panel product order gets "Products" instead (decision
+			# 2026-11-18 pick 1; the Products tab lists panel projects by that type).
+			# See product_sale.project_type_for; it never raises.
 			value_streams = [d.get("value_stream") for d in opp.get("custom_value_stream")]
-
-			for p in priority_order:
-				if p in value_streams:
-					project_type_value = p
-					break
+			project_type_value = product_sale.project_type_for_deal(opportunity_name, value_streams)
 
 			if project_type_value:
 				project.project_type = project_type_value

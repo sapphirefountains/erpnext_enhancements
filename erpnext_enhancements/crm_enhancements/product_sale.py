@@ -95,7 +95,9 @@ def deal_facts(opportunities):
 	import frappe
 
 	names = sorted({name for name in opportunities or [] if name})
-	facts = {name: {"marked": False, "has_configuration": False, "documents": []} for name in names}
+	facts = {
+		name: {"marked": False, "has_configuration": False, "documents": [], "lines": []} for name in names
+	}
 	if not names:
 		return facts
 	if frappe.db.has_column("Opportunity", MARKER):
@@ -136,7 +138,55 @@ def deal_facts(opportunities):
 	for (opportunity, _quotation), lines in by_quotation.items():
 		if opportunity in facts:
 			facts[opportunity]["documents"].append(document_skips_project(lines))
+			facts[opportunity]["lines"].extend(lines)
 	return facts
+
+
+#: The value streams a Project's type is chosen from, highest priority first (the hand-off's order).
+STREAM_PRIORITY = ("Design", "Build", "Service", "Events")
+PRODUCTS_TYPE = "Products"
+
+
+def project_type_for(value_streams, quoted_lines):
+	"""The Project Type a deal's project gets (v1.825.0).
+
+	**Products** when the deal's live linked quote lines, taken together, are a product order that
+	needs a project: every line a product or incidental, and a control panel among them
+	(``product_orders.classify_lines`` ``needs_project``). Decision pick 1: "custom-engineered control
+	panels keep a Project of type Products", and the Products tab lists control-panel projects by
+	that type. Otherwise the value-stream choice the hand-off always made (Design, Build, Service,
+	Events), so a fountain job is typed as before, and ``None`` when no stream matches. A fountain
+	quote beside the panel makes the lines a job, which keeps the stream choice.
+	"""
+	if quoted_lines:
+		from erpnext_enhancements import product_orders
+
+		result = product_orders.classify_lines(quoted_lines)
+		if result["is_product"] and result["needs_project"]:
+			return PRODUCTS_TYPE
+	streams = set(value_streams or [])
+	return next((stream for stream in STREAM_PRIORITY if stream in streams), None)
+
+
+def project_type_for_deal(opportunity, value_streams):
+	"""``project_type_for`` with the deal's quote lines read in, for the hand-off job. Never raises.
+
+	A read that fails, or a site without the Products Project Type, falls back to the stream choice.
+	"""
+	try:
+		lines = deal_facts([opportunity]).get(opportunity, {}).get("lines", [])
+	except Exception:
+		lines = []
+	chosen = project_type_for(value_streams, lines)
+	if chosen == PRODUCTS_TYPE:
+		try:
+			import frappe
+
+			if not frappe.db.exists("Project Type", PRODUCTS_TYPE):
+				chosen = project_type_for(value_streams, [])
+		except Exception:
+			chosen = project_type_for(value_streams, [])
+	return chosen
 
 
 def product_sale_names(opportunities):

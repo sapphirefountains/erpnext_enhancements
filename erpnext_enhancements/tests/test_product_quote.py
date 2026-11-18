@@ -388,6 +388,12 @@ class FakeDB:
 			raise AssertionError("has_column takes a DocType")
 		return self.columns
 
+	project_types = ("Design", "Build", "Service", "Events", "Products")
+
+	def exists(self, doctype, name=None):
+		assert doctype == "Project Type", doctype
+		return name in self.project_types
+
 	def sql(self, query, values=None, as_dict=False):
 		self.queries.append(query)
 		if self.sql_raises:
@@ -478,6 +484,49 @@ def test_no_frappe_at_all_reads_as_a_job(monkeypatch):
 def test_without_the_marker_column_nothing_is_ticked(fake_frappe):
 	fake_frappe(FakeDB(marked=["OPP-1"], lines=[("OPP-1", "QTN-1", ESTOP)], columns=False))
 	assert product_sale.product_sale_names(["OPP-1"]) == set()
+
+
+@pytest.mark.parametrize(
+	"streams, lines, expected",
+	[
+		# A control-panel product order keeps a Project, typed Products (decision pick 1).
+		(["Products", "Build"], [PANEL], "Products"),
+		(["Build"], [PANEL, FREIGHT], "Products"),
+		([], [PANEL, ESTOP], "Products"),
+		# A fountain beside the panel is a job: the value-stream choice, as before.
+		(["Products", "Build", "Design"], [PANEL, FOUNTAIN], "Design"),
+		# An E-Stop order needs no project; when it gets one anyway, the streams decide.
+		(["Products", "Build"], [ESTOP], "Build"),
+		(["Products"], [ESTOP], None),
+		# No linked quote (the real one may be in QuickBooks): the streams, unchanged.
+		(["Service", "Events"], [], "Service"),
+		([], [], None),
+	],
+)
+def test_a_control_panel_order_gets_a_products_project(streams, lines, expected):
+	assert product_sale.project_type_for(streams, lines) == expected
+
+
+def test_the_hand_off_reads_the_deals_quotes_for_the_type(fake_frappe):
+	db = FakeDB(lines=[("OPP-1", "QTN-1", PANEL), ("OPP-2", "QTN-2", PANEL), ("OPP-2", "QTN-3", FOUNTAIN)])
+	fake_frappe(db)
+	assert product_sale.project_type_for_deal("OPP-1", ["Build"]) == "Products"
+	assert product_sale.project_type_for_deal("OPP-2", ["Build"]) == "Build"
+	db.project_types = ("Build",)  # a site without the Products Project Type: the streams
+	assert product_sale.project_type_for_deal("OPP-1", ["Build"]) == "Build"
+	db.sql_raises = True  # a failed read: the streams, never an error in the hand-off job
+	assert product_sale.project_type_for_deal("OPP-1", ["Design", "Build"]) == "Design"
+
+
+def test_the_hand_off_job_takes_its_type_from_the_shared_choice():
+	api = _code(APP / "crm_enhancements" / "api.py")
+	job = api[api.index("def create_project_from_opportunity_background") :]
+	assert (
+		"project_type_value = product_sale . project_type_for_deal ( opportunity_name , value_streams )"
+		in job
+	)
+	assert "priority_order" not in job  # one ordering, in product_sale.STREAM_PRIORITY
+	assert product_sale.STREAM_PRIORITY == ("Design", "Build", "Service", "Events")
 
 
 class SavingOpp:
