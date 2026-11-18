@@ -148,7 +148,7 @@ def _attach_file_to(file_url, user, submission):
 # ----------------------------------------------------------------------- submit
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_work(course, lesson_key, file=None, text=None, block_key=None):
 	"""Hand in a file against a lesson that asks for one.
 
@@ -207,7 +207,7 @@ def submit_work(course, lesson_key, file=None, text=None, block_key=None):
 # ------------------------------------------------------------------------ grade
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def grade_submission(submission, status, feedback=None, grade=None):
 	"""Grade a learner's submission. Training Manager only.
 

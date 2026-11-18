@@ -209,7 +209,7 @@ def get_blocking_links(doctype, name):
 	return discover_references(doctype, name, include_cancelled=False, respect_ignore_hook=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def unlink_and_delete(doctype, name):
 	"""Clear every reference returned by :func:`get_blocking_links`, then delete.
 

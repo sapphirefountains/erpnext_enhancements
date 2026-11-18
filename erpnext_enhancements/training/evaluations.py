@@ -41,7 +41,7 @@ def _is_manager(user=None):
 	return bool(MANAGER_ROLES & set(frappe.get_roles(user or frappe.session.user)))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_evaluation(evaluation, outcome, competency_notes=None, signature_image=None):
 	"""Record an evaluation's outcome as a submitted ``Training Signoff``.
 

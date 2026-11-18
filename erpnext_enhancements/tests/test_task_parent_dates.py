@@ -569,7 +569,7 @@ def test_a_task_off_the_project_is_refused_before_anything_is_saved(api, site):
 
 def test_the_old_endpoint_delegates_and_keeps_its_contract(api):
 	source = DASHBOARD_PY.read_text(encoding="utf-8")
-	body = source.split("def update_task_structure(")[1].split("\n@frappe.whitelist()")[0]
+	body = source.split("def update_task_structure(")[1].split("\n@frappe.whitelist(")[0]
 	assert "scope_tasks.move_tasks(" in body
 	assert "task_doc.save(ignore_permissions=True)" not in body
 	assert '"status": "error"' in body and '"status": "success"' in body
@@ -660,7 +660,7 @@ def test_the_override_promotes_the_parent_in_before_validate_not_before_save(sit
 def test_direct_date_writers_ask_the_rule_and_walk_the_parents():
 	source = DASHBOARD_PY.read_text(encoding="utf-8")
 	for fn in ("update_task_date", "update_multiple_docs", "update_task_dates_from_gantt"):
-		body = source.split(f"def {fn}(")[1].split("\n@frappe.whitelist()")[0]
+		body = source.split(f"def {fn}(")[1].split("\n@frappe.whitelist(")[0]
 		assert "parent_dates.refusal(" in body, fn
 		assert "parent_dates.sync_task_ancestors(" in body, fn
 

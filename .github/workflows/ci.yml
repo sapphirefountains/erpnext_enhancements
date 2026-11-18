@@ -880,6 +880,11 @@ jobs:
       # Pure filesystem plus a stubbed frappe, so it runs as plain unittest.
       - name: Settings pages write roles
         run: python -m unittest erpnext_enhancements.tests.test_settings_write_roles -v
+      # AST only, no frappe import. Every whitelisted endpoint either declares `methods=` or is
+      # on a baseline that can only shrink (tests/data/whitelist_methods_baseline.txt), so a new
+      # state-changing endpoint is written POST-only on purpose rather than by default.
+      - name: Whitelisted endpoints declare their HTTP methods
+        run: python -m unittest erpnext_enhancements.tests.test_whitelist_methods_ratchet -v
       # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
       # given (a, b) it swaps them only when `a` contains a newline. So the legacy
       # log_error(message, title) stores a one-line message as the row's TITLE and

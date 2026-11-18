@@ -488,7 +488,7 @@ def locate_customer(phone_number):
     info = _get_caller_info(phone_number)
     return info.get("customer")
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
     """Persist a finished call's transcript as a Phone Communication record.
 
@@ -1027,7 +1027,7 @@ def receive_mms():
 
     return "OK"
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_voicemail_email(subject, body, caller_number=None, **kwargs):
     """Email a voicemail / message summary to info@sapphirefountains.com.
 
@@ -1053,7 +1053,7 @@ def analyze_transfer_transcript(transcript, customer_name):
     """Placeholder hook for future call-transfer transcript analysis. No-op."""
     pass
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def trigger_outbound_call(doctype, docname, target_number):
     """Initiate a click-to-call via the Triton gateway from a Desk form.
 
@@ -1167,7 +1167,7 @@ def get_employee_number(employee_name):
         return None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_call_details(call_sid, direction, from_number, to_number, duration, transcript, summary, reference_doctype=None, reference_docname=None):
     """Create a Phone Communication for a completed (typically softphone) call.
 
@@ -1474,7 +1474,7 @@ def send_system_sms(target_number, message):
     response.raise_for_status()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_sms(target_number, message, media_urls=None, reference_doctype=None, reference_docname=None):
     """Send an outbound SMS via the Triton gateway and log it.
 

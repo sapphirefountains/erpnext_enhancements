@@ -116,7 +116,7 @@ def get_supplier_scorecards(supplier, limit=12):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def build_scorecard(supplier, period_start):
     """Build the scorecard for one subcontractor and month, on demand.
 
@@ -144,7 +144,7 @@ def build_scorecard(supplier, period_start):
     return _shape(frappe.get_doc(DOCTYPE, name))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_adjustment(scorecard_name, adjustment, reason):
     """Apply a signed manual adjustment to a scorecard's score.
 

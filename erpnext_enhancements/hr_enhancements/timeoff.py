@@ -51,7 +51,7 @@ def _may_decide(doc, user):
 	return bool(DECIDER_ROLES & set(frappe.get_roles(user)))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_request(request):
 	"""Send it to the approver. The requester's own action."""
 	me = _me()
@@ -78,7 +78,7 @@ def submit_request(request):
 	return {"status": doc.status, "notified": notified}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decide(request, decision, note=None):
 	"""Approve or decline. The approver's action, or a stand-in's."""
 	me = _me()
@@ -114,7 +114,7 @@ def decide(request, decision, note=None):
 	return {"status": doc.status, "notified": notified}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_request(request, note=None):
 	"""Withdraw it. The requester's, up until it has been taken.
 

@@ -67,7 +67,7 @@ def _already_linked(doctype: str, name: str) -> bool:
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def push_to_qbo(doctype: str, name: str):
 	"""Create the QBO Bill/Payment for a submitted, intake-created ERPNext doc and
 	seed the Sync Mapping so CDC links rather than duplicates. Synchronous, so the

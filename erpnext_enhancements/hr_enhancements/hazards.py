@@ -166,7 +166,7 @@ def _hazards_at(customer, visit):
 		return []
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def report_hazard(what, category, customer=None, where_exactly=None, maintenance_record=None, photo=None):
 	"""Thirty seconds, standing at the thing.
 

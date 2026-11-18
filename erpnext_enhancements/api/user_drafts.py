@@ -18,7 +18,7 @@ import json
 import frappe
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_draft(ref_doctype, ref_name, form_data):
 	"""
 	Upsert a User Form Draft for the current user.
@@ -55,7 +55,7 @@ def save_draft(ref_doctype, ref_name, form_data):
 
 	return doc.name
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_draft(ref_doctype, ref_name):
 	"""
 	Delete a User Form Draft for the current user.

@@ -28,7 +28,7 @@ from frappe import _
 from erpnext_enhancements.quality import alerting, critical_alerts
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def acknowledge_critical_alert(ncr, note=None):
     """Stamp the calling user's acknowledgement row. Returns the acknowledged/total counts.
 

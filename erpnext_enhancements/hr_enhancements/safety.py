@@ -39,7 +39,7 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def report_incident(
 	what_happened,
 	location_text,
@@ -159,7 +159,7 @@ def _log_keepers():
 	return [u for u in users if u and u not in ("Administrator", "Guest")]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def raise_action(incident, row, kind="Task"):
 	"""Turn one corrective action into work that exists outside this form.
 

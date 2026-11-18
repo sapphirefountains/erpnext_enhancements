@@ -93,7 +93,7 @@ STOP_MIN_MINUTES = 5
 _haversine_m = haversine_m
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None,
              time_category=None, skip_reason=None, accuracy=None, offsite_acknowledged=None,
              break_minutes=None):
@@ -240,7 +240,7 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
 
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def close_interval_for_employee(employee=None, skip_reason=None, source="Triton"):
     caller_emp = _session_employee()
     
@@ -322,7 +322,7 @@ def _location_stash_key(user=None):
     return f"ee_kiosk_location_fix::{user or frappe.session.user}"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def stash_location_fix(lat=None, lng=None, accuracy=None):
     """Record the caller's own browser geolocation fix for ``LOCATION_STASH_TTL_SEC``.
 
@@ -371,7 +371,7 @@ def consume_stashed_location_fix(user=None):
     return fix
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def clock_in_with_stashed_fix(project=None, task=None, time_category=None,
                               description=None, offsite_acknowledged=None, source="Triton"):
     """Clock the CALLER in, anchored to the fix their browser stashed.
@@ -793,7 +793,7 @@ def _stamp_tracking_health(doc, settings=None):
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refresh_tracking_health(job_interval):
     """Recompute one interval's tracking health from the Time Kiosk Log and save
     it. Managers, or the interval's own employee. Returns the stored dict."""
@@ -1188,7 +1188,7 @@ def get_nearby_visit(lat=None, lng=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_attachment(file_name, project=None, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
@@ -1283,7 +1283,7 @@ def _gate_photo_count(job_interval):
         return 0
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_job_photo(job_interval=None, client_uid=None, file_name=None, caption=None,
                      captured_on=None, lat=None, lng=None, upload_failed=None):
     """Register or update one photo on a Job Interval.
@@ -1789,7 +1789,7 @@ TCR_LIST_FIELDS = ["name", "request_type", "status", "job_interval", "reason", "
                    "reviewed_on", "review_note", "proposed_start", "proposed_end", "proposed_project"]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_correction_request(request_type, reason, job_interval=None, proposed_start=None,
                               proposed_end=None, proposed_project=None, proposed_task=None,
                               proposed_activity=None):
@@ -1828,7 +1828,7 @@ def get_my_correction_requests(limit=20):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_correction_request(name):
     """Withdraw one of the session employee's own requests while it is still
     ``Requested``. Anything already decided stays as decided."""
@@ -1891,7 +1891,7 @@ def _valid_coords(lat, lng):
     return -90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_geolocation(employee=None, latitude=None, longitude=None, device_agent=None,
                     log_status=None, timestamp=None, job_interval=None, accuracy=None):
     """
@@ -1964,7 +1964,7 @@ def _touch_interval_fixes(job_interval, count, latest):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_geolocation_batch(points, offline_key=None):
     """
     Bulk-ingest geolocation points captured by the kiosk PWA worker.
@@ -2587,7 +2587,7 @@ def _assert_may_edit_time_for(employee):
     frappe.throw(_("Not permitted to edit time for this employee."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_manual_interval(project=None, start_time=None, end_time=None, reason=None,
                         task=None, time_category=None, description=None, employee=None):
     """Enter time by hand: a whole finished block, or an open session that started
@@ -2712,7 +2712,7 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_backdated(project=None, start_time=None, reason=None, task=None, time_category=None, description=None):
     """"I forgot to clock in" — an open session that began earlier today.
 
@@ -2733,7 +2733,7 @@ def start_backdated(project=None, start_time=None, reason=None, task=None, time_
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_interval_times(interval=None, start_time=None, end_time=None, reason=None, time_category=None):
     """Move an existing interval's start and/or end, and correct its activity.
 
@@ -2803,12 +2803,12 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
 
     return {"status": "success", "message": _("Times updated."), "doc": doc.name}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_day(employee=None, date=None):
     from erpnext_enhancements.workforce.approval import approve_day as _approve_day
     return _approve_day(employee, date)
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reopen_day(employee=None, date=None, reason=None):
     from erpnext_enhancements.workforce.approval import reopen_day as _reopen_day
     return _reopen_day(employee, date, reason)

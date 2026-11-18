@@ -135,7 +135,7 @@ Email Content:
         }).insert(ignore_permissions=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def suggest_sms_reply(communication_name):
     """Whitelisted: draft a short AI SMS reply for an inbound SMS Communication.
 

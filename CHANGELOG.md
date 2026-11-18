@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -32,6 +32,51 @@ Hardening changes released together. Each was written and reviewed as its own pu
     ends in "Settings", the roles that hold write at permlevel 0 to a reviewed table, so a new
     writer role has to be added on purpose. It also covers the new controller check. It runs as
     its own `ci.yml` step.
+- **State-changing endpoints now require POST.** 250 whitelisted endpoints that create,
+  update, delete, send, approve or sync something were declared with a bare `@frappe.whitelist()`,
+  which Frappe answers for GET, POST, PUT and DELETE alike. Each now declares
+  `methods=["POST"]`, consistent with the endpoints that already did, so it answers only the
+  request the Desk sends for a change. They span payments, accounting and bank sync, Google
+  Drive, device management, the Triton widget, e-signature and contracts, projects, comments
+  and drafts, CRM, rentals, travel, maintenance, quality, time, inventory, procurement,
+  training, telephony, HR, and the delete and merge actions. One of them,
+  `kanban_order.update_order`, stands in for a Frappe method through
+  `override_whitelisted_methods`, and the Desk calls it with POST.
+  Every caller was checked before the change. All of them go through `frappe.call`,
+  `frappe.xcall`, `sf_kit.call` or a `fetch` that already sends POST (the time kiosk's `api()`
+  helper, its service worker's batch upload, the Triton widget's stream and the customer card
+  page included), or through `frm.call` for the two controller methods. Triton's `run_method`,
+  the one outside client of these paths, also sends POST.
+- **`mdm_integration.api.remote_action` also refuses a request authenticated by an
+  `Authorization` header**, the same rule `assistant_tools.gating_api` applies. The Managed Device
+  form signs in with the session cookie and never sends that header.
+- **Left as they were on purpose:**
+  - every read endpoint;
+  - the two addresses an outside service sends the browser to, which arrive as a GET
+    (`quickbooks_online.core.api.oauth_callback` and `disconnect_callback`);
+  - the gateway and provider webhooks, which are checked against a shared secret or a signature;
+  - `fieldlevel_read.apply_workflow`, which stands in for Frappe's own `apply_workflow` and
+    mirrors its declaration, as `tests/test_fieldlevel_read.py` requires;
+  - the document-mapper `make_*` functions. They build an unsaved document and store nothing,
+    and `frappe.model.open_mapped_doc` reaches them with a POST to
+    `frappe.model.mapper.make_mapped_doc`, which checks only that the mapper is whitelisted, so
+    a `methods=` on the mapper itself is not consulted on that path.
+    (`asset_management.rental_sales.make_rental_agreement` shares the prefix but saves a record,
+    so it does declare POST.)
+
+### Added
+
+- **`tests/test_whitelist_methods_ratchet.py`**, a bench-free AST test with its own CI step, in
+  three parts.
+  - **The baseline.** Every whitelisted function must declare `methods=` or be listed in
+    `tests/data/whitelist_methods_baseline.txt`. A new endpoint without `methods=`, or a baseline
+    line for an endpoint that now declares it or no longer exists, fails the build.
+  - **The ceiling.** The baseline's length is also kept as a number in the test. The build fails
+    unless the two agree, and `--write` refuses to write a longer list, so the number only goes
+    down and every change to it is a line in a diff.
+  - **The names.** An endpoint that answers GET, declared or not, and whose name reads as a
+    change (`create_`, `send_`, `delete_` and so on) must be in the test's reviewed list with the
+    reason it is a read. Declaring `methods=["GET"]` on a change does not pass.
 
 ## [1.824.0] - 2026-11-18
 

@@ -251,7 +251,7 @@ def preview_import(content):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def run_import(content, batch_label=None):
 	"""Upsert the parsed rows. Returns what it did, per row.
 

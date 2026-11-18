@@ -92,7 +92,7 @@ def get_impacted_documents(source_project):
 	return impact_map
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def merge_projects(source_project, target_project):
 	"""
 	Merge source_project into target_project.
