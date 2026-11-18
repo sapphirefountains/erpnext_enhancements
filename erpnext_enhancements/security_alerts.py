@@ -50,6 +50,23 @@ Google-only, and those are the routes where 2FA is all that stands behind a
 password). It asks frappe's own ``two_factor_is_enabled_for_`` per user instead
 of copying its rule, so the answer follows the installed framework. Quiet when
 there is nothing to report.
+
+**Error Log masking (v1.826.6).** :func:`mask_error_log` runs on every Error Log
+``before_insert`` and passes the row's ``error`` and ``method`` through
+``utils.log_masking.mask_secrets``, which replaces credential-shaped values with a
+fixed marker and keeps the rest of the text. frappe masks a traceback variable by its
+name; this masks by the shape of the value, including one printed inside another
+object's repr. It is a ``doc_events`` hook, resolved by name when the row is inserted,
+so it applies in background workers too, and to rows frappe defers and inserts later.
+It never raises and never logs: a failure leaves the row as frappe built it, and a
+masking step that wrote an Error Log of its own would feed itself.
+:func:`mask_stored_error_logs` applies the same masking to rows already stored; an
+administrator runs it by hand, dry run first.
+
+**Site configuration (v1.826.6, daily).** :func:`check_site_configuration` emails the
+same recipients while ``developer_mode``, ``server_script_enabled`` or ``allow_tests``
+is on in the site configuration, at most once per setting per day. Password sign-in
+being on is reported by :func:`check_two_factor_coverage` and is not repeated here.
 """
 
 import frappe
@@ -158,15 +175,19 @@ def _recipients():
 	)
 
 
+def _claim_once(key, seconds):
+	"""True the first time ``key`` is claimed in a ``seconds`` window, False after that."""
+	if frappe.cache.get_value(key):
+		return False
+	frappe.cache.set_value(key, 1, expires_in_sec=seconds)
+	return True
+
+
 def _should_send_now(failed):
 	"""Throttle gate. Successes always pass; failures pass once per window."""
 	if not failed:
 		return True
-	key = "admin_login_failure_alert_sent"
-	if frappe.cache.get_value(key):
-		return False
-	frappe.cache.set_value(key, 1, expires_in_sec=FAILURE_THROTTLE_SECONDS)
-	return True
+	return _claim_once("admin_login_failure_alert_sent", FAILURE_THROTTLE_SECONDS)
 
 
 def send_admin_login_alert(subject, message, recipients):
@@ -312,3 +333,172 @@ def check_two_factor_coverage():
 		frappe.sendmail(recipients=recipients, subject=subject, message=message)
 	except Exception:
 		frappe.log_error(title="Two-factor coverage check failed")
+
+
+# ---------------------------------------------------------------- Error Log masking
+
+#: Error Log fields that carry free text worth masking.
+MASKED_ERROR_LOG_FIELDS = ("error", "method")
+
+#: Rows read per query by :func:`mask_stored_error_logs`. One row can be hundreds of
+#: kilobytes, so batches stay small.
+MASK_BATCH_SIZE = 50
+
+#: Most rows one call of :func:`mask_stored_error_logs` will examine.
+MASK_MAX_LIMIT = 5000
+
+
+def _masked_fields(values):
+	"""``{field: masked text}`` for each field of ``values`` that masking changes. Pure."""
+	from erpnext_enhancements.utils.log_masking import mask_secrets
+
+	changed = {}
+	for field in MASKED_ERROR_LOG_FIELDS:
+		value = values.get(field)
+		if isinstance(value, str) and value:
+			masked = mask_secrets(value)
+			if masked != value:
+				changed[field] = masked
+	return changed
+
+
+def mask_error_log(doc, method=None):
+	"""``Error Log`` ``before_insert``: mask credential-shaped values in ``error`` and ``method``.
+
+	Never raises and never logs (see the module docstring): any failure leaves the row as it
+	was built, because losing the row would be worse than storing it unmasked.
+	"""
+	try:
+		values = {field: getattr(doc, field, None) for field in MASKED_ERROR_LOG_FIELDS}
+		for field, masked in _masked_fields(values).items():
+			setattr(doc, field, masked)
+	except Exception:
+		pass
+
+
+@frappe.whitelist(methods=["POST"])
+def mask_stored_error_logs(dry_run=1, limit=500, after=None):
+	"""Apply :func:`mask_error_log`'s masking to Error Log rows already stored.
+
+	System Manager only. Examines up to ``limit`` rows (at most :data:`MASK_MAX_LIMIT`) in name
+	order, starting after the name ``after``, and returns counts and the cursor for the next call;
+	never row content. A dry run (the default) only counts. Rows are rewritten in place without
+	touching ``modified``, and each batch is committed. Idempotent: a masked row is left alone.
+	"""
+	frappe.only_for("System Manager")
+
+	dry_run = bool(cint(dry_run))
+	limit = min(max(cint(limit) or 500, 1), MASK_MAX_LIMIT)
+	cursor = after or ""
+	scanned = changed = 0
+	exhausted = False
+
+	while scanned < limit:
+		rows = frappe.db.sql(
+			"""select name, error, method from `tabError Log`
+			where name > %s order by name asc limit %s""",
+			(cursor, min(MASK_BATCH_SIZE, limit - scanned)),
+			as_dict=True,
+		)
+		if not rows:
+			exhausted = True
+			break
+		for row in rows:
+			scanned += 1
+			cursor = row["name"]
+			updates = _masked_fields(row)
+			if not updates:
+				continue
+			changed += 1
+			if not dry_run:
+				frappe.db.set_value("Error Log", row["name"], updates, update_modified=False)
+		if not dry_run:
+			frappe.db.commit()
+
+	return {
+		"dry_run": dry_run,
+		"scanned": scanned,
+		"changed": changed,
+		"next_after": None if exhausted else (cursor or None),
+		"done": exhausted,
+	}
+
+
+# ---------------------------------------------------------------- site configuration
+
+#: A configuration alert repeats at most this often per setting: under a day, so the next
+#: daily run reports a setting that is still on.
+SITE_CONFIGURATION_THROTTLE_SECONDS = 20 * 3600
+
+#: ``(site_config key, sentence)`` for each setting this check reports while it is on.
+SITE_CONFIGURATION_CHECKS = (
+	(
+		"developer_mode",
+		"Developer mode is on (developer_mode in the site configuration). It is meant for "
+		"development sites only.",
+	),
+	(
+		"server_script_enabled",
+		"Server Scripts are enabled (server_script_enabled in the site configuration).",
+	),
+	(
+		"allow_tests",
+		"Running tests is allowed (allow_tests in the site configuration). It is meant for "
+		"development sites only.",
+	),
+)
+
+
+def site_configuration_findings(conf):
+	"""``[(key, sentence)]`` for each :data:`SITE_CONFIGURATION_CHECKS` setting on in ``conf``. Pure."""
+	return [(key, sentence) for key, sentence in SITE_CONFIGURATION_CHECKS if cint(conf.get(key))]
+
+
+def format_site_configuration_alert(sentences, site_url):
+	"""Build ``(subject, html_body)`` for the daily configuration alert. Pure — no frappe calls."""
+	count = len(sentences)
+	if count == 1:
+		subject = "[Sapphire Security] 1 site configuration setting needs attention"
+	else:
+		subject = f"[Sapphire Security] {count} site configuration settings need attention"
+	body = [
+		email_style.rich("The site is running with:"),
+		email_style.bullets(sentences),
+		email_style.kv([("Site", site_url or "unknown")]),
+		email_style.callout(
+			"Turn each setting above off in the site configuration unless it is on deliberately. "
+			"This email repeats every day while a setting stays on.",
+			"warning",
+		),
+	]
+	return subject, email_style.wrap("".join(body), title=subject, eyebrow="Security")
+
+
+def check_site_configuration():
+	"""Daily: email while a :data:`SITE_CONFIGURATION_CHECKS` setting is on.
+
+	At most one email per setting per day (:func:`_claim_once`); quiet when nothing is on. Never
+	raises, for the same reason as :func:`check_two_factor_coverage`.
+	"""
+	try:
+		findings = site_configuration_findings(frappe.conf)
+		if not findings:
+			return
+		recipients = _recipients()
+		if not recipients:
+			frappe.log_error(
+				title="Site configuration alert has no recipients",
+				message="Set `admin_alert_recipients` in site_config.json, or grant System Manager to a user with an email address.",
+			)
+			return
+		due = [
+			sentence
+			for key, sentence in findings
+			if _claim_once(f"site_configuration_alert_sent:{key}", SITE_CONFIGURATION_THROTTLE_SECONDS)
+		]
+		if not due:
+			return
+		subject, message = format_site_configuration_alert(due, get_url())
+		frappe.sendmail(recipients=recipients, subject=subject, message=message)
+	except Exception:
+		frappe.log_error(title="Site configuration check failed")
