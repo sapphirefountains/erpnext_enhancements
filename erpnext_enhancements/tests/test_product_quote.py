@@ -745,6 +745,75 @@ def test_the_rule_reads_quotes_by_either_link(fake_frappe):
 	assert "q.opportunity in %(names)s or q.custom_source_opportunity in %(names)s" in query
 
 
+class QuoteDoc:
+	def __init__(self, has_field=True, **values):
+		self.values = values
+		self.meta = types.SimpleNamespace(get_field=lambda name: object() if has_field else None)
+
+	def get(self, key, default=None):
+		return self.values.get(key, default)
+
+	def set(self, key, value):
+		self.values[key] = value
+
+
+def test_a_quote_made_erpnexts_way_also_names_its_deal_in_our_field():
+	native = QuoteDoc(opportunity="OPP-1")
+	product_sale.mirror_deal_link(native)
+	assert native.get("custom_source_opportunity") == "OPP-1"
+	configurator = QuoteDoc(opportunity=None, custom_source_opportunity="OPP-2")
+	product_sale.mirror_deal_link(configurator)
+	assert configurator.get("custom_source_opportunity") == "OPP-2"  # never overwritten
+	assert configurator.get("opportunity") is None  # and ERPNext's link never filled in
+	unlinked = QuoteDoc()
+	product_sale.mirror_deal_link(unlinked)
+	assert "custom_source_opportunity" not in unlinked.values
+	before_migrate = QuoteDoc(has_field=False, opportunity="OPP-1")
+	product_sale.mirror_deal_link(before_migrate)
+	assert "custom_source_opportunity" not in before_migrate.values
+	broken = QuoteDoc(opportunity="OPP-1")
+	broken.meta = None
+	product_sale.mirror_deal_link(broken)  # never raises
+
+
+def _dashboard_frappe(monkeypatch, fields):
+	frappe = types.ModuleType("frappe")
+	frappe._ = lambda text: text
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(has_field=lambda name: (doctype, name) in fields)
+	monkeypatch.setitem(sys.modules, "frappe", frappe)
+
+
+def test_the_deals_connections_list_configurator_quotes(monkeypatch):
+	"""ERPNext's Opportunity dashboard links Quotations through `opportunity`, empty on a configurator
+	quote; frappe allows one field per doctype, so the link moves to custom_source_opportunity, which
+	every deal-linked quote carries (mirror_deal_link fills it for Create > Quotation too)."""
+	_dashboard_frappe(
+		monkeypatch, {("Quotation", "custom_source_opportunity"), ("Product Configuration", "opportunity")}
+	)
+	erpnext = {
+		"fieldname": "opportunity",
+		"transactions": [{"items": ["Quotation", "Request for Quotation", "Supplier Quotation"]}],
+	}
+	data = product_sale.add_dashboard_links(erpnext)
+	assert data["non_standard_fieldnames"] == {"Quotation": "custom_source_opportunity"}
+	assert data["fieldname"] == "opportunity"  # the RFQ and Supplier Quotation links are untouched
+	assert {"label": "Products", "items": ["Product Configuration"]} in data["transactions"]
+
+
+def test_before_the_field_exists_the_dashboard_is_erpnexts(monkeypatch):
+	_dashboard_frappe(monkeypatch, set())
+	data = product_sale.add_dashboard_links({"fieldname": "opportunity", "transactions": []})
+	assert data == {"fieldname": "opportunity", "transactions": []}
+
+
+def test_the_opportunity_dashboard_override_adds_them():
+	code = _code(APP / "travel_management" / "dashboard.py")
+	body = code[code.index("def get_opportunity_dashboard_data") :]
+	body = body[: body.index("def ", 10)]
+	assert 'return add_dashboard_links ( _add_travel_group ( data or { } , "Opportunity" ) )' in body
+	assert "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link" in _hooks()
+
+
 def test_the_stage_guard_is_gone():
 	"""The custom link means ERPNext never writes the deal's status from a configurator quote, so the
 	guard that undid those writes (and the Label comments) is not needed."""

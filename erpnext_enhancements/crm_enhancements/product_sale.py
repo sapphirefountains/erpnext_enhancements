@@ -227,6 +227,45 @@ def documents_agree(opportunity):
 		return False
 
 
+def mirror_deal_link(doc, method=None):
+	"""Quotation ``validate``: a quote linked ERPNext's way also names its deal in our field (v1.825.0).
+
+	Configurator quotes name their deal only in ``custom_source_opportunity`` (``Quotation.opportunity``
+	would let ERPNext move and freeze the deal's stage). ERPNext's own Create > Quotation still sets
+	``opportunity``. Copying it across means one field finds every quote of a deal, which is what the
+	Opportunity's Connections dashboard needs (:func:`add_dashboard_links`: frappe links a dashboard
+	doctype through one field). Fills a blank only, never overwrites. Never raises.
+	"""
+	try:
+		if (
+			doc.get("opportunity")
+			and not doc.get(SOURCE_OPPORTUNITY)
+			and doc.meta.get_field(SOURCE_OPPORTUNITY)
+		):
+			doc.set(SOURCE_OPPORTUNITY, doc.get("opportunity"))
+	except Exception:
+		return
+
+
+def add_dashboard_links(data):
+	"""The Opportunity's Connections (v1.825.0): Quotations through ``custom_source_opportunity``, so a
+	configurator quote shows on its deal (its ``opportunity`` is empty), and the deal's Product
+	Configurations (their own ``opportunity`` field, the dashboard's default). Each only once the field
+	exists on the site; a reader that fails leaves ERPNext's dashboard as it was."""
+	try:
+		import frappe
+
+		if frappe.get_meta("Quotation").has_field(SOURCE_OPPORTUNITY):
+			data.setdefault("non_standard_fieldnames", {})["Quotation"] = SOURCE_OPPORTUNITY
+		if frappe.get_meta("Product Configuration").has_field("opportunity"):
+			data.setdefault("transactions", []).append(
+				{"label": frappe._("Products"), "items": ["Product Configuration"]}
+			)
+	except Exception:
+		pass
+	return data
+
+
 def is_product_sale_doc(doc):
 	"""The rule for an Opportunity being saved: its own tick, which the database may not hold yet
 	(a person can tick it in the same save that marks the deal Closed Won), and its linked

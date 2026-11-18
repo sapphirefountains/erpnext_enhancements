@@ -1424,11 +1424,14 @@ def product_sale_gate_updates(ticked, row, is_product):
 	stamped yet (it is at the win) or already done with.
 
 	* **Ticked, and the deal really is a product sale** (``is_product``: no linked quote disagrees):
-	  the gate and its deadline lift. There is nothing to hand off, the overdue escalation reads the
-	  deadline, and a gate left closed would refuse even Create Project Anyway.
-	* **Unticked:** the deal is a job again, so the gate comes back, with its deadline kept or set
-	  two business days out. Create Project Anyway clears the tick with a bare ``set_value``
-	  (``api._clear_product_sale``), so it never comes through here and is never gated.
+	  the gate lifts. There is nothing to hand off, the overdue escalation reads the gate, and a gate
+	  left closed would refuse even Create Project Anyway. The deadline stamped at the win stays: it
+	  is the record that the gate applied (the escalation and the tab read the flag, not the date).
+	* **Unticked:** only a gate the tick lifted comes back, and the stamped deadline is how that is
+	  known. :func:`stamp_handoff_gate` stamps it only on a deal it gates, so a Service Call's deal, a
+	  deal won before the gate shipped, or a deal ticked before its win has none and stays ungated.
+	  Create Project Anyway clears the tick with a bare ``set_value`` (``api._clear_product_sale``), so
+	  it never comes through here and is never gated.
 	"""
 	if (
 		row.get("status") != WON_STATUS
@@ -1437,14 +1440,10 @@ def product_sale_gate_updates(ticked, row, is_product):
 	):
 		return {}
 	if ticked:
-		if not is_product:
-			return {}
-		return {"custom_handoff_gate_applies": 0, "custom_handoff_due_by": None}
-	return {
-		"custom_handoff_gate_applies": 1,
-		"custom_handoff_due_by": row.get("custom_handoff_due_by")
-		or add_working_days(now_datetime(), HANDOFF_SLA_BUSINESS_DAYS, holiday_list=_handoff_holiday_list()),
-	}
+		return {"custom_handoff_gate_applies": 0} if is_product else {}
+	if not row.get("custom_handoff_due_by"):
+		return {}
+	return {"custom_handoff_gate_applies": 1}
 
 
 def follow_product_sale_tick(doc, method=None):

@@ -618,6 +618,11 @@ doc_events = {
 	},
 	"Quotation": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		# v1.825.0: a quote made ERPNext's way (Create > Quotation sets `opportunity`) also names its
+		# deal in custom_source_opportunity, the field configurator quotes use instead, so the
+		# Opportunity's Connections list every quote through one field. Never raises. See
+		# crm_enhancements/product_sale.py.
+		"validate": "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link",
 	},
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",

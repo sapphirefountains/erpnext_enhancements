@@ -69,9 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     hand-off backlog and the Hand-Off Backlog KPI. `enqueue_project_creation` answers `product_sale`
     before it asks for a Project Template.
   - **The hand-off gate follows the tick, however it is ticked.** Ticking a won deal with no project
-    lifts the gate and its deadline (the overdue escalation reads it, and a closed gate would refuse
-    even Create Project Anyway); unticking brings the gate back, due two business days out. The
-    button (`handoff.mark_product_sale`, POST, write on the deal, which also adds the Products value
+    lifts the gate (the overdue escalation reads it, and a closed gate would refuse even Create
+    Project Anyway). Unticking brings back only a gate the tick lifted: the deadline stamped at the
+    win stays as the record of it, so a Service Call's deal or one won before the gate shipped, which
+    never had one, is never gated by a tick and an untick. The button (`handoff.mark_product_sale`, POST, write on the deal, which also adds the Products value
     stream) and a tick on the form (`handoff.follow_product_sale_tick`, Opportunity `before_save`)
     share `product_sale_gate_updates`. A tick that a linked quote contradicts lifts nothing.
   - **The escape is always there.** Untick the field, or press **Create Project Anyway** on the
@@ -105,7 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   product-sale rule reads a deal's quotes by either link, and so does the Products tab's Opportunities
   section (`project_dashboard._quote_deal_select`, guarded for a site the field has not reached yet),
   which read only `Quotation.opportunity` and would never have shown a deal quoted through the
-  configurator. An earlier draft of this release undid
+  configurator. The deal's **Connections** dashboard links its Quotations through
+  `custom_source_opportunity` too (`product_sale.add_dashboard_links`, from the existing Opportunity
+  dashboard override; frappe links a dashboard doctype through one field), and shows its Product
+  Configurations. So that quotes made with ERPNext's own Create > Quotation do not drop off it, a
+  Quotation `validate` hook copies a set `opportunity` into the blank custom field
+  (`product_sale.mirror_deal_link`). An earlier draft of this release undid
   ERPNext's writes with an `on_change` guard instead; the guard could not undo the ordered-quote
   refusal, and with the custom link there is nothing left for it to do, so it is gone.
 - **A Sales Order for a configured product could not be saved.** The configured Item is a stock item,

@@ -714,11 +714,8 @@ class TestProductSaleTick(unittest.TestCase):
 				self.assertEqual(
 					self.writes,
 					[
-						(
-							"Opportunity",
-							name,
-							{self.MARKER: 1, "custom_handoff_gate_applies": 0, "custom_handoff_due_by": None},
-						)
+						# The deadline stamped at the win stays: the record that the gate applied.
+						("Opportunity", name, {self.MARKER: 1, "custom_handoff_gate_applies": 0})
 					],
 				)
 				self.assertEqual(result, {"opportunity": name, "state": "read back"})
@@ -730,15 +727,20 @@ class TestProductSaleTick(unittest.TestCase):
 		handoff.mark_product_sale(name, ticked=1)
 		self.assertEqual(self.writes, [("Opportunity", name, {self.MARKER: 1})])
 
-	def test_unticking_a_won_deal_brings_the_gate_back(self):
+	def test_unticking_brings_back_the_gate_the_tick_lifted(self):
+		name = _opportunity(custom_handoff_gate_applies=0, custom_handoff_due_by=NOW, custom_product_sale=1)
+		handoff.mark_product_sale(name, ticked=0)
+		self.assertEqual(
+			self.writes, [("Opportunity", name, {self.MARKER: 0, "custom_handoff_gate_applies": 1})]
+		)
+		self.assertEqual(self.tagged, [])
+
+	def test_unticking_never_gates_a_deal_the_win_did_not_gate(self):
+		"""A Service Call's deal, or one won before the gate shipped: stamp_handoff_gate gave it no
+		deadline, so a tick and an untick leave it as exempt as it was."""
 		name = _opportunity(custom_handoff_gate_applies=0, custom_handoff_due_by=None, custom_product_sale=1)
 		handoff.mark_product_sale(name, ticked=0)
-		((_, _, values),) = self.writes
-		self.assertEqual(values[self.MARKER], 0)
-		self.assertEqual(values["custom_handoff_gate_applies"], 1)
-		# NOW is Thursday 2026-08-06: +2 business days -> Monday the 10th.
-		self.assertEqual(values["custom_handoff_due_by"].date(), datetime.date(2026, 8, 10))
-		self.assertEqual(self.tagged, [])
+		self.assertEqual(self.writes, [("Opportunity", name, {self.MARKER: 0})])
 
 	def test_a_deal_not_yet_won_or_already_handed_off_keeps_its_gate(self):
 		for fields in (
@@ -776,13 +778,17 @@ class TestProductSaleTick(unittest.TestCase):
 		doc = self._form(1, 0, custom_handoff_gate_applies=1, custom_handoff_due_by=NOW)
 		handoff.follow_product_sale_tick(doc)
 		self.assertEqual(doc.custom_handoff_gate_applies, 0)
-		self.assertIsNone(doc.custom_handoff_due_by)
+		self.assertNotIn("custom_handoff_due_by", doc.__dict__)  # the win's deadline is kept
 
-	def test_an_untick_on_the_form_brings_the_gate_back(self):
-		doc = self._form(0, 1, custom_handoff_gate_applies=0, custom_handoff_due_by=None)
+	def test_an_untick_on_the_form_brings_back_the_gate_the_tick_lifted(self):
+		doc = self._form(0, 1, custom_handoff_gate_applies=0, custom_handoff_due_by=NOW)
 		handoff.follow_product_sale_tick(doc)
 		self.assertEqual(doc.custom_handoff_gate_applies, 1)
-		self.assertEqual(doc.custom_handoff_due_by.date(), datetime.date(2026, 8, 10))
+
+	def test_an_untick_on_the_form_leaves_an_exempt_deal_ungated(self):
+		doc = self._form(0, 1, custom_handoff_gate_applies=0, custom_handoff_due_by=None)
+		handoff.follow_product_sale_tick(doc)
+		self.assertNotIn("custom_handoff_gate_applies", doc.__dict__)
 
 	def test_a_save_that_does_not_change_the_tick_changes_nothing(self):
 		doc = self._form(1, 1, custom_handoff_gate_applies=1)
