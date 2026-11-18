@@ -46,6 +46,7 @@ from frappe.utils import cint
 from werkzeug.wrappers import Response
 
 from erpnext_enhancements.utils.sse_filter import filter_sse_stream, scrub_sse_frame
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
 from erpnext_enhancements.utils.url_safety import scrub_urls
 
 # Re-mint a little before the token actually expires so an in-flight request
@@ -225,16 +226,21 @@ def get_settings() -> dict:
 def user_has_widget_access(settings: dict | None = None) -> bool:
     """Whether the current user may see/use the Triton widget.
 
-    Independent of the master ``enabled`` switch. When the whitelist is off,
-    everyone is allowed. When it is on, only the Administrator and the users
-    listed in "Allowed Users" are allowed — this is the gate used to roll the
-    assistant out to trusted testers before releasing it to everyone.
+    Independent of the master ``enabled`` switch. Only a System User qualifies
+    (a Website User never does). When the whitelist is off, every System User is
+    allowed. When it is on, only the Administrator and the users listed in
+    "Allowed Users" are allowed — this is the gate used to roll the assistant
+    out to trusted testers before releasing it to everyone.
     """
     if settings is None:
         settings = get_settings()
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return False
+    if frappe.get_cached_value("User", user, "user_type") != "System User":
+        return False
     if not settings.get("restrict_to_whitelist"):
         return True
-    user = frappe.session.user
     if user == "Administrator":
         return True
     return user in settings.get("allowed_users", set())
@@ -738,6 +744,7 @@ def set_default_persona(persona_key: str | None = None) -> dict:
 
 
 @frappe.whitelist()
+@user_rate_limit(limit=30, seconds=3600)
 def morning_briefing(force: int | str = 0, cached_only: int | str = 0) -> dict:
     """Proxy to Triton's Morning Briefing for the current user.
 
@@ -794,6 +801,7 @@ def _sse_error(message: str) -> bytes:
 
 
 @frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=300, seconds=3600)
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
                  hidden: int | str = 0, model: str | None = None,
                  persona_key: str | None = None, use_search: int | str = 0):

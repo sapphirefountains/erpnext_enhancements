@@ -29,7 +29,12 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
+
 DOCTYPE = "Safety Incident"
+
+#: Who may file without an Employee row: the people the report is sent to.
+LOG_KEEPER_ROLES = {"HR Manager", "System Manager"}
 
 
 def _me():
@@ -39,7 +44,18 @@ def _me():
 	return user
 
 
+def _require_staff(me):
+	"""An active Employee, or a log keeper. By employment, as `timeoff.who_is_out`
+	checks it: an incident report is filed by somebody who works here."""
+	if frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
+		return
+	if LOG_KEEPER_ROLES & set(frappe.get_roles(me)):
+		return
+	frappe.throw(_("Only staff can file an incident report."), frappe.PermissionError)
+
+
 @frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=20, seconds=3600)
 def report_incident(
 	what_happened,
 	location_text,
@@ -65,6 +81,7 @@ def report_incident(
 	passes it explicitly.
 	"""
 	me = _me()
+	_require_staff(me)
 	if not (what_happened or "").strip():
 		frappe.throw(_("Say what happened."))
 	if not (location_text or "").strip():

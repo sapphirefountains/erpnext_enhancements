@@ -49,8 +49,27 @@ def _me():
 	return user
 
 
+def _require_staff(me):
+	"""An active Employee, or one of DECIDER_ROLES. Checked by employment, the way
+	`timeoff.who_is_out` checks it: a review is about people on the payroll, and a
+	login with no Employee row has no standing to start, route or list one."""
+	if frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
+		return
+	if DECIDER_ROLES & set(frappe.get_roles(me)):
+		return
+	frappe.throw(_("Only staff can do this."), frappe.PermissionError)
+
+
+def _name_arg(value):
+	"""A record name must arrive as a non-empty string. Checked before any lookup, so a
+	structured value never reaches `frappe.db.get_value` as a filter."""
+	if not isinstance(value, str) or not value.strip():
+		frappe.throw(_("Choose a record by its name."), frappe.ValidationError)
+	return value.strip()
+
+
 @frappe.whitelist(methods=["POST"])
-def open_review(employee, to_position=None):
+def open_review(employee: str, to_position: str | None = None):
 	"""Start a review for *employee* against the rung above their own.
 
 	Refuses when the target rung lists no requirements. That is the guardrail, not
@@ -60,9 +79,11 @@ def open_review(employee, to_position=None):
 	hold" than to produce a document that looks like diligence.
 	"""
 	me = _me()
+	_require_staff(me)
+	employee = _name_arg(employee)
+	if to_position:
+		to_position = _name_arg(to_position)
 	user = frappe.db.get_value("Employee", employee, "user_id")
-	if not user:
-		frappe.throw(_("That employee has no login, so there is nothing to review against."))
 
 	# Who may START one. The form button is drawn for HR only, but a client-side
 	# check decides what to DRAW and never what is allowed -- without this, any of
@@ -74,17 +95,20 @@ def open_review(employee, to_position=None):
 	# Technician starts the conversation about a Junior without going through HR --
 	# which, with four Juniors and one Senior, is the conversation that has to
 	# happen for the ladder to move at all.
+	#
+	# The refusal reads the same whether or not the employee exists or has a login,
+	# and names nobody: the caller learns only that they may not open it.
+	is_hr = bool(DECIDER_ROLES & set(frappe.get_roles(me)))
 	if not (
-		me == user
-		or (DECIDER_ROLES & set(frappe.get_roles(me)))
-		or me in set(progression.eligible_reviewers(user))
+		is_hr
+		or (user and (me == user or me in set(progression.eligible_reviewers(user))))
 	):
 		frappe.throw(
-			_("Only {0}, somebody senior to them on that ladder, or HR can open this.").format(
-				frappe.db.get_value("Employee", employee, "employee_name") or employee
-			),
+			_("Only the employee, somebody senior to them on that ladder, or HR can open this."),
 			frappe.PermissionError,
 		)
+	if not user:
+		frappe.throw(_("That employee has no login, so there is nothing to review against."))
 
 	here = progression.position_of(user)
 	if not here:
@@ -149,7 +173,7 @@ def open_review(employee, to_position=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def send_to_reviewer(review, reviewer):
+def send_to_reviewer(review: str, reviewer: str):
 	"""The person's own action: "this is where I think I am."
 
 	The reviewer must be somebody whose Position outranks theirs on the same
@@ -157,6 +181,9 @@ def send_to_reviewer(review, reviewer):
 	the two cannot come to disagree about who has standing.
 	"""
 	me = _me()
+	_require_staff(me)
+	review = _name_arg(review)
+	reviewer = _name_arg(reviewer)
 	doc = frappe.get_doc(DOCTYPE, review)
 	if doc.user != me and not (DECIDER_ROLES & set(frappe.get_roles(me))):
 		frappe.throw(_("That is not your review."), frappe.PermissionError)
@@ -164,19 +191,20 @@ def send_to_reviewer(review, reviewer):
 		frappe.throw(_("That review has already been sent."))
 
 	reviewer_user = frappe.db.get_value("Employee", reviewer, "user_id")
-	if not reviewer_user:
-		frappe.throw(_("That reviewer has no login."))
-	if reviewer_user == doc.user:
+	if reviewer_user and reviewer_user == doc.user:
 		frappe.throw(_("Somebody else has to review this."), frappe.PermissionError)
 
 	eligible = set(progression.eligible_reviewers(doc.user))
-	if reviewer_user not in eligible:
+	if not reviewer_user or reviewer_user not in eligible:
 		# Deliberately not softened to a warning. The list being empty is a real
 		# and important state on this site -- four Junior Technicians share one
 		# eligible reviewer -- and quietly accepting anybody would hide it.
+		#
+		# One message for "no such person", "no login" and "not senior enough", and
+		# it names nobody: the picker (`reviewers_for`) already lists who qualifies.
 		frappe.throw(
-			_("{0} does not outrank {1} on that ladder, so they cannot review it.").format(
-				reviewer_user, doc.from_position or _("this position")
+			_("That person does not outrank {0} on that ladder, so they cannot review it.").format(
+				doc.from_position or _("this position")
 			),
 			frappe.PermissionError,
 		)
@@ -310,7 +338,7 @@ def cancel_review(review, note=None):
 
 
 @frappe.whitelist()
-def reviewers_for(employee):
+def reviewers_for(employee: str):
 	"""Who may review this person. Drives the picker, and tells the truth when the
 	answer is nobody.
 
@@ -318,6 +346,8 @@ def reviewers_for(employee):
 	empty or one-name list is the single most useful thing this feature can show
 	somebody — it is the fact the whole deliverable exists to surface.
 	"""
+	_require_staff(_me())
+	employee = _name_arg(employee)
 	user = frappe.db.get_value("Employee", employee, "user_id")
 	if not user:
 		return []

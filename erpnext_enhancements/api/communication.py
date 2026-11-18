@@ -19,6 +19,8 @@ either in a background job or on behalf of an interactive user.
 import frappe
 from frappe import _
 
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
+
 
 def after_insert_communication(doc, method=None):
     """Communication ``after_insert`` hook: queue an AI draft for inbound email.
@@ -136,6 +138,7 @@ Email Content:
 
 
 @frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=30, seconds=3600)
 def suggest_sms_reply(communication_name):
     """Whitelisted: draft a short AI SMS reply for an inbound SMS Communication.
 
@@ -151,11 +154,22 @@ def suggest_sms_reply(communication_name):
     Side effects: external Vertex AI call; if the model returned reasoning,
     inserts a Comment with the AI "thoughts" on the SMS and commits. Called
     from ``public/js/communication.js``.
+
+    Requires a System User who can read the Communication, and is rate limited
+    per user.
     """
+    from frappe.permissions import is_system_user
+
+    if not is_system_user(frappe.session.user):
+        frappe.throw(_("Only staff accounts can draft replies."), frappe.PermissionError)
+    if not isinstance(communication_name, str) or not communication_name:
+        frappe.throw(_("Communication record not found"))
+
     try:
         inbound_sms = frappe.get_doc("Communication", communication_name)
     except frappe.DoesNotExistError:
         frappe.throw(_("Communication record not found"))
+    inbound_sms.check_permission("read")
 
     if inbound_sms.communication_medium != "SMS":
         frappe.throw(_("Can only suggest replies for SMS communications"))
