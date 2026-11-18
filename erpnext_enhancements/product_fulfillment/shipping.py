@@ -133,10 +133,13 @@ def _assign_delivery(doc):
 			{"reference_type": DN, "reference_name": doc.name, "allocated_to": user, "status": "Open"},
 		):
 			return
+		# The whitelisted ``assign_to.add`` takes only ``args`` (v16.56.0); ``ignore_permissions`` belongs
+		# to ``_add``, which also sends the assignment notification. The person saving the note may not
+		# be allowed to assign others, and the assignment is a consequence of a note they may save.
 		from frappe.desk.form import assign_to
 
 		when = doc.get("custom_delivery_date")
-		assign_to.add(
+		assign_to._add(
 			{
 				"assign_to": [user],
 				"doctype": DN,

@@ -528,6 +528,43 @@ class TestTheHooksOnAStub(unittest.TestCase):
 		self.assertEqual(shipping.send_ready_for_pickup(doc.name), {"sent_to": "buyer@example.com"})
 		self.assertIn("ready_for_pickup.html", frappe_stub.sent[0]["message"])
 
+	def test_a_sapphire_delivery_is_assigned_to_the_person_delivering(self):
+		# Review of #1472: assign_to.add takes only args at v16.56.0, so the old call raised TypeError
+		# on every save and nobody was ever assigned.
+		calls = []
+		fake = types.ModuleType("frappe.desk.form.assign_to")
+		fake._add = lambda args, ignore_permissions=False, **k: calls.append((args, ignore_permissions))
+		fake.add = lambda args=None: calls.append(("public", args))
+		saved = {
+			name: sys.modules.get(name)
+			for name in ("frappe.desk", "frappe.desk.form", "frappe.desk.form.assign_to")
+		}
+		desk = types.ModuleType("frappe.desk")
+		form = types.ModuleType("frappe.desk.form")
+		form.assign_to = fake
+		desk.form = form
+		sys.modules.update(
+			{"frappe.desk": desk, "frappe.desk.form": form, "frappe.desk.form.assign_to": fake}
+		)
+		try:
+			doc = _note(
+				sr.SAPPHIRE, custom_delivery_person="driver@example.com", custom_delivery_date="2026-11-20"
+			)
+			shipping.delivery_note_on_update(doc)
+		finally:
+			for name, module in saved.items():
+				if module is None:
+					sys.modules.pop(name, None)
+				else:
+					sys.modules[name] = module
+		self.assertEqual(len(calls), 1)
+		args, ignore = calls[0]
+		self.assertTrue(ignore)
+		self.assertEqual(
+			(args["assign_to"], args["doctype"], args["date"]),
+			(["driver@example.com"], "Delivery Note", "2026-11-20"),
+		)
+
 	def test_ready_for_pickup_is_for_a_draft_pickup_only(self):
 		doc = _note(sr.CARRIER)
 		doc.check_permission = lambda ptype: None

@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Tracking's client, when that feature is switched on. Nothing is stored.
   - **Sapphire delivery** needs a **Delivery Date** and **Delivered By** (a user). The note is assigned
     to that person, on that date, as soon as it is saved (once; a ToDo they see in My Work).
-- Tests: `test_product_fulfillment_shipping` (38) in CI, its own process. It covers the rules, the two
+- Tests: `test_product_fulfillment_shipping` (39) in CI, its own process. It covers the rules, the two
   email bodies rendered from the repo under plain Jinja (the tracking button, no button without a
   link, customer values escaped), the fixtures, and the hooks on a frappe stub.
 
