@@ -47,6 +47,7 @@ QI_FIELDS = [
 	"docstatus",
 	"inspected_by",
 	"report_date",
+	"modified",
 	"creation",
 	"quality_inspection_template",
 ]
@@ -252,24 +253,35 @@ def quality_inspection_before_submit(doc, method=None):
 
 
 def gate_rows(doc):
-	"""The Delivery Note lines that need the test, as ``rules.delivery_gate`` reads them."""
+	"""The lines that need the test, as ``rules.delivery_gate`` reads them.
+
+	The document's own lines, and its packed items: a Product Bundle line is a non-stock Item whose
+	components move as ``packed_items`` rows, each with its own serial numbers, so a configured unit
+	shipped inside a bundle is checked like any other. ``idx`` is the place a person looks ("Row 2",
+	"Packed item 1"), which the messages print.
+	"""
 	from erpnext_enhancements.product_fulfillment.serials import serials_of_row
 
-	items = doc.get("items") or ()
-	facts = item_facts([row.item_code for row in items])
+	items = list(doc.get("items") or ())
+	packed = list(doc.get("packed_items") or ())
+	facts = item_facts([row.item_code for row in items + packed])
 	rows = []
-	for row in items:
-		if not needs_test(facts.get(row.item_code)):
-			continue
-		rows.append(
-			{
-				"idx": row.idx,
-				"item_code": row.item_code,
-				"stock_qty": row.get("stock_qty") or row.get("qty"),
-				"serials": serials_of_row(row),
-				"has_serial_no": cint(facts[row.item_code].get("has_serial_no")),
-			}
-		)
+	for label, table, qty_field in (
+		(_("Row {0}"), items, "stock_qty"),
+		(_("Packed item {0}"), packed, "qty"),
+	):
+		for row in table:
+			if not needs_test(facts.get(row.item_code)):
+				continue
+			rows.append(
+				{
+					"idx": label.format(row.idx),
+					"item_code": row.item_code,
+					"stock_qty": row.get(qty_field) or row.get("qty"),
+					"serials": serials_of_row(row),
+					"has_serial_no": cint(facts[row.item_code].get("has_serial_no")),
+				}
+			)
 	return rows
 
 
@@ -285,7 +297,7 @@ def gate_problems(doc):
 	for row in rows:
 		if not row["has_serial_no"]:
 			messages.append(
-				_("Row {0}: {1} has no serial numbers, and every product unit needs one.").format(
+				_("{0}: {1} has no serial numbers, and every product unit needs one.").format(
 					row["idx"], row["item_code"]
 				)
 			)
@@ -299,9 +311,9 @@ def gate_problems(doc):
 	for problem in problems:
 		meaning = _(rules.GATE_MESSAGES.get(problem["code"], problem["code"]))
 		if problem["serial"]:
-			messages.append(_("Row {0}: unit {1} {2}.").format(problem["idx"], problem["serial"], meaning))
+			messages.append(_("{0}: unit {1} {2}.").format(problem["idx"], problem["serial"], meaning))
 		else:
-			messages.append(_("Row {0}: {1}.").format(problem["idx"], meaning))
+			messages.append(_("{0}: {1}.").format(problem["idx"], meaning))
 	return messages
 
 
@@ -317,6 +329,45 @@ def delivery_note_before_submit(doc, method=None):
 		)
 
 
+def warn_untested_issue(doc, method=None):
+	"""Stock Entry ``on_submit``: say so when a Material Issue takes untested configured units out.
+
+	A warning, never a refusal: issuing a unit is how a failed one is scrapped or stripped for parts,
+	and refusing that would leave it on the shelf. But a unit handed to a customer on a Material Issue
+	skips the pre-shipment test, so the person is told to ship on a Delivery Note instead. The rows are
+	read back from the database, because ERPNext writes an auto-picked bundle to them only while the
+	ledger posts. Never raises.
+	"""
+	try:
+		if doc.get("purpose") != "Material Issue" or not cint(get_settings().require_test):
+			return
+		from erpnext_enhancements.product_fulfillment.serials import serials_of_row
+
+		rows = frappe.get_all(
+			"Stock Entry Detail",
+			filters={"parent": doc.name},
+			fields=["idx", "item_code", "serial_no", "serial_and_batch_bundle"],
+		)
+		facts = item_facts([row.item_code for row in rows])
+		serials = [s for row in rows if needs_test(facts.get(row.item_code)) for s in serials_of_row(row)]
+		if not serials:
+			return
+		states = unit_states(serials, get_settings().test_template or None)
+		untested = [s for s in serials if states.get(s, {}).get("state") != rules.UNIT_PASSED]
+		if untested:
+			frappe.msgprint(
+				_(
+					"This Material Issue took out {0} configured unit(s) without a passed Pre-Shipment "
+					"Functional Test: {1}. If any of them is going to a customer, ship it on a Delivery Note "
+					"instead, where the test is checked."
+				).format(len(untested), ", ".join(untested)),
+				indicator="orange",
+				alert=True,
+			)
+	except Exception:
+		frappe.log_error(title="Product Fulfillment: Material Issue warning", message=frappe.get_traceback())
+
+
 def sales_invoice_before_submit(doc, method=None):
 	"""The same gate on a Sales Invoice that ships stock itself (Update Stock ticked, the website or a
 	counter sale): it moves the unit out exactly as a Delivery Note does."""
@@ -325,7 +376,7 @@ def sales_invoice_before_submit(doc, method=None):
 	delivery_note_before_submit(doc, method)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET"])
 def delivery_gate_status(delivery_note):
 	"""What the gate would say about a Delivery Note now, for its form."""
 	doc = frappe.get_doc("Delivery Note", delivery_note)

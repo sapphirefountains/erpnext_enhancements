@@ -28,10 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to deliver. A line being built for claims the units its Work Orders already made and not yet
     delivered, because they sit on the same shelf (`rules.line_claim`). Two lines of one order share
     what is left in turn.
+  - **Drafts are started once the warehouses are set.** ERPNext's own `set_default_warehouse` reads
+    only the Company's defaults, so a draft never picks up Product Build Settings by itself. Pressing
+    Create > Product Work Orders again fills in what each draft lacks and submits it, and the message
+    on the order says so.
   - **No unit is built without a serial number.** A configured Item saved before this release has Has
     Serial No off. While it has moved no stock, the plan turns serial numbers on first. Once stock has
     moved, ERPNext refuses that, so nothing is built and the order says why: a unit with no serial
-    could never pass the gate.
+    could never pass the gate. "Has moved stock" is ERPNext's own test, asked rather than copied
+    (`Item._get_linked_submitted_documents`: any submitted Delivery Note, Purchase Receipt, Stock
+    Entry, Stock Reconciliation or stock-moving invoice).
   - **No hard-coded warehouse.** A new Single, **Product Build Settings**, holds the build,
     work-in-progress and finished units warehouses, all empty until Nikolas picks the Build Room
     shelves, and says on the page what each one is for. Empty, they fall back to Manufacturing
@@ -50,9 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is submitted while the unit is built, and an Update would check submit rights and could race an
     open form.
   - **Who built it.** `Work Order.custom_built_by` is recorded by **I'm building this** or by the
-    first step ticked. It is read-only on the form. Once someone is recorded, only a Manufacturing
-    Manager can take it over (with a comment on the Work Order), because the builder is what keeps the
-    builder from testing the unit. When the Manufacture entry is submitted, each serial number it
+    first step ticked. Once someone is recorded, only a System Manager can take it over (with a
+    comment on the Work Order): both builders hold Manufacturing Manager, Stock Manager and Item
+    Manager, and the builder is what keeps the builder from testing the unit. The field is read-only
+    on the form, and since Frappe does not enforce read-only on the server, a hook on Work Order
+    (`validate` and `before_update_after_submit`) and on Serial No (`validate`) refuses any change to
+    `custom_built_by` made through a document save (the form, `frappe.client.set_value`, REST, an
+    import, a bulk edit) by anyone but a System Manager. The module's own writes never save the
+    document. When the Manufacture entry is submitted, each serial number it
     made is stamped with that builder (`Serial No.custom_built_by`) and with its Work Order
     (ERPNext's own `Serial No.work_order`, which it fills itself only when Manufacturing Settings makes
     serials at Work Order submit, off on prod). The serials are read back from the entry's rows in the
@@ -88,17 +99,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     where ERPNext leaves the overall status to the person.
   - **The gate.** A Delivery Note that ships a configured product is refused at submit until every
     unit on it has its serial number picked and the newest submitted test of each serial is Accepted,
-    on the configured template, for that Item, and signed by someone other than its builder. The
-    message lists every unit and what it lacks, and a draft Delivery Note shows the same verdict as
-    its headline. It is ours, not ERPNext's `inspection_required_before_delivery`, which stays off on
+    on the configured template, for that Item, and signed by someone other than its builder. Newest
+    means last submitted, never the Report Date the tester types, so a failed re-test dated a day early
+    still overturns the earlier pass. Units inside a Product Bundle (the note's packed items) are
+    checked the same way. The message lists every unit and what it lacks, and a draft Delivery Note
+    shows the same verdict as its headline. It is ours, not ERPNext's `inspection_required_before_delivery`, which stays off on
     configured Items. That flag checks one inspection per line, made against the Delivery Note
     itself, so it cannot see serial numbers, and it would make the built-ahead units wait for a
     Delivery Note before they could be tested. The gate also refuses to let ERPNext pick serials on
     its own at submit: "Auto Create Serial and Batch Bundle For Outward" is on, on prod, and first in,
     first out would ship the oldest unit, tested or not. A return is never held. A **Sales Invoice
     with Update Stock** (a counter or website sale) ships the unit itself, so it is held by the same
-    gate. Product Build
-    Settings' **Require a Passed Test Before Delivery** switches the gate off.
+    gate. A **Material Issue** of untested configured units is warned about, not refused: issuing is
+    also how a failed unit is scrapped. Product Build
+    Settings' **Require a Passed Test Before Delivery** switches the gate off. It and the test template
+    sit at permission level 1, which only a System Manager can write, and the settings track changes:
+    either builder holds Manufacturing Manager, which writes the rest of the page.
   - **A printable test certificate**, "Pre-Shipment Test Certificate" on Quality Inspection, for the
     box: product, part number, serial, built by and tested by, every check with its criterion,
     reading and result, the result in words, and the warranty. A draft prints "DRAFT - NOT SIGNED"
@@ -113,7 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unit built for another order on the board is not counted as shelf stock. A product that is not
   configured, or the gate switched off, keeps the old rule: Ready as soon as it is built. The column
   never stops the board: a failure is logged and the stage rule keeps its own answer.
-- Tests: `test_product_fulfillment_rules` (43, stub-free) and `test_product_fulfillment_wiring` (40,
+- Tests: `test_product_fulfillment_rules` (44, stub-free) and `test_product_fulfillment_wiring` (56,
   on a frappe stub: the schema, the settings defaults against the code and the seed, the label and
   certificate rendered, the gate and the plan glue), each in CI. `test_products_tab_endpoint` gains 15
   Testing-column cases, including that the board logs nothing.

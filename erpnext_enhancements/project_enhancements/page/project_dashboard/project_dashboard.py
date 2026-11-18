@@ -2096,7 +2096,7 @@ def _product_qc(orders, work_orders, covered):
 			for test in frappe.db.sql(
 				"""
 				SELECT name, item_serial_no, item_code, status, docstatus, inspected_by, report_date,
-					creation, quality_inspection_template
+					modified, creation, quality_inspection_template
 				FROM `tabQuality Inspection`
 				WHERE item_serial_no IN %(serials)s AND docstatus = 1
 				""",

@@ -250,9 +250,12 @@ UNIT_NO_BUILDER = NO_BUILDER
 
 
 def _test_key(test):
-	# The newest test decides: by its date, then when it was made, then by name.
+	# The newest test decides, by when it was signed: a submitted test's ``modified`` is its submit
+	# (nothing on a submitted Quality Inspection is editable after that), then when it was made, then
+	# its name. Never by ``report_date``, which the tester types: a failed re-test dated a day early
+	# would otherwise sort below the pass it overturned.
 	return (
-		str(test.get("report_date") or "")[:10],
+		str(test.get("modified") or ""),
 		str(test.get("creation") or ""),
 		str(test.get("name") or ""),
 	)
@@ -311,7 +314,7 @@ def delivery_gate(rows, tests_by_serial, builders, template=None):
 	``rows``: the Delivery Note lines that need the test (``needs_test``), dicts with ``idx``,
 	``item_code``, ``stock_qty`` (units in the stock UOM) and ``serials`` (the serial numbers picked
 	on the line). ``tests_by_serial``: ``{serial: [test, ...]}``, Quality Inspections with
-	``name``, ``docstatus``, ``status``, ``item_code``, ``inspected_by``, ``report_date``,
+	``name``, ``docstatus``, ``status``, ``item_code``, ``inspected_by``, ``modified``,
 	``creation`` and ``quality_inspection_template``. ``builders``: ``{serial: user}``.
 
 	Each line needs one serial number per unit. The gate does not let ERPNext pick serials on its

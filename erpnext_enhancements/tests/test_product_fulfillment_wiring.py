@@ -156,6 +156,43 @@ class TestSchema(unittest.TestCase):
 			f'"test_template": "{template}"', settings_py, "the not-installed fallback names it too"
 		)
 
+	def test_only_a_system_manager_can_switch_the_test_off(self):
+		# Manager review of #1470: either builder holds Manufacturing Manager, which writes these settings.
+		data = _load(PF / "doctype" / "product_build_settings" / "product_build_settings.json")
+		fields = {f["fieldname"]: f for f in data["fields"]}
+		for name in ("require_test", "test_template"):
+			self.assertEqual(fields[name].get("permlevel"), 1, name)
+		level1 = [p for p in data["permissions"] if p.get("permlevel") == 1]
+		self.assertEqual([p["role"] for p in level1 if p.get("write")], ["System Manager"])
+		self.assertTrue(all(p.get("read") for p in level1))
+		self.assertEqual(data.get("track_changes"), 1, "who changed a switch is on the record")
+		other = [
+			f
+			for f in data["fields"]
+			if f.get("permlevel") and f["fieldname"] not in ("require_test", "test_template")
+		]
+		self.assertEqual(other, [])
+
+	def test_the_get_endpoints_take_get_only_and_their_callers_ask_with_get(self):
+		# The repo's whitelist ratchet (security batch #1478) wants methods= on every endpoint.
+		for path, func in (("checklist.py", "get_build"), ("qc_gate.py", "delivery_gate_status")):
+			tree = ast.parse((PF / path).read_text(encoding="utf-8"))
+			node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == func)
+			methods = [
+				kw.value
+				for d in node.decorator_list
+				if isinstance(d, ast.Call)
+				for kw in d.keywords
+				if kw.arg == "methods"
+			]
+			self.assertEqual([ast.literal_eval(m) for m in methods], [["GET"]], func)
+		page = (PF / "page" / "build_checklist" / "build_checklist.js").read_text(encoding="utf-8")
+		self.assertIn('this.call("checklist.get_build", { work_order: asked }, "GET")', page)
+		form = (APP / "public" / "js" / "product_fulfillment" / "delivery_note.js").read_text(
+			encoding="utf-8"
+		)
+		self.assertIn('type: "GET"', form)
+
 	def test_ticks_on_a_submitted_work_order_are_allowed_on_submit(self):
 		step = _fields(PF / "doctype" / "work_order_build_step" / "work_order_build_step.json")
 		for name in ("done", "done_by", "done_at"):
@@ -463,6 +500,17 @@ class TestTheGateOnAStub(unittest.TestCase):
 			qc_gate.delivery_note_before_submit(_dn([self.line(serial_no="")]))
 		self.assertIn("has no serial numbers", str(caught.exception))
 
+	def test_a_unit_inside_a_product_bundle_is_checked_too(self):
+		self.builders["SF-26-00009"] = LOGAN
+		doc = _dn([self.line(item="SRV-105", serial_no="")])
+		doc["packed_items"] = [_Row(idx=1, item_code="PDT-0040-1-1-1-2-0", qty=1, serial_no="SF-26-00009")]
+		with self.assertRaises(Thrown) as caught:
+			qc_gate.delivery_note_before_submit(doc)
+		self.assertIn(
+			"Packed item 1: unit SF-26-00009 has no submitted Pre-Shipment Functional Test",
+			str(caught.exception),
+		)
+
 	def test_a_return_and_a_switched_off_gate_pass(self):
 		qc_gate.delivery_note_before_submit(_dn([self.line()], is_return=1))
 		self.settings.require_test = 0
@@ -579,6 +627,34 @@ class TestThePlanOnAStub(unittest.TestCase):
 			del build._ensure_serial_numbers
 		self.assertEqual(len(self.made), 1)
 
+	def test_a_draft_left_without_warehouses_is_started_once_they_are_set(self):
+		# Manager review of #1470: ERPNext's set_default_warehouse reads only the Company's defaults, so a
+		# draft never picks up Product Build Settings by itself. Planning again fills and starts it.
+		self.planned = [_Dict(name="WO-7", status="Draft", docstatus=0, qty=1)]
+		started = []
+		build._start_draft = (
+			lambda name, warehouses, ignore: started.append((name, warehouses["wip"])) or True
+		)
+		try:
+			result = build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
+		finally:
+			del build._start_draft
+		self.assertEqual(started, [("WO-7", "WIP - SF")])
+		self.assertEqual((self.made, result["submitted"]), ([], ["WO-7"]))
+
+	def test_a_draft_is_left_alone_while_the_warehouses_are_missing(self):
+		self.planned = [_Dict(name="WO-7", status="Draft", docstatus=0, qty=1)]
+		build._start_draft = lambda *a: self.fail("started without warehouses")
+		try:
+			result = build.plan_and_make(self.order(qty=1), _Dict())
+		finally:
+			del build._start_draft
+		self.assertEqual(result["submitted"], [])
+
+	def test_the_draft_message_names_the_real_fix(self):
+		source = (PF / "build.py").read_text(encoding="utf-8")
+		self.assertIn("press Create > Product Work Orders on this order", source)
+
 	def test_a_line_that_is_not_configured_is_left_to_erpnext(self):
 		self.facts["PDT-0040-1-1-1-2-0"]["source_configuration"] = None
 		result = build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
@@ -636,6 +712,97 @@ class TestTheBuilderStampOnAStub(unittest.TestCase):
 		self.assertEqual(self.set_values, [])
 
 
+class TestTheBuilderGuardOnAStub(unittest.TestCase):
+	"""Manager review of #1470: Frappe does not enforce read-only on the server, so frappe.client.set_value
+	could rewrite Built By. Any change through a document save is refused, but by a System Manager."""
+
+	def setUp(self):
+		self.stored = {"WO-1": "logan.penrod@example.com"}
+		frappe_stub.db.get_value = lambda doctype, name, field, *a, **k: self.stored.get(name)
+		frappe_stub.flags = _Dict()
+		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing Manager", "Stock Manager"]
+		self.saved = serials.has_column
+		serials.has_column = lambda doctype, column: True
+
+	def tearDown(self):
+		serials.has_column = self.saved
+
+	def doc(self, name, value, new=False):
+		row = _Row(doctype="Work Order", name=name, custom_built_by=value)
+		row.is_new = lambda: new
+		return row
+
+	def test_a_change_is_refused(self):
+		with self.assertRaises(Thrown):
+			serials.guard_builder(self.doc("WO-1", "nathan.cox@example.com"))
+
+	def test_clearing_it_is_refused_too(self):
+		with self.assertRaises(Thrown):
+			serials.guard_builder(self.doc("WO-1", None))
+
+	def test_a_new_record_cannot_arrive_with_one(self):
+		with self.assertRaises(Thrown):
+			serials.guard_builder(self.doc("WO-NEW", "nathan.cox@example.com", new=True))
+
+	def test_an_unchanged_value_saves(self):
+		serials.guard_builder(self.doc("WO-1", "logan.penrod@example.com"))
+		serials.guard_builder(self.doc("WO-2", None, new=True))
+
+	def test_a_system_manager_may_correct_it(self):
+		frappe_stub.get_roles = lambda *a, **k: ["System Manager"]
+		serials.guard_builder(self.doc("WO-1", "nathan.cox@example.com"))
+
+	def test_the_hooks_cover_draft_and_submitted_work_orders_and_serials(self):
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		guard = '"erpnext_enhancements.product_fulfillment.serials.guard_builder"'
+		self.assertIn(f'"validate": {guard}', hooks)
+		self.assertIn(f'"before_update_after_submit": {guard}', hooks)
+		self.assertEqual(
+			hooks.count(guard), 3, "Work Order validate and update-after-submit, Serial No validate"
+		)
+
+
+class TestTheSerialLockOnAStub(unittest.TestCase):
+	"""Manager review of #1470: ERPNext refuses to change Has Serial No once any submitted Delivery
+	Note, Purchase Receipt, Stock Entry or Stock Reconciliation names the Item, not only once the stock
+	ledger has a row. Ask ERPNext's own check."""
+
+	def test_erpnexts_own_check_decides(self):
+		asked = []
+		item = _Row(name="PDT-0040-1-1-1-2-0")
+		item._get_linked_submitted_documents = lambda fields: asked.append(fields) or {
+			"doctype": "Delivery Note"
+		}
+		self.assertTrue(serials._serials_locked(item))
+		self.assertEqual(asked, [["has_serial_no"]])
+		item._get_linked_submitted_documents = lambda fields: None
+		self.assertFalse(serials._serials_locked(item))
+
+
+class TestTheMaterialIssueWarningOnAStub(unittest.TestCase):
+	def setUp(self):
+		frappe_stub.messages.clear()
+		self.saved = (qc_gate.get_settings, qc_gate.item_facts, qc_gate.unit_states, serials.serials_of_row)
+		qc_gate.get_settings = lambda: _Dict(require_test=1, test_template=None)
+		qc_gate.item_facts = lambda codes: {"PDT-0040-1-1-1-2-0": dict(CONFIGURED)}
+		qc_gate.unit_states = lambda serials_, template=None: {"SF-26-00001": {"state": "untested"}}
+		serials.serials_of_row = lambda row: ["SF-26-00001"]
+		frappe_stub.get_all = lambda *a, **k: [
+			_Dict(idx=1, item_code="PDT-0040-1-1-1-2-0", serial_no="SF-26-00001")
+		]
+
+	def tearDown(self):
+		qc_gate.get_settings, qc_gate.item_facts, qc_gate.unit_states, serials.serials_of_row = self.saved
+
+	def test_an_untested_unit_issued_is_warned_about_not_refused(self):
+		qc_gate.warn_untested_issue(_Row(name="STE-9", purpose="Material Issue"))
+		self.assertTrue(any("SF-26-00001" in str(m) for m in frappe_stub.messages))
+
+	def test_another_purpose_says_nothing(self):
+		qc_gate.warn_untested_issue(_Row(name="STE-9", purpose="Material Transfer"))
+		self.assertEqual(frappe_stub.messages, [])
+
+
 class TestTheInvoiceGateOnAStub(unittest.TestCase):
 	def setUp(self):
 		self.calls = []
@@ -685,8 +852,15 @@ class TestClaimingABuildOnAStub(unittest.TestCase):
 			self.checklist.claim_build("WO-1")
 		self.assertEqual(self.writes, [])
 
-	def test_a_manager_can_correct_it(self):
-		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing Manager"]
+	def test_a_manufacturing_manager_cannot_either(self):
+		# Manager review of #1470: both builders hold Manufacturing Manager.
+		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing Manager", "Stock Manager", "Item Manager"]
+		with self.assertRaises(Thrown):
+			self.checklist.claim_build("WO-1")
+		self.assertEqual(self.writes, [])
+
+	def test_a_system_manager_can_correct_it(self):
+		frappe_stub.get_roles = lambda *a, **k: ["System Manager"]
 		self.assertEqual(self.checklist.claim_build("WO-1"), "build")
 		self.assertEqual(self.writes[0][2:4], ("custom_built_by", "nathan.cox@example.com"))
 

@@ -208,6 +208,15 @@ class TestAUnitsState(unittest.TestCase):
 		]
 		self.assertEqual(rules.unit_state(tests, LOGAN), rules.UNIT_FAILED)
 
+	def test_a_backdated_report_date_does_not_hide_a_later_failure(self):
+		# Manager review of #1470: report_date is typed by the tester. A failed re-test dated a day
+		# early must still overturn the pass it followed; the order is when each test was submitted.
+		passed = qi("Accepted", NATHAN, day="2026-11-18", name="QI-1")
+		passed["modified"] = "2026-11-18 09:00:00"
+		failed = qi("Rejected", NATHAN, day="2026-11-17", name="QI-2")
+		failed["modified"] = "2026-11-18 15:00:00"
+		self.assertEqual(rules.unit_state([passed, failed], LOGAN), rules.UNIT_FAILED)
+
 	def test_only_the_pre_shipment_template_counts_when_one_is_set(self):
 		other = [qi("Accepted", NATHAN, template="Incoming Components")]
 		self.assertEqual(rules.unit_state(other, LOGAN, ITEM, TEMPLATE), rules.UNIT_UNTESTED)

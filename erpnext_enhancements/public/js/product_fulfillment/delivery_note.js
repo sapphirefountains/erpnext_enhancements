@@ -12,6 +12,7 @@ frappe.ui.form.on("Delivery Note", {
 			.call({
 				method: "erpnext_enhancements.product_fulfillment.qc_gate.delivery_gate_status",
 				args: { delivery_note: frm.doc.name },
+				type: "GET", // the endpoint takes GET only
 			})
 			.then((r) => {
 				const answer = r && r.message;
