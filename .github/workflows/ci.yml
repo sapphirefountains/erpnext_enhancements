@@ -875,6 +875,11 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # Who may write each settings Single: the roles with write at permlevel 0 are pinned to a
+      # reviewed table, and the ERPNext Enhancements Settings controller keeps writes to System Manager.
+      # Pure filesystem plus a stubbed frappe, so it runs as plain unittest.
+      - name: Settings pages write roles
+        run: python -m unittest erpnext_enhancements.tests.test_settings_write_roles -v
       # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
       # given (a, b) it swaps them only when `a` contains a newline. So the legacy
       # log_error(message, title) stores a one-line message as the row's TITLE and

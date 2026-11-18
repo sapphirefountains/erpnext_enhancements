@@ -20,7 +20,9 @@ The app-wide configuration hub (``issingle``). Holds:
     ``add_project_pick_routing_button`` patch.
 
 Values are read via ``frappe.get_single`` / ``frappe.get_cached_doc`` elsewhere.
-The only controller logic is the fail-closed guard below.
+The controller logic is the fail-closed guards below, plus a write-role check: only a
+System Manager may change this page from a request. The permission rows in the DocType JSON
+say the same thing; the check keeps it true if a row is ever added back from the Desk.
 """
 
 import frappe
@@ -31,8 +33,30 @@ from frappe.utils import cint
 
 class ERPNextEnhancementsSettings(Document):
 	def validate(self):
+		self.require_system_manager()
 		self.validate_fountain_move_public_form()
 		self.validate_lead_sla()
+
+	def require_system_manager(self):
+		"""Refuse a change to these settings from a request unless the user is a System Manager.
+
+		Server-side callers with no request (patches, install, scheduled and background
+		jobs) and Administrator pass, so seeding defaults and migrations are unaffected.
+		Settings that code writes with ``frappe.db.set_single_value`` never reach this
+		method.
+		"""
+		if not getattr(frappe.local, "request", None):
+			return
+		if frappe.session.user == "Administrator":
+			return
+		if getattr(frappe.flags, "in_patch", None) or getattr(frappe.flags, "in_install", None):
+			return
+		if "System Manager" in frappe.get_roles():
+			return
+		frappe.throw(
+			_("Only a System Manager can change ERPNext Enhancements Settings."),
+			frappe.PermissionError,
+		)
 
 	def validate_lead_sla(self):
 		"""Refuse to enable the speed-to-lead SLA without a named escalation user.
