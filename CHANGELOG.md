@@ -67,9 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **What a product sale skips.** The hand-off SLA stamp, the "Create project now?" prompt, the
     Create Project button, and the daily won-without-project reminder, the Sales Dashboard's
     hand-off backlog and the Hand-Off Backlog KPI. `enqueue_project_creation` answers `product_sale`
-    before it asks for a Project Template. Ticking a won deal lifts its hand-off deadline (the
-    overdue escalation reads it) and gives it the Products value stream (`handoff.mark_product_sale`,
-    POST, write on the deal).
+    before it asks for a Project Template.
+  - **The hand-off gate follows the tick, however it is ticked.** Ticking a won deal with no project
+    lifts the gate and its deadline (the overdue escalation reads it, and a closed gate would refuse
+    even Create Project Anyway); unticking brings the gate back, due two business days out. The
+    button (`handoff.mark_product_sale`, POST, write on the deal, which also adds the Products value
+    stream) and a tick on the form (`handoff.follow_product_sale_tick`, Opportunity `before_save`)
+    share `product_sale_gate_updates`. A tick that a linked quote contradicts lifts nothing.
   - **The escape is always there.** Untick the field, or press **Create Project Anyway** on the
     Hand-Off tab: `enqueue_project_creation(create_anyway=1)` creates the project regardless and
     clears the tick in the same request, so a refusal further down keeps it. A ticked deal whose
@@ -87,20 +91,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A Quotation linked to an Opportunity would freeze the deal, or close it**
-  (`crm_enhancements/opportunity_stage_guard.py`). ERPNext v16 moves the Opportunity's status
-  through a `db_set` no validation sees (read at v16.54.0): `Quotation` when a linked Quotation is
-  submitted, `Converted` when its Sales Order is, `Open` when the Quotation is canceled, and `Lost`
-  when the Quotation is declared lost and no other submitted quote is open (QuickBooks drafts don't
-  count). The first three are not on this site's stage list, and a record holding a status off its
-  list refuses every later save and drops off the Kanban board (148 Zoho imports sat that way for a
-  year). `Lost` is on the list, so a lost E-Stop add-on quote would close a whole fountain deal,
-  without the Lost Reason a person must give. None of it happened because every Quotation on prod
-  was a QuickBooks draft; the quote-to-order flow would have hit it on every sale. An `on_change`
-  hook, first in the list, puts back the stage the deal had (ERPNext's `db_set` carries no
-  `_action`, which every real save sets, so a person's own Lost is left alone), and deletes the
-  "Label" timeline comment ERPNext wrote for the status it set. Moving a deal to Closed Won or Lost
-  stays a person's call.
+- **Configurator Quotations link to their deal by their own field, so ERPNext never moves or freezes
+  the deal's stage** (`Quotation.custom_source_opportunity`, made by `product_configurator/setup.py`;
+  `engine.quote.quotation_header` clears ERPNext's `opportunity`, which its Opportunity mapping
+  sets). A Quotation linked ERPNext's way (its `opportunity`, or an item's `prevdoc_docname`) drives
+  the deal's status through a `db_set` no validation sees (read at v16.54.0): `Quotation` when it is
+  submitted, `Converted` when its Sales Order is, `Lost` when it is declared lost. And once it is
+  ordered, `Opportunity.validate_status_against_quotations` refuses every status but `Converted`
+  ("Status cannot be changed because an ordered Quotation exists"), so the deal could never reach
+  Closed Won: no won stamp, no hand-off, stuck in the open pipeline. `Quotation` and `Converted` are
+  not stages on this site at all, and a lost E-Stop add-on quote would have closed a whole fountain
+  deal. None of it happened before because every Quotation on prod was a QuickBooks draft. The
+  product-sale rule reads a deal's quotes by either link. An earlier draft of this release undid
+  ERPNext's writes with an `on_change` guard instead; the guard could not undo the ordered-quote
+  refusal, and with the custom link there is nothing left for it to do, so it is gone.
 - **A Sales Order for a configured product could not be saved.** The configured Item is a stock item,
   ERPNext refuses a Sales Order holding a stock item with no warehouse, and prod has no default
   warehouse in Stock Settings or Manufacturing Settings. The Item now gets an Item Default warehouse

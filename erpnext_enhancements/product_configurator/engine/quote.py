@@ -27,6 +27,8 @@ from html import escape
 
 #: The Quotation ``quotation_to`` values a configuration can quote, in ERPNext v16's own spelling.
 PARTY_TYPES = ("Customer", "Lead", "Prospect")
+#: The Quotation field naming the deal a configurator quote belongs to (see :func:`quotation_header`).
+SOURCE_OPPORTUNITY = "custom_source_opportunity"
 
 
 def _qty_text(value):
@@ -144,15 +146,25 @@ def quotation_header(
 
 	``ignore_pricing_rule`` keeps the configured price: a pricing rule's discount would otherwise
 	rewrite it on save. Trade and distributor prices, when they come, are price lists, not rules.
+
+	**The deal is linked by ``custom_source_opportunity``, and ERPNext's ``opportunity`` is cleared**
+	(v1.825.0), on purpose. A Quotation linked through ERPNext's own field (or an item's
+	``prevdoc_docname``) drives the deal's status: submitting it writes ``Quotation``, its Sales Order
+	``Converted``, declaring it lost ``Lost``, none through validation; and once it is ordered,
+	``Opportunity.validate_status_against_quotations`` refuses every other status, so the deal could
+	never be moved to Closed Won again (ERPNext v16.54.0, ``opportunity.py``). ``Quotation`` and
+	``Converted`` are not stages on this site at all. ERPNext's Opportunity mapping sets
+	``opportunity``, so it is set to ``None`` here rather than left out.
 	"""
 	header = {
 		"quotation_to": quotation_to,
 		"party_name": party_name,
 		"company": company,
 		"ignore_pricing_rule": 1,
+		"opportunity": None,
 	}
 	if opportunity:
-		header["opportunity"] = opportunity
+		header[SOURCE_OPPORTUNITY] = opportunity
 	if price_list:
 		header["selling_price_list"] = price_list
 	if transaction_date:

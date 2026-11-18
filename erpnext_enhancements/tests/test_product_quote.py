@@ -10,7 +10,8 @@ unittest`` would collect nothing from it). What it holds:
 * options given as data (the phone page and the Triton tool will start configurations that way);
 * the refusals' plain words;
 * the product-sale rule that keeps a project away from a product sale, in Python and in SQL;
-* the stage guard that undoes ERPNext's "Quotation" / "Converted" statuses;
+* the deal link: a configurator quote names its deal by its own field, so ERPNext never moves or
+  freezes the deal's stage from it (a Sales Order, then Closed Won; a lost quote);
 * the wiring: hooks, the hand-off, the endpoints, the no-commit contract, the DocType JSON.
 
 The modules under test import no frappe at module level; where a function reads the database, a
@@ -34,7 +35,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.crm_enhancements import opportunity_stage_guard as guard
 from erpnext_enhancements.crm_enhancements import product_sale
 from erpnext_enhancements.product_configurator.engine import quote
 from erpnext_enhancements.product_configurator.seed_data import PDT_0040
@@ -228,11 +228,12 @@ def test_the_header_quotes_the_party_at_the_configured_price():
 		"party_name": "LEAD-1",
 		"company": "Sapphire Fountains",
 		"ignore_pricing_rule": 1,
-		"opportunity": "OPP-1",
+		"opportunity": None,
+		"custom_source_opportunity": "OPP-1",
 		"selling_price_list": "Standard Selling",
 		"transaction_date": "2026-11-18",
 	}
-	assert "opportunity" not in quote.quotation_header("Customer", "C", "Co")
+	assert "custom_source_opportunity" not in quote.quotation_header("Customer", "C", "Co")
 
 
 def test_the_whole_quote_for_the_common_setup():
@@ -375,10 +376,11 @@ def test_a_control_panel_quote_keeps_the_project():
 class FakeDB:
 	"""The three reads ``deal_facts`` makes: ticks, configurations, live linked quote lines."""
 
-	def __init__(self, marked=(), configured=(), lines=(), columns=True, sql_raises=False):
+	def __init__(self, marked=(), configured=(), lines=(), columns=True, sql_raises=False, native_lines=()):
 		self.marked = list(marked)
 		self.configured = list(configured)
-		self.lines = list(lines)  # (opportunity, quotation, item dict)
+		self.lines = list(lines)  # (opportunity, quotation, item): linked by custom_source_opportunity
+		self.native_lines = list(native_lines)  # linked by ERPNext's own Quotation.opportunity
 		self.columns = columns
 		self.sql_raises = sql_raises
 		self.queries = []
@@ -400,12 +402,16 @@ class FakeDB:
 			raise RuntimeError("database went away")
 		wanted = set(values["names"])
 		marker = "i.custom_source_configuration" in query
+		own_link = "q.custom_source_opportunity in %(names)s" in query
 		rows = []
-		for opportunity, quotation, item in self.lines:
-			if opportunity in wanted:
+		for source, lines in ((True, self.lines), (False, self.native_lines)):
+			for opportunity, quotation, item in lines:
+				if opportunity not in wanted or (source and not own_link):
+					continue
 				rows.append(
 					{
-						"opportunity": opportunity,
+						"opportunity": None if source else opportunity,
+						"source_opportunity": opportunity if source else "",
 						"quotation": quotation,
 						"item_code": item.get("item_code"),
 						"item_name": item.get("item_name"),
@@ -555,7 +561,6 @@ def test_the_save_reads_its_own_tick_not_the_stored_one(fake_frappe):
 def test_the_pure_modules_import_no_frappe():
 	for path in (
 		APP / "crm_enhancements" / "product_sale.py",
-		APP / "crm_enhancements" / "opportunity_stage_guard.py",
 		APP / "product_configurator" / "engine" / "quote.py",
 	):
 		tree_imports = re.findall(r"^(?:import|from)\s+(\S+)", path.read_text(encoding="utf-8"), re.M)
@@ -580,126 +585,173 @@ def test_the_item_rule_is_the_shared_one():
 	assert "PDT-" not in rule and "freight" not in rule.lower() and "LINE_PANELS" not in rule
 
 
-# ------------------------------------------------------------------ the stage guard
+# ------------------------------------------------------------------ the deal link
+#
+# ERPNext v16.54.0 (erpnext/crm/doctype/opportunity/opportunity.py, quotation.py, sales_order.py),
+# reduced to the two facts that matter here, so the tests can state what a configurator quote does
+# to its deal. A Quotation is linked to an Opportunity when its ``opportunity`` names it or any of
+# its items' ``prevdoc_docname`` does (``get_linked_quotations``). Only a linked Quotation is ever
+# passed to ``update_opportunity`` (submit, Sales Order, cancel, declare lost), and an ordered linked
+# Quotation makes ``validate_status_against_quotations`` refuse every status but "Converted";
+# an active one refuses "Lost".
 
 
-@pytest.mark.parametrize(
-	"new, previous, automatic, expected",
-	[
-		("Quotation", "Proposal/Price Quote", True, "Proposal/Price Quote"),  # a submitted quote
-		("Converted", "Negotiation/Review", True, "Negotiation/Review"),  # its Sales Order
-		("Converted", "Closed Won", True, "Closed Won"),
-		("Open", "Proposal/Price Quote", True, "Proposal/Price Quote"),  # the quote canceled
-		("Quotation", "Quotation", True, "Proposal/Price Quote"),  # nothing usable before: ERPNext's meaning
-		("Converted", None, True, "Closed Won"),
-		("Open", "Zoho Stage", True, "Qualification"),
-		("Closed", "", True, "Lost"),
-		# A lost E-Stop add-on quote must not close the deal (declare_enquiry_lost's db_set).
-		("Lost", "Negotiation/Review", True, "Negotiation/Review"),
-		("Lost", "Closed Won", True, "Closed Won"),
-		# A person setting Lost (a save, with its reason) is left alone.
-		("Lost", "Negotiation/Review", False, None),
-		("Lost", "Lost", True, None),
-		("Lost", None, True, None),  # nothing to go back to
-		("Closed Won", "Qualification", True, None),  # on the list and not Lost: left alone
-		("Prospecting", "Qualification", True, None),  # not ERPNext's own: not this guard's business
-		(None, "Qualification", True, None),
-	],
-)
-def test_erpnexts_own_writes_go_back_to_the_stage_the_deal_had(new, previous, automatic, expected):
-	assert guard.restored_status(new, previous, STAGES, automatic=automatic) == expected
+def erpnext_links(quotation, opportunity):
+	items = quotation.get("items") or []
+	return quotation.get("opportunity") == opportunity or any(
+		(row.get("prevdoc_docname") == opportunity) for row in items
+	)
 
 
-def test_a_site_that_offers_the_status_keeps_it():
-	assert guard.restored_status("Converted", "Closed Won", [*STAGES, "Converted"]) is None
+def erpnext_allows(new_status, linked_quotation_statuses):
+	"""``Opportunity.validate_status_against_quotations``, given the linked quotations' states."""
+	ordered = any(s in ("Ordered", "Partially Ordered") for s in linked_quotation_statuses)
+	active = any(s not in ("Lost", "Cancelled", "Expired") for s in linked_quotation_statuses)
+	quotation_status = "Converted" if ordered else ("Quotation" if active else None)
+	if new_status == "Lost" and quotation_status:
+		return False
+	if quotation_status == "Converted" and new_status != "Converted":
+		return False
+	return True
 
 
-def test_with_no_fallback_stage_the_first_stage_is_used():
-	assert guard.restored_status("Converted", None, ["New", "Won", "Lost"]) == "New"
-	assert guard.restored_status("Converted", None, []) is None
+class FakeQuotation:
+	"""What ERPNext's ``make_quotation`` hands back for a deal with no items of its own: the header
+	linked through ``opportunity`` and one empty row linked through ``prevdoc_docname``."""
+
+	def __init__(self, opportunity):
+		self.values = {
+			"quotation_to": "Customer",
+			"party_name": "CUST-1",
+			"opportunity": opportunity,
+			"enq_no": opportunity,
+			"items": [{"prevdoc_doctype": "Opportunity", "prevdoc_docname": opportunity}],
+			"taxes": [{"account_head": "Sales Tax"}],
+		}
+		self.ran = []
+
+	def get(self, key, default=None):
+		return self.values.get(key, default)
+
+	def update(self, values):
+		self.values.update(values)
+
+	def set(self, key, value):
+		self.values[key] = value
+
+	def run_method(self, name):
+		self.ran.append(name)
 
 
-class FakeOpp:
-	doctype = "Opportunity"
-	name = "OPP-1"
-
-	def __init__(self, status, before, options=None, action=None):
-		options = "\n".join(STAGES) if options is None else options
-		self.status = status
-		self._before = {"status": before} if before is not None else None
-		self.meta = types.SimpleNamespace(get_field=lambda name: types.SimpleNamespace(options=options))
-		self.writes = []
-		if action:
-			self._action = action  # what every real save sets; ERPNext's db_set leaves it unset
-
-	def get(self, key):
-		return getattr(self, key, None)
-
-	def get_doc_before_save(self):
-		return self._before
-
-	def db_set(self, field, value, update_modified=True):
-		self.writes.append((field, value, update_modified))
-		setattr(self, field, value)
-
-
-def test_the_hook_writes_the_stage_back_without_moving_modified():
-	opp = FakeOpp("Quotation", "Negotiation/Review")
-	guard.keep_stage_on_list(opp)
-	assert opp.writes == [("status", "Negotiation/Review", False)]
-
-
-def test_the_hook_tells_erpnexts_db_set_from_a_persons_save():
-	automatic = FakeOpp("Lost", "Negotiation/Review")
-	guard.keep_stage_on_list(automatic)
-	assert automatic.writes == [("status", "Negotiation/Review", False)]
-
-	person = FakeOpp("Lost", "Negotiation/Review", action="save")
-	guard.keep_stage_on_list(person)
-	assert person.writes == []
-
-
-def test_the_hook_leaves_an_ordinary_save_alone_and_never_raises():
-	opp = FakeOpp("Closed Won", "Negotiation/Review", action="save")
-	guard.keep_stage_on_list(opp)
-	assert opp.writes == []
-
-	broken = FakeOpp("Quotation", "Negotiation/Review")
-	broken.meta = None  # meta.get_field raises: logged (or not), never raised
-	guard.keep_stage_on_list(broken)
-	assert broken.writes == []
-
-
-def test_erpnexts_label_comment_goes_with_the_status_it_announced(monkeypatch):
-	deleted, asked = [], []
+@pytest.fixture
+def quoting_module(monkeypatch):
+	"""``product_configurator.quoting`` imported against a stub frappe and ERPNext mapping."""
+	made = {}
 	frappe = types.ModuleType("frappe")
 	frappe._ = lambda text: text
-
-	def get_all(doctype, filters=None, pluck=None, order_by=None, limit=None, **kwargs):
-		asked.append((doctype, filters, order_by, limit))
-		return ["CMT-9"]
-
-	frappe.get_all = get_all
-	frappe.db = types.SimpleNamespace(delete=lambda doctype, filters: deleted.append((doctype, filters)))
-	frappe.log_error = lambda **kwargs: None
-	frappe.get_traceback = lambda: ""
+	frappe.new_doc = lambda doctype: made.setdefault("blank", FakeQuotation(None))
+	frappe.flags = types.SimpleNamespace()
 	utils = types.ModuleType("frappe.utils")
-	utils.now_datetime = lambda: "NOW"
-	utils.add_to_date = lambda when, seconds=0: f"{when}{seconds}"
-	monkeypatch.setitem(sys.modules, "frappe", frappe)
-	monkeypatch.setitem(sys.modules, "frappe.utils", utils)
+	utils.flt = lambda value, precision=None: round(float(value or 0), precision or 9)
+	utils.nowdate = lambda: "2026-11-18"
+	frappe.utils = utils
+	mapping = types.ModuleType("erpnext.crm.doctype.opportunity.opportunity")
+	mapping.make_quotation = lambda name: made.setdefault("mapped", FakeQuotation(name))
+	for module_name, module in (
+		("frappe", frappe),
+		("frappe.utils", utils),
+		("erpnext", types.ModuleType("erpnext")),
+		("erpnext.crm", types.ModuleType("erpnext.crm")),
+		("erpnext.crm.doctype", types.ModuleType("erpnext.crm.doctype")),
+		("erpnext.crm.doctype.opportunity", types.ModuleType("erpnext.crm.doctype.opportunity")),
+		("erpnext.crm.doctype.opportunity.opportunity", mapping),
+	):
+		monkeypatch.setitem(sys.modules, module_name, module)
+	for cached in (
+		"erpnext_enhancements.product_configurator.quoting",
+		"erpnext_enhancements.product_configurator.erp_integration",
+	):
+		monkeypatch.delitem(sys.modules, cached, raising=False)
+	import importlib
 
-	guard.keep_stage_on_list(FakeOpp("Quotation", "Proposal/Price Quote"))
-	assert deleted == [("Comment", {"name": "CMT-9"})]
-	doctype, filters, order_by, limit = asked[0]
-	assert doctype == "Comment" and order_by == "creation desc" and limit == 1
-	assert filters["comment_type"] == "Label" and filters["reference_name"] == "OPP-1"
-	assert filters["content"] == ("in", ["Quotation"])
-	assert filters["creation"] == (">=", f"NOW-{guard.LABEL_WINDOW_SECONDS}")
+	module = importlib.import_module("erpnext_enhancements.product_configurator.quoting")
+	yield module, made
+	for cached in (
+		"erpnext_enhancements.product_configurator.quoting",
+		"erpnext_enhancements.product_configurator.erp_integration",
+	):
+		sys.modules.pop(cached, None)
 
-	deleted.clear()
-	guard.keep_stage_on_list(FakeOpp("Closed Won", "Qualification", action="save"))
-	assert deleted == []  # nothing put back, nothing deleted
+
+def _built_quotation(quoting, made, deal="OPP-1"):
+	cfg = types.SimpleNamespace(opportunity=deal)
+	opp = {"opportunity_from": "Customer", "party_name": "CUST-1"}
+	header = quote.quotation_header("Customer", "CUST-1", "Sapphire Fountains", opportunity=deal)
+	line = quote.quotation_line("PDT-0040-1-1-1-2-0", 1512.98, "<p>d</p>", "PCFG-1", "Finished Goods - SF")
+	built = quoting._new_quotation(cfg, opp, header, line)
+	assert built is made["mapped"]  # the deal's own party: ERPNext's mapping, contact and taxes
+	return built
+
+
+def test_the_header_links_the_deal_by_its_own_field_and_clears_erpnexts():
+	header = quote.quotation_header("Customer", "CUST-1", "Co", opportunity="OPP-1")
+	assert header["opportunity"] is None  # cleared, because ERPNext's mapping sets it
+	assert header["custom_source_opportunity"] == "OPP-1"
+	assert "custom_source_opportunity" not in quote.quotation_header("Customer", "CUST-1", "Co")
+
+
+def test_the_built_quotation_is_not_linked_the_way_erpnext_counts_links(quoting_module):
+	quoting, made = quoting_module
+	built = _built_quotation(quoting, made)
+	assert built.get("opportunity") is None
+	assert built.get("custom_source_opportunity") == "OPP-1"
+	assert [row.get("prevdoc_docname") for row in built.get("items")] == [None]  # the mapping's row is gone
+	assert built.get("items")[0]["item_code"] == "PDT-0040-1-1-1-2-0"
+	assert not erpnext_links(built.values, "OPP-1")
+	assert built.ran == ["set_missing_values", "calculate_taxes_and_totals"]
+
+
+def test_after_its_sales_order_the_deal_can_still_be_won(quoting_module):
+	"""The reviewed blocker: submit the configurator Quotation, make its Sales Order, then move the
+	deal to Closed Won. ERPNext freezes a deal whose linked Quotation is ordered; this one isn't."""
+	quoting, made = quoting_module
+	built = _built_quotation(quoting, made)
+	linked = ["Ordered"] if erpnext_links(built.values, "OPP-1") else []
+	assert erpnext_allows("Closed Won", linked)
+	# The same quote linked ERPNext's way would have frozen the deal for good.
+	assert not erpnext_allows("Closed Won", ["Ordered"])
+
+
+def test_a_lost_product_quote_neither_closes_nor_blocks_the_deal(quoting_module):
+	"""Declaring the quote lost runs update_opportunity("Lost") on linked deals only: none here. And
+	a person can still mark the deal Lost (ERPNext refuses that while a linked quote is active)."""
+	quoting, made = quoting_module
+	built = _built_quotation(quoting, made)
+	assert not erpnext_links(built.values, "OPP-1")  # so update_opportunity touches nothing
+	still_active = ["Open"] if erpnext_links(built.values, "OPP-1") else []
+	assert erpnext_allows("Lost", still_active)
+	assert not erpnext_allows("Lost", ["Open"])  # what a linked active quote would have done
+
+
+def test_the_rule_reads_quotes_by_either_link(fake_frappe):
+	"""Configurator quotes (custom_source_opportunity) and ERPNext's own Create > Quotation
+	(opportunity) both belong to the deal for the product-sale rule; QuickBooks quotes, neither."""
+	db = FakeDB(
+		marked=["OPP-1"], lines=[("OPP-1", "QTN-1", ESTOP)], native_lines=[("OPP-1", "QTN-2", FOUNTAIN)]
+	)
+	fake_frappe(db)
+	assert product_sale.product_sale_names(["OPP-1"]) == set()  # the native fountain quote makes it a job
+	query = db.queries[-1]
+	assert "q.opportunity in %(names)s or q.custom_source_opportunity in %(names)s" in query
+
+
+def test_the_stage_guard_is_gone():
+	"""The custom link means ERPNext never writes the deal's status from a configurator quote, so the
+	guard that undid those writes (and the Label comments) is not needed."""
+	assert not (APP / "crm_enhancements" / "opportunity_stage_guard.py").exists()
+	hooks = _hooks()
+	assert "opportunity_stage_guard" not in hooks
+	assert '"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",' in hooks
 
 
 # ------------------------------------------------------------------ wiring
@@ -707,23 +759,6 @@ def test_erpnexts_label_comment_goes_with_the_status_it_announced(monkeypatch):
 
 def _hooks():
 	return (APP / "hooks.py").read_text(encoding="utf-8")
-
-
-def test_the_stage_guard_runs_first_on_every_opportunity_change():
-	hooks = _hooks()
-	guard_at = hooks.index(
-		'"erpnext_enhancements.crm_enhancements.opportunity_stage_guard.keep_stage_on_list"'
-	)
-	# The list it sits in: from its `"on_change": [` to the closing `],`.
-	opened = hooks.rindex('"on_change": [', 0, guard_at)
-	closed = hooks.index("],", guard_at)
-	block = hooks[opened:closed]
-	assert block.index("opportunity_stage_guard") < block.index(
-		'"erpnext_enhancements.task_enhancements.auto_close.on_change"'
-	)
-	# ...and that list is the Opportunity's: no other doctype's events start between them.
-	owner = hooks[:opened]
-	assert owner.rindex('"Opportunity": {') > owner.rindex('"Event": {')
 
 
 def test_a_product_sale_skips_every_project_step():
@@ -779,8 +814,10 @@ def test_the_tick_is_a_persons_with_write_permission():
 	mark = handoff[at:]
 	mark = mark[: mark.index("def ", 10)]
 	assert 'frappe . has_permission ( "Opportunity" , "write" , doc = opportunity )' in mark
-	# Ticking a won deal with no project lifts the hand-off deadline the escalation reads.
-	assert '"custom_handoff_gate_applies" : 0' in mark and '"custom_handoff_due_by" : None' in mark
+	# The gate follows the tick through the one helper the form's hook uses too; the behavior is held
+	# by test_handoff_gate (TestProductSaleTick), which calls these functions.
+	assert "product_sale_gate_updates ( value , row or { } , is_product )" in mark
+	assert "def mark_product_sale ( opportunity , ticked = 1 )" in handoff  # not the module's name
 	# The Products value stream follows the person's tick, never a quote.
 	assert "if value :" in mark and "_tag_products_stream ( opportunity )" in mark
 	quoting = _code(APP / "product_configurator" / "quoting.py")

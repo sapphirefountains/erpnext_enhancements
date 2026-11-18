@@ -46,6 +46,9 @@ with the Products tab, so the two never disagree about a line.
 """
 
 MARKER = "custom_product_sale"
+#: How a configurator Quotation names its deal (v1.825.0): not ERPNext's ``Quotation.opportunity``,
+#: so ERPNext never moves or freezes the deal's stage from it (``quoting.py`` says why).
+SOURCE_OPPORTUNITY = "custom_source_opportunity"
 
 
 def is_product_sale(marked, documents):
@@ -88,9 +91,10 @@ def deal_facts(opportunities):
 	"""``{name: {"marked", "has_configuration", "documents"}}`` for saved Opportunities.
 
 	Three reads whatever the count: the ticks, the linked configurations, and the lines of the live
-	header-linked Quotations (the configurator and ERPNext's own Create > Quotation both set
-	``Quotation.opportunity``; QuickBooks quotes never do). Raises on a database problem; the
-	callers below are the ones that must not.
+	Quotations linked to the deal. A Quotation is linked by ``custom_source_opportunity`` (how the
+	configurator links its quotes, v1.825.0) or by ERPNext's own ``Quotation.opportunity`` (what
+	Create > Quotation sets); QuickBooks quotes set neither. Raises on a database problem; the callers
+	below are the ones that must not.
 	"""
 	import frappe
 
@@ -120,21 +124,29 @@ def deal_facts(opportunities):
 		if frappe.db.has_column("Item", "custom_source_configuration")
 		else "''"
 	)
+	own_link = frappe.db.has_column("Quotation", SOURCE_OPPORTUNITY)
+	source = f"q.{SOURCE_OPPORTUNITY}" if own_link else "''"
+	either = (
+		f"(q.opportunity in %(names)s or q.{SOURCE_OPPORTUNITY} in %(names)s)"
+		if own_link
+		else ("q.opportunity in %(names)s")
+	)
 	rows = frappe.db.sql(
 		f"""
-		select q.opportunity as opportunity, q.name as quotation, qi.item_code as item_code,
-			qi.item_name as item_name, {marked} as source_configuration
+		select q.opportunity as opportunity, {source} as source_opportunity, q.name as quotation,
+			qi.item_code as item_code, qi.item_name as item_name, {marked} as source_configuration
 		from `tabQuotation Item` qi
 		join `tabQuotation` q on q.name = qi.parent and qi.parenttype = 'Quotation'
 		left join `tabItem` i on i.name = qi.item_code
-		where q.opportunity in %(names)s and q.docstatus < 2
+		where {either} and q.docstatus < 2
 		""",
 		{"names": tuple(names)},
 		as_dict=True,
 	)
 	by_quotation = {}
 	for row in rows or []:
-		by_quotation.setdefault((row.get("opportunity"), row.get("quotation")), []).append(row)
+		deal = row.get("source_opportunity") or row.get("opportunity")
+		by_quotation.setdefault((deal, row.get("quotation")), []).append(row)
 	for (opportunity, _quotation), lines in by_quotation.items():
 		if opportunity in facts:
 			facts[opportunity]["documents"].append(document_skips_project(lines))
@@ -204,6 +216,15 @@ def product_sale_names(opportunities):
 def is_product_opportunity(opportunity):
 	"""Whether the saved Opportunity ``opportunity`` is a product sale. Never raises."""
 	return bool(opportunity) and opportunity in product_sale_names([opportunity])
+
+
+def documents_agree(opportunity):
+	"""No live Quotation linked to the deal disagrees with a product sale. Never raises; False on a
+	failed read (a job keeps its gate)."""
+	try:
+		return all(deal_facts([opportunity]).get(opportunity, {}).get("documents", []))
+	except Exception:
+		return False
 
 
 def is_product_sale_doc(doc):

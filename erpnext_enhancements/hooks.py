@@ -1460,6 +1460,11 @@ doc_events = {
 			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
 			# so the SLA data is already meaningful whenever a switch is flipped.
 			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
+			# v1.825.0: right after it. A tick or untick of Product Sale (No Project) on the form
+			# lifts or restores the hand-off gate exactly as handoff.mark_product_sale does, so a
+			# hand-ticked won deal is not left gated (Create Project Anyway refused, the escalation
+			# still calling it overdue). Never raises.
+			"erpnext_enhancements.crm_enhancements.handoff.follow_product_sale_tick",
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
@@ -1490,18 +1495,8 @@ doc_events = {
 		# Drive folder per Customer-party opportunity (settings opt-in)
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
-		"on_change": [
-			# v1.825.0, FIRST: submitting a linked Quotation makes ERPNext db_set the status to
-			# "Quotation", its Sales Order to "Converted", a cancel to "Open" -- none of them on this
-			# site's stage list, and a status off the list freezes the record (every later save refused,
-			# gone from the Kanban) -- and declaring the Quotation lost db_sets "Lost", which would close
-			# a whole job over a lost add-on quote. Puts the previous stage back (a person's own save to
-			# Lost is left alone) and drops ERPNext's Label comment, so auto_close below sees the stage
-			# the deal is really in. Never raises. See crm_enhancements/opportunity_stage_guard.py.
-			"erpnext_enhancements.crm_enhancements.opportunity_stage_guard.keep_stage_on_list",
-			# My Work (WI-081): close its open assignments when it moves into a finished state.
-			"erpnext_enhancements.task_enhancements.auto_close.on_change",
-		],
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	"File": {
 		# knowledge_base (WI-080 PR 2, v1.539.0): every File attached to Knowledge Article

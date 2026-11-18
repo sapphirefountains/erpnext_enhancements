@@ -26,6 +26,10 @@ What this module is careful about:
   from ``erpnext.crm...opportunity.make_quotation``, so the contact, the addresses and the default
   sales taxes come across the way Create > Quotation brings them; the configured line replaces the
   empty row that mapping adds. Otherwise it starts blank and gets the same default taxes.
+* **The deal is linked by ``custom_source_opportunity``, never ERPNext's ``opportunity``** (which
+  the mapping sets and the header clears). A Quotation linked through ERPNext's own field writes the
+  deal's status when it is submitted, ordered or lost, and once ordered ERPNext refuses every other
+  status, so the deal could never reach Closed Won (``engine.quote.quotation_header``).
 * **One quote per configuration.** A configuration whose Quotation is still live (draft or
   submitted) returns that Quotation instead of making a second one, and says when the configuration
   has changed since. A canceled or deleted Quotation frees it.
@@ -251,7 +255,8 @@ def _new_quotation(cfg, opp, header, line):
 	else:
 		quotation = frappe.new_doc("Quotation")
 	quotation.update(header)
-	# The mapping adds one empty row for a deal with no items of its own; the configured line is the quote.
+	# The mapping adds one empty row for a deal with no items of its own, linked to the deal through
+	# prevdoc_docname (which ERPNext counts as a link too); the configured line, with no such link, is the quote.
 	quotation.set("items", [line])
 	if not quotation.get("taxes"):
 		_default_taxes(quotation)
@@ -265,7 +270,8 @@ def create_quotation(configuration):
 
 	Generates the configured Item, its default BOM and its selling price first (``generate``), then a
 	draft Quotation with the configured Item at the configured price, the one line format, the
-	finished-goods warehouse, the Opportunity linked, and the configuration linked both ways. The
+	finished-goods warehouse, the deal linked by ``custom_source_opportunity``, and the configuration
+	linked both ways. The
 	Pricing Summary is attached as a private PDF. Returns ``{quotation, existing, item, bom,
 	item_price, attachment, warnings}``.
 	"""

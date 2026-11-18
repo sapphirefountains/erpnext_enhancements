@@ -1378,43 +1378,103 @@ def handoff_state(opportunity):
 
 
 @frappe.whitelist(methods=["POST"])
-def mark_product_sale(opportunity, product_sale=1):
+def mark_product_sale(opportunity, ticked=1):
 	"""Tick or untick Product Sale (No Project) on a deal: a person's decision (v1.825.0).
 
-	Called by the Closed Won prompt and the Hand-Off Process tab when the configurator suggests it,
-	and by Create Project Anyway's untick. Needs write on the deal. Written with ``set_value`` (which
-	moves ``modified``, so a stale open form is told it changed) rather than a full save, which would
-	run every Opportunity hook and could be refused by one unrelated to this, as the board's snooze
-	does it.
+	Called by the Closed Won prompt, the Hand-Off Process tab and the question after Create Quotation.
+	Needs write on the deal. Written with ``set_value`` (which moves ``modified``, so a stale open
+	form is told it changed) rather than a full save, which would run every Opportunity hook and
+	could be refused by one unrelated to this, as the board's snooze does it. The parameter is
+	``ticked``, not ``product_sale``: that name is the module this file reads the rule from.
 
-	Ticking a won deal that has no project and no recorded meeting also lifts the hand-off deadline
-	stamped at the win: there is nothing to hand off, and the overdue escalation reads that stamp. It
-	also gives the deal the Products value stream, as the Task asked. Unticking leaves both alone: the
-	gate stays open, so Create Project works at once. Returns the deal's product-sale state.
+	The hand-off gate follows the tick (:func:`product_sale_gate_updates`), exactly as a tick on the
+	form does through :func:`follow_product_sale_tick`. Ticking also gives the deal the Products
+	value stream, as the Task asked. Returns the deal's product-sale state.
 	"""
 	if not frappe.db.exists("Opportunity", opportunity):
 		frappe.throw(_("Opportunity {0} was not found.").format(opportunity))
 	if not frappe.has_permission("Opportunity", "write", doc=opportunity):
 		frappe.throw(
-			_("You can't change this Opportunity, so you can't mark it a product sale."), frappe.PermissionError
+			_("You can't change this Opportunity, so you can't mark it a product sale."),
+			frappe.PermissionError,
 		)
 	if not frappe.db.has_column("Opportunity", product_sale.MARKER):
 		frappe.throw(_("Product Sale (No Project) is not set up on this site yet. Run a migrate first."))
-	value = 1 if cint(product_sale) else 0
+	value = 1 if cint(ticked) else 0
 	updates = {product_sale.MARKER: value}
-	if value and _has_gate_fields():
+	if _has_gate_fields():
 		row = frappe.db.get_value(
 			"Opportunity",
 			opportunity,
-			["custom_created_project", "custom_handoff_meeting_held"],
+			["status", "custom_created_project", "custom_handoff_meeting_held", "custom_handoff_due_by"],
 			as_dict=True,
 		)
-		if row and not row.custom_created_project and not cint(row.custom_handoff_meeting_held):
-			updates.update({"custom_handoff_gate_applies": 0, "custom_handoff_due_by": None})
+		is_product = bool(value) and product_sale.documents_agree(opportunity)
+		updates.update(product_sale_gate_updates(value, row or {}, is_product))
 	frappe.db.set_value("Opportunity", opportunity, updates)
 	if value:
 		_tag_products_stream(opportunity)
 	return product_sale.deal_state(opportunity)
+
+
+def product_sale_gate_updates(ticked, row, is_product):
+	"""What the hand-off gate becomes when Product Sale is ticked or unticked (v1.825.0).
+
+	Only on a won deal with no project and no recorded meeting: elsewhere the gate is either not
+	stamped yet (it is at the win) or already done with.
+
+	* **Ticked, and the deal really is a product sale** (``is_product``: no linked quote disagrees):
+	  the gate and its deadline lift. There is nothing to hand off, the overdue escalation reads the
+	  deadline, and a gate left closed would refuse even Create Project Anyway.
+	* **Unticked:** the deal is a job again, so the gate comes back, with its deadline kept or set
+	  two business days out. Create Project Anyway clears the tick with a bare ``set_value``
+	  (``api._clear_product_sale``), so it never comes through here and is never gated.
+	"""
+	if (
+		row.get("status") != WON_STATUS
+		or row.get("custom_created_project")
+		or cint(row.get("custom_handoff_meeting_held"))
+	):
+		return {}
+	if ticked:
+		if not is_product:
+			return {}
+		return {"custom_handoff_gate_applies": 0, "custom_handoff_due_by": None}
+	return {
+		"custom_handoff_gate_applies": 1,
+		"custom_handoff_due_by": row.get("custom_handoff_due_by")
+		or add_working_days(now_datetime(), HANDOFF_SLA_BUSINESS_DAYS, holiday_list=_handoff_holiday_list()),
+	}
+
+
+def follow_product_sale_tick(doc, method=None):
+	"""Opportunity ``before_save``: a tick or untick on the form moves the gate as the button does.
+
+	Without it, ticking the field by hand left a won deal gated: Create Project Anyway was refused
+	with "Hand-Off Required", the tab hid the booking buttons, and the escalation kept calling the
+	deal overdue. Runs after :func:`stamp_handoff_gate`. Never raises.
+	"""
+	try:
+		meta = doc.meta
+		if not (meta.get_field(product_sale.MARKER) and meta.get_field("custom_handoff_gate_applies")):
+			return
+		before = doc.get_doc_before_save()
+		if before is None:
+			return
+		ticked = cint(doc.get(product_sale.MARKER))
+		if ticked == cint(before.get(product_sale.MARKER)):
+			return
+		row = {
+			"status": doc.status,
+			"custom_created_project": doc.get("custom_created_project"),
+			"custom_handoff_meeting_held": doc.get("custom_handoff_meeting_held"),
+			"custom_handoff_due_by": doc.get("custom_handoff_due_by"),
+		}
+		is_product = bool(ticked) and product_sale.is_product_sale_doc(doc)
+		for field, value in product_sale_gate_updates(ticked, row, is_product).items():
+			setattr(doc, field, value)
+	except Exception:
+		return
 
 
 def _tag_products_stream(opportunity):
@@ -1428,7 +1488,11 @@ def _tag_products_stream(opportunity):
 			return
 		rows = frappe.get_all(
 			"Value Stream",
-			filters={"parent": opportunity, "parenttype": "Opportunity", "parentfield": "custom_value_stream"},
+			filters={
+				"parent": opportunity,
+				"parenttype": "Opportunity",
+				"parentfield": "custom_value_stream",
+			},
 			fields=["value_stream", "value_streams", "idx"],
 		)
 		if any("Products" in (r.get("value_stream"), r.get("value_streams")) for r in rows):

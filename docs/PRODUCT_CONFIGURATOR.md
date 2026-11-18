@@ -183,7 +183,8 @@ there is no project per unit. The flow:
    Pricing Summary is attached as a private PDF. The configuration and the
    Quotation link to each other (`Product Configuration.quotation`, and
    `custom_product_configuration` on the Quotation line, which Make Sales Order
-   copies to the Sales Order line). Pressing it again returns the same Quotation
+   copies to the Sales Order line); the Quotation names its deal in
+   `custom_source_opportunity`. Pressing it again returns the same Quotation
    while it is live, and says so if the configuration changed since. When
    everything quoted on the deal in ERPNext is a product, the form then asks
    whether the deal is a product sale; the quote itself writes nothing on the
@@ -209,13 +210,13 @@ project. A ticked deal whose linked quote carries anything else (a fountain, a
 control panel, labor) is a job. What counts as a product item is
 `product_orders`'s rule, shared with the Products tab.
 
-**ERPNext's Opportunity statuses** (`crm_enhancements/opportunity_stage_guard.py`):
-submitting a linked Quotation makes ERPNext write the Opportunity's status as
-`Quotation`, its Sales Order as `Converted`, and declaring the Quotation lost as
-`Lost`. The first two are not stages on this site (a status off the list freezes
-the record), and the last would close a whole job over a lost add-on quote. The
-guard puts the previous stage back and removes ERPNext's "Label" comment for it.
-Moving the deal to Closed Won or Lost stays a person's call.
+**The deal link.** A configurator Quotation names its deal in
+`Quotation.custom_source_opportunity`, not ERPNext's own `opportunity` (which the
+Opportunity mapping sets and the configurator clears). A Quotation linked
+ERPNext's way writes the deal's status as it is submitted (`Quotation`), ordered
+(`Converted`) or lost (`Lost`), and once ordered ERPNext refuses any other status,
+so the deal could never be moved to Closed Won. With the custom link the deal's
+stage is only ever moved by a person.
 
 **Permissions.** Starting a configuration and quoting it need the Product
 Engineer role (create/write on Product Configuration), plus create on Quotation,

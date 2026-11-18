@@ -435,7 +435,7 @@
 		frappe
 			.xcall("erpnext_enhancements.crm_enhancements.handoff.mark_product_sale", {
 				opportunity: frm.doc.name,
-				product_sale: 1,
+				ticked: 1,
 			})
 			.then(() => {
 				frappe.show_alert({ message: __("Marked a product sale: no project."), indicator: "blue" });

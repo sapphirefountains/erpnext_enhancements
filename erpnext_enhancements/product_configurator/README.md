@@ -21,7 +21,7 @@ code map.
 | `quoting.py` | The sale (v1.825.0): `start_configuration` (a configuration for a deal, party filled in, options optional) and `create_quotation` (Item + BOM + price, then a draft Quotation linked both ways, the Pricing Summary attached). No commits; the attachment runs in a savepoint and degrades to a warning. It writes nothing on the deal: it returns `suggest_product_sale`, and the form asks the person whether the deal is a product sale (`crm_enhancements/product_sale.py`) |
 | `api/configurator.py` | Whitelisted desk endpoints — thin adapters over the controller, `erp_integration` and `quoting` (`start_configuration` and `create_quotation` are POST-only, for the Desk now and the phone page and Triton later) |
 | `seed_data.py` | The PDT-0040 STILLWATER E-Stop seed definition (stdlib only) |
-| `setup.py` | `after_migrate` — `Item.custom_source_configuration`, and `custom_product_configuration` on Quotation Item and Sales Order Item (v1.825.0; Make Sales Order copies it across). Insert-only |
+| `setup.py` | `after_migrate` — `Item.custom_source_configuration`; `custom_product_configuration` on Quotation Item and Sales Order Item (v1.825.0; Make Sales Order copies it across); and `Quotation.custom_source_opportunity`, the deal a configurator quote belongs to, kept off ERPNext's own `opportunity` so the quote never moves or freezes the deal's stage. Insert-only |
 | `setup_print_formats.py` | `after_migrate` — three print formats per configuration |
 | `dev_checks.py` | Plain assertion functions runnable via `bench execute` |
 

@@ -887,7 +887,7 @@ frappe.provide("erpnext_enhancements.crm");
 					d.hide();
 					done();
 					frappe
-						.xcall(MARK_METHOD, { opportunity: opportunity_name, product_sale: 1 })
+						.xcall(MARK_METHOD, { opportunity: opportunity_name, ticked: 1 })
 						.then(function () {
 							frappe.show_alert({ message: __("Marked a product sale: no project."), indicator: "blue" });
 							refresh_view();
