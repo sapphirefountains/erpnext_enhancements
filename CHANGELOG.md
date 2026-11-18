@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469), and the notes below are theirs, grouped by kind.
 
 From #1468: Hardening of the inbound webhook and gateway checks. Nothing changes for the callers that
 production uses today: the Triton gateway still authenticates with its own API key, and the
@@ -243,6 +243,45 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
   and pins each rule above at source level. `test_triton_personas` gains the System User cases.
   The kiosk suites call `maintenance_context` for the context logic, and the Visit Wizard case
   for a login with no Employee is pinned in `test_maintenance_visit_crews`.
+- **Error Log rows are masked before they are stored.** A new `Error Log` `before_insert` hook,
+  `security_alerts.mask_error_log`, passes each row's `error` and `method` through
+  `utils/log_masking.mask_secrets`, which replaces credential-shaped values with `[masked]` and keeps
+  the rest of the text: PEM private-key blocks; Google API key, OAuth client secret, access and
+  refresh token shapes; Stripe secret, restricted and webhook-signing keys; a 32-hex value after
+  `auth_token` or `api_secret` (account and key identifiers are kept); `Authorization` header values,
+  `Bearer` tokens and frappe's `token key:secret`; `name='value'` and `"name": "value"` pairs whose
+  name is a credential word (the name is kept); credential URL query values; and the password in
+  `user:password@host`.
+  - **`metadata` is masked by structure.** The row's `metadata` (the request's form values or the
+    job's arguments, as JSON text) goes through `log_masking.mask_json_text`: a value under a
+    credential-named key becomes `[masked]` at any depth, a string that holds JSON of its own is
+    masked by its own keys, every other string goes through the text rules, and the result is
+    always valid JSON. Unchanged metadata is stored exactly as frappe wrote it.
+  - **How it complements frappe's own masking.** frappe masks by variable or top-level key name;
+    this goes by the shape of the value and by key names at any depth.
+  - **Why a `doc_event`.** It is resolved by name when the row is inserted, so it applies in
+    background workers that serve hooks from the cache, and to rows frappe pushes through
+    `deferred_insert` and inserts later from the scheduler.
+  - **It can never cost the row or feed itself.** The hook is wrapped whole in `try/except` and
+    falls through to the row as frappe built it, and it never calls `log_error`: an Error Log hook
+    that logged would insert another Error Log and run again (the same family as the Notification
+    loop fixed in v1.360.0). A test walks both functions for a `log_error` call.
+  - **Cost.** Every pattern has bounded quantifiers and runs in linear time, and a rule is skipped
+    unless a substring test says it could match; a 1 MB traceback takes about 0.1 s. Text past
+    2,000,000 characters is kept unscanned rather than cut, so the stored text is never shortened.
+    Masking is idempotent.
+- **`security_alerts.mask_stored_error_logs`** applies the same masking to rows already stored.
+  System Manager only, POST only, a dry run by default; examines up to `limit` rows (at most 5,000)
+  in name order from an `after` cursor, rewrites changed fields without touching `modified`, commits
+  each batch, and returns counts and the next cursor, never row content. No patch and no scheduler
+  entry: an administrator runs it by hand.
+- **A daily site-configuration check.** `security_alerts.check_site_configuration` (scheduler
+  `daily`) emails the admin alert recipients while `developer_mode`, `server_script_enabled` or
+  `allow_tests` is on in the site configuration, at most once per setting per day, through the
+  module's recipient helper and a per-setting cache claim (`_claim_once`, which the Administrator
+  login throttle now uses too, unchanged in behavior). Quiet when nothing is on; never raises.
+  Password sign-in being on is already reported every day by `check_two_factor_coverage` (v1.755.0)
+  and is not repeated, so one setting never produces two emails a day.
 
 ### Tests
 
@@ -253,6 +292,16 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
   recording URL rule and `_voicemail_audio`, the guard before the export is queued, both
   `get_secret` readers, and the QuickBooks Time webhook.
 - `tests/test_triton_personas.py` covers the action id check.
+- `tests/test_log_masking.py` (new CI step): each value shape, the name kept and only the value
+  masked, ordinary tracebacks and identifiers unchanged, idempotence, a 1 MB traceback and nine
+  pathological 1 MB inputs inside a time budget, text past the cap kept exactly, and the
+  repository's secrets scanner clean on the masker and the test file. Every credential-shaped
+  value in it is synthetic and assembled from fragments.
+- `tests/test_security_alerts.py`: the hook masks `error`, `method` and `metadata`, leaves other fields and
+  clean rows alone, never raises or logs, and is registered on Error Log `before_insert`; the
+  backfill's dry run, write path, cursor, limit clamp, role check, POST-only decorator and absence
+  from the scheduler; the configuration check per setting, its daily throttle, its silence on a
+  clean site, its no-recipient and failure paths, and its daily schedule.
 
 ## [1.824.0] - 2026-11-18
 

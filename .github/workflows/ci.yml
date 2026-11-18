@@ -2280,8 +2280,18 @@ jobs:
       # sign-in check: it reports a staff account with no 2FA role, 2FA off or bypassed, and
       # password or LDAP sign-in switched on, stays quiet on a healthy site, escapes account
       # names, and never raises.
+      # Since v1.826.6 also the Error Log before_insert masking hook (never raises, never logs,
+      # registered on Error Log), the hand-run backfill of stored rows (System Manager, POST,
+      # dry run by default, counts only) and the daily site-configuration check (one email per
+      # setting per day).
       - name: Administrator login alerts + two-factor coverage (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
+      # Error Log value masking (v1.826.6): utils/log_masking.mask_secrets on each value shape it
+      # masks, ordinary text left alone, idempotence, a 1 MB input and pathological ones inside a
+      # time budget, text past the scan cap kept rather than cut, and the repository's secrets
+      # scanner clean on the masker and its tests. Pure module, no frappe stub; own step anyway.
+      - name: Error Log value masking (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_log_masking -v
       # Client-IP derivation guard (TASK-2026-01478). GCLB -> nginx -> bench only yields a
       # real request_ip because of a hand-placed nginx realip file on the VM; this pins that
       # file (infra/configs/nginx-realip.conf), the startup script that installs it on every

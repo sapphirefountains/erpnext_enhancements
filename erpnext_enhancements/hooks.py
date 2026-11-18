@@ -1587,6 +1587,17 @@ doc_events = {
 		# too, and the failures are the early warning.
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
 	},
+	"Error Log": {
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
+		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
+		# masks a traceback variable by its name only; this goes by the value's shape, including
+		# one printed inside another object's repr. A doc_event is resolved by name at insert
+		# time, so it also applies in workers and to rows frappe defers and inserts later. Never
+		# raises and never logs (a row is never lost to it, and it cannot feed itself);
+		# linear-time, and work on a very large row is capped without shortening the text. Rows
+		# already stored: security_alerts.mask_stored_error_logs, run by hand.
+		"before_insert": "erpnext_enhancements.security_alerts.mask_error_log",
+	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
 		# core Contact.autoname reads links[0], so an insert carrying only the
@@ -2316,6 +2327,11 @@ scheduler_events = {
 		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
 		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
+		# security (v1.826.6): email the same recipients while developer_mode, server_script_enabled
+		# or allow_tests is on in the site configuration, at most once per setting per day. Password
+		# sign-in is the two-factor check's (above) and is not repeated. Quiet when nothing is on;
+		# never raises. See security_alerts.check_site_configuration.
+		"erpnext_enhancements.security_alerts.check_site_configuration",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
