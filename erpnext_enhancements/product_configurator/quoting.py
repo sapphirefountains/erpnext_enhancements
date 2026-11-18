@@ -3,7 +3,7 @@
 
 """Quote a configured product: start a configuration from a deal, then make its draft Quotation.
 
-The first E-Stop sales slice (v1.824.0; decision 2026-11-18, "the Sales Order is the record"). A sale
+The first E-Stop sales slice (v1.825.0; decision 2026-11-18, "the Sales Order is the record"). A sale
 runs Opportunity -> Product Configuration -> draft Quotation -> ERPNext's own Make Sales Order. The
 whitelisted adapters are in ``api/configurator.py``: the Opportunity's "Quote <product>" action and
 the configuration's "Create Quotation" button call them today, and the phone quick-quote page and
@@ -14,9 +14,11 @@ What this module is careful about:
 
 * **No commits** (the module's atomicity contract, README). :func:`create_quotation` makes the Item,
   BOM and price (``erp_integration.generate``) and the Quotation in one request, so a Quotation that
-  fails to save takes the Item and BOM with it. The two extras that follow it, the attached Pricing
-  Summary and the Products tag on the deal, run in savepoints: either one failing rolls back only
-  itself, says so in ``warnings``, and the quote stands.
+  fails to save takes the Item and BOM with it. The attached Pricing Summary that follows runs in a
+  savepoint: if it fails it rolls back only itself, says so in ``warnings``, and the quote stands.
+* **A quote never decides that a deal is a product sale.** It writes nothing on the Opportunity.
+  It returns ``suggest_product_sale``, and the form asks the person, who ticks Product Sale (No
+  Project) or not (``crm_enhancements/product_sale.py`` says why a configured quote is not enough).
 * **Refusals in plain words.** Two of the people who will quote did not yet hold the Product
   Engineer role on 2026-11-18, and frappe's own refusal ("No permission for Product Configuration")
   tells them nothing they can act on. Every refusal here says what is missing and who can fix it.
@@ -51,7 +53,6 @@ from erpnext_enhancements.product_configurator.engine.quote import (
 
 CONFIG_DOCTYPE = "Product Configuration"
 PRICING_PRINT_FORMAT = "Product Configuration - Pricing Summary"
-PRODUCTS_STREAM = "Products"
 
 #: The option-row fields a caller's selections are applied to and written back from.
 OPTION_FIELDS = (
@@ -336,8 +337,13 @@ def create_quotation(configuration):
 			)
 		)
 	attachment = _attach_pricing_summary(cfg.name, quotation.name, warnings)
+	# Whether to ask the person if the deal is a product sale (no project). Asked, never set: a
+	# configured quote on a deal says nothing about the rest of it (crm_enhancements/product_sale.py).
+	suggest = False
 	if cfg.opportunity:
-		_tag_products_stream(cfg.opportunity, warnings)
+		from erpnext_enhancements.crm_enhancements.product_sale import deal_state
+
+		suggest = deal_state(cfg.opportunity)["suggested"]
 
 	return {
 		"quotation": quotation.name,
@@ -346,6 +352,8 @@ def create_quotation(configuration):
 		"bom": generated["bom"],
 		"item_price": generated["item_price"],
 		"attachment": attachment,
+		"opportunity": cfg.opportunity,
+		"suggest_product_sale": suggest,
 		"warnings": warnings,
 	}
 
@@ -387,50 +395,3 @@ def _attach_pricing_summary(configuration, quotation, warnings):
 			)
 		)
 		return None
-
-
-def _tag_products_stream(opportunity, warnings):
-	"""Give the deal the Products value stream, if it lacks it, without saving the whole Opportunity.
-
-	A full save would run every Opportunity hook (and could be refused by one that has nothing to do
-	with this), so the row goes in directly and the tags are refreshed the way the form's own
-	``sync_opportunity_tags_for_existing`` does it. That write moves ``modified``, so a stale open
-	form is told the record changed rather than saving its old value-stream rows over this one.
-	"""
-	try:
-		if not frappe.db.exists("Value Streams", PRODUCTS_STREAM):
-			return
-		rows = frappe.get_all(
-			"Value Stream",
-			filters={
-				"parent": opportunity,
-				"parenttype": "Opportunity",
-				"parentfield": "custom_value_stream",
-			},
-			fields=["value_stream", "value_streams", "idx"],
-		)
-	except Exception:
-		return
-	if any(PRODUCTS_STREAM in (row.get("value_stream"), row.get("value_streams")) for row in rows):
-		return
-	frappe.db.savepoint("pc_quote_tag")
-	try:
-		frappe.get_doc(
-			{
-				"doctype": "Value Stream",
-				"parent": opportunity,
-				"parenttype": "Opportunity",
-				"parentfield": "custom_value_stream",
-				"idx": max([row.get("idx") or 0 for row in rows] + [0]) + 1,
-				"value_stream": PRODUCTS_STREAM,
-			}
-		).db_insert()
-		from erpnext_enhancements.crm_enhancements.api import sync_opportunity_tags_for_existing
-
-		sync_opportunity_tags_for_existing(opportunity)
-	except Exception:
-		frappe.db.rollback(save_point="pc_quote_tag")
-		frappe.log_error(title="Product quote: Products stream not tagged", message=frappe.get_traceback())
-		warnings.append(
-			_("The Opportunity could not be tagged with the Products value stream. Add it by hand.")
-		)

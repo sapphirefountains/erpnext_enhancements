@@ -132,14 +132,14 @@ class TestTheLeadWarning(unittest.TestCase):
         body = source[source.index("def handoff_state") :]
         body = body[: body.index("\ndef ", 10)]
         self.assertIn('"opportunity_from") == "Lead"', body)
-        # The early return (no gate fields) reports it too. v1.824.0 added the product-sale flag
-        # beside it and split the dict over lines, so the keys are checked within that return.
+        # The early return (no gate fields) reports it too. v1.825.0 added the product-sale keys
+        # beside it (**product_keys), so the keys are checked within that return.
         early = body[body.index("if not _has_gate_fields():") : body.index("row = frappe.db.get_value(")]
         for key in (
             '"available": False',
             '"is_historical": historical',
             '"on_lead": on_lead',
-            '"is_product_sale": is_product',
+            "**product_keys",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, early)

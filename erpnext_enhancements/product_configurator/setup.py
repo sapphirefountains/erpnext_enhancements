@@ -12,7 +12,7 @@ is, so a label somebody changed on the site survives a migrate.
   configurator-owned so a regenerate can safely reuse it, and a hand-made Item
   with a colliding code is never touched.
 * ``Quotation Item.custom_product_configuration`` and the same field on
-  ``Sales Order Item`` (v1.824.0) — the configuration a line was quoted from.
+  ``Sales Order Item`` (v1.825.0) — the configuration a line was quoted from.
   ``quoting.create_quotation`` sets it on the Quotation line; ERPNext's Make
   Sales Order copies every same-named field across, so the Sales Order line
   carries it too, which is how the Work Order step will find the exact

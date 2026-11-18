@@ -12,7 +12,7 @@
  *   contract_types(doctype)                 contracts.js's "Generate Contract": the agreements a
  *   can_generate_contract(doctype)          record of this DocType generates, and whether the suite
  *   open_generate_contract(doctype, name)   is on; then its dialog
- *   can_quote_product(doctype, values)      v1.824.0, the Opportunity's "Quote <product>": whether
+ *   can_quote_product(doctype, values)      v1.825.0, the Opportunity's "Quote <product>": whether
  *   quote_product_label()                   it is offered, what it is called, and the start of a
  *   open_quote_product(opportunity)         Product Configuration for the deal (opened when made)
  *
@@ -288,7 +288,7 @@ function generate_contract_dialog(source_doctype, source_name, types) {
 	return d;
 }
 
-// ------------------------------------------------------------------ Quote a product (v1.824.0)
+// ------------------------------------------------------------------ Quote a product (v1.825.0)
 
 // The Opportunity's "Quote <product>" (decision 2026-11-18: a sale starts from the deal). It makes a
 // Product Configuration for the deal, with its Account or Lead and the deal filled in, and opens it;

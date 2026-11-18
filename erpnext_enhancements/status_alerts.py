@@ -344,7 +344,7 @@ def nag_unconverted_opportunities():
 		order_by="custom_date_closed_won asc",
 	)
 	opportunities = _drop_back_linked(opportunities)
-	# A product sale gets no project by design (v1.824.0, crm_enhancements/product_sale.py), so it is
+	# A product sale gets no project by design (v1.825.0, crm_enhancements/product_sale.py), so it is
 	# never "still waiting on" one. One batch read for the whole list; never raises.
 	from erpnext_enhancements.crm_enhancements.product_sale import product_sale_names
 

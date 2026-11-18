@@ -3670,7 +3670,7 @@ jobs:
       # bench-free unittest tests, green, and named nowhere in this file.
       - name: Product Configurator engine (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
-      # E-Stop quote to order (v1.824.0). Guards a quote line that reads differently from the last
+      # E-Stop quote to order (v1.825.0). Guards a quote line that reads differently from the last
       # one, a configured price ERPNext re-prices into a fake discount, a Sales Order that can't save
       # for want of a warehouse, a quote to the wrong party, a refusal in frappe's words instead of
       # "ask for the Product Engineer role", a product sale that still gets a project (or a panel job

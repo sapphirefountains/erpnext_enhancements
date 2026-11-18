@@ -16,7 +16,7 @@
  *    realtime prompt in create_project_prompt.js. There is no manual "Create
  *    Project" button on the toolbar; project creation runs from that prompt or
  *    from the Hand-Off Process tab (opportunity_handoff.js).
- *  - "Quote <product>" (v1.824.0): starts a Product Configuration for the deal and opens it
+ *  - "Quote <product>" (v1.825.0): starts a Product Configuration for the deal and opens it
  *    (record_actions.open_quote_product, shared with the guided page's Actions menu).
  *  - Listen on the `project_creation_status` realtime channel to report
  *    background project-creation success/failure (incl. Google Drive folder
@@ -107,7 +107,7 @@ frappe.ui.form.on("Opportunity", {
 		// future ERPNext / site adds one.
 		frm.remove_custom_button("Project", "Create");
 
-		// v1.824.0: "Quote <product>" — a Product Configuration for this deal, opened when made. The
+		// v1.825.0: "Quote <product>" — a Product Configuration for this deal, opened when made. The
 		// guided page's Actions menu offers the same through the same function (record_actions.js).
 		// Guarded on the function itself: this script travels with the form's meta, the bundle that
 		// installs record_actions with the tab, and a tab open across a deploy can hold an old bundle.

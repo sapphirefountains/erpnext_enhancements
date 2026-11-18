@@ -1491,10 +1491,12 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 		"on_change": [
-			# v1.824.0, FIRST: submitting a linked Quotation makes ERPNext db_set the status to
+			# v1.825.0, FIRST: submitting a linked Quotation makes ERPNext db_set the status to
 			# "Quotation", its Sales Order to "Converted", a cancel to "Open" -- none of them on this
 			# site's stage list, and a status off the list freezes the record (every later save refused,
-			# gone from the Kanban). Puts the previous stage back, so auto_close below sees the stage
+			# gone from the Kanban) -- and declaring the Quotation lost db_sets "Lost", which would close
+			# a whole job over a lost add-on quote. Puts the previous stage back (a person's own save to
+			# Lost is left alone) and drops ERPNext's Label comment, so auto_close below sees the stage
 			# the deal is really in. Never raises. See crm_enhancements/opportunity_stage_guard.py.
 			"erpnext_enhancements.crm_enhancements.opportunity_stage_guard.keep_stage_on_list",
 			# My Work (WI-081): close its open assignments when it moves into a finished state.
@@ -2919,7 +2921,7 @@ after_migrate = [
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 	# product_configurator: Item provenance field (marks configurator-generated
-	# Items so regenerate can safely reuse them), and since v1.824.0 the
+	# Items so regenerate can safely reuse them), and since v1.825.0 the
 	# configuration link on Quotation Item and Sales Order Item (Make Sales Order
 	# copies it across) + the Build Instructions / QC Checklist / Pricing Summary
 	# Print Formats (idempotent + guarded). The Pricing Summary is also what

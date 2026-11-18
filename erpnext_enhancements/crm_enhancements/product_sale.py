@@ -1,95 +1,152 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Is this Opportunity a product sale? A product sale gets no project (v1.824.0).
+"""Is this Opportunity a product sale? A product sale gets no project (v1.825.0).
 
-Decision 2026-11-18: for a product like the Stillwater E-Stop, **the Sales Order is the record**;
-there is no project per unit. Until then every E-Stop sale got one, and one got the 40-task Design
-template (PRJ-00776, all 40 tasks Overdue on a Completed project). Custom-engineered control panels
-keep a project.
+Decision 2026-11-18, pick 1: for the E-Stop and other standard products **the Sales Order is the
+record**; there is no project per unit. Custom-engineered control panels keep a Project of type
+Products. Until then every E-Stop sale got a project, and one got the 40-task Design template.
 
-**The rule** (:func:`is_product_sale`): a deal is a product sale when it has a configured product,
-meaning a Product Configuration linked to it or a live Quotation line whose Item the configurator
-made, **and** every line on its live Quotations is such an Item. One line of anything else (a
-fountain, a custom control panel, labor) makes it a job, and a job keeps its project. "Live" is a
-draft or submitted Quotation; a canceled one says nothing about the deal.
+**The rule** (:func:`is_product_sale`): a deal is a product sale only when **a person has said so**,
+by ticking ``Opportunity.custom_product_sale`` ("Product Sale (No Project)"), **and nothing linked
+to the deal says otherwise**: every live (draft or submitted) Quotation linked to it is a product
+sale that skips a project by ``product_orders.skips_project`` (#1464's shared rule: every line a
+product Item or an incidental freight or delivery line, at least one product, no control panel).
+When it is unclear, the deal is a job and keeps its project.
 
-**Why not the Products value stream.** It was the obvious candidate, and prod says no (read
-2026-11-18). 14 Opportunities carry Products. The E-Stop deals for one pool builder carry Design +
-Build + Products, because the old process put each unit through the Design template. The
-control-panel deals ("Control Panel for Pool & Splash Pad", "Hotel Pool Controller") carry Products
-too, and those are exactly the ones that keep a project. So the stream would skip projects on panel
-jobs and keep them on E-Stops: wrong in both directions. It is a tag a person picks; a configured
-Item on the quote is a fact about what was sold. (``quoting`` still adds the Products stream to a
-deal it quotes, so the tag follows the fact.)
+**Why a person's tick and not the documents alone.** The first draft of this rule (never merged)
+read a deal as a product sale when it had a Product Configuration or a configured quote line. A manager
+review traced what that does on prod:
 
-**Where it is read.** ``handoff.stamp_handoff_gate`` (no hand-off SLA for a product sale),
-``project_prompt.prompt_create_project_on_won`` (no "Create project now?"),
-``handoff.handoff_state`` (the form and the prompt show a quiet line instead of a next step), and
-``api.enqueue_project_creation`` (refuses to queue one, in plain words).
+* The QuickBooks estimate mapper never sets ``Quotation.opportunity``, and none of prod's 705
+  Quotations carries one. So the only Quotations the rule could ever see are the ones the
+  configurator makes, and "product sale" came to mean "has a configuration".
+* A rep who quotes an E-Stop add-on on a fountain deal, or presses Quote by mistake, would have
+  cost that deal its project, its hand-off and its place in every backlog, with no way back.
 
-**Never raises** (:func:`is_product_opportunity`): it runs inside the Opportunity's save chain,
-including during ERPNext's own test bootstrap before this app's fields exist, and a hook that raises
-there blocks every deal on the site. Any failure reads as "not a product sale", which is what the
+The documents cannot settle it, because the deal's real quote may live in QuickBooks where nothing
+links it to the deal. So the configurator only **suggests** the tick (:func:`suggests_product_sale`:
+a product on the deal and nothing contrary), the Closed Won prompt and Create Quotation ask, and the
+person decides. Documents can only overrule the tick, never stand in for it: one linked Quotation
+with a fountain on it makes the deal a job again, tick or no tick.
+
+**The escape.** Untick the field, or press **Create Project Anyway** on the Hand-Off Process tab,
+which unticks it and creates the project (``api.enqueue_project_creation(create_anyway=1)``).
+
+**Where it is read.** ``handoff.stamp_handoff_gate`` (no hand-off SLA), ``project_prompt`` (no
+"Create project now?"), ``handoff.handoff_state`` (the tab's quiet line and its buttons),
+``api.enqueue_project_creation``, and the three won-without-project counts: the daily reminder
+(``status_alerts``), the Sales Dashboard's hand-off backlog and the Hand-Off Backlog KPI.
+
+**Never raises.** It runs inside the Opportunity's save chain, including ERPNext's own test bootstrap
+before this app's fields exist. Any failure reads as "not a product sale": a job, which is what the
 site did before this rule existed. The pure rule has no frappe import, so the bench-free suite runs
-it directly.
+it directly. What counts as a product item or a product document is ``product_orders``'s, shared
+with the Products tab, so the two never disagree about a line.
 """
 
+MARKER = "custom_product_sale"
 
-def is_product_sale(has_configuration, quoted_lines):
+
+def is_product_sale(marked, documents):
 	"""The rule, on facts already read.
 
-	``has_configuration``: a Product Configuration is linked to the deal. ``quoted_lines``: one bool
-	per line on the deal's live Quotations, True when the line's Item was made by the configurator.
+	``marked``: the person's tick. ``documents``: one bool per live Quotation linked to the deal,
+	True when it is a product document. No tick, no product sale; one non-product document, a job.
 	"""
-	lines = list(quoted_lines or [])
-	if any(not configured for configured in lines):
+	return bool(marked) and all(documents or [])
+
+
+def suggests_product_sale(marked, has_configuration, documents):
+	"""Whether to ask the person to tick it: a product on the deal and nothing contrary.
+
+	Never once it is ticked (there is nothing to ask), and never on a deal with a non-product
+	document linked. A configuration with no quote yet is enough to ask, and only to ask.
+	"""
+	if marked:
 		return False
-	return bool(has_configuration) or any(lines)
+	docs = list(documents or [])
+	if not all(docs):
+		return False
+	return bool(has_configuration) or bool(docs)
 
 
-#: A Quotation line's Item was made by the configurator (``Item.custom_source_configuration``).
-_CONFIGURED = "ifnull(i.custom_source_configuration, '') != ''"
+def document_skips_project(lines):
+	"""Whether one Quotation's lines are a product sale with no project: ``product_orders``'s rule.
+
+	``product_orders.skips_project`` (#1464, shared with the Products tab, never copied here): every
+	line a product Item or an incidental one (freight, delivery), at least one product, and no
+	control panel among them (decision pick 1: custom-engineered panels keep a Project). A hand-made
+	``PDT-0040`` and a configured E-Stop get the same answer.
+	"""
+	from erpnext_enhancements import product_orders
+
+	return product_orders.skips_project(lines)
+
+
+def deal_facts(opportunities):
+	"""``{name: {"marked", "has_configuration", "documents"}}`` for saved Opportunities.
+
+	Three reads whatever the count: the ticks, the linked configurations, and the lines of the live
+	header-linked Quotations (the configurator and ERPNext's own Create > Quotation both set
+	``Quotation.opportunity``; QuickBooks quotes never do). Raises on a database problem; the
+	callers below are the ones that must not.
+	"""
+	import frappe
+
+	names = sorted({name for name in opportunities or [] if name})
+	facts = {name: {"marked": False, "has_configuration": False, "documents": []} for name in names}
+	if not names:
+		return facts
+	if frappe.db.has_column("Opportunity", MARKER):
+		for name in frappe.get_all(
+			"Opportunity", filters={"name": ("in", names), MARKER: 1}, pluck="name", limit_page_length=0
+		):
+			if name in facts:
+				facts[name]["marked"] = True
+	if frappe.db.has_column("Product Configuration", "opportunity"):
+		for name in frappe.get_all(
+			"Product Configuration",
+			filters={"opportunity": ("in", names)},
+			pluck="opportunity",
+			limit_page_length=0,
+		):
+			if name in facts:
+				facts[name]["has_configuration"] = True
+	marked = (
+		"i.custom_source_configuration"
+		if frappe.db.has_column("Item", "custom_source_configuration")
+		else "''"
+	)
+	rows = frappe.db.sql(
+		f"""
+		select q.opportunity as opportunity, q.name as quotation, qi.item_code as item_code,
+			qi.item_name as item_name, {marked} as source_configuration
+		from `tabQuotation Item` qi
+		join `tabQuotation` q on q.name = qi.parent and qi.parenttype = 'Quotation'
+		left join `tabItem` i on i.name = qi.item_code
+		where q.opportunity in %(names)s and q.docstatus < 2
+		""",
+		{"names": tuple(names)},
+		as_dict=True,
+	)
+	by_quotation = {}
+	for row in rows or []:
+		by_quotation.setdefault((row.get("opportunity"), row.get("quotation")), []).append(row)
+	for (opportunity, _quotation), lines in by_quotation.items():
+		if opportunity in facts:
+			facts[opportunity]["documents"].append(document_skips_project(lines))
+	return facts
 
 
 def product_sale_names(opportunities):
-	"""The product sales among ``opportunities`` (names), in two queries whatever the count.
-
-	Header-linked Quotations only: the configurator and ERPNext's own Create > Quotation both set
-	``Quotation.opportunity``. Never raises; a failure reads as "none of them".
-	"""
-	names = sorted({name for name in opportunities or [] if name})
+	"""The product sales among ``opportunities`` (names). Never raises; a failure reads as none."""
+	names = [name for name in opportunities or [] if name]
 	if not names:
 		return set()
 	try:
-		import frappe
-
-		with_configuration = set()
-		if frappe.db.has_column("Product Configuration", "opportunity"):
-			with_configuration = set(
-				frappe.get_all(
-					"Product Configuration",
-					filters={"opportunity": ("in", names)},
-					pluck="opportunity",
-					limit_page_length=0,
-				)
-			)
-		configured = _CONFIGURED if frappe.db.has_column("Item", "custom_source_configuration") else "0"
-		rows = frappe.db.sql(
-			f"""
-			select q.opportunity as opportunity, {configured} as configured
-			from `tabQuotation Item` qi
-			join `tabQuotation` q on q.name = qi.parent and qi.parenttype = 'Quotation'
-			left join `tabItem` i on i.name = qi.item_code
-			where q.opportunity in %(names)s and q.docstatus < 2
-			""",
-			{"names": tuple(names)},
-			as_dict=True,
-		)
-		lines = {}
-		for row in rows or []:
-			lines.setdefault(row.get("opportunity"), []).append(bool(int(row.get("configured") or 0)))
-		return {name for name in names if is_product_sale(name in with_configuration, lines.get(name, []))}
+		facts = deal_facts(names)
+		return {name for name, f in facts.items() if is_product_sale(f["marked"], f["documents"])}
 	except Exception:
 		return set()
 
@@ -99,31 +156,40 @@ def is_product_opportunity(opportunity):
 	return bool(opportunity) and opportunity in product_sale_names([opportunity])
 
 
-def product_sale_sql(name_column):
-	"""The rule as a SQL condition on the Opportunity whose name is ``name_column``.
-
-	For a count that cannot take a Python filter (the KPI snapshot's Hand-Off Backlog): use it as
-	``and not (<this>)``. ``name_column`` is SQL the caller writes, never input. ``"0"`` (nothing is
-	a product sale) while either column the rule reads is missing, or on any error.
-	"""
+def is_product_sale_doc(doc):
+	"""The rule for an Opportunity being saved: its own tick, which the database may not hold yet
+	(a person can tick it in the same save that marks the deal Closed Won), and its linked
+	documents. Never raises; a new record is never a product sale (nothing is linked to it yet)."""
 	try:
-		import frappe
-
-		if not (
-			frappe.db.has_column("Product Configuration", "opportunity")
-			and frappe.db.has_column("Item", "custom_source_configuration")
-		):
-			return "0"
+		if doc.is_new() or not doc.get(MARKER):
+			return False
+		name = getattr(doc, "name", None)
+		documents = deal_facts([name]).get(name, {}).get("documents", [])
+		return is_product_sale(True, documents)
 	except Exception:
-		return "0"
-	live_lines = (
-		"select 1 from `tabQuotation Item` qi "
-		"join `tabQuotation` q on q.name = qi.parent and qi.parenttype = 'Quotation' "
-		"left join `tabItem` i on i.name = qi.item_code "
-		f"where q.opportunity = {name_column} and q.docstatus < 2"
+		return False
+
+
+def deal_state(opportunity):
+	"""What the hand-off and the quote need to know about one deal. Never raises.
+
+	``marked``: the tick. ``is_product_sale``: the rule. ``conflict``: ticked, but a linked Quotation
+	carries something else, so it is treated as a job. ``suggested``: worth asking the person.
+	"""
+	state = {"marked": False, "is_product_sale": False, "conflict": False, "suggested": False}
+	if not opportunity:
+		return state
+	try:
+		f = deal_facts([opportunity]).get(opportunity)
+	except Exception:
+		return state
+	if not f:
+		return state
+	product = is_product_sale(f["marked"], f["documents"])
+	state.update(
+		marked=f["marked"],
+		is_product_sale=product,
+		conflict=bool(f["marked"] and not product),
+		suggested=suggests_product_sale(f["marked"], f["has_configuration"], f["documents"]),
 	)
-	return (
-		f"((exists (select 1 from `tabProduct Configuration` pc where pc.opportunity = {name_column})"
-		f" or exists ({live_lines} and {_CONFIGURED}))"
-		f" and not exists ({live_lines} and not ({_CONFIGURED})))"
-	)
+	return state

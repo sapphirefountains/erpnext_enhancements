@@ -1,4 +1,4 @@
-"""Bench-free tests for the E-Stop quote-to-order slice (v1.824.0).
+"""Bench-free tests for the E-Stop quote-to-order slice (v1.825.0).
 
 Plain pytest functions, so CI runs this file in its own ``python -m pytest`` step (``python -m
 unittest`` would collect nothing from it). What it holds:
@@ -19,6 +19,7 @@ small fake ``frappe`` stands in through ``monkeypatch`` and is removed afterward
 Run: python -m pytest erpnext_enhancements/tests/test_product_quote.py -q
 """
 
+import ast
 import io
 import json
 import re
@@ -314,26 +315,70 @@ def test_no_refusal_speaks_frappe_s_old_words():
 
 
 @pytest.mark.parametrize(
-	"has_configuration, lines, expected",
+	"marked, documents, expected",
 	[
-		(True, [], True),  # configured, not quoted yet
+		(True, [], True),  # a person said so and nothing linked disagrees (the real quote may be in QBO)
 		(True, [True], True),
-		(False, [True], True),  # quoted from a configured Item without a linked configuration
-		(False, [True, True], True),
-		(True, [True, False], False),  # an E-Stop and a fountain: a job, keeps its project
-		(False, [False], False),
+		(True, [True, True], True),
+		(True, [True, False], False),  # ticked, but a linked quote carries a fountain: a job
 		(True, [False], False),
-		(False, [], False),  # an ordinary deal
+		(False, [True], False),  # a configured quote alone is never enough
+		(False, [True, True], False),
+		(False, [], False),
 	],
 )
-def test_a_product_sale_is_configured_products_and_nothing_else(has_configuration, lines, expected):
-	assert product_sale.is_product_sale(has_configuration, lines) is expected
+def test_a_product_sale_needs_a_persons_tick_and_no_contrary_quote(marked, documents, expected):
+	assert product_sale.is_product_sale(marked, documents) is expected
+
+
+@pytest.mark.parametrize(
+	"marked, has_configuration, documents, expected",
+	[
+		(False, True, [], True),  # a configuration and no quote yet: ask
+		(False, False, [True], True),
+		(False, True, [True, False], False),  # something else is quoted: don't even ask
+		(False, False, [], False),  # nothing product-shaped on the deal
+		(True, True, [True], False),  # already ticked: nothing to ask
+	],
+)
+def test_the_configurator_only_suggests(marked, has_configuration, documents, expected):
+	assert product_sale.suggests_product_sale(marked, has_configuration, documents) is expected
+
+
+ESTOP = {"item_code": "PDT-0040-1-1-1-2-0", "source_configuration": "PCFG-2026-00001"}
+HAND_MADE_ESTOP = {"item_code": "PDT-0040", "item_name": "PDT-0040 STILLWATER E-STOP SYSTEM"}
+FREIGHT = {"item_code": "SRV-105", "item_name": "BUILD - FREIGHT & DELIVERY"}
+PLAIN_FREIGHT = {"item_code": "Freight"}
+FOUNTAIN = {"item_code": "SF-BASIN-12", "item_name": "Fountain basin, 12 ft"}
+PANEL = {"item_code": "PDT-0003", "item_name": "Splash Wizard Industrial"}
+BILLING = {"item_code": "PDT-0701", "item_name": "SERVICE - FOUNTAIN MATERIALS & EQUIPMENT"}
+
+
+def test_a_quote_skips_a_project_by_the_shared_rule():
+	"""#1464's product_orders.skips_project, so both PRs answer the same for the same lines."""
+	assert product_sale.document_skips_project([ESTOP])
+	assert product_sale.document_skips_project([ESTOP, FREIGHT])
+	# A hand-made PDT-0040 line and a configured one get the same answer.
+	assert product_sale.document_skips_project([HAND_MADE_ESTOP, PLAIN_FREIGHT])
+	assert not product_sale.document_skips_project([ESTOP, FOUNTAIN])  # mixed means job
+	assert not product_sale.document_skips_project([BILLING])  # a billing family, not a product
+	assert not product_sale.document_skips_project([FREIGHT])  # freight alone sells nothing
+	assert not product_sale.document_skips_project([])
+
+
+def test_a_control_panel_quote_keeps_the_project():
+	"""Decision pick 1: custom-engineered control panels keep a Project (needs_project)."""
+	assert not product_sale.document_skips_project([PANEL])
+	assert not product_sale.document_skips_project([ESTOP, PANEL])
 
 
 class FakeDB:
-	def __init__(self, configured_opps=(), lines=(), columns=True, sql_raises=False):
-		self.configured_opps = list(configured_opps)
-		self.lines = list(lines)
+	"""The three reads ``deal_facts`` makes: ticks, configurations, live linked quote lines."""
+
+	def __init__(self, marked=(), configured=(), lines=(), columns=True, sql_raises=False):
+		self.marked = list(marked)
+		self.configured = list(configured)
+		self.lines = list(lines)  # (opportunity, quotation, item dict)
 		self.columns = columns
 		self.sql_raises = sql_raises
 		self.queries = []
@@ -344,17 +389,24 @@ class FakeDB:
 		return self.columns
 
 	def sql(self, query, values=None, as_dict=False):
-		self.queries.append((query, values))
+		self.queries.append(query)
 		if self.sql_raises:
 			raise RuntimeError("database went away")
 		wanted = set(values["names"])
-		# The query says "0 as configured" when the marker column is missing; honor what it asks.
-		marked = "custom_source_configuration" in query
-		return [
-			{"opportunity": opp, "configured": int(flag) if marked else 0}
-			for opp, flag in self.lines
-			if opp in wanted
-		]
+		marker = "i.custom_source_configuration" in query
+		rows = []
+		for opportunity, quotation, item in self.lines:
+			if opportunity in wanted:
+				rows.append(
+					{
+						"opportunity": opportunity,
+						"quotation": quotation,
+						"item_code": item.get("item_code"),
+						"item_name": item.get("item_name"),
+						"source_configuration": item.get("source_configuration") if marker else "",
+					}
+				)
+		return rows
 
 
 @pytest.fixture
@@ -364,9 +416,12 @@ def fake_frappe(monkeypatch):
 		frappe.db = db
 
 		def get_all(doctype, filters=None, pluck=None, **kwargs):
-			assert doctype == "Product Configuration"
-			wanted = set(filters["opportunity"][1])
-			return [opp for opp in db.configured_opps if opp in wanted]
+			if doctype == "Opportunity":
+				assert filters.get("custom_product_sale") == 1
+				return [name for name in db.marked if name in filters["name"][1]]
+			if doctype == "Product Configuration":
+				return [name for name in db.configured if name in filters["opportunity"][1]]
+			raise AssertionError(doctype)
 
 		frappe.get_all = get_all
 		monkeypatch.setitem(sys.modules, "frappe", frappe)
@@ -375,55 +430,77 @@ def fake_frappe(monkeypatch):
 	return install
 
 
-def test_the_batch_read_applies_the_same_rule_in_two_queries(fake_frappe):
-	db = FakeDB(
-		configured_opps=["OPP-1", "OPP-3"],
-		lines=[("OPP-1", True), ("OPP-2", True), ("OPP-3", True), ("OPP-3", False), ("OPP-4", False)],
-	)
-	fake_frappe(db)
-	assert product_sale.product_sale_names(["OPP-1", "OPP-2", "OPP-3", "OPP-4", "OPP-5", None]) == {
-		"OPP-1",
-		"OPP-2",
-	}
-	assert len(db.queries) == 1  # plus the one get_all: two reads whatever the count
-	query = db.queries[0][0]
-	assert "q.docstatus < 2" in query  # a canceled Quotation says nothing about the deal
-	assert "ifnull(i.custom_source_configuration, '') != ''" in query
-	assert "left join `tabItem` i" in query
-
-
-def test_a_database_failure_reads_as_not_a_product_sale(fake_frappe):
-	fake_frappe(FakeDB(configured_opps=["OPP-1"], sql_raises=True))
+def test_the_reviewed_blocker_a_fountain_deal_quoting_an_estop_add_on_keeps_its_project(fake_frappe):
+	"""The manager review's scenario: the fountain's real quote lives in QuickBooks (never linked),
+	a rep quotes an E-Stop add-on (or presses Quote by mistake). Nobody ticks Product Sale."""
+	fake_frappe(FakeDB(configured=["OPP-1"], lines=[("OPP-1", "QTN-1", ESTOP)]))
 	assert product_sale.product_sale_names(["OPP-1"]) == set()
 	assert product_sale.is_product_opportunity("OPP-1") is False
+	state = product_sale.deal_state("OPP-1")
+	assert state["is_product_sale"] is False
+	assert state["suggested"] is True  # asked, never assumed
 
 
-def test_no_frappe_at_all_reads_as_not_a_product_sale(monkeypatch):
+def test_a_ticked_deal_is_a_product_sale_until_a_linked_quote_says_otherwise(fake_frappe):
+	db = FakeDB(
+		marked=["OPP-1", "OPP-2", "OPP-3"],
+		configured=["OPP-1"],
+		lines=[
+			("OPP-1", "QTN-1", ESTOP),
+			("OPP-1", "QTN-1", FREIGHT),
+			("OPP-2", "QTN-2", ESTOP),
+			("OPP-2", "QTN-3", FOUNTAIN),
+		],
+	)
+	fake_frappe(db)
+	# OPP-3: ticked, nothing linked in ERPNext (its quote may be in QuickBooks): the person's word stands.
+	assert product_sale.product_sale_names(["OPP-1", "OPP-2", "OPP-3", "OPP-4", None]) == {"OPP-1", "OPP-3"}
+	assert len(db.queries) == 1  # plus two get_all calls: three reads whatever the count
+	assert "q.docstatus < 2" in db.queries[0]  # a canceled Quotation says nothing about the deal
+	conflict = product_sale.deal_state("OPP-2")
+	assert conflict == {"marked": True, "is_product_sale": False, "conflict": True, "suggested": False}
+
+
+def test_a_database_failure_reads_as_a_job(fake_frappe):
+	fake_frappe(FakeDB(marked=["OPP-1"], sql_raises=True))
+	assert product_sale.product_sale_names(["OPP-1"]) == set()
+	assert product_sale.is_product_opportunity("OPP-1") is False
+	assert product_sale.deal_state("OPP-1")["is_product_sale"] is False
+
+
+def test_no_frappe_at_all_reads_as_a_job(monkeypatch):
 	monkeypatch.setitem(sys.modules, "frappe", None)  # import frappe raises ImportError
 	assert product_sale.is_product_opportunity("OPP-1") is False
-	assert product_sale.product_sale_sql("o.name") == "0"
+	assert product_sale.deal_state("OPP-1")["is_product_sale"] is False
 	assert product_sale.is_product_opportunity("") is False
 
 
-def test_without_the_marker_column_no_quoted_line_counts_as_configured(fake_frappe):
-	db = FakeDB(configured_opps=[], lines=[("OPP-1", True)], columns=False)
-	fake_frappe(db)
+def test_without_the_marker_column_nothing_is_ticked(fake_frappe):
+	fake_frappe(FakeDB(marked=["OPP-1"], lines=[("OPP-1", "QTN-1", ESTOP)], columns=False))
 	assert product_sale.product_sale_names(["OPP-1"]) == set()
-	assert "custom_source_configuration" not in db.queries[0][0]
 
 
-def test_the_sql_form_states_the_same_rule(fake_frappe):
-	fake_frappe(FakeDB())
-	sql = product_sale.product_sale_sql("`tabOpportunity`.name")
-	assert sql.count("`tabOpportunity`.name") == 3
-	assert (
-		"exists (select 1 from `tabProduct Configuration` pc where pc.opportunity = `tabOpportunity`.name)"
-		in sql
-	)
-	assert "and not exists (" in sql and "and not (ifnull(i.custom_source_configuration, '') != '')" in sql
-	assert sql.count("q.docstatus < 2") == 2
-	fake_frappe(FakeDB(columns=False))
-	assert product_sale.product_sale_sql("o.name") == "0"
+class SavingOpp:
+	def __init__(self, name, marked, new=False):
+		self.name = name
+		self._marked = marked
+		self._new = new
+
+	def is_new(self):
+		return self._new
+
+	def get(self, key):
+		return self._marked if key == product_sale.MARKER else None
+
+
+def test_the_save_reads_its_own_tick_not_the_stored_one(fake_frappe):
+	"""A person can tick Product Sale in the same save that marks the deal Closed Won."""
+	fake_frappe(FakeDB(marked=[], lines=[("OPP-1", "QTN-1", ESTOP)]))
+	assert product_sale.is_product_sale_doc(SavingOpp("OPP-1", 1)) is True
+	assert product_sale.is_product_sale_doc(SavingOpp("OPP-1", 0)) is False
+	assert product_sale.is_product_sale_doc(SavingOpp(None, 1, new=True)) is False
+	fake_frappe(FakeDB(marked=[], lines=[("OPP-1", "QTN-1", ESTOP), ("OPP-1", "QTN-2", FOUNTAIN)]))
+	assert product_sale.is_product_sale_doc(SavingOpp("OPP-1", 1)) is False
 
 
 def test_the_pure_modules_import_no_frappe():
@@ -436,28 +513,52 @@ def test_the_pure_modules_import_no_frappe():
 		assert not any(name.startswith("frappe") for name in tree_imports), path.name
 
 
+def test_the_item_rule_is_the_shared_one():
+	"""One item rule for both PRs: product_orders (#1464), never a copy here."""
+	code = (APP / "crm_enhancements" / "product_sale.py").read_text(encoding="utf-8")
+	assert "from erpnext_enhancements import product_orders" in code
+	assert "product_orders.skips_project(lines)" in code
+	# The code with every docstring and comment gone: no item codes, freight or panel rules of its own.
+	tree = ast.parse(code)
+	for node in ast.walk(tree):
+		body = getattr(node, "body", None)
+		if isinstance(body, list) and body and isinstance(body[0], ast.Expr):
+			if isinstance(getattr(body[0], "value", None), ast.Constant) and isinstance(
+				body[0].value.value, str
+			):
+				body.pop(0)
+	rule = ast.unparse(tree)
+	assert "PDT-" not in rule and "freight" not in rule.lower() and "LINE_PANELS" not in rule
+
+
 # ------------------------------------------------------------------ the stage guard
 
 
 @pytest.mark.parametrize(
-	"new, previous, expected",
+	"new, previous, automatic, expected",
 	[
-		("Quotation", "Proposal/Price Quote", "Proposal/Price Quote"),  # a submitted quote
-		("Converted", "Negotiation/Review", "Negotiation/Review"),  # its Sales Order
-		("Converted", "Closed Won", "Closed Won"),
-		("Open", "Proposal/Price Quote", "Proposal/Price Quote"),  # the quote canceled
-		("Quotation", "Quotation", "Proposal/Price Quote"),  # nothing usable before: ERPNext's meaning
-		("Converted", None, "Closed Won"),
-		("Open", "Zoho Stage", "Qualification"),
-		("Closed", "", "Lost"),
-		("Lost", "Negotiation/Review", None),  # on the list: left alone
-		("Closed Won", "Qualification", None),
-		("Prospecting", "Qualification", None),  # not ERPNext's own: not this guard's business
-		(None, "Qualification", None),
+		("Quotation", "Proposal/Price Quote", True, "Proposal/Price Quote"),  # a submitted quote
+		("Converted", "Negotiation/Review", True, "Negotiation/Review"),  # its Sales Order
+		("Converted", "Closed Won", True, "Closed Won"),
+		("Open", "Proposal/Price Quote", True, "Proposal/Price Quote"),  # the quote canceled
+		("Quotation", "Quotation", True, "Proposal/Price Quote"),  # nothing usable before: ERPNext's meaning
+		("Converted", None, True, "Closed Won"),
+		("Open", "Zoho Stage", True, "Qualification"),
+		("Closed", "", True, "Lost"),
+		# A lost E-Stop add-on quote must not close the deal (declare_enquiry_lost's db_set).
+		("Lost", "Negotiation/Review", True, "Negotiation/Review"),
+		("Lost", "Closed Won", True, "Closed Won"),
+		# A person setting Lost (a save, with its reason) is left alone.
+		("Lost", "Negotiation/Review", False, None),
+		("Lost", "Lost", True, None),
+		("Lost", None, True, None),  # nothing to go back to
+		("Closed Won", "Qualification", True, None),  # on the list and not Lost: left alone
+		("Prospecting", "Qualification", True, None),  # not ERPNext's own: not this guard's business
+		(None, "Qualification", True, None),
 	],
 )
-def test_erpnexts_own_statuses_go_back_to_the_stage_the_deal_had(new, previous, expected):
-	assert guard.restored_status(new, previous, STAGES) == expected
+def test_erpnexts_own_writes_go_back_to_the_stage_the_deal_had(new, previous, automatic, expected):
+	assert guard.restored_status(new, previous, STAGES, automatic=automatic) == expected
 
 
 def test_a_site_that_offers_the_status_keeps_it():
@@ -470,12 +571,17 @@ def test_with_no_fallback_stage_the_first_stage_is_used():
 
 
 class FakeOpp:
-	def __init__(self, status, before, options=None):
+	doctype = "Opportunity"
+	name = "OPP-1"
+
+	def __init__(self, status, before, options=None, action=None):
 		options = "\n".join(STAGES) if options is None else options
 		self.status = status
 		self._before = {"status": before} if before is not None else None
 		self.meta = types.SimpleNamespace(get_field=lambda name: types.SimpleNamespace(options=options))
 		self.writes = []
+		if action:
+			self._action = action  # what every real save sets; ERPNext's db_set leaves it unset
 
 	def get(self, key):
 		return getattr(self, key, None)
@@ -494,8 +600,18 @@ def test_the_hook_writes_the_stage_back_without_moving_modified():
 	assert opp.writes == [("status", "Negotiation/Review", False)]
 
 
+def test_the_hook_tells_erpnexts_db_set_from_a_persons_save():
+	automatic = FakeOpp("Lost", "Negotiation/Review")
+	guard.keep_stage_on_list(automatic)
+	assert automatic.writes == [("status", "Negotiation/Review", False)]
+
+	person = FakeOpp("Lost", "Negotiation/Review", action="save")
+	guard.keep_stage_on_list(person)
+	assert person.writes == []
+
+
 def test_the_hook_leaves_an_ordinary_save_alone_and_never_raises():
-	opp = FakeOpp("Closed Won", "Negotiation/Review")
+	opp = FakeOpp("Closed Won", "Negotiation/Review", action="save")
 	guard.keep_stage_on_list(opp)
 	assert opp.writes == []
 
@@ -503,6 +619,38 @@ def test_the_hook_leaves_an_ordinary_save_alone_and_never_raises():
 	broken.meta = None  # meta.get_field raises: logged (or not), never raised
 	guard.keep_stage_on_list(broken)
 	assert broken.writes == []
+
+
+def test_erpnexts_label_comment_goes_with_the_status_it_announced(monkeypatch):
+	deleted, asked = [], []
+	frappe = types.ModuleType("frappe")
+	frappe._ = lambda text: text
+
+	def get_all(doctype, filters=None, pluck=None, order_by=None, limit=None, **kwargs):
+		asked.append((doctype, filters, order_by, limit))
+		return ["CMT-9"]
+
+	frappe.get_all = get_all
+	frappe.db = types.SimpleNamespace(delete=lambda doctype, filters: deleted.append((doctype, filters)))
+	frappe.log_error = lambda **kwargs: None
+	frappe.get_traceback = lambda: ""
+	utils = types.ModuleType("frappe.utils")
+	utils.now_datetime = lambda: "NOW"
+	utils.add_to_date = lambda when, seconds=0: f"{when}{seconds}"
+	monkeypatch.setitem(sys.modules, "frappe", frappe)
+	monkeypatch.setitem(sys.modules, "frappe.utils", utils)
+
+	guard.keep_stage_on_list(FakeOpp("Quotation", "Proposal/Price Quote"))
+	assert deleted == [("Comment", {"name": "CMT-9"})]
+	doctype, filters, order_by, limit = asked[0]
+	assert doctype == "Comment" and order_by == "creation desc" and limit == 1
+	assert filters["comment_type"] == "Label" and filters["reference_name"] == "OPP-1"
+	assert filters["content"] == ("in", ["Quotation"])
+	assert filters["creation"] == (">=", f"NOW-{guard.LABEL_WINDOW_SECONDS}")
+
+	deleted.clear()
+	guard.keep_stage_on_list(FakeOpp("Closed Won", "Qualification", action="save"))
+	assert deleted == []  # nothing put back, nothing deleted
 
 
 # ------------------------------------------------------------------ wiring
@@ -535,15 +683,18 @@ def test_a_product_sale_skips_every_project_step():
 	assert "if _is_product_sale_deal ( doc ) :" in stamp[: stamp.index("def ", 10)]
 	helper = handoff[handoff.index("def _is_product_sale_deal") :]
 	helper = helper[: helper.index("def ", 10)]
-	# A before_save hook on every deal: guarded, like the Service Call one beside it.
-	assert "try :" in helper and "except Exception :" in helper
-	assert "product_sale . is_product_opportunity (" in helper
+	# The deal's own tick as this save holds it (is_product_sale_doc never raises).
+	assert "product_sale . is_product_sale_doc ( doc )" in helper
+	rule = _code(APP / "crm_enhancements" / "product_sale.py")
+	doc_rule = rule[rule.index("def is_product_sale_doc") :]
+	doc_rule = doc_rule[: doc_rule.index("def ", 10)]
+	assert "try :" in doc_rule and "except Exception :" in doc_rule
 	state = handoff[handoff.index("def handoff_state") :]
-	assert state[: state.index("def ", 10)].count('"is_product_sale" : is_product') == 2
+	assert state[: state.index("def ", 10)].count("** product_keys") == 2
 
 	prompt = _code(APP / "crm_enhancements" / "project_prompt.py")
 	body = prompt[prompt.index("def prompt_create_project_on_won") :]
-	assert "product_sale . is_product_opportunity (" in body[: body.index("def ", 10)]
+	assert "product_sale . is_product_sale_doc ( doc )" in body[: body.index("def ", 10)]
 
 	api = _code(APP / "crm_enhancements" / "api.py")
 	enqueue = api[api.index("def enqueue_project_creation") :]
@@ -553,21 +704,80 @@ def test_a_product_sale_skips_every_project_step():
 	assert '"status" : "product_sale"' in enqueue
 
 
+def test_create_project_anyway_is_always_honored():
+	"""The escape: create_anyway skips the product-sale answer and clears the tick, in the same
+	request as the queueing, so a refusal further down (no template, a bad address) keeps the tick."""
+	api = _code(APP / "crm_enhancements" / "api.py")
+	enqueue = api[api.index("def enqueue_project_creation") :]
+	enqueue = enqueue[: enqueue.index("def ", 10)]
+	assert "create_anyway = None" in enqueue
+	assert "if not anyway and product_sale . is_product_opportunity ( opportunity_name ) :" in enqueue
+	clear = enqueue.index("_clear_product_sale ( opportunity_name )")
+	assert (
+		enqueue.index("Please select a Project Template.") < clear < enqueue.index("progress . mark_queued")
+	)
+	clearer = api[api.index("def _clear_product_sale") :]
+	clearer = clearer[: clearer.index("def ", 10)]
+	assert (
+		'frappe . db . set_value ( "Opportunity" , opportunity_name , product_sale . MARKER , 0 )' in clearer
+	)
+
+
+def test_the_tick_is_a_persons_with_write_permission():
+	handoff = _code(APP / "crm_enhancements" / "handoff.py")
+	at = handoff.index("def mark_product_sale")
+	assert handoff[max(0, at - 60) : at].rstrip().endswith('@ frappe . whitelist ( methods = [ "POST" ] )')
+	mark = handoff[at:]
+	mark = mark[: mark.index("def ", 10)]
+	assert 'frappe . has_permission ( "Opportunity" , "write" , doc = opportunity )' in mark
+	# Ticking a won deal with no project lifts the hand-off deadline the escalation reads.
+	assert '"custom_handoff_gate_applies" : 0' in mark and '"custom_handoff_due_by" : None' in mark
+	# The Products value stream follows the person's tick, never a quote.
+	assert "if value :" in mark and "_tag_products_stream ( opportunity )" in mark
+	quoting = _code(APP / "product_configurator" / "quoting.py")
+	assert "_tag_products_stream" not in quoting
+	create = quoting[quoting.index("def create_quotation") :]
+	create = create[: create.index("def _attach_pricing_summary")]
+	# A quote writes nothing on the deal: no tick, no stream, no stage.
+	assert 'set_value ( "Opportunity"' not in create and "db_insert" not in create
+	assert "mark_product_sale" not in create
+	assert '"suggest_product_sale" : suggest' in quoting
+
+
+def test_the_marker_is_a_visible_field_on_the_hand_off_tab():
+	rows = json.loads((APP / "fixtures" / "custom_field.json").read_text(encoding="utf-8"))
+	(field,) = [row for row in rows if row["name"] == "Opportunity-custom_product_sale"]
+	assert field["dt"] == "Opportunity" and field["fieldname"] == "custom_product_sale"
+	assert field["fieldtype"] == "Check" and field["default"] == "0"
+	assert field["description"].startswith("Tick when the deal sells only standard products")
+	assert not field["read_only"] and not field["hidden"]
+	assert field["insert_after"] == "custom_handoff_last_reminded_on"  # the Hand-Off Process tab
+
+
 def test_the_backlogs_leave_product_sales_out():
 	assert "product_sale_names (" in _code(APP / "status_alerts.py")
 	assert "product_sale_names (" in _code(APP / "api" / "sales_dashboard.py")
-	assert "product_sale_sql (" in _code(APP / "kpi_dashboards" / "snapshots.py")
+	assert "product_sale_names ( waiting )" in _code(APP / "kpi_dashboards" / "snapshots.py")
 
 
-def test_the_client_shows_a_quiet_line_not_a_project_step():
+def test_the_client_asks_and_keeps_the_escape():
 	prompt = (APP / "public" / "js" / "crm_enhancements" / "create_project_prompt.js").read_text(
 		encoding="utf-8"
 	)
-	assert prompt.count("state.is_product_sale") == 2
+	assert "state.is_product_sale && !opts.create_anyway" in prompt
+	assert "create_anyway: opts.create_anyway ? 1 : 0," in prompt
 	assert 'result.status === "product_sale"' in prompt
+	assert "if (state && state.product_sale_suggested) ask_product_sale(next_step);" in prompt
 	tab = (APP / "public" / "js" / "crm_enhancements" / "opportunity_handoff.js").read_text(encoding="utf-8")
 	assert "product_sale: !!s.is_product_sale," in tab
-	assert "if (!f.won || (f.product_sale && !f.project)) return by_step;" in tab
+	assert "product_suggested: !!s.product_sale_suggested," in tab
+	assert 'button("anyway", __("Create Project Anyway"), "default")' in tab
+	assert "anyway: create_project_anyway," in tab and "mark_product: mark_product_sale," in tab
+	assert "open_create_project_dialog(frm.doc.name, { frm: frm, create_anyway: true })" in tab
+	form = (
+		APP / "product_configurator" / "doctype" / "product_configuration" / "product_configuration.js"
+	).read_text(encoding="utf-8")
+	assert "out.suggest_product_sale" in form and "mark_product_sale" in form
 
 
 def test_the_quote_action_is_on_the_desk_form_and_the_guided_menu():
@@ -613,7 +823,6 @@ def test_quoting_keeps_the_module_rules():
 	# The extras run in savepoints and never take the quote down with them.
 	assert 'frappe . db . savepoint ( "pc_quote_attach" )' in quoting
 	assert 'frappe . db . rollback ( save_point = "pc_quote_attach" )' in quoting
-	assert 'frappe . db . savepoint ( "pc_quote_tag" )' in quoting
 	# A swallowed refusal must not reach the browser as a stray red modal.
 	assert "with erp_integration . muted_messages ( ) :" in quoting
 

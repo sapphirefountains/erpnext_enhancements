@@ -151,7 +151,7 @@ one Workstation at the product's labor rate, `with_operations = 1`,
 `time_in_mins = module hours × 60` — then remove labor from the quote or
 reconcile deliberately.
 
-**Stock (v1.824.0).** The configured Item is a stock item (set explicitly, not
+**Stock (v1.825.0).** The configured Item is a stock item (set explicitly, not
 left to the site's default) with a submitted default BOM, so built-ahead stock
 and Work Orders can use it. It also gets an Item Default warehouse for the
 company: Manufacturing Settings' Default Finished Goods Warehouse, else Stock
@@ -164,7 +164,7 @@ it and reported where it does not; `Item.default_bom` is re-asserted on every ru
 ERPNext locks `has_serial_no` once stock moves, so the Work Order step must turn
 it on before the first unit is built.
 
-## Quote to order (v1.824.0)
+## Quote to order (v1.825.0)
 
 Decision 2026-11-18: **the Sales Order is the record** for a product sale, and
 there is no project per unit. The flow:
@@ -183,9 +183,11 @@ there is no project per unit. The flow:
    Pricing Summary is attached as a private PDF. The configuration and the
    Quotation link to each other (`Product Configuration.quotation`, and
    `custom_product_configuration` on the Quotation line, which Make Sales Order
-   copies to the Sales Order line). The deal gets the Products value stream.
-   Pressing it again returns the same Quotation while it is live, and says so if
-   the configuration changed since.
+   copies to the Sales Order line). Pressing it again returns the same Quotation
+   while it is live, and says so if the configuration changed since. When
+   everything quoted on the deal in ERPNext is a product, the form then asks
+   whether the deal is a product sale; the quote itself writes nothing on the
+   deal.
 3. **Quotation → Sales Order.** ERPNext's own Make Sales Order. The line already
    carries its warehouse.
 
@@ -194,17 +196,26 @@ page and the Triton tool can call them: `start_configuration(opportunity,
 product, customer, selections)` takes the options as
 `{option_key: choice_code | qty}`.
 
-**No project for a product sale** (`crm_enhancements/product_sale.py`): a deal
-whose live quotes are all configured products (or that has a configuration and
-no quote yet) gets no hand-off SLA, no "Create project now?" and no Create
-Project button, and stays out of the won-without-project reminder and backlog
-counts. One line of anything else on its quotes keeps the project.
+**No project for a product sale** (`crm_enhancements/product_sale.py`): only a
+deal a **person** has ticked **Product Sale (No Project)** (on the Hand-Off
+Process tab), with nothing else on its linked quotes. A configured quote never
+decides it on its own: QuickBooks quotes never link to the deal, so a fountain
+deal's real quote can be invisible while its E-Stop add-on quote is linked. The
+configurator suggests the tick, and the Closed Won prompt, the Hand-Off tab and
+Create Quotation ask. A ticked deal gets no hand-off SLA, no "Create project
+now?" and stays out of the won-without-project reminder and backlog counts; its
+one button is **Create Project Anyway**, which unticks it and creates the
+project. A ticked deal whose linked quote carries anything else (a fountain, a
+control panel, labor) is a job. What counts as a product item is
+`product_orders`'s rule, shared with the Products tab.
 
 **ERPNext's Opportunity statuses** (`crm_enhancements/opportunity_stage_guard.py`):
 submitting a linked Quotation makes ERPNext write the Opportunity's status as
-`Quotation`, and its Sales Order as `Converted`. Neither is a stage on this site,
-and a status off the list freezes the record; the guard puts the previous stage
-back. Moving the deal to Closed Won stays a person's call.
+`Quotation`, its Sales Order as `Converted`, and declaring the Quotation lost as
+`Lost`. The first two are not stages on this site (a status off the list freezes
+the record), and the last would close a whole job over a lost add-on quote. The
+guard puts the previous stage back and removes ERPNext's "Label" comment for it.
+Moving the deal to Closed Won or Lost stays a person's call.
 
 **Permissions.** Starting a configuration and quoting it need the Product
 Engineer role (create/write on Product Configuration), plus create on Quotation,
@@ -232,7 +243,7 @@ endpoints/buttons that create ERPNext masters. Server guards:
 4. Configure away: **Product Configuration → New**, pick PDT-0040, tick/adjust
    options, Save → **Create → Item + BOM + Selling Price**; print the Build
    Sheet / QC Checklist / Pricing Summary from the View menu.
-5. To sell one (v1.824.0): **Opportunity → Quote STILLWATER E-Stop**, adjust the
+5. To sell one (v1.825.0): **Opportunity → Quote STILLWATER E-Stop**, adjust the
    options, Save → **Create Quotation**. Set **Manufacturing Settings → Default
    Finished Goods Warehouse** if finished units should not live in
    `Finished Goods - <abbr>`.

@@ -164,7 +164,7 @@ def get_handoff_backlog():
 
 	Historical deals (pre-ERPNext, untouched for 90 days — ``historical.py``,
 	v1.629.0) are left out, as they are from the ``handoff_backlog`` KPI. So are
-	product sales (v1.824.0, ``crm_enhancements/product_sale.py``), which get no
+	product sales (v1.825.0, ``crm_enhancements/product_sale.py``), which get no
 	project by design.
 	"""
 	if not frappe.db.has_column("Opportunity", "custom_created_project"):
