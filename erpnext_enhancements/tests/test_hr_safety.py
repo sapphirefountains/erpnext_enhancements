@@ -43,6 +43,7 @@ SUMMARY_300A = MODULE / "report/osha_300a_summary/osha_300a_summary.py"
 PRIVACY_LIST = MODULE / "report/osha_privacy_case_list/osha_privacy_case_list.py"
 PRIVACY_JSON = MODULE / "report/osha_privacy_case_list/osha_privacy_case_list.json"
 LOG_JSON = MODULE / "report/osha_300_log/osha_300_log.json"
+SUMMARY_JSON = MODULE / "report/osha_300a_summary/osha_300a_summary.json"
 PERMISSIONS = MODULE / "permissions.py"
 HOOKS = APP / "hooks.py"
 WIZARD = APP / "sapphire_maintenance/page/visit_wizard/visit_wizard.js"
@@ -253,12 +254,21 @@ class TestPrivacyCasesCarryNoNameOnThePostedLog(unittest.TestCase):
         block = body[at : body.index("def _cases")]
         self.assertNotIn("doc.employee_name", block)
 
-    def test_the_privacy_list_is_role_gated_more_tightly_than_the_log(self):
-        """It maps case numbers back to names."""
+    def test_the_privacy_list_is_never_wider_than_the_log(self):
+        """It maps case numbers back to names. Since v1.826.8 both carry the same
+        two roles; the list must never carry one the log does not."""
         private = {r["role"] for r in json.loads(_text(PRIVACY_JSON))["roles"]}
         posted = {r["role"] for r in json.loads(_text(LOG_JSON))["roles"]}
-        self.assertTrue(private < posted, "the privacy list must be strictly narrower")
+        self.assertLessEqual(private, posted)
         self.assertNotIn("HR User", private)
+
+    def test_the_osha_reports_are_for_hr_manager_and_system_manager(self):
+        """v1.826.8: the 300 log, the 300A summary and the privacy list read every
+        incident without row scoping, so their role lists are the whole gate."""
+        for path in (LOG_JSON, SUMMARY_JSON, PRIVACY_JSON):
+            with self.subTest(report=path.parent.name):
+                roles = {r["role"] for r in json.loads(_text(path))["roles"]}
+                self.assertEqual(roles, {"System Manager", "HR Manager"})
 
     def test_the_privacy_list_does_not_carry_the_injury_detail(self):
         """The point of a privacy case is that the NATURE of it stays off the list
@@ -318,6 +328,17 @@ class TestACorrectiveActionBecomesRealWork(unittest.TestCase):
         body = _fn("raise_action", SAFETY)
         self.assertIn("Training Assignment", body)
         self.assertIn("_raise_task", body)
+
+    def test_raising_one_is_for_hr_or_the_named_persons_supervisor(self):
+        """v1.826.8: write on the incident (HR Manager, System Manager) or the
+        `reports_to` arm of the scoping hook -- checked before anything is created."""
+        body = _fn("raise_action", SAFETY)
+        self.assertIn("_may_raise(doc, me)", body)
+        self.assertIn("PermissionError", body)
+        self.assertLess(body.index("_may_raise"), body.index("_raise_task"))
+        check = _fn("_may_raise", SAFETY)
+        self.assertIn('has_permission("write")', check)
+        self.assertIn('"reports_to"', check)
 
     def test_the_same_action_cannot_be_raised_twice(self):
         """Raised three times is three people doing it once between them."""

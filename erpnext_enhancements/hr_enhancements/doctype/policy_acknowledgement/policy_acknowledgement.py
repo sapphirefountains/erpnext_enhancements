@@ -30,6 +30,17 @@ SIGNED = "Signed"
 DECLINED = "Declined"
 
 
+#: Roles whose Data Import keeps the statuses in the file (historical records).
+IMPORT_ROLES = ("HR Manager", "System Manager")
+
+
+def _trusted_import():
+	"""True during a Data Import run by HR Manager or System Manager."""
+	if not getattr(frappe.flags, "in_import", None):
+		return False
+	return bool(set(IMPORT_ROLES) & set(frappe.get_roles()))
+
+
 class PolicyAcknowledgement(Document):
 	def validate(self):
 		self._resolve_user()
@@ -48,10 +59,22 @@ class PolicyAcknowledgement(Document):
 		signing IS a write. Without this, anybody could POST their own row to Signed
 		without ever seeing the document, which is precisely the thing the record
 		exists to prove they did.
+
+		A NEW row that did not come through `policies.request_acknowledgement`
+		starts as Requested with no signature and no decline, whatever the insert
+		carried.
 		"""
-		if self.flags.get("policy_transition") or self.is_new():
+		if self.flags.get("policy_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		# A Data Import by HR Manager or System Manager keeps the file's statuses (paper-signed rows).
+		if _trusted_import():
+			return
+		if self.is_new():
+			self.status = REQUESTED
+			for field in ("signed_name", "signature", "signed_on", "signed_from_ip", "declined_reason"):
+				self.set(field, None)
 			return
 		before = self.get_doc_before_save()
 		if before and before.status != self.status:

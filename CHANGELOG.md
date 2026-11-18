@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469, #1477), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469, #1477, #1474), and the notes below are theirs, grouped by kind.
 
 From #1468: Hardening of the inbound webhook and gateway checks. Nothing changes for the callers that
 production uses today: the Triton gateway still authenticates with its own API key, and the
@@ -239,6 +239,47 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
   `infra/variables.tf` and its README row, two examples in `modules/cloudsql-instance/README.md`, and two
   sample values in `scripts/test_capture_scrub.js`. The scanner also reads a hyphenated Terraform
   reference such as `module.kms.keys.key-regional.id` as a reference rather than a value.
+- **HR records: HR Manager and System Manager see every record; everyone else is scoped.**
+  Hardening, by the owner's decision of 2026-11-18. `HR User` is held by nearly every staff
+  account, so it now counts as an ordinary staff role in the HR Enhancements module:
+  - `hr_enhancements/permissions.py`: `UNSCOPED_ROLES` is System Manager and HR Manager. A
+    holder of `HR User` goes through the same row scoping as everyone else: their own
+    records, and their direct reports' where the hook for that doctype already has that arm
+    (time off, onboarding, credentials, work restrictions, incidents). Tier Review stays own
+    and named reviewer; Policy Acknowledgement stays own.
+  - The `HR User` DocPerm rows on Safety Incident, Work Restriction, Tier Review, Employee
+    Credential, Time Off Request, Onboarding Checklist and Policy Acknowledgement now grant
+    exactly what the `Employee` row on the same doctype grants, no more. Filing credentials
+    and work restrictions, editing incidents and creating acknowledgements by hand is HR
+    Manager's (the module's endpoints for acknowledgements and incidents are unchanged).
+    Each JSON's `modified` is bumped so `bench migrate` re-imports the rows.
+  - The `OSHA 300 Log` and `OSHA 300A Summary` reports are for System Manager and HR Manager
+    only, the same as `OSHA Privacy Case List`. They read incidents without row scoping, so
+    the role list is their whole gate.
+  - `safety.raise_action` now accepts write on the incident (HR Manager, System Manager) or
+    the supervisor (`reports_to`) of the person the incident names, and refuses anyone else.
+    It used to check write only, which `HR User` no longer grants.
+  - `permissions.incident_has_permission` allows the create check on a new incident.
+    `reported_by` is stamped in `before_insert`, after Frappe's create check, so a near miss
+    filed from the Desk by someone without an unscoped role was refused. Who may create is
+    still bounded by the DocPerm.
+- **A new Time Off Request, Tier Review or Policy Acknowledgement starts at its first status.**
+  A record created outside the module's own buttons starts as `Draft` / `Draft` /
+  `Requested`, with its decision, approval, signature and applied fields empty; a Desk
+  duplicate of a decided record starts the same way. A new time-off request takes its
+  approver from `reports_to`. A new tier review has no reviewer until `send_to_reviewer`
+  names one.
+  - **A tier review created by hand goes through the Start button's checks.** The person,
+    HR, or somebody senior on that ladder may start it; its from and to rungs and its
+    requirement lines are read from the ladder (`_ladder_snapshot`), and it is refused when
+    the target rung lists no requirements.
+  - **Imports of historical records keep their statuses.** A Data Import run by HR Manager or
+    System Manager keeps the status and decision columns in the file, so approved leave and
+    paper-signed acknowledgements from before the module can be loaded. Migrations, installs
+    and patches are exempt as before.
+- **`tier_review.apply_promotion` requires an eligible reviewer.** Applying is for HR Manager
+  or System Manager, or the named reviewer while they are in `progression.eligible_reviewers`
+  for that person, the same predicate `send_to_reviewer` uses.
 
 ### Added
 
