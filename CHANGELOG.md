@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469, #1477, #1474), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469, #1477, #1474, #1471), and the notes below are theirs, grouped by kind.
 
 From #1468: Hardening of the inbound webhook and gateway checks. Nothing changes for the callers that
 production uses today: the Triton gateway still authenticates with its own API key, and the
@@ -280,6 +280,39 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
 - **`tier_review.apply_promotion` requires an eligible reviewer.** Applying is for HR Manager
   or System Manager, or the named reviewer while they are in `progression.eligible_reviewers`
   for that person, the same predicate `send_to_reviewer` uses.
+- **OAuth client registration is limited to allow-listed redirect addresses, at a limited rate.**
+  Nikolas, 2026-11-18: dynamic client registration (RFC 7591) stays on, because Claude and Google's
+  connector both register themselves before they connect to this site's MCP server, but only for
+  clients whose redirect addresses are on an allow-list. A new `before_request` hook,
+  `oauth_registration.guard_registration`, judges every POST to a method path
+  (`/api/method/...`, `/api/v1/method/...`, `/api/v2/method/...`) or `cmd` whose dotted name ends
+  in `register_client`. That covers frappe's `frappe.integrations.oauth2.register_client`, Frappe
+  Assistant Core's `frappe_assistant_core.api.oauth_registration.register_client`, and any second
+  dotted name for either, the same reasoning as `fieldlevel_read.seal_wrapped_originals`.
+  - **Every redirect URI must match.** Built in: `https://claude.ai/api/mcp/auth_callback` and
+    `https://claude.com/api/mcp/auth_callback` (exact path), and any path on
+    `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com` and
+    `oauth-redirect-test.googleusercontent.com`. A URI must be https with exactly that host (letter
+    case aside), and is refused with a port, a user name, a trailing dot, a fragment, a dot segment, a
+    percent-encoded dot, slash or backslash, or a character outside RFC 3986's set, so an
+    internationalized host counts only in its `xn--` form. One entry off the list refuses the whole
+    registration. Claude's single callback and Google's six addresses in one request both pass
+    unchanged.
+  - **Site config.** `oauth_registration_redirect_allowlist` adds entries (`host` or
+    `host/path-prefix`; a loopback client only when `http://localhost` or `http://127.0.0.1` is listed
+    explicitly, with any port). `oauth_registration_guard: 0` turns the hook off.
+  - **Rate.** Two counters an hour per client address, keyed on `frappe.local.request_ip` like
+    every other IP-keyed limit here (see `utils/client_ip.py`). Ten refused requests refuse that
+    address for the rest of the window. Accepted registrations have their own limit of 60,
+    because the allow-listed clients register from their vendors' servers and every staff member
+    connecting shares those addresses. A counter's expiry is set on its first hit and set again
+    if the counter is ever found without one.
+  - **How it refuses.** frappe v16's `application` sends a raised werkzeug `HTTPException`'s own
+    response, so the hook ends the request with a JSON body in RFC 7591's error shape: 400
+    `invalid_redirect_uri` naming the URI, 400 `invalid_client_metadata` when the body is not a JSON
+    object with a non-empty list, or 429. A matching request fails closed: an unreadable body or any
+    unexpected error refuses it. Every other request returns after a method check and a string test,
+    and nothing on that path raises.
 
 ### Added
 
@@ -383,6 +416,10 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
   backfill's dry run, write path, cursor, limit clamp, role check, POST-only decorator and absence
   from the scheduler; the configuration check per setting, its daily throttle, its silence on a
   clean site, its no-recipient and failure paths, and its daily schedule.
+- `tests/test_oauth_registration.py` (bench-free, own CI step): allowed and refused URIs, mixed
+  lists, unusual forms, site-config entries, the path and `cmd` matcher, the rate, and the hook
+  (other requests untouched, refusals with their status and body, fail-closed cases, the off
+  switch, and the response built by the real werkzeug when it is installed).
 
 ## [1.824.0] - 2026-11-18
 

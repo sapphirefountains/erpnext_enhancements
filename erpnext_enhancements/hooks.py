@@ -3442,6 +3442,15 @@ before_request = [
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).
 	"erpnext_enhancements.monkeypatches.ensure_applied",
+	# OAuth client registration (v1.826.9, Nikolas 2026-11-18): dynamic registration stays on, but a
+	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
+	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
+	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
+	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
+	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
+	# and a string test and never raises. See oauth_registration.py.
+	"erpnext_enhancements.oauth_registration.guard_registration",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled
