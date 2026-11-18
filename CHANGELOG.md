@@ -102,7 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Closed Won: no won stamp, no hand-off, stuck in the open pipeline. `Quotation` and `Converted` are
   not stages on this site at all, and a lost E-Stop add-on quote would have closed a whole fountain
   deal. None of it happened before because every Quotation on prod was a QuickBooks draft. The
-  product-sale rule reads a deal's quotes by either link. An earlier draft of this release undid
+  product-sale rule reads a deal's quotes by either link, and so does the Products tab's Opportunities
+  section (`project_dashboard._quote_deal_select`, guarded for a site the field has not reached yet),
+  which read only `Quotation.opportunity` and would never have shown a deal quoted through the
+  configurator. An earlier draft of this release undid
   ERPNext's writes with an `on_change` guard instead; the guard could not undo the ordered-quote
   refusal, and with the custom link there is nothing left for it to do, so it is gone.
 - **A Sales Order for a configured product could not be saved.** The configured Item is a stock item,
