@@ -50,12 +50,30 @@
  *                           fetched project_data: headline number cards + CSS-bar
  *                           breakdowns (status / type / completion). It is what the
  *                           "Dashboard" tab used to show; that tab is gone.
- * The five tabs are always visible (Mock B, v1.781.0; "View More" is retired). What a
+ *   - Products            — v1.824.0 (Nikolas, 2026-11-18: a product sale is a Sales
+ *                           Order, not a Project). Its own answer, get_products_data,
+ *                           fetched the first time the tab is shown and again on Refresh
+ *                           and on a return once it has been: the order board (a strip of
+ *                           five stage counts, Ordered / Paid, Building, Testing, Ready,
+ *                           Delivered, each a filter, over the orders grouped by stage,
+ *                           with the promise date and Late), the sales pipeline (open
+ *                           product quotations, open Products-stream opportunities, the
+ *                           win rate), stock and shortages (finished units on hand,
+ *                           components out or under their reorder level) and the control
+ *                           panel projects (project type Products). The product-line chips
+ *                           (E-Stops, Control Panels, Other) narrow every section. Each
+ *                           section draws its own empty, no-access or error panel: prod had
+ *                           no product Sales Order when the tab shipped. The rules (what is a
+ *                           product, an order's stage) are product_orders.py's, not this
+ *                           file's.
+ * The six tabs are always visible (Mock B, v1.781.0; "View More" is retired). What a
  * person chooses is kept per browser in localStorage, never in frappe user_settings
  * (Redis only, flushed on every deploy): the tab (chb_projects_dashboard_tab_v1), each
  * tab's sort (chb_projects_dashboard_sort_v1), the stream chips, Ranked only and Group by
- * stream (chb_projects_dashboard_overview_v1), plus the columns and widths the shared
- * ColumnSelector / ColumnResizer already keep. The pressed tile is not kept.
+ * stream (chb_projects_dashboard_overview_v1), the product-line chips
+ * (chb_projects_dashboard_products_v1), plus the columns and widths the shared
+ * ColumnSelector / ColumnResizer already keep. The pressed tile and the pressed stage are
+ * not kept.
  * The band — one slim row since v1.785.0: title, search, Refresh, "+" — carries one "+"
  * button whose menu holds "New Project" / "New Master Project". The list tabs' Columns
  * control is an icon button (tooltip "Columns") with "Reset widths" an item in its menu;
@@ -121,7 +139,8 @@
     const TAB_KEY = "chb_projects_dashboard_tab_v1";
     const SORT_KEY = "chb_projects_dashboard_sort_v1";
     const OVERVIEW_KEY = "chb_projects_dashboard_overview_v1";
-    const TAB_ROUTES = ["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"];
+    const PRODUCTS_KEY = "chb_projects_dashboard_products_v1";
+    const TAB_ROUTES = ["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary", "products"];
 
     function read_saved(key) {
         try {
@@ -503,9 +522,11 @@
     }
 
     // The loading, no-access or error panel, remembered so render_current_tab can draw it
-    // again while nothing has loaded.
+    // again while nothing has loaded. Not drawn on the Products tab, which shows its own
+    // answer: a failed project read must not cover the product orders.
     function show_panel(kind, opts) {
         panel = { kind, opts };
+        if (current_tab === "products") return;
         sf.state.render(content_el(), kind, opts);
     }
 
@@ -536,6 +557,9 @@
     // one draws.
     async function fetch_data() {
         const current = ticket(container);
+        // The Products tab's answer comes on its own ticket, alongside: on screen, or asked for
+        // before (so a Refresh or a return never leaves it stale behind another tab).
+        if (current_tab === "products" || products_asked) fetch_products();
         const $refresh = $root.find('#btn-refresh').prop('disabled', true);
         try {
             const [projectsRes, priorityRes, statusRes] = await Promise.all([
@@ -2009,6 +2033,563 @@
         }
     }
 
+    // ----- PRODUCTS TAB (v1.824.0) -----
+    //
+    // Nikolas, 2026-11-18: a product sale is a Sales Order, not a Project; the Stillwater
+    // E-Stop first, control panels and the rest after. Four sections, for Logan, James, Brian
+    // and him: the order board, the sales pipeline, stock and shortages, and the control panel
+    // projects. One answer, get_products_data, on its own ticket (products_turns), so a project
+    // refresh landing in between never retires it and it never retires the projects. What is a
+    // product and which stage an order is in are decided on the server
+    // (erpnext_enhancements/product_orders.py); this block only draws them.
+
+    // The product lines, in chip order: product_orders.LINES. And the board's stages, left to
+    // right: product_orders.STAGES (their words come with the answer).
+    const PRODUCT_LINES = ["E-Stops", "Control Panels", "Other"];
+    const PRODUCT_STAGES = ["ordered", "building", "testing", "ready", "delivered"];
+    const STAGE_WORDS = { ordered: "Ordered / Paid", building: "Building", testing: "Testing", ready: "Ready", delivered: "Delivered" };
+    // The group row's edge per stage, from the pillar tones the Overview's group rows use.
+    const STAGE_PILLAR = { ordered: "neutral", building: "build", testing: "rent", ready: "service", delivered: "neutral" };
+    const PAID_WORDS = {
+        paid: [__("Paid"), "good"],
+        part_paid: [__("Part paid"), "warn"],
+        unpaid: [__("Unpaid"), "warn"],
+        not_invoiced: [__("Not invoiced"), "neutral"],
+    };
+    const COMPONENT_WORDS = { out: [__("Out of stock"), "danger"], low: [__("Below reorder"), "warn"] };
+
+    let products = null;                         // the last answer drawn
+    let products_panel = { kind: "loading" };    // what stands while there is none
+    let products_asked = false;
+    const products_turns = {};                   // the Products answer's own ticket holder
+    let product_stage = "";                      // the pressed stage: session only
+    const product_view = { lines: [] };          // the pressed line chips: kept per browser
+
+    (function load_product_view() {
+        const saved = read_saved(PRODUCTS_KEY);
+        const picked = saved && typeof saved === "object" && Array.isArray(saved.lines) ? saved.lines : [];
+        product_view.lines = PRODUCT_LINES.filter((line) => picked.includes(line));
+    })();
+
+    // A row is shown when no line chip is pressed, or one of its lines is. A row that names no
+    // line (an Opportunity with no item) shows under every chip when `unset_shows` says so.
+    function in_picked_lines(lines, unset_shows) {
+        if (!product_view.lines.length) return true;
+        if (!Array.isArray(lines) || !lines.length) return !!unset_shows;
+        return lines.some((line) => product_view.lines.includes(line));
+    }
+
+    // The answer's shape: an object with its sections. Anything else (a list, a null, an error
+    // string) is a failed read.
+    function is_products_answer(message) {
+        return Boolean(message && typeof message === "object" && !Array.isArray(message) && message.orders && typeof message.orders === "object");
+    }
+
+    function products_failed(title) {
+        // A refresh that fails keeps the last answer on screen and says so.
+        if (products) {
+            frappe.show_alert({ message: title, indicator: "red" });
+            return;
+        }
+        products_panel = { kind: "error", opts: { title, on_action: fetch_products } };
+    }
+
+    async function fetch_products() {
+        products_asked = true;
+        const current = ticket(products_turns);
+        if (!products) {
+            // Opening straight onto a remembered Products tab: show_panel leaves this tab alone,
+            // so the loading panel is drawn here.
+            products_panel = { kind: "loading" };
+            if (current_tab === "products") sf.state.render(content_el(), "loading");
+        }
+        try {
+            const res = await api_call('get_products_data');
+            if (!current()) return;
+            const message = res && res.message;
+            if (is_products_answer(message)) {
+                products = message;
+                products_panel = null;
+            } else if (is_denial(message)) {
+                products = null;
+                products_panel = { kind: "no-access" };
+            } else {
+                const title = __("Could not load the products.");
+                products_failed(title);
+            }
+        } catch (err) {
+            if (!current()) return;
+            if (err && err.status === 403) {
+                products = null;
+                products_panel = { kind: "no-access" };
+            } else {
+                const title = __("Could not load the products: the request failed.");
+                products_failed(title);
+            }
+        }
+        if (current_tab === "products") render_current_tab();
+    }
+
+    // Each table of the tab: its columns, for the Columns menu and the drag-to-resize widths.
+    // Keys start p_ so no rule for another tab's columns ever reaches these. A width is the
+    // cell's content box (each cell adds 24px of padding): every table fits about 1,050px.
+    const PRODUCT_TABLES = {
+        orders: [
+            { key: "p_order", label: "Order", locked: true, width: 140 },
+            { key: "p_customer", label: "Customer", width: 140 },
+            { key: "p_product", label: "Product", width: 170 },
+            { key: "p_promise", label: "Promise date", width: 120 },
+            { key: "p_progress", label: "Where it is", width: 170 },
+            { key: "p_paid", label: "Paid", width: 80 },
+            { key: "p_total", label: "Total", width: 80, num: true },
+        ],
+        quotes: [
+            { key: "p_quote", label: "Quotation", locked: true, width: 160 },
+            { key: "p_customer", label: "Customer", width: 180 },
+            { key: "p_line", label: "Line", width: 150 },
+            { key: "p_date", label: "Date", width: 100 },
+            { key: "p_status", label: "Status", width: 100 },
+            { key: "p_value", label: "Value", width: 100, num: true },
+        ],
+        opportunities: [
+            { key: "p_opportunity", label: "Opportunity", locked: true, width: 220 },
+            { key: "p_customer", label: "Customer", width: 170 },
+            { key: "p_line", label: "Line", width: 150 },
+            { key: "p_close", label: "Expected close", width: 120 },
+            { key: "p_status", label: "Status", width: 150 },
+            { key: "p_value", label: "Value", width: 100, num: true },
+        ],
+        units: [
+            { key: "p_item", label: "Item", locked: true, width: 220 },
+            { key: "p_line", label: "Line", width: 120 },
+            { key: "p_on_hand", label: "On hand", width: 90, num: true },
+            { key: "p_claimed", label: "Claimed by orders", width: 130, num: true },
+            { key: "p_free", label: "Free", width: 80, num: true },
+            { key: "p_where", label: "Where", width: 200 },
+        ],
+        components: [
+            { key: "p_item", label: "Component", locked: true, width: 260 },
+            { key: "p_state", label: "Stock", width: 130 },
+            { key: "p_on_hand", label: "On hand", width: 90, num: true },
+            { key: "p_on_order", label: "On order", width: 90, num: true },
+            { key: "p_reorder", label: "Reorder level", width: 110, num: true },
+        ],
+        projects: [
+            { key: "p_project", label: "Project", locked: true, width: 240 },
+            { key: "p_customer", label: "Customer", width: 180 },
+            { key: "p_status", label: "Status", width: 120 },
+            { key: "p_completion", label: "Completion", width: 170 },
+            { key: "p_end", label: "Expected end", width: 150 },
+        ],
+    };
+    const product_selectors = {};
+    const product_resizers = {};
+    Object.keys(PRODUCT_TABLES).forEach((name) => {
+        const columns = PRODUCT_TABLES[name];
+        product_selectors[name] = new ColumnSelector(`chb_products_${name}_columns`, columns.map((c) => ({ key: c.key, label: c.label, locked: !!c.locked })));
+        product_resizers[name] = make_table_resizer(`chb_products_${name}_widths`, columns.map((c) => ({ key: c.key, defaultWidth: c.width, minWidth: Math.min(90, c.width), maxWidth: 520 })));
+    });
+
+    function visible_product_columns(name) {
+        const selector = product_selectors[name];
+        return Math.max(1, PRODUCT_TABLES[name].filter((c) => !selector.is_hidden(c.key)).length);
+    }
+
+    const money = (amount) => sf.esc(fmt_money(parseFloat(amount) || 0));
+    const number = (value) => {
+        const n = parseFloat(value) || 0;
+        return sf.esc(String(Math.round(n * 100) / 100));
+    };
+    const dash = '<span class="pd-dash">—</span>';
+    const desk_link = (slug, name, cls) =>
+        `<a href="/desk/${slug}/${encodeURIComponent(name)}"${cls ? ` class="${cls}"` : ""}>${sf.esc(name)}</a>`;
+    const date_cell = (iso) => (iso ? sf.esc(fmt_date(iso)) : dash);
+    const lines_html = (lines) =>
+        Array.isArray(lines) && lines.length ? lines.map((line) => sf.chip(line, "build")).join(" ") : `<span class="pd-muted">${sf.esc(__("Not set"))}</span>`;
+    const stage_word = (key) => {
+        const listed = products && Array.isArray(products.stages) ? products.stages.find((s) => s && s.key === key) : null;
+        return (listed && listed.label) || STAGE_WORDS[key] || key;
+    };
+
+    // What a section the person cannot read, or one whose read failed, draws instead.
+    function section_state(section, what) {
+        if (!section || section.allowed === false) {
+            return { kind: "no-access", opts: { title: __("You do not have access to {0}.", [what]) } };
+        }
+        if (section.failed) {
+            const title = __("Could not load {0}.", [what]);
+            return { kind: "error", opts: { title, on_action: fetch_products } };
+        }
+        return null;
+    }
+
+    // One section: a heading, then its blocks.
+    function product_section(key, title) {
+        const $section = $(`<section class="pd-psec" data-section="${key}"></section>`);
+        $section.append(`<h3 class="pd-psec-title">${sf.esc(title)}</h3>`);
+        return $section;
+    }
+
+    // One table of the tab under its own small heading, with its own Columns button; a panel
+    // in its place when there is nothing to list. Returns the block and, for a table, the call
+    // that applies its columns once the block is on the page.
+    function product_block(name, title, note, state, rows) {
+        const $block = $(`<div class="pd-pblock" data-block="${name}"></div>`);
+        $block.append(
+            `<div class="pd-pblock-head"><h4 class="pd-pblock-title">${sf.esc(title)}</h4>` +
+            (note ? `<span class="pd-pblock-note">${sf.esc(note)}</span>` : "") +
+            `<div class="pd-list-tools" data-tools="${name}"></div></div>`
+        );
+        if (state) {
+            const el = $(`<div class="dashboard-empty-state pd-pblock-state" data-state="${name}"></div>`).appendTo($block)[0];
+            sf.state.render(el, state.kind, state.opts);
+            return { $block, columns: null };
+        }
+        const head = PRODUCT_TABLES[name].map((c) => `<th class="dashcol dashcol-${c.key}${c.num ? " pd-num" : ""}">${sf.esc(c.label)}</th>`).join("");
+        const table = table_shell(head);
+        const tbody = table.find('tbody');
+        rows.forEach((html) => tbody.append(html));
+        $block.append(table_wrap().append(table));
+        return { $block, columns: () => product_columns(name, $block) };
+    }
+
+    // The Columns menu and the widths, scoped to the block: two tables share column keys.
+    function product_columns(name, $block) {
+        const selector = product_selectors[name];
+        const resizer = product_resizers[name];
+        const fit = () => $block.find('tr.pd-group > td').attr('colspan', String(visible_product_columns(name)));
+        selector.apply($block);
+        fit();
+        resizer.apply($block);
+        resizer.attach_handles($block, $block.find('table thead th'), resizer_key_of);
+        selector.render_button($block.find(`[data-tools="${name}"]`).empty(), () => {
+            selector.apply($block);
+            fit();
+        }, {
+            icon: true,
+            actions: [{ label: __("Reset column widths"), onClick: () => { resizer.reset($block); render_current_tab(); } }],
+        });
+    }
+
+    // ---- the order board ----
+
+    function order_row(o) {
+        const items = (o.items || []).map((i) => `${number(i.qty)} &times; ${desk_link("item", i.item_code)}`).join("<br>");
+        const promise = o.delivery_date
+            ? `${sf.esc(fmt_date(o.delivery_date))}${o.late ? `<span class="pd-late">${sf.esc(__("Late"))}</span>` : ""}`
+            : dash;
+        const where = [];
+        if (o.stage === "delivered" && o.delivered_on) where.push(sf.esc(__("Delivered {0}", [fmt_date(o.delivered_on)])));
+        else where.push(sf.esc(o.note || ""));
+        (o.work_orders || []).forEach((w) => where.push(desk_link("work-order", w.name, "pd-plink")));
+        (o.deliveries || []).forEach((d) => where.push(desk_link("delivery-note", d, "pd-plink")));
+        if (o.partly_delivered) where.push(sf.chip(__("Part delivered"), "warn"));
+        if (o.on_hold) where.push(sf.chip(__("On hold"), "warn"));
+        const paid_word = o.paid && PAID_WORDS[o.paid];
+        const paid = paid_word
+            ? sf.chip(paid_word[0], paid_word[1])
+            : `<span class="pd-dash" title="${sf.esc(__("Needs read access to Sales Invoices"))}">—</span>`;
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_order">${desk_link("sales-order", o.name, "pd-pname")}</td>
+                <td class="dashcol dashcol-p_customer">${sf.esc(o.customer_name || "")}</td>
+                <td class="dashcol dashcol-p_product">${items || dash}</td>
+                <td class="dashcol dashcol-p_promise pd-due">${promise}</td>
+                <td class="dashcol dashcol-p_progress">${where.join(" · ")}</td>
+                <td class="dashcol dashcol-p_paid">${paid}</td>
+                <td class="dashcol dashcol-p_total pd-num">${money(o.grand_total)}</td>
+            </tr>`;
+    }
+
+    // The soonest promise first (undated last), then the order number. A late order's promise
+    // is before today and an on-time one's is not, so the late ones lead their stage.
+    function compare_orders(a, b) {
+        const da = a.delivery_date || "9999-12-31", db = b.delivery_date || "9999-12-31";
+        if (da !== db) return da < db ? -1 : 1;
+        return String(a.name).localeCompare(String(b.name));
+    }
+
+    function render_orders_section($content, pending) {
+        const section = products.orders;
+        const $section = product_section("orders", __("Order board"));
+        const state = section_state(section, __("Sales Orders"));
+        const all = state ? [] : (section.rows || []).filter((o) => in_picked_lines(o.lines));
+
+        // The strip: one count per stage, each a filter (pressed again, it clears). Drawn even
+        // with no orders, so the five stages read before the first sale.
+        const counts = {}, late = {};
+        all.forEach((o) => {
+            counts[o.stage] = (counts[o.stage] || 0) + 1;
+            if (o.late) late[o.stage] = (late[o.stage] || 0) + 1;
+        });
+        const strip = PRODUCT_STAGES.map((key) => `
+            <button type="button" class="pd-stage" data-stage="${key}" aria-pressed="${product_stage === key ? "true" : "false"}" title="${sf.esc(__("Show only the orders at this stage"))}">
+                <span class="pd-stage-n">${counts[key] || 0}</span>
+                <span class="pd-stage-l">${sf.esc(stage_word(key))}</span>
+                ${late[key] ? `<span class="pd-stage-late">${sf.esc(__("{0} late", [late[key]]))}</span>` : ""}
+            </button>`).join("");
+        if (!state) $section.append(`<div class="pd-stages" role="group" aria-label="${sf.esc(__("Orders by stage"))}">${strip}</div>`);
+
+        const shown = product_stage ? all.filter((o) => o.stage === product_stage) : all;
+        let block_state = state;
+        if (!block_state && !(section.rows || []).length) {
+            block_state = { kind: "empty", opts: {
+                title: __("No product orders yet."),
+                body: __("A submitted Sales Order for an E-Stop or another product shows here, by stage. A delivered one stays for 30 days."),
+            } };
+        } else if (!block_state && !shown.length) {
+            block_state = { kind: "empty", opts: { title: __("No orders in the lines or stage picked.") } };
+        }
+        const rows = [];
+        if (!block_state) {
+            const colspan = visible_product_columns("orders");
+            PRODUCT_STAGES.forEach((key) => {
+                const at = shown.filter((o) => o.stage === key).sort(compare_orders);
+                if (!at.length) return;
+                const count = at.length === 1 ? __("1 order") : __("{0} orders", [at.length]);
+                rows.push(group_row(stage_word(key), count, STAGE_PILLAR[key], colspan));
+                at.forEach((o) => rows.push(order_row(o)));
+            });
+        }
+        const note = section.paid_visible === false ? __("Paid needs read access to Sales Invoices") : "";
+        const block = product_block("orders", __("Orders"), note, block_state, rows);
+        $section.append(block.$block);
+        $content.append($section);
+        if (block.columns) pending.push(block.columns);
+
+        $section.find('.pd-stage').on('click', function() {
+            const key = $(this).attr('data-stage') || "";
+            product_stage = product_stage === key || !PRODUCT_STAGES.includes(key) ? "" : key;
+            render_current_tab();
+        });
+        return all.length;
+    }
+
+    // ---- the sales pipeline ----
+
+    function quote_row(q) {
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_quote">${desk_link("quotation", q.name, "pd-pname")}</td>
+                <td class="dashcol dashcol-p_customer">${sf.esc(q.party || "")}</td>
+                <td class="dashcol dashcol-p_line">${lines_html(q.lines)}</td>
+                <td class="dashcol dashcol-p_date">${date_cell(q.transaction_date)}</td>
+                <td class="dashcol dashcol-p_status">${sf.chip(q.status || "", "neutral")}</td>
+                <td class="dashcol dashcol-p_value pd-num">${money(q.grand_total)}</td>
+            </tr>`;
+    }
+
+    function opportunity_row(o) {
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_opportunity"><a href="/desk/opportunity/${encodeURIComponent(o.name)}" class="pd-pname">${sf.esc(o.title || o.name)}</a></td>
+                <td class="dashcol dashcol-p_customer">${sf.esc(o.party || "")}</td>
+                <td class="dashcol dashcol-p_line">${lines_html(o.lines)}</td>
+                <td class="dashcol dashcol-p_close">${date_cell(o.expected_closing)}</td>
+                <td class="dashcol dashcol-p_status">${sf.chip(o.status || "", "neutral")}</td>
+                <td class="dashcol dashcol-p_value pd-num">${o.amount ? money(o.amount) : dash}</td>
+            </tr>`;
+    }
+
+    function pipeline_card(label, value, sub) {
+        return `
+            <section class="pd-card">
+                <div class="pd-card-l">${sf.esc(label)}</div>
+                <div class="pd-card-n">${sf.esc(value)}</div>
+                ${sub ? `<div class="pd-card-s">${sf.esc(sub)}</div>` : ""}
+            </section>`;
+    }
+
+    function render_pipeline_section($content, pending) {
+        const pipeline = products.pipeline || {};
+        const $section = product_section("pipeline", __("Sales pipeline"));
+        const q_state = section_state(pipeline.quotations, __("Quotations"));
+        const o_state = section_state(pipeline.opportunities, __("Opportunities"));
+        const quotes = q_state ? [] : (pipeline.quotations.rows || []).filter((q) => in_picked_lines(q.lines));
+        const opps = o_state ? [] : (pipeline.opportunities.rows || []).filter((o) => in_picked_lines(o.lines, true));
+
+        const sum = (rows, field) => rows.reduce((total, r) => total + (parseFloat(r[field]) || 0), 0);
+        const opp = pipeline.opportunities || {};
+        const rate = !o_state && opp.win_rate !== null && opp.win_rate !== undefined ? `${opp.win_rate}%` : "—";
+        const rate_sub = o_state ? "" : __("{0} won · {1} lost · last 12 months", [opp.won || 0, opp.lost || 0]);
+        $section.append(
+            '<div class="pd-cards pd-pcards">' +
+            pipeline_card(__("Open quotations"), q_state ? "—" : String(quotes.length), q_state ? "" : fmt_money(sum(quotes, "grand_total"))) +
+            pipeline_card(__("Open opportunities"), o_state ? "—" : String(opps.length), o_state ? "" : fmt_money(sum(opps, "amount"))) +
+            pipeline_card(__("Win rate, Products stream"), rate, rate_sub) +
+            "</div>"
+        );
+
+        const open_days = (pipeline.quotations && pipeline.quotations.open_days) || 90;
+        let quote_state = q_state;
+        if (!quote_state && !quotes.length) {
+            quote_state = { kind: "empty", opts: {
+                title: (pipeline.quotations.rows || []).length ? __("No open quotations in the lines picked.") : __("No open product quotations."),
+                body: __("Open: not lost, ordered or expired, and dated in the last {0} days when it has no Valid Till.", [open_days]),
+            } };
+        }
+        const q_block = product_block("quotes", __("Open quotations"), "", quote_state, quotes.map(quote_row));
+        $section.append(q_block.$block);
+
+        let opp_state = o_state;
+        if (!opp_state && !opps.length) {
+            opp_state = { kind: "empty", opts: {
+                title: (pipeline.opportunities.rows || []).length ? __("No open opportunities in the lines picked.") : __("No open opportunities in the Products value stream."),
+            } };
+        }
+        const o_block = product_block("opportunities", __("Open opportunities"), __("Value stream: Products"), opp_state, opps.map(opportunity_row));
+        $section.append(o_block.$block);
+        $content.append($section);
+        [q_block, o_block].forEach((b) => { if (b.columns) pending.push(b.columns); });
+    }
+
+    // ---- stock and shortages ----
+
+    function unit_row(u) {
+        const claimed = u.committed === null || u.committed === undefined ? dash : number(u.committed);
+        const free = u.free === null || u.free === undefined ? dash : number(u.free);
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_item">${desk_link("item", u.item_code, "pd-pname")}<div class="pd-psub">${sf.esc(u.item_name || "")}</div></td>
+                <td class="dashcol dashcol-p_line">${lines_html([u.line])}</td>
+                <td class="dashcol dashcol-p_on_hand pd-num">${number(u.on_hand)}</td>
+                <td class="dashcol dashcol-p_claimed pd-num">${claimed}</td>
+                <td class="dashcol dashcol-p_free pd-num">${free}</td>
+                <td class="dashcol dashcol-p_where pd-muted">${sf.esc(u.warehouses || "")}</td>
+            </tr>`;
+    }
+
+    function component_row(c) {
+        const word = COMPONENT_WORDS[c.state] || [c.state, "neutral"];
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_item">${desk_link("item", c.item_code, "pd-pname")}<div class="pd-psub">${sf.esc(c.item_name || "")}</div></td>
+                <td class="dashcol dashcol-p_state">${sf.chip(word[0], word[1])}</td>
+                <td class="dashcol dashcol-p_on_hand pd-num">${number(c.on_hand)}</td>
+                <td class="dashcol dashcol-p_on_order pd-num">${c.on_order ? number(c.on_order) : dash}</td>
+                <td class="dashcol dashcol-p_reorder pd-num">${c.reorder_level ? number(c.reorder_level) : dash}</td>
+            </tr>`;
+    }
+
+    function render_stock_section($content, pending) {
+        const stock = products.stock;
+        const $section = product_section("stock", __("Stock and shortages"));
+        const state = section_state(stock, __("stock"));
+        const units = state ? [] : (stock.units || []).filter((u) => in_picked_lines([u.line]));
+        const components = state ? [] : (stock.components || []).filter((c) => in_picked_lines([c.line]));
+        const short = components.filter((c) => c.state === "out" || c.state === "low");
+
+        let unit_state = state;
+        if (!unit_state && !(stock.units || []).length) {
+            unit_state = { kind: "empty", opts: {
+                title: __("No finished units on hand."),
+                body: __("Units built ahead to the Build Room shelf show here, with how many the open orders have claimed."),
+            } };
+        } else if (!unit_state && !units.length) {
+            unit_state = { kind: "empty", opts: { title: __("No finished units in the lines picked.") } };
+        }
+        const u_block = product_block("units", __("Finished units on hand"), "", unit_state, units.map(unit_row));
+        $section.append(u_block.$block);
+
+        let comp_state = state;
+        if (!comp_state && !components.length) {
+            comp_state = { kind: "empty", opts: { title: __("No component group is set up for the lines picked."), body: __("E-Stop parts are in the item group E-Stop Components.") } };
+        } else if (!comp_state && !short.length) {
+            comp_state = { kind: "empty", opts: { title: __("No component is out of stock or below its reorder level.") } };
+        }
+        const comp_note = state ? "" : __("{0} of {1} short", [short.length, components.length]);
+        // Out of stock first, then below reorder, each by item code.
+        short.sort((a, b) => (a.state === b.state ? String(a.item_code).localeCompare(String(b.item_code)) : a.state === "out" ? -1 : 1));
+        const c_block = product_block("components", __("Component shortages"), comp_note, comp_state, short.map(component_row));
+        $section.append(c_block.$block);
+        $content.append($section);
+        [u_block, c_block].forEach((b) => { if (b.columns) pending.push(b.columns); });
+    }
+
+    // ---- control panel projects ----
+
+    function product_project_row(p) {
+        const end = p.expected_end_date
+            ? `${sf.esc(fmt_date(p.expected_end_date))}${p.late ? '<span class="pd-late">Past due</span>' : ''}`
+            : dash;
+        return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_project"><a href="${project_link(p)}" class="pd-pname">${sf.esc(p.project_name || p.name)}</a><div class="pd-psub">${sf.esc(p.name)}</div></td>
+                <td class="dashcol dashcol-p_customer">${p.customer ? sf.esc(p.customer) : dash}</td>
+                <td class="dashcol dashcol-p_status">${sf.chip(p.status || "", "neutral")}</td>
+                ${completion_cell(p, "p_completion")}
+                <td class="dashcol dashcol-p_end pd-due">${end}</td>
+            </tr>`;
+    }
+
+    function render_projects_section($content, pending) {
+        const section = products.projects;
+        const $section = product_section("projects", __("Control panel projects"));
+        let state = section_state(section, __("Projects"));
+        const rows = state ? [] : (section.rows || []).filter((p) => in_picked_lines([p.line]));
+        if (!state && !(section.rows || []).length) {
+            state = { kind: "empty", opts: {
+                title: __("No active control panel projects."),
+                body: __("Custom-engineered control panels are Projects of type Products; the active ones show here."),
+            } };
+        } else if (!state && !rows.length) {
+            state = { kind: "empty", opts: { title: __("Control panel projects are under the Control Panels line.") } };
+        }
+        const block = product_block("projects", __("Active projects"), __("Project type: Products"), state, rows.map(product_project_row));
+        $section.append(block.$block);
+        $content.append($section);
+        if (block.columns) pending.push(block.columns);
+    }
+
+    // The line chips' counts are the orders on the board in each line; All is every order.
+    function render_line_chips() {
+        const orders = products && products.orders && Array.isArray(products.orders.rows) ? products.orders.rows : null;
+        $root.find('[data-line-count=""]').text(orders ? String(orders.length) : "");
+        PRODUCT_LINES.forEach((line) => {
+            const n = orders ? orders.filter((o) => Array.isArray(o.lines) && o.lines.includes(line)).length : "";
+            $root.find(`[data-line-count="${line}"]`).text(String(n));
+        });
+        $root.find('.pd-lchip[data-line=""]').attr('aria-pressed', product_view.lines.length ? 'false' : 'true');
+        PRODUCT_LINES.forEach((line) => {
+            $root.find(`.pd-lchip[data-line="${line}"]`).attr('aria-pressed', product_view.lines.includes(line) ? 'true' : 'false');
+        });
+    }
+
+    function render_products() {
+        const $content = $root.find('#dashboard-content');
+        render_line_chips();
+        if (!products) {
+            // Never asked: ask now (the answer draws the tab again). Loading, no access or a
+            // failed read stands as the tab's one panel until an answer arrives.
+            if (!products_asked) fetch_products();
+            const standing = products_panel || { kind: "loading" };
+            sf.state.render(content_el(), standing.kind, standing.opts);
+            return;
+        }
+        $content.empty();
+        const pending = [];
+        render_orders_section($content, pending);
+        render_pipeline_section($content, pending);
+        render_stock_section($content, pending);
+        render_projects_section($content, pending);
+        pending.forEach((apply) => apply());
+    }
+
+    // A line chip toggles its line in the set, as the stream chips do; All clears the set. Kept
+    // in the bar's order whichever way it was built.
+    $root.find('.pd-lchip').on('click', function() {
+        const line = $(this).attr('data-line') || "";
+        if (!line) {
+            product_view.lines = [];
+        } else if (product_view.lines.includes(line)) {
+            product_view.lines = product_view.lines.filter((l) => l !== line);
+        } else {
+            product_view.lines = PRODUCT_LINES.filter((l) => l === line || product_view.lines.includes(l));
+        }
+        write_saved(PRODUCTS_KEY, product_view);
+        if (current_tab === "products") render_current_tab();
+    });
+
     // Which controls belong to the tab on screen: the band's search box and the stream
     // filter row are for the list tabs (the filter row, with the Columns button at its end,
     // for Priority Overview only; the slim strip with that button for Internal and
@@ -2021,6 +2602,7 @@
         $root.find('#overview-controls').toggle(current_tab === "priority-overview");
         $root.find('#list-controls').toggle(current_tab === "active-internal-projects" || current_tab === "completed-projects");
         $root.find('#pd-tiles').toggle(current_tab === "summary" && loaded);
+        $root.find('#products-controls').toggle(current_tab === "products");
     }
 
     function render_current_tab() {
@@ -2034,6 +2616,13 @@
             if (portfolio_gantt_widget) {
                 portfolio_gantt_widget.destroy();
                 portfolio_gantt_widget = null;
+            }
+
+            // The Products tab has its own answer and its own panels, whatever the projects did.
+            if (current_tab === "products") {
+                render_products();
+                setTimeout(apply_search_filter, 50);
+                return;
             }
 
             // Nothing has loaded (still loading, no access, or a failed read): the panel
@@ -2099,7 +2688,7 @@
 
     // ----- TABS -----
     //
-    // Five tabs, always in the bar. The one chosen is kept per browser (TAB_KEY), so the
+    // Six tabs, always in the bar. The one chosen is kept per browser (TAB_KEY), so the
     // dashboard opens where it was left.
     function show_tab(route) {
         if (!TAB_ROUTES.includes(route)) route = "priority-overview";

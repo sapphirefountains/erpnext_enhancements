@@ -4,6 +4,8 @@ Backend for the "Projects Dashboard" Custom HTML Block
 (``custom_html_blocks/projects_dashboard.js``, embedded on the Home / Projects
 workspaces): data retrieval, permission checks, and in-place updates for projects
 and tasks. All functions called from the front end are ``@frappe.whitelist()``.
+The Products tab reads ``get_products_data`` (v1.824.0, at the end of this module), whose
+rules live Frappe-free in ``erpnext_enhancements/product_orders.py``.
 
 NOTE: the standalone desk page that used to live here (``project_dashboard.js`` /
 ``.json`` + the per-tab ``dashboard_components/*.js``) was retired in v1.159.8 when
@@ -16,8 +18,9 @@ from datetime import timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, getdate, nowdate
+from frappe.utils import add_days, cint, flt, getdate, nowdate
 
+from erpnext_enhancements import product_orders as po
 from erpnext_enhancements.utils.spreadsheet import build_payload
 
 # Fields the dashboard is allowed to inline-edit on a Project via
@@ -1666,3 +1669,542 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 	except Exception:
 		frappe.log_error(title="Error fetching all projects for Gantt view", message=frappe.get_traceback())
 		return {"error": "Could not fetch project data for the Gantt chart. Please check logs."}
+
+
+# ---------------------------------------------------------------------------------------------
+# The Products tab (v1.824.0)
+# ---------------------------------------------------------------------------------------------
+#
+# Nikolas, 2026-11-18 (vault decisions/2026-11-18-estop-product-line.md): a product sale is a
+# Sales Order, not a Project, and the Projects Dashboard gets a Products tab for Logan, James,
+# Brian and him. Version 1 has four sections: the order board by stage, the sales pipeline,
+# stock and shortages, and the control panel projects (custom-engineered panels stay Projects
+# of type "Products").
+#
+# Every rule that decides something (which Items are products, an order's stage, which orders
+# the shelf covers, the win rate) lives in erpnext_enhancements/product_orders.py, Frappe-free
+# and tested bench-free by tests/test_product_orders.py. What is here only gathers the facts.
+#
+# Permissions: the page gate first (check_permission), as every endpoint in this module. Then
+# each section asks for read on the doctypes it shows. A section the person cannot read comes
+# back {"allowed": False} and draws the no-access panel, and the other sections still draw. The
+# reads are SQL, so per-record User Permissions do not narrow them: the same choice
+# get_project_data makes for the portfolio (see its docstring). The paid chip on an order also
+# needs Sales Invoice read: Logan builds the units and holds no accounts role.
+#
+# Aggregates are frappe.db.sql with bound parameters, never a function written as a string field
+# in get_all (Frappe 16 refuses those; CLAUDE.md). The configurator's provenance column on Item
+# is added in after_migrate, so it is checked before any query names it.
+
+#: Custom-engineered control panels are Projects of this type.
+PRODUCTS_PROJECT_TYPE = "Products"
+#: The Opportunity value stream the pipeline reads.
+PRODUCTS_VALUE_STREAM = "Products"
+#: The SQL prefilter for product item codes; product_orders.product_line has the final word.
+_PDT_LIKE = "PDT-%"
+
+
+@frappe.whitelist()
+def get_products_data():
+	"""Everything the Products tab draws, in one answer.
+
+	``{"today", "lines", "stages", "orders", "pipeline": {"quotations", "opportunities"},
+	"stock", "projects"}``. Each section carries ``allowed`` (False: the person cannot read its
+	doctypes) and, when its read raised, ``failed`` (the error is in the Error Log). A user
+	without the page role gets ``{"error": "You do not have permission ..."}``, as
+	get_project_data answers.
+	"""
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
+
+	today = getdate(nowdate())
+	source_column = _item_has_source_configuration()
+
+	orders = _products_section(("Sales Order",), lambda: _product_orders(today, source_column))
+	# What the open orders have already claimed from the shelf, for the stock section. Private:
+	# it never goes to the browser.
+	committed = orders.pop("_committed", None)
+
+	return {
+		"today": str(today),
+		"lines": list(po.LINES),
+		"stages": [{"key": key, "label": po.STAGE_LABELS[key]} for key in po.STAGES],
+		"orders": orders,
+		"pipeline": {
+			"quotations": _products_section(
+				("Quotation",), lambda: _open_product_quotations(today, source_column)
+			),
+			"opportunities": _products_section(("Opportunity",), lambda: _product_opportunities(today)),
+		},
+		"stock": _products_section(("Item", "Bin"), lambda: _product_stock(source_column, committed)),
+		"projects": _products_section(("Project",), lambda: _product_projects(today)),
+	}
+
+
+def _products_section(doctypes, build):
+	"""One section of the Products tab: read permission first, and a failure kept to itself."""
+	if not all(frappe.has_permission(doctype, "read") for doctype in doctypes):
+		return {"allowed": False}
+	try:
+		section = build()
+	except Exception:
+		frappe.log_error(title="Products tab: a section could not be read", message=frappe.get_traceback())
+		return {"allowed": True, "failed": True}
+	section["allowed"] = True
+	return section
+
+
+def _item_has_source_configuration():
+	"""Whether Item has the Product Configurator's provenance column yet.
+
+	product_configurator/setup.py adds it in after_migrate, so a fresh site can lack it, and
+	has_column raises on an unknown table rather than answering False.
+	"""
+	try:
+		return bool(frappe.db.has_column("Item", "custom_source_configuration"))
+	except Exception:
+		return False
+
+
+def _product_match(item_alias, line_alias, source_column):
+	"""The SELECT expression for an Item's provenance and the WHERE prefilter for product lines."""
+	code_match = f"{line_alias}.item_code LIKE %(pdt)s"
+	if not source_column:
+		return "NULL", code_match
+	source = f"{item_alias}.custom_source_configuration"
+	return source, f"({code_match} OR coalesce({source}, '') <> '')"
+
+
+def _iso(value):
+	return str(value)[:10] if value else None
+
+
+def _on_hand(item_codes):
+	"""Finished units per item code, summed across warehouses."""
+	if not item_codes:
+		return {}
+	rows = frappe.db.sql(
+		"""
+		SELECT item_code, SUM(actual_qty) AS qty
+		FROM `tabBin`
+		WHERE item_code IN %(codes)s
+		GROUP BY item_code
+		""",
+		{"codes": tuple(item_codes)},
+		as_dict=True,
+	)
+	return {row.item_code: flt(row.qty) for row in rows}
+
+
+def _product_orders(today, source_column):
+	"""The order board: submitted product Sales Orders not yet delivered, and the ones delivered
+	in the last ``po.DELIVERED_WINDOW_DAYS`` days, each with its stage.
+	"""
+	since = add_days(today, -po.DELIVERED_WINDOW_DAYS)
+	source_select, product_where = _product_match("i", "soi", source_column)
+	rows = frappe.db.sql(
+		f"""
+		SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
+			so.status, so.per_delivered, so.per_billed, so.grand_total, so.currency,
+			soi.item_code, soi.item_name, soi.qty, soi.delivered_qty,
+			{source_select} AS source_configuration
+		FROM `tabSales Order Item` soi
+		INNER JOIN `tabSales Order` so ON so.name = soi.parent
+		LEFT JOIN `tabItem` i ON i.name = soi.item_code
+		WHERE so.docstatus = 1
+			AND {product_where}
+			AND (
+				(so.per_delivered < 100 AND so.status NOT IN ('Closed', 'Completed', 'Cancelled'))
+				OR EXISTS (
+					SELECT 1
+					FROM `tabDelivery Note Item` dni
+					INNER JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+					WHERE dni.against_sales_order = so.name
+						AND dn.docstatus = 1
+						AND dn.posting_date >= %(since)s
+				)
+			)
+		ORDER BY so.delivery_date, so.name, soi.idx
+		""",
+		{"pdt": _PDT_LIKE, "since": since},
+		as_dict=True,
+	)
+
+	orders = {}
+	for row in rows:
+		line = po.product_line(row.item_code, row.source_configuration)
+		if line is None:
+			continue
+		order = orders.get(row.name)
+		if order is None:
+			order = orders[row.name] = {
+				"name": row.name,
+				"customer": row.customer,
+				"customer_name": row.customer_name or row.customer,
+				"transaction_date": _iso(row.transaction_date),
+				"delivery_date": _iso(row.delivery_date),
+				"status": row.status,
+				"per_delivered": flt(row.per_delivered),
+				"per_billed": flt(row.per_billed),
+				"grand_total": flt(row.grand_total),
+				"currency": row.currency,
+				"items": [],
+			}
+		order["items"].append(
+			{
+				"item_code": row.item_code,
+				"item_name": row.item_name,
+				"qty": flt(row.qty),
+				"pending_qty": max(0.0, flt(row.qty) - flt(row.delivered_qty)),
+				"line": line,
+			}
+		)
+
+	paid_visible = bool(frappe.has_permission("Sales Invoice", "read"))
+	if not orders:
+		return {"rows": [], "paid_visible": paid_visible, "_committed": {}}
+
+	names = tuple(orders)
+	work_orders = {}
+	for wo in frappe.db.sql(
+		"""
+		SELECT name, sales_order, production_item, status, docstatus, qty, produced_qty
+		FROM `tabWork Order`
+		WHERE sales_order IN %(names)s AND docstatus < 2
+		ORDER BY creation
+		""",
+		{"names": names},
+		as_dict=True,
+	):
+		work_orders.setdefault(wo.sales_order, []).append(wo)
+
+	deliveries = {}
+	for dn in frappe.db.sql(
+		"""
+		SELECT DISTINCT dni.against_sales_order AS sales_order, dn.name, dn.posting_date
+		FROM `tabDelivery Note Item` dni
+		INNER JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+		WHERE dni.against_sales_order IN %(names)s AND dn.docstatus = 1 AND dn.is_return = 0
+		""",
+		{"names": names},
+		as_dict=True,
+	):
+		deliveries.setdefault(dn.sales_order, []).append(dn)
+
+	invoices = {}
+	if paid_visible:
+		for si in frappe.db.sql(
+			"""
+			SELECT DISTINCT sii.sales_order, si.name, si.grand_total, si.outstanding_amount
+			FROM `tabSales Invoice Item` sii
+			INNER JOIN `tabSales Invoice` si ON si.name = sii.parent
+			WHERE sii.sales_order IN %(names)s AND si.docstatus = 1 AND si.is_return = 0
+			""",
+			{"names": names},
+			as_dict=True,
+		):
+			invoices.setdefault(si.sales_order, []).append(si)
+
+	on_hand = _on_hand({item["item_code"] for order in orders.values() for item in order["items"]})
+
+	facts = []
+	for order in orders.values():
+		_drafts, live, done = po.work_order_summary(work_orders.get(order["name"], []))
+		facts.append(
+			{
+				"name": order["name"],
+				"delivery_date": order["delivery_date"],
+				"built": done,
+				"has_work_order": bool(live),
+				"lines": order["items"],
+			}
+		)
+	covered = po.allocate_stock(facts, on_hand)
+
+	committed = {}
+	for fact in facts:
+		if fact["built"] or fact["name"] in covered:
+			for item in fact["lines"]:
+				committed[item["item_code"]] = committed.get(item["item_code"], 0) + item["pending_qty"]
+
+	result = []
+	for order in orders.values():
+		wos = work_orders.get(order["name"], [])
+		stage = po.order_stage(order["per_delivered"], wos, order["name"] in covered, qc=None)
+		dns = sorted(deliveries.get(order["name"], []), key=lambda d: (str(d.posting_date), d.name))
+		order.update(
+			{
+				"stage": stage["stage"],
+				"note": stage["note"],
+				"late": po.is_late(order["delivery_date"], today, stage["stage"]),
+				"partly_delivered": 0 < order["per_delivered"] < 100,
+				"on_hold": order["status"] == "On Hold",
+				"lines": po.lines_of(order["items"]),
+				"work_orders": [
+					{"name": wo.name, "status": wo.status, "docstatus": wo.docstatus} for wo in wos
+				],
+				"deliveries": [dn.name for dn in dns],
+				"delivered_on": _iso(dns[-1].posting_date) if dns else None,
+				"paid": None,
+			}
+		)
+		if paid_visible:
+			sis = invoices.get(order["name"], [])
+			order["paid"] = po.paid_state(
+				sum(flt(si.grand_total) for si in sis),
+				sum(flt(si.outstanding_amount) for si in sis),
+				order["per_billed"],
+			)
+		result.append(order)
+
+	return {"rows": result, "paid_visible": paid_visible, "_committed": committed}
+
+
+def _open_product_quotations(today, source_column):
+	"""Open quotations with a product line on them (product_orders.is_open_quotation)."""
+	since = add_days(today, -po.QUOTE_OPEN_DAYS)
+	source_select, product_where = _product_match("i", "qi", source_column)
+	rows = frappe.db.sql(
+		f"""
+		SELECT q.name, q.quotation_to, q.party_name, q.customer_name, q.transaction_date,
+			q.valid_till, q.status, q.docstatus, q.grand_total, q.currency, q.opportunity,
+			qi.item_code, {source_select} AS source_configuration
+		FROM `tabQuotation Item` qi
+		INNER JOIN `tabQuotation` q ON q.name = qi.parent
+		LEFT JOIN `tabItem` i ON i.name = qi.item_code
+		WHERE q.docstatus < 2
+			AND q.status NOT IN %(closed)s
+			AND {product_where}
+			AND (q.valid_till >= %(today)s OR (q.valid_till IS NULL AND q.transaction_date >= %(since)s))
+		ORDER BY q.transaction_date DESC, q.name
+		""",
+		{"pdt": _PDT_LIKE, "closed": po.QUOTE_CLOSED_STATUSES, "today": today, "since": since},
+		as_dict=True,
+	)
+
+	quotes = {}
+	for row in rows:
+		quote = quotes.get(row.name)
+		if quote is None:
+			quote = quotes[row.name] = {
+				"name": row.name,
+				"quotation_to": row.quotation_to,
+				"party": row.customer_name or row.party_name,
+				"transaction_date": _iso(row.transaction_date),
+				"valid_till": _iso(row.valid_till),
+				"status": row.status,
+				"docstatus": row.docstatus,
+				"grand_total": flt(row.grand_total),
+				"currency": row.currency,
+				"opportunity": row.opportunity,
+				"_items": [],
+			}
+		quote["_items"].append({"item_code": row.item_code, "source_configuration": row.source_configuration})
+
+	result = []
+	for quote in quotes.values():
+		quote["lines"] = po.lines_of(quote.pop("_items"))
+		if quote["lines"] and po.is_open_quotation(
+			quote["status"], quote["docstatus"], quote["valid_till"], quote["transaction_date"], since, today
+		):
+			result.append(quote)
+	return {"rows": result, "open_days": po.QUOTE_OPEN_DAYS}
+
+
+def _product_opportunities(today):
+	"""Open Opportunities in the Products value stream, and the stream's win rate over a year.
+
+	Historical deals (crm_enhancements/historical.py) are left out of both, as the Value Stream
+	Performance report leaves them out of its win rate.
+	"""
+	from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
+	try:
+		has_name = bool(frappe.db.has_column("Opportunity", "custom_opportunity_name"))
+	except Exception:
+		has_name = False
+	name_select = "o.custom_opportunity_name" if has_name else "NULL"
+	rows = frappe.db.sql(
+		f"""
+		SELECT o.name, o.title, {name_select} AS opportunity_name, o.opportunity_from,
+			o.party_name, o.customer_name, o.status, o.opportunity_amount, o.currency,
+			o.transaction_date, o.expected_closing, o.opportunity_owner
+		FROM `tabOpportunity` o
+		WHERE EXISTS (
+				SELECT 1 FROM `tabValue Stream` vs
+				WHERE vs.parent = o.name AND vs.parenttype = 'Opportunity' AND vs.value_stream = %(stream)s
+			)
+			AND {exclude_sql("o")}
+		ORDER BY o.transaction_date DESC, o.name
+		""",
+		{"stream": PRODUCTS_VALUE_STREAM},
+		as_dict=True,
+	)
+
+	since = str(add_days(today, -po.WIN_RATE_DAYS))
+	won = lost = 0
+	open_rows = []
+	for row in rows:
+		dated = _iso(row.transaction_date) or ""
+		if dated >= since:
+			won += row.status in po.WON_STATUSES
+			lost += row.status in po.LOST_STATUSES
+		if po.is_open_opportunity(row.status):
+			open_rows.append(row)
+
+	items = {}
+	if open_rows:
+		for item in frappe.db.sql(
+			"""
+			SELECT parent, item_code FROM `tabOpportunity Item`
+			WHERE parent IN %(names)s AND parenttype = 'Opportunity'
+			""",
+			{"names": tuple(row.name for row in open_rows)},
+			as_dict=True,
+		):
+			items.setdefault(item.parent, []).append({"item_code": item.item_code})
+
+	return {
+		"rows": [
+			{
+				"name": row.name,
+				"title": row.opportunity_name or row.title or row.name,
+				"party": row.customer_name or row.party_name,
+				"status": row.status,
+				"amount": flt(row.opportunity_amount),
+				"currency": row.currency,
+				"transaction_date": _iso(row.transaction_date),
+				"expected_closing": _iso(row.expected_closing),
+				"owner": row.opportunity_owner,
+				# An Opportunity often names no item: its lines are then [] and it shows under
+				# every product-line chip.
+				"lines": po.lines_of(items.get(row.name, [])),
+			}
+			for row in open_rows
+		],
+		"won": won,
+		"lost": lost,
+		"win_rate": po.win_rate(won, lost),
+		"window_days": po.WIN_RATE_DAYS,
+	}
+
+
+def _product_stock(source_column, committed):
+	"""Finished product units on hand, and the component stock of each product line.
+
+	``committed``: units the open orders have already claimed from the shelf, per item code, or
+	None when the person cannot read Sales Orders (the column then shows a dash).
+	"""
+	source_select, product_where = _product_match("i", "b", source_column)
+	group_by = "b.item_code, i.item_name" + (", i.custom_source_configuration" if source_column else "")
+	units = []
+	for row in frappe.db.sql(
+		f"""
+		SELECT b.item_code, i.item_name, {source_select} AS source_configuration,
+			SUM(b.actual_qty) AS on_hand,
+			GROUP_CONCAT(DISTINCT b.warehouse ORDER BY b.warehouse SEPARATOR ', ') AS warehouses
+		FROM `tabBin` b
+		INNER JOIN `tabItem` i ON i.name = b.item_code
+		WHERE b.actual_qty > 0 AND {product_where}
+		GROUP BY {group_by}
+		ORDER BY b.item_code
+		""",
+		{"pdt": _PDT_LIKE},
+		as_dict=True,
+	):
+		line = po.product_line(row.item_code, row.source_configuration)
+		if line is None:
+			continue
+		on_hand = flt(row.on_hand)
+		claimed = None if committed is None else min(on_hand, flt(committed.get(row.item_code)))
+		units.append(
+			{
+				"item_code": row.item_code,
+				"item_name": row.item_name,
+				"line": line,
+				"on_hand": on_hand,
+				"committed": claimed,
+				"free": None if claimed is None else on_hand - claimed,
+				"warehouses": row.warehouses,
+			}
+		)
+
+	group_line = {group: line for line, groups in po.COMPONENT_GROUPS.items() for group in groups}
+	components = []
+	for row in frappe.db.sql(
+		"""
+		SELECT i.name AS item_code, i.item_name, i.item_group, i.stock_uom,
+			(SELECT COALESCE(SUM(b.actual_qty), 0) FROM `tabBin` b WHERE b.item_code = i.name) AS on_hand,
+			(SELECT COALESCE(SUM(b.ordered_qty), 0) FROM `tabBin` b WHERE b.item_code = i.name) AS on_order,
+			(
+				SELECT COALESCE(SUM(r.warehouse_reorder_level), 0) FROM `tabItem Reorder` r
+				WHERE r.parent = i.name AND r.parenttype = 'Item'
+			) AS reorder_level
+		FROM `tabItem` i
+		WHERE i.item_group IN %(groups)s AND i.disabled = 0
+		ORDER BY i.name
+		""",
+		{"groups": tuple(sorted(group_line)) or ("",)},
+		as_dict=True,
+	):
+		components.append(
+			{
+				"item_code": row.item_code,
+				"item_name": row.item_name,
+				"item_group": row.item_group,
+				"uom": row.stock_uom,
+				"line": group_line.get(row.item_group, po.LINE_OTHER),
+				"on_hand": flt(row.on_hand),
+				"on_order": flt(row.on_order),
+				"reorder_level": flt(row.reorder_level),
+				"state": po.component_state(row.on_hand, row.reorder_level),
+			}
+		)
+
+	return {
+		"units": units,
+		"components": components,
+		"component_groups": {line: list(groups) for line, groups in po.COMPONENT_GROUPS.items()},
+	}
+
+
+def _product_projects(today):
+	"""Active Projects of type Products: the custom-engineered control panels."""
+	projects = frappe.get_all(
+		"Project",
+		filters={
+			"project_type": PRODUCTS_PROJECT_TYPE,
+			"is_active": "Yes",
+			"status": ["not in", ["Completed", "Canceled"]],
+		},
+		fields=[
+			"name",
+			"project_name",
+			"customer",
+			"status",
+			"percent_complete",
+			"expected_start_date",
+			"expected_end_date",
+		],
+	)
+	today_iso = str(today)
+	rows = []
+	for project in projects:
+		end = _iso(project.get("expected_end_date"))
+		percent = flt(project.get("percent_complete"))
+		rows.append(
+			{
+				"name": project.get("name"),
+				"project_name": project.get("project_name") or project.get("name"),
+				"customer": project.get("customer"),
+				"status": project.get("status"),
+				"percent_complete": percent,
+				"expected_start_date": _iso(project.get("expected_start_date")),
+				"expected_end_date": end,
+				"late": bool(end) and end < today_iso and percent < 100,
+				"line": po.LINE_PANELS,
+			}
+		)
+	# Soonest end first; undated last.
+	rows.sort(key=lambda p: (p["expected_end_date"] or "9999-12-31", p["project_name"] or ""))
+	return {"rows": rows}

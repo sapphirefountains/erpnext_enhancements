@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.824.0] - 2026-11-18
+
+### Added
+
+- **A Products tab on the Projects Dashboard, version 1.** Nikolas, 2026-11-18: the shop is turning
+  its configure-to-order E-Stop panel into a product line, and "the Sales Order is the record": a
+  product sale gets no Project. Custom-engineered control panels stay Projects of type "Products".
+  The tab is the sixth, after Summary, for the four people who run the line. Its four sections:
+  - **Order board.** A strip of five stage counts (Ordered / Paid, Building, Testing, Ready,
+    Delivered) over the product Sales Orders, grouped by stage. Each stage count is a filter, and
+    pressing it again clears it. Each order shows its promise date (`delivery_date`) with a Late
+    pill once that date has passed, and where it is ("Work Order in process", "From stock", "Delivered
+    11/12/2026"), with links to its Work Orders and Delivery Notes. It also shows paid, part paid,
+    unpaid or not invoiced, and its total. A delivered order stays on the board for 30 days.
+  - **Sales pipeline.** Open product quotations, open Opportunities in the Products value stream,
+    and that stream's win rate over 12 months. The win rate is won / (won + lost) and leaves out
+    historical deals, the same rule as the Value Stream Performance report. A test reads the report's
+    won and lost statuses and fails if the two drift apart.
+  - **Stock and shortages.** Finished product units on hand, with how many the open orders have
+    already claimed. Below them, the components in "E-Stop Components" that are out of stock or
+    under their reorder level.
+  - **Control panel projects.** Active Projects of type Products, soonest end first, with Past due.
+  - **Product-line chips** (E-Stops, Control Panels, Other) narrow every section. Several can be
+    pressed together, as the stream chips can. The choice is kept per browser in
+    `chb_projects_dashboard_products_v1`, like the dashboard's other choices, never in frappe
+    `user_settings`.
+- **`project_dashboard.get_products_data`**, the tab's one endpoint, and
+  **`erpnext_enhancements/product_orders.py`**, which holds every rule the endpoint applies and
+  imports nothing from Frappe. The module sits at the package top level because
+  `project_enhancements/__init__.py` imports frappe, and a bench-free test could not import it from
+  there.
+  - **What a product is (the proposed rule).** An Item is a product when the Product Configurator
+    made it (`Item.custom_source_configuration` is set) or when its code is in a PDT product family:
+    `PDT-` and four digits, then the end, a hyphen or a space. So `PDT-0040` and
+    `PDT-0040-1-1-1-2-0` match, and `PDT-00040 (deleted)` and `PDT-00XX` do not. Three codes are
+    left out: **PDT-0701, PDT-0400 and PDT-0030**. Prod, read on 2026-11-18, has PDT-0701 ("SERVICE -
+    FOUNTAIN MATERIALS & EQUIPMENT") on 325 invoice lines and PDT-0400 (chemicals) on 178, nearly all
+    of them service work. The obvious `LIKE 'PDT-%'` would have put most service quotes on the tab.
+    PDT-0030 ("BUILD - SAPPHIRE CONNECT HARDWARE") has the same catch-all shape. **The item group
+    "Configured Products" is not a rule on its own.** On prod it holds 13 hand-made Items that are
+    not products (a first aid kit, a pipe union, a heat exchanger), and none of them carries the
+    configurator's mark. The configurator stamps that field on every Item it makes, so the field is
+    the configurator's own mark. A product Sales Order is a submitted one with at least one product
+    line.
+  - **The lines.** E-Stops is PDT-0040. Control Panels are the families Nikolas listed for phase P4:
+    Splash Wizard, VFD Bypass, Pool & Fountain Center, Level Master and Activation Bollard. Every
+    other product family is Other, and so is a configured Item whose code has no PDT family.
+  - **An order's stage** (`order_stage`). Delivered once `per_delivered` reaches 100. Building while
+    a submitted Work Order is not finished; a draft Work Order has not been released to the shop and
+    moves nothing. Built once every submitted Work Order is finished, or, with none, once stock on
+    the shelf covers what is left to deliver: a common configuration built ahead to the Build Room
+    shelf ships from stock and has no Work Order of its own. Built is Ready. **Testing is reserved
+    for the pre-shipment test a later P1 task records:** the function takes a `qc` argument, and the
+    endpoint passes None until that task lands. Until then the Testing column stays empty, on
+    purpose. Otherwise the order is Ordered / Paid.
+  - **Which orders the shelf covers** (`allocate_stock`). A unit built for one order is set aside
+    for that order first, so it never also covers the next one. What is left goes to orders with no
+    Work Order, earliest promise date first. An order counts as covered only when every one of its
+    product lines is.
+  - **An open quotation.** Not cancelled, lost, ordered or expired, and still current: its Valid Till
+    is today or later, or, with no Valid Till, it is dated within the last 90 days. Every product
+    quote on prod is a draft mirrored from QuickBooks with no Valid Till, going back to 2016: 147
+    in all, 13 of them in the last 90 days.
+  - **Permissions.** The page gate first (`check_permission`), as every endpoint in the module. Then
+    each section asks for read on the doctypes it shows: Sales Order, Quotation, Opportunity, Item
+    and Bin, and Project. A section the person cannot read comes back `{"allowed": false}` and draws
+    the no-access panel, and the other sections still draw. The paid chip also needs Sales Invoice
+    read: Logan builds the units and holds no accounts role, so he sees the board without it. The
+    reads are SQL, so per-record User Permissions do not narrow them, the same choice
+    `get_project_data` makes for the portfolio. A section whose read raises is logged and comes back
+    `{"failed": true}`. It draws an error panel with Try again, and the rest of the tab is unaffected.
+  - **CLAUDE.md rules held.** Aggregates are `frappe.db.sql` with bound parameters, never a function
+    written as a string field in `get_all`, which Frappe 16 refuses. Nothing names the configurator's
+    `custom_source_configuration` column without first checking `has_column("Item", ...)`: the
+    configurator adds that column in `after_migrate`. The shelf commitments the board works out for
+    the stock section are removed before the answer leaves.
+- **Every section of the tab has a sensible empty state**, because prod had 0 Sales Orders, 0 Work
+  Orders, 0 Delivery Notes, no finished unit and no Products project when it shipped. On an empty
+  site the strip reads five zeros, and each block keeps the table's frame with a short panel that
+  says what will appear there and when.
+
+### Changed
+
+- **The Projects Dashboard has six tabs.** `show_panel` no longer draws the projects' loading,
+  no-access or error panel while the Products tab is on screen. The Products tab has its own answer
+  on its own ticket, so a failed project read can never cover the product orders, and a project
+  refresh never retires a Products answer that is still on its way. Refresh, and a return to the
+  workspace, ask for the Products answer again once the tab has been opened.
+
+### Tests
+
+- `tests/test_product_orders.py` (stub-free) covers the product rule on prod's real codes, every
+  stage transition and the QC hook, the shelf allocation, the open-quotation and win-rate rules, and
+  that the script, the shell and the server name the same lines and stages.
+  `tests/test_products_tab_endpoint.py` runs `get_products_data` on its own frappe stub. It checks
+  the empty answer prod gets today, per-section permissions, a failed section kept to itself, and the
+  board on sample orders. It also formats every query with its parameters the way the driver does,
+  and holds the two CLAUDE.md rules. Both run in a new CI step. The Projects Dashboard harness
+  (`scripts/test_projects_dashboard_toolbar.mjs`) drives the tab's real script. It covers asking
+  once, the empty panels, grouping by stage, the stage and line filters, the remembered chips, and
+  a failed project read never drawn over the tab. The existing shell tests now expect six tabs.
+
 ## [1.823.0] - 2026-11-17
 
 ### Added
