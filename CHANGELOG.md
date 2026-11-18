@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.4] - 2026-11-18
+
+### Changed
+
+- **Record values are escaped wherever a page prints them (hardening).** One rule per way a value
+  reaches a page, each with a bench-free test (`tests/test_output_escaping.py`,
+  `scripts/test_safe_file_link.mjs`), both wired into CI:
+  - **Inline boot data.** The Time Kiosk, Wall Display, traveler itinerary and training preview
+    pages now print their boot JSON through one shared encoder, `utils/script_json.script_json`
+    (moved out of `www/itinerary.py`), which writes `<`, `>` and `&` as `\u` escapes. The page
+    scripts read the same structure as before; the escapes read back as the same characters.
+  - **Customer rentals page.** Every record value printed as text, in `value="..."` and inside
+    `<textarea>` in `www/rentals.html` now goes through `| e`.
+  - **Attachment lists.** The form sidebar's attachment rows and the comment box's upload preview
+    and attached-files list build their HTML with escaped names, and draw an address as a link only
+    when it starts with `/files/`, `/private/files/`, `http://` or `https://` (anything else shows
+    as plain text). The row builder is `public/js/global_enhancements/safe_file_link.js`.
+  - **Accounting intake preview.** The Document Intake form frames, shows or links `source_file`
+    only when it starts with `/files/`, `/private/files/` or `https://`.
+  - **Purchase links on Purchase Orders and Material Requests.** `procurement_links.js` escapes
+    supplier, item code and address, links only http(s) addresses, and its add/edit buttons read
+    `data-` attributes through one click handler instead of inline `onclick` strings.
+    `api.procurement.save_item_link` now stores only an address that
+    `item_flow_rules.purchase_url_problem` accepts (the rule `api.item_flow.save_supplier` already
+    applies), and it requires write permission on the Item rather than saving with
+    `ignore_permissions`. The purchasing-role gate is unchanged.
+  - **Child-task tree.** `get_child_tasks_html` escapes the status, the assignee and an error
+    message in the HTML it returns.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added

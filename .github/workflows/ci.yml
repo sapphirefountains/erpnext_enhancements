@@ -2391,6 +2391,19 @@ jobs:
       # holding another Item. Runs the real files against a stub of the v16 pieces they hook.
       - name: New records from a grid keep what was typed (bench-free, node)
         run: node scripts/test_new_item_prefill.mjs
+      # v1.826.4: record values in rendered HTML. The boot JSON of the kiosk, wall display,
+      # itinerary and training preview goes through one script-safe encoder; the rentals page
+      # escapes every record value (the real template body is rendered); the child-task tree
+      # escapes status and assignee; save_item_link stores only an address the guided Item flow
+      # accepts. Own step: each suite loads its functions with ast over a stand-in frappe, so no
+      # stub is installed. Needs jinja2, installed at the top of this job.
+      - name: Record values are escaped where they are rendered (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_output_escaping -v
+      # The browser halves of the same rule, run under node: the sidebar attachment row and the
+      # comment box's file link (global_enhancements/safe_file_link.js) and the Purchase Order's
+      # supplier-link buttons (procurement_links.js, run in a vm over a stub of frappe).
+      - name: Attachment and purchase links escape their values (bench-free, node)
+        run: node scripts/test_safe_file_link.mjs
       # Same audit: the Contact "Account" field mirrored the first Customer link, so a supplier's
       # employee took the first fanned-out Customer as their employer, and clearing it promoted the
       # next one. Also AddressLinkGuard: a staff-created linkless Address is never filed under the

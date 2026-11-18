@@ -19,6 +19,7 @@ import frappe
 
 from erpnext_enhancements.api.task_dashboard import STAFF_ROLES, get_wall_dashboard_data
 from erpnext_enhancements.utils.deploy import get_deploy_version
+from erpnext_enhancements.utils.script_json import script_json
 
 # Always render fresh per-user; never cache the authenticated shell.
 no_cache = 1
@@ -48,6 +49,6 @@ def get_context(context):
 		)
 
 	context.no_cache = 1
-	context.boot_json = frappe.as_json(get_wall_dashboard_data())
+	context.boot_json = script_json(get_wall_dashboard_data())
 	context.deploy_version = get_deploy_version()
 	return context

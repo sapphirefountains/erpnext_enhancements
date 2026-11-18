@@ -3568,6 +3568,18 @@ class TestItineraryBackForward(unittest.TestCase):
 		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
 		return namespace[name]
 
+	def _script_json(self, fake_frappe):
+		"""The shared ``script_json`` (utils/script_json.py, which itinerary.py imports), extracted
+		with ast over a stand-in frappe."""
+		import ast
+
+		path = os.path.join(APP_DIR, "utils", "script_json.py")
+		tree = ast.parse(_read(path))
+		wanted = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "script_json"]
+		namespace = {"frappe": fake_frappe}
+		exec(compile(ast.Module(body=wanted, type_ignores=[]), path, "exec"), namespace)
+		return namespace["script_json"]
+
 	def _login_redirect(self):
 		from urllib.parse import quote
 
@@ -3596,6 +3608,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		namespace = {
 			"frappe": fake,
 			"quote": quote,
+			"script_json": self._script_json(fake),
 			"get_itinerary_bootstrap": lambda: dict(boot or {"user": user, "csrf_token": "tok", "trips": []}),
 			"get_deploy_version": lambda: "v7",
 			"set_marker": set_marker,
@@ -3604,7 +3617,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		wanted = [
 			n
 			for n in tree.body
-			if (isinstance(n, ast.FunctionDef) and n.name in ("get_context", "script_json", "login_redirect"))
+			if (isinstance(n, ast.FunctionDef) and n.name in ("get_context", "login_redirect"))
 			or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "ROUTE" for t in n.targets))
 		]
 		exec(compile(ast.Module(body=wanted, type_ignores=[]), self.CONTROLLER, "exec"), namespace)
@@ -3663,7 +3676,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		import types
 
 		fake_frappe = types.SimpleNamespace(as_json=lambda value: json.dumps(value, indent=1, sort_keys=True))
-		script_json = self._controller_function("script_json", {"frappe": fake_frappe})
+		script_json = self._script_json(fake_frappe)
 		boot = {"trips": [{"purpose": "</script><script>alert(1)</script> R&D"}]}
 		out = script_json(boot)
 		for char in "<>&":
@@ -3671,6 +3684,7 @@ class TestItineraryBackForward(unittest.TestCase):
 		self.assertEqual(json.loads(out), boot)
 		self.assertIn("boot_json | safe", _read(os.path.join(APP_DIR, "www", "itinerary.html")))
 		self.assertIn("context.boot_json = script_json(boot)", _read(self.CONTROLLER))
+		self.assertIn("from erpnext_enhancements.utils.script_json import script_json", _read(self.CONTROLLER))
 
 	def test_the_login_redirect_keeps_the_trip(self):
 		login_redirect = self._login_redirect()

@@ -17,6 +17,8 @@
  * through /api/method/upload_file into Home/Attachments.
  */
 
+import { fileLinkHtml } from "./global_enhancements/safe_file_link.js";
+
 // 1. Monkey-patch the Timeline to inject the attachment button
 frappe.provide('erpnext_enhancements.timeline_attachments');
 
@@ -237,7 +239,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
             const $preview_item = $(`
                 <div class="attachment-preview-item" data-temp-id="${file_id_temp}" style="padding: 5px; border: 1px solid var(--border-color); border-radius: 4px; display: flex; align-items: center; background: var(--control-bg);">
                     <i class="fa fa-spinner fa-spin text-muted" style="margin-right: 5px;"></i>
-                    <span class="text-muted" style="font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${file.name}</span>
+                    <span class="text-muted" style="font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${frappe.utils.escape_html(file.name)}</span>
                 </div>
             `);
             $preview_container.append($preview_item);
@@ -273,7 +275,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
                     // Update UI to show success and remove button
                     $preview_item.html(`
                         <i class="fa fa-paperclip text-muted" style="margin-right: 5px;"></i>
-                        <a href="${uploaded_file.file_url}" target="_blank" style="font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px;">${uploaded_file.file_name}</a>
+                        ${fileLinkHtml(uploaded_file.file_name, uploaded_file.file_url, frappe.utils.escape_html, 'style="font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 5px;"')}
                         <button class="btn btn-link btn-xs text-danger btn-remove-attachment" style="padding: 0;">
                             <i class="fa fa-times"></i>
                         </button>
@@ -291,7 +293,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
             })
             .catch(error => {
                 $preview_item.remove();
-                frappe.show_alert({message: `Failed to upload ${file.name}`, indicator: 'red'});
+                frappe.show_alert({message: `Failed to upload ${frappe.utils.escape_html(file.name)}`, indicator: 'red'});
                 reject(error);
             });
         });
@@ -338,8 +340,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
                     let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
 
                     for (let file of self._uploaded_files) {
-                        let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                        attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
+                        attachment_html += `<li>${fileLinkHtml(file.file_name, file.file_url, frappe.utils.escape_html)}</li>`;
                     }
                     attachment_html += '</ul>';
 

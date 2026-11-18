@@ -34,6 +34,7 @@ import frappe
 from frappe.utils import cint, flt
 
 from erpnext_enhancements.utils.deploy import get_deploy_version
+from erpnext_enhancements.utils.script_json import script_json
 
 no_cache = 1
 
@@ -174,7 +175,7 @@ def _draft_payload(course=None):
 			}
 		)
 
-	return frappe.as_json(
+	return script_json(
 		{
 			"course": {
 				"course": doc.name,

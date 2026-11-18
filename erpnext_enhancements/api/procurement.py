@@ -4,17 +4,18 @@ Whitelisted API consumed by ``public/js/procurement_links.js`` to show and edit
 the "purchase URL" stored on Item Supplier child rows (e.g. quick links to a
 vendor's product page from a Purchase Order).
 
-Security: ``save_item_link`` writes the Item with ``ignore_permissions=True`` so a
-buyer can record a supplier URL without needing full Item write access — but that
-elevation is gated to purchasing roles (``_require_purchasing_access``). Without a
-gate, any authenticated user could write an arbitrary ``purchase_url`` onto any Item,
-and buyers later click that link straight from the Purchase Order screen. No external
+``save_item_link`` is limited to purchasing roles (``_require_purchasing_access``), needs
+write permission on the Item itself, and stores only a web address that
+``item_flow_rules.purchase_url_problem`` accepts (the same rule the guided Item flow applies),
+because buyers click the stored link straight from the Purchase Order screen. No external
 services.
 """
 
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowtime
+
+from erpnext_enhancements.inventory_enhancements.item_flow_rules import purchase_url_problem
 
 #: Roles that may read/write supplier purchase links. Purchasing staff plus the
 #: administrative roles that manage Items. A user outside this set has no business
@@ -83,6 +84,12 @@ def save_item_link(item_code, supplier, url):
     if not url:
         return
 
+    url = str(url).strip()
+    problem = purchase_url_problem(url)
+    if problem:
+        frappe.throw(_(problem))
+    frappe.has_permission("Item", "write", item_code, throw=True)
+
     # Check if this supplier already exists for the item
     exists = frappe.db.exists("Item Supplier", {"parent": item_code, "supplier": supplier})
 
@@ -95,7 +102,7 @@ def save_item_link(item_code, supplier, url):
             "supplier": supplier,
             "purchase_url": url
         })
-        item_doc.save(ignore_permissions=True) # Allow User to save even if they don't have Item write access
+        item_doc.save()
 
     return True
 
