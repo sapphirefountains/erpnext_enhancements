@@ -151,6 +151,66 @@ one Workstation at the product's labor rate, `with_operations = 1`,
 `time_in_mins = module hours × 60` — then remove labor from the quote or
 reconcile deliberately.
 
+**Stock (v1.824.0).** The configured Item is a stock item (set explicitly, not
+left to the site's default) with a submitted default BOM, so built-ahead stock
+and Work Orders can use it. It also gets an Item Default warehouse for the
+company: Manufacturing Settings' Default Finished Goods Warehouse, else Stock
+Settings' Default Warehouse, else the company's `Finished Goods - <abbr>`.
+Without one, ERPNext refuses to save a Sales Order holding a stock item
+("Delivery warehouse required"), and on 2026-11-18 neither setting was filled in
+on prod. A reused Item that is not a stock item is switched where ERPNext allows
+it and reported where it does not; `Item.default_bom` is re-asserted on every run.
+**Not yet:** serial numbers. Decision 2026-11-18 gives every unit one, and
+ERPNext locks `has_serial_no` once stock moves, so the Work Order step must turn
+it on before the first unit is built.
+
+## Quote to order (v1.824.0)
+
+Decision 2026-11-18: **the Sales Order is the record** for a product sale, and
+there is no project per unit. The flow:
+
+1. **Opportunity → configuration.** "Quote STILLWATER E-Stop" on the
+   Opportunity (a Desk button, and the guided page's Actions menu, which is how
+   most people open a deal). With more than one enabled Configurable Product it
+   reads "Quote a Product" and asks which. It calls `start_configuration`, which
+   makes a Product Configuration with the deal's Account (or Lead) and the deal
+   filled in, on the product's default options, and opens it.
+2. **Configuration → Quotation.** "Create Quotation" on the configuration calls
+   `create_quotation`: Item + BOM + price (`generate`), then a **draft**
+   Quotation for the configuration's Account, else the deal's party (a Lead or a
+   Prospect), linked to the deal, with the configured Item at the configured
+   price. The line reads the part number, then one plain line per option. The
+   Pricing Summary is attached as a private PDF. The configuration and the
+   Quotation link to each other (`Product Configuration.quotation`, and
+   `custom_product_configuration` on the Quotation line, which Make Sales Order
+   copies to the Sales Order line). The deal gets the Products value stream.
+   Pressing it again returns the same Quotation while it is live, and says so if
+   the configuration changed since.
+3. **Quotation → Sales Order.** ERPNext's own Make Sales Order. The line already
+   carries its warehouse.
+
+Both endpoints are POST-only and take plain arguments, so the phone quick-quote
+page and the Triton tool can call them: `start_configuration(opportunity,
+product, customer, selections)` takes the options as
+`{option_key: choice_code | qty}`.
+
+**No project for a product sale** (`crm_enhancements/product_sale.py`): a deal
+whose live quotes are all configured products (or that has a configuration and
+no quote yet) gets no hand-off SLA, no "Create project now?" and no Create
+Project button, and stays out of the won-without-project reminder and backlog
+counts. One line of anything else on its quotes keeps the project.
+
+**ERPNext's Opportunity statuses** (`crm_enhancements/opportunity_stage_guard.py`):
+submitting a linked Quotation makes ERPNext write the Opportunity's status as
+`Quotation`, and its Sales Order as `Converted`. Neither is a stage on this site,
+and a status off the list freezes the record; the guard puts the previous stage
+back. Moving the deal to Closed Won stays a person's call.
+
+**Permissions.** Starting a configuration and quoting it need the Product
+Engineer role (create/write on Product Configuration), plus create on Quotation,
+Item, Item Price and Supplier and create/submit on BOM for the generation.
+Every refusal says, in plain words, what is missing and which role to ask for.
+
 ## Master switch
 
 `ERPNext Enhancements Settings → Product Configurator →
@@ -172,6 +232,10 @@ endpoints/buttons that create ERPNext masters. Server guards:
 4. Configure away: **Product Configuration → New**, pick PDT-0040, tick/adjust
    options, Save → **Create → Item + BOM + Selling Price**; print the Build
    Sheet / QC Checklist / Pricing Summary from the View menu.
+5. To sell one (v1.824.0): **Opportunity → Quote STILLWATER E-Stop**, adjust the
+   options, Save → **Create Quotation**. Set **Manufacturing Settings → Default
+   Finished Goods Warehouse** if finished units should not live in
+   `Finished Goods - <abbr>`.
 
 ## Verification
 

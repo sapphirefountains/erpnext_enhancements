@@ -47,6 +47,10 @@ frappe.provide("erpnext_enhancements.crm");
 	const EVENT = "ee_prompt_create_project";
 	const open_prompts = {}; // opportunity_name -> true while a prompt/dialog is showing
 
+	// v1.824.0: what a product sale (crm_enhancements/product_sale.py) is told instead of a project.
+	const PRODUCT_SALE_TEXT =
+		"This deal is a product sale, so it gets no project: its Sales Order is the record. Make the Sales Order from its Quotation.";
+
 	const PROGRESS_EVENT = "ee_project_creation_progress";
 	const STATUS_EVENT = "project_creation_status";
 	const STATE_METHOD =
@@ -137,6 +141,15 @@ frappe.provide("erpnext_enhancements.crm");
 				opportunity: opportunity_name,
 			})
 			.then(function (state) {
+				// v1.824.0: a product sale gets no project (crm_enhancements/product_sale.py).
+				if (state && state.is_product_sale) {
+					frappe.msgprint({
+						title: __("No project for a product sale"),
+						indicator: "blue",
+						message: __(PRODUCT_SALE_TEXT),
+					});
+					return;
+				}
 				if (state && state.available && state.enabled && !state.gate_open) {
 					frappe.msgprint({
 						title: __("Hand-Off Required"),
@@ -308,6 +321,16 @@ frappe.provide("erpnext_enhancements.crm");
 							if (result.status === "exists") {
 								tracker.cancel();
 								report(opportunity_name, { status: "exists", project: result.project }, opts);
+								return;
+							}
+							// v1.824.0: the server found a product sale, which gets no project.
+							if (result.status === "product_sale") {
+								tracker.cancel();
+								frappe.msgprint({
+									title: __("No project for a product sale"),
+									indicator: "blue",
+									message: __(PRODUCT_SALE_TEXT),
+								});
 								return;
 							}
 							// "running": someone (or another tab) had already started it,
@@ -854,6 +877,15 @@ frappe.provide("erpnext_enhancements.crm");
 				// that same save, so a fresh transition is never skipped by this.
 				if (state && state.is_historical) {
 					done();
+					return;
+				}
+				// v1.824.0: a product sale gets no project and no hand-off, so there is no next step
+				// to ask about. A fresh win says so once; reopening the deal asks nothing.
+				if (state && state.is_product_sale) {
+					done();
+					if (opts.mode === "transition") {
+						frappe.show_alert({ message: __(PRODUCT_SALE_TEXT), indicator: "blue" }, 10);
+					}
 					return;
 				}
 				if (state && state.on_lead) {

@@ -22,16 +22,61 @@ deliberately NOT in the BOM (no operations): the configurator's selling price
 already carries labor + markup, and BOM operations would double-count it. To
 add operations later: one Workstation at the product's labor rate, one
 "Assembly" Operation, ``with_operations = 1``.
+
+Stock, for the Sales Order and the Work Order (v1.824.0): the configured Item is
+a stock item with a submitted default BOM, which is what built-ahead stock and
+Work Orders need. Three gaps closed then:
+
+* **A warehouse.** This site sets no default warehouse anywhere (Stock Settings
+  and Manufacturing Settings were both blank on 2026-11-18), and ERPNext refuses
+  to save a Sales Order holding a stock item with no warehouse ("Delivery
+  warehouse required"). A new configured Item gets an Item Default for the
+  company pointing at :func:`finished_goods_warehouse`, and the Quotation line
+  carries it too, so Make Sales Order copies it across.
+* **A reused Item that is not a stock item.** The reuse path never looked at
+  the flag. It now switches it on where ERPNext allows it, and says so where it
+  does not (ERPNext refuses the change once a submitted document uses the Item).
+* **The default-BOM pointer.** ERPNext sets ``Item.default_bom`` when a default
+  BOM is submitted; an unchanged BOM is only re-costed, so a pointer somebody
+  cleared stayed cleared. It is re-asserted on every run.
 """
+
+from contextlib import contextmanager
 
 import frappe
 from frappe import _
 from frappe.utils import flt
 
+from erpnext_enhancements.product_configurator.engine.quote import (
+	description_html,
+	description_lines,
+	missing_permission_message,
+)
+
 CONFIG_DOCTYPE = "Product Configuration"
 SELLING_PRICE_LIST = "Standard Selling"
 BUYING_PRICE_LIST = "Standard Buying"
 DEFAULT_SUPPLIER_GROUP = "Distributor"
+#: ERPNext's setup wizard names a company's finished-goods warehouse this way ("Finished Goods - SF").
+FINISHED_GOODS_WAREHOUSE = "Finished Goods"
+
+
+@contextmanager
+def muted_messages():
+	"""Keep a refusal we catch out of the response.
+
+	``frappe.throw`` queues its message before it raises, so a caught throw still reaches the
+	browser as a red modal with no error behind it. ``mute_messages`` is msgprint's own opt-out.
+	"""
+	flags = getattr(frappe, "flags", None)
+	before = getattr(flags, "mute_messages", None) if flags is not None else None
+	if flags is not None:
+		flags.mute_messages = True
+	try:
+		yield
+	finally:
+		if flags is not None:
+			flags.mute_messages = before
 
 
 def generate(configuration_name):
@@ -44,10 +89,46 @@ def generate(configuration_name):
 
 	item_code = _ensure_product_item(cfg)
 	bom_name = _ensure_bom(cfg, item_code)
+	_point_default_bom(item_code, bom_name)
 	price_name = _upsert_selling_price(cfg, item_code)
 
 	cfg.mark_generated(item_code, bom_name, price_name)
 	return {"item": item_code, "bom": bom_name, "item_price": price_name}
+
+
+def finished_goods_warehouse(company):
+	"""Where finished configured units are kept and shipped from, or ``None``.
+
+	Manufacturing Settings' Default Finished Goods Warehouse first (the one a Work Order will use),
+	then Stock Settings' Default Warehouse, then the company's "Finished Goods - <abbr>", which
+	ERPNext's setup wizard makes. Each must be an enabled, non-group warehouse of ``company``.
+	Never raises: a quote without a warehouse is still a quote, and the caller says what is missing.
+	"""
+	candidates = []
+	for doctype, field in (
+		("Manufacturing Settings", "default_fg_warehouse"),
+		("Stock Settings", "default_warehouse"),
+	):
+		try:
+			candidates.append(frappe.db.get_single_value(doctype, field))
+		except Exception:
+			continue
+	try:
+		abbr = frappe.get_cached_value("Company", company, "abbr") if company else None
+	except Exception:
+		abbr = None
+	if abbr:
+		candidates.append(f"{FINISHED_GOODS_WAREHOUSE} - {abbr}")
+	for name in candidates:
+		if not name:
+			continue
+		try:
+			row = frappe.db.get_value("Warehouse", name, ["is_group", "disabled", "company"], as_dict=True)
+		except Exception:
+			row = None
+		if row and not row.is_group and not row.disabled and (not company or row.company == company):
+			return name
+	return None
 
 
 def ensure_component_items(product_name):
@@ -117,25 +198,24 @@ def _assert_config_ready(cfg):
 
 
 def _assert_generation_permitted():
-	"""Fail fast with one clean message instead of a mid-flight PermissionError."""
-	missing = []
-	for doctype, ptype in (
-		("Supplier", "create"),
-		("Item", "create"),
-		("BOM", "create"),
-		("BOM", "submit"),
-		("Item Price", "create"),
-	):
-		if not frappe.has_permission(doctype, ptype):
-			missing.append(f"{doctype} ({ptype})")
-	if missing:
-		frappe.throw(
-			_(
-				"You need these permissions to generate ERPNext records: {0}. "
-				"Ask an administrator to grant the relevant stock/manufacturing roles."
-			).format(", ".join(missing)),
-			frappe.PermissionError,
+	"""Fail fast with one clean message instead of a mid-flight PermissionError.
+
+	The message is in plain words (v1.824.0): what the person can't do yet and which role to ask
+	for, rather than "Item (create), BOM (submit)" (``engine.quote.missing_permission_message``).
+	"""
+	missing = [
+		(doctype, ptype)
+		for doctype, ptype in (
+			("Supplier", "create"),
+			("Item", "create"),
+			("BOM", "create"),
+			("BOM", "submit"),
+			("Item Price", "create"),
 		)
+		if not frappe.has_permission(doctype, ptype)
+	]
+	if missing:
+		frappe.throw(missing_permission_message(missing), frappe.PermissionError, title=_("Not allowed yet"))
 
 
 # ------------------------------------------------------------------ masters
@@ -225,6 +305,8 @@ def _ensure_product_item(cfg):
 	product = frappe.get_cached_doc("Configurable Product", cfg.product)
 	item_name = f"{product.product_name} {item_code}"[:140]
 	description = _compose_description(cfg, product)
+	company = cfg.company or frappe.defaults.get_global_default("default_company")
+	warehouse = finished_goods_warehouse(company)
 
 	if frappe.db.exists("Item", item_code):
 		item = frappe.get_doc("Item", item_code)
@@ -241,6 +323,7 @@ def _ensure_product_item(cfg):
 			)
 		item.db_set("item_name", item_name, update_modified=False)
 		item.db_set("description", description, update_modified=False)
+		_make_stockable(item, company, warehouse)
 		return item_code
 
 	item = frappe.get_doc(
@@ -250,11 +333,15 @@ def _ensure_product_item(cfg):
 			"item_name": item_name,
 			"item_group": product.item_group or "Configured Products",
 			"stock_uom": "Nos",
+			# Explicit, not the site default: built-ahead stock and Work Orders need a stock item.
 			"is_stock_item": 1,
 			"is_sales_item": 1,
 			"is_purchase_item": 0,
 			"description": description,
 			"custom_source_configuration": cfg.name,
+			"item_defaults": (
+				[{"company": company, "default_warehouse": warehouse}] if company and warehouse else []
+			),
 		}
 	)
 	# The configurator allocates this part number itself, and the person generating a
@@ -272,17 +359,54 @@ def _ensure_product_item(cfg):
 	return item_code
 
 
+def _make_stockable(item, company, warehouse):
+	"""Switch a reused configured Item to a stock item with a warehouse, or say why it can't be.
+
+	ERPNext's ``Item.cant_change`` refuses the stock flag once a submitted document uses the Item,
+	and that refusal is the authority: the switch runs through ``save()`` in a savepoint, never a
+	``db_set`` around it, and a refusal becomes an orange note while the quote carries on (a Sales
+	Order works without stock; a Work Order will not).
+	"""
+	needs_stock = not item.get("is_stock_item")
+	needs_default = bool(
+		company and warehouse and not any(row.company == company for row in item.get("item_defaults") or [])
+	)
+	if not (needs_stock or needs_default):
+		return
+	frappe.db.savepoint("pc_item_stockable")
+	try:
+		if needs_stock:
+			item.is_stock_item = 1
+		if needs_default:
+			item.append("item_defaults", {"company": company, "default_warehouse": warehouse})
+		item.flags.ignore_naming_guard = True  # the part number is the configurator's (see below)
+		with muted_messages():
+			item.save()
+	except Exception as e:
+		frappe.db.rollback(save_point="pc_item_stockable")
+		frappe.msgprint(
+			_(
+				"Item {0} could not be made a stock item with a warehouse, so a Work Order can't build "
+				"it yet: {1}"
+			).format(item.name, frappe.utils.escape_html(str(e))),
+			indicator="orange",
+		)
+
+
 def _compose_description(cfg, product):
-	"""Human-readable decode — what sales sees on a Quotation line."""
-	bits = [product.product_name]
-	for row in cfg.options:
-		if row.option_type == "Choice" and row.selected:
-			bits.append(f"{row.option_label}: {row.choice_label or row.choice_code}")
-		elif row.option_type == "Quantity":
-			bits.append(f"{row.option_label}: {int(row.qty or 0)}")
-	if flt(cfg.additional_cost):
-		bits.append(f"Additional: {cfg.additional_description or 'see configuration'}")
-	return " | ".join(bits)
+	"""What a Quotation line says: the part number, then one plain line per option.
+
+	The same format the Quotation line gets (``engine.quote.description_lines``), so a line somebody
+	adds to a Quotation or Sales Order by hand reads like one the configurator made. Until v1.824.0
+	this was the product name and the options on one line, split by " | ".
+	"""
+	lines = description_lines(
+		cfg.part_number,
+		[row.as_dict() for row in cfg.options],
+		cfg.additional_description,
+		flt(cfg.additional_cost),
+	)
+	return description_html(lines)
 
 
 # --------------------------------------------------------------------- BOM
@@ -370,6 +494,16 @@ def _ensure_bom(cfg, item_code):
 			indicator="orange",
 		)
 	return bom.name
+
+
+def _point_default_bom(item_code, bom_name):
+	"""``Item.default_bom`` names the BOM the configuration uses (a Work Order reads it).
+
+	A newly submitted default BOM sets it in ERPNext's own ``BOM.on_submit``; an unchanged BOM is
+	only re-costed, so a pointer somebody cleared by hand would otherwise stay cleared.
+	"""
+	if bom_name and frappe.db.get_value("Item", item_code, "default_bom") != bom_name:
+		frappe.db.set_value("Item", item_code, "default_bom", bom_name, update_modified=False)
 
 
 # --------------------------------------------------------------- item price

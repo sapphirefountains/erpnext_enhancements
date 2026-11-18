@@ -27,6 +27,7 @@ so answering "No" leaves no side effects to undo beyond the status + stamp.
 import frappe
 from frappe import _
 
+from erpnext_enhancements.crm_enhancements import product_sale
 from erpnext_enhancements.status_alerts import _in_maintenance_context
 
 EVENT = "ee_prompt_create_project"
@@ -49,6 +50,10 @@ def prompt_create_project_on_won(doc, method=None):
 	been created yet. Skips bulk/import/migrate contexts (no interactive user to
 	prompt). Fire-and-forget: a missed event is recovered by the form's
 	reopen-on-load check (see the client script).
+
+	Never for a product sale (v1.824.0, ``product_sale``): its record is the Sales
+	Order, so there is no project to offer. Asked last, after the cheap checks,
+	because it reads the database.
 	"""
 	if doc.status != WON_STATUS:
 		return
@@ -60,6 +65,8 @@ def prompt_create_project_on_won(doc, method=None):
 	before = doc.get_doc_before_save()
 	if before and before.status == WON_STATUS:
 		return  # already won before this save — not a transition
+	if product_sale.is_product_opportunity(getattr(doc, "name", None)):
+		return
 
 	frappe.publish_realtime(
 		EVENT,

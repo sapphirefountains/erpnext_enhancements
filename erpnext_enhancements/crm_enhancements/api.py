@@ -20,6 +20,7 @@ import frappe
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
+from erpnext_enhancements.crm_enhancements import product_sale
 from erpnext_enhancements.crm_enhancements import project_creation_progress as progress
 from erpnext_enhancements.crm_enhancements.project_copy import copy_site_and_budget
 from erpnext_enhancements.utils import attachment_copies
@@ -64,7 +65,17 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		enqueued; ``{"status": "running", ...}`` with the same keys when a job
 		for this Opportunity is already queued or running (nothing new is
 		queued); ``{"status": "exists", "project"}`` when it already has its
-		Project. The client draws its progress bar from ``steps``.
+		Project; ``{"status": "product_sale", "message"}`` when the deal is a
+		product sale, which gets no project (v1.824.0, see below). The client
+		draws its progress bar from ``steps``.
+
+	A product sale skips project creation (v1.824.0; decision 2026-11-18, "the
+	Sales Order is the record"). Recognized by
+	:func:`~erpnext_enhancements.crm_enhancements.product_sale.is_product_opportunity`:
+	a configured product on the deal and nothing else on its quotes. Answered
+	before the template and the notify list are checked, because neither
+	matters for a deal that will have no project. A deal with anything besides
+	configured products on its quotes still gets its project.
 
 	Raises:
 		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing,
@@ -85,6 +96,15 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	# state (the requester, the Error Log's name). project_creation_state's read check is
 	# the same rule's other half.
 	frappe.has_permission("Opportunity", "write", doc=opportunity_name, throw=True)
+
+	if product_sale.is_product_opportunity(opportunity_name):
+		return {
+			"status": "product_sale",
+			"message": (
+				"This deal is a product sale, so it gets no project: its Sales Order is the record. "
+				"Make the Sales Order from its Quotation."
+			),
+		}
 
 	# Normalized here so a field holding only separators ("," / " ") is refused up
 	# front rather than queueing a job that notifies nobody.

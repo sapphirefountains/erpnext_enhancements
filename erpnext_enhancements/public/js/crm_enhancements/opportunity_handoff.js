@@ -48,6 +48,9 @@
  *    from hand-off warnings. Its buttons stay, all plain (none primary), so a
  *    deal behind a closed gate can still book or skip the meeting and then
  *    create its project.
+ *  - A product sale (v1.824.0, `is_product_sale` from handoff_state; see
+ *    crm_enhancements/product_sale.py) with no Project reads the same quiet way,
+ *    "Not needed (product sale)", with no buttons: its record is the Sales Order.
  *
  * Step 2's box also carries the booked meeting (1.733.0): its Google Meet link and
  * a "Guests & RSVPs" toggle that reads each guest's answer from Google on a click
@@ -177,6 +180,9 @@
 			// Pre-ERPNext and untouched for 90 days (crm_enhancements/historical.py).
 			// Reported on both branches of handoff_state; the doc is the fallback.
 			historical: !!(state && "is_historical" in s ? s.is_historical : frm.doc.custom_is_historical),
+			// v1.824.0: a product sale gets no hand-off and no project (crm_enhancements/product_sale.py).
+			// Known only from the server; without it the tab reads as it always did.
+			product_sale: !!s.is_product_sale,
 			// Creating the project needs write on the Opportunity (v1.749.0): doc-aware, as the server checks.
 			can_write: !!frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc),
 		};
@@ -216,8 +222,9 @@
 
 		// A historical deal is not waiting on a hand-off, so neither step 2 nor
 		// step 3 is "next" and nothing reads Ready or OVERDUE.
-		const quiet = f.historical && f.won && !project_created;
-		if (quiet && !f.held) handoff_meta = __("Not tracked (historical)");
+		const quiet = (f.historical || f.product_sale) && f.won && !project_created;
+		const quiet_text = f.product_sale ? __("Not needed (product sale)") : __("Not tracked (historical)");
+		if (quiet && !f.held) handoff_meta = quiet_text;
 
 		// The gate, shown rather than merely enforced, so the order is visible
 		// before somebody hits a server error.
@@ -226,7 +233,7 @@
 		if (project_created) {
 			create_meta = __("Done");
 		} else if (quiet) {
-			create_meta = __("Not tracked (historical)");
+			create_meta = quiet_text;
 		} else if (f.won && !unblocked) {
 			create_meta = __("Blocked until the hand-off meeting is booked");
 		} else if (f.won) {
@@ -273,7 +280,10 @@
 		if (!f.won) return "";
 		let cls = "orange";
 		let text;
-		if (f.historical && !f.project) {
+		if (f.product_sale && !f.project) {
+			cls = "muted";
+			text = __("Product sale: no hand-off meeting and no project. Its Sales Order is the record.");
+		} else if (f.historical && !f.project) {
 			cls = "muted";
 			text = __("Historical (pre-ERPNext) — excluded from hand-off warnings.");
 		} else if (f.held && f.skip_reason) {
@@ -319,7 +329,9 @@
 
 	function step_buttons(f) {
 		const by_step = {};
-		if (!f.won) return by_step;
+		// Not won yet: nothing to do. A product sale with no Project (v1.824.0): nothing to book or
+		// create either, ever; the server refuses its project. A historical deal never exits here.
+		if (!f.won || (f.product_sale && !f.project)) return by_step;
 		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
 
 		// Historical (pre-ERPNext, untouched for 90 days): the same buttons, but
@@ -536,7 +548,7 @@
 				// audit found 17 of 17 meetings silently past SLA, and a warning
 				// only visible to somebody who already went looking is the failure
 				// mode, not the fix.
-				if (f.overdue && !f.held && !f.historical) {
+				if (f.overdue && !f.held && !f.historical && !(f.product_sale && !f.project)) {
 					frm.dashboard.add_comment(
 						__("Hand-off meeting is OVERDUE (due {0}). {1}", [
 							when(f.due_by),

@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.824.0] - 2026-11-18
+
+### Added
+
+- **Quote a configured product from the deal, and make its Quotation in one click: the first E-Stop
+  sales slice** (`product_configurator/quoting.py`, `engine/quote.py`). Decision 2026-11-18: for a
+  product like the Stillwater E-Stop, the Sales Order is the record, not a project. Until now E-Stop
+  quotes were typed by hand in QuickBooks, in at least four formats, and the Product Configurator
+  had never been used (0 configurations on prod).
+  - **"Quote STILLWATER E-Stop" on the Opportunity.** On the Desk form and in the guided page's
+    Actions menu, which is how most people open a deal. It starts a Product Configuration with the
+    deal's Account (or Lead) and the deal filled in, on the product's default options
+    (`PDT-0040-1-1-1-2-0`), and opens it. The label comes from the enabled Configurable Products
+    (`frappe.boot.ee_configurable_products`); with more than one it reads "Quote a Product" and asks
+    which. Not hidden from people without the Product Engineer role: the server tells them what to
+    ask for, where a missing button would tell them nothing.
+  - **"Create Quotation" on the configuration.** Makes the Item, its default BOM and its price
+    (`erp_integration.generate`), then a **draft** Quotation for the configuration's Account, else the
+    deal's own party (a Lead or a Prospect), linked to the deal, with the configured Item at the
+    configured price. When the quote is for the deal's own party it starts from ERPNext's own
+    Opportunity-to-Quotation mapping, so the contact, the addresses and the default sales taxes come
+    across as they do from Create > Quotation. The Pricing Summary is attached as a private PDF; the
+    configuration and the Quotation link to each other (`Product Configuration.quotation`, and
+    `custom_product_configuration` on Quotation Item and Sales Order Item, which Make Sales Order copies
+    across); the deal gets the Products value stream. Pressing it again returns the live Quotation
+    rather than making a second, and says so if the configuration changed since.
+  - **One line format.** The part number, then one plain line per option ("E-Stop Mounting: Flush",
+    "Pump Contactor Qty: 2"), zeros included, then the additional item when there is one. The
+    configured Item's own description now uses the same format, so a line added to a Quotation or
+    Sales Order by hand reads the same. It was the product name and the options on one line, split by
+    " | ".
+  - **Kept by the module's rules.** No commits: the Item, BOM, price and Quotation stand or fall
+    together. The attachment and the value-stream tag run in savepoints and turn into a warning when
+    they fail, never a failed quote. `create_quotation` is gated by `product_configurator_enabled`;
+    starting a configuration is data at rest and is not.
+  - **For the phone quick-quote page and the Triton tool to come.** Both endpoints are POST-only
+    whitelisted adapters in `api/configurator.py`: `start_configuration(opportunity, product,
+    customer, selections)` takes the options as `{option_key: choice_code | qty}`, and
+    `create_quotation(configuration)`.
+  - **The line keeps the configured price.** ERPNext v16 re-prices a line with no list rate and books
+    the gap as an invented discount, so every line carries `price_list_rate` equal to `rate`, and the
+    Quotation sets `ignore_pricing_rule`.
+- **A product sale gets no project** (`crm_enhancements/product_sale.py`). A deal is a product sale
+  when a configured product is on it (a configuration linked, or a live Quotation line whose Item the
+  configurator made) and nothing else is on its live Quotations. Such a deal gets no hand-off SLA
+  stamp, no "Create project now?" prompt, no Create Project button (the Hand-Off Process tab says why
+  instead), and `enqueue_project_creation` answers `product_sale` before it asks for a Project
+  Template. It is also left out of the daily won-without-project reminder, the Sales Dashboard's
+  hand-off backlog and the Hand-Off Backlog KPI, where it would otherwise sit forever. **Why not the
+  Products value stream:** on prod the E-Stop deals carry Design + Build + Products (the old process
+  put each unit through the Design template) and the control-panel jobs carry Products too, and
+  those keep a project. The stream would have been wrong both ways; a configured Item on the quote
+  is a fact. One line of anything else on the quotes keeps the project.
+
+### Fixed
+
+- **Submitting a Quotation linked to an Opportunity would freeze the Opportunity**
+  (`crm_enhancements/opportunity_stage_guard.py`). ERPNext v16 sets the Opportunity's status to
+  `Quotation` when a linked Quotation is submitted, `Converted` when its Sales Order is, and `Open`
+  when the Quotation is canceled, through a `db_set` no validation sees (read at v16.54.0). None of
+  them is on this site's stage list, and a record holding a status off its list refuses every later
+  save and drops off the Kanban board (148 Zoho imports sat that way for a year). It never happened
+  because every Quotation on prod was a QuickBooks draft; the quote-to-order flow would have hit it
+  on every sale. An `on_change` hook, first in the list, puts back the stage the deal had. Moving a
+  deal to Closed Won stays a person's call.
+- **A Sales Order for a configured product could not be saved.** The configured Item is a stock item,
+  ERPNext refuses a Sales Order holding a stock item with no warehouse, and prod has no default
+  warehouse in Stock Settings or Manufacturing Settings. The Item now gets an Item Default warehouse
+  for the company (Manufacturing Settings' Default Finished Goods Warehouse, else Stock Settings'
+  Default Warehouse, else `Finished Goods - <abbr>`), and the Quotation line carries it too.
+- **The configured Item is now reliably ready for stock and Work Orders.** New ones were already stock
+  items with a submitted default BOM. Two gaps closed: a reused Item that was not a stock item was
+  never switched (now it is, where ERPNext allows it, with an orange note where it does not), and
+  `Item.default_bom` was only set by a new BOM's submit, so a pointer cleared by hand stayed cleared
+  (now re-asserted on every run). Serial numbers are not set yet: the Work Order step has to turn
+  them on before the first unit is built, because ERPNext locks `has_serial_no` once stock moves.
+
+### Changed
+
+- **Configurator refusals read in plain words.** "Not permitted (write Product Configuration)" and
+  "You need these permissions to generate ERPNext records: BOM (submit)" now say what the person
+  can't do and which role to ask for ("Quoting a product needs the Product Engineer role…", "You
+  can't create bills of materials or submit bills of materials yet… ask for the Manufacturing User
+  role").
+- **A configuration's title follows its part number** until somebody types their own. A
+  configuration started from a deal is saved on the default options first, so a title fixed at the
+  first save named the wrong setup. Picking an Opportunity on the form fills the Account or Lead.
+
 ## [1.823.0] - 2026-11-17
 
 ### Added

@@ -83,7 +83,7 @@ from frappe.utils import (
 )
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.crm_enhancements import handoff_calendar
+from erpnext_enhancements.crm_enhancements import handoff_calendar, product_sale
 from erpnext_enhancements.crm_enhancements.historical import is_historical
 from erpnext_enhancements.feature_flags import handoff_gate_enabled, process_automation_enabled
 from erpnext_enhancements.utils.working_days import add_working_days
@@ -1304,8 +1304,17 @@ def handoff_state(opportunity):
 	# A deal still on a Lead cannot hand off cleanly: the Project takes the Lead as its customer
 	# and no Google Drive folder is made. The Closed Won prompt warns (Nik, 2026-10-13).
 	on_lead = frappe.db.get_value("Opportunity", opportunity, "opportunity_from") == "Lead"
+	# A product sale gets no project (v1.824.0, product_sale.py): the prompt asks nothing and the
+	# Hand-Off Process tab says why instead of offering Create Project. Both branches, like the two
+	# above, so it holds on a site without the gate fields too.
+	is_product = product_sale.is_product_opportunity(opportunity)
 	if not _has_gate_fields():
-		return {"available": False, "is_historical": historical, "on_lead": on_lead}
+		return {
+			"available": False,
+			"is_historical": historical,
+			"on_lead": on_lead,
+			"is_product_sale": is_product,
+		}
 
 	row = frappe.db.get_value(
 		"Opportunity",
@@ -1361,6 +1370,7 @@ def handoff_state(opportunity):
 		"gate_open": not handoff_block_reason(opportunity),
 		"gate_message": _(GATE_MESSAGE),
 		"is_historical": historical,
+		"is_product_sale": is_product,
 	}
 
 
@@ -1391,12 +1401,17 @@ def stamp_handoff_gate(doc, method=None):
 	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03): a one-off service client's
 	approval on the link wins the deal, and there is no hand-off meeting to hold for a pump swap.
 	The guard never raises (:func:`_is_service_call_deal`).
+
+	Not for a product sale either (v1.824.0; decision 2026-11-18): an E-Stop's record is its Sales
+	Order, so there is no project to hand off to (:mod:`.product_sale`, which never raises).
 	"""
 	if doc.status != WON_STATUS:
 		return
 	if not doc.meta.get_field("custom_handoff_gate_applies"):
 		return
 	if _is_service_call_deal(doc):
+		return
+	if _is_product_sale_deal(doc):
 		return
 
 	before = doc.get_doc_before_save()
@@ -1425,6 +1440,19 @@ def _is_service_call_deal(doc):
 		from erpnext_enhancements.sapphire_maintenance.service_calls import belongs_to_service_call
 
 		return belongs_to_service_call(getattr(doc, "name", None) if not doc.is_new() else None)
+	except Exception:
+		return False
+
+
+def _is_product_sale_deal(doc):
+	"""A product sale's Opportunity (v1.824.0), or False; never raises, like the guard above.
+
+	A new record has nothing linked to it yet, so only a saved one is asked.
+	"""
+	try:
+		if doc.is_new():
+			return False
+		return product_sale.is_product_opportunity(getattr(doc, "name", None))
 	except Exception:
 		return False
 

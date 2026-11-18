@@ -1490,8 +1490,16 @@ doc_events = {
 		# Drive folder per Customer-party opportunity (settings opt-in)
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
-		# My Work (WI-081): close its open assignments when it moves into a finished state.
-		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		"on_change": [
+			# v1.824.0, FIRST: submitting a linked Quotation makes ERPNext db_set the status to
+			# "Quotation", its Sales Order to "Converted", a cancel to "Open" -- none of them on this
+			# site's stage list, and a status off the list freezes the record (every later save refused,
+			# gone from the Kanban). Puts the previous stage back, so auto_close below sees the stage
+			# the deal is really in. Never raises. See crm_enhancements/opportunity_stage_guard.py.
+			"erpnext_enhancements.crm_enhancements.opportunity_stage_guard.keep_stage_on_list",
+			# My Work (WI-081): close its open assignments when it moves into a finished state.
+			"erpnext_enhancements.task_enhancements.auto_close.on_change",
+		],
 	},
 	"File": {
 		# knowledge_base (WI-080 PR 2, v1.539.0): every File attached to Knowledge Article
@@ -2911,8 +2919,11 @@ after_migrate = [
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 	# product_configurator: Item provenance field (marks configurator-generated
-	# Items so regenerate can safely reuse them) + the Build Instructions /
-	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
+	# Items so regenerate can safely reuse them), and since v1.824.0 the
+	# configuration link on Quotation Item and Sales Order Item (Make Sales Order
+	# copies it across) + the Build Instructions / QC Checklist / Pricing Summary
+	# Print Formats (idempotent + guarded). The Pricing Summary is also what
+	# Create Quotation attaches to the Quotation.
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
 	# enhancements_core: the supplier-facing Purchase Order print format. Procurement

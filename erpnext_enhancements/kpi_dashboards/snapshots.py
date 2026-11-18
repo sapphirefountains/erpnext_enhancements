@@ -934,13 +934,16 @@ def _sales_metrics():
 		metrics.LOWER,
 	)
 	if frappe.db.has_column("Opportunity", "custom_created_project"):
+		from erpnext_enhancements.crm_enhancements.product_sale import product_sale_sql
+
 		add(
 			"handoff_backlog",
 			"Hand-Off Backlog",
-			# Historical deals excluded (v1.629.0), as in the nag and the Sales Dashboard widget.
+			# Historical deals excluded (v1.629.0), as in the nag and the Sales Dashboard widget. Product
+			# sales too (v1.824.0): they get no project by design (crm_enhancements/product_sale.py).
 			_scalar(
 				"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(custom_created_project,'')='' "
-				f"and {not_historical}"
+				f"and {not_historical} and not ({product_sale_sql('`tabOpportunity`.name')})"
 			),
 			"count",
 			"Opportunity",
