@@ -171,10 +171,18 @@ def raise_action(incident, row, kind="Task"):
 	Refuses to raise the same row twice — `raised_reference` is the guard — because
 	a corrective action raised three times is three people doing it once between
 	them.
+
+	Who may raise one: anybody with write on the incident (HR Manager, System
+	Manager), and the supervisor of the person it names -- the `reports_to` arm of
+	`permissions.incident_has_permission`. Nobody else, whatever else they can read.
 	"""
 	me = _me()
 	doc = frappe.get_doc(DOCTYPE, incident)
-	doc.check_permission("write")
+	if not _may_raise(doc, me):
+		frappe.throw(
+			_("Only HR or the supervisor of the person named on this incident can raise its actions."),
+			frappe.PermissionError,
+		)
 
 	line = next((r for r in doc.actions if r.name == row), None)
 	if not line:
@@ -190,6 +198,18 @@ def raise_action(incident, row, kind="Task"):
 	line.db_set("raised_reference", reference, update_modified=False)
 	doc.add_comment("Comment", _("Corrective action raised as {0} by {1}.").format(reference, me))
 	return {"reference": reference}
+
+
+def _may_raise(doc, user):
+	"""Write on the incident, or supervising the person it names."""
+	if doc.has_permission("write"):
+		return True
+	if not doc.get("employee"):
+		return False
+	manager = frappe.db.get_value("Employee", {"user_id": user}, "name")
+	if not manager:
+		return False
+	return frappe.db.get_value("Employee", doc.get("employee"), "reports_to") == manager
 
 
 def _raise_task(doc, line):

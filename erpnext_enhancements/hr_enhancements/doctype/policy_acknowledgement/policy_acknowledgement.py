@@ -48,10 +48,19 @@ class PolicyAcknowledgement(Document):
 		signing IS a write. Without this, anybody could POST their own row to Signed
 		without ever seeing the document, which is precisely the thing the record
 		exists to prove they did.
+
+		A NEW row that did not come through `policies.request_acknowledgement`
+		starts as Requested with no signature and no decline, whatever the insert
+		carried.
 		"""
-		if self.flags.get("policy_transition") or self.is_new():
+		if self.flags.get("policy_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		if self.is_new():
+			self.status = REQUESTED
+			for field in ("signed_name", "signature", "signed_on", "signed_from_ip", "declined_reason"):
+				self.set(field, None)
 			return
 		before = self.get_doc_before_save()
 		if before and before.status != self.status:

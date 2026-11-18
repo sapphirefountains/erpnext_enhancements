@@ -258,7 +258,11 @@ def apply_promotion(review):
 	"""
 	me = _me()
 	doc = frappe.get_doc(DOCTYPE, review)
-	if not (DECIDER_ROLES & set(frappe.get_roles(me))) and doc.reviewer_user != me:
+	if not (DECIDER_ROLES & set(frappe.get_roles(me))) and (
+		doc.reviewer_user != me or me not in set(progression.eligible_reviewers(doc.user))
+	):
+		# The named reviewer must still outrank them on that ladder at the moment
+		# of applying -- the same predicate `send_to_reviewer` checks.
 		frappe.throw(_("Only the reviewer or HR can apply this."), frappe.PermissionError)
 	if doc.decision != PROMOTE:
 		frappe.throw(_("That review did not decide to promote."))

@@ -64,10 +64,21 @@ class TimeOffRequest(Document):
 
 		The endpoints set ``flags.timeoff_transition`` before saving; anything else
 		may only leave the status where it already was.
+
+		A NEW request starts as a Draft with no decision and no approver, whatever
+		the insert carried; the approver is then derived from ``reports_to`` in
+		``_resolve_approver``. Same for a Desk duplicate of a decided request.
 		"""
-		if self.flags.get("timeoff_transition") or self.is_new():
+		if self.flags.get("timeoff_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		if self.is_new():
+			self.status = DRAFT
+			self.decided_on = None
+			self.decision_note = None
+			self.approver = None
+			self.approver_user = None
 			return
 		before = self.get_doc_before_save()
 		if before and before.status != self.status:

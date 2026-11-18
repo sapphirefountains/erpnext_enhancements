@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.8] - 2026-11-18
+
+### Changed
+
+- **HR records: HR Manager and System Manager see every record; everyone else is scoped.**
+  Hardening, by the owner's decision of 2026-11-18. `HR User` is held by nearly every staff
+  account, so it now counts as an ordinary staff role in the HR Enhancements module:
+  - `hr_enhancements/permissions.py`: `UNSCOPED_ROLES` is System Manager and HR Manager. A
+    holder of `HR User` goes through the same row scoping as everyone else: their own
+    records, and their direct reports' where the hook for that doctype already has that arm
+    (time off, onboarding, credentials, work restrictions, incidents). Tier Review stays own
+    and named reviewer; Policy Acknowledgement stays own.
+  - The `HR User` DocPerm rows on Safety Incident, Work Restriction, Tier Review, Employee
+    Credential, Time Off Request, Onboarding Checklist and Policy Acknowledgement now grant
+    exactly what the `Employee` row on the same doctype grants, no more. Filing credentials
+    and work restrictions, editing incidents and creating acknowledgements by hand is HR
+    Manager's (the module's endpoints for acknowledgements and incidents are unchanged).
+    Each JSON's `modified` is bumped so `bench migrate` re-imports the rows.
+  - The `OSHA 300 Log` and `OSHA 300A Summary` reports are for System Manager and HR Manager
+    only, the same as `OSHA Privacy Case List`. They read incidents without row scoping, so
+    the role list is their whole gate.
+  - `safety.raise_action` now accepts write on the incident (HR Manager, System Manager) or
+    the supervisor (`reports_to`) of the person the incident names, and refuses anyone else.
+    It used to check write only, which `HR User` no longer grants.
+  - `permissions.incident_has_permission` allows the create check on a new incident.
+    `reported_by` is stamped in `before_insert`, after Frappe's create check, so a near miss
+    filed from the Desk by someone without an unscoped role was refused. Who may create is
+    still bounded by the DocPerm.
+- **A new Time Off Request, Tier Review or Policy Acknowledgement starts at its first status.**
+  The controllers' status guards returned early on a new document. An insert that does not
+  come through the module's endpoint (no transition flag) now starts as `Draft` / `Draft` /
+  `Requested`. Its decision, approval, signature and applied fields are cleared, whatever the
+  insert carried, and that includes a Desk duplicate of a decided record. A new time-off
+  request also drops any approver it was sent with, so `_resolve_approver` derives the
+  approver from `reports_to`. A new tier review drops any reviewer, because `send_to_reviewer`
+  sets one after checking eligibility. Migrations, installs and patches are exempt, as
+  before.
+- **`tier_review.apply_promotion` checks the reviewer's eligibility again.** Applying now
+  requires HR Manager or System Manager, or the named reviewer who is still in
+  `progression.eligible_reviewers` for that person, the same predicate `send_to_reviewer`
+  uses.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added

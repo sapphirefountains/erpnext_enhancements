@@ -98,11 +98,200 @@ class TestTheRecordIsScoped(unittest.TestCase):
         self.assertIn("except Exception:", body)
         self.assertIn("allowed = {user}", body)
 
-    def test_hr_user_can_see_the_whole_register(self):
-        """The difference from `training/permissions.UNSCOPED_ROLES` is intentional:
-        training records are performance data, a credential register is the filing
-        cabinet, and the person filing needs all of it."""
-        self.assertIn('"HR User"', _text(PERMISSIONS))
+    def test_only_hr_manager_and_system_manager_are_unscoped(self):
+        """v1.826.8: every other role, `HR User` included, goes through the row
+        scoping. Read from the AST, so a comment naming a role cannot satisfy it."""
+        self.assertEqual(_unscoped_roles(), {"System Manager", "HR Manager"})
+
+
+# ------------------------------------------------------------------ HR User parity
+#
+# v1.826.8. The seven doctypes the hooks in `permissions.py` scope. On each, the
+# `HR User` DocPerm rows grant nothing the `Employee` rows on the same doctype do
+# not, so the row scoping decides what a holder of `HR User` sees, and only HR
+# Manager and System Manager see every record.
+
+SCOPED = {
+    "Safety Incident": "safety_incident",
+    "Work Restriction": "work_restriction",
+    "Tier Review": "tier_review",
+    "Employee Credential": "employee_credential",
+    "Time Off Request": "time_off_request",
+    "Onboarding Checklist": "onboarding_checklist",
+    "Policy Acknowledgement": "policy_acknowledgement",
+}
+
+FLAGS = (
+    "read", "write", "create", "delete", "submit", "cancel", "amend", "report",
+    "export", "import", "share", "print", "email", "set_user_permissions",
+)
+
+
+def _unscoped_roles():
+    import ast
+
+    for node in ast.parse(_text(PERMISSIONS)).body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "UNSCOPED_ROLES" for t in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError("UNSCOPED_ROLES not found")
+
+
+def _granted(perms, role):
+    return {
+        (perm.get("permlevel") or 0, flag)
+        for perm in perms
+        if perm.get("role") == role
+        for flag in FLAGS
+        if perm.get(flag)
+    }
+
+
+class TestHRUserGrantsNoMoreThanEmployee(unittest.TestCase):
+    def test_hr_user_rows_are_within_the_employee_rows(self):
+        for doctype, folder in SCOPED.items():
+            perms = _read(MODULE_DIR / f"doctype/{folder}/{folder}.json")["permissions"]
+            employee = _granted(perms, "Employee")
+            with self.subTest(doctype=doctype):
+                self.assertTrue(employee, "the Employee rows are what ordinary staff rely on")
+                self.assertLessEqual(_granted(perms, "HR User"), employee)
+
+    def test_hr_manager_keeps_full_access(self):
+        for doctype, folder in SCOPED.items():
+            perms = _read(MODULE_DIR / f"doctype/{folder}/{folder}.json")["permissions"]
+            with self.subTest(doctype=doctype):
+                for flag in ("read", "write", "create"):
+                    self.assertIn((0, flag), _granted(perms, "HR Manager"))
+
+    def test_every_scoped_doctype_has_both_hooks(self):
+        hooks = _text(HOOKS)
+        for doctype in SCOPED:
+            for hook in ("query_conditions", "has_permission"):
+                with self.subTest(doctype=doctype, hook=hook):
+                    self.assertRegex(
+                        hooks,
+                        rf'"{doctype}": "erpnext_enhancements\.hr_enhancements\.permissions\.\w+_{hook}"',
+                    )
+
+    def test_no_custom_docperm_fixture_widens_them(self):
+        """A Custom DocPerm row replaces the doctype's own rows entirely, so one in
+        the fixtures for these doctypes would undo the parity above."""
+        rows = _read(APP / "fixtures/custom_docperm.json")
+        self.assertFalse([r for r in rows if r.get("parent") in SCOPED])
+
+
+class TestTheScopingHooks(unittest.TestCase):
+    """The hooks run against a `frappe` stub: one HR Manager, one supervisor and
+    two staff who report to them, everyone but the HR Manager holding `HR User`."""
+
+    ROLES = {
+        "hrm@example.com": ["HR Manager", "Employee"],
+        "lead@example.com": ["HR User", "Employee"],
+        "tech@example.com": ["HR User", "Employee"],
+        "other@example.com": ["HR User", "Employee"],
+    }
+    EMPLOYEES = {
+        "EMP-1": {"user_id": "hrm@example.com", "reports_to": None},
+        "EMP-2": {"user_id": "lead@example.com", "reports_to": None},
+        "EMP-3": {"user_id": "tech@example.com", "reports_to": "EMP-2"},
+        "EMP-4": {"user_id": "other@example.com", "reports_to": None},
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        import sys
+        import types
+
+        cls._saved = {k: sys.modules.get(k) for k in ("frappe", "erpnext_enhancements.training.authority")}
+        employees = cls.EMPLOYEES
+
+        def _match(row, filters):
+            return all(row.get(k) == v for k, v in filters.items())
+
+        class DB:
+            def get_value(self, doctype, filters, field):
+                assert doctype == "Employee"
+                if isinstance(filters, dict):
+                    hit = next((n for n, r in employees.items() if _match(r, filters)), None)
+                    return hit if field == "name" else (employees[hit][field] if hit else None)
+                return (employees.get(filters) or {}).get(field)
+
+            def exists(self, doctype, filters):
+                return any(_match(r, filters) for r in employees.values())
+
+            def escape(self, value):
+                return "'" + str(value) + "'"
+
+        fake = types.ModuleType("frappe")
+        fake.db = DB()
+        fake.session = types.SimpleNamespace(user="Guest")
+        fake.get_roles = lambda user: cls.ROLES.get(user, [])
+
+        def get_all(doctype, filters=None, pluck=None, **kwargs):
+            rows = [dict(r, name=n) for n, r in employees.items() if _match(r, filters or {})]
+            return [r[pluck] for r in rows] if pluck else rows
+
+        fake.get_all = get_all
+        authority = types.ModuleType("erpnext_enhancements.training.authority")
+        authority.signable_learner_users = lambda user: []
+        sys.modules["frappe"] = fake
+        sys.modules["erpnext_enhancements.training.authority"] = authority
+
+        spec = importlib.util.spec_from_file_location("_hr_permissions_under_test", PERMISSIONS)
+        cls.perms = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.perms)
+
+    @classmethod
+    def tearDownClass(cls):
+        import sys
+
+        for key, value in cls._saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+
+    def test_hr_manager_sees_every_record(self):
+        p = self.perms
+        self.assertEqual(p.credential_query_conditions("hrm@example.com"), "")
+        self.assertTrue(p.incident_has_permission({"employee": "EMP-4"}, "read", "hrm@example.com"))
+
+    def test_hr_user_is_scoped_to_their_own_rows(self):
+        p = self.perms
+        me, colleague = "other@example.com", "tech@example.com"
+        condition = p.credential_query_conditions(me)
+        self.assertIn(f"'{me}'", condition)
+        self.assertNotIn(colleague, condition)
+        self.assertFalse(p.credential_has_permission({"user": colleague}, "read", me))
+        self.assertTrue(p.credential_has_permission({"user": me}, "read", me))
+
+    def test_a_supervisor_sees_their_direct_reports(self):
+        p = self.perms
+        lead, report = "lead@example.com", "tech@example.com"
+        self.assertIn(f"'{report}'", p.restriction_query_conditions(lead))
+        self.assertTrue(p.restriction_has_permission({"user": report}, "read", lead))
+        self.assertTrue(p.incident_has_permission({"employee": "EMP-3"}, "read", lead))
+        self.assertTrue(p.timeoff_has_permission({"user": report}, "read", lead))
+        self.assertFalse(p.incident_has_permission({"employee": "EMP-4"}, "read", lead))
+
+    def test_staff_still_reach_their_own_records(self):
+        p = self.perms
+        me = "tech@example.com"
+        self.assertTrue(p.timeoff_has_permission({"employee": "EMP-3"}, "create", me))
+        self.assertTrue(p.acknowledgement_has_permission({"user": me}, "write", me))
+        self.assertTrue(p.tier_review_has_permission({"user": me}, "write", me))
+        self.assertTrue(p.onboarding_has_permission({"user": me}, "write", me))
+        self.assertTrue(p.incident_has_permission({"employee": "EMP-3"}, "read", me))
+
+    def test_anyone_who_may_create_an_incident_can_file_a_new_one(self):
+        """`reported_by` is stamped in before_insert, after the create check."""
+        p = self.perms
+        me = "other@example.com"
+        self.assertTrue(p.incident_has_permission({"incident_type": "Near Miss"}, "create", me))
+        filed = {"employee": "EMP-3", "reported_by": "x@example.com"}
+        self.assertFalse(p.incident_has_permission(filed, "read", me))
 
 
 class TestStatusIsDerived(unittest.TestCase):

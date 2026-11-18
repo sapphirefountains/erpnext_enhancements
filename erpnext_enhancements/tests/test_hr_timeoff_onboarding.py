@@ -408,6 +408,148 @@ class TestTheStatusCannotBeSelfApproved(unittest.TestCase):
 
 
 
+class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
+    """v1.826.8. Time Off Request, Tier Review and Policy Acknowledgement: a row
+    inserted without its module's transition flag starts in its first status with
+    the decision, approval and applied fields cleared, whatever the insert carried.
+
+    Runs each controller's `_guard_status` against a `frappe` stub, installed for
+    this class only and removed afterwards.
+    """
+
+    STUBBED = ("frappe", "frappe.model", "frappe.model.document", "frappe.utils")
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        import sys
+        import types
+
+        cls._saved = {k: sys.modules.get(k) for k in cls.STUBBED}
+
+        fake = types.ModuleType("frappe")
+        fake._ = lambda text: text
+        fake.flags = types.SimpleNamespace(in_migrate=False, in_install=False, in_patch=False)
+        fake.PermissionError = type("PermissionError", (Exception,), {})
+
+        def throw(message, exc=Exception, **kwargs):
+            raise exc(message)
+
+        fake.throw = throw
+        utils = types.ModuleType("frappe.utils")
+        for name in ("cint", "date_diff", "getdate", "now_datetime"):
+            setattr(utils, name, lambda *a, **k: None)
+        model = types.ModuleType("frappe.model")
+        document = types.ModuleType("frappe.model.document")
+
+        class Document:
+            def __init__(self, new=True, transition=None, before=None, **values):
+                self.flags = {transition: True} if transition else {}
+                self._new = new
+                self._before = before
+                for key, value in values.items():
+                    setattr(self, key, value)
+
+            def is_new(self):
+                return self._new
+
+            def get(self, key, default=None):
+                return getattr(self, key, default)
+
+            def set(self, key, value):
+                setattr(self, key, value)
+
+            def get_doc_before_save(self):
+                return self._before
+
+        document.Document = Document
+        fake.utils, fake.model, model.document = utils, model, document
+        for key, module in zip(cls.STUBBED, (fake, model, document, utils), strict=True):
+            sys.modules[key] = module
+
+        def load(path, alias):
+            spec = importlib.util.spec_from_file_location(alias, path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        cls.fake = fake
+        cls.timeoff = load(TIMEOFF_PY, "_timeoff_controller_under_test")
+        cls.tier = load(
+            MODULE / "doctype/tier_review/tier_review.py", "_tier_review_controller_under_test"
+        )
+        cls.ack = load(
+            MODULE / "doctype/policy_acknowledgement/policy_acknowledgement.py",
+            "_acknowledgement_controller_under_test",
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        import sys
+
+        for key, value in cls._saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+
+    def test_a_new_time_off_request_cannot_arrive_approved(self):
+        doc = self.timeoff.TimeOffRequest(
+            status="Approved", decided_on="2026-11-18", decision_note="ok",
+            approver="EMP-9", approver_user="friend@example.com",
+        )
+        doc._guard_status()
+        self.assertEqual(doc.status, "Draft")
+        for field in ("decided_on", "decision_note", "approver", "approver_user"):
+            with self.subTest(field=field):
+                self.assertIsNone(getattr(doc, field))
+
+    def test_a_new_tier_review_cannot_arrive_decided(self):
+        doc = self.tier.TierReview(
+            status="Decided", decision="Promote", decided_by="x@example.com",
+            decided_on="2026-11-18", applied_on="2026-11-18", reviewer="EMP-9",
+            reviewer_user="friend@example.com",
+        )
+        doc._guard_status()
+        doc._guard_decision()
+        self.assertEqual(doc.status, "Draft")
+        for field in ("decision", "decided_by", "decided_on", "applied_on", "reviewer_user"):
+            with self.subTest(field=field):
+                self.assertIsNone(getattr(doc, field))
+
+    def test_a_new_acknowledgement_cannot_arrive_signed(self):
+        doc = self.ack.PolicyAcknowledgement(
+            status="Signed", signed_name="Somebody", signed_on="2026-11-18"
+        )
+        doc._guard_status()
+        self.assertEqual(doc.status, "Requested")
+        self.assertIsNone(doc.signed_name)
+        self.assertIsNone(doc.signed_on)
+
+    def test_the_module_endpoints_keep_what_they_set(self):
+        """`open_review` and `request_acknowledgement` flag their inserts."""
+        review = self.tier.TierReview(transition="tier_transition", status="Draft", decision=None)
+        review._guard_status()
+        self.assertEqual(review.status, "Draft")
+        ack = self.ack.PolicyAcknowledgement(
+            transition="policy_transition", status="Requested", signed_name=None
+        )
+        ack._guard_status()
+        self.assertEqual(ack.status, "Requested")
+
+    def test_an_existing_record_still_refuses_a_direct_status_change(self):
+        before = types_namespace(status="Requested")
+        doc = self.timeoff.TimeOffRequest(new=False, before=before, status="Approved")
+        with self.assertRaises(self.fake.PermissionError):
+            doc._guard_status()
+
+
+def types_namespace(**values):
+    import types
+
+    return types.SimpleNamespace(**values)
+
+
 class TestTheApprovalFlowIsActuallyReachable(unittest.TestCase):
     """The defect the HR feature survey found, and it made the whole feature
     decorative.

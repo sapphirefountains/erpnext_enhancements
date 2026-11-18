@@ -84,10 +84,18 @@ class TierReview(Document):
 
 		Exactly the hole the WI-072 branch review found in `Time Off Request`,
 		avoided here by writing the guard at the same time as the field.
+
+		A NEW review that did not come through `open_review` starts as a Draft with
+		no reviewer and every decision, review and applied field cleared, whatever the insert
+		carried -- so `decide` and `apply_promotion` only ever see a decision that
+		was recorded through them.
 		"""
-		if self.flags.get("tier_transition") or self.is_new():
+		if self.flags.get("tier_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		if self.is_new():
+			self._start_as_draft()
 			return
 		before = self.get_doc_before_save()
 		if before and before.status != self.status:
@@ -95,6 +103,22 @@ class TierReview(Document):
 				_("A review moves through the buttons on this form, not by editing the status."),
 				frappe.PermissionError,
 			)
+
+	def _start_as_draft(self):
+		self.status = DRAFT
+		for field in (
+			"reviewer",
+			"reviewer_user",
+			"reviewer_summary",
+			"decision",
+			"decision_note",
+			"decided_by",
+			"decided_on",
+			"reviewed_on",
+			"applied_on",
+			"self_submitted_on",
+		):
+			self.set(field, None)
 
 	def _guard_decision(self):
 		"""Same rule for the decision itself, and the reason is sharper.
