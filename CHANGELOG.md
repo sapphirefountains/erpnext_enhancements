@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -63,6 +63,61 @@ Hardening changes released together. Each was written and reviewed as its own pu
     a `methods=` on the mapper itself is not consulted on that path.
     (`asset_management.rental_sales.make_rental_agreement` shares the prefix but saves a record,
     so it does declare POST.)
+- **Operations-side endpoints now check access before they read or write.** Hardening, consistent
+  with the checks the neighboring endpoints already make. Each rule below is pinned by
+  `tests/test_access_checks_ops.py` (bench-free, AST over the source, plus the access helpers
+  executed against a fake `frappe`), which has its own CI step.
+  - **Maintenance visit briefing** (`get_dashboard_context`) requires read permission on the
+    Project and one of the roles that see every visit (`sapphire_maintenance.permissions.VIEW_ALL_ROLES`).
+    The role is checked before the project is looked up. The desk form asks for the briefing
+    only when the user holds one of those roles and can read Projects.
+  - **Visit checklist payload** (`get_visit_payload`) requires create or write permission on
+    Sapphire Maintenance Record, or read permission on each of the contract, project and service
+    call it names. The desk form fills a draft only for a user who can create or write visits.
+  - Both are now thin checked wrappers over unchecked builders (`build_dashboard_context`,
+    `build_visit_payload`). The Visit Wizard's bootstrap calls the builders directly, after its
+    own read check on the visit, so the wizard behaves as before.
+  - **Create > Maintenance Contract** from a Sales Order, a Project Contract or a Project requires
+    read permission on the source document and create permission on Sapphire Maintenance Contract.
+    The signing hook that drafts the contract when an agreement is Signed maps through the
+    unchecked `map_contract_from_project_contract`, so it works as before.
+  - **Task tree on the Task form** (`get_child_tasks_html`) requires read permission on the Task,
+    checked before its `try` so a refusal is raised rather than drawn, and reads at most 2,000
+    descendants and 50 levels.
+  - **Change Orders on This Project, Budget Reallocations for a project, and a subcontractor's
+    scorecard history** each also require read permission on their own doctype. The scorecard
+    history clamps `limit` to 1..120.
+  - **Project Planner publish and Reset baseline** require write permission on the Project named,
+    in addition to the existing role gate and Task write.
+  - **Project comments** (`get_project_comments`, `add_project_comment`) require read permission
+    on the Project. No browser code calls them today.
+  - **Projects Dashboard per-project readers** (`get_project_tasks`, `get_task_children`,
+    `get_gantt_tasks_for_project`, `get_resource_allocation_data`, `get_project_health_metrics`)
+    require read permission on the Project, resolved from the parent task where the call names a
+    task, and on the task itself when it has no Project. Their callers are the Project form, which
+    already needs that read.
+  - **The Portfolio Gantt reader** (`get_all_projects_for_gantt`) has the dashboard's page gate
+    again, now that `check_permission()` falls back to Project Dashboard Settings' roles, and
+    reads through `frappe.get_list`, as the dashboard widget's own Gantt query does. No browser
+    code calls it since the Portfolio Gantt moved to that widget.
+  - **Master project ordering** (`update_master_project_structure`) writes only projects that
+    belong to that master and that the caller may write; any other name comes back in `skipped`.
+  - **Opportunity tag sync** (`sync_opportunity_tags_for_existing`) requires write permission on
+    the Opportunity and no longer moves `modified`, so the open form does not go stale. The form
+    calls it only for a user who can write the record.
+  - **Asset Booking availability** (`check_availability`) requires read permission on Asset
+    Booking.
+  - **Supervisor sign-off requests** (`request_signoff`): a learner asks about a course they can
+    open (`api.training._visible_course_names`), with their own attempt and their own open
+    assignment for that course. Training, System and HR Managers raising a request for someone
+    else are unchanged.
+  - **"Expand with AI" on the feedback form** (`draft_description`) is for System Users, with at
+    most 30 drafts per person per hour (`_enforce_draft_rate`, the same counter shape as the
+    filing limit). The bootstrap offers the button only to System Users.
+  - **Unlink and Delete preview** (`get_blocking_links`) requires read permission on the
+    document; `unlink_and_delete`, which checks delete permission first, uses the unchecked list.
+    **Merge Project preview** (`get_merge_stats`) requires read permission on Project, checked
+    before either name is looked up, and on both projects.
 
 ### Added
 

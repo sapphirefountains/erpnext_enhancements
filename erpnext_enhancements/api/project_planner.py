@@ -6604,13 +6604,16 @@ def _apply_notified(doc, notify, **kwargs):
 
 def _schedule_project(project):
 	"""The project a schedule call names, after the planner's checks: the role gate, Task write
-	(what publishing and every planner save need) and the project existing."""
+	(what publishing and every planner save need), the project existing, and write permission on
+	that Project (publishing and resetting a baseline both write to it)."""
 	_require_planner()
 	project = given(project)
 	if not project or not frappe.db.exists("Project", project):
 		frappe.throw(_("Pick a project."))
 	if not frappe.has_permission("Task", "write"):
 		frappe.throw(_("You cannot change Tasks."), frappe.PermissionError)
+	if not frappe.has_permission("Project", "write", doc=project):
+		frappe.throw(_("You cannot change this project."), frappe.PermissionError)
 	if not _has_schedule_columns():
 		frappe.throw(_("The schedule fields are not installed yet. Run bench migrate."))
 	return project

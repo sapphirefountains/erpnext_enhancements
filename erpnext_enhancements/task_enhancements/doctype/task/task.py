@@ -34,6 +34,11 @@ FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template
 #: ``task_enhancements.assignments.TASK_DEPENDENCY_DONE``, which My Work checks before Done.
 DEPENDENCY_DONE = ("Completed", "Cancelled", "Canceled")
 
+#: The most descendants ``get_child_tasks_html`` reads, and the deepest level it walks. A
+#: tree past either is drawn as far as the limit.
+MAX_TREE_NODES = 2000
+MAX_TREE_DEPTH = 50
+
 
 class Task(BaseTask):
     """ERPNext Task controller override (installed via override_doctype_class).
@@ -146,14 +151,18 @@ def get_child_tasks_html(task_name):
     ``custom_child_tasks_table`` HTML field.
 
     Returns an empty string when there are no descendants; on error it logs the
-    traceback and returns a short error ``<div>`` rather than raising.
+    traceback and returns a short error ``<div>`` rather than raising. Requires read
+    permission on the Task, checked before the ``try`` so a refusal is raised rather than
+    drawn; the walk stops at ``MAX_TREE_NODES`` descendants.
     """
     # Use a dedicated logger for debugging
     logger = frappe.logger("erpnext_enhancements")
     logger.debug(f"Executing get_child_tasks_html for task: {task_name}")
 
+    task = frappe.get_doc("Task", task_name)
+    task.check_permission("read")
+
     try:
-        task = frappe.get_doc("Task", task_name)
         descendants = _get_all_descendants("Task", task.name)
 
         logger.debug(f"Found {len(descendants)} descendants.")
@@ -242,28 +251,37 @@ def get_child_tasks_html(task_name):
         return f"<div>An error occurred: {e}</div>"
 
 
-def _get_all_descendants(doctype, parent):
+def _get_all_descendants(doctype, parent, _budget=None, _depth=0):
     """Recursively collect every descendant task under ``parent``.
 
     Performs a depth-first walk over ``parent_task`` links, returning a flat
     list of ``frappe._dict`` rows (each carrying the fields needed to render
     the tree). The dict wrapper enables dot-notation access by the
     tree-building logic. Note: one query is issued per node, so very deep/wide
-    trees fan out into many small queries.
+    trees fan out into many small queries. The walk stops after
+    ``MAX_TREE_NODES`` rows (``_budget`` is the count left, shared by every
+    level) and below ``MAX_TREE_DEPTH`` levels.
     """
+    if _budget is None:
+        _budget = [MAX_TREE_NODES]
     descendants = []
+    if _budget[0] <= 0 or _depth >= MAX_TREE_DEPTH:
+        return descendants
     fields = [
         "name", "subject", "parent_task", "status",
         "exp_start_date", "exp_end_date", "expected_time"
     ]
-    children = frappe.get_all(doctype, filters={'parent_task': parent}, fields=fields)
+    children = frappe.get_all(doctype, filters={'parent_task': parent}, fields=fields, limit=_budget[0])
 
     for child in children:
+        if _budget[0] <= 0:
+            break
+        _budget[0] -= 1
         # Convert the dictionary to a Frappe dict to allow dot notation access,
         # making it compatible with the existing tree-building logic.
         child_obj = frappe._dict(child)
         descendants.append(child_obj)
-        descendants.extend(_get_all_descendants(doctype, child_obj.name))
+        descendants.extend(_get_all_descendants(doctype, child_obj.name, _budget, _depth + 1))
 
     return descendants
 

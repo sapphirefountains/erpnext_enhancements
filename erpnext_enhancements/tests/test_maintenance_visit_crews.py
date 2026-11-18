@@ -266,6 +266,8 @@ def setUpModule():
 	record_module = types.ModuleType(RECORD_MODULE)
 	record_module.get_dashboard_context = lambda *a, **k: {}
 	record_module.get_visit_payload = lambda *a, **k: {}
+	record_module.build_dashboard_context = lambda *a, **k: {}
+	record_module.build_visit_payload = lambda *a, **k: {}
 	record_module.resolve_template = lambda *a, **k: None
 	contract_module = types.ModuleType(CONTRACT_MODULE)
 	contract_module.iter_seasonal_visits = lambda contract: iter(())
