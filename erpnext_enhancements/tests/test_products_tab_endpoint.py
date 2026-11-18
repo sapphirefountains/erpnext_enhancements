@@ -76,6 +76,7 @@ class Site:
 		self.errors = []
 		self.raise_on = None
 		self.default_wip = None
+		self.settings = None  # Product Build Settings; None: the DocType is not installed
 
 	def rows(self, key):
 		return [_Dict(row) for row in self.tables.get(key, [])]
@@ -93,6 +94,11 @@ _ROUTES = (
 	("FROM `tabQuotation` q", "quote_headers"),
 	("SELECT DISTINCT wip_warehouse", "wip_orders"),
 	("FROM `tabWork Order`", "work_orders"),
+	# The Testing column (v1.826.0): the units a finished Work Order made, the tested units on the
+	# shelf, and their submitted pre-shipment tests.
+	("WHERE work_order IN %(wos)s", "serials_wo"),
+	("WHERE item_code IN %(items)s AND status = 'Active'", "serials_active"),
+	("FROM `tabQuality Inspection`", "tests"),
 	("SELECT item_code, warehouse, actual_qty, projected_qty, ordered_qty", "component_bins"),
 	("FROM `tabSales Invoice Item` sii", "invoices"),
 	("SELECT item_code, SUM(actual_qty) AS qty", "on_hand"),
@@ -175,6 +181,13 @@ def setUpModule():
 		),
 	)
 	frappe.get_all = _get_all
+
+	def get_cached_doc(doctype, *args, **kwargs):
+		if doctype == "Product Build Settings" and SITE.settings is not None:
+			return _Dict(SITE.settings)
+		raise Exception("DoesNotExistError: " + doctype)
+
+	frappe.get_cached_doc = get_cached_doc
 	frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable
 	frappe.get_traceback = lambda *a, **k: "Traceback (most recent call last):\n  stub"
 	frappe.get_roles = lambda *a, **k: []
@@ -512,6 +525,16 @@ class TestTheBoard(Base):
 
 	def test_only_product_documents_are_on_the_board(self):
 		self.assertEqual(sorted(self.rows()), ["SO-1", "SO-3", "SO-4", "SO-5"])
+
+	def test_the_board_logs_nothing(self):
+		# The Testing column (v1.826.0) runs its own queries; one the stub does not know would be
+		# swallowed into the Error Log and the column would silently never fill.
+		self.rows()
+		self.assertEqual(SITE.errors, [])
+
+	def test_a_hand_made_product_from_stock_is_not_held_for_a_test(self):
+		# SO-1's PDT-0040-1-1-1-2-0 here carries no configuration: the gate does not apply to it.
+		self.assertEqual(self.rows()["SO-1"]["stage"], "ready")
 
 	def test_a_fountain_job_with_one_product_line_stays_off(self):
 		# Manager review of #1464: SO-6 would have shown at its full value and then turned Late.
@@ -852,3 +875,111 @@ class TestTheCLAUDEmdRules(Base):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+def unit(name, item, built_by, work_order=None, status="Active"):
+	return {"name": name, "item_code": item, "work_order": work_order, "custom_built_by": built_by, "status": status}
+
+
+def test_row(serial, item, status, by, day="2026-11-17", template="Pre-Shipment Functional Test - E-Stop", created=None):
+	return {
+		"name": "QI-" + serial + "-" + by + "-" + status,
+		"item_serial_no": serial,
+		"item_code": item,
+		"status": status,
+		"docstatus": 1,
+		"inspected_by": by,
+		"report_date": day,
+		"creation": created or day + " 10:00:00",
+		"quality_inspection_template": template,
+	}
+
+
+CONFIGURED = "PDT-0040-1-1-1-2-0"
+LOGAN = "logan@example.com"
+NATHAN = "nathan@example.com"
+
+
+class TestTheTestingColumn(Base):
+	"""v1.826.0: a built configured unit waits in Testing until its pre-shipment test passes, signed by
+	someone other than its builder. A unit from the shelf passes when tested units on hand cover it."""
+
+	def setUp(self):
+		super().setUp()
+		SITE.tables["so_headers"] = [so("SO-10"), so("SO-11", delivery_date="2026-12-05")]
+		SITE.tables["so_lines"] = [
+			so_line("SO-10", CONFIGURED, 1668, source="CFG-1"),
+			so_line("SO-11", CONFIGURED, 1668, source="CFG-1"),
+		]
+		SITE.tables["work_orders"] = [
+			{
+				"name": "WO-10",
+				"sales_order": "SO-10",
+				"production_item": CONFIGURED,
+				"status": "Completed",
+				"docstatus": 1,
+				"qty": 1,
+				"produced_qty": 1,
+			}
+		]
+		SITE.tables["on_hand"] = {CONFIGURED: 2}  # SO-10's built unit, plus one built ahead
+		SITE.tables["serials_wo"] = [unit("SN-1", CONFIGURED, LOGAN, work_order="WO-10")]
+		SITE.tables["serials_active"] = [unit("SN-2", CONFIGURED, NATHAN)]
+		SITE.tables["tests"] = [test_row("SN-2", CONFIGURED, "Accepted", LOGAN)]
+
+	def rows(self):
+		answer = self.answer()
+		self.assertEqual(SITE.errors, [])
+		return {row["name"]: row for row in answer["orders"]["rows"]}
+
+	def test_built_and_untested_waits_in_testing(self):
+		row = self.rows()["SO-10"]
+		self.assertEqual((row["stage"], row["note"]), ("testing", "Waiting for the pre-shipment test"))
+
+	def test_passed_by_someone_else_is_ready(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", NATHAN))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "ready")
+
+	def test_tested_by_its_builder_does_not_count(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", LOGAN))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "testing")
+
+	def test_a_failed_test_says_so(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Rejected", NATHAN))
+		row = self.rows()["SO-10"]
+		self.assertEqual((row["stage"], row["note"]), ("testing", "Test failed"))
+
+	def test_fixed_and_tested_again_is_ready(self):
+		SITE.tables["tests"] += [
+			test_row("SN-1", CONFIGURED, "Rejected", NATHAN, day="2026-11-16"),
+			test_row("SN-1", CONFIGURED, "Accepted", NATHAN, day="2026-11-17"),
+		]
+		self.assertEqual(self.rows()["SO-10"]["stage"], "ready")
+
+	def test_a_test_on_another_template_does_not_count(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", NATHAN, template="Incoming"))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "testing")
+
+	def test_from_the_shelf_a_tested_unit_on_hand_makes_it_ready(self):
+		row = self.rows()["SO-11"]
+		self.assertEqual((row["stage"], row["note"]), ("ready", "From stock"))
+
+	def test_from_the_shelf_with_no_tested_unit_it_waits(self):
+		SITE.tables["tests"] = []
+		self.assertEqual(self.rows()["SO-11"]["stage"], "testing")
+
+	def test_a_unit_built_for_another_order_is_not_shelf_stock(self):
+		# SN-1 is SO-10's own unit: passing it must not make SO-11's shelf unit read tested.
+		SITE.tables["serials_active"].append(unit("SN-1", CONFIGURED, LOGAN, work_order="WO-10"))
+		SITE.tables["tests"] = [test_row("SN-1", CONFIGURED, "Accepted", NATHAN)]
+		rows = self.rows()
+		self.assertEqual((rows["SO-10"]["stage"], rows["SO-11"]["stage"]), ("ready", "testing"))
+
+	def test_the_switch_off_brings_back_ready_as_soon_as_built(self):
+		SITE.settings = {"require_test": 0}
+		rows = self.rows()
+		self.assertEqual((rows["SO-10"]["stage"], rows["SO-11"]["stage"]), ("ready", "ready"))
+
+	def test_no_private_key_reaches_the_browser(self):
+		for row in self.rows().values():
+			self.assertNotIn("_tested_items", row)

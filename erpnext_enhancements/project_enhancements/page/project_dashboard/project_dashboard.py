@@ -1933,6 +1933,10 @@ def _product_orders(today, source_column):
 				for item in verdict["product_lines"]
 			],
 			"_deliveries": dns,
+			# The configured lines' Items: the units the pre-shipment test applies to (_product_qc).
+			"_tested_items": {
+				item.get("item_code") for item in verdict["product_lines"] if item.get("source_configuration")
+			},
 			"delivered_on": delivered_on,
 		}
 	if not orders:
@@ -1986,13 +1990,17 @@ def _product_orders(today, source_column):
 			for item in fact["lines"]:
 				committed[item["item_code"]] = committed.get(item["item_code"], 0) + item["pending_qty"]
 
+	qc_by_order = _product_qc(orders, work_orders, covered)
 	show_work_orders = bool(frappe.has_permission("Work Order", "read"))
 	show_deliveries = bool(frappe.has_permission("Delivery Note", "read"))
 	board, panels = [], []
 	for order in orders.values():
 		wos = work_orders.get(order["name"], [])
-		stage = po.order_stage(order["per_delivered"], wos, order["name"] in covered, qc=None)
+		stage = po.order_stage(
+			order["per_delivered"], wos, order["name"] in covered, qc=qc_by_order.get(order["name"])
+		)
 		dns = order.pop("_deliveries")
+		order.pop("_tested_items", None)
 		order.update(
 			{
 				"stage": stage["stage"],
@@ -2019,6 +2027,110 @@ def _product_orders(today, source_column):
 		(panels if order["needs_project"] else board).append(order)
 
 	return {"rows": board, "paid_visible": paid_visible, "_committed": committed, "_panel_orders": panels}
+
+
+def _product_qc(orders, work_orders, covered):
+	"""The pre-shipment test result of each built order, for the board's Testing column (v1.826.0).
+
+	``{order: "passed" | "pending" | "failed"}``, and nothing for an order not built yet (the stage
+	rule only asks once the build is done). Product Build Settings' Require a Passed Test Before
+	Delivery off, or a site without the serial's Built By column: every order is left out, and the
+	stage rule keeps its old answer (Ready as soon as it is built).
+
+	* **Built to order:** the units its finished Work Orders made (``Serial No.work_order``, which the
+	  Manufacture entry's hook stamps), each judged by ``product_fulfillment.rules.unit_state`` on its
+	  submitted tests and its recorded builder; ``rules.order_qc`` folds them.
+	* **From the shelf:** whether enough units of the Item in stock have passed
+	  (``rules.stock_qc``). Which unit ships is picked on the Delivery Note.
+
+	Never raises: the board without a Testing column is better than no board.
+	"""
+	try:
+		from erpnext_enhancements.product_fulfillment import rules as pf
+		from erpnext_enhancements.product_fulfillment.settings import get_settings
+
+		settings = get_settings()
+		if not cint(settings.require_test) or not frappe.db.has_column("Serial No", "custom_built_by"):
+			return {}
+		template = settings.test_template or None
+		tested = {name: order.get("_tested_items") or set() for name, order in orders.items()}
+		finished = {}
+		for name, wos in work_orders.items():
+			summary = po.work_order_summary(wos)
+			made = [wo.name for wo in summary["finished"] if wo.production_item in tested.get(name, ())]
+			if summary["built"] and made:
+				finished[name] = made
+		shelf = [
+			order
+			for name, order in orders.items()
+			if name in covered and tested.get(name) and not work_orders.get(name)
+		]
+		wo_names = tuple(sorted({wo for names in finished.values() for wo in names}))
+		item_codes = tuple(
+			sorted({item["item_code"] for order in shelf for item in order["items"] if item["item_code"] in tested[order["name"]]})
+		)
+		units = []
+		if wo_names:
+			units += frappe.db.sql(
+				"""
+				SELECT name, item_code, work_order, custom_built_by, status
+				FROM `tabSerial No`
+				WHERE work_order IN %(wos)s
+				""",
+				{"wos": wo_names},
+				as_dict=True,
+			)
+		if item_codes:
+			units += frappe.db.sql(
+				"""
+				SELECT name, item_code, work_order, custom_built_by, status
+				FROM `tabSerial No`
+				WHERE item_code IN %(items)s AND status = 'Active'
+				""",
+				{"items": item_codes},
+				as_dict=True,
+			)
+		units = list({u.name: u for u in units}.values())  # a unit can come back from both queries
+		if not units:
+			return {name: po.QC_PENDING for name in finished} if finished else {}
+		tests = {}
+		for test in frappe.db.sql(
+			"""
+			SELECT name, item_serial_no, item_code, status, docstatus, inspected_by, report_date,
+				creation, quality_inspection_template
+			FROM `tabQuality Inspection`
+			WHERE item_serial_no IN %(serials)s AND docstatus = 1
+			""",
+			{"serials": tuple(sorted({u.name for u in units}))},
+			as_dict=True,
+		):
+			tests.setdefault(test.item_serial_no, []).append(test)
+		state = {
+			u.name: pf.unit_state(tests.get(u.name), u.custom_built_by, u.item_code, template) for u in units
+		}
+		out = {}
+		for name, wo_list in finished.items():
+			made = [u.name for u in units if u.work_order in wo_list]
+			out[name] = pf.order_qc([state[s] for s in made]) or po.QC_PENDING
+		# A unit built for an order on the board is that order's, not the shelf's.
+		spoken_for = set(wo_names)
+		passed_on_hand = {}
+		for u in units:
+			if u.status == "Active" and u.work_order not in spoken_for and state[u.name] == pf.UNIT_PASSED:
+				passed_on_hand[u.item_code] = passed_on_hand.get(u.item_code, 0) + 1
+		for order in shelf:
+			verdicts = [
+				pf.stock_qc(passed_on_hand.get(item["item_code"], 0), item["pending_qty"])
+				for item in order["items"]
+				if item["item_code"] in tested[order["name"]]
+			]
+			verdicts = [v for v in verdicts if v]
+			if verdicts:
+				out[order["name"]] = po.QC_PASSED if all(v == po.QC_PASSED for v in verdicts) else po.QC_PENDING
+		return out
+	except Exception:
+		frappe.log_error(title="Projects Dashboard: product test results", message=frappe.get_traceback())
+		return {}
 
 
 def _product_quotations(today, source_column):

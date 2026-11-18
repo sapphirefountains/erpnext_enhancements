@@ -2561,6 +2561,18 @@ jobs:
         run: |
           python -m unittest erpnext_enhancements.tests.test_product_orders -v
           python -m unittest erpnext_enhancements.tests.test_products_tab_endpoint -v
+      # Build, test and ship a product unit (v1.826.0, TASK-2026-03229 / -03230). The rules suite is
+      # stub-free: the person who built a unit signs its test (or a case difference in the user id lets
+      # them), a unit that failed a re-test ships on its old pass, ERPNext's FIFO auto-pick ships an
+      # untested unit because the gate never asked for a serial per unit, or planning a Sales Order twice
+      # builds every unit twice. The wiring suite installs its own frappe stub (setUpModule, so its own
+      # process): the allow-on-submit fields a phone ticks on a submitted Work Order, the settings
+      # defaults against the code and the seed template, the label and certificate rendered (a draft
+      # must say NOT SIGNED, a failure FAILED), and the Delivery Note gate and the Work Order plan glue.
+      - name: Product build, test and ship (rules + wiring on a stub)
+        run: |
+          python -m unittest erpnext_enhancements.tests.test_product_fulfillment_rules -v
+          python -m unittest erpnext_enhancements.tests.test_product_fulfillment_wiring -v
       # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
       # every block's status colours in both themes. Fails on any of the literal status hexes
       # (and their rgba() tints) the blocks used before, comments stripped so a note naming

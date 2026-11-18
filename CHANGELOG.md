@@ -7,6 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.0] - 2026-11-18
+
+### Added
+
+- **Build a product unit from a Work Order (TASK-2026-03229).** Nikolas, 2026-11-18: the Sales Order
+  is the record of an E-Stop sale; 2-3 units of the common configuration `1-1-1-2-0` wait on a Build
+  Room shelf and every other configuration is built to order. A new module, **Product Fulfillment**
+  (`product_fulfillment/`), carries a product order from the Sales Order to a tested unit.
+  - **Submitting a product Sales Order plans its configured lines.** A configured line is an Item the
+    Product Configurator generated (`custom_source_configuration`) and keeps in stock. Finished units
+    of that Item that no other open order claims ship from stock; the rest get **one Work Order per
+    unit** from the Item's default BOM, so each unit has its own builder, checklist and serial
+    number. The Work Orders are made as the system (a salesperson holds no Work Order rights) and
+    started at once when a work-in-progress and a finished warehouse resolve. Otherwise they are left
+    as drafts with a message saying which warehouse to set. A failure never stops the order: it is
+    rolled back to a savepoint and logged, and the order's new **Create > Product Work Orders** runs
+    the same plan again. Planning again never builds twice.
+  - **No hard-coded warehouse.** A new Single, **Product Build Settings**, holds the build,
+    work-in-progress and finished units warehouses, all empty until Nikolas picks the Build Room
+    shelves, and says on the page what each one is for. Empty, they fall back to Manufacturing
+    Settings' defaults (also empty on prod) and, for the finished units, the order line's own
+    warehouse. Once a finished units warehouse is set, product lines on a draft order deliver from it,
+    so the Delivery Note looks where the units are.
+  - **The build steps on the Work Order.** A Work Order for a configured product copies its
+    configuration's build steps into a new **Build** tab (`custom_build_steps`), whoever made it: this
+    module or ERPNext's own Sales Order > Work Order. It is a copy, not a link, so a step edited on
+    the product later never changes what a unit being built was told.
+  - **The Build Checklist page** (`/desk/build-checklist/<Work Order>`, the Work Order's new Build
+    Checklist button) is sized for a phone or a tablet on the bench. Each step is a whole-row tap
+    target at least 56px tall, with who ticked it and when. A progress bar sits on top. The QC steps
+    are shown separately as notes for the tester. Once the unit is built, the page shows its serial
+    number, its label and its test. Each tick writes one row (`db.set_value`), because the Work Order
+    is submitted while the unit is built, and an Update would check submit rights and could race an
+    open form.
+  - **Who built it.** `Work Order.custom_built_by` is recorded by **I'm building this** or by the
+    first step ticked. When the Manufacture entry is submitted, each serial number it made is stamped
+    with that builder (`Serial No.custom_built_by`) and with its Work Order (ERPNext's own
+    `Serial No.work_order`, which it fills itself only when Manufacturing Settings makes serials at
+    Work Order submit, off on prod).
+- **Serial number, QC gate and warranty (TASK-2026-03230).**
+  - **One serial number per unit.** A configured product kept in stock gets Has Serial No, the series
+    `SF-.YY.-.#####` (SF-26-00001; a setting), a 365-day Warranty Period and the pre-shipment test
+    template, each only where blank (Item `before_validate`, so ERPNext's own Item checks see them; it
+    never turns serial numbers on for an Item that has moved stock, which ERPNext refuses). This is a
+    hook rather than a change to `product_configurator/erp_integration.py`, which quote to order
+    (#1465) is rewriting at the same time, and it covers a configured Item however it is saved.
+  - **A printable serial label**, "Product Unit Label" on Serial No: the serial number and the part
+    number on a 4 x 2 inch label. **Print Label** is on the serial number and on the Build Checklist
+    page.
+  - **The Pre-Shipment Functional Test is ERPNext's own Quality Inspection**, one per unit, made
+    against the Manufacture entry that produced it, on the template Product Build Settings names. A
+    new **ADR 0019** says why it is native and not the app's `quality` module, and why the gate is
+    not. ADR 0012 kept project inspections off Quality Inspection because a project milestone has no
+    item, stock document or sample. A product unit has all three. The `quality` module's Draft
+    "Products — Pre-Shipment Functional Test" needs a Project, which an E-Stop sale does not have, and
+    it is written for engineered control panels.
+  - **The starter checks** (a patch, insert-only): the template "Pre-Shipment Functional Test -
+    E-Stop" with 12 checks drawn from the configurator's QC steps and the quality strawman, for Logan
+    to refine on the template. Pass checks reject a blank reading, so nothing passes by being left
+    alone. The timer, contactor and relay checks accept Pass or N/A, because a configuration can have
+    none. The control voltage is a reading of 24 VDC within ten percent (21.6 to 26.4).
+  - **The tester is never the builder.** A unit's test cannot be saved with the builder as Inspected
+    By. Submitting signs the test, so only the person it names as Inspected By can submit it. Start
+    Test (on the serial number or the page) makes a draft for the person asking and refuses the
+    builder. The test shows the builder beside Inspected By (`Quality Inspection.custom_built_by`,
+    fetched from the serial). One Rejected reading rejects the unit, even on a manual inspection
+    where ERPNext leaves the overall status to the person.
+  - **The gate.** A Delivery Note that ships a configured product is refused at submit until every
+    unit on it has its serial number picked and the newest submitted test of each serial is Accepted,
+    on the configured template, for that Item, and signed by someone other than its builder. The
+    message lists every unit and what it lacks, and a draft Delivery Note shows the same verdict as
+    its headline. It is ours, not ERPNext's `inspection_required_before_delivery`, which stays off on
+    configured Items. That flag checks one inspection per line, made against the Delivery Note
+    itself, so it cannot see serial numbers, and it would make the built-ahead units wait for a
+    Delivery Note before they could be tested. The gate also refuses to let ERPNext pick serials on
+    its own at submit: "Auto Create Serial and Batch Bundle For Outward" is on, on prod, and first in,
+    first out would ship the oldest unit, tested or not. A return is never held. Product Build
+    Settings' **Require a Passed Test Before Delivery** switches the gate off.
+  - **A printable test certificate**, "Pre-Shipment Test Certificate" on Quality Inspection, for the
+    box: product, part number, serial, built by and tested by, every check with its criterion,
+    reading and result, the result in words, and the warranty. A draft prints "DRAFT - NOT SIGNED"
+    across it and a rejected test "FAILED", so neither can pass for a certificate.
+  - **Warranty: 1 year parts and labor at the shop, from delivery,** is ERPNext's own: delivering a
+    serial sets its Warranty Expiry Date from the Item's Warranty Period (read at v16.54.0,
+    `serial_batch_bundle.update_serial_no_status_warehouse`), and a return clears it.
+- **The Products tab's Testing column fills.** `project_dashboard._product_qc` gives the stage rule
+  the test result of each built order. A built configured unit waits in Testing ("Waiting for the
+  pre-shipment test", or "Test failed") until its newest test passes, signed by someone other than its
+  builder. A unit from the shelf is Ready when enough tested units of that Item are on hand, and a
+  unit built for another order on the board is not counted as shelf stock. A product that is not
+  configured, or the gate switched off, keeps the old rule: Ready as soon as it is built. The column
+  never stops the board: a failure is logged and the stage rule keeps its own answer.
+- Tests: `test_product_fulfillment_rules` (41, stub-free) and `test_product_fulfillment_wiring` (30,
+  on a frappe stub: the schema, the settings defaults against the code and the seed, the label and
+  certificate rendered, the gate and the plan glue), each in CI. `test_products_tab_endpoint` gains 13
+  Testing-column cases, including that the board logs nothing.
+
+### Notes
+
+- **Nothing changes on prod until someone builds.** Production has no configured Item, Work Order,
+  serial-numbered product or Delivery Note today.
+- **To set before the first build:** the three warehouses in Product Build Settings, and Quality
+  Inspection rights for each tester. Only the Quality Manager role may create or submit a Quality
+  Inspection (ERPNext's own permissions), and on 2026-11-18 only one of the two builders held it. That
+  grant is Nikolas's call and is not shipped as a permission fixture, because a Custom DocPerm row would replace
+  ERPNext's whole permission set for the doctype.
+- A configured Item that moved stock before this release keeps Has Serial No off, because ERPNext
+  refuses to change it then.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added
