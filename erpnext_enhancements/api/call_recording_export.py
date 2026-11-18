@@ -156,9 +156,8 @@ def is_twilio_recording_url(url, account_sid=None):
 	"""True only for ``https://api.twilio.com/2010-04-01/Accounts/<the configured
 	Account SID>/Recordings/<RE sid>``, optionally with an extension or a query.
 
-	The voicemail download sends the Twilio account credentials, so a URL is
-	used only when it names this account's recordings on Twilio's API host.
-	False when no Account SID is configured.
+	A URL is used for the voicemail download only when it names this account's
+	recordings on Twilio's API host. False when no Account SID is configured.
 	"""
 	if account_sid is None:
 		account_sid = _twilio_account_sid()

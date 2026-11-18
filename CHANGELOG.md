@@ -35,13 +35,16 @@ Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all c
   `https://api.twilio.com/2010-04-01/Accounts/<configured Account SID>/Recordings/<RE sid>`,
   with an optional extension or query string, and nothing else; with no Account SID
   configured it accepts nothing. `process_call_intelligence` checks it before queueing the
-  Drive export, and `_voicemail_audio` checks it again before the authenticated request, so
-  the Twilio credentials are only ever sent to that URL. A refused URL is still stored on the
-  Call Log; only the download is skipped.
+  Drive export, and `_voicemail_audio` checks it again before the authenticated request. A
+  refused URL is still stored on the Call Log; only the download is skipped.
+- **`api/call_intelligence.process_call_intelligence` resolves the caller through
+  `telephony._get_caller_info`,** the in-process lookup the other server-side callers use,
+  instead of the whitelisted wrapper. The endpoint's own decorator has already checked the
+  request, so a site that names a different gateway user in `telephony_gateway_users` still
+  gets its missed-call and voicemail payloads recorded.
 - **`stripe_payments/core/utils.get_secret` and `quickbooks_online/core/utils.get_secret`
   read with `get_password(fieldname, raise_exception=False)` and return None for a missing,
-  empty, undecryptable or `*`-only value.** They used to fall back to the raw field on any
-  exception, which for a Password field is the masked `*` placeholder. Every caller already
+  empty, undecryptable or `*`-only value.** Every caller already
   treats None as "not configured": the Stripe and QuickBooks webhook signature checks refuse,
   and the API clients throw their "not configured" / "reconnect" messages. A value set in
   memory and not yet saved is still returned, by `get_password` itself. The Stripe signature

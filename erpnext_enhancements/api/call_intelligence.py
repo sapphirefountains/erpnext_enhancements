@@ -36,7 +36,11 @@ from frappe.utils import cint, get_datetime
 
 # Safe one-way import: telephony.py only imports this module lazily inside
 # process_unified_recording, so no circular import at module load.
-from erpnext_enhancements.api.telephony import get_caller_info, validate_webhook_secret
+# `_get_caller_info` is the in-process lookup (see its docstring): the whitelisted
+# `get_caller_info` wrapper checks the request again, and this module's own endpoint
+# has already passed that check and switched to the Triton user by the time it looks
+# a caller up.
+from erpnext_enhancements.api.telephony import _get_caller_info, validate_webhook_secret
 
 # Triton/Twilio call status -> stock Call Log status option
 STATUS_MAP = {
@@ -303,7 +307,7 @@ def process_call_intelligence(**kwargs):
 
         customer = contact = display_name = None
         if customer_phone:
-            info = get_caller_info(
+            info = _get_caller_info(
                 customer_phone,
                 twilio_caller_name=val("caller_name"),
                 create_if_missing=status != "missed",

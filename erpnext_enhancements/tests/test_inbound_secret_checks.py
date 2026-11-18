@@ -263,6 +263,31 @@ class TwilioRecordingUrlTests(unittest.TestCase):
 					guarded = True
 		self.assertTrue(guarded, "enqueue_recording_export must run only on an accepted URL")
 
+	def test_call_intelligence_resolves_the_caller_in_process(self):
+		"""The endpoint looks the caller up through ``_get_caller_info``, never the
+		whitelisted ``get_caller_info`` wrapper: the wrapper checks the request again,
+		after this endpoint has already passed that check and switched user."""
+		tree = ast.parse(CALL_INTELLIGENCE.read_text(encoding="utf-8"))
+		(fn,) = [
+			n for n in ast.walk(tree)
+			if isinstance(n, ast.FunctionDef) and n.name == "process_call_intelligence"
+		]
+		called = {
+			getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+			for n in ast.walk(fn)
+			if isinstance(n, ast.Call)
+		}
+		self.assertIn("_get_caller_info", called)
+		self.assertNotIn("get_caller_info", called)
+		imported = {
+			alias.name
+			for n in ast.walk(tree)
+			if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("api.telephony")
+			for alias in n.names
+		}
+		self.assertIn("_get_caller_info", imported)
+		self.assertNotIn("get_caller_info", imported)
+
 
 class StoredSecretTests(unittest.TestCase):
 	def _settings(self, value=None, raises=None):
