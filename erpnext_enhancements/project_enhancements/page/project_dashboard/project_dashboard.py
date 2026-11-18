@@ -2091,20 +2091,19 @@ def _product_qc(orders, work_orders, covered):
 				as_dict=True,
 			)
 		units = list({u.name: u for u in units}.values())  # a unit can come back from both queries
-		if not units:
-			return {name: po.QC_PENDING for name in finished} if finished else {}
 		tests = {}
-		for test in frappe.db.sql(
-			"""
-			SELECT name, item_serial_no, item_code, status, docstatus, inspected_by, report_date,
-				creation, quality_inspection_template
-			FROM `tabQuality Inspection`
-			WHERE item_serial_no IN %(serials)s AND docstatus = 1
-			""",
-			{"serials": tuple(sorted({u.name for u in units}))},
-			as_dict=True,
-		):
-			tests.setdefault(test.item_serial_no, []).append(test)
+		if units:
+			for test in frappe.db.sql(
+				"""
+				SELECT name, item_serial_no, item_code, status, docstatus, inspected_by, report_date,
+					creation, quality_inspection_template
+				FROM `tabQuality Inspection`
+				WHERE item_serial_no IN %(serials)s AND docstatus = 1
+				""",
+				{"serials": tuple(sorted({u.name for u in units}))},
+				as_dict=True,
+			):
+				tests.setdefault(test.item_serial_no, []).append(test)
 		state = {
 			u.name: pf.unit_state(tests.get(u.name), u.custom_built_by, u.item_code, template) for u in units
 		}
@@ -2118,15 +2117,22 @@ def _product_qc(orders, work_orders, covered):
 		for u in units:
 			if u.status == "Active" and u.work_order not in spoken_for and state[u.name] == pf.UNIT_PASSED:
 				passed_on_hand[u.item_code] = passed_on_hand.get(u.item_code, 0) + 1
+		# Shelf orders in board order (promise date first, as the shelf was allocated), each taking its
+		# tested units from what is left, so one tested unit never makes two orders Ready.
 		for order in shelf:
-			verdicts = [
-				pf.stock_qc(passed_on_hand.get(item["item_code"], 0), item["pending_qty"])
-				for item in order["items"]
-				if item["item_code"] in tested[order["name"]]
-			]
-			verdicts = [v for v in verdicts if v]
-			if verdicts:
-				out[order["name"]] = po.QC_PASSED if all(v == po.QC_PASSED for v in verdicts) else po.QC_PENDING
+			needs = {}
+			for item in order["items"]:
+				if item["item_code"] in tested[order["name"]] and flt(item["pending_qty"]) > 0:
+					needs[item["item_code"]] = needs.get(item["item_code"], 0) + flt(item["pending_qty"])
+			if not needs:
+				continue
+			verdicts = [pf.stock_qc(passed_on_hand.get(code, 0), qty) for code, qty in needs.items()]
+			if all(v == po.QC_PASSED for v in verdicts):
+				out[order["name"]] = po.QC_PASSED
+				for code, qty in needs.items():
+					passed_on_hand[code] = passed_on_hand.get(code, 0) - qty
+			else:
+				out[order["name"]] = po.QC_PENDING
 		return out
 	except Exception:
 		frappe.log_error(title="Projects Dashboard: product test results", message=frappe.get_traceback())

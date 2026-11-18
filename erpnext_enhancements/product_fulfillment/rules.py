@@ -10,8 +10,8 @@ The Frappe half (``build.py``, ``qc_gate.py``, ``serials.py``) gathers the facts
 makes from them live here, so ``tests/test_product_fulfillment_rules.py`` can hold them without a
 bench:
 
-* ``plan_line``, ``free_stock``: what a product Sales Order line takes from the shelf and what it
-  builds, one Work Order per unit;
+* ``plan_line``, ``free_stock``, ``line_claim``: what a product Sales Order line takes from the shelf
+  and what it builds, one Work Order per unit;
 * ``resolve_warehouses``: the build, work-in-progress and finished-units warehouses a Work Order
   gets, from Product Build Settings first, and whether it can be submitted with them;
 * ``checklist_rows``, ``checklist_progress``: the configurator's build steps as a Work Order
@@ -49,6 +49,22 @@ def free_stock(on_hand, claims=()):
 	shelf's). The same rule the Products tab applies (``product_orders.allocate_stock``).
 	"""
 	return max(0.0, _num(on_hand) - sum(_num(c) for c in claims or ()))
+
+
+def line_claim(pending_qty, has_work_order, produced_qty=0, delivered_qty=0):
+	"""What one open order line claims of the finished units on the shelf.
+
+	* A line with no Work Order will take what it still has to deliver from the shelf.
+	* A line being built for claims only the units its Work Orders already made and it has not
+	  delivered yet: they sit on the same shelf, counted in on hand, waiting for their own order.
+	  Its units still being built are not on the shelf yet, so they claim nothing.
+
+	All quantities in stock units. Never more than the line still has to deliver, never negative.
+	"""
+	pending = max(0.0, _num(pending_qty))
+	if not has_work_order:
+		return pending
+	return min(pending, max(0.0, _num(produced_qty) - _num(delivered_qty)))
 
 
 def plan_line(pending_qty, free_qty, planned_qty=0):

@@ -81,10 +81,15 @@ def on_sales_order_submit(doc, method=None):
 	if not _configured_lines(doc):
 		return
 	frappe.db.savepoint("product_fulfillment_work_orders")
+	# A refusal inside the plan (a Work Order's own frappe.throw) is caught below, but Frappe has
+	# already queued its red dialog in message_log, which would show beside "The Sales Order is
+	# submitted". Anything queued during the failed attempt is dropped with it.
+	messages_before = len(frappe.local.message_log or [])
 	try:
 		result = plan_and_make(doc, settings, ignore_permissions=True)
 	except Exception:
 		frappe.db.rollback(save_point="product_fulfillment_work_orders")
+		frappe.local.message_log = (frappe.local.message_log or [])[:messages_before]
 		frappe.log_error(
 			title=f"Product Fulfillment: Work Orders for {doc.name}", message=frappe.get_traceback()
 		)
@@ -140,21 +145,31 @@ def plan_and_make(doc, settings, ignore_permissions=False):
 		"drafts": [],
 		"from_stock": [],
 		"missing_bom": [],
+		"no_serial": [],
 		"missing": [],
 	}
 	manufacturing = manufacturing_defaults()
+	free_left = {}  # (item, warehouse): shelf units still free, shared by this order's lines in turn
 	for row, facts in _configured_lines(doc):
 		bom = facts.get("default_bom")
 		if not bom:
 			result["missing_bom"].append(row.item_code)
 			continue
+		if not facts.get("has_serial_no") and not _ensure_serial_numbers(row.item_code):
+			# Built without serials, a unit could never pass the gate, and ERPNext refuses to turn
+			# serial numbers on once stock has moved: better to build nothing and say why.
+			result["no_serial"].append(row.item_code)
+			continue
 		warehouses = rules.resolve_warehouses(settings, row.warehouse, manufacturing)
 		pending = max(0.0, flt(row.stock_qty) - flt(row.delivered_qty) * (flt(row.conversion_factor) or 1.0))
 		planned = rules.planned_qty(_line_work_orders(row.name))
-		free = rules.free_stock(
-			_on_hand(row.item_code, warehouses["fg"]), _claims(row.item_code, warehouses["fg"], doc.name)
-		)
-		plan = rules.plan_line(pending, free, planned)
+		key = (row.item_code, warehouses["fg"])
+		if key not in free_left:
+			free_left[key] = rules.free_stock(
+				_on_hand(row.item_code, warehouses["fg"]), _claims(row.item_code, warehouses["fg"], doc.name)
+			)
+		plan = rules.plan_line(pending, free_left[key], planned)
+		free_left[key] = max(0.0, free_left[key] - plan["from_stock"])
 		if plan["from_stock"]:
 			result["from_stock"].append({"item_code": row.item_code, "qty": plan["from_stock"]})
 		for _unit in range(plan["to_build"]):
@@ -189,32 +204,60 @@ def _on_hand(item_code, warehouse):
 
 
 def _claims(item_code, warehouse, this_order):
-	"""What other open orders still have to deliver of the Item from the shelf.
+	"""What open orders already claim of the Item's finished units on the shelf (``rules.line_claim``).
 
-	Lines of submitted Sales Orders that are not Closed, Completed or Cancelled, for the same Item
-	(and the same warehouse, when there is one), that have no Work Order of their own. An order being
-	built for claims its own unit, not the shelf's (``product_orders.allocate_stock``).
+	Lines of submitted Sales Orders that are not Closed, Completed or Cancelled, for the same Item (and
+	the same warehouse, when there is one). Another order's line with no Work Order claims what it
+	still has to deliver; a line being built for claims the units its Work Orders made that it has not
+	delivered yet, which sit on the same shelf. This order's own lines claim only those built units:
+	its unbuilt lines are what is being planned, shared in turn by ``plan_and_make``.
 	"""
 	where_warehouse = "AND soi.warehouse = %(warehouse)s" if warehouse else ""
 	rows = frappe.db.sql(
 		f"""
-		SELECT soi.stock_qty - soi.delivered_qty * COALESCE(NULLIF(soi.conversion_factor, 0), 1) AS pending
+		SELECT soi.parent,
+			soi.stock_qty - soi.delivered_qty * COALESCE(NULLIF(soi.conversion_factor, 0), 1) AS pending,
+			soi.delivered_qty * COALESCE(NULLIF(soi.conversion_factor, 0), 1) AS delivered,
+			(
+				SELECT COALESCE(SUM(wo.produced_qty), 0) FROM `tabWork Order` wo
+				WHERE wo.sales_order_item = soi.name AND wo.docstatus = 1
+			) AS produced,
+			EXISTS (
+				SELECT 1 FROM `tabWork Order` wo
+				WHERE wo.sales_order_item = soi.name AND wo.docstatus < 2 AND wo.status != 'Cancelled'
+			) AS has_work_order
 		FROM `tabSales Order Item` soi
 		INNER JOIN `tabSales Order` so ON so.name = soi.parent
 		WHERE soi.item_code = %(item)s
 			AND so.docstatus = 1
 			AND so.status NOT IN ('Closed', 'Completed', 'Cancelled')
-			AND so.name != %(order)s
 			{where_warehouse}
-			AND NOT EXISTS (
-				SELECT 1 FROM `tabWork Order` wo
-				WHERE wo.sales_order_item = soi.name AND wo.docstatus < 2 AND wo.status != 'Cancelled'
-			)
 		""",
-		{"item": item_code, "order": this_order, "warehouse": warehouse},
+		{"item": item_code, "warehouse": warehouse},
 		as_dict=True,
 	)
-	return [max(0.0, flt(row.pending)) for row in rows]
+	return [
+		rules.line_claim(
+			row.pending,
+			True if row.parent == this_order else bool(int(row.has_work_order or 0)),
+			row.produced,
+			row.delivered,
+		)
+		for row in rows
+	]
+
+
+def _ensure_serial_numbers(item_code):
+	"""Turn serial numbers on for a configured Item before its first build. True when it has them."""
+	try:
+		from erpnext_enhancements.product_fulfillment.serials import ensure_serial_numbers
+
+		return ensure_serial_numbers(item_code)
+	except Exception:
+		frappe.log_error(
+			title=f"Product Fulfillment: serial numbers for {item_code}", message=frappe.get_traceback()
+		)
+		return False
 
 
 def _configuration_of(row):
@@ -281,6 +324,13 @@ def _announce(result):
 	for line in result["from_stock"]:
 		bits.append(
 			_("{0}: {1} from finished units on the shelf.").format(line["item_code"], int(line["qty"]))
+		)
+	if result["no_serial"]:
+		bits.append(
+			_(
+				"Nothing was built for {0}: the Item has no serial numbers and has already moved stock, so "
+				"ERPNext will not turn them on. Every unit needs one to pass its test and ship."
+			).format(", ".join(result["no_serial"]))
 		)
 	if result["missing_bom"]:
 		bits.append(

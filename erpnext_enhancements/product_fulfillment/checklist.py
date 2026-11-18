@@ -100,6 +100,7 @@ def get_build(work_order):
 		"units": qc_gate.units_of_work_order(doc.name),
 		"can_edit": _can_edit(doc),
 		"can_test": bool(frappe.has_permission("Quality Inspection", "create")),
+		"is_manager": _is_manager(),
 		"me": frappe.session.user,
 		"me_name": _full_name(frappe.session.user),
 	}
@@ -142,5 +143,25 @@ def claim_build(work_order):
 		frappe.throw(_("You cannot change this Work Order."), frappe.PermissionError)
 	if _manufactured(doc):
 		frappe.throw(_("This unit is already built; its serial number records who built it."))
+	current = doc.get("custom_built_by")
+	if current and not rules.same_person(current, frappe.session.user) and not _is_manager():
+		# The builder is what keeps the builder from testing the unit, so one person cannot quietly
+		# take another's name off it. A manager can correct a mistake.
+		frappe.throw(
+			_("{0} is recorded as building this unit. Ask a Manufacturing Manager to change it.").format(
+				_full_name(current)
+			)
+		)
 	frappe.db.set_value(WORK_ORDER, doc.name, "custom_built_by", frappe.session.user, update_modified=False)
+	if current and not rules.same_person(current, frappe.session.user):
+		doc.add_comment(
+			"Info",
+			_("Builder changed from {0} to {1}.").format(
+				_full_name(current), _full_name(frappe.session.user)
+			),
+		)
 	return get_build(work_order)
+
+
+def _is_manager():
+	return bool({"Manufacturing Manager", "System Manager"} & set(frappe.get_roles()))
