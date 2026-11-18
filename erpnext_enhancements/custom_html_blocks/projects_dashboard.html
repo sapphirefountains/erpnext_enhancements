@@ -10,8 +10,9 @@
     - a navy head band, ONE slim row: the title in the display face, the search field,
       a Refresh button with "Updated N min ago" beside it, and the "+" menu (New Project /
       New Master Project). The PROJECTS eyebrow is gone (v1.785.0);
-    - five tabs, always visible: Priority Overview, Portfolio Gantt, Internal,
-      Completed, Summary;
+    - six tabs, always visible: Priority Overview, Portfolio Gantt, Internal,
+      Completed, Summary, and Products (v1.824.0: product Sales Orders by stage, the
+      product pipeline, stock and shortages, control panel projects);
     - the Priority Overview's filter row (stream chips, the pressed tile's filter chip,
       Ranked only, Group by stream, and the Columns "..." button at its right end), the
       slim tools strip that carries the same button for Internal and Completed, the four
@@ -19,7 +20,8 @@
       Summary tab shows above its cards (each a button that filters the Priority
       Overview; they sat on the band until v1.785.0), the Gantt-only toolbar (project /
       status / type / customer dropdowns, date window, at-risk, view-mode buttons, Today,
-      Columns, Export), and an empty #dashboard-content target.
+      Columns, Export), the Products tab's product-line chips (All / E-Stops / Control
+      Panels / Other), and an empty #dashboard-content target.
   projects_dashboard.js fetches data via the project_dashboard page's whitelisted
   methods and renders the tables / Gantt into #dashboard-content; projects_dashboard.css
   styles it from the --sf-* design tokens.
@@ -59,6 +61,7 @@
         <button type="button" class="pd-tab" aria-pressed="false" data-route="active-internal-projects">Internal</button>
         <button type="button" class="pd-tab" aria-pressed="false" data-route="completed-projects">Completed</button>
         <button type="button" class="pd-tab" aria-pressed="false" data-route="summary">Summary</button>
+        <button type="button" class="pd-tab" aria-pressed="false" data-route="products">Products</button>
     </div>
 
     <div class="pd-controls dashboard-controls">
@@ -120,6 +123,19 @@
                 <span class="pd-tile-n" data-tile-count="unranked">–</span>
                 <span class="pd-tile-l">No company rank</span>
             </button>
+        </div>
+
+        <!-- Products only (v1.824.0): the product-line chips. Each line chip toggles, so several
+             can be pressed together and every section shows their union; All clears them. The
+             counts are the orders on the board in each line, filled by the script. Its own
+             class, not .pd-fchip: the stream chips' one click binding must not catch these. -->
+        <div class="pd-filters" id="products-controls" style="display: none;">
+            <div class="pd-chips" id="pd-line-chips" role="group" aria-label="Filter by product line; press more than one to combine them">
+                <button type="button" class="pd-lchip" data-line="" aria-pressed="true" title="Every product line">All <b data-line-count=""></b></button>
+                <button type="button" class="pd-lchip" data-line="E-Stops" aria-pressed="false" title="Press to add or remove this line">E-Stops <b data-line-count="E-Stops"></b></button>
+                <button type="button" class="pd-lchip" data-line="Control Panels" aria-pressed="false" title="Press to add or remove this line">Control Panels <b data-line-count="Control Panels"></b></button>
+                <button type="button" class="pd-lchip" data-line="Other" aria-pressed="false" title="Press to add or remove this line">Other <b data-line-count="Other"></b></button>
+            </div>
         </div>
 
         <div id="gantt-controls" style="display: none;">

@@ -3,8 +3,8 @@ slimmed in v1.785.0), read as files.
 
 Nikolas, 2026-11-03: the tabs' contents had "variable styles, difficult to read"; he picked Mock B
 from the canvas. The shell gained a navy head band (title in the display face, the search field,
-Refresh with "Updated N min ago", the "+" menu, four live tiles), the five tabs are always
-visible ("View More" is retired), and the Priority Overview has stream chips, a Ranked-only box
+Refresh with "Updated N min ago", the "+" menu, four live tiles), the five tabs (six since the
+Products tab, v1.824.0) are always visible ("View More" is retired), and the Priority Overview has stream chips, a Ranked-only box
 and a Group-by-stream toggle. Spend % became Budget. The red-to-green hue scale on priority
 badges went. Since v1.798.0 the stream chips are a set (Nikolas, 2026-11-06: "being able to select
 multiple value streams would be good, rather than just one at a time"): each one toggles, the rows
@@ -58,7 +58,15 @@ SELECTOR_CODE = _strip_js(SELECTOR)
 CSS_CODE = re.sub(r"/\*[\s\S]*?\*/", "", CSS)
 
 TABS = re.findall(r'<button type="button" class="pd-tab[^"]*"([^>]*)data-route="([^"]+)"', HTML_CODE)
-FIVE_TABS = ["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"]
+# Products is the sixth since v1.824.0 (Nikolas, 2026-11-18: a product sale is a Sales Order).
+SIX_TABS = [
+	"priority-overview",
+	"portfolio-gantt",
+	"active-internal-projects",
+	"completed-projects",
+	"summary",
+	"products",
+]
 
 
 def _js_list(name):
@@ -68,11 +76,11 @@ def _js_list(name):
 
 
 class TestTabs(unittest.TestCase):
-	def test_the_five_tabs_are_in_the_bar_in_order_and_none_is_hidden(self):
-		self.assertEqual([route for _attrs, route in TABS], FIVE_TABS)
+	def test_the_six_tabs_are_in_the_bar_in_order_and_none_is_hidden(self):
+		self.assertEqual([route for _attrs, route in TABS], SIX_TABS)
 		for attrs, route in TABS:
 			self.assertNotIn("hidden", attrs, route)
-		self.assertEqual(_js_list("TAB_ROUTES"), FIVE_TABS)
+		self.assertEqual(_js_list("TAB_ROUTES"), SIX_TABS)
 
 	def test_the_tabs_are_buttons_with_their_short_labels(self):
 		self.assertRegex(HTML_CODE, r'data-route="active-internal-projects">Internal</button>')
@@ -80,6 +88,7 @@ class TestTabs(unittest.TestCase):
 		self.assertRegex(HTML_CODE, r'data-route="priority-overview">Priority Overview</button>')
 		self.assertRegex(HTML_CODE, r'data-route="portfolio-gantt">Portfolio Gantt</button>')
 		self.assertRegex(HTML_CODE, r'data-route="summary">Summary</button>')
+		self.assertRegex(HTML_CODE, r'data-route="products">Products</button>')
 		self.assertNotIn('class="nav-link', HTML_CODE)
 
 	def test_view_more_is_retired_everywhere(self):
@@ -96,7 +105,7 @@ class TestTabs(unittest.TestCase):
 		self.assertNotIn('current_tab === "dashboard"', JS_CODE)
 
 	def test_every_tab_route_has_a_renderer(self):
-		for route in FIVE_TABS:
+		for route in SIX_TABS:
 			if route == "portfolio-gantt":
 				continue
 			self.assertIn(f'current_tab === "{route}"', JS_CODE, route + " has nothing drawing it")
@@ -132,7 +141,7 @@ class TestTabs(unittest.TestCase):
 		self.assertNotIn("aria-selected", HTML_CODE)
 		self.assertNotIn("aria-selected", JS_CODE)
 		self.assertRegex(HTML_CODE, r'class="pd-tab active" aria-pressed="true" data-route="priority-overview"')
-		self.assertEqual(len(re.findall(r'class="pd-tab" aria-pressed="false"', HTML_CODE)), 4)
+		self.assertEqual(len(re.findall(r'class="pd-tab" aria-pressed="false"', HTML_CODE)), 5)
 		self.assertIn("addClass('active').attr('aria-pressed', 'true')", JS_CODE)
 
 	def test_a_panel_stands_until_rows_have_loaded(self):
@@ -404,7 +413,12 @@ class TestSavedView(unittest.TestCase):
 		keys = re.findall(r'"(chb_projects_dashboard_[a-z_]+_v1)"', JS_CODE)
 		self.assertEqual(
 			sorted(set(keys)),
-			["chb_projects_dashboard_overview_v1", "chb_projects_dashboard_sort_v1", "chb_projects_dashboard_tab_v1"],
+			[
+				"chb_projects_dashboard_overview_v1",
+				"chb_projects_dashboard_products_v1",
+				"chb_projects_dashboard_sort_v1",
+				"chb_projects_dashboard_tab_v1",
+			],
 		)
 		self.assertNotIn("user_settings", JS_CODE)
 		self.assertNotIn("user_settings", SELECTOR_CODE)
@@ -429,7 +443,8 @@ class TestOneTableStyle(unittest.TestCase):
 		self.assertIn('<table class="pd-table dashboard-resizable-table">', JS_CODE)
 		for bootstrap in ("table-bordered", "thead-light", "table-hover", 'class="badge', "progress-bar"):
 			self.assertNotIn(bootstrap, JS_CODE, bootstrap + " is the old Bootstrap look")
-		self.assertEqual(JS_CODE.count("table_shell("), 3)  # the three list tabs, nothing else
+		# the three list tabs, and the Products tab's one block helper (product_block) for its six tables
+		self.assertEqual(JS_CODE.count("table_shell("), 4)
 
 	def test_the_header_and_row_measurements_are_the_picks(self):
 		th = re.search(r"\.pd-table th\s*\{([^}]*)\}", CSS_CODE).group(1)
