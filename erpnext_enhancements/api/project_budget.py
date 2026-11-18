@@ -186,6 +186,8 @@ def get_project_reallocations(project):
     day the money moved, which is what makes a sequence of these reconstructable.
     """
     frappe.get_doc("Project", project).check_permission("read")
+    # The rows are Budget Reallocations, so reading them needs that doctype's read as well.
+    frappe.has_permission(DOCTYPE, "read", throw=True)
 
     return frappe.get_all(
         DOCTYPE,

@@ -42,7 +42,9 @@ Lifecycle / wiring:
 
 Whitelisted helpers used by the desk form's JS: ``get_visit_payload``
 (instantiate the form's child tables from the resolved template) and
-``get_dashboard_context`` (technician on-site briefing).
+``get_dashboard_context`` (technician on-site briefing). Each checks access and then
+calls an unchecked builder (``build_visit_payload`` / ``build_dashboard_context``), which
+the Visit Wizard's bootstrap calls directly after its own record check.
 """
 
 import datetime
@@ -568,8 +570,7 @@ def _reading_overrides(serial_no):
 	return {(row.reading or "").strip().lower(): row for row in rows}
 
 
-@frappe.whitelist()
-def get_visit_payload(
+def build_visit_payload(
 	project=None,
 	serial_no=None,
 	maintenance_contract=None,
@@ -580,7 +581,10 @@ def get_visit_payload(
 ):
 	"""Instantiate the visit form's child-table rows from the resolved template.
 
-	Whitelisted; called by the desk form JS (``populate_from_template``).
+	No permission check of its own: the desk form reaches it through the whitelisted
+	:func:`get_visit_payload`, which checks first, and the Visit Wizard's bootstrap
+	(``api.maintenance_visit.get_visit_bootstrap``) calls it directly once it has checked
+	write permission on the visit.
 
 	``service_call`` (v1.778.0): a one-off job with no contract. The one feature is the record's
 	Serial No, else the call's (or none), and its template is the call's **Visit Template**, which
@@ -762,6 +766,55 @@ def get_visit_payload(
 
 
 @frappe.whitelist()
+def get_visit_payload(
+	project=None,
+	serial_no=None,
+	maintenance_contract=None,
+	technician=None,
+	visit_label=None,
+	visit_date=None,
+	service_call=None,
+):
+	"""The checklist rows for a visit (:func:`build_visit_payload`), for the desk form's
+	``populate_from_template``.
+
+	Allowed for anyone who may create or write a Sapphire Maintenance Record (the people who
+	fill a visit form in); anyone else needs read permission on each of the contract, project
+	and service call named, and must name at least one.
+	"""
+	_check_visit_payload_access(project, maintenance_contract, service_call)
+	return build_visit_payload(
+		project=project,
+		serial_no=serial_no,
+		maintenance_contract=maintenance_contract,
+		technician=technician,
+		visit_label=visit_label,
+		visit_date=visit_date,
+		service_call=service_call,
+	)
+
+
+def _check_visit_payload_access(project, maintenance_contract, service_call):
+	if frappe.has_permission("Sapphire Maintenance Record", "create") or frappe.has_permission(
+		"Sapphire Maintenance Record", "write"
+	):
+		return
+	named = [
+		(doctype, name)
+		for doctype, name in (
+			("Sapphire Maintenance Contract", maintenance_contract),
+			("Project", project),
+			("Service Call", service_call),
+		)
+		if name
+	]
+	if not named:
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	for doctype, name in named:
+		frappe.has_permission(doctype, "read", doc=name, throw=True)
+
+
+@frappe.whitelist()
 def get_historical_visits(project, exclude=None):
 	"""Last 5 submitted maintenance visits for a Project.
 
@@ -796,10 +849,35 @@ def get_historical_visits(project, exclude=None):
 
 @frappe.whitelist()
 def get_dashboard_context(project, serial_no=None, record=None):
+	"""The on-site briefing (:func:`build_dashboard_context`), for the desk form's
+	``render_dashboard``.
+
+	Requires read permission on the Project and one of the maintenance roles that see every
+	visit (``sapphire_maintenance.permissions.VIEW_ALL_ROLES``), checked before anything is
+	read.
+	"""
+	_check_dashboard_access(project)
+	return build_dashboard_context(project, serial_no, record=record)
+
+
+def _check_dashboard_access(project):
+	from erpnext_enhancements.sapphire_maintenance.permissions import VIEW_ALL_ROLES
+
+	if not project:
+		frappe.throw(_("Project is required"))
+	frappe.has_permission("Project", "read", doc=project, throw=True)
+	if frappe.session.user != "Administrator" and not (VIEW_ALL_ROLES & set(frappe.get_roles())):
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+
+
+def build_dashboard_context(project, serial_no=None, record=None):
 	"""Return the on-site briefing data for the technician dashboard widget.
 
-	Whitelisted; called by the desk form JS (``render_dashboard``) to build the
-	in-form HTML panel shown before the safety gate is acknowledged.
+	No permission check of its own. Reached through the whitelisted
+	:func:`get_dashboard_context`, which checks first, and from the Visit Wizard's bootstrap
+	(``api.maintenance_visit.get_visit_bootstrap``), which has already checked read
+	permission on the visit. Builds the in-form HTML panel shown before the safety gate is
+	acknowledged.
 
 	Args:
 		project (str): Project name (docname).

@@ -1048,6 +1048,14 @@ jobs:
       # Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner per-project publish and baseline (P3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_publish_baseline -v
+      # Operations-side endpoints check access before they read or write: the maintenance briefing
+      # and visit payload, the maintenance contract mappers, the Task tree (and its node cap), the
+      # Change Order / Budget Reallocation / Scorecard lists, project comments, the Projects
+      # Dashboard readers, Opportunity tag sync, Asset Booking availability, sign-off requests,
+      # and the delete and merge previews. AST over the source plus two helpers executed against a
+      # fake frappe namespace; it imports no frappe and installs no stub.
+      - name: Access checks, operations side (checked before read or write)
+        run: python -m unittest erpnext_enhancements.tests.test_access_checks_ops -v
       # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
       # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
       # follower first and the planner then moves it again, so a crew turns up a day off with nothing

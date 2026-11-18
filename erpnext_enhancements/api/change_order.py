@@ -133,6 +133,8 @@ def get_project_change_orders(project):
     frappe.has_permission("Project", "read", doc=project, throw=True)
     if not frappe.db.exists("DocType", "Change Order"):
         return {"change_orders": [], "totals": change_orders.totals([])}
+    # The rows are Change Orders, so reading them needs Change Order read as well.
+    frappe.has_permission("Change Order", "read", throw=True)
 
     rows = frappe.get_all(
         "Change Order",

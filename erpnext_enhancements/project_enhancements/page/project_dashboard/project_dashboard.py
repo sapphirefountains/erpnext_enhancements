@@ -66,6 +66,13 @@ def check_permission():
 		return False
 
 
+def _require_project_read(project):
+	"""Raise unless the caller may read ``project``: the per-project readers below show that
+	project's tasks, so they ask what its form asks."""
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read {0}").format(project), frappe.PermissionError)
+
+
 def _get_assignee_names(doctype, docname):
 	"""Retrieves the full names of users assigned to a document via ToDo."""
 	try:
@@ -526,9 +533,17 @@ def _fetch_all_project_tasks(project_name):
 
 @frappe.whitelist()
 def get_task_children(parent_task):
-	"""Fetches direct children of a task for lazy loading."""
+	"""Fetches direct children of a task for lazy loading.
+
+	Requires read permission on the parent task's Project, or on the task itself when it has
+	no Project."""
 	if not parent_task:
 		return []
+	project = frappe.db.get_value("Task", parent_task, "project")
+	if project:
+		_require_project_read(project)
+	else:
+		frappe.has_permission("Task", "read", doc=parent_task, throw=True)
 
 	task_fields = [
 		"name", "subject", "status", "priority", "exp_start_date",
@@ -561,9 +576,10 @@ def get_task_children(parent_task):
 
 @frappe.whitelist()
 def get_resource_allocation_data(project_name):
-	"""Aggregates expected time and task list by assignee per day."""
+	"""Aggregates expected time and task list by assignee per day. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -610,9 +626,10 @@ def get_resource_allocation_data(project_name):
 
 @frappe.whitelist()
 def get_project_health_metrics(project_name):
-	"""Calculates key health indicators for a project."""
+	"""Calculates key health indicators for a project. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -661,9 +678,11 @@ def get_project_tasks(project, parent=None):
 	"""
 	Fetches tasks for a project. If 'parent' is provided, fetches only 
 	its direct children (Lazy Loading). Otherwise, fetches root tasks.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project:
 		return {"error": "Project name is required."}
+	_require_project_read(project)
 
 	try:
 		task_fields = [
@@ -906,7 +925,11 @@ def get_master_project_projects(master_project):
 
 @frappe.whitelist()
 def update_master_project_structure(master_project, projects):
-	"""Updates ordering for projects under a Master Project."""
+	"""Updates ordering for projects under a Master Project.
+
+	Writes only projects that belong to ``master_project`` (``custom_master_project``) and that
+	the caller may write; any other name in ``projects`` is left alone and listed in
+	``skipped``."""
 	if not master_project or not projects:
 		return {"status": "error", "message": "Master Project name and project data are required."}
 
@@ -917,11 +940,18 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": "No permission to modify this Master Project."}
 
 	try:
+		skipped = []
 		for p_data in projects:
 			p_name = p_data.get("name")
-			if p_name:
-				frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
-		return {"status": "success"}
+			if not p_name:
+				continue
+			if frappe.db.get_value("Project", p_name, "custom_master_project") != master_project or not (
+				frappe.has_permission("Project", ptype="write", doc=p_name)
+			):
+				skipped.append(p_name)
+				continue
+			frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
+		return {"status": "success", "skipped": skipped}
 	except Exception as e:
 		frappe.log_error(
 			title=f"Error updating master project structure for {master_project}",
@@ -1357,9 +1387,11 @@ def get_gantt_tasks_for_project(project_name):
 	"""
 	Fetches all tasks for a specific project, formatted for the frappe-gantt library.
 	Optimized with bulk-fetching for dependencies and assignees.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project_name:
 		return {"error": "Project name is required."}
+	_require_project_read(project_name)
 
 	try:
 		# Check if baseline fields exist in Task doctype to avoid DB errors
@@ -1607,11 +1639,15 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 	Fetches all active projects (and optionally child tasks) for the Gantt view.
 	Supports status filtering and detailed view expansion.
 	"""
-	# Note: legacy check_permission() gate removed here in favour of native Page
-	# Role permissions, mirroring get_project_data(). The previous gate returned
-	# an error whenever the "Project Dashboard" Custom Role was not configured,
-	# which left the Portfolio Gantt empty even though every other tab (fed by
-	# get_project_data) loaded fine.
+	# The page gate, as get_project_data() has it. An earlier version dropped this gate
+	# because it returned an error whenever the "Project Dashboard" Custom Role was not
+	# configured, which left the Portfolio Gantt empty while get_project_data loaded fine;
+	# check_permission() now falls back to Project Dashboard Settings' roles, so the two
+	# agree. The reads go through get_list, so they follow the caller's Project and Task
+	# read permissions, as the widget's own Gantt query (get_gantt_data) already does. No
+	# browser code calls this endpoint since the Portfolio Gantt moved to that widget.
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
 	try:
 		include_tasks = int(include_tasks)
 
@@ -1628,7 +1664,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 			if status_list:
 				filters["status"] = ["in", status_list]
 
-		projects = frappe.get_all(
+		projects = frappe.get_list(
 			"Project",
 			fields=[
 				"name",
@@ -1641,12 +1677,13 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 				"project_type",
 			],
 			filters=filters,
+			limit_page_length=0,
 		)
 
 		tasks = []
 		if include_tasks and projects:
 			project_names = [p.name for p in projects]
-			tasks = frappe.get_all(
+			tasks = frappe.get_list(
 				"Task",
 				fields=[
 					"name",
@@ -1659,6 +1696,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 					"parent_task",
 				],
 				filters={"project": ["in", project_names], "status": ["not in", ["Completed", "Canceled"]]},
+				limit_page_length=0,
 			)
 
 		return {

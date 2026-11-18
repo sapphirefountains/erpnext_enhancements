@@ -47,8 +47,8 @@ class MaintenanceSiteBriefing(BaseTool):
 
     def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
         project = arguments["project"]
-        # get_dashboard_context reads via frappe.db.get_value / get_all without
-        # permission checks, so gate on the Project document explicitly.
+        # get_dashboard_context checks Project read and a maintenance role itself;
+        # the explicit Project check stays so this tool's refusal reads the same as before.
         require_doc_read("Project", project)
 
         from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (

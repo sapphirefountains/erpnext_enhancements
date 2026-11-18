@@ -38,6 +38,10 @@ def get_merge_stats(source_project, target_project):
 	if not frappe.db.exists("Project", source_project):
 		frappe.throw(_("Source Project {0} does not exist.").format(source_project))
 
+	# The preview is the first step of merging two projects, so it needs read on both.
+	frappe.has_permission("Project", "read", doc=source_project, throw=True)
+	frappe.has_permission("Project", "read", doc=target_project, throw=True)
+
 	impact_map = get_impacted_documents(source_project)
 
 	# Clean up for UI consumption (remove empty doctypes)

@@ -211,6 +211,12 @@ def request_signoff(course, user=None, assignment=None, attempt=None):
 	``user`` is honoured only for a Training Manager raising a request on somebody
 	else's behalf; a learner asking for their own gets their session identity
 	whatever they send.
+
+	A learner may ask only about a course they can open (``api.training._visible_course_names``);
+	any other course reads as "No such course.", the same as one that does not exist. An
+	``attempt``, when given, must be the learner's own attempt at this course. An ``assignment``
+	is used only when it is the learner's, for this course, and still open
+	(:func:`_mark_assignment_awaiting`).
 	"""
 	caller = _session_user()
 	if _in_maintenance_context():
@@ -218,7 +224,14 @@ def request_signoff(course, user=None, assignment=None, attempt=None):
 	if not is_enabled("training_enabled"):
 		frappe.throw(_("Training is not available yet."))
 
-	learner = user if (user and _is_manager(caller)) else caller
+	manager = _is_manager(caller)
+	learner = user if (user and manager) else caller
+
+	if not manager:
+		from erpnext_enhancements.api.training import _visible_course_names
+
+		if course not in _visible_course_names(caller):
+			frappe.throw(_("No such course."))
 
 	course_row = frappe.db.get_value(
 		"Training Course",
@@ -230,6 +243,8 @@ def request_signoff(course, user=None, assignment=None, attempt=None):
 		frappe.throw(_("No such course."))
 	if not cint(course_row.require_supervisor_signoff):
 		frappe.throw(_("{0} does not require a supervisor sign-off.").format(course_row.course_title))
+	if attempt and not _is_learners_attempt(attempt, course, learner):
+		frappe.throw(_("That attempt is not this learner's attempt at this course."))
 
 	existing = frappe.db.exists(
 		SIGNOFF_DOCTYPE, {"course": course, "user": learner, "docstatus": 0}
@@ -296,9 +311,11 @@ def _mark_assignment_awaiting(assignment, course, learner):
 	"""Park the assignment in Awaiting Sign-off so it stops reading as unstarted.
 
 	Resolved from the course when the caller did not name one, because the player
-	knows the course and the desk knows the assignment, and both reach this.
+	knows the course and the desk knows the assignment, and both reach this. A named
+	assignment is used only when it is the learner's, for this course, and not in a
+	closed status; otherwise it is ignored and the course lookup decides.
 	"""
-	name = assignment or frappe.db.get_value(
+	name = _learners_open_assignment(assignment, course, learner) or frappe.db.get_value(
 		"Training Assignment",
 		{"course": course, "user": learner, "status": ["not in", CLOSED_ASSIGNMENT_STATUSES]},
 		"name",
@@ -307,6 +324,24 @@ def _mark_assignment_awaiting(assignment, course, learner):
 	if not name:
 		return
 	frappe.db.set_value("Training Assignment", name, "status", AWAITING, update_modified=False)
+
+
+def _learners_open_assignment(assignment, course, learner):
+	"""``assignment`` when it is ``learner``'s, for ``course``, and still open; else None."""
+	if not assignment or not isinstance(assignment, str):
+		return None
+	row = frappe.db.get_value("Training Assignment", assignment, ["user", "course", "status"], as_dict=True)
+	if not row or row.user != learner or row.course != course or row.status in CLOSED_ASSIGNMENT_STATUSES:
+		return None
+	return assignment
+
+
+def _is_learners_attempt(attempt, course, learner):
+	"""True when ``attempt`` is ``learner``'s Training Attempt at ``course``."""
+	if not isinstance(attempt, str):
+		return False
+	row = frappe.db.get_value("Training Attempt", attempt, ["user", "course"], as_dict=True)
+	return bool(row) and row.user == learner and row.course == course
 
 
 # -------------------------------------------------------------------- record
