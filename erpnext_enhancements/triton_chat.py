@@ -485,7 +485,7 @@ def get_config() -> dict:
     return cfg
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_session(
     title: str | None = None,
     model: str | None = None,
@@ -793,7 +793,7 @@ def _sse_error(message: str) -> bytes:
 # imports frappe at the top and would drag that into every test of it.
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
                  hidden: int | str = 0, model: str | None = None,
                  persona_key: str | None = None, use_search: int | str = 0):

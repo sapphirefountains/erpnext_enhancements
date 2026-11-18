@@ -523,7 +523,7 @@ def _bucket_name_complaint(bucket):
 	return ""
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def test_connection():
 	"""Write a probe object, sign it, fetch it, delete it.
 

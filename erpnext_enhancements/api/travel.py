@@ -1366,7 +1366,7 @@ def get_trip_map_data(trip):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cache_poi_geocode(poi, lat, lng):
 	"""Persist a client-geocoded point onto a Travel POI's ``geolocation`` so a
 	linked Address isn't re-geocoded on every map load.
@@ -1971,7 +1971,7 @@ def ee_trip_sheet(doc):
 # -------------------------------------------------------------------- email
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_itinerary_email(trip, employee=None):
 	"""Send the itinerary email (with ICS attachment) to one traveler, or to
 	every traveler when ``employee`` is omitted. Coordinators can send to

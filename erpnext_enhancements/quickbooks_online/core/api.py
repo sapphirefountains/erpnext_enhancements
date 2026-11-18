@@ -96,7 +96,7 @@ def _require_qbo_operator():
 	frappe.only_for(QBO_OPERATOR_ROLES)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_oauth(environment=None):
 	"""Begin the OAuth2 connect flow; return the Intuit authorization URL.
 
@@ -194,7 +194,7 @@ def import_all():
 	return {"status": "queued"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def preview_resync(entity_types=None):
 	"""RPC: enqueue a dry-run resync preview on the long queue (returns immediately).
 

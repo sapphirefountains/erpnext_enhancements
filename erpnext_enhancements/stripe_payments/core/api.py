@@ -252,7 +252,7 @@ def portal_price_card_payment(sales_invoice, confirmation_token):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def portal_confirm_card_payment(stripe_payment, confirmation_token):
 	"""RPC (portal): charge the total quoted by ``portal_price_card_payment``.
 
