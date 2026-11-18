@@ -1364,14 +1364,32 @@ doc_events = {
 	# on or before the day of the switch. Reads the Maintain Stock Decision row the switch left;
 	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
 	"Delivery Note": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
+			# v1.827.0 -- product_fulfillment (TASK-2026-03231): a Carrier shipping note's tracking
+			# number is cleaned and its tracking link (custom_tracking_url) set from the carrier's
+			# public page. Any other method clears the link.
+			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_validate",
+		],
 		# v1.826.0 -- product_fulfillment, the QC gate (Nik 2026-11-18): a Delivery Note that ships a
 		# configured product is refused until every unit on it has its serial number picked and the
 		# newest submitted Pre-Shipment Functional Test of each serial is Accepted and signed by
 		# someone other than its builder. Ours, not ERPNext's inspection_required_before_delivery,
 		# which checks one inspection per line and cannot see serials (ADR 0019). Returns pass;
 		# Product Build Settings' Require a Passed Test Before Delivery switches it off.
-		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.delivery_note_before_submit",
+		"before_submit": [
+			"erpnext_enhancements.product_fulfillment.qc_gate.delivery_note_before_submit",
+			# v1.827.0 -- then how it travels: a note shipping a configured product names its
+			# fulfillment method, and Carrier shipping needs the carrier and tracking number, Sapphire
+			# delivery a date and a person. After the QC gate, so an untested unit is refused first.
+			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_before_submit",
+		],
+		# v1.827.0 -- Carrier shipping emails the customer contact "Shipped" with the tracking link
+		# (queued in Email Queue, so a deploy's FLUSHDB cannot lose it); Sapphire delivery assigns the
+		# note to the person delivering it on the delivery date. Never undoes the submit.
+		"on_submit": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_submit",
+		# v1.827.0 -- a draft Sapphire delivery is assigned as soon as it names a person. Idempotent.
+		"on_update": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_update",
 	},
 	# v1.826.0 -- product_fulfillment (TASK-2026-03229): a configured product line on a submitted
 	# Sales Order gets one Work Order per unit from its Item's default BOM, unless finished units on
@@ -2976,6 +2994,10 @@ after_migrate = [
 	# Certificate (Quality Inspection). Upserted so template edits deploy; guarded. ABOVE
 	# ensure_chrome_pdf_generator, like the rest.
 	"erpnext_enhancements.product_fulfillment.setup_print_formats.ensure_print_formats",
+	# product_fulfillment (v1.827.0): every Product Build Settings default with no tabSingles row gets
+	# one, never over a stored value, so a field added later (Email the Customer When It Ships) is not
+	# saved as 0 by the next person to save the page. Also a patch. Never raises.
+	"erpnext_enhancements.patches.backfill_product_build_settings_defaults.backfill_product_build_settings_defaults",
 	# enhancements_core: the supplier-facing Purchase Order print format. Procurement
 	# has no module of its own (po_approval / po_segregation / procurement_project sit
 	# at the app root) and a Print Format needs a real Module Def, so it lands in the

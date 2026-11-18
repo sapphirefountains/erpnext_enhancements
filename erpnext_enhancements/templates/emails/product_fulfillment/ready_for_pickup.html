@@ -1,0 +1,21 @@
+{# Ready for pickup: the customer's product order is built, tested and waiting at the shop.
+
+   A FRAGMENT: chrome comes from email_style.render() in product_fulfillment/shipping.py.
+   Context: greeting_name, units [(label, serials)], references [(label, value)], pickup_instructions.
+
+   NOTE: frappe's Jinja env has NO autoescape. The macros below escape their own text arguments, so
+   values passed into them need no second |e. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Hi " ~ greeting_name ~ "," if greeting_name else "Hello,") }}
+
+{{ ee.p("Your order is built, has passed its pre-shipment test, and is ready to pick up at our shop.") }}
+
+{{ ee.table(["Product", "Serial number"], units) }}
+
+{% if references %}{{ ee.kv(references) }}{% endif %}
+
+{{ ee.h("Picking it up") }}
+{{ ee.prose(pickup_instructions) }}
+
+{{ ee.note("The test certificate is in the box. Your warranty is one year, parts and labor at our shop, from the day you pick it up. Keep the serial number for any warranty claim. Questions? Just reply to this email.") }}

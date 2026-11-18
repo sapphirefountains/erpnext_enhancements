@@ -26,12 +26,14 @@ FALLBACK = {
 	"warranty_days": rules.DEFAULT_WARRANTY_DAYS,
 	"require_test": 1,
 	"test_template": "Pre-Shipment Functional Test - E-Stop",
+	"send_shipped_email": 1,
+	"pickup_instructions": None,
 }
 
 
 #: Fields whose blank means "use the default", not "none". A cleared Pre-Shipment Test Template
 #: stays blank on purpose (any template counts), and cleared warehouses stay blank.
-_BLANK_MEANS_DEFAULT = ("make_work_orders", "require_test", "warranty_days")
+_BLANK_MEANS_DEFAULT = ("make_work_orders", "require_test", "warranty_days", "send_shipped_email")
 
 
 def get_settings():

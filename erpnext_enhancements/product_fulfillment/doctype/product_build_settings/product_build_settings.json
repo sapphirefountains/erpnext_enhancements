@@ -20,7 +20,12 @@
   "test_section",
   "test_help",
   "require_test",
-  "test_template"
+  "test_template",
+  "shipping_section",
+  "shipping_help",
+  "send_shipped_email",
+  "pickup_instructions",
+  "carriers"
  ],
  "fields": [
   {
@@ -113,12 +118,41 @@
    "fieldtype": "Link",
    "label": "Pre-Shipment Test Template",
    "options": "Quality Inspection Template"
+  },
+  {
+   "fieldname": "shipping_section",
+   "fieldtype": "Section Break",
+   "label": "Shipping"
+  },
+  {
+   "fieldname": "shipping_help",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">A Delivery Note says how a product order gets to the customer: Pickup at shop, Carrier shipping or Sapphire delivery. For a carrier shipment the carrier is the note's Carrier (a Supplier ticked Is Transporter) and the tracking number its Tracking Number; ERPNext then emails the customer contact \"Shipped\" with a link to the carrier's tracking page. UPS, FedEx, USPS and DHL are recognized by name. Add a row below for a carrier whose name does not say which it is, or for any other carrier, with its tracking page written as a link containing {number}.</p>"
+  },
+  {
+   "default": "1",
+   "description": "Email the customer contact when a Carrier shipping Delivery Note is submitted. Off: send it from the note with Resend Shipped Email.",
+   "fieldname": "send_shipped_email",
+   "fieldtype": "Check",
+   "label": "Email the Customer When It Ships"
+  },
+  {
+   "description": "Printed in the Ready for Pickup email: the shop's address, hours and where to come. Empty: the email asks the customer to reply to arrange a time.",
+   "fieldname": "pickup_instructions",
+   "fieldtype": "Small Text",
+   "label": "Pickup Instructions"
+  },
+  {
+   "fieldname": "carriers",
+   "fieldtype": "Table",
+   "label": "Carriers",
+   "options": "Product Carrier"
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-18 12:00:00.000000",
+ "modified": "2026-11-18 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Fulfillment",
  "name": "Product Build Settings",
