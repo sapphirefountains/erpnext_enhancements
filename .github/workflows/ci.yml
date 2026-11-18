@@ -5112,7 +5112,12 @@ jobs:
   # before: 14m37s and 14m43s on main that day. Measured for v1.774.2 (see CHANGELOG): the
   # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
   # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
-  # after one is the slow run, and 30 minutes is the headroom for it.
+  # after one is the slow run: 17m20s in CI on 2026-11-02. The provider and password rules
+  # added on 2026-11-18 read the same text with more patterns. Each skips a line that lacks
+  # the substring it needs (the script's `_QUICK_TRIGGERS`): measured on a fresh clone, the
+  # walk took twice as long without that and about a tenth longer with it. 60 minutes is
+  # the headroom for that one run; a job killed at its limit saves no cache, so a limit that
+  # is too short fails the same way on every run after it.
   #
   # THE CACHE is a list of blob shas keyed on `--rules-hash`, a hash of the whole script,
   # so any change to a pattern, the marker, the window or the code that applies them
@@ -5129,7 +5134,7 @@ jobs:
   secret-scan:
     name: ${{ github.event_name == 'pull_request' && 'No committed secrets (PR range)' || 'No committed secrets (full history)' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

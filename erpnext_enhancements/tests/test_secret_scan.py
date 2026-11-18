@@ -374,6 +374,128 @@ class StagedTests(_TempTestCase):
 		self.assertIn("1 staged files scanned", out)
 
 
+REVIEWED_LIST = "scripts/secret_scan_reviewed_blobs.txt"
+
+
+class ReviewedBlobTests(_TempTestCase):
+	"""``scripts/secret_scan_reviewed_blobs.txt``: old blobs a person has read, by content hash.
+
+	The list exists so a new rule does not leave the full walk red for good over blobs nobody
+	can edit. Every test here is about how little it excuses.
+	"""
+
+	def planted_and_removed(self, name: str = "repo") -> tuple[_Repo, str]:
+		repo = self.repo(name)
+		rel, text, _rule = PLANTS["OAuth client secret"]
+		repo.commit({rel: text}, "plant")
+		sha = repo.blob(f"HEAD:{rel}")
+		repo.commit({rel: None}, "remove it again")
+		return repo, sha
+
+	def test_a_listed_historical_blob_is_excused_by_the_full_walk(self):
+		repo, sha = self.planted_and_removed()
+		code, out = _scan(repo.root)
+		self.assertEqual(code, 1, out)
+
+		repo.commit(
+			{REVIEWED_LIST: f"# read by a person\n\n{sha}  an old example, read 2026-11-18\n"}, "list it"
+		)
+		code, out = _scan(repo.root)
+		self.assertEqual(code, 0, out)
+		self.assertIn(f"reviewed: 1 historical blob(s) with findings are listed in {REVIEWED_LIST}", out)
+
+	def test_a_listed_blob_is_never_recorded_as_clean(self):
+		repo, sha = self.planted_and_removed()
+		repo.commit({REVIEWED_LIST: f"{sha}  an old example, read 2026-11-18\n"}, "list it")
+		cache = self.tmp / "cache.txt"
+		code, out = _scan(repo.root, "--cache", str(cache))
+		self.assertEqual(code, 0, out)
+		self.assertNotIn(sha, cache.read_text(encoding="ascii"))
+
+		repo.commit({REVIEWED_LIST: "# nothing listed any more\n"}, "take the line out")
+		code, out = _scan(repo.root, "--cache", str(cache))
+		self.assertEqual(code, 1, "with its line gone the blob must be reported again:\n" + out)
+		self.assertIn("rule: client_secret", out)
+
+	def test_a_listed_blob_that_is_still_in_the_tree_is_not_excused(self):
+		repo = self.repo()
+		rel, text, rule = PLANTS["OAuth client secret"]
+		repo.commit({rel: text}, "plant and keep")
+		sha = repo.blob(f"HEAD:{rel}")
+		repo.commit({REVIEWED_LIST: f"{sha}  listed although it is the current file\n"}, "list it")
+		code, out = _scan(repo.root)
+		self.assertEqual(code, 1, out)
+		self.assertIn(f"rule: {rule}", out)
+		self.assertIn("is in the current tree", out)
+
+	def test_the_same_content_under_a_new_name_is_still_found_in_the_tree(self):
+		repo, sha = self.planted_and_removed()
+		repo.commit({REVIEWED_LIST: f"{sha}  an old example, read 2026-11-18\n"}, "list it")
+		_rel, text, rule = PLANTS["OAuth client secret"]
+		repo.commit({"elsewhere/copy.py": text}, "the same bytes come back under another name")
+		code, out = _scan(repo.root)
+		self.assertEqual(code, 1, out)
+		self.assertIn(f"rule: {rule}", out)
+
+	def test_the_pr_range_never_reads_the_list(self):
+		repo = self.repo()
+		_git(repo.root, "checkout", "-q", "-b", "feature")
+		rel, text, rule = PLANTS["OAuth client secret"]
+		repo.commit({rel: text}, "plant")
+		sha = repo.blob(f"HEAD:{rel}")
+		repo.commit(
+			{rel: None, REVIEWED_LIST: f"{sha}  listed by the same pull request\n"}, "remove and list"
+		)
+		repo.pack()
+		code, out = _scan(repo.root, "--since", "main")
+		self.assertEqual(code, 1, out)
+		self.assertIn(f"rule: {rule}", out)
+		self.assertNotIn("reviewed:", out)
+
+	def test_staged_files_never_read_the_list(self):
+		repo, sha = self.planted_and_removed()
+		repo.commit({REVIEWED_LIST: f"{sha}  an old example, read 2026-11-18\n"}, "list it")
+		rel, text, rule = PLANTS["OAuth client secret"]
+		repo.write({rel: text})
+		_git(repo.root, "add", rel)
+		code, out = _scan(repo.root, "--staged")
+		self.assertEqual(code, 1, out)
+		self.assertIn(f"rule: {rule}", out)
+
+	def test_an_entry_that_excuses_nothing_fails_the_run(self):
+		repo = self.repo()
+		clean = repo.blob("HEAD:README.md")
+		absent = "ab" * 20
+		for sha in (clean, absent):
+			with self.subTest(sha=sha[:8]):
+				repo.commit({REVIEWED_LIST: f"{sha}  a line the walk has no use for\n"}, "list it")
+				code, out = _scan(repo.root)
+				self.assertEqual(code, 1, out)
+				self.assertIn("LISTS BLOBS IT DOES NOT NEED TO", out)
+				self.assertIn(sha, out)
+
+	def test_a_line_that_is_not_a_full_hash_and_a_note_refuses_to_run(self):
+		repo, sha = self.planted_and_removed()
+		for line in (
+			sha[:12] + "  a short hash",
+			sha,
+			sha + "  short",
+			f"{sha}  a note\n{sha}  listed twice here",
+		):
+			with self.subTest(line=line[-24:]):
+				repo.commit({REVIEWED_LIST: line + "\n"}, "a bad line")
+				code, out = _scan(repo.root)
+				self.assertEqual(code, 1, out)
+				self.assertIn("cannot scan for committed secrets", out)
+
+	def test_this_repositorys_own_list_is_well_formed_and_names_nothing_current(self):
+		scanner = _load_scanner()
+		reviewed = scanner.load_reviewed_blobs()
+		self.assertTrue(reviewed, "the list is expected to exist while the blobs it names are in history")
+		self.assertLessEqual(len(reviewed), 5, "the list is not a place to put new findings")
+		self.assertEqual(sorted(set(reviewed) & scanner.head_blobs()), [])
+
+
 def _load_scanner():
 	spec = importlib.util.spec_from_file_location("check_no_committed_secrets_rules", SCRIPT)
 	module = importlib.util.module_from_spec(spec)
@@ -432,6 +554,96 @@ class ProviderAndPasswordRuleTests(unittest.TestCase):
 			with self.subTest(text):
 				self.assertEqual(self.rules("config/notes.txt", text + "\n"), set())
 
+	# -- the quick triggers ---------------------------------------------------------------------
+
+	def without_triggers(self, where, text):
+		"""The same scan with every rule's regex run on every line, as it was before the triggers."""
+		saved = dict(self.scanner._QUICK_TRIGGERS)
+		self.scanner._QUICK_TRIGGERS.clear()
+		try:
+			return [(f.rule, f.line_no) for f in self.scanner.scan_text(where, text)]
+		finally:
+			self.scanner._QUICK_TRIGGERS.update(saved)
+
+	def test_every_trigger_names_a_rule_and_is_lower_case(self):
+		names = {
+			name
+			for rules in (self.scanner.VALUE_RULES, self.scanner.TOKEN_RULES, self.scanner.PASSWORD_RULES)
+			for name, _pattern, _why in rules
+		}
+		for rule, triggers in self.scanner._QUICK_TRIGGERS.items():
+			with self.subTest(rule):
+				self.assertIn(rule, names)
+				self.assertTrue(triggers)
+				for trigger in triggers:
+					self.assertEqual(trigger, trigger.lower())
+		# The provider and password rules all have one: a rule added without one is slow, not wrong.
+		for name, _pattern, _why in (*self.scanner.TOKEN_RULES, *self.scanner.PASSWORD_RULES):
+			self.assertIn(name, self.scanner._QUICK_TRIGGERS)
+
+	def test_the_triggers_change_no_finding(self):
+		"""A trigger only skips a regex that could not have matched. Held on shaped lines in both
+		letter cases and on the largest real files in the repository."""
+		mixed = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+		value = "Zk3Pq9Lm"
+		lines = [
+			"KEY = '" + "sk_" + "live_" + mixed[:24] + "'",
+			"KEY = '" + "rk_" + "live_" + mixed[:24] + "'",
+			"export HOOK=" + "whsec" + "_" + mixed[:24],
+			"key=" + "AI" + "za" + mixed[:35],
+			"id: " + "AK" + "IA" + "7Q2M5X8B1C4D6E9F",
+			"id: " + "AS" + "IA" + "7Q2M5X8B1C4D6E9F",
+			*("token " + "gh" + letter + "_" + mixed for letter in "pousr"),
+			"pat " + "github" + "_pat_" + mixed + mixed,
+			*("SLACK=" + "xo" + "x" + letter + "-" + "8317025946-Qw7Zr2Lp9Xv4" for letter in "abprs"),
+			"Bearer " + "ey" + "JhbGciOiJIUzI1NiJ9." + "ey" + "JzdWIiOiJ4eXoifQ." + "Qm9ndXNTaWduYXR1cmU",
+			"Authorization: token " + "k3Jd9Lm2Qp8Rx7V" + ":" + "b1Hs5Yw4Tn6Zc0A",
+			"Authorization: TOKEN " + "k3Jd9Lm2Qp8Rx7V" + ":" + "b1Hs5Yw4Tn6Zc0A",
+			"DATABASE_URL=postgres://app:" + value + "@db.internal:5432/app",
+			"TWILIO_AUTH_TOKEN=" + "9f3a7c1e5b2d4086" + "ae1c3b5d7f902468",
+			"Twilio token " + "9f3a7c1e5b2d4086" + "ae1c3b5d7f902468",
+			"encryption_" + 'key = "' + "Zk3Pq9LmXv2Wb7Nd4Rt8Yh1Gs6Jc5Ae0Uo3Ik9Pl2Q=" + '"',
+			"SITE_ENCRYPTION_" + "KEY=" + "Zk3Pq9LmXv2Wb7Nd4Rt8Yh1Gs6Jc5Ae0Uo3Ik9Pl2Q=",
+			"db_" + "password: " + value,
+			"DB_" + "PASSWORD=" + value,
+			"MYSQL_ROOT_" + "PASSWD: " + value,
+			"| MariaDB root pass" + "word | `" + value + "` |",
+			"| ROOT PASS" + "WORD | `" + value + "` |",
+			"bench new-site --admin-" + "password " + value,
+			"bench new-site --ADMIN-" + "PASSWORD=" + value,
+			"mysql -u root -p'" + value + "'",
+			"MYSQLDUMP -u root -p" + value + " db",
+			"mariadb-dump -u root -p" + value + " db",
+			"nothing to see on this line",
+		]
+		for line in lines:
+			for where in ("docs/setup.md", "app/settings.py"):
+				with self.subTest(line=line[:18], where=where):
+					fast = [(f.rule, f.line_no) for f in self.scanner.scan_text(where, line + "\n")]
+					self.assertEqual(fast, self.without_triggers(where, line + "\n"))
+		together = "\n".join(lines) + "\n"
+		fast = [(f.rule, f.line_no) for f in self.scanner.scan_text("docs/setup.md", together)]
+		self.assertEqual(fast, self.without_triggers("docs/setup.md", together))
+		self.assertGreater(len({rule for rule, _line in fast}), 12, "the lines are meant to fire most rules")
+
+		for rel in ("CHANGELOG.md", "README.md", "infra/README.md", "erpnext_enhancements/hooks.py"):
+			path = REPO_ROOT / rel
+			if not path.exists():
+				continue
+			with self.subTest(rel):
+				text = path.read_text(encoding="utf-8", errors="replace")
+				fast = [(f.rule, f.line_no) for f in self.scanner.scan_text(rel, text)]
+				self.assertEqual(fast, self.without_triggers(rel, text))
+
+	def test_a_typed_out_run_is_a_stand_in(self):
+		typed = "1234567890abcdefghijklmnopqrstuvwxyz"
+		for text in ('default = "' + "gh" + "p_" + typed + '"', "token " + "gh" + "p_" + typed.upper()):
+			with self.subTest(text[:12]):
+				self.assertEqual(self.rules("infra/variables.tf", text + "\n"), set())
+		# A short run inside an otherwise mixed value is not enough to wave it through.
+		mixed = "A1b2C3d4E5f6G7h8I9j0K1l2" + "abcdefghijkl"
+		self.assertIn("github-token", self.rules("infra/variables.tf", "token " + "gh" + "p_" + mixed + "\n"))
+
 	# -- password literals in docs and config ---------------------------------------------------
 
 	def test_password_literals_in_docs_and_config_fire(self):
@@ -463,6 +675,18 @@ class ProviderAndPasswordRuleTests(unittest.TestCase):
 		for text in clean:
 			with self.subTest(text):
 				self.assertEqual(self.rules("docs/setup.md", text + "\n"), set())
+
+	def test_the_sudoers_tag_is_not_a_password(self):
+		tag = "NOPASS" + "WD"
+		for text in (
+			f"deploy ALL=(ALL) {tag}: /usr/bin/systemctl restart frappe-bench",
+			f"echo 'deploy ALL=(ALL) {tag}: /usr/bin/supervisorctl restart all' | sudo tee /etc/sudoers.d/deploy",
+		):
+			with self.subTest(text[:24]):
+				self.assertEqual(self.rules("infra/configs/startup_script.sh", text + "\n"), set())
+		# Any other name ending in the word is still an assignment.
+		self.assertIn("password-assignment", self.rules("docs/setup.md", "db_" + "passwd: Zk3Pq9Lm\n"))
+		self.assertIn("password-assignment", self.rules("docs/setup.md", tag.lower() + ": Zk3Pq9Lm\n"))
 
 	def test_password_rules_leave_source_code_to_review(self):
 		line = "db_" + "password = 'Zk3Pq9Lm'\n"
