@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.2] - 2026-11-18
+
+### Changed
+
+- **Access checks tightened on the people-facing endpoints.** Hardening, consistent with how
+  `timeoff.who_is_out` and `permits.open_permits` already check employment. Each endpoint below
+  now enforces the rule named:
+  - **Tier reviews** (`hr_enhancements/tier_review.py`): `open_review`, `reviewers_for` and
+    `send_to_reviewer` require an active Employee (or HR Manager / System Manager). Their name
+    arguments are annotated `str` and refused when they are anything else, before any lookup. A
+    permission refusal reads the same whether or not the named record exists, and names nobody.
+  - **Confined-space permits** (`hr_enhancements/permits.py`): `open_permit`, `close_permit` and
+    `cancel_permit` require an active Employee who has write permission on the permit or is its
+    attendant or supervisor.
+  - **Incident and hazard reports**: `safety.report_incident` and `hazards.report_hazard`
+    require an active Employee (or HR Manager / System Manager) and are rate limited per user.
+    `hazards.safety_brief` returns an empty brief to anybody else, keeping its promise never to
+    raise on the visit screen.
+  - **Telephony** (`api/telephony.py`): `log_call_transcript`, `send_voicemail_email` and
+    `get_employee_number` are callable only by the Triton gateway, through
+    `@validate_webhook_secret`. They stay ordinary whitelisted methods, not guest endpoints,
+    because a request authenticated with an API key is never Guest. Nothing in the browser or in
+    Triton calls them today. `log_call_transcript` no longer switches the session user; it sets
+    the Communication's owner and sender explicitly. `get_employee_number` escapes the LIKE
+    wildcards in the name it is given. `trigger_outbound_call` and `log_call_details` require an
+    active Employee. `trigger_outbound_call` no longer falls back to a User's phone fields for a
+    login with no Employee, and its `docname` is annotated `str`. `log_call_details` attaches a
+    call only to a Customer, Contact or Lead the caller can read. `trigger_outbound_call`,
+    `send_sms` and `send_voicemail_email` are rate limited per user.
+  - **The desk softphone**: `get_softphone_token` returns None to a caller who is neither an
+    active Employee nor a System Manager. When `Triton Settings.softphone_users` is empty, only a
+    System Manager gets the shared legacy identity's token, and everybody else gets None. The
+    client already treats None as "no answer device here" and keeps the call notifications. **A
+    site that relies on the empty list to ring every desk needs its answerers listed in
+    `softphone_users`.**
+  - **The SMS reply drafter**: `communication.suggest_sms_reply` requires a System User who can
+    read the Communication, and is rate limited per user.
+  - **The time kiosk** (`api/time_kiosk.py`): the legacy `log_geolocation` takes the employee
+    from the session, as `log_geolocation_batch` does. It honours a supplied `employee` only for
+    a `TIMELINE_MANAGER_ROLES` holder. `get_tasks_for_project` and `get_maintenance_context`
+    require a session Employee and Project read on the project named, the same projects the
+    kiosk's picker lists. `get_my_visits_today` and `get_nearby_visit` answer empty to a login
+    with no Employee, so the Visit Wizard's picker still draws for one. The context logic moved
+    into the unchecked `maintenance_context`. The hourly
+    `tasks.nudge_unsubmitted_maintenance_forms` calls that helper directly, so one employee's
+    project permissions cannot stop its loop.
+  - **Time correction requests**: a new request must name the filer's own Employee, unless the
+    filer may review that employee's requests (`workforce/permissions.can_review`).
+  - **Triton widget**: `triton_chat.user_has_widget_access`, which `triton_attachments` and
+    `api/triton_frame` also use, now also requires a System User, with the allow-list on or off.
+    `stream_query` and `morning_briefing` are rate limited per user.
+  - **Training assistant tools**: `training_learner_record` and `training_compliance_status`
+    apply the Desk's row scoping from `training/permissions.py`. A caller sees their own rows
+    and their direct reports' rows, unless they hold an unscoped training role. The scoping
+    covers assignments, certificates and the per-course counts.
+
+### Added
+
+- **`utils/user_rate_limit.py`**, a per-user rate limit for whitelisted endpoints. Frappe's own
+  `rate_limit` keys its counter on the client address or on a form value the client chooses.
+  The whole office shares one public address, so an address-keyed limit on a staff endpoint is
+  one bucket for everybody. This one counts per session user, in the style of
+  `api/feedback.py`'s filing limit. It counts only inside a web request, lets the call through
+  when redis cannot be read (it is a ceiling on volume, not an access check), and keeps the
+  wrapped function's signature.
+- **`tests/test_people_access_checks.py`** (its own CI step) runs the rate limit against a stub
+  and pins each rule above at source level. `test_triton_personas` gains the System User cases.
+  The kiosk suites call `maintenance_context` for the context logic, and the Visit Wizard case
+  for a login with no Employee is pinned in `test_maintenance_visit_crews`.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added

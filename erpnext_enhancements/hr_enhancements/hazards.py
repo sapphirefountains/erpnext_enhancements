@@ -31,9 +31,14 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
+
 VISIT = "Sapphire Maintenance Record"
 HAZARD = "Site Hazard"
 ASSESSMENT = "PPE Hazard Assessment"
+
+#: Who counts as staff without an Employee row. The same pair `safety.py` uses.
+STAFF_ROLES = {"HR Manager", "System Manager"}
 
 
 def _me():
@@ -43,6 +48,19 @@ def _me():
 	return user
 
 
+def _is_staff(me):
+	"""An active Employee, or one of STAFF_ROLES. By employment, as
+	`timeoff.who_is_out` checks it."""
+	if frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
+		return True
+	return bool(STAFF_ROLES & set(frappe.get_roles(me)))
+
+
+def _require_staff(me):
+	if not _is_staff(me):
+		frappe.throw(_("Only staff can report a site hazard."), frappe.PermissionError)
+
+
 @frappe.whitelist()
 def safety_brief(maintenance_record=None, customer=None, work_type=None):
 	"""Everything worth knowing before this visit starts.
@@ -50,8 +68,13 @@ def safety_brief(maintenance_record=None, customer=None, work_type=None):
 	Every section is independently best-effort: a missing doctype or a bad row
 	costs that section and nothing else. A brief with two of three parts is still
 	worth reading, and an exception here would take the safety step down with it.
+
+	Staff only. A caller who is not staff gets the empty brief rather than an error,
+	keeping the "never raises" promise above for the visit screen.
 	"""
-	_me()
+	me = _me()
+	if not _is_staff(me):
+		return {"sheets": [], "ppe": [], "hazards": []}
 	visit = None
 	if maintenance_record and frappe.db.exists(VISIT, maintenance_record):
 		visit = frappe.get_doc(VISIT, maintenance_record)
@@ -167,6 +190,7 @@ def _hazards_at(customer, visit):
 
 
 @frappe.whitelist()
+@user_rate_limit(limit=20, seconds=3600)
 def report_hazard(what, category, customer=None, where_exactly=None, maintenance_record=None, photo=None):
 	"""Thirty seconds, standing at the thing.
 
@@ -176,6 +200,7 @@ def report_hazard(what, category, customer=None, where_exactly=None, maintenance
 	looks hazard-free because nobody could face the form is the worst outcome.
 	"""
 	me = _me()
+	_require_staff(me)
 	if not (what or "").strip():
 		frappe.throw(_("Say what you found."))
 

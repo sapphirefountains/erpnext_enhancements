@@ -784,6 +784,7 @@ class TestKiosk(unittest.TestCase):
 			{"name": "SMR-1", "project": "PRJ-1", "serial_no": None, "visit_label": None}
 		]
 		frappe.tables["Project"] = [{"name": "PRJ-1", "project_name": "Highlands"}]
+		frappe.tables["Employee"] = [{"name": "HR-EMP-KORBEN", "user_id": KORBEN}]
 
 		def sql(query, values):
 			if "tabSapphire Visit Crew Member" in query and values.get("user") == KORBEN:
@@ -801,6 +802,13 @@ class TestKiosk(unittest.TestCase):
 		sql = next(q for q in frappe.queries if q[0] == "sql")
 		self.assertEqual(sql[2]["docstatus"], 0)
 		self.assertIn("LIMIT %(limit)s", sql[1])
+
+	def test_a_login_with_no_employee_gets_an_empty_list(self):
+		"""Staff only, and empty rather than an error: the Visit Wizard's picker asks for
+		this beside other lists and must still draw."""
+		frappe.tables["Employee"] = []
+		self.assertEqual(kiosk.get_my_visits_today(), [])
+		self.assertFalse([q for q in frappe.queries if q[0] == RECORD])
 
 	def test_a_crew_lookup_failure_leaves_the_list_standing(self):
 		frappe.sql_handler = lambda query, values: (_ for _ in ()).throw(RuntimeError("no table"))

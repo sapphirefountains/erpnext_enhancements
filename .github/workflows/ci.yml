@@ -3267,6 +3267,14 @@ jobs:
       # WARNS THE NEXT PERSON, which is the half that makes it worth thirty seconds.
       - name: HR hazards (SDS, PPE, and warning the next technician)
         run: python -m unittest erpnext_enhancements.tests.test_hr_hazards -v
+      # Access checks on the people-facing endpoints (v1.826.2): tier reviews, permit
+      # transitions, incident and hazard reports, the telephony endpoints, the SMS reply
+      # drafter, the kiosk's project and visit lookups, time correction requests and the
+      # two training assistant tools, pinned at source level; plus the per-user rate limit
+      # (utils/user_rate_limit) run for real. Its own step: it installs a frappe stub in
+      # setUpModule.
+      - name: People-side access checks + per-user rate limit (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_people_access_checks -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines

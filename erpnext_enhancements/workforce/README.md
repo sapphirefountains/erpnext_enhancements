@@ -336,8 +336,9 @@ same `corrections._record_originals` the reviewer path uses, writes the operator
 **Reviewed, and the route once a day is locked or the change is somebody else's call.** A
 technician files a `Time Correction Request` from the
 kiosk's My Day view (`Adjust Times`, `Change Project`, `Missed Clock-Out`, or `Missed Entry`
-for a session that never existed; the controller enforces which proposals each needs and
-that the interval is theirs), the supervisor is emailed, and a reviewer decides on the desk
+for a session that never existed; the controller enforces which proposals each needs,
+that the interval is theirs, and that a new request names the filer's own Employee unless
+the filer may review that employee's requests), the supervisor is emailed, and a reviewer decides on the desk
 form. Reviewers are HR Manager, Projects Manager, System Manager **or the employee's
 `reports_to` user**, who need hold none of those roles (`permissions.can_review`; the
 `has_permission` hook grants them read on the row).
