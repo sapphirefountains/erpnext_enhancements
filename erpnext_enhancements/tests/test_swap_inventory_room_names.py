@@ -20,11 +20,16 @@ through the real patch against an in-memory database:
   the patch never raises (a raising patch aborts ``bench migrate``, which is the deploy);
 * a site without these warehouses answers "not needed here" with no Error Log row, and the second
   run answers "already";
+* a rename done by hand without its label gets the label, and a label somebody chose is left;
+* the saved-filter queries match case the way ``replace()`` does, and the by-hand recovery commits;
 * the output counts and never names a person.
 
 What it cannot see: Frappe's real ``rename_doc`` walking every Link field (the stub follows the
 links production had on 2026-11-17, listed in :data:`LINKS`), the Single it saves through the ORM,
-and the after_rename hook. The rehearsal on a copy of production checks those.
+and the after_rename hook. **No rehearsal on a copy of production was run** to check those. What
+covers them instead: ``rename_doc`` was read at frappe v16.56.0 and erpnext v16.54.0, and the same
+``rename_doc(force=True)`` Warehouse rename (``patches/rename_stores_to_project_shelf``) ran
+cleanly on production on 2026-11-13.
 
 Stubs a minimal ``frappe`` in ``setUpModule``, so it has its own CI step.
 
@@ -36,6 +41,7 @@ import contextlib
 import copy
 import io
 import json
+import re
 import sys
 import types
 import unittest
@@ -487,8 +493,7 @@ class TestTheSwap(_Base):
 		self.assertIn("5. The search index: done.", printed, "a rebuild, so done again")
 
 	def test_a_run_that_stopped_after_the_room_finishes_the_swap(self):
-		"""A rehearsal, or a run whose group step failed: the room is Receiving, the group is not
-		renamed yet."""
+		"""A run whose group step failed: the room is Receiving, the group is not renamed yet."""
 		STATE["fail_rename"] = {GROUP}
 		self._run()
 		self.assertIn(RECEIVING, _table("Warehouse"))
@@ -501,6 +506,86 @@ class TestTheSwap(_Base):
 		self.assertIn("3. The group: Inventory becomes Inventory Room: done.", printed)
 		self.assertEqual(self.wh(ROOM).is_group, 1)
 		self.assertEqual(_table("Item Reorder")["IR-2"].warehouse_group, ROOM)
+
+
+# --------------------------------------------------------------------------- labels left behind
+
+
+class TestLabelsLeftBehind(_Base):
+	"""A rename done by hand with ``rename_doc`` alone keeps the old Warehouse Name."""
+
+	def _by_hand(self, old, new):
+		sys.modules["frappe.model.rename_doc"].rename_doc(doctype="Warehouse", old=old, new=new, force=True)
+		STATE["renames"].clear()
+
+	def _inventory_rooms(self):
+		return [w.name for w in _table("Warehouse").values() if w.warehouse_name == "Inventory Room"]
+
+	def test_both_renames_done_by_hand_get_their_labels(self):
+		self._by_hand(ROOM, RECEIVING)
+		self._by_hand(GROUP, ROOM)
+		self.assertEqual(self.wh(RECEIVING).warehouse_name, "Inventory Room")
+		self.assertEqual(self.wh(ROOM).warehouse_name, "Inventory")
+		printed, reports = self._run()
+		self.assertEqual((reports, STATE["errors"], STATE["renames"]), ([], [], []))
+		self.assertEqual(self.wh(RECEIVING).warehouse_name, "Receiving")
+		self.assertEqual(self.wh(ROOM).warehouse_name, "Inventory Room")
+		self.assertEqual(self._inventory_rooms(), [ROOM], "one Inventory Room, and it is the group")
+		self.assertIn(
+			"1. The room: Inventory Room becomes Receiving: done. Receiving - SF is there, and Inventory Room - SF "
+			'is no longer a place that holds stock; its Warehouse Name read "Inventory Room" and now reads "Receiving"',
+			printed,
+		)
+		self.assertIn(
+			"3. The group: Inventory becomes Inventory Room: done. Inventory Room - SF is the group, holding 3 "
+			'warehouses; its Warehouse Name read "Inventory" and now reads "Inventory Room"',
+			printed,
+		)
+		self.assertEqual(
+			[v for v in STATE["set_values"] if v[0] == "Warehouse"],
+			[
+				("Warehouse", RECEIVING, {"warehouse_name": "Receiving"}, False),
+				("Warehouse", ROOM, {"warehouse_name": "Inventory Room"}, False),
+			],
+		)
+		self.assertIn(("Warehouse", RECEIVING), STATE["cache_cleared"])
+		# The run after it has nothing left to set.
+		writes = len(STATE["set_values"])
+		printed, reports = self._run()
+		self.assertEqual(reports, [])
+		self.assertEqual(len(STATE["set_values"]), writes)
+		for number in (1, 3):
+			self.assertIn(": already.", self._line(printed, number))
+
+	def test_a_room_renamed_by_hand_is_labeled_and_the_swap_finishes(self):
+		self._by_hand(ROOM, RECEIVING)
+		printed, reports = self._run()
+		self.assertEqual(reports, [])
+		self.assertEqual([r["old"] for r in STATE["renames"]], [GROUP], "the patch renames only the group")
+		self.assertEqual(self.wh(RECEIVING).warehouse_name, "Receiving")
+		self.assertEqual(self.wh(ROOM).is_group, 1)
+		self.assertEqual(self._inventory_rooms(), [ROOM])
+		self.assertIn(": done.", self._line(printed, 1))
+
+	def test_an_empty_label_is_filled(self):
+		self._by_hand(ROOM, RECEIVING)
+		self.wh(RECEIVING).warehouse_name = ""
+		printed, _reports = self._run()
+		self.assertEqual(self.wh(RECEIVING).warehouse_name, "Receiving")
+		self.assertIn('its Warehouse Name was empty and now reads "Receiving"', self._line(printed, 1))
+
+	def test_a_label_somebody_chose_is_left_and_said(self):
+		self._by_hand(ROOM, RECEIVING)
+		self.wh(RECEIVING).warehouse_name = "Receiving Dock"
+		printed, reports = self._run()
+		self.assertEqual(reports, [])
+		self.assertEqual(self.wh(RECEIVING).warehouse_name, "Receiving Dock")
+		line = self._line(printed, 1)
+		self.assertIn(": already.", line)
+		self.assertIn('its Warehouse Name is "Receiving Dock", which somebody chose, so it was left', line)
+		self.assertEqual(
+			self.wh(ROOM).warehouse_name, "Inventory Room", "the group is still renamed and labeled"
+		)
 
 
 # --------------------------------------------------------------------------- saved list filters
@@ -781,6 +866,24 @@ class TestTheOutput(_Base):
 		text = patch.report({"room": (patch.DONE, "x")})
 		self.assertIn("2. People's saved list filters that named the room: skipped. not reached", text)
 
+	def test_a_console_recovery_commits_and_sets_the_label(self):
+		for key, new, label in (("room", RECEIVING, "Receiving"), ("group", ROOM, "Inventory Room")):
+			with self.subTest(key=key):
+				text = patch.RECOVERY[key]
+				self.assertIn(f'frappe.db.set_value("Warehouse", "{new}", "warehouse_name", "{label}")', text)
+				self.assertIn("frappe.db.commit()", text)
+				self.assertLess(text.index("rename_doc"), text.index("frappe.db.commit()"))
+
+	def test_a_failed_index_says_every_warehouse_may_be_missing_from_search(self):
+		"""__global_search is MyISAM: a savepoint does not bring the deleted rows back."""
+		text = patch.RECOVERY["search"]
+		self.assertIn("every warehouse, not only the two renamed", text)
+		self.assertIn("MyISAM", text)
+		self.assertIn('rebuild_for_doctype("Warehouse"); frappe.db.commit()', text)
+		STATE["search_fails"] = True
+		_printed, reports = self._run()
+		self.assertIn("By hand: The Desk's search may now be missing every warehouse", reports[0])
+
 
 # --------------------------------------------------------------------------- the file and its wiring
 
@@ -820,8 +923,41 @@ class TestWiring(unittest.TestCase):
 		ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 		self.assertIn("python -m unittest erpnext_enhancements.tests.test_swap_inventory_room_names", ci)
 
-	def test_stock_scan_says_a_label_that_opens_a_group_is_out_of_date(self):
-		"""The old Inventory Room label opens the group after the swap."""
+	def test_the_saved_filter_count_and_the_rewrite_agree_on_case(self):
+		"""replace() is case-sensitive; a plain like under the table's _ci collation is not. A row
+		that differed only in case would be counted as moved and left unchanged."""
+		source = PATCH_FILE.read_text(encoding="utf-8")
+		self.assertEqual(re.findall(r"`data` like( binary)? %s", source), [" binary", " binary"])
+
+	def test_only_the_scan_path_says_a_label_is_out_of_date(self):
+		"""The old Inventory Room label opens the group after the swap. The hint is for a scan:
+		the Bin Manager and the Count Desk ask the same question where nothing was scanned."""
+
+		def calls(path):
+			found = {}
+			for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+				if not isinstance(fn, ast.FunctionDef):
+					continue
+				for node in ast.walk(fn):
+					if not isinstance(node, ast.Call):
+						continue
+					name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+					if name == "_location_problem":
+						scanned = any(
+							k.arg == "scanned" and isinstance(k.value, ast.Constant) and k.value.value is True
+							for k in node.keywords
+						)
+						found.setdefault(fn.name, []).append(scanned)
+			return found
+
+		scan_calls = calls(APP / "api" / "stock_scan.py")
+		self.assertIn(True, scan_calls["_resolve"], "a code scanned on the page")
+		self.assertIn(True, scan_calls["boot_payload"], "a label opened with the phone's camera (?w=)")
+		self.assertEqual(scan_calls["_location"], [False], "the page's actions and the Bin Manager share it")
+		for path in (APP / "inventory_enhancements" / "bin_assignments.py", APP / "api" / "count_desk.py"):
+			for fn, flags in calls(path).items():
+				self.assertNotIn(True, flags, f"{path.name} {fn}: nothing was scanned there")
+
 		tree = ast.parse((APP / "api" / "stock_scan.py").read_text(encoding="utf-8"))
 		problem = next(
 			n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_location_problem"

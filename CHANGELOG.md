@@ -43,7 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     means to, but it looks for them with `data LIKE '<old name>'` and no wildcards, so it matches
     none. The quoted old name is replaced with the quoted new one in `__UserSettings`, and their
     Redis copies are dropped. A rewrite never runs while the old name belongs to a warehouse. That
-    keeps a second run from sending a filter on the renamed group to Receiving.
+    keeps a second run from sending a filter on the renamed group to Receiving. Both the count and
+    the rewrite match with `like binary`: `replace()` is case-sensitive, and a plain `like` under
+    the table's `_ci` collation is not, so a row that differed only in case would have been counted
+    as moved and left unchanged.
+  - **What this rests on. No rehearsal on a copy of production was run.** The confidence rests on
+    two things. First, `rename_doc` was read at frappe v16.56.0 and erpnext v16.54.0, the versions
+    production runs. Second, the same `rename_doc(force=True)` Warehouse rename, with
+    `warehouse_name` set after it, ran cleanly on production on 2026-11-13: the Project Shelf patch
+    (`rename_stores_to_project_shelf`, v1.817.0) is in Patch Log, with no Error Log row.
   - **What follows the room to Receiving** (production, read 2026-11-17): 84 Stock Ledger Entries,
     84 Bins (56 with stock), 70 Item Defaults, 83 Putaway Rules, 29 reorder rules, 17 Purchase Order
     lines (14 on orders received in full, 3 on a closed order; none still to receive), one Warehouse
@@ -63,26 +71,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     for sign-in addresses, and item codes are left out too. A site with no `Inventory Room - SF` leaf
     and no `Receiving - SF` answers "not needed here" for every step, with no Error Log row. The
     second run answers "already".
-  - **Left for a person, and said in the migrate output:**
+  - **A label left behind by a rename done by hand is set.** Someone recovering a failed step by
+    hand might call `rename_doc` alone and forget the label. That would leave a leaf labeled
+    "Inventory Room" beside the group of that name. So a run that finds the docname already right
+    still sets `warehouse_name`, and that step answers done. It does this only where the label still
+    reads the old one or is empty. Any other label was somebody's choice, so it is left and the
+    output says so. The by-hand console recovery in the Error Log row sets the label and ends with
+    `frappe.db.commit()`.
+  - **A failed index step says how bad it can be.** `__global_search` is MyISAM, so the step's
+    savepoint cannot undo it. Frappe's rebuild deletes every Warehouse row before writing them back,
+    so a failure in between drops every warehouse from Desk search, not only the two renamed. The
+    by-hand step says so and rebuilds the whole Warehouse index
+    (`rebuild_for_doctype("Warehouse")`, then commit), or runs the patch again.
+  - **After the deploy (left for a person, and said in the migrate output):**
     - **Reprint the room's QR label as Receiving.** A label encodes `/stock-scan?w=<warehouse name>`,
       so the old Inventory Room label now opens the group, which Stock Scan refuses.
-    - **The map box that was linked to the room is linked to Receiving now.** It is the same
-      warehouse. If the box was drawn as the whole room, re-link it in the map editor.
+    - **The box on the "Bountiful Office" warehouse map linked to Inventory Room is the whole room
+      outline. After the deploy it reads "Receiving" until someone re-links it to the new Inventory
+      Room group in the map editor.** The rename carries the box's link to `Receiving - SF`, which
+      is the same warehouse under its new name. The owner re-links it by hand, and the patch changes
+      no map.
   - Tests: `tests/test_swap_inventory_room_names.py`, bench-free, own `frappe` stub, own CI step.
-    They run the real patch: the order, every link, the tree unchanged, nothing meant for the room on
-    the group, the filters per rename and the second run leaving the group's alone, every refusal
-    and failure path, the quiet site, counts without people or items, and the wiring. What they
-    cannot see is Frappe's real `rename_doc` walking every Link field and saving the Single. A
-    rehearsal on a copy of production checks that.
+    They run the real patch and cover:
+    - the order, every link, and the tree unchanged;
+    - nothing meant for the room ending up on the group;
+    - the filters per rename, and the second run leaving the group's alone;
+    - labels left behind by a rename done by hand;
+    - every refusal and failure path, and the quiet site;
+    - counts without people or items;
+    - the `like binary` queries, the recovery text, and the wiring.
+
+    What they cannot see is Frappe's real `rename_doc` walking every Link field and saving the
+    Single. No rehearsal checked that; see "What this rests on" above.
 
 ### Changed
 
 - **Stock Scan says a label that opens a group is out of date** (`api/stock_scan.py`
   `_location_problem`). A label is printed only for a place that holds stock, so a label that opens a
   group was printed before its place was renamed or made a group. The old Inventory Room label is
-  the case in point. The refusal already said to scan a location inside the group. It now adds: "If
-  you scanned a label stuck on a shelf or a room, the label is out of date: print a new one from
-  Warehouse Labels."
+  the case in point. The refusal already said to scan a location inside the group. On the scan path
+  only, it now adds: "If you scanned a label stuck on a shelf or a room, the label is out of date:
+  print a new one from Warehouse Labels." The scan path is a code scanned on the page (`_resolve`) and
+  a label opened with the phone's camera (`boot_payload`'s `?w=`). Both pass `scanned=True`.
+  The Bin Manager (`bin_assignments`), the Count Desk and Stock Scan's own actions (`_location`)
+  ask the same question where nothing was scanned, so they keep the old sentence.
+  `test_bin_assignments` checks both sentences on the real module. The swap suite checks that only
+  the scan path passes the flag.
 - Present-tense docs that name the two warehouses now use the new names: `inventory_enhancements/README.md`
   (a short section on the swap, the Boneyard, job sites, the Project Shelf's place, the Overhead
   fallback, reorder groups), and the docstrings of `api/reorder_levels._default_group`,

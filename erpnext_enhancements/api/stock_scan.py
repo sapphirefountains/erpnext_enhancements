@@ -209,20 +209,29 @@ def _warehouse(name):
 	return row
 
 
-def _location_problem(row, name=""):
-	"""Why ``row`` cannot be scanned as a location, or ``None``."""
+def _location_problem(row, name="", scanned=False):
+	"""Why ``row`` cannot be scanned as a location, or ``None``.
+
+	``scanned`` is for the scan path only: :func:`_resolve` and the page's ``?w=`` boot
+	(:func:`boot_payload`). There, a group means the label just scanned is out of date, and the
+	sentence says to print a new one. The Bin Manager and the Count Desk ask here too, where nothing
+	was scanned, and get the sentence without that hint."""
 	if not row:
 		return _("There is no location called {0}.").format(name or _("that"))
 	label = row.warehouse_name or row.name
 	if row.is_group:
-		# A label is printed only for a place that holds stock (warehouse_labels.py), so a label that
-		# opens a group is out of date: its place was renamed, or made a group, after it was printed.
-		# The room's label opened the shop's group once v1.823.0 swapped the two names
-		# (patches/swap_inventory_room_names.py).
+		if scanned:
+			# A label is printed only for a place that holds stock (warehouse_labels.py), so a label
+			# that opens a group is out of date: its place was renamed, or made a group, after it was
+			# printed. The room's label opened the shop's group once v1.823.0 swapped the two names
+			# (patches/swap_inventory_room_names.py).
+			return _(
+				"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it. "
+				"If you scanned a label stuck on a shelf or a room, the label is out of date: print a new one "
+				"from Warehouse Labels."
+			).format(label)
 		return _(
-			"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it. "
-			"If you scanned a label stuck on a shelf or a room, the label is out of date: print a new one "
-			"from Warehouse Labels."
+			"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it."
 		).format(label)
 	if row.disabled:
 		return _("{0} is disabled.").format(label)
@@ -2587,7 +2596,7 @@ def _resolve(code, context=None):
 	if kind in ("warehouse", "storage_location"):
 		name = value if kind == "warehouse" else _storage_location_warehouse(value)
 		row = _warehouse(name)
-		problem = _location_problem(row, value)
+		problem = _location_problem(row, value, scanned=True)
 		if problem:
 			return {"kind": "unknown", "message": problem}
 		return {"kind": "location", "location": _location_payload(row)}
@@ -2615,7 +2624,7 @@ def _resolve(code, context=None):
 	if item_code:
 		return {"kind": "item", "item": _item_payload(item_code, context_row)}
 	if row:
-		return {"kind": "unknown", "message": _location_problem(row, value)}
+		return {"kind": "unknown", "message": _location_problem(row, value, scanned=True)}
 	return {"kind": "unknown", "message": _("Nothing matches {0}. Try searching instead.").format(value[:60])}
 
 
@@ -2860,7 +2869,7 @@ def boot_payload(args=None):
 		else:
 			name = value if kind == "warehouse" else _storage_location_warehouse(value)
 			row = _warehouse(name)
-			problem = _location_problem(row, value)
+			problem = _location_problem(row, value, scanned=True)
 			initial = (
 				{"kind": "unknown", "message": problem}
 				if problem

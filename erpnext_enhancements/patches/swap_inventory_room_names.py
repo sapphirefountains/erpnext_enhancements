@@ -44,6 +44,14 @@ v16.54.0, the versions production runs:
   carries each rename into the map boxes' ``bin_order`` text. No box's order named either
   warehouse on 2026-11-17, so it has nothing to do here, and it cannot raise.
 
+**What this rests on.** No rehearsal on a copy of production was run for this patch. The
+confidence rests on two things. First, ``rename_doc`` was read at frappe v16.56.0 and erpnext
+v16.54.0, as above. Second, the same call, ``rename_doc(force=True)`` on a Warehouse with
+``warehouse_name`` set after it, renamed ``Stores - SF`` to ``Project Shelf - SF`` on production
+on 2026-11-13 (``patches/rename_stores_to_project_shelf``, in Patch Log with no Error Log row).
+The bench-free tests run this file against a stub of that call, so they cannot see Frappe walk
+every Link field.
+
 **The order is the point.** After step 1 the name ``Inventory Room - SF`` is free, and step 2
 gives it to the group. So anything that still says ``Inventory Room - SF`` when step 2 runs
 silently changes meaning, from the room to the whole shop. Links are safe: step 1 has moved them
@@ -65,8 +73,15 @@ Inventory Room, a filter that names it means the group, and a second run must no
 Receiving. The output says how many rows, how many people and which lists; **never who**: the
 migrate output lands in the build log, and a person's sign-in address does not belong there.
 
+Each rewrite matches with ``like binary``, because ``replace()`` is case-sensitive while a plain
+``like`` under the table's ``_ci`` collation is not. Without it, a row that differs from the name
+only in case would be counted as moved and left unchanged.
+
 Then the Warehouse names are indexed again for the Desk's search, here and not in a background
-job, because the deploy clears the job queue.
+job, because the deploy clears the job queue. ``__global_search`` is MyISAM, so the step's
+savepoint cannot undo it. Frappe's rebuild deletes every Warehouse row and then writes them back.
+If it fails in between, every warehouse is missing from the Desk's search, not only the two
+renamed ones, until the whole Warehouse index is rebuilt (:data:`RECOVERY`).
 
 **Never merge two warehouses.** Where ``Receiving - SF`` already exists beside the room, step 1
 is skipped and says so. Where the group's new name is taken by anything but the room it has just
@@ -78,9 +93,10 @@ renamed, step 2 is skipped. Step 2 never runs unless step 1 answered done or alr
   the room now opens the group, which Stock Scan refuses (it says a label that opens a group is
   out of date). Print a new label for Receiving from Warehouse Labels and stick it over the old
   one.
-* **The map.** The box that was linked to the room is linked to ``Receiving - SF`` after step 1,
-  because that is the same warehouse. If the box was meant as the whole room, re-link it in the
-  map editor; nothing here guesses.
+* **The map.** The box on the Bountiful Office warehouse map that was linked to the room is the
+  whole room's outline. After step 1 it is linked to ``Receiving - SF``, because that is the same
+  warehouse, so it reads "Receiving" until someone re-links it to the Inventory Room group in the
+  map editor. The owner re-links it by hand, and nothing here changes the map.
 * It moves no stock, changes no order line beyond the name, and touches no Putaway Rule, Item
   Default or reorder rule beyond the name.
 
@@ -99,6 +115,12 @@ answers :data:`ABSENT`, the output says so in one line each, and no Error Log ro
 Safe twice: the second run finds Receiving, the group already called Inventory Room, no saved
 filter left to rewrite, and answers "already" (the index step answers "done" again; it is a
 rebuild).
+
+A rename done by hand with ``rename_doc`` alone leaves the old Warehouse Name behind. It would
+leave a leaf labeled Inventory Room beside the group of that name. So a run that finds the
+docname already right still sets the label, and that step answers "done". It does this only where
+the label still reads the old one or is empty. Any other label was somebody's choice, so it is
+left and the output says so.
 """
 
 import frappe
@@ -111,6 +133,8 @@ ROOM = "Inventory Room - SF"
 RECEIVING = "Receiving - SF"
 RECEIVING_LABEL = "Receiving"
 ROOM_LABEL = "Inventory Room"
+#: The group's Warehouse Name before the swap.
+GROUP_LABEL = "Inventory"
 SETTINGS = "Inventory Scanner Settings"
 SETTING = "overhead_receiving_warehouse"
 SAVEPOINT = "swap_inventory_room_names"
@@ -130,32 +154,42 @@ RERUN = "bench --site <site> execute erpnext_enhancements.patches.swap_inventory
 #: patch again (:data:`RERUN`): it is safe twice.
 RECOVERY = {
 	"room": (
-		f"Run the patch again: {RERUN}. Or, as a System Manager in the console, "
-		f'frappe.rename_doc("Warehouse", "{ROOM}", "{RECEIVING}", force=True), then set that '
-		f'warehouse\'s Warehouse Name to "{RECEIVING_LABEL}", then run the patch again for the rest. '
-		"Never rename the group before this is done."
+		f"Run the patch again: {RERUN}. Or, as a System Manager in bench --site <site> console: "
+		f'frappe.rename_doc("Warehouse", "{ROOM}", "{RECEIVING}", force=True); '
+		f'frappe.db.set_value("Warehouse", "{RECEIVING}", "warehouse_name", "{RECEIVING_LABEL}"); '
+		"frappe.db.commit(). Then run the patch again for the rest; it also sets a label left "
+		"behind. Never rename the group before this is done."
 	),
 	"room_filters": (
 		f"Run the patch again: {RERUN}. The group is not renamed until this is done, so nothing "
 		"points at the wrong warehouse meanwhile."
 	),
 	"group": (
-		f"Run the patch again: {RERUN}. Or, only once {ROOM} is no longer a leaf (step 1 done), "
-		f'frappe.rename_doc("Warehouse", "{GROUP}", "{ROOM}", force=True) and set its Warehouse '
-		f'Name to "{ROOM_LABEL}". Until then the tree reads Inventory › Receiving, which is right, '
-		"only not yet renamed."
+		f"Run the patch again: {RERUN}. Or, only once {ROOM} is no longer a leaf (step 1 done), as a "
+		"System Manager in bench --site <site> console: "
+		f'frappe.rename_doc("Warehouse", "{GROUP}", "{ROOM}", force=True); '
+		f'frappe.db.set_value("Warehouse", "{ROOM}", "warehouse_name", "{ROOM_LABEL}"); '
+		f"frappe.db.commit(). Until then the tree reads {GROUP_LABEL} › {RECEIVING_LABEL}, which is "
+		"right, only not yet renamed."
 	),
 	"group_filters": (
 		"Nothing to do by hand. A list that opens empty because it is still filtered to the old "
 		"group name is fixed by clearing that filter once."
 	),
-	"search": "Nothing to do by hand: a name is indexed the next time its warehouse is saved.",
+	"search": (
+		"The Desk's search may now be missing every warehouse, not only the two renamed. "
+		"__global_search is MyISAM, so a rebuild that failed after deleting the Warehouse rows "
+		"and before writing them back is not undone. Rebuild the whole Warehouse index: "
+		f"run the patch again ({RERUN}), or, in bench --site <site> console, "
+		"from frappe.utils.global_search import rebuild_for_doctype; "
+		'rebuild_for_doctype("Warehouse"); frappe.db.commit().'
+	),
 }
 
 STEPS = (
 	("room", f"The room: {ROOM_LABEL} becomes {RECEIVING_LABEL}"),
 	("room_filters", "People's saved list filters that named the room"),
-	("group", f"The group: Inventory becomes {ROOM_LABEL}"),
+	("group", f"The group: {GROUP_LABEL} becomes {ROOM_LABEL}"),
 	("group_filters", "People's saved list filters that named the group"),
 	("search", "The search index"),
 )
@@ -199,6 +233,26 @@ def _rename(old, new, label):
 	return renamed
 
 
+def _relabel(row, label, old_label):
+	"""Set the label of a warehouse whose docname is already right. ``(changed, words for the detail)``.
+
+	A rename done by hand with ``rename_doc`` alone keeps the old Warehouse Name: a leaf still
+	labeled Inventory Room beside the group of that name. So the label is set where it still reads
+	``old_label`` or nothing. Any other label was somebody's choice, and it is left and said."""
+	current = (row.warehouse_name or "").strip()
+	if current == label:
+		return False, ""
+	if current and current != old_label:
+		return False, f'; its Warehouse Name is "{current}", which somebody chose, so it was left'
+	frappe.db.set_value("Warehouse", row.name, "warehouse_name", label, update_modified=False)
+	try:
+		frappe.clear_document_cache("Warehouse", row.name)
+	except Exception:
+		pass
+	was = f'read "{current}"' if current else "was empty"
+	return True, f'; its Warehouse Name {was} and now reads "{label}"'
+
+
 def rename_room():
 	"""Step 1: the leaf ``Inventory Room - SF`` becomes ``Receiving - SF``.
 	``(status, detail, Receiving's docname or None)``."""
@@ -214,7 +268,12 @@ def rename_room():
 				"so neither was touched",
 				None,
 			)
-		return ALREADY, f"{RECEIVING} is there, and {ROOM} is no longer a place that holds stock", RECEIVING
+		changed, said = _relabel(receiving, RECEIVING_LABEL, ROOM_LABEL)
+		return (
+			DONE if changed else ALREADY,
+			f"{RECEIVING} is there, and {ROOM} is no longer a place that holds stock{said}",
+			RECEIVING,
+		)
 	if not room:
 		return ABSENT, f"there is no warehouse {ROOM} and none called {RECEIVING}", None
 	if room.is_group:
@@ -248,6 +307,10 @@ def rewrite_saved_filters(old, new):
 	Nothing is rewritten while ``old`` is the name of a warehouse that exists: a filter naming it
 	then means that warehouse. That is what keeps a second run from sending filters on the renamed
 	group to Receiving.
+
+	Both queries match with ``like binary``. ``replace()`` is case-sensitive, and a plain ``like``
+	under the table's ``_ci`` collation is not. Without it, a row that differs only in case would be
+	counted as moved and left as it was.
 	"""
 	if not new or not frappe.db.exists("Warehouse", new):
 		return SKIPPED, f"there is no {new or 'warehouse'} to point them at"
@@ -257,11 +320,13 @@ def rewrite_saved_filters(old, new):
 			f"{old} is the name of a warehouse that exists now, so a filter naming it means that one",
 		)
 	like = f'%"{old}"%'
-	rows = frappe.db.sql("select `user`, `doctype` from `__UserSettings` where `data` like %s", (like,))
+	rows = frappe.db.sql(
+		"select `user`, `doctype` from `__UserSettings` where `data` like binary %s", (like,)
+	)
 	if not rows:
 		return ALREADY, f"no saved list filter names {old}"
 	frappe.db.sql(
-		"update `__UserSettings` set `data` = replace(`data`, %s, %s) where `data` like %s",
+		"update `__UserSettings` set `data` = replace(`data`, %s, %s) where `data` like binary %s",
 		(f'"{old}"', f'"{new}"', like),
 	)
 	for user, doctype in rows:
@@ -300,7 +365,11 @@ def rename_group(room_step, room_filters_step):
 				SKIPPED,
 				f"both {GROUP} and {ROOM} exist as groups; nothing is merged, so neither was touched",
 			)
-		return ALREADY, f"{ROOM} is the group, holding {_plural(_children(ROOM), 'warehouse', 'warehouses')}"
+		changed, said = _relabel(room, ROOM_LABEL, GROUP_LABEL)
+		return (
+			DONE if changed else ALREADY,
+			f"{ROOM} is the group, holding {_plural(_children(ROOM), 'warehouse', 'warehouses')}{said}",
+		)
 	if not group:
 		return SKIPPED, f"there is no {GROUP} to rename and no group called {ROOM}"
 	if not group.is_group:
@@ -373,7 +442,8 @@ def counts(receiving, group):
 		if row and int(row[0]):
 			lines.append(
 				f"- Warehouse Map boxes linked to {receiving}: {int(row[0])}. A box drawn as the whole room "
-				"should be re-linked to the room in the map editor."
+				f"should be re-linked to the {ROOM_LABEL} group in the map editor; until then it reads "
+				f"{RECEIVING_LABEL}."
 			)
 		lines.append(
 			f"- The QR label printed for {ROOM_LABEL} now opens the group, which Stock Scan refuses. "
