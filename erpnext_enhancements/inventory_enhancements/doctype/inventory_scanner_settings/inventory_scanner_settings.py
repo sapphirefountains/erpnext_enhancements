@@ -50,6 +50,10 @@ default, because a warehouse's name is per site. ``patches/rename_stores_to_proj
 renames ``Stores`` and writes both once, only where ``tabSingles`` has no row for the field. A
 blank shelf switches the Project Shelf off: nothing defaults to it and nothing is left out of
 shop stock on its account.
+
+``Inventory - SF``, named above as the patches knew it, is ``Inventory Room - SF`` since v1.823.0
+(``patches/swap_inventory_room_names``), and the room ``overhead_receiving_warehouse`` was filled
+with is ``Receiving - SF``. Frappe's rename carried the stored value with it.
 """
 
 import frappe

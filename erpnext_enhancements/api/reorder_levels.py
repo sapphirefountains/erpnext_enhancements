@@ -283,8 +283,9 @@ def _default_group(warehouse):
 
 	The one its neighbours use: among the existing rules on warehouses at the **same depth** in the
 	tree, under the nearest group ancestor that has any, the most common ``warehouse_group`` (ties
-	by name). On this site that is ``Inventory - SF`` for the bins under the Rows and ``All
-	Warehouses - SF`` for ``Inventory Room - SF``. Rules whose group is their own warehouse (one bin
+	by name). On this site that is ``Inventory Room - SF`` (the shop's group, ``Inventory - SF`` until
+	v1.823.0) for the bins under the Rows and ``All Warehouses - SF`` for ``Receiving - SF`` (the room
+	called ``Inventory Room - SF`` until then). Rules whose group is their own warehouse (one bin
 	has such a rule, the shape this function exists to avoid) are not asked. With no neighbours at
 	all: the warehouse's parent group, else the warehouse itself. Read, never written.
 	"""

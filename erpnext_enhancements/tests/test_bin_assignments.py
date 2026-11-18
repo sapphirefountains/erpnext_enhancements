@@ -1583,6 +1583,34 @@ class TestTheBoneyardIsAnOrdinaryLocation(_Base):
 		self.assertIsNone(scan._location_problem(scan._warehouse(BONEYARD), BONEYARD))
 
 
+class TestTheOutOfDateLabelHint(_Base):
+	"""v1.823.0: a group's refusal says the label is out of date only where a label was scanned.
+	The swap left the old Inventory Room label opening the shop's group; the Bin Manager and the
+	Count Desk ask the same question where nothing was scanned, and keep the plain sentence."""
+
+	HINT = "the label is out of date"
+
+	def test_a_scanned_label_that_opens_a_group_is_called_out_of_date(self):
+		out = scan._resolve("https://erp.example.com/stock-scan?w=Inventory%20-%20SF")
+		self.assertEqual(out["kind"], "unknown")
+		self.assertIn("group of locations", out["message"])
+		self.assertIn(self.HINT, out["message"])
+		self.assertIn("print a new one from Warehouse Labels", out["message"])
+
+	def test_the_bin_manager_says_group_without_the_hint(self):
+		message = self.assertRefused(
+			bins.ensure_assignment, "group of locations", item_code="PDT-0001", warehouse="Inventory - SF"
+		)
+		self.assertNotIn(self.HINT, message)
+
+	def test_the_plain_sentence_is_the_default(self):
+		message = scan._location_problem(scan._warehouse("Inventory - SF"), "Inventory - SF")
+		self.assertIn("group of locations", message)
+		self.assertNotIn(self.HINT, message)
+		scanned = scan._location_problem(scan._warehouse("Inventory - SF"), "Inventory - SF", scanned=True)
+		self.assertIn(self.HINT, scanned)
+
+
 # --------------------------------------------------------------------------- the source rules
 
 

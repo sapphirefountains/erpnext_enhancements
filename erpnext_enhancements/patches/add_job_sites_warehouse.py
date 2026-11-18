@@ -52,6 +52,8 @@ import frappe
 
 from erpnext_enhancements.inventory_enhancements import job_site_rules as rules
 
+# The group is called Inventory Room - SF since v1.823.0 (patches/swap_inventory_room_names). This patch ran on
+# production before that and is not meant to run again, so it keeps the name it was written for.
 SHOP_GROUP = "Inventory - SF"
 OLD_NAME = "Job Site"
 SETTINGS = "Inventory Scanner Settings"

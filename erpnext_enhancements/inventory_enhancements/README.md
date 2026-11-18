@@ -586,7 +586,15 @@ is `release_if_empty(item_code, warehouse)` (v1.692.1): when the flow moves an i
 bin is taken off as a *Move to* that empties its source does, and stock still there keeps it
 (the answer is what is left; `None` when nothing claimed the pair).
 
-**The Boneyard** is a leaf warehouse `Boneyard` under `Inventory - SF`, created by
+**The shop's group is the Inventory Room** (v1.823.0, `patches/swap_inventory_room_names`). The group
+that holds Row 1 to Row 5, the Boneyard and the receiving room was `Inventory - SF` until then, and the
+receiving room was the leaf `Inventory Room - SF`. The owner wanted the bays to read as being in the
+Inventory Room, and a warehouse with stock cannot become a group, so the two names were swapped with
+Frappe's rename: the leaf is `Receiving - SF` and the group is `Inventory Room - SF`. Nothing moved in the
+tree, and every Link followed its warehouse, so whatever read the group as the shop's stock still does. A
+QR label printed for the old room opens the group now; Stock Scan says it is out of date.
+
+**The Boneyard** is a leaf warehouse `Boneyard` under the shop's group (`Inventory Room - SF`; `Inventory - SF` until v1.823.0), created by
 `patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
 once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
 QR label like any location.
@@ -618,7 +626,7 @@ Material Transfer from the shop bin into that job's own leaf Warehouse. Nik's de
 **What a site is.** A Warehouse whose `custom_job_site_project` names a Project. Not its name and
 not its place in the tree: a Stock Manager may rename or move one in the Desk and it stays that
 job's site. Sites are created under the group in `Inventory Scanner Settings.job_sites_warehouse`
-(`Job Sites`, beside `Inventory - SF`), named `Job Site <project id> <project name>`. Everything
+(`Job Sites`, beside the shop's group `Inventory Room - SF`), named `Job Site <project id> <project name>`. Everything
 else under that group, at any depth, also counts as on a job site (`site_warehouses`): production's
 hand-made `Job Site - SF`, and any sub-group somebody adds later. It is found through each
 warehouse's parent, not the tree's left and right numbers.
@@ -667,7 +675,7 @@ every warehouse:
 | Reorder Board, its daily digest and hourly sync | `job_site_rules.without_sites` takes site stock, and orders headed to a site, out of every group above a site. Many of production's rules roll up at the company's root. The rules are not changed |
 
 **ERPNext's own screens are not changed, and still count job-site stock unless filtered to
-`Inventory - SF`:**
+`Inventory Room - SF`:**
 
 - Stock Balance and Stock Projected Qty, when run for a group above the sites (or for none);
 - the Item form's stock levels: a site shows as its own line, and the total includes it;
@@ -709,9 +717,9 @@ not by its place in the tree. Blank switches the whole feature off and every cal
 did before v1.817.0. It is an ordinary location in every other way: it has a QR label, it can be
 received to, counted and moved from.
 
-**Where it sits.** Directly under the company's root group, beside `Inventory - SF` and
-`Job Sites - SF`, where `Stores` already was. Not under `Job Sites`: that group refuses bins and
-everything in it reads as a job site. Not under `Inventory`: ERPNext's own reports and 23 of
+**Where it sits.** Directly under the company's root group, beside the shop's group (`Inventory Room - SF`,
+`Inventory - SF` until v1.823.0) and `Job Sites - SF`, where `Stores` already was. Not under `Job Sites`: that group refuses bins and
+everything in it reads as a job site. Not under the shop's group: ERPNext's own reports and 23 of
 production's reorder rules read that group as the shop's stock, no code of ours runs inside them,
 and a shelf placed there would count as shop stock in exactly the places this app cannot correct.
 
@@ -771,7 +779,7 @@ nothing, it is never offered as "the only job that holds it".
 |---|---|
 | Any project that is not an Overhead project | The Project Shelf |
 | An Overhead project | The item's own bin: the bin it is assigned to (an enabled Putaway Rule; with several, the one holding the most), else its Item Default, else the warehouse a reorder rule asks for. Never the shelf, a job site or the Boneyard |
-| An Overhead project, and the item has no bin yet | `Inventory Scanner Settings.overhead_receiving_warehouse` (`Inventory Room` on production) |
+| An Overhead project, and the item has no bin yet | `Inventory Scanner Settings.overhead_receiving_warehouse` (`Receiving` on production, called `Inventory Room` until v1.823.0) |
 | No project yet, or no shelf set up | Nothing is decided; the line keeps what it has |
 
 It is a default at the moment a line first has both its item and its project. **One thing is not
@@ -1071,7 +1079,7 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
   neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
-  ignored): `Inventory - SF` for a bin, `All Warehouses - SF` for the Inventory Room. Existing rules are
+  ignored): `Inventory Room - SF` (the shop's group) for a bin, `All Warehouses - SF` for Receiving. Existing rules are
   never changed. (`api.item_flow.save_stock` still writes the bin as its own group: a follow-up.)
 * **Endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` (the Stock
   Scan roles; `can_edit` is Item write), `set_reorder_level(item_code, warehouse, modified, level, qty,
@@ -1105,8 +1113,8 @@ TASK-2026-02922 to -02926.
   the rules and projected quantities ERPNext's own `get_items_for_reorder` and
   `get_item_warehouse_projected_qty` return: Item enabled, stock item, not past end of life, the warehouse
   enabled, variants inheriting their template's rules, projected read at the rule's `warehouse_group` and
-  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for the Inventory Room,
-  `Inventory - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
+  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for Receiving,
+  `Inventory Room - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
   a real rule. Only `Purchase` rules are listed (all of production's are).
 * **Covered** means a request or order line for that item, in the rule's scope, with **something still to
   come** (`reorder_rules.still_to_come`): the part of a Material Request line not yet on a submitted Purchase
@@ -1120,7 +1128,7 @@ TASK-2026-02922 to -02926.
   * Stopped, Cancelled and Closed requests never cover;
   * the **scope** (`in_scope`) is the rule's warehouse and, for a rule with a `warehouse_group`, every warehouse
     under that group, which is where ERPNext reads the rule's projected qty. A Draft for a sibling bin covers a
-    bin rule grouped on `Inventory - SF`, as a submitted one would by raising that group's projected qty.
+    bin rule grouped on the shop's group, as a submitted one would by raising that group's projected qty.
 
   A covered item is on **On order**, at its stage from the documents' own links (MR Item ← PO Item
   `material_request_item` ← PR Item `purchase_order_item`): Draft request, Requested, PO in draft, Partially

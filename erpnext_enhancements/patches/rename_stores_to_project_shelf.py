@@ -95,9 +95,12 @@ import frappe
 
 from erpnext_enhancements.inventory_enhancements import project_shelf_rules as rules
 
+# The group is called Inventory Room - SF since v1.823.0 (patches/swap_inventory_room_names). This patch ran on
+# production before that and is not meant to run again, so it keeps the name it was written for.
 SHOP_GROUP = "Inventory - SF"
 OLD_NAME = rules.FORMER_NAME
 NEW_NAME = rules.SHELF_NAME
+# Since v1.823.0 the leaf this named is Receiving - SF, and "Inventory Room" is the group.
 FALLBACK_NAME = "Inventory Room"
 SETTINGS = "Inventory Scanner Settings"
 SETTING = "project_shelf_warehouse"

@@ -7,6 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.823.0] - 2026-11-17
+
+### Added
+
+- **The Inventory Room swap: the bays now sit in the Inventory Room, and the room that used to be
+  called that is Receiving** (`patches/swap_inventory_room_names.py`). **This writes production
+  data on migrate.** The owner, looking at the Warehouse Map's list on 2026-11-17, where a bay reads
+  "Bay A1 · Inventory › Row 1": "Those bays should exist in the Inventory Room, not the Inventory
+  warehouse."
+  - **Why a swap and not a move.** `Inventory - SF` is the group under `All Warehouses - SF` that
+    holds Row 1 to Row 5 (then Bays, Shelves, Bins), the Boneyard, and a leaf called
+    `Inventory Room - SF`. That leaf holds stock (56 items on 2026-11-17) and is where Stock Scan
+    receives an Overhead purchase whose item has no bin, so ERPNext refuses to make it a group. The
+    owner chose to swap the names and to call the leaf Receiving. The group keeps its place, its
+    children and every Link to it. ERPNext's own reports and 23 reorder rules read it as the shop's
+    stock, and so does this app wherever it rolls stock up at a group. They hold it by its name in
+    Links, a rename carries every Link, so they all keep reading the same warehouse under its new
+    name. A new group would have broken all of them.
+  - **The order, and why it matters.** (1) `Inventory Room - SF` becomes `Receiving - SF`.
+    (2) People's saved list filters that named it move to Receiving. (3) Only then does
+    `Inventory - SF` become `Inventory Room - SF`. (4) Filters that named the group follow it.
+    (5) The Warehouse names are indexed again. After step 1 the name `Inventory Room - SF` is free,
+    and step 3 gives it to the whole shop. So anything still saying `Inventory Room - SF` when step 3
+    runs silently changes meaning from the room to everything. Links are safe: step 1 moved them all.
+    The saved filters are the one known thing a rename misses (below). So step 3 runs **only when
+    steps 1 and 2 both answered done or already**.
+  - **The same machinery as the Project Shelf rename (v1.817.0), read at frappe v16.56.0 and erpnext
+    v16.54.0.** Each rename is `frappe.model.rename_doc.rename_doc` with `force=True`: ERPNext
+    16.54.0's Warehouse has no `allow_rename`, and that is the only check `force` skips. It rewrites
+    every Link to the warehouse in every doctype, submitted documents included, and saves any Single
+    that held it through the ORM. Warehouse has no rename hook at that version, so the patch sets
+    `warehouse_name` itself. The search index is rebuilt in the patch, not in a queued job, because
+    the deploy `FLUSHDB`s the job queue. Saved list filters are rewritten by hand: Frappe's rename
+    means to, but it looks for them with `data LIKE '<old name>'` and no wildcards, so it matches
+    none. The quoted old name is replaced with the quoted new one in `__UserSettings`, and their
+    Redis copies are dropped. A rewrite never runs while the old name belongs to a warehouse. That
+    keeps a second run from sending a filter on the renamed group to Receiving. Both the count and
+    the rewrite match with `like binary`: `replace()` is case-sensitive, and a plain `like` under
+    the table's `_ci` collation is not, so a row that differed only in case would have been counted
+    as moved and left unchanged.
+  - **What this rests on. No rehearsal on a copy of production was run.** The confidence rests on
+    two things. First, `rename_doc` was read at frappe v16.56.0 and erpnext v16.54.0, the versions
+    production runs. Second, the same `rename_doc(force=True)` Warehouse rename, with
+    `warehouse_name` set after it, ran cleanly on production on 2026-11-13: the Project Shelf patch
+    (`rename_stores_to_project_shelf`, v1.817.0) is in Patch Log, with no Error Log row.
+  - **What follows the room to Receiving** (production, read 2026-11-17): 84 Stock Ledger Entries,
+    84 Bins (56 with stock), 70 Item Defaults, 83 Putaway Rules, 29 reorder rules, 17 Purchase Order
+    lines (14 on orders received in full, 3 on a closed order; none still to receive), one Warehouse
+    Map box, and `Inventory Scanner Settings.overhead_receiving_warehouse`, so Overhead receiving
+    still lands in the same room. **What follows the group**: 23 reorder rules' `warehouse_group`, and
+    the children's `parent_warehouse` and `old_parent` (both Links). No List Filter, Report,
+    Dashboard Chart, Number Card, Kanban Board, Workspace, Auto Email Report, Property Setter, Custom
+    Field, Notification or script named either warehouse as text, and no map box's `bin_order` did
+    (this app's `after_rename` hook would have carried it anyway).
+  - **Nothing moves in the tree, no stock moves, nothing is merged.** Where `Receiving - SF` already
+    exists beside the room, or the group's new name is taken, the step is skipped and says so.
+  - **Cannot raise; safe twice; quiet where it does not apply.** Each step runs in its own savepoint
+    and answers done / already / skipped / failed. A failure is rolled back and logged, and the next
+    step still runs or says why it may not. One Error Log row, *Inventory Room patch
+    (swap_inventory_room_names): finish these steps by hand*, lists any step that did not finish,
+    with the by-hand fix. The migrate output prints counts and never who: the build log is no place
+    for sign-in addresses, and item codes are left out too. A site with no `Inventory Room - SF` leaf
+    and no `Receiving - SF` answers "not needed here" for every step, with no Error Log row. The
+    second run answers "already".
+  - **A label left behind by a rename done by hand is set.** Someone recovering a failed step by
+    hand might call `rename_doc` alone and forget the label. That would leave a leaf labeled
+    "Inventory Room" beside the group of that name. So a run that finds the docname already right
+    still sets `warehouse_name`, and that step answers done. It does this only where the label still
+    reads the old one or is empty. Any other label was somebody's choice, so it is left and the
+    output says so. The by-hand console recovery in the Error Log row sets the label and ends with
+    `frappe.db.commit()`.
+  - **A failed index step says how bad it can be.** `__global_search` is MyISAM, so the step's
+    savepoint cannot undo it. Frappe's rebuild deletes every Warehouse row before writing them back,
+    so a failure in between drops every warehouse from Desk search, not only the two renamed. The
+    by-hand step says so and rebuilds the whole Warehouse index
+    (`rebuild_for_doctype("Warehouse")`, then commit), or runs the patch again.
+  - **After the deploy (left for a person, and said in the migrate output):**
+    - **Reprint the room's QR label as Receiving.** A label encodes `/stock-scan?w=<warehouse name>`,
+      so the old Inventory Room label now opens the group, which Stock Scan refuses.
+    - **The box on the "Bountiful Office" warehouse map linked to Inventory Room is the whole room
+      outline. After the deploy it reads "Receiving" until someone re-links it to the new Inventory
+      Room group in the map editor.** The rename carries the box's link to `Receiving - SF`, which
+      is the same warehouse under its new name. The owner re-links it by hand, and the patch changes
+      no map.
+  - Tests: `tests/test_swap_inventory_room_names.py`, bench-free, own `frappe` stub, own CI step.
+    They run the real patch and cover:
+    - the order, every link, and the tree unchanged;
+    - nothing meant for the room ending up on the group;
+    - the filters per rename, and the second run leaving the group's alone;
+    - labels left behind by a rename done by hand;
+    - every refusal and failure path, and the quiet site;
+    - counts without people or items;
+    - the `like binary` queries, the recovery text, and the wiring.
+
+    What they cannot see is Frappe's real `rename_doc` walking every Link field and saving the
+    Single. No rehearsal checked that; see "What this rests on" above.
+
+### Changed
+
+- **Stock Scan says a label that opens a group is out of date** (`api/stock_scan.py`
+  `_location_problem`). A label is printed only for a place that holds stock, so a label that opens a
+  group was printed before its place was renamed or made a group. The old Inventory Room label is
+  the case in point. The refusal already said to scan a location inside the group. On the scan path
+  only, it now adds: "If you scanned a label stuck on a shelf or a room, the label is out of date:
+  print a new one from Warehouse Labels." The scan path is a code scanned on the page (`_resolve`) and
+  a label opened with the phone's camera (`boot_payload`'s `?w=`). Both pass `scanned=True`.
+  The Bin Manager (`bin_assignments`), the Count Desk and Stock Scan's own actions (`_location`)
+  ask the same question where nothing was scanned, so they keep the old sentence.
+  `test_bin_assignments` checks both sentences on the real module. The swap suite checks that only
+  the scan path passes the flag.
+- Present-tense docs that name the two warehouses now use the new names: `inventory_enhancements/README.md`
+  (a short section on the swap, the Boneyard, job sites, the Project Shelf's place, the Overhead
+  fallback, reorder groups), and the docstrings of `api/reorder_levels._default_group`,
+  `warehouse_labels.py` and Inventory Scanner Settings. History is left as it was. The three
+  patches that named `Inventory - SF` (`add_boneyard_warehouse`, `add_job_sites_warehouse`,
+  `rename_stores_to_project_shelf`) ran on production before the swap and are recorded in Patch Log.
+  Production had no Error Log row asking for any of them to run again. So their code is unchanged,
+  and a comment beside each constant says it keeps the name it was written for.
+
 ## [1.822.1] - 2026-11-16
 
 ### Removed
