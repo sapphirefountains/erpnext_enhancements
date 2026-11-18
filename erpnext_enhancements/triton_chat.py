@@ -38,6 +38,7 @@ check that failed open on the exact input the original fix existed to close.
 from __future__ import annotations
 
 import json
+import re
 
 import frappe
 import requests
@@ -767,10 +768,26 @@ def delete_session(session_id: str) -> dict:
     return _request("DELETE", f"/api/v1/assistant/sessions/{cint(session_id)}")
 
 
+#: A Triton pending-action id (a UUID today): letters, digits, `-` and `_`, at most 64.
+_ACTION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _action_path(action_id, verb: str) -> str:
+    """Validate ``action_id`` and build its confirm/cancel path.
+
+    Anything outside ``_ACTION_ID_RE`` is refused rather than placed in the URL
+    path, like ``_custom_persona_path`` does for persona ids.
+    """
+    aid = str(action_id or "").strip()
+    if not _ACTION_ID_RE.match(aid):
+        frappe.throw(_("Invalid action id."))
+    return f"/api/v1/integrations/actions/{aid}/{verb}"
+
+
 @frappe.whitelist()
 def confirm_action(action_id: str, session_id: str | None = None) -> dict:
     """Approve a Triton-proposed write action (human-in-the-loop confirm)."""
-    return _request("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {
+    return _request("POST", _action_path(action_id, "confirm"), {
         "session_id": cint(session_id) or None,
     })
 
@@ -778,7 +795,7 @@ def confirm_action(action_id: str, session_id: str | None = None) -> dict:
 @frappe.whitelist()
 def cancel_action(action_id: str, session_id: str | None = None) -> dict:
     """Reject a Triton-proposed write action."""
-    return _request("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {
+    return _request("POST", _action_path(action_id, "cancel"), {
         "session_id": cint(session_id) or None,
     })
 

@@ -345,21 +345,32 @@ def process_call_intelligence(**kwargs):
         # Voicemails also get mirrored into the Operations Shared Drive's
         # monthly folder (the audio is fetched from Twilio in the background
         # job — its bytes never reach ERPNext otherwise). Gated on
-        # Triton Settings.call_recordings_drive_folder.
+        # Triton Settings.call_recordings_drive_folder. Only a recording URL
+        # of the configured Twilio account is queued; the job checks it again.
         if val("voicemail_url"):
-            from erpnext_enhancements.api.call_recording_export import enqueue_recording_export
-
-            enqueue_recording_export(
-                call_sid=call_sid,
-                when=val("start_time"),
-                direction=direction,
-                caller_name=val("caller_name") or display_name,
-                caller_number=customer_phone or from_number,
-                twilio_audio_url=val("voicemail_url"),
-                is_voicemail=True,
-                # for voicemails the payload "summary" carries the VM transcript
-                summary=val("summary"),
+            from erpnext_enhancements.api.call_recording_export import (
+                enqueue_recording_export,
+                is_twilio_recording_url,
             )
+
+            if not is_twilio_recording_url(val("voicemail_url")):
+                frappe.log_error(
+                    title="Call Intelligence",
+                    message=f"Voicemail for {call_sid} not queued for export: the URL is not "
+                    "a Twilio recording URL for the configured account.",
+                )
+            else:
+                enqueue_recording_export(
+                    call_sid=call_sid,
+                    when=val("start_time"),
+                    direction=direction,
+                    caller_name=val("caller_name") or display_name,
+                    caller_number=customer_phone or from_number,
+                    twilio_audio_url=val("voicemail_url"),
+                    is_voicemail=True,
+                    # for voicemails the payload "summary" carries the VM transcript
+                    summary=val("summary"),
+                )
 
         frappe.db.commit()
         return {"status": "success", "call_log": name}

@@ -304,3 +304,27 @@ def test_stream_query_never_searches_on_a_hidden_continuation(monkeypatch):
 	sent = _run_stream(monkeypatch, prompt="proceed", hidden=1, use_search=1)
 	assert "use_search" not in sent["json"]
 	assert sent["json"]["hidden"] is True
+
+
+# ---------------------------------------------------------------------------
+# Action ids reach the URL path only in the expected shape
+# ---------------------------------------------------------------------------
+def test_confirm_and_cancel_build_the_action_route(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	action_id = "3f2b8c1e-9a4d-4e7b-8c2a-1d0e5f6a7b8c"
+	triton_chat.confirm_action(action_id=action_id, session_id="4")
+	triton_chat.cancel_action(action_id=f" {action_id} ")
+	assert calls[0] == ("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {"session_id": 4})
+	assert calls[1] == ("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {"session_id": None})
+
+
+def test_confirm_and_cancel_refuse_an_unexpected_action_id(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	for bad in ("", "  ", None, "a/b", "../personas", "a?b=1", "a#b", "a b", "a%2Fb", "x" * 65):
+		for fn in (triton_chat.confirm_action, triton_chat.cancel_action):
+			try:
+				fn(action_id=bad)
+			except Exception:
+				continue
+			raise AssertionError(f"expected a throw for {bad!r}")
+	assert calls == []
