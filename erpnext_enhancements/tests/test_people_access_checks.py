@@ -16,8 +16,8 @@ now enforces:
 
 - tier reviews: an active Employee (or HR), names arriving as strings and checked before any
   lookup, and refusals that name nobody;
-- confined-space permit transitions: an active Employee with write permission on the permit,
-  or its attendant or supervisor;
+- confined-space permit transitions: a Maintenance Manager, HR Manager or System Manager, or
+  an active Employee named on the permit as its entrant, attendant or supervisor;
 - incident and hazard reports: an active Employee, and a per-user rate limit;
 - telephony: gateway-only endpoints behind ``validate_webhook_secret`` (never ``allow_guest``),
   an active Employee for the desk phone tools, no shared softphone token for a non-System
@@ -61,6 +61,8 @@ class _Cache:
 		self.counts = {}
 		self.expiries = {}
 		self.broken = False
+		self.drop_expires = 0
+		self.expire_calls = []
 
 	def make_key(self, key):
 		return f"site1|{key}"
@@ -72,7 +74,16 @@ class _Cache:
 		return self.counts[key]
 
 	def expire(self, key, seconds):
+		if self.drop_expires:
+			self.drop_expires -= 1
+			return
 		self.expiries[key] = seconds
+		self.expire_calls.append(key)
+
+	def ttl(self, key):
+		if key not in self.counts:
+			return -2
+		return self.expiries.get(key, -1)
 
 
 def setUpModule():
@@ -188,6 +199,17 @@ class TestUserRateLimit(unittest.TestCase):
 			return ("ran", project, task)
 
 		return endpoint
+
+	def test_a_counter_found_without_a_window_gets_one(self):
+		endpoint = self._endpoint(limit=5)
+		frappe.cache.drop_expires = 1
+		endpoint("PRJ-1")
+		(key,) = frappe.cache.counts
+		self.assertEqual(frappe.cache.ttl(key), -1)
+		endpoint("PRJ-1")
+		self.assertEqual(frappe.cache.ttl(key), 600)
+		endpoint("PRJ-1")
+		self.assertEqual(frappe.cache.expire_calls, [key])
 
 	def test_the_call_past_the_limit_is_refused(self):
 		endpoint = self._endpoint(limit=3)
@@ -310,15 +332,85 @@ class TestPermitChecks(unittest.TestCase):
 				self.assertNotIn("frappe.get_doc", _calls(PERMITS, name))
 				self.assertEqual(_annotation(PERMITS, name, "permit"), "str")
 
-	def test_the_check_is_employment_and_write_or_named(self):
+	def test_the_check_is_a_role_or_a_person_named_on_the_permit(self):
 		body = _src(PERMITS, "_permit_for_change")
 		self.assertIn("'status': 'Active'", body)
-		self.assertIn("frappe.has_permission(DOCTYPE, 'write'", body)
-		self.assertIn("attendant", body)
-		self.assertIn("supervisor", body)
+		self.assertIn("CHANGE_ROLES", body)
+		for field in ("entrant", "attendant", "supervisor"):
+			self.assertIn(f"doc.get('{field}')", body)
 		self.assertIn("isinstance(permit, str)", body)
-		# Employment is checked before the permit is even loaded.
+		self.assertNotIn("frappe.has_permission", body)
+		# The role or employment is checked before the permit is even loaded.
 		self.assertLess(body.index("'status': 'Active'"), body.index("frappe.get_doc"))
+
+	def _check(self, roles=(), employee=None, permit=None):
+		"""``_permit_for_change`` run against a fake ``frappe``: the caller's roles, their
+		active Employee (or None) and the permit's three people."""
+
+		class Refused(Exception):
+			pass
+
+		loaded = []
+		permit = permit or {"entrant": "EMP-1", "attendant": "EMP-2", "supervisor": "EMP-3"}
+
+		def throw(message, exc=Exception, **kwargs):
+			raise Refused(message) if exc is fake.PermissionError else exc(message)
+
+		def get_doc(doctype, name):
+			loaded.append(name)
+			return dict(permit)
+
+		fake = types.SimpleNamespace(
+			PermissionError=type("PermissionError", (Exception,), {}),
+			ValidationError=ValueError,
+			throw=throw,
+			get_roles=lambda user=None: list(roles),
+			get_doc=get_doc,
+			db=types.SimpleNamespace(get_value=lambda *a, **k: employee),
+		)
+		namespace = {
+			"frappe": fake,
+			"_": lambda text: text,
+			"DOCTYPE": "Confined Space Entry Permit",
+			"CHANGE_ROLES": ("Maintenance Manager", "HR Manager", "System Manager"),
+		}
+		module = ast.fix_missing_locations(
+			ast.Module(body=[_fn(PERMITS, "_permit_for_change")], type_ignores=[])
+		)
+		exec(compile(module, PERMITS, "exec"), namespace)
+		return namespace["_permit_for_change"], Refused, loaded
+
+	def test_each_person_named_on_the_permit_may_change_it(self):
+		for employee in ("EMP-1", "EMP-2", "EMP-3"):
+			with self.subTest(employee=employee):
+				check, _refused, loaded = self._check(roles=["Employee"], employee=employee)
+				self.assertEqual(check("CSEP-0001", "tech@example.com")["entrant"], "EMP-1")
+				self.assertEqual(loaded, ["CSEP-0001"])
+
+	def test_a_manager_role_may_change_any_permit_without_being_named(self):
+		for role in ("Maintenance Manager", "HR Manager", "System Manager"):
+			with self.subTest(role=role):
+				check, _refused, _loaded = self._check(roles=[role], employee=None)
+				self.assertTrue(check("CSEP-0001", "lead@example.com"))
+
+	def test_staff_not_named_on_the_permit_are_refused(self):
+		check, refused, loaded = self._check(roles=["Employee"], employee="EMP-9")
+		with self.assertRaises(refused):
+			check("CSEP-0001", "other@example.com")
+		self.assertEqual(loaded, ["CSEP-0001"])
+
+	def test_a_login_with_no_role_and_no_employee_never_loads_the_permit(self):
+		check, refused, loaded = self._check(roles=[], employee=None)
+		with self.assertRaises(refused):
+			check("CSEP-0001", "portal@example.com")
+		self.assertEqual(loaded, [])
+
+	def test_the_permit_name_must_be_text(self):
+		check, _refused, loaded = self._check(roles=["System Manager"])
+		for bad in ({"name": ["like", "%"]}, "", None):
+			with self.subTest(bad=bad), self.assertRaises(ValueError):
+				check(bad, "lead@example.com")
+		self.assertEqual(loaded, [])
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +451,10 @@ class TestTelephonyChecks(unittest.TestCase):
 		authentication decorator; ``log_call_transcript`` sets owner and sender instead."""
 		self.assertNotIn("frappe.set_user", _calls(TELEPHONY, "log_call_transcript"))
 		src = _src(TELEPHONY, "log_call_transcript")
-		self.assertIn("'owner': 'triton@sapphirefountains.com'", src)
+		# frappe stamps owner with the session user on insert, so it is set after the insert.
+		hand_over = "comm.db_set('owner', 'triton@sapphirefountains.com', update_modified=False)"
+		self.assertIn(hand_over, src)
+		self.assertLess(src.index("comm.insert(ignore_permissions=True)"), src.index(hand_over))
 		for node in ast.walk(_tree(TELEPHONY)):
 			if not isinstance(node, ast.FunctionDef):
 				continue
@@ -420,6 +515,83 @@ class TestTelephonyChecks(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # The SMS reply drafter
 # ---------------------------------------------------------------------------
+class TestSoftphoneTokenBehavior(unittest.TestCase):
+	"""``get_softphone_token`` run against fakes: who gets a token and who gets None."""
+
+	LISTED = "desk@example.com"
+
+	def _token(self, user, roles=(), employee=None, listed=None):
+		read_settings = []
+
+		class Settings:
+			twilio_api_key_sid = "SK-fake"
+			twilio_twiml_app_sid = "AP-fake"
+			twilio_account_sid = "AC-fake"
+
+			def get_password(self, field, raise_exception=True):
+				return "not-a-real-value"
+
+		def get_doc(doctype):
+			read_settings.append(doctype)
+			return Settings()
+
+		class AccessToken:
+			def __init__(self, account_sid, key_sid, key_value, identity=None):
+				self.identity = identity
+
+			def add_grant(self, grant):
+				self.grant = grant
+
+			def to_jwt(self):
+				return f"jwt-for-{self.identity}"
+
+		fake = types.SimpleNamespace(
+			session=types.SimpleNamespace(user=user),
+			get_roles=lambda u=None: list(roles),
+			get_doc=get_doc,
+			conf={},
+			throw=lambda message, *a, **k: (_ for _ in ()).throw(RuntimeError(message)),
+		)
+		namespace = {
+			"frappe": fake,
+			"os": types.SimpleNamespace(environ={}),
+			"AccessToken": AccessToken,
+			"VoiceGrant": lambda **kwargs: kwargs,
+			"LEGACY_SOFTPHONE_IDENTITY": "shared_identity",
+			"_active_employee": lambda u=None: employee,
+			"_softphone_users": lambda settings: list(self.LISTED.split())
+			if listed is None
+			else list(listed),
+			"_softphone_identity": lambda u: "erpnext_" + u.replace("@", "_").replace(".", "_"),
+		}
+		node = _fn(TELEPHONY, "get_softphone_token")
+		node.decorator_list = []
+		module = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+		exec(compile(module, TELEPHONY, "exec"), namespace)
+		return namespace["get_softphone_token"](), read_settings
+
+	def test_a_listed_active_employee_gets_their_own_token(self):
+		token, _read = self._token(self.LISTED, roles=["Employee"], employee={"name": "EMP-1"})
+		self.assertEqual(token, "jwt-for-erpnext_desk_example_com")
+
+	def test_an_account_that_is_not_staff_gets_none_and_reads_no_settings(self):
+		token, read = self._token("portal@example.com", roles=[], employee=None)
+		self.assertIsNone(token)
+		self.assertEqual(read, [])
+
+	def test_an_active_employee_who_is_not_listed_gets_none(self):
+		token, _read = self._token("tech@example.com", roles=["Employee"], employee={"name": "EMP-2"})
+		self.assertIsNone(token)
+
+	def test_with_no_list_only_a_system_manager_gets_the_shared_identity(self):
+		token, _read = self._token(
+			"tech@example.com", roles=["Employee"], employee={"name": "EMP-2"}, listed=[]
+		)
+		self.assertIsNone(token)
+		token, _read = self._token("admin@example.com", roles=["System Manager"], employee=None, listed=[])
+		self.assertEqual(token, "jwt-for-shared_identity")
+
+
 class TestSmsReplyChecks(unittest.TestCase):
 	def test_system_user_read_permission_and_rate_limit(self):
 		self.assertEqual(

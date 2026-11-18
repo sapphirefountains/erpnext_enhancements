@@ -35,6 +35,9 @@ OPEN = "Open"
 CLOSED = "Closed"
 CANCELED = "Canceled"
 
+#: Roles that may open, close or cancel any permit (the DocType's own manager roles).
+CHANGE_ROLES = ("Maintenance Manager", "HR Manager", "System Manager")
+
 
 def _me():
 	user = frappe.session.user
@@ -46,23 +49,34 @@ def _me():
 def _permit_for_change(permit, me):
 	"""Load the permit a transition acts on, after checking who is asking.
 
-	Two conditions, both required. The caller is an active Employee (by employment,
-	as `open_permits` already checks), and either holds write permission on this
-	permit or is named on it as its attendant or supervisor. The transitions save
-	with `ignore_permissions` because they set fields the form keeps read-only, so
-	this is where the caller is checked. One refusal message for every case, and
-	it names nobody.
+	The caller holds one of :data:`CHANGE_ROLES`, or is an active Employee named on the
+	permit as its entrant, attendant or supervisor. The entrant is included because the
+	person in the space is the one who calls an entry off, and the roles because somebody
+	has to be able to close a permit when the named people are away.
+
+	The check does not go through document permission: the permit links three Employees,
+	and a login limited to its own Employee record by a User Permission cannot write a
+	document that names two others. The transitions save with `ignore_permissions` for the
+	same reason and because they set fields the form keeps read-only, so this is where the
+	caller is checked. The role or employment is checked before the permit is loaded, and
+	there is one refusal message for every case, which names nobody.
 	"""
 	if not isinstance(permit, str) or not permit.strip():
 		frappe.throw(_("Choose a permit."), frappe.ValidationError)
-	refusal = _("Only staff who can edit this permit, or its attendant or supervisor, can change it.")
-	if not frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
-		frappe.throw(refusal, frappe.PermissionError)
+	refusal = _(
+		"Only the entrant, attendant or supervisor on this permit, or a maintenance or HR "
+		"manager, can change it."
+	)
+	by_role = bool(set(CHANGE_ROLES) & set(frappe.get_roles(me)))
+	employee = None
+	if not by_role:
+		employee = frappe.db.get_value("Employee", {"user_id": me, "status": "Active"}, "name")
+		if not employee:
+			frappe.throw(refusal, frappe.PermissionError)
 	doc = frappe.get_doc(DOCTYPE, permit.strip())
-	if frappe.has_permission(DOCTYPE, "write", doc=doc, user=me):
+	if by_role:
 		return doc
-	named = [e for e in (doc.get("attendant"), doc.get("supervisor")) if e]
-	if named and frappe.db.exists("Employee", {"name": ["in", named], "user_id": me}):
+	if employee in {doc.get("entrant"), doc.get("attendant"), doc.get("supervisor")}:
 		return doc
 	frappe.throw(refusal, frappe.PermissionError)
 

@@ -15,12 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `timeoff.who_is_out` and `permits.open_permits` already check employment. Each endpoint below
   now enforces the rule named:
   - **Tier reviews** (`hr_enhancements/tier_review.py`): `open_review`, `reviewers_for` and
-    `send_to_reviewer` require an active Employee (or HR Manager / System Manager). Their name
-    arguments are annotated `str` and refused when they are anything else, before any lookup. A
-    permission refusal reads the same whether or not the named record exists, and names nobody.
+    `send_to_reviewer` require an active Employee (or HR Manager / System Manager) and take
+    names as plain strings. A permission refusal reads the same whatever is named.
   - **Confined-space permits** (`hr_enhancements/permits.py`): `open_permit`, `close_permit` and
-    `cancel_permit` require an active Employee who has write permission on the permit or is its
-    attendant or supervisor.
+    `cancel_permit` are for a Maintenance Manager, HR Manager or System Manager, or an active
+    Employee named on the permit as its entrant, attendant or supervisor. The entrant can call
+    an entry off, and a manager can close a permit when the named people are away.
   - **Incident and hazard reports**: `safety.report_incident` and `hazards.report_hazard`
     require an active Employee (or HR Manager / System Manager) and are rate limited per user.
     `hazards.safety_brief` returns an empty brief to anybody else, keeping its promise never to
@@ -30,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `@validate_webhook_secret`. They stay ordinary whitelisted methods, not guest endpoints,
     because a request authenticated with an API key is never Guest. Nothing in the browser or in
     Triton calls them today. `log_call_transcript` no longer switches the session user; it sets
-    the Communication's owner and sender explicitly. `get_employee_number` escapes the LIKE
-    wildcards in the name it is given. `trigger_outbound_call` and `log_call_details` require an
+    the Communication's sender, and hands its owner to the Triton service user after insert.
+    `get_employee_number` escapes the LIKE wildcards in the name it is given. `trigger_outbound_call` and `log_call_details` require an
     active Employee. `trigger_outbound_call` no longer falls back to a User's phone fields for a
     login with no Employee, and its `docname` is annotated `str`. `log_call_details` attaches a
     call only to a Customer, Contact or Lead the caller can read. `trigger_outbound_call`,

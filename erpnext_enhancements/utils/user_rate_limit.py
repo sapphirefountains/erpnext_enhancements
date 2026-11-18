@@ -54,7 +54,9 @@ def enforce_user_rate(bucket, limit, seconds, user=None):
 	try:
 		key = frappe.cache.make_key(f"ee_user_rate:{bucket}:{user}")
 		count = frappe.cache.incrby(key, 1)
-		if count == 1:
+		# The window starts on the first call, and is set again whenever the counter is found
+		# without one, so a counter can never outlive its window.
+		if count == 1 or frappe.cache.ttl(key) < 0:
 			frappe.cache.expire(key, seconds)
 	except Exception:
 		return

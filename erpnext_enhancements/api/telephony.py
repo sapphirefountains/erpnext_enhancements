@@ -526,8 +526,9 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 
     Gateway only: ``@validate_webhook_secret`` requires an API-key request, and
     no browser code calls this. It does not switch the session user; the
-    Communication's ``sender`` and ``owner`` are set to the Triton service user
-    explicitly below. Generates a fallback ``call_sid`` if missing.
+    Communication's ``sender`` is set to the Triton service user, and its
+    ``owner`` is set to that user after the insert (frappe stamps ``owner``
+    with the session user on insert). Generates a fallback ``call_sid`` if missing.
     Resolves the caller (via ``get_caller_info``) and links the Communication to
     the Customer/Contact through ``timeline_links``. Also closes/reassigns any
     auto-created ToDos to the Triton user. Commits; returns
@@ -573,6 +574,10 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             })
 
         comm.insert(ignore_permissions=True)
+        # frappe stamps `owner` with the session user on insert, so the record is handed
+        # to the Triton service user here, whichever gateway account made the request.
+        if comm.owner != "triton@sapphirefountains.com":
+            comm.db_set("owner", "triton@sapphirefountains.com", update_modified=False)
 
         todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
         for t in todos:
