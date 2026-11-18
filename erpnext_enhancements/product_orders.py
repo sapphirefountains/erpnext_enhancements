@@ -26,11 +26,11 @@ without a bench:
   ``is_open_opportunity``, ``win_rate``, ``component_state``: the smaller facts the tab shows.
 
 **Where a control-panel order shows, once.** A product Sales Order that needs a project (a
-control panel on it) is not on the order board. Its working record is its Project of type
-Products, so it shows in the tab's Control panel projects section: on its Project's row (with the
-order beside it), or, while it has no Project yet, as its own row marked "No project yet". The
-board holds the product orders that get no project (E-Stops and the other standard products), so
-no sale is listed twice and none is lost.
+control panel on it) is not on the order board. Its working record is its Project, so it shows in
+the tab's Control panel projects section: on its linked Project's row, whatever that Project's type
+(``place_panel_orders``), or, while it has no Project yet, as its own row marked "No project yet".
+The board holds the product orders that get no project (E-Stops and the other standard products),
+so no sale is listed twice and none is lost.
 
 Dates are compared as ISO ``YYYY-MM-DD`` strings, so a ``datetime.date`` and a string read the
 same way and nothing here depends on a time zone.
@@ -425,6 +425,41 @@ def on_board(status, docstatus, per_delivered, delivered_on, since):
 	return bool(_iso(delivered_on)) and _iso(delivered_on) >= _iso(since)
 
 
+def place_panel_orders(orders, projects):
+	"""Put each control-panel order on exactly one Project row, or on none.
+
+	``orders``: dicts with ``name`` and ``project`` (``Sales Order.project``). ``projects``: dicts
+	with ``name`` and ``sales_order`` (``Project.sales_order``), whatever their project type: the
+	hand-off picks a deal's project type from its value streams, in the order Design, Build,
+	Service, Events, so a control panel tagged Build + Products gets a Build project.
+
+	* The order's own link wins: when ``Sales Order.project`` names one of ``projects``, the order
+	  goes there. When the two links disagree (P1 names order A, while A names P2), A goes to P2 and
+	  is listed once.
+	* Otherwise the first Project (in the order given) whose ``sales_order`` names it.
+	* Otherwise the order is unplaced: it shows as "No project yet".
+
+	A Project can carry several orders. Returns ``({project: [order, ...]}, [unplaced order, ...])``,
+	both in the order given.
+	"""
+	known = [p.get("name") for p in projects or () if p.get("name")]
+	by_sales_order = {}
+	for project in projects or ():
+		if project.get("sales_order") and project.get("name"):
+			by_sales_order.setdefault(project["sales_order"], project["name"])
+	placed = {name: [] for name in known}
+	unplaced = []
+	for order in orders or ():
+		name = order.get("name")
+		own = order.get("project")
+		target = own if own in placed else by_sales_order.get(name)
+		if target:
+			placed[target].append(name)
+		else:
+			unplaced.append(name)
+	return placed, unplaced
+
+
 def allocate_stock(orders, on_hand):
 	"""The names of the orders that finished units on hand already cover.
 
@@ -512,12 +547,14 @@ WON_STATUSES = ("Closed Won",)
 LOST_STATUSES = ("Lost",)
 CLOSED_STATUSES = ("Closed", "Converted")
 
-#: The product-quote win rate: a submitted product Quotation that became an order is won, one
-#: marked Lost is lost. Drafts and Expired quotes decide nothing. Prod's product quotes are all
-#: QuickBooks-mirrored drafts, so the rate reads "none decided yet" until quote to order (#1465)
-#: makes real ones.
+#: The product-quote win rate: a submitted product Quotation that became an order is won; one
+#: marked Lost, or one that Expired, is lost. ERPNext's daily ``set_expired_status`` moves a
+#: submitted quotation that was never ordered to Expired, and nobody marks those Lost, so leaving
+#: them out made the rate read high (3 ordered, 1 Lost and 6 expired is 30%, not 75%). Drafts
+#: decide nothing. Prod's product quotes are all QuickBooks-mirrored drafts, so the rate reads
+#: "none decided yet" until quote to order (#1465) makes real ones.
 QUOTE_WON_STATUSES = ("Ordered", "Partially Ordered")
-QUOTE_LOST_STATUSES = ("Lost",)
+QUOTE_LOST_STATUSES = ("Lost", "Expired")
 
 #: Quotation statuses that are no longer open.
 QUOTE_CLOSED_STATUSES = ("Lost", "Ordered", "Expired", "Cancelled")
@@ -567,13 +604,40 @@ def win_rate(won, lost):
 COMPONENT_GROUPS = {LINE_ESTOPS: ("E-Stop Components",)}
 
 
+def stock_totals(bins, wip_warehouses=()):
+	"""Each item's stock summed over its Bins, with Work In Progress warehouses left out.
+
+	``bins``: dicts with ``item_code``, ``warehouse``, ``actual_qty``, ``projected_qty`` and
+	``ordered_qty``. ``wip_warehouses``: the warehouses a build moves parts into. Returns
+	``{item_code: {"on_hand", "projected", "on_order"}}``.
+
+	A part moved to a WIP warehouse for a build is spoken for, but its Bin there still counts it in
+	``actual_qty`` and ``projected_qty``. ERPNext reserves for a Work Order only what is still to be
+	transferred, and only in its source warehouse (``reserved_qty_for_production``, required minus
+	transferred, read at 16.54.0), so the WIP Bin carries no reservation to cancel it out. Summed
+	over every warehouse, the parts already moved to a build would count again as available. So
+	on hand and projected leave the WIP warehouses out. What is on order is counted wherever it is.
+	"""
+	wip = {warehouse for warehouse in wip_warehouses or () if warehouse}
+	totals = {}
+	for row in bins or ():
+		code = row.get("item_code")
+		total = totals.setdefault(code, {"on_hand": 0.0, "projected": 0.0, "on_order": 0.0})
+		total["on_order"] += _num(row.get("ordered_qty"))
+		if row.get("warehouse") in wip:
+			continue
+		total["on_hand"] += _num(row.get("actual_qty"))
+		total["projected"] += _num(row.get("projected_qty"))
+	return totals
+
+
 def component_state(projected, reorder_level):
 	"""``out`` at zero or below, ``low`` under a reorder level that is set, else ``ok``.
 
-	Judged on the Bin's ``projected_qty`` summed across warehouses (on hand, plus ordered and
-	planned, minus what orders and Work Orders have reserved), not on ``actual_qty``: the parts
-	already moved to Work In Progress for a build are spoken for, and a part on a purchase order is
-	on its way.
+	Judged on the projected quantity from ``stock_totals``, not on ``actual_qty``. That is on hand,
+	plus ordered and planned, minus what orders and Work Orders have reserved, summed over every
+	warehouse except the Work In Progress ones. A part on a purchase order is on its way, and a part
+	already moved to a build is not counted as available a second time.
 	"""
 	qty = _num(projected)
 	if qty <= 0:

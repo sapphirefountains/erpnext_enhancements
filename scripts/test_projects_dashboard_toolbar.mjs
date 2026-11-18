@@ -1116,8 +1116,8 @@ await test("a control-panel order shows once, in the projects section, with or w
 		projects: {
 			allowed: true,
 			rows: [
-				{ kind: "project", name: "PRJ-00901", project_name: "Splash Wizard Industrial", customer: "Demo City", status: "Active", percent_complete: 40, expected_end_date: "2026-12-20", late: false, line: "Control Panels", order: panel("SO-0101", "building") },
-				{ kind: "order", name: "SO-0102", project_name: null, customer: "Demo Pools", status: null, percent_complete: null, expected_end_date: "2026-12-01", late: false, line: "Control Panels", order: panel("SO-0102", "ordered") },
+				{ kind: "project", name: "PRJ-00901", project_name: "Splash Wizard Industrial", project_type: "Build", customer: "Demo City", status: "Active", percent_complete: 40, expected_end_date: "2026-12-20", late: false, line: "Control Panels", orders: [panel("SO-0101", "building"), panel("SO-0103", "ordered")] },
+				{ kind: "order", name: "SO-0102", project_name: null, project_type: null, customer: "Demo Pools", status: null, percent_complete: null, expected_end_date: "2026-12-01", late: false, line: "Control Panels", orders: [panel("SO-0102", "ordered")] },
 			],
 		},
 	};
@@ -1128,10 +1128,12 @@ await test("a control-panel order shows once, in the projects section, with or w
 	const html = drawn(run, from);
 	const project = html.slice(html.indexOf("/desk/project/PRJ-00901"));
 	assert.match(project, /href="\/desk\/sales-order\/SO-0101">SO-0101<\/a><div class="pd-psub">Building · Promise 2026-12-20</, "the project carries its order and the order's stage");
+	assert.match(project, /href="\/desk\/sales-order\/SO-0103">SO-0103<\/a>/, "and a second order on the same project");
+	assert.match(project, /<div class="pd-psub">PRJ-00901 · Build<\/div>/, "a linked project of another type says its type");
 	assert.match(html, /dashcol-p_project">No project yet<\/td>[\s\S]*?\/desk\/sales-order\/SO-0102/, "an order with no project yet is its own row");
 	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"], "neither panel order is on the board");
-	assert.equal(run.dom.node('[data-line-count="Control Panels"]').text(), "3", "the chips count the panel orders too");
-	assert.equal(run.dom.node('[data-line-count=""]').text(), "5");
+	assert.equal(run.dom.node('[data-line-count="Control Panels"]').text(), "4", "the chips count the panel orders too");
+	assert.equal(run.dom.node('[data-line-count=""]').text(), "6");
 });
 
 await test("a line chip does not touch the Priority Overview's stream chips", async () => {
