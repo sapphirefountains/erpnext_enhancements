@@ -26,10 +26,9 @@ SECURITY — read carefully:
           server-to-server webhooks with no Frappe session. They are protected
           either by ``@validate_twilio_request`` (Twilio HMAC signature) or
           ``@validate_webhook_secret`` (a Frappe API key, ``Authorization: token
-          key:secret``, which Frappe itself verifies -- see the decorator for why
-          the old ``Bearer`` branch was removed). ``get_gateway_config`` is
-          unauthenticated by design and therefore returns ONLY non-sensitive
-          routing config.
+          key:secret``, which Frappe itself verifies, owned by one of the
+          gateway users -- see the decorator for why the old ``Bearer`` branch
+          was removed). ``get_gateway_config`` sits behind the same decorator.
         - Webhook handlers call ``frappe.set_user("triton@sapphirefountains.com")``
           to act as the Triton service user and write with ``ignore_permissions=True``.
         - Outbound endpoints (``send_sms``, ``trigger_outbound_call``) are normal
@@ -84,32 +83,6 @@ from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
 _DEFAULT_VOICE_MODEL_ID = "gemini-3.8-live"
 
 
-@frappe.whitelist(allow_guest=True)
-def get_gateway_config():
-    """Return non-sensitive call-routing config to the Triton gateway.
-
-    Guest-accessible (``allow_guest=True``) and intentionally unauthenticated.
-    Returns only the master system prompt, forwarding phone number, and voice
-    model id from Triton Settings — NEVER secrets/API keys. On any error,
-    returns hard-coded safe defaults (and logs the failure).
-    """
-    try:
-        settings = frappe.get_doc("Triton Settings")
-        return {
-            # NOTE: never return secrets (API keys / tokens) from this guest-
-            # accessible endpoint. It exposes non-sensitive call-routing config only.
-            "master_system_prompt": settings.master_system_prompt,
-            "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
-            "voice_model_id": getattr(settings, "voice_model_id", _DEFAULT_VOICE_MODEL_ID),
-        }
-    except Exception as e:
-        frappe.log_error(title="Gateway Config Error", message=f"Failed to fetch Triton settings: {e!s}")
-        return {
-            "master_system_prompt": "You are Triton.",
-            "forwarding_phone_number": "+18018200044",
-            "voice_model_id": _DEFAULT_VOICE_MODEL_ID
-        }
-
 def validate_twilio_request(func):
     """Decorator: reject requests whose Twilio HMAC signature is invalid.
 
@@ -117,11 +90,17 @@ def validate_twilio_request(func):
     body using the Twilio auth token from Triton Settings. ``frappe.throw(...
     PermissionError)`` on mismatch. Used to authenticate Twilio's own webhooks
     (e.g. ``receive_mms``) since they arrive with no Frappe session.
+
+    Refuses every request while no auth token is stored: a signature is only
+    checked against a configured token, never against an empty one.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         settings = frappe.get_doc("Triton Settings")
-        validator = RequestValidator(settings.get_password("twilio_auth_token", raise_exception=False) or "")
+        auth_token = settings.get_password("twilio_auth_token", raise_exception=False) or ""
+        if not auth_token.strip():
+            frappe.throw(_("Invalid Twilio Signature"), frappe.PermissionError)
+        validator = RequestValidator(auth_token)
         url = frappe.request.url
         post_vars = frappe.request.form
         signature = frappe.request.headers.get("X-Twilio-Signature", "")
@@ -153,10 +132,11 @@ def validate_webhook_secret(func):
     ``admin_webhook_secret`` still authenticates ERPNext *to* the gateway (the
     outbound calls below); nothing inbound checks it.
 
-    Note that ANY enabled API key passes, not only the Triton service account's,
-    and the handlers then ``set_user`` to the Triton user and write with
-    ``ignore_permissions``. Narrowing this to Triton's own API user needs to know
-    which account its ``FRAPPE_API_KEY`` belongs to.
+    The authenticated user must also be one of the gateway users
+    (``_gateway_users``): ``triton@sapphirefountains.com`` by default, the
+    account the handlers ``set_user`` to, or the list in the site config key
+    ``telephony_gateway_users``. An API key that belongs to any other user is
+    refused with the same ``PermissionError``.
 
     The name is kept because a dozen endpoints and ``dev_checks.py`` refer to it.
     """
@@ -165,8 +145,59 @@ def validate_webhook_secret(func):
         scheme = frappe.request.headers.get("Authorization", "").split(" ", 1)[0].lower()
         if scheme != "token" or frappe.session.user in ("", "Guest"):
             frappe.throw(_("Missing or Invalid Authorization Header"), frappe.PermissionError)
+        if (frappe.session.user or "").strip().lower() not in _gateway_users():
+            frappe.throw(_("Missing or Invalid Authorization Header"), frappe.PermissionError)
         return func(*args, **kwargs)
     return wrapper
+
+
+#: The users ``validate_webhook_secret`` accepts when the site config names none.
+_DEFAULT_GATEWAY_USERS = ("triton@sapphirefountains.com",)
+
+
+def _gateway_users():
+    """Lower-cased user names that ``validate_webhook_secret`` accepts.
+
+    The site config key ``telephony_gateway_users`` (a list, or one
+    comma-separated string) replaces the default when it names at least one
+    user; anything else falls back to ``_DEFAULT_GATEWAY_USERS``.
+    """
+    configured = frappe.conf.get("telephony_gateway_users")
+    if isinstance(configured, str):
+        configured = configured.split(",")
+    users = set()
+    if isinstance(configured, (list, tuple)):
+        users = {str(u).strip().lower() for u in configured if str(u or "").strip()}
+    return users or {u.lower() for u in _DEFAULT_GATEWAY_USERS}
+
+
+@frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
+def get_gateway_config():
+    """Return call-routing config to the Triton gateway.
+
+    Guarded by ``@validate_webhook_secret``, like the other gateway endpoints:
+    the caller must be one of the gateway users. Returns only the master system
+    prompt, forwarding phone number, and voice model id from Triton Settings —
+    NEVER secrets/API keys. On any error, returns hard-coded safe defaults (and
+    logs the failure).
+    """
+    try:
+        settings = frappe.get_doc("Triton Settings")
+        return {
+            # NOTE: never return secrets (API keys / tokens) from this endpoint.
+            # It exposes call-routing config only.
+            "master_system_prompt": settings.master_system_prompt,
+            "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
+            "voice_model_id": getattr(settings, "voice_model_id", _DEFAULT_VOICE_MODEL_ID),
+        }
+    except Exception as e:
+        frappe.log_error(title="Gateway Config Error", message=f"Failed to fetch Triton settings: {e!s}")
+        return {
+            "master_system_prompt": "You are Triton.",
+            "forwarding_phone_number": "+18018200044",
+            "voice_model_id": _DEFAULT_VOICE_MODEL_ID
+        }
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
@@ -1042,6 +1073,45 @@ def preview_call_routing(from_number="", intent="General", at=None):
         when=frappe.utils.get_datetime(at) if at else None,
     )
 
+#: Largest MMS media file ``receive_mms`` downloads; the download stops past it.
+_MMS_MEDIA_MAX_BYTES = 10 * 1024 * 1024
+#: Seconds ``receive_mms`` waits on Twilio's media host (connect, read).
+_MMS_MEDIA_TIMEOUT = (10, 30)
+
+
+def _is_twilio_media_url(url):
+    """True when ``url`` is https on ``api.twilio.com`` or a ``*.twilio.com`` host,
+    with no user info and no port other than 443."""
+    try:
+        parsed = urlparse(str(url or "").strip())
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return (
+        parsed.scheme == "https"
+        and port in (None, 443)
+        and not parsed.username
+        and not parsed.password
+        and (host == "api.twilio.com" or host.endswith(".twilio.com"))
+    )
+
+
+def _download_mms_media(url):
+    """Stream ``url`` and return its bytes, or None on a non-200 answer or a body
+    larger than ``_MMS_MEDIA_MAX_BYTES``."""
+    with requests.get(url, stream=True, timeout=_MMS_MEDIA_TIMEOUT) as response:
+        if response.status_code != 200:
+            return None
+        chunks, total = [], 0
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            total += len(chunk)
+            if total > _MMS_MEDIA_MAX_BYTES:
+                return None
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
 def receive_mms():
@@ -1049,7 +1119,11 @@ def receive_mms():
 
     Guest endpoint guarded by ``@validate_twilio_request`` (Twilio signature).
     Locates the Customer for the ``From`` number, fetches ``MediaUrl0`` over
-    HTTP, and saves it as a private File attached to that Customer. Returns "OK".
+    HTTPS, and saves it as a private File attached to that Customer. Returns "OK".
+
+    ``MediaUrl0`` is fetched only from a Twilio host (``_is_twilio_media_url``),
+    with a timeout, and only up to ``_MMS_MEDIA_MAX_BYTES``; anything else is
+    skipped and the message still returns "OK".
     """
     frappe.set_user("triton@sapphirefountains.com")
 
@@ -1058,9 +1132,13 @@ def receive_mms():
 
     customer_name = locate_customer(sender_number)
 
+    if media_url and not _is_twilio_media_url(media_url):
+        frappe.log_error(title="Twilio MMS media skipped", message="MediaUrl0 is not an https Twilio URL.")
+        media_url = None
+
     if media_url:
-        response = requests.get(media_url)
-        if response.status_code == 200:
+        content = _download_mms_media(media_url)
+        if content is not None:
             parsed_url = urlparse(media_url)
             filename = os.path.basename(parsed_url.path) or f"mms_image_{frappe.utils.now()}.jpg"
 
@@ -1069,7 +1147,7 @@ def receive_mms():
                 "file_name": filename,
                 "attached_to_doctype": "Customer",
                 "attached_to_name": customer_name,
-                "content": response.content,
+                "content": content,
                 "is_private": 1
             })
             file_doc.save(ignore_permissions=True)

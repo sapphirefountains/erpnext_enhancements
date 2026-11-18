@@ -356,3 +356,27 @@ def test_the_two_proxied_ai_calls_carry_a_per_user_rate_limit():
 			]
 	for name in ("stream_query", "morning_briefing"):
 		assert "user_rate_limit" in decorated[name], name
+
+
+# ---------------------------------------------------------------------------
+# Action ids reach the URL path only in the expected shape
+# ---------------------------------------------------------------------------
+def test_confirm_and_cancel_build_the_action_route(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	action_id = "3f2b8c1e-9a4d-4e7b-8c2a-1d0e5f6a7b8c"
+	triton_chat.confirm_action(action_id=action_id, session_id="4")
+	triton_chat.cancel_action(action_id=f" {action_id} ")
+	assert calls[0] == ("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {"session_id": 4})
+	assert calls[1] == ("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {"session_id": None})
+
+
+def test_confirm_and_cancel_refuse_an_unexpected_action_id(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	for bad in ("", "  ", None, "a/b", "../personas", "a?b=1", "a#b", "a b", "a%2Fb", "x" * 65):
+		for fn in (triton_chat.confirm_action, triton_chat.cancel_action):
+			try:
+				fn(action_id=bad)
+			except Exception:
+				continue
+			raise AssertionError(f"expected a throw for {bad!r}")
+	assert calls == []

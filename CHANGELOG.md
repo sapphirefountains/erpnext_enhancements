@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.826.0] - 2026-11-18
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468), and the notes below are theirs, grouped by kind.
+
+From #1468: Hardening of the inbound webhook and gateway checks. Nothing changes for the callers that
+production uses today: the Triton gateway still authenticates with its own API key, and the
+Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all configured.
 
 ### Changed
 
@@ -169,6 +173,51 @@ Hardening changes released together. Each was written and reviewed as its own pu
     apply the Desk's row scoping from `training/permissions.py`. A caller sees their own rows
     and their direct reports' rows, unless they hold an unscoped training role. The scoping
     covers assignments, certificates and the per-course counts.
+- **`api/telephony.validate_webhook_secret` now also requires the authenticated user to be a
+  gateway user.** The API key Frappe verified must belong to `triton@sapphirefountains.com`
+  (the account the handlers already `set_user` to), or to a user named in the new site config
+  key `telephony_gateway_users` (a list, or one comma-separated string), which replaces the
+  default when it names anyone. User names compare case-insensitively. Every endpoint behind
+  the decorator is covered, `call_intelligence.process_call_intelligence` included.
+- **`api/telephony.get_gateway_config` is now behind `@validate_webhook_secret`**, like the
+  other gateway endpoints. Nothing calls it today (see the comment above
+  `_DEFAULT_VOICE_MODEL_ID`); it was moved below the decorator's definition so the decorator
+  can apply.
+- **`api/telephony.validate_twilio_request` refuses every request while no Twilio auth token
+  is stored**, instead of checking the signature against an empty token.
+- **`api/telephony.receive_mms` downloads `MediaUrl0` only from an https `api.twilio.com` or
+  `*.twilio.com` URL** (`_is_twilio_media_url`), streamed, with a timeout and a 10 MB cap
+  (`_MMS_MEDIA_MAX_BYTES`). Any other URL is skipped with one Error Log row, and the webhook
+  still answers "OK".
+- **The voicemail download uses a URL only when it names this account's recordings on
+  Twilio's API host.** `api/call_recording_export.is_twilio_recording_url` accepts
+  `https://api.twilio.com/2010-04-01/Accounts/<configured Account SID>/Recordings/<RE sid>`,
+  with an optional extension or query string, and nothing else; with no Account SID
+  configured it accepts nothing. `process_call_intelligence` checks it before queueing the
+  Drive export, and `_voicemail_audio` checks it again before the authenticated request. A
+  refused URL is still stored on the Call Log; only the download is skipped.
+- **`api/call_intelligence.process_call_intelligence` resolves the caller through
+  `telephony._get_caller_info`,** the in-process lookup the other server-side callers use,
+  instead of the whitelisted wrapper. The endpoint's own decorator has already checked the
+  request, so a site that names a different gateway user in `telephony_gateway_users` still
+  gets its missed-call and voicemail payloads recorded.
+- **`stripe_payments/core/utils.get_secret` and `quickbooks_online/core/utils.get_secret`
+  read with `get_password(fieldname, raise_exception=False)` and return None for a missing,
+  empty, undecryptable or `*`-only value.** Every caller already
+  treats None as "not configured": the Stripe and QuickBooks webhook signature checks refuse,
+  and the API clients throw their "not configured" / "reconnect" messages. A value set in
+  memory and not yet saved is still returned, by `get_password` itself. The Stripe signature
+  check is unchanged.
+- **`quickbooks_time/api.qb_timesheet_webhook` refuses every request while the site config
+  key `qb_time_webhook_secret` is unset.** It accepts the secret from the new
+  `X-QB-Time-Webhook-Secret` header as well as the existing `token` parameter, compares with
+  `hmac.compare_digest`, answers a refusal with a fixed 401 body and no Error Log row, and an
+  accepted request that fails returns a fixed error body instead of the exception text (the
+  traceback still goes to the Error Log).
+- **`triton_chat.confirm_action` and `cancel_action` check `action_id` before it goes into
+  the Triton URL path**: letters, digits, `-` and `_`, at most 64 characters (Triton's ids are
+  UUIDs). Anything else throws "Invalid action id.", like `_custom_persona_path` does for
+  persona ids.
 
 ### Added
 
@@ -194,6 +243,16 @@ Hardening changes released together. Each was written and reviewed as its own pu
   and pins each rule above at source level. `test_triton_personas` gains the System User cases.
   The kiosk suites call `maintenance_context` for the context logic, and the Visit Wizard case
   for a login with no Employee is pinned in `test_maintenance_visit_crews`.
+
+### Tests
+
+- `tests/test_webhook_auth.py` covers the gateway-user rule and its site config override,
+  `get_gateway_config` behind the decorator, the empty-token refusal, and `receive_mms`'s host
+  rule, streaming, timeout and size cap.
+- New `tests/test_inbound_secret_checks.py` (its own unittest step in `ci.yml`) covers the
+  recording URL rule and `_voicemail_audio`, the guard before the export is queued, both
+  `get_secret` readers, and the QuickBooks Time webhook.
+- `tests/test_triton_personas.py` covers the action id check.
 
 ## [1.824.0] - 2026-11-18
 

@@ -3842,6 +3842,13 @@ jobs:
       # is gone. Own step: it stubs frappe, twilio and requests in setUpModule.
       - name: Webhook auth, MDM + telephony (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_webhook_auth -v
+      # Configuration checks on three inbound paths (v1.826.5): the Twilio voicemail
+      # download accepts only this account's recording URLs on api.twilio.com; the Stripe
+      # and QuickBooks Online secret readers return None for a missing, undecryptable or
+      # placeholder value; the QuickBooks Time webhook refuses every request while its
+      # site_config secret is unset. Own step: it stubs frappe and requests in setUpModule.
+      - name: Inbound secret and URL checks (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inbound_secret_checks -v
       # The requests the MDM provider clients actually send, checked against the vendors'
       # specs (v1.506.0). Both Live adapters had been written against guessed endpoints:
       # Miradore sync called a list endpoint API v2 does not have (12,803 failed syncs), and

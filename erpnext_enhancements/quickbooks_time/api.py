@@ -46,6 +46,28 @@ def get_erpnext_project(qb_jobcode_id):
     return project
 
 
+#: Request header that may carry the shared secret (the `token` query parameter also does).
+SECRET_HEADER = "X-QB-Time-Webhook-Secret"
+
+
+def _webhook_secret_ok(kwargs):
+    """True only when `qb_time_webhook_secret` is set in site_config and the request
+    carries the same value in `SECRET_HEADER` or the `token` parameter."""
+    expected = str(frappe.conf.get("qb_time_webhook_secret") or "").strip()
+    if not expected:
+        return False
+    provided = (
+        frappe.get_request_header(SECRET_HEADER)
+        or kwargs.get("token")
+        or frappe.form_dict.get("token")
+        or ""
+    )
+    provided = str(provided).strip()
+    if not provided:
+        return False
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+
+
 @frappe.whitelist(allow_guest=True)
 def qb_timesheet_webhook(*args, **kwargs):
     """Guest webhook: create an ERPNext Time Log from a QuickBooks Time timesheet.
@@ -59,22 +81,15 @@ def qb_timesheet_webhook(*args, **kwargs):
     accounting pipeline. Authentication is an interim shared-secret gate (below),
     pending WI-046 which retires this endpoint at cutover.
     """
-    # SECURITY (interim, WI-046 §rollback). This is an unauthenticated guest endpoint that
-    # INSERTS Time Log documents, so anyone who learns the URL can inject time entries. Until
-    # WI-046 decommissions it, gate on a shared secret: when `qb_time_webhook_secret` is set in
-    # site_config, require a matching `token` on the webhook URL and reject anything else. It is
-    # left open until that secret is configured so the upgrade does not break the live feed —
-    # to close the hole, set the secret and append `?token=<secret>` to the URL configured in
-    # QuickBooks Time. (QB Time cannot sign its payloads reliably; this mirrors the shared-secret
-    # option the finding calls for, hmac.compare_digest for constant-time comparison.)
-    expected_secret = (frappe.conf.get("qb_time_webhook_secret") or "").strip()
-    if expected_secret:
-        provided = (kwargs.get("token") or frappe.form_dict.get("token") or "").strip()
-        if not provided or not hmac.compare_digest(
-            provided.encode("utf-8"), expected_secret.encode("utf-8")
-        ):
-            frappe.local.response.http_status_code = 401
-            return {"status": "unauthorized"}
+    # Interim shared-secret gate (WI-046 retires this endpoint at cutover). The secret is
+    # `qb_time_webhook_secret` in site_config; the caller sends it in the
+    # `X-QB-Time-Webhook-Secret` header or as `?token=<secret>` on the webhook URL. Every
+    # request is refused while the secret is unset, and a refusal returns a fixed 401 body
+    # without writing an Error Log row. (QB Time cannot sign its payloads reliably, hence a
+    # shared secret; hmac.compare_digest keeps the comparison constant-time.)
+    if not _webhook_secret_ok(kwargs):
+        frappe.local.response.http_status_code = 401
+        return {"status": "unauthorized"}
 
     try:
         webhook_data = frappe.request.get_data()
@@ -104,7 +119,7 @@ def qb_timesheet_webhook(*args, **kwargs):
 
         return {"status": "success", "message": f"Time Log {time_log.name} created."}
 
-    except Exception as e:
+    except Exception:
         frappe.log_error(frappe.get_traceback(), "QuickBooks Time Webhook Failed")
         frappe.local.response.http_status_code = 500
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "The timesheet could not be processed."}
