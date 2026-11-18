@@ -429,7 +429,12 @@ class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
 
         fake = types.ModuleType("frappe")
         fake._ = lambda text: text
-        fake.flags = types.SimpleNamespace(in_migrate=False, in_install=False, in_patch=False)
+        fake.flags = types.SimpleNamespace(
+            in_migrate=False, in_install=False, in_patch=False, in_import=False
+        )
+        fake.session = types.SimpleNamespace(user="staff@example.com")
+        cls.roles = ["Employee"]
+        fake.get_roles = lambda user=None: list(cls.roles)
         fake.PermissionError = type("PermissionError", (Exception,), {})
 
         def throw(message, exc=Exception, **kwargs):
@@ -459,6 +464,9 @@ class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
             def set(self, key, value):
                 setattr(self, key, value)
 
+            def append(self, key, row):
+                getattr(self, key).append(row)
+
             def get_doc_before_save(self):
                 return self._before
 
@@ -482,6 +490,23 @@ class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
             MODULE / "doctype/policy_acknowledgement/policy_acknowledgement.py",
             "_acknowledgement_controller_under_test",
         )
+
+    def setUp(self):
+        type(self).roles = ["Employee"]
+        self.fake.flags.in_import = False
+        self.may_start = True
+        self.ladder_calls = []
+        self.tier._may_start = lambda user: self.may_start
+
+        def ladder(user, to_position=None):
+            self.ladder_calls.append((user, to_position))
+            return (
+                "Junior Technician",
+                to_position or "Senior Technician",
+                [{"requirement_kind": "Course", "requirement_label": "Pumps 101", "held_at_open": "Held"}],
+            )
+
+        self.tier._ladder_snapshot = ladder
 
     @classmethod
     def tearDownClass(cls):
@@ -508,7 +533,7 @@ class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
         doc = self.tier.TierReview(
             status="Decided", decision="Promote", decided_by="x@example.com",
             decided_on="2026-11-18", applied_on="2026-11-18", reviewer="EMP-9",
-            reviewer_user="friend@example.com",
+            reviewer_user="friend@example.com", user="pat@example.com", to_position=None, lines=[],
         )
         doc._guard_status()
         doc._guard_decision()
@@ -525,6 +550,58 @@ class TestANewRecordStartsAtTheBeginning(unittest.TestCase):
         self.assertEqual(doc.status, "Requested")
         self.assertIsNone(doc.signed_name)
         self.assertIsNone(doc.signed_on)
+
+    def test_a_new_tier_review_takes_its_rungs_and_lines_from_the_ladder(self):
+        doc = self.tier.TierReview(
+            status="Draft", user="pat@example.com", from_position="Apprentice",
+            to_position=None, lines=[{"requirement_label": "typed by hand", "held_at_open": "Held"}],
+        )
+        doc._guard_status()
+        self.assertEqual(self.ladder_calls, [("pat@example.com", None)])
+        self.assertEqual(doc.from_position, "Junior Technician")
+        self.assertEqual(doc.to_position, "Senior Technician")
+        self.assertEqual([line["requirement_label"] for line in doc.lines], ["Pumps 101"])
+
+    def test_a_named_target_rung_is_checked_against_the_ladder(self):
+        doc = self.tier.TierReview(
+            status="Draft", user="pat@example.com", to_position="Lead Technician", lines=[]
+        )
+        doc._guard_status()
+        self.assertEqual(self.ladder_calls, [("pat@example.com", "Lead Technician")])
+        self.assertEqual(doc.to_position, "Lead Technician")
+
+    def test_a_new_tier_review_needs_someone_who_may_start_it(self):
+        self.may_start = False
+        doc = self.tier.TierReview(status="Draft", user="pat@example.com", to_position=None, lines=[])
+        with self.assertRaises(self.fake.PermissionError):
+            doc._guard_status()
+        self.assertEqual(self.ladder_calls, [])
+
+    def test_an_hr_import_keeps_the_statuses_in_the_file(self):
+        type(self).roles = ["HR Manager"]
+        self.fake.flags.in_import = True
+        leave = self.timeoff.TimeOffRequest(status="Approved", decided_on="2025-03-01", approver="EMP-2")
+        leave._guard_status()
+        self.assertEqual((leave.status, leave.decided_on, leave.approver), ("Approved", "2025-03-01", "EMP-2"))
+        ack = self.ack.PolicyAcknowledgement(status="Signed", signed_name="Pat Example", signed_on="2025-03-01")
+        ack._guard_status()
+        self.assertEqual((ack.status, ack.signed_name), ("Signed", "Pat Example"))
+        review = self.tier.TierReview(status="Decided", decision="Promote", user="pat@example.com", lines=[])
+        review._guard_status()
+        review._guard_decision()
+        self.assertEqual((review.status, review.decision), ("Decided", "Promote"))
+        self.assertEqual(self.ladder_calls, [])
+
+    def test_an_import_by_anyone_else_starts_at_the_beginning(self):
+        self.fake.flags.in_import = True
+        leave = self.timeoff.TimeOffRequest(
+            status="Approved", decided_on="2025-03-01", decision_note="x", approver="EMP-2", approver_user="a@example.com"
+        )
+        leave._guard_status()
+        self.assertEqual(leave.status, "Draft")
+        ack = self.ack.PolicyAcknowledgement(status="Signed", signed_name="Pat Example", signed_on="2025-03-01")
+        ack._guard_status()
+        self.assertEqual(ack.status, "Requested")
 
     def test_the_module_endpoints_keep_what_they_set(self):
         """`open_review` and `request_acknowledgement` flag their inserts."""

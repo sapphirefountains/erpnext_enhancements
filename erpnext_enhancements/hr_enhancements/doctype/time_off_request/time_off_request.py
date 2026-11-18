@@ -42,6 +42,17 @@ OPEN_STATUSES = (DRAFT, REQUESTED)
 BLOCKING_STATUSES = (REQUESTED, APPROVED)
 
 
+#: Roles whose Data Import keeps the statuses in the file (historical records).
+IMPORT_ROLES = ("HR Manager", "System Manager")
+
+
+def _trusted_import():
+	"""True during a Data Import run by HR Manager or System Manager."""
+	if not getattr(frappe.flags, "in_import", None):
+		return False
+	return bool(set(IMPORT_ROLES) & set(frappe.get_roles()))
+
+
 class TimeOffRequest(Document):
 	def validate(self):
 		self._resolve_user()
@@ -72,6 +83,9 @@ class TimeOffRequest(Document):
 		if self.flags.get("timeoff_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		# A Data Import by HR Manager or System Manager keeps the file's statuses (historical leave).
+		if _trusted_import():
 			return
 		if self.is_new():
 			self.status = DRAFT

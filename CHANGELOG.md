@@ -36,18 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     filed from the Desk by someone without an unscoped role was refused. Who may create is
     still bounded by the DocPerm.
 - **A new Time Off Request, Tier Review or Policy Acknowledgement starts at its first status.**
-  The controllers' status guards returned early on a new document. An insert that does not
-  come through the module's endpoint (no transition flag) now starts as `Draft` / `Draft` /
-  `Requested`. Its decision, approval, signature and applied fields are cleared, whatever the
-  insert carried, and that includes a Desk duplicate of a decided record. A new time-off
-  request also drops any approver it was sent with, so `_resolve_approver` derives the
-  approver from `reports_to`. A new tier review drops any reviewer, because `send_to_reviewer`
-  sets one after checking eligibility. Migrations, installs and patches are exempt, as
-  before.
-- **`tier_review.apply_promotion` checks the reviewer's eligibility again.** Applying now
-  requires HR Manager or System Manager, or the named reviewer who is still in
-  `progression.eligible_reviewers` for that person, the same predicate `send_to_reviewer`
-  uses.
+  A record created outside the module's own buttons starts as `Draft` / `Draft` /
+  `Requested`, with its decision, approval, signature and applied fields empty; a Desk
+  duplicate of a decided record starts the same way. A new time-off request takes its
+  approver from `reports_to`. A new tier review has no reviewer until `send_to_reviewer`
+  names one.
+  - **A tier review created by hand goes through the Start button's checks.** The person,
+    HR, or somebody senior on that ladder may start it; its from and to rungs and its
+    requirement lines are read from the ladder (`_ladder_snapshot`), and it is refused when
+    the target rung lists no requirements.
+  - **Imports of historical records keep their statuses.** A Data Import run by HR Manager or
+    System Manager keeps the status and decision columns in the file, so approved leave and
+    paper-signed acknowledgements from before the module can be loaded. Migrations, installs
+    and patches are exempt as before.
+- **`tier_review.apply_promotion` requires an eligible reviewer.** Applying is for HR Manager
+  or System Manager, or the named reviewer while they are in `progression.eligible_reviewers`
+  for that person, the same predicate `send_to_reviewer` uses.
 
 ## [1.824.0] - 2026-11-18
 
