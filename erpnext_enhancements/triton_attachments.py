@@ -339,7 +339,7 @@ def _discard_and_throw(file_docname: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Whitelisted API (called by the widget)
 # ---------------------------------------------------------------------------
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def register_upload(file: str | None = None, file_url: str | None = None,
                     session_id: int | str | None = None) -> dict:
     """Adopt a File the browser has already uploaded, and return its chip.
@@ -473,7 +473,7 @@ def register_upload(file: str | None = None, file_url: str | None = None,
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def attach_drive_file(drive_file_id: str, file_name: str | None = None,
                       mime_type: str | None = None, drive_url: str | None = None,
                       session_id: int | str | None = None) -> dict:
@@ -644,7 +644,7 @@ def list_pending() -> list:
     ]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove(attachment: str) -> dict:
     """Delete one of the caller's own attachments, and its bytes with it.
 

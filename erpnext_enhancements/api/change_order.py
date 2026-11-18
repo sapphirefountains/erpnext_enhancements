@@ -41,7 +41,7 @@ def _editable(name):
     return doc
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_change_order(change_order, note=None):
     """Record the project manager's approval. Returns the change order's derived state.
 
@@ -70,7 +70,7 @@ def approve_change_order(change_order, note=None):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_customer_approval(change_order, how):
     """Record that the customer has agreed, and **how**.
 
@@ -96,7 +96,7 @@ def record_customer_approval(change_order, how):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_approval(change_order, which):
     """Undo an approval that was recorded in error. ``which`` is ``pm`` or ``customer``.
 

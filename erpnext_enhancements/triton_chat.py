@@ -660,7 +660,7 @@ def list_personas() -> list:
     return personas
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_persona(
     name: str,
     system_prompt: str,
@@ -680,7 +680,7 @@ def create_persona(
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_persona(
     persona_id: str,
     name: str | None = None,
@@ -707,7 +707,7 @@ def update_persona(
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_persona(persona_id: str) -> dict:
     """Delete one of the current user's own personas."""
     result = _request("DELETE", _custom_persona_path(persona_id))
@@ -715,7 +715,7 @@ def delete_persona(persona_id: str) -> dict:
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def duplicate_persona(persona_key: str) -> dict:
     """Fork any visible persona into an editable copy owned by this user.
 
@@ -727,7 +727,7 @@ def duplicate_persona(persona_key: str) -> dict:
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_default_persona(persona_key: str | None = None) -> dict:
     """Set the persona the current user's new chats start on (both surfaces)."""
     result = _request("PUT", "/api/v1/personas/selection", {
@@ -761,13 +761,13 @@ def get_messages(session_id: str, limit: int | None = 50) -> list:
     return _request("GET", path)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_session(session_id: str) -> dict:
     """Delete a Triton chat session and its history."""
     return _request("DELETE", f"/api/v1/assistant/sessions/{cint(session_id)}")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def confirm_action(action_id: str, session_id: str | None = None) -> dict:
     """Approve a Triton-proposed write action (human-in-the-loop confirm)."""
     return _request("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {
@@ -775,7 +775,7 @@ def confirm_action(action_id: str, session_id: str | None = None) -> dict:
     })
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_action(action_id: str, session_id: str | None = None) -> dict:
     """Reject a Triton-proposed write action."""
     return _request("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {

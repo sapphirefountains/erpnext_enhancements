@@ -597,7 +597,7 @@ def _template_meta(template):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_visit(record, patch, modified=None):
     """Apply a wizard step's changes and return the re-validated state.
 
@@ -665,7 +665,7 @@ def save_visit(record, patch, modified=None):
     return state
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def finish_visit(record, signature=None, modified=None, technician_signature=None, email_sign_off=None):
     """Finish the visit: sign off and advance it through the house workflow.
 
@@ -875,7 +875,7 @@ def get_upcoming_visits(days=UPCOMING_WINDOW_DAYS):
     return entries
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_visit_today(contract, serial_no=None):
     """Create a draft visit record now for a feature scheduled later.
 
@@ -1020,7 +1020,7 @@ def _date_existing_draft(name, visit_date):
             pass
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_visit(contract, serial_no=None, visit_date=None):
     """Start a visit record for a site on a chosen date — today, or backfilled.
 

@@ -1150,7 +1150,7 @@ def get_project_comments(project_name):
 	return comments
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_comment(project_name, comment_text):
 	"""
 	Adds a standard comment to a project.
@@ -1178,7 +1178,7 @@ def add_project_comment(project_name, comment_text):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_project_comment(project_name, comment_name):
 	"""
 	Deletes a comment if the user is the owner.
@@ -1201,7 +1201,7 @@ def delete_project_comment(project_name, comment_name):
 		return {"success": False, "error": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_comment(project_name, comment_name, comment_text):
 	if not comment_name or not comment_text:
 		frappe.throw(_("Comment name and comment text are required."))

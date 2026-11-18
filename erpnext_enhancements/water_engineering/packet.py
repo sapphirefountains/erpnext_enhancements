@@ -335,7 +335,7 @@ def _attach_packet_pdf(doc):
     return file_doc.file_url
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_packet(design):
     """Whitelisted (write-gated): snapshot the packet HTML onto the design and
     produce the PDF (chrome) with the CAD drawings merged in, attached to the

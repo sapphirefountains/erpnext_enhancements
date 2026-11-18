@@ -124,7 +124,7 @@ def _draft(course_version):
 # ------------------------------------------------------------------ versioning
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_draft_version(course, change_type=None):
     """Clone the live version into a fresh editable draft, and return its name.
 
@@ -251,7 +251,7 @@ def _clone_lessons(from_version, to_version):
             cp.insert(ignore_permissions=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_for_review(course_version, notes=None):
     """Hand a draft to a Training Manager.
 
@@ -303,7 +303,7 @@ def _unreviewed_ai_questions(course_version):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def publish_version(course_version, change_type, release_notes=None):
     """Freeze a draft and make it the live version. Training Manager only.
 
@@ -749,7 +749,7 @@ def _raise_retake(course, user, due_days):
     ).insert(ignore_permissions=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retire_course(course, reason=None):
     """Withdraw a course and cancel what is still outstanding on it."""
     _require_manager()
@@ -777,7 +777,7 @@ def retire_course(course, reason=None):
 # ------------------------------------------------------------------ assignment
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def assign_course(course, users=None, employees=None, due_date=None):
     """Assign a course to named people. Training Manager only."""
     _require_manager()
@@ -824,7 +824,7 @@ def resolve_assignment_group(target_type, target_value=None):
     return {"users": _group_users(target_type, target_value)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def assign_course_to_group(course, target_type, target_value=None, due_date=None):
     """Assign a course to everybody in a department, designation, position or role.
 
@@ -925,7 +925,7 @@ def run_bulk_assign(course, targets, due_date=None, assigned_by=None):
     return created
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def waive_assignment(assignment, reason):
     """Excuse somebody from a course they were assigned."""
     _require_manager()
@@ -985,7 +985,7 @@ def drive_file_id_from(value):
     return text
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def register_video_asset(drive_file_id, title=None):
     """Register a Drive video, probing its real duration.
 
@@ -1038,7 +1038,7 @@ def register_video_asset(drive_file_id, title=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retry_video_copy(video_asset):
     """Re-run the Drive to GCS copy for one asset, and say what happened.
 
@@ -1830,7 +1830,7 @@ def _options_by_parent(parenttype, parents):
 # ------------------------------------------------------------------- autosave
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_draft_version(course_version, payload, modified=None):
     """Apply a builder patch to an open draft and return a fresh lock token.
 
@@ -2055,7 +2055,7 @@ def _apply_quiz(lesson, rows, rejected):
         lesson.append("quiz_questions", values)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reorder_lessons(course_version, order):
     """Re-number lessons from a drag-and-drop, in the order given.
 

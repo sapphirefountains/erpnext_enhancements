@@ -49,7 +49,7 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def open_review(employee, to_position=None):
 	"""Start a review for *employee* against the rung above their own.
 
@@ -148,7 +148,7 @@ def open_review(employee, to_position=None):
 	return {"name": doc.name, "lines": len(doc.lines)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_to_reviewer(review, reviewer):
 	"""The person's own action: "this is where I think I am."
 
@@ -199,7 +199,7 @@ def send_to_reviewer(review, reviewer):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decide(review, decision, note=None):
 	"""Promote, or not yet. The reviewer's action, or a stand-in's.
 
@@ -243,7 +243,7 @@ def decide(review, decision, note=None):
 	return {"status": doc.status, "decision": doc.decision}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def apply_promotion(review):
 	"""Actually move them. A separate, deliberate act.
 
@@ -287,7 +287,7 @@ def apply_promotion(review):
 	return {"applied_on": str(doc.applied_on), "position": doc.to_position}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_review(review, note=None):
 	"""Withdraw it. Either side, any time before it is applied."""
 	me = _me()

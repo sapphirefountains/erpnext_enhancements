@@ -138,7 +138,7 @@ def oauth_callback(code=None, realmId=None, realm_id=None, state=None):
 	frappe.local.response["location"] = "/app/quickbooks-online-dashboard"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def disconnect():
 	"""Disconnect from QuickBooks Online: revoke at Intuit, then clear local state.
 
@@ -173,7 +173,7 @@ def disconnect_callback():
 	frappe.local.response["location"] = "/app/quickbooks-online-dashboard"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def import_all():
 	"""RPC: enqueue a full QBO import on the long queue (returns immediately).
 
@@ -220,7 +220,7 @@ def preview_resync(entity_types=None):
 	return {"preview_id": preview_id, "status": "queued"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def run_resync(preview_id):
 	"""RPC: enqueue running a previously generated resync preview.
 
@@ -237,14 +237,14 @@ def run_resync(preview_id):
 	return {"status": "queued"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_entity(entity_type, qbo_id):
 	"""RPC: fetch and upsert a single QBO entity (dashboard per-entity Sync)."""
 	_require_qbo_operator()
 	return run_sync_entity(entity_type, qbo_id)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retry_failed(log_name=None):
 	"""RPC: re-run a failed CDC poll in the background (dashboard "Retry Failed").
 
@@ -323,7 +323,7 @@ def reconcile_transactions(entity_types=None, tolerance=1.0):
 	return run_reconcile_transactions(entity_types=entity_types, tolerance=float(tolerance or 1.0))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_opening_balances(as_of_date=None, auto_submit=0):
 	"""RPC: build an opening Journal Entry from QBO balances (draft unless auto_submit)."""
 	_require_qbo_operator()
@@ -572,14 +572,14 @@ def decide_matches(decisions, fill_blanks=0, merge_duplicate=1):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def confirm_match(entity_type, qbo_id):
 	"""RPC: stamp a mapping as reviewed without changing it (the page's Keep button)."""
 	_require_qbo_operator()
 	return matching.confirm(entity_type, qbo_id)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def confirm_matches(pairs):
 	"""RPC: ``confirm_match`` over a list (the page's Keep selected), one result per pair in
 	order; a row with no mapping is reported, never raised, and never stops the rest."""

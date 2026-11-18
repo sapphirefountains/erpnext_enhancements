@@ -35,7 +35,7 @@ def _require_stripe_operator():
 	frappe.only_for(STRIPE_OPERATOR_ROLES)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_invoice_payment(sales_invoice, method=None):
 	"""RPC (desk): start a Stripe Checkout for a Sales Invoice. Returns checkout url.
 
@@ -46,7 +46,7 @@ def create_invoice_payment(sales_invoice, method=None):
 	return create_payment(sales_invoice=sales_invoice, channel="Desk", method=method)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_adhoc_payment(customer, amount, description=None, method=None):
 	"""RPC (desk): start a Stripe Checkout for an ad-hoc amount (no invoice). Refused while the
 	customer has a Stripe payment settling or a link open: it is applied to no invoice, so it
@@ -57,7 +57,7 @@ def create_adhoc_payment(customer, amount, description=None, method=None):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_payment_link(stripe_payment, via="email", to=None):
 	"""RPC (desk): email or text the hosted-checkout link for a Stripe Payment.
 
@@ -208,7 +208,7 @@ def payment_config():
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def portal_create_payment(sales_invoice, method=None):
 	"""RPC (portal): a logged-in customer pays one of *their own* invoices.
 
@@ -327,7 +327,7 @@ def portal_invoice_pdf(invoice=None):
 	return invoice_pdf.respond_with_pdf(name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enroll_autopay(customer):
 	"""RPC (desk): start a setup-mode Checkout to save a customer's method for autopay."""
 	_require_stripe_operator()
@@ -336,7 +336,7 @@ def enroll_autopay(customer):
 	return create_setup_session(customer, channel="Desk")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def portal_enroll_autopay():
 	"""RPC (portal): a logged-in customer saves their own method for autopay."""
 	if frappe.session.user == "Guest":
@@ -349,7 +349,7 @@ def portal_enroll_autopay():
 	return create_setup_session(customers[0], channel="Portal")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def charge_saved_method(customer, amount=None, sales_invoice=None, description=None):
 	"""RPC (desk): charge a customer's saved method off-session (manual trigger).
 
@@ -372,7 +372,7 @@ def charge_saved_method(customer, amount=None, sales_invoice=None, description=N
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_autopay(customer):
 	"""RPC (desk): cancel a customer's autopay — detach the method, clear flags, revoke consent."""
 	_require_stripe_operator()
@@ -381,7 +381,7 @@ def revoke_autopay(customer):
 	return _revoke(customer)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def portal_revoke_autopay():
 	"""RPC (portal): a logged-in customer cancels their own autopay."""
 	if frappe.session.user == "Guest":
@@ -394,7 +394,7 @@ def portal_revoke_autopay():
 	return _revoke(customers[0])
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refund_payment(stripe_payment, amount=None):
 	"""RPC (desk): refund a Stripe Payment in Stripe (full unless ``amount`` given).
 

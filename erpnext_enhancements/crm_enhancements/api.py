@@ -44,7 +44,7 @@ def _notify_recipients(users):
 
 
 # The enqueue function now accepts 'project_template' and passes it on.
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enqueue_project_creation(opportunity_name, users=None, project_template=None):
 	"""Queue background creation of a Project from an Opportunity.
 
@@ -182,7 +182,7 @@ def sync_opportunity_tags(doc, method=None):
 		doc._user_tags = None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_opportunity_tags_for_existing(opportunity_name):
 	"""Sync tags for an existing Opportunity without triggering a full save.
 

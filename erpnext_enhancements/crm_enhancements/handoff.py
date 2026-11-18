@@ -368,7 +368,7 @@ def project_meeting_attendees(project):
 	return resolve_project_attendees(project)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_project_meeting(project, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the project launch meeting and invite the team.
 
@@ -1088,7 +1088,7 @@ def _cancel_meeting(event_name):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the hand-off meeting and invite Sales, Production and Billing.
 
@@ -1238,7 +1238,7 @@ def _mirror_onto_project(opportunity, when, by, skip_reason):
 		frappe.log_error(frappe.get_traceback(), "Hand-off: mirror onto project failed")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_handoff_complete(opportunity):
 	"""Record that the hand-off meeting happened. This is what opens the gate."""
 	doc = frappe.get_doc("Opportunity", opportunity)
@@ -1254,7 +1254,7 @@ def mark_handoff_complete(opportunity):
 	return {"already": False, "on": str(stamped), "by": frappe.session.user}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def skip_handoff(opportunity, reason):
 	"""Skip the hand-off meeting, on the record, with a reason.
 

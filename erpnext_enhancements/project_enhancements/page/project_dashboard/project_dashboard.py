@@ -212,7 +212,7 @@ def get_project_data(is_active=None):
 		return {"error": "Could not fetch project data. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_inline_task(project, subject, parent_task=None):
 	"""Instantly creates a task from the inline 'Quick Add' row."""
 	if not project or not subject:
@@ -236,7 +236,7 @@ def create_inline_task(project, subject, parent_task=None):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_assignee(project_name, user_id):
 	"""Assigns a user to a project with permission checks.
 
@@ -271,7 +271,7 @@ def add_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_project_assignee(project_name, user_id):
 	"""Removes a user's assignment from a project with permission checks.
 
@@ -306,7 +306,7 @@ def remove_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_details(project_name, field, value):
 	"""Updates a single field for a specified project document.
 
@@ -342,7 +342,7 @@ def update_project_details(project_name, field, value):
 		return {"status": "error", "message": "Could not update project. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_status(task_name, status):
 	"""Updates the status of a single task."""
 	if not check_permission():
@@ -358,7 +358,7 @@ def update_task_status(task_name, status):
 		return {"status": "error", "message": "Could not update task status."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_priority(task_name, priority):
 	"""Updates the priority of a single task."""
 	if not check_permission():
@@ -904,7 +904,7 @@ def get_master_project_projects(master_project):
 		return {"error": "Could not fetch projects for master project."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_master_project_structure(master_project, projects):
 	"""Updates ordering for projects under a Master Project."""
 	if not master_project or not projects:
@@ -930,7 +930,7 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_date(task_name, field, value):
 	"""Updates a task's start or end date with permission checks.
 
@@ -994,7 +994,7 @@ def update_task_date(task_name, field, value):
 		return {"status": "error", "message": "Could not update task date. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_expected_time(task_name, expected_time):
 	"""Updates a task's expected time with permission and validation checks.
 
@@ -1042,7 +1042,7 @@ def update_task_expected_time(task_name, expected_time):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_assignee(task_name, user_id):
 	"""Assigns a user to a task with permission checks.
 
@@ -1078,7 +1078,7 @@ def add_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_task_assignee(task_name, user_id):
 	"""Removes a user's assignment from a task with permission checks.
 
@@ -1114,7 +1114,7 @@ def remove_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_structure(project_name, tasks):
 	"""Updates the parent and ordering for a list of tasks.
 
@@ -1157,7 +1157,7 @@ def update_task_structure(project_name, tasks):
 	return {"status": "success", "moved": out.get("moved", []), "converted": out.get("converted", [])}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_dates_from_gantt(task_name, start_date, end_date):
 	"""
 	Updates a task's start and end dates from the Gantt chart and 
@@ -1239,7 +1239,7 @@ def _shift_successors(predecessor_name, day_diff, processed=None):
 		_shift_successors(task_name, day_diff, processed)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_dates_from_gantt(project_name, start_date, end_date):
 	"""Updates a project's expected start/end dates from a Gantt drag.
 
@@ -1298,7 +1298,7 @@ def _task_has_dependency_path(start_task, target_task, visited=None):
 	return False
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_dependency(task_name, depends_on_task):
 	"""Creates a dependency so that `task_name` depends on `depends_on_task`.
 
@@ -1467,7 +1467,7 @@ def get_gantt_tasks_for_project(project_name):
 		return {"error": "Could not fetch tasks for Gantt board."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_progress_from_gantt(task_name, progress):
 	"""
 	Updates a task's progress from the Gantt chart.
@@ -1510,7 +1510,7 @@ def update_task_progress_from_gantt(task_name, progress):
 		return {"status": "error", "message": "Could not update task progress. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_multiple_docs(project_updates, task_updates):
 	"""Updates multiple project and task documents in a single transaction.
 
@@ -1561,7 +1561,7 @@ def update_multiple_docs(project_updates, task_updates):
 		frappe.log_error(title="Error in batch update", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_task(task_name):
 	"""Deletes a single task.
 

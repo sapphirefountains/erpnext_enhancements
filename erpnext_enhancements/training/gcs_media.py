@@ -372,7 +372,7 @@ REQUIRED_KEY_FIELDS = ("type", "project_id", "private_key", "client_email")
 EXPECTED_ACCOUNT_PREFIX = "sa-training-media@"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_service_account_key(key_json):
 	"""Store the signing key, after checking it is actually a usable one.
 

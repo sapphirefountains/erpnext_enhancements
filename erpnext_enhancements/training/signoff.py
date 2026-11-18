@@ -200,7 +200,7 @@ def resolve_supervisor(course, learner):
 # ------------------------------------------------------------------- request
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def request_signoff(course, user=None, assignment=None, attempt=None):
 	"""Open a draft sign-off for a learner and tell the supervisor.
 
@@ -312,7 +312,7 @@ def _mark_assignment_awaiting(assignment, course, learner):
 # -------------------------------------------------------------------- record
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_signoff(signoff, outcome, competency_notes=None, signature_image=None):
 	"""Record a supervisor's verdict and submit it.
 

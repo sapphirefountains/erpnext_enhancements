@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.0] - 2026-11-18
+
+### Changed
+
+- **State-changing endpoints now require POST.** About 215 whitelisted endpoints that create,
+  update, delete, send, approve or sync something were declared with a bare `@frappe.whitelist()`,
+  which Frappe answers for GET, POST, PUT and DELETE alike. Each now declares
+  `methods=["POST"]`, consistent with the endpoints that already did, so a link or an image tag
+  can no longer invoke a write. Covered: Stripe payments (refunds, saved-method charges, autopay,
+  payment links, the customer payment page's POSTs), QuickBooks Online (disconnect, import, resync,
+  entity sync, retry, match confirmation, write-back), Plaid, Accounting Intake review and upload,
+  Google Drive link management, the offsite backup run, MDM and device management, the Triton chat
+  persona and action endpoints and its attachment writes, e-signature requests, contract creation,
+  the Projects Dashboard writers, project comments, CRM hand-off, Fountain Move and data-quality
+  actions, contact and address linking, rental and out-of-service actions, the Gantt, scope task,
+  budget, change order, scorecard, maintenance planner, maintenance visit, quality, time kiosk,
+  inventory scanner, booking and procurement writers, training authoring, sign-off, submissions,
+  Q&A and evaluations, telephony and SMS sends, HR permits, lone work, safety, hazards, policies,
+  tier review and time off, and the delete, project merge and document merge actions.
+  Every caller was checked before the change. All of them go through `frappe.call`,
+  `frappe.xcall`, `sf_kit.call` or a `fetch` that already sends POST (the time kiosk's `api()`
+  helper and its service worker's batch upload included), or through `frm.call` for the two
+  controller methods. Triton's `run_method`, the one outside client of these paths, also sends
+  POST.
+- **`mdm_integration.api.remote_action` also refuses a request authenticated by an
+  `Authorization` header**, the same rule `assistant_tools.gating_api` applies. The Managed Device
+  form signs in with the session cookie and never sends that header.
+- **Left as they were on purpose:** `quickbooks_online.core.api.disconnect_callback` (the address
+  Intuit sends the browser to is a GET navigation), `oauth_callback`, `start_oauth`, every read
+  endpoint, the document-mapper `make_*` functions that `frappe.model.open_mapped_doc` calls with GET,
+  and `triton_chat.stream_query`.
+
+### Added
+
+- **`tests/test_whitelist_methods_ratchet.py`**, a bench-free AST test with its own CI step. Every
+  whitelisted function must declare `methods=` or be listed in
+  `tests/data/whitelist_methods_baseline.txt`. The baseline can only shrink: a new endpoint without
+  `methods=`, or a baseline line for an endpoint that now declares it or no longer exists, fails
+  the build. The file's docstring says how to regenerate it.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added

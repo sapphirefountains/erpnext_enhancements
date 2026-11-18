@@ -43,7 +43,7 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def open_permit(permit, acknowledge_controls=0):
 	"""Open it, or say exactly why not.
 
@@ -92,7 +92,7 @@ def open_permit(permit, acknowledge_controls=0):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def close_permit(permit, everyone_out=1, notes=None):
 	"""Close it out. Deliberately one click and a confirmation.
 
@@ -119,7 +119,7 @@ def close_permit(permit, everyone_out=1, notes=None):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_permit(permit, notes=None):
 	"""Abandon it without entering — the common case when the gas is bad."""
 	_me()
