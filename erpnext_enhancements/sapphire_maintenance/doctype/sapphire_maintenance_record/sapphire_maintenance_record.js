@@ -27,12 +27,13 @@
 
 const EE_SECTION_TABLES = ["maintenance_results", "chemistry_readings", "cleaning_tasks", "consumables"];
 
-// The roles get_dashboard_context requires (sapphire_maintenance/permissions.py VIEW_ALL_ROLES).
-// Without one the form skips the briefing rather than asking for it and being refused.
+// What get_dashboard_context requires: one of these roles (sapphire_maintenance/permissions.py
+// VIEW_ALL_ROLES; tests/test_access_checks_ops.py holds the two lists equal) and read on Project.
+// Without both the form skips the briefing rather than asking for it and being refused.
 const EE_BRIEFING_ROLES = ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"];
 
 function ee_sees_briefing() {
-	return frappe.user.has_role(EE_BRIEFING_ROLES);
+	return frappe.user.has_role(EE_BRIEFING_ROLES) && frappe.model.can_read("Project");
 }
 
 // get_visit_payload is for the people who fill a visit form in: create or write on the doctype.

@@ -556,7 +556,7 @@ def map_contract_from_project_contract(source_name):
 
 	No permission check of its own: reached through the whitelisted
 	:func:`make_contract_from_project_contract`, and from the signing hook
-	:func:`autocreate_maintenance_contract_on_signed`, which may run as Guest. Pulls the legal
+	:func:`autocreate_maintenance_contract_on_signed`. Pulls the legal
 	terms (frequency, invoicing cadence, start date, seasonal options) and, if
 	the project has a submitted Maintenance Sales Order, links it and maps its
 	water-feature items into ``covered_features``.

@@ -13,12 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Operations-side endpoints now check access before they read or write.** Hardening, consistent
   with the checks the neighboring endpoints already make. Each rule below is pinned by
-  `tests/test_access_checks_ops.py` (bench-free, AST over the source, plus two helpers executed
-  against a fake `frappe`), which has its own CI step.
+  `tests/test_access_checks_ops.py` (bench-free, AST over the source, plus the access helpers
+  executed against a fake `frappe`), which has its own CI step.
   - **Maintenance visit briefing** (`get_dashboard_context`) requires read permission on the
     Project and one of the roles that see every visit (`sapphire_maintenance.permissions.VIEW_ALL_ROLES`).
-    The desk form now asks for it only when the user holds one of those roles, so a Finance Team
-    reader opening a visit no longer meets a refusal.
+    The role is checked before the project is looked up. The desk form asks for the briefing
+    only when the user holds one of those roles and can read Projects.
   - **Visit checklist payload** (`get_visit_payload`) requires create or write permission on
     Sapphire Maintenance Record, or read permission on each of the contract, project and service
     call it names. The desk form fills a draft only for a user who can create or write visits.
@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     own read check on the visit, so the wizard behaves as before.
   - **Create > Maintenance Contract** from a Sales Order, a Project Contract or a Project requires
     read permission on the source document and create permission on Sapphire Maintenance Contract.
-    The signing hook that drafts the contract when an agreement is Signed (which can run as Guest)
-    maps through the unchecked `map_contract_from_project_contract`.
+    The signing hook that drafts the contract when an agreement is Signed maps through the
+    unchecked `map_contract_from_project_contract`, so it works as before.
   - **Task tree on the Task form** (`get_child_tasks_html`) requires read permission on the Task,
     checked before its `try` so a refusal is raised rather than drawn, and reads at most 2,000
     descendants and 50 levels.
@@ -55,18 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     calls it only for a user who can write the record.
   - **Asset Booking availability** (`check_availability`) requires read permission on Asset
     Booking.
-  - **Supervisor sign-off requests** (`request_signoff`): a learner may ask only about a course
-    they can open (`api.training._visible_course_names`); any other reads as "No such course.".
-    A named attempt must be the learner's own attempt at that course. A named assignment is used
-    only when it is the learner's, for that course, and still open; otherwise the course lookup
-    decides, as it always did when none was named. Training, System and HR Managers raising a
-    request for someone else are unchanged.
+  - **Supervisor sign-off requests** (`request_signoff`): a learner asks about a course they can
+    open (`api.training._visible_course_names`), with their own attempt and their own open
+    assignment for that course. Training, System and HR Managers raising a request for someone
+    else are unchanged.
   - **"Expand with AI" on the feedback form** (`draft_description`) is for System Users, with at
     most 30 drafts per person per hour (`_enforce_draft_rate`, the same counter shape as the
     filing limit). The bootstrap offers the button only to System Users.
   - **Unlink and Delete preview** (`get_blocking_links`) requires read permission on the
     document; `unlink_and_delete`, which checks delete permission first, uses the unchecked list.
-    **Merge Project preview** (`get_merge_stats`) requires read permission on both projects.
+    **Merge Project preview** (`get_merge_stats`) requires read permission on Project, checked
+    before either name is looked up, and on both projects.
 
 ## [1.824.0] - 2026-11-18
 

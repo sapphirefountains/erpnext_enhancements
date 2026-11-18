@@ -865,9 +865,11 @@ def _check_dashboard_access(project):
 
 	if not project:
 		frappe.throw(_("Project is required"))
-	frappe.has_permission("Project", "read", doc=project, throw=True)
+	# The role first, then the record: a caller without the role gets the same answer
+	# whatever project is named.
 	if frappe.session.user != "Administrator" and not (VIEW_ALL_ROLES & set(frappe.get_roles())):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	frappe.has_permission("Project", "read", doc=project, throw=True)
 
 
 def build_dashboard_context(project, serial_no=None, record=None):

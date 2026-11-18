@@ -50,6 +50,7 @@ SIGNOFF = APP / "training/signoff.py"
 DELETE_UTILS = APP / "delete_utils.py"
 PROJECT_MERGE = APP / "project_merge.py"
 RECORD_JS = APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"
+MAINTENANCE_PERMISSIONS = APP / "sapphire_maintenance/permissions.py"
 OPPORTUNITY_JS = APP / "public/js/crm_enhancements/opportunity.js"
 
 
@@ -85,6 +86,55 @@ def _is_whitelisted(path, name):
 		if ast.unparse(target) == "frappe.whitelist":
 			return True
 	return False
+
+
+def _view_all_roles():
+	"""``VIEW_ALL_ROLES`` read out of the source (importing the module needs a bench)."""
+	for node in _tree(MAINTENANCE_PERMISSIONS).body:
+		if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == "VIEW_ALL_ROLES":
+			return set(ast.literal_eval(node.value))
+	raise AssertionError("VIEW_ALL_ROLES not found")
+
+
+class _Refused(Exception):
+	pass
+
+
+class _FakeFrappe:
+	"""Enough of ``frappe`` to run the two access helpers: a user, their roles, and a
+	``has_permission`` that records what it was asked and answers from a table."""
+
+	PermissionError = _Refused
+
+	def __init__(self, user="tech@example.com", roles=(), allowed=()):
+		self.session = types.SimpleNamespace(user=user)
+		self._roles = list(roles)
+		self._allowed = set(allowed)
+		self.asked = []
+
+	def get_roles(self, user=None):
+		return list(self._roles)
+
+	def has_permission(self, doctype, ptype="read", doc=None, throw=False):
+		self.asked.append((doctype, ptype, doc, throw))
+		ok = (doctype, ptype) in self._allowed or (doctype, ptype, doc) in self._allowed
+		if not ok and throw:
+			raise _Refused(f"{doctype} {ptype}")
+		return ok
+
+	def throw(self, message, exc=None, **kwargs):
+		raise (exc or ValueError)(message)
+
+
+def _run(path, name, fake, **extra):
+	"""The function ``name`` from ``path``, compiled alone against ``fake``. An import inside
+	its body is dropped and the names it would bind are passed in ``extra``."""
+	node = _function(path, name)
+	node.body = [statement for statement in node.body if not isinstance(statement, ast.ImportFrom)]
+	module = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+	namespace = {"frappe": fake, "_": lambda text: text, **extra}
+	exec(compile(module, str(path), "exec"), namespace)
+	return namespace[name]
 
 
 class _Order(unittest.TestCase):
@@ -129,6 +179,77 @@ class TestMaintenanceBriefingAndPayload(_Order):
 		js = RECORD_JS.read_text(encoding="utf-8")
 		self.assertIn("if (!frm.doc.project || !ee_sees_briefing()) return;", js)
 		self.assertIn("if (frm.doc.docstatus !== 0 || !ee_fills_visits(frm)) return;", js)
+		self.assertIn(
+			'return frappe.user.has_role(EE_BRIEFING_ROLES) && frappe.model.can_read("Project");', js
+		)
+
+	def test_the_forms_role_list_is_the_servers(self):
+		import json
+		import re
+
+		js = RECORD_JS.read_text(encoding="utf-8")
+		match = re.search(r"const EE_BRIEFING_ROLES = (\[[^\]]*\]);", js)
+		self.assertIsNotNone(match, "EE_BRIEFING_ROLES not found")
+		self.assertEqual(set(json.loads(match.group(1))), _view_all_roles())
+
+	def test_the_role_is_checked_before_the_project_is_looked_up(self):
+		check = _code(RECORD, "_check_dashboard_access")
+		self.assertBefore(
+			check, "VIEW_ALL_ROLES", "frappe.has_permission('Project', 'read', doc=project, throw=True)"
+		)
+
+	def _briefing_check(self, fake):
+		return _run(RECORD, "_check_dashboard_access", fake, VIEW_ALL_ROLES=_view_all_roles())
+
+	def test_briefing_access_needs_a_project(self):
+		fake = _FakeFrappe(roles=["Maintenance User"])
+		with self.assertRaises(ValueError):
+			self._briefing_check(fake)("")
+		self.assertEqual(fake.asked, [])
+
+	def test_briefing_access_without_the_role_never_reaches_the_project(self):
+		fake = _FakeFrappe(roles=["Finance Team"], allowed=[("Project", "read", "PRJ-1")])
+		with self.assertRaises(_Refused):
+			self._briefing_check(fake)("PRJ-1")
+		self.assertEqual(fake.asked, [])
+
+	def test_briefing_access_with_the_role_still_needs_project_read(self):
+		fake = _FakeFrappe(roles=["Maintenance User"])
+		with self.assertRaises(_Refused):
+			self._briefing_check(fake)("PRJ-1")
+		self.assertEqual(fake.asked, [("Project", "read", "PRJ-1", True)])
+		fake = _FakeFrappe(roles=["Maintenance User"], allowed=[("Project", "read", "PRJ-1")])
+		self.assertIsNone(self._briefing_check(fake)("PRJ-1"))
+
+	def test_briefing_access_for_administrator_skips_the_role_and_keeps_the_read(self):
+		fake = _FakeFrappe(user="Administrator", roles=[], allowed=[("Project", "read", "PRJ-1")])
+		self.assertIsNone(self._briefing_check(fake)("PRJ-1"))
+		self.assertEqual(fake.asked, [("Project", "read", "PRJ-1", True)])
+
+	def _payload_check(self, fake):
+		return _run(RECORD, "_check_visit_payload_access", fake)
+
+	def test_payload_access_for_someone_who_fills_visits_in(self):
+		for right in ("create", "write"):
+			with self.subTest(right=right):
+				fake = _FakeFrappe(allowed=[("Sapphire Maintenance Record", right)])
+				self.assertIsNone(self._payload_check(fake)("PRJ-1", "MNT-CON-1", None))
+				self.assertTrue(all(row[0] == "Sapphire Maintenance Record" for row in fake.asked))
+
+	def test_payload_access_with_nothing_named_is_refused(self):
+		fake = _FakeFrappe()
+		with self.assertRaises(_Refused):
+			self._payload_check(fake)(None, None, None)
+
+	def test_payload_access_otherwise_needs_read_on_each_record_named(self):
+		fake = _FakeFrappe(
+			allowed=[("Sapphire Maintenance Contract", "read", "MNT-CON-1"), ("Project", "read", "PRJ-1")]
+		)
+		self.assertIsNone(self._payload_check(fake)("PRJ-1", "MNT-CON-1", None))
+		self.assertIn(("Sapphire Maintenance Contract", "read", "MNT-CON-1", True), fake.asked)
+		self.assertIn(("Project", "read", "PRJ-1", True), fake.asked)
+		with self.assertRaises(_Refused):
+			self._payload_check(fake)("PRJ-1", "MNT-CON-1", "SC-9")
 
 
 class TestMaintenanceContractMappers(_Order):
@@ -340,6 +461,10 @@ class TestDeleteAndMergePreviews(_Order):
 	def test_unlink_and_delete_checks_delete_then_uses_the_unchecked_list(self):
 		code = _code(DELETE_UTILS, "unlink_and_delete")
 		self.assertBefore(code, "frappe.has_permission(doctype, 'delete', name)", "_blocking_links(doctype, name)")
+
+	def test_the_merge_preview_checks_project_read_before_it_looks_a_name_up(self):
+		code = _code(PROJECT_MERGE, "get_merge_stats")
+		self.assertBefore(code, "frappe.has_permission('Project', 'read', throw=True)", "frappe.db.exists(")
 
 	def test_the_merge_preview_needs_read_on_both_projects(self):
 		code = _code(PROJECT_MERGE, "get_merge_stats")

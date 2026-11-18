@@ -35,6 +35,10 @@ def get_merge_stats(source_project, target_project):
 	if source_project == target_project:
 		frappe.throw(_("Source and Target Project cannot be the same."))
 
+	# Read on Project first, then the names: a caller without it gets the same answer
+	# whatever projects are named.
+	frappe.has_permission("Project", "read", throw=True)
+
 	if not frappe.db.exists("Project", source_project):
 		frappe.throw(_("Source Project {0} does not exist.").format(source_project))
 

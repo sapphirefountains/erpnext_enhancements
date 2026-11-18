@@ -26,8 +26,10 @@ class MaintenanceSiteBriefing(BaseTool):
             "deliverables), chemistry trends from the last 5 visits, and any open visit "
             "drafts. NOTE: the response contains site access codes — the same data the "
             "desk technician widget shows — so only surface them when the user actually "
-            "needs site access. Requires read permission on the Project and on Sapphire "
-            "Maintenance Records."
+            "needs site access. Requires a maintenance role (Maintenance User, Maintenance "
+            "Supervisor, Projects Manager or System Manager), read permission on the Project "
+            "and on Sapphire Maintenance Records; without the role the tool answers "
+            "'Not permitted'."
         )
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
