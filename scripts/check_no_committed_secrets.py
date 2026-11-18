@@ -77,6 +77,29 @@ header saying "fake" above a real key is the cheapest way to blind this script.
 ``ALLOWLISTED_PATHS`` exists for the case that mechanism cannot cover and ships empty;
 see the note there before adding to it.
 
+Reviewed historical blobs
+-------------------------
+
+A marker cannot be added to a blob that is already in history: nobody can edit it. So when a
+rule is added and old versions of a file match it, the full walk would be red for good, and a
+gate that cannot go green gets ignored. ``scripts/secret_scan_reviewed_blobs.txt`` lists such
+blobs by their full git hash, each with a note, after a person has read every finding in them.
+
+It is narrow on purpose:
+
+  * it is keyed on **content**, never on a path: a blob that differs by one byte is not on it,
+    so the current file and every future version are still read by every rule;
+  * it is read by the **full walk only**. The working tree, the staged files and the PR range
+    never consult it, so nothing a pull request adds can be excused by it;
+  * a listed blob that is also in ``HEAD``'s tree is **not** excused: the list covers history;
+  * an entry that excuses nothing (the blob is gone, or is clean under today's rules) **fails
+    the run**, so the list only ever holds what it needs;
+  * a listed blob is never recorded in the clean-blob cache. Take its line out and the next run
+    reports it again.
+
+Listing a blob says its findings were read. It does not say the values in it are harmless:
+where one was a real credential, rotating it is still the fix.
+
 Three modes, one set of rules
 -----------------------------
 
@@ -171,6 +194,13 @@ FILE_LEVEL_MARKER_DIRS = frozenset({"tests", "test", "fixtures"})
 #: about to add one, check first whether the finding is a keyword match with no credential
 #: value attached — if so, the rule is what needs fixing.
 ALLOWLISTED_PATHS: dict[str, str] = {}
+
+#: Where the reviewed historical blobs are listed, relative to the repository being scanned.
+#: One per line: the blob's full 40-character hash, then a note. See the module docstring.
+REVIEWED_BLOBS_REL = "scripts/secret_scan_reviewed_blobs.txt"
+
+#: A line of that file: the hash, whitespace, and a note long enough to mean something.
+_REVIEWED_LINE_RE = re.compile(r"^([0-9a-f]{40})\s+(\S.{9,})$")
 
 #: Blobs larger than this are reported as skipped rather than scanned. A credential is a
 #: few kilobytes; the cap exists so one pathological text file cannot turn a CI gate into a
@@ -399,6 +429,17 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 	"sample",
 )
 
+#: The digits and the alphabet in the orders people type them, for :func:`_is_typed_run`.
+TYPED_RUNS: tuple[str, ...] = (
+	"1234567890abcdefghijklmnopqrstuvwxyz",
+	"0123456789abcdefghijklmnopqrstuvwxyz",
+	"abcdefghijklmnopqrstuvwxyz1234567890",
+	"abcdefghijklmnopqrstuvwxyz0123456789",
+)
+
+#: How long a typed-out run must be before the value counts as a stand-in.
+TYPED_RUN_LENGTH = 20
+
 #: An expression that *refers* to a secret rather than being one: a dotted attribute
 #: chain, which is how HCL, Python and JS all reach for a value held somewhere else
 #: (``google_iap_client.iap_client.secret``, ``process.env.CLIENT_SECRET``). Only the
@@ -449,10 +490,25 @@ class Finding:
 # --------------------------------------------------------------------------- scanning
 
 
+def _is_typed_run(lowered: str) -> bool:
+	"""Does this value hold the digits and the alphabet typed out in order?
+
+	``1234567890abcdefghijklmnopqrstuvwxyz`` behind a provider's prefix is what somebody types
+	where a token would go. :data:`TYPED_RUN_LENGTH` characters of it in a row is not something a
+	generated credential contains, so the value is a stand-in whatever surrounds the run.
+	"""
+	for start in range(len(lowered) - TYPED_RUN_LENGTH + 1):
+		piece = lowered[start : start + TYPED_RUN_LENGTH]
+		if any(piece in run for run in TYPED_RUNS):
+			return True
+	return False
+
+
 def _is_placeholder(value: str, key_name: str = "") -> bool:
 	"""Is this value a stand-in rather than a credential?
 
-	Five ways to be one, and the last two were learned from this repository's own contents:
+	Six ways to be one. The typed-out run is checked with the named tokens (see
+	:func:`_is_typed_run`), and the last two were learned from this repository's own contents:
 
 	1. it names itself a placeholder (:data:`PLACEHOLDER_TOKENS`);
 	2. it is an interpolation or a template hole (``${…}``, ``{{…}}``, ``<…>``);
@@ -476,6 +532,8 @@ def _is_placeholder(value: str, key_name: str = "") -> bool:
 		return True
 	if any(token in lowered for token in PLACEHOLDER_TOKENS):
 		return True
+	if _is_typed_run(lowered):
+		return True
 	if value.startswith(("${", "{{", "<", "$(")) or value.endswith(("}", ">")):
 		return True
 	if _REFERENCE_RE.match(value):
@@ -492,6 +550,48 @@ def _value_of(match: re.Match[str]) -> str:
 	to close.
 	"""
 	return match.group(1) or match.group(2) or ""
+
+
+#: A substring every match of a rule must contain (lower case). A line without one skips the
+#: rule's regex outright. The full walk reads gigabytes of text (every version of the
+#: changelog), and the provider and password rules doubled its time without this, which is
+#: longer than the CI job allowed. Each entry is a necessary part of its rule's pattern, so the
+#: findings are the same with or without it; ``test_secret_scan`` holds that for every rule.
+#: The three rules the walk had before are not listed and always run.
+_QUICK_TRIGGERS: dict[str, tuple[str, ...]] = {
+	"encryption_key": ("encryption_key",),
+	"stripe-live-key": ("_live_",),
+	"stripe-webhook-secret": ("whsec_",),
+	"google-api-key": ("aiza",),
+	"aws-access-key": ("akia", "asia"),
+	"github-token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+	"slack-token": ("xox",),
+	"jwt": ("eyj",),
+	"token-key-secret-pair": ("token",),
+	"url-with-password": ("://",),
+	"twilio-auth-token": ("twilio",),
+	"password-assignment": ("passw",),
+	"password-table-cell": ("passw",),
+	"password-option": ("passw",),
+	"database-client-password": ("mysql", "mariadb"),
+}
+
+
+def _active_rules(lowered_text: str) -> frozenset[str]:
+	"""The :data:`_QUICK_TRIGGERS` rules whose substring occurs anywhere in this file or blob."""
+	return frozenset(
+		rule
+		for rule, triggers in _QUICK_TRIGGERS.items()
+		if any(trigger in lowered_text for trigger in triggers)
+	)
+
+
+def _may_match(rule: str, lowered_line: str, active: frozenset[str]) -> bool:
+	"""False when the file or the line lacks the substring the rule needs, so its regex cannot match."""
+	triggers = _QUICK_TRIGGERS.get(rule)
+	if triggers is None:
+		return True
+	return rule in active and any(trigger in lowered_line for trigger in triggers)
 
 
 def _token_of(rule: str, match: re.Match[str]) -> str:
@@ -536,6 +636,16 @@ def _is_prose_password(line: str, match: re.Match[str]) -> bool:
 		return False
 	before = line[: match.start("key")]
 	return len(re.findall(r"[A-Za-z]\w*", before)) > 3
+
+
+def _is_sudoers_tag(match: re.Match[str]) -> bool:
+	"""Is this the sudoers tag ``NOPASSWD:``, which is followed by a command and not a password?
+
+	``deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart …`` reads to the assignment rule as a
+	name ending in ``passwd`` with a value after the colon. The tag means the opposite of a
+	credential: no password is asked for. Upper case only, as sudoers writes it.
+	"""
+	return match.groupdict().get("key") == "NOPASSWD"
 
 
 def _is_code_path(where: str) -> bool:
@@ -628,6 +738,7 @@ def scan_text(where: str, text: str) -> list[Finding]:
 	if _has_file_level_marker(where, lines):
 		return findings
 	has_key_material = bool(KEY_MATERIAL_RE.search(text))
+	active = _active_rules(text.lower())
 	check_passwords = not _is_code_path(where)
 
 	for index, line in enumerate(lines):
@@ -647,23 +758,32 @@ def scan_text(where: str, text: str) -> list[Finding]:
 				)
 			)
 
+		lowered = line.lower() if active else ""
+
 		for name, pattern, why in VALUE_RULES:
+			if not _may_match(name, lowered, active):
+				continue
 			match = pattern.search(line)
 			if match and not _is_placeholder(_value_of(match), name):
 				findings.append(Finding(name, why, where, line_no, _clip(line)))
 
 		for name, pattern, why in TOKEN_RULES:
+			if not _may_match(name, lowered, active):
+				continue
 			match = pattern.search(line)
 			if match and not _is_placeholder(_token_of(name, match)):
 				findings.append(Finding(name, why, where, line_no, _clip(line)))
 
 		if check_passwords:
 			for name, pattern, why in PASSWORD_RULES:
+				if not _may_match(name, lowered, active):
+					continue
 				match = pattern.search(line)
 				if (
 					match
 					and not _is_password_placeholder(_password_value(match))
 					and not _is_prose_password(line, match)
+					and not _is_sudoers_tag(match)
 				):
 					findings.append(Finding(name, why, where, line_no, _clip(line)))
 
@@ -936,6 +1056,47 @@ def range_objects(since: str) -> tuple[Iterable[tuple[str, str, int]], dict[str,
 	return list(_batch_check(paths)), paths
 
 
+class ReviewedListError(Exception):
+	"""The reviewed-blob list cannot be used as written."""
+
+
+def load_reviewed_blobs() -> dict[str, str]:
+	"""``{blob hash: note}`` from :data:`REVIEWED_BLOBS_REL` in the scanned repository.
+
+	No file means no entries. A line that is not a full hash and a note raises
+	:class:`ReviewedListError`: a list that half-parses would excuse less, or more, than its
+	reader thinks it does.
+	"""
+	path = REPO / REVIEWED_BLOBS_REL
+	try:
+		text = path.read_text(encoding="utf-8")
+	except FileNotFoundError:
+		return {}
+	reviewed: dict[str, str] = {}
+	for number, raw in enumerate(text.splitlines(), 1):
+		line = raw.strip()
+		if not line or line.startswith("#"):
+			continue
+		match = _REVIEWED_LINE_RE.match(line)
+		if not match:
+			raise ReviewedListError(
+				f"{REVIEWED_BLOBS_REL}:{number}: expected a full 40-character blob hash and a note"
+			)
+		if match.group(1) in reviewed:
+			raise ReviewedListError(f"{REVIEWED_BLOBS_REL}:{number}: {match.group(1)[:12]} is listed twice")
+		reviewed[match.group(1)] = match.group(2)
+	return reviewed
+
+
+def head_blobs() -> set[str]:
+	"""The hash of every blob in ``HEAD``'s tree: what the repository holds today."""
+	return {
+		fields[2]
+		for line in _git("ls-tree", "-r", "HEAD").splitlines()
+		if len(fields := line.split(None, 3)) >= 3 and fields[1] == "blob"
+	}
+
+
 def iter_staged() -> Iterator[tuple[str, str]]:
 	"""The index version of every file added or changed in the index, as it will be committed.
 
@@ -1119,6 +1280,20 @@ def main(argv: list[str] | None = None) -> int:
 	cache = CleanBlobCache(_cache_path(args.cache), fingerprint)
 	cache.load()
 
+	# The reviewed list belongs to the full walk. The PR range never reads it, so nothing a
+	# pull request adds can be excused by it, and a listed blob still in the tree is not excused.
+	reviewed: dict[str, str] = {}
+	current: set[str] = set()
+	if not args.since:
+		try:
+			reviewed = load_reviewed_blobs()
+		except ReviewedListError as exc:
+			print(f"\ncannot scan for committed secrets: {exc}\n", file=sys.stderr)
+			return 1
+		if reviewed:
+			current = head_blobs()
+	excused: set[str] = set()
+
 	if args.since:
 		commits = _git("rev-list", "--count", f"{args.since}..HEAD").strip()
 		print(
@@ -1139,20 +1314,35 @@ def main(argv: list[str] | None = None) -> int:
 	counts = BlobCounts()
 	for where, text, sha, rel in iter_blobs(objects, paths, cache, counts):
 		blob_findings = scan_text(where, text)
-		if blob_findings:
-			findings.extend(blob_findings)
-		else:
+		if not blob_findings:
 			cache.mark_clean(sha, rel)
+		elif sha in reviewed and sha not in current:
+			excused.add(sha)  # read and accepted; never recorded as clean
+		else:
+			findings.extend(blob_findings)
 
 	new_entries = cache.save()
 	if cache.path is not None:
 		print(f"cache: {new_entries} newly clean blobs recorded in {cache.path}")
 	if counts.oversize:
 		print(f"note: {counts.oversize} blob(s) over {MAX_BLOB_BYTES} bytes were not scanned")
+	if reviewed:
+		print(f"reviewed: {len(excused)} historical blob(s) with findings are listed in {REVIEWED_BLOBS_REL}")
 
 	elapsed = time.monotonic() - started
+	unused = sorted(set(reviewed) - excused)
 	if findings:
 		_report(findings)
+	if unused:
+		print(f"\n{REVIEWED_BLOBS_REL} LISTS BLOBS IT DOES NOT NEED TO:\n", file=sys.stderr)
+		for sha in unused:
+			if sha in current:
+				why = "is in the current tree, and the list covers history only"
+			else:
+				why = "has no finding under the current rules, or is not in this repository"
+			print(f"  {sha}  {why}", file=sys.stderr)
+		print("\nRemove these lines. The list holds only what the full walk still needs.\n", file=sys.stderr)
+	if findings or unused:
 		return 1
 
 	print(

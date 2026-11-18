@@ -27,16 +27,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules. A `password` or `passwd` assignment with a literal value (a `db_password` key, a
   `--admin-password` option, a `mysql -p` argument, a table row) is matched in documentation and
   configuration files; source code is left to review. The existing `FAKE-DO-NOT-USE` marker works for
-  all of these as before. Run over the whole working tree the new rules produced 12 findings: 5 in the
-  test VM setup note and 7 in documentation or fixtures, all examples. Nothing is left after the
-  edits below, and the existing history and PR-range checks are unchanged in how they run.
+  all of these as before. Run over the whole working tree the new rules produced 12 findings, in one
+  setup note and in documentation and fixtures. Nothing is left in the tree after the edits below.
+  The rules apply in every mode: the working tree, staged files, the PR range and the full-history
+  walk.
+- **Older blobs that match the new rules, where nothing can be edited.** Run over every blob in the
+  repository, the new rules matched earlier versions of seven files (43 blobs), and a full-history
+  walk that cannot go green is a gate nobody reads. They are handled two ways.
+  - Two shapes that are never a credential are now read as stand-ins by the rules themselves: a
+    value holding twenty or more characters of the digits and the alphabet typed out in order (the
+    placeholder default of `cloud_build_github_token`, 36 blobs), and the sudoers tag `NOPASSWD:`,
+    which is followed by a command and not a password (2 blobs).
+  - The five blobs that remain are listed by content hash in the new
+    `scripts/secret_scan_reviewed_blobs.txt`, each after a person read its findings: earlier
+    versions of `scripts/test_capture_scrub.js`, `modules/cloudsql-instance/README.md` and
+    `infra/assets/test-vm-setup.md`. The list names exact blobs, never paths, so every other version
+    of those files is still read. Only the full-history walk reads it: the working tree, the staged
+    files and the PR range never do, so nothing a pull request adds can be excused by it. A listed
+    blob that is still in the tree is not excused, an entry that excuses nothing fails the run, and
+    a listed blob is never recorded in the clean-blob cache.
+  With both, the full-history walk passes on a fresh clone of the repository with every branch
+  (25,437 blobs).
+- **The provider and password rules skip a line that cannot match.** Each has a substring its
+  pattern requires (`_QUICK_TRIGGERS`), looked for before the regex runs. Without it the full walk
+  took about twice as long as with the old rules, which is past the CI job's time limit on the first
+  run after a rule change, when the clean-blob cache starts empty. With it the walk takes about a
+  tenth longer than before (one pass over a fresh clone, split across twenty processes: 75 s with
+  the old rules, 141 s with the new ones, 84 s with the triggers). The findings are the same with and
+  without it: a test holds that on shaped lines and on the largest files, and it was checked once
+  over every blob in the repository. The full-history job's limit goes from 30 to 60 minutes for
+  that one run (it took 17 minutes with the old rules on 2026-11-02): a job killed at its limit
+  saves no cache, so too short a limit fails the same way on every run after it.
 
 ### Changed
 
 - **The scanner's PEM private-key rule can no longer be excused by the fixture marker**, in either
   form (beside the value, or in a file header under `tests/` or `fixtures/`). A test that needs
   PEM-shaped data assembles it at run time from fragments, as `tests/test_secret_scan.py` does.
-  New tests there cover each new rule, the placeholders that must stay quiet, and the marker.
+  New tests there cover each new rule, the placeholders that must stay quiet, the marker, the
+  reviewed-blob list (what it excuses and, mostly, what it does not) and the quick triggers.
 - `infra/assets/test-vm-setup.md` no longer carries database or site credential values in its prose,
   its pasted `site_config.json` or its command lines; each now reads `<stored in the password manager>`.
 - `.github/workflows/ci.yml` declares `permissions: contents: read` for the whole workflow. No job
