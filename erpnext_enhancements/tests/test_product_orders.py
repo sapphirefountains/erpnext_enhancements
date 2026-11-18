@@ -352,6 +352,49 @@ class TestOrderStage(unittest.TestCase):
 		self.assertEqual(po.STAGE_LABELS[po.STAGE_ORDERED], "Ordered / Paid")
 
 
+class TestPlacePanelOrders(unittest.TestCase):
+	"""Each control-panel order on exactly one Project row, whatever the Project's type."""
+
+	def test_the_orders_own_link_and_the_projects_link_both_place_it(self):
+		placed, unplaced = po.place_panel_orders(
+			[{"name": "SO-A", "project": "PRJ-1"}, {"name": "SO-B", "project": None}],
+			[{"name": "PRJ-1", "sales_order": None}, {"name": "PRJ-2", "sales_order": "SO-B"}],
+		)
+		self.assertEqual(placed, {"PRJ-1": ["SO-A"], "PRJ-2": ["SO-B"]})
+		self.assertEqual(unplaced, [])
+
+	def test_two_orders_on_one_project_both_show_there(self):
+		# Manager re-review: setdefault kept only the first; the second read "No project yet".
+		placed, unplaced = po.place_panel_orders(
+			[{"name": "SO-A", "project": "PRJ-1"}, {"name": "SO-B", "project": "PRJ-1"}],
+			[{"name": "PRJ-1", "sales_order": "SO-A"}],
+		)
+		self.assertEqual(placed, {"PRJ-1": ["SO-A", "SO-B"]})
+		self.assertEqual(unplaced, [])
+
+	def test_when_the_links_disagree_the_order_is_listed_once_by_its_own_link(self):
+		# PRJ-1 names SO-A, while SO-A names PRJ-2: SO-A goes to PRJ-2, and only there.
+		placed, unplaced = po.place_panel_orders(
+			[{"name": "SO-A", "project": "PRJ-2"}],
+			[{"name": "PRJ-1", "sales_order": "SO-A"}, {"name": "PRJ-2", "sales_order": None}],
+		)
+		self.assertEqual(placed, {"PRJ-1": [], "PRJ-2": ["SO-A"]})
+		self.assertEqual(sum(len(v) for v in placed.values()) + len(unplaced), 1)
+
+	def test_an_order_whose_project_is_not_listed_falls_back_or_waits(self):
+		placed, unplaced = po.place_panel_orders(
+			[{"name": "SO-A", "project": "PRJ-GONE"}, {"name": "SO-B", "project": "PRJ-GONE"}],
+			[{"name": "PRJ-1", "sales_order": "SO-B"}],
+		)
+		self.assertEqual(placed, {"PRJ-1": ["SO-B"]})
+		self.assertEqual(unplaced, ["SO-A"])
+
+	def test_nothing_in_nothing_out(self):
+		self.assertEqual(po.place_panel_orders([], []), ({}, []))
+		self.assertEqual(po.place_panel_orders(None, None), ({}, []))
+		self.assertEqual(po.place_panel_orders([{"name": "SO-A"}], []), ({}, ["SO-A"]))
+
+
 class TestAllocateStock(unittest.TestCase):
 	def order(self, name, date_, code="PDT-0040-1-1-1-2-0", qty=1, built=False, has_wo=False):
 		return {
@@ -511,8 +554,56 @@ class TestSmallFacts(unittest.TestCase):
 
 	def test_the_product_quote_win_rate_statuses(self):
 		self.assertEqual(po.QUOTE_WON_STATUSES, ("Ordered", "Partially Ordered"))
-		self.assertEqual(po.QUOTE_LOST_STATUSES, ("Lost",))
+		# Manager re-review of #1464: ERPNext's daily set_expired_status moves an unordered
+		# submitted quote to Expired and nobody marks it Lost, so Expired counts as lost.
+		self.assertEqual(po.QUOTE_LOST_STATUSES, ("Lost", "Expired"))
 		self.assertFalse(set(po.QUOTE_WON_STATUSES) & set(po.QUOTE_LOST_STATUSES))
+		self.assertEqual(po.win_rate(3, 1 + 6), 30, "3 ordered, 1 Lost, 6 expired is 30%, not 75%")
+
+	def test_stock_totals_leave_work_in_progress_out(self):
+		# Manager re-review of #1464: a Work Order reserves required - transferred in its source
+		# warehouse only, so parts already moved to WIP counted again as available.
+		bins = [
+			{
+				"item_code": "GRT6-M1",
+				"warehouse": "Project Shelf - SF",
+				"actual_qty": 10,
+				"projected_qty": 8,
+				"ordered_qty": 0,
+			},
+			{
+				"item_code": "GRT6-M1",
+				"warehouse": "Work In Progress - SF",
+				"actual_qty": 5,
+				"projected_qty": 5,
+				"ordered_qty": 0,
+			},
+			{
+				"item_code": "AF12Z",
+				"warehouse": "Stores - SF",
+				"actual_qty": 0,
+				"projected_qty": 4,
+				"ordered_qty": 4,
+			},
+			{
+				"item_code": "AF12Z",
+				"warehouse": "Work In Progress - SF",
+				"actual_qty": 0,
+				"projected_qty": 0,
+				"ordered_qty": 1,
+			},
+		]
+		totals = po.stock_totals(bins, {"Work In Progress - SF"})
+		self.assertEqual(totals["GRT6-M1"], {"on_hand": 10.0, "projected": 8.0, "on_order": 0.0})
+		self.assertEqual(
+			totals["AF12Z"], {"on_hand": 0.0, "projected": 4.0, "on_order": 5.0}, "on order counts anywhere"
+		)
+		everything = po.stock_totals(bins, ())
+		self.assertEqual(
+			everything["GRT6-M1"]["projected"], 13.0, "without the WIP list, the moved parts count twice"
+		)
+		self.assertEqual(po.stock_totals([], {"x"}), {})
+		self.assertEqual(po.stock_totals(None, None), {})
 
 	def test_component_state(self):
 		self.assertEqual(po.component_state(0, 0), "out")

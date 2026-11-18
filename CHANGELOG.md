@@ -142,11 +142,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     on the board for 30 days.
   - **Sales pipeline.** Open product quotations, valued by their product lines. The open
     Opportunities that one of those quotations names. And the **product-quote win rate** over 12
-    months: a submitted product quotation that became an order is won, one marked Lost is lost.
+    months: a submitted product quotation that became an order is won; one marked Lost, or one that
+    Expired, is lost.
   - **Stock and shortages.** Finished product units on hand, with how many the open orders have
     already claimed. Below them, the components in "E-Stop Components" that are short by their
-    **projected** quantity: the Bin's on hand, plus ordered, minus reserved.
-  - **Control panel projects.** Active Projects of type Products, each with its Sales Order. A
+    **projected** quantity: the Bin's on hand, plus ordered, minus reserved, summed over every
+    warehouse except the Work In Progress ones.
+  - **Control panel projects.** Active Projects of type Products, and every Project a
+    control-panel order is linked to, whatever its type, each with its Sales Orders. A
     control-panel order that has no Project yet shows here too, marked "No project yet".
   - **Product-line chips** (E-Stops, Control Panels, Other) narrow every section and count every
     product order. Several can be pressed together, as the stream chips can. The choice is kept per
@@ -181,9 +184,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Does it need a project?** (`needs_project`, `skips_project`). Decision pick 1: E-Stops and
     standard products get no project, and control panels keep one. So a product document with a
     Control Panels line needs a project. **That order is not on the order board.** It shows once, in
-    the Control panel projects section. It sits on its Project's row when the two are linked
-    (`Sales Order.project` or `Project.sales_order`). Without a Project, it is its own row, "No
-    project yet". No sale is listed twice, and none is lost.
+    the Control panel projects section (`place_panel_orders`). It sits on its Project's row when the
+    two are linked (`Sales Order.project` or `Project.sales_order`), **whatever the Project's
+    type**. The hand-off picks a project type from the deal's value streams in the order Design,
+    Build, Service, Events, so a panel deal tagged Build + Products gets a Build project. Reading
+    only type Products left such an order on "No project yet" and its Project nowhere. Several
+    orders can share one Project. When the two links disagree (P1 names order A, while A names P2),
+    the order's own link wins and A is listed once. A Canceled Project is no project. Without a
+    Project, the order is its own row, "No project yet". No sale is listed twice, and none is lost.
   - **The lines.** E-Stops is PDT-0040. Control Panels are the families Nikolas listed for phase P4:
     Splash Wizard, VFD Bypass, Pool & Fountain Center, Level Master and Activation Bollard. Every
     other product family is Other, and so is a configured Item whose code has no PDT family.
@@ -213,7 +221,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Design + Build + Products, the control-panel jobs carry Products too, and quote to order tags
     mixed deals with it. So a deal shows only through a product quotation that names it. None of
     prod's 705 Quotations names an Opportunity yet, so that list fills once quote to order makes
-    linked quotes. The win rate is the product quotes', for the same reason.
+    linked quotes. The win rate is the product quotes', for the same reason. **An Expired quote is
+    lost:** ERPNext's daily `set_expired_status` moves a submitted quotation that was never ordered
+    to Expired, and nobody marks it Lost. Leaving those out made the rate read high: 3 ordered,
+    1 Lost and 6 expired is 30%, not 75%.
+  - **Component stock** (`stock_totals`, `component_state`). Summed per warehouse in Python, with
+    the Work In Progress warehouses left out of on hand and projected. ERPNext 16.54.0 reserves
+    for a Work Order only what is still to transfer, and only in its source warehouse. So a part
+    already moved to WIP for a build would otherwise count again as available. The WIP warehouses
+    are Manufacturing Settings' default, every Work Order's own, and the "Work In Progress" warehouse
+    ERPNext creates for each company (`Work In Progress - SF` on prod).
 - **`project_dashboard.get_products_data`**, the tab's one endpoint. It finds candidates by any
   product line, then reads **every** line of each candidate and judges it with `classify_lines`.
   - **Permissions.** The page gate first (`check_permission`), as every endpoint in the module. Then
@@ -253,6 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - every stage transition, including a Work Order Closed short, and the QC hook;
   - the board window, including Closed orders and the 30-day edge, the stock-UOM quantity and the
     shelf allocation;
+  - the control-panel placement: a linked Project of any type, two orders on one Project, links
+    that disagree, a missing Project; stock totals without WIP; and Expired counted as lost;
   - the open-quotation and win-rate rules, and that the script, the shell and the server name the
     same lines and stages.
 - `tests/test_products_tab_endpoint.py` runs `get_products_data` on its own frappe stub. The stub
@@ -260,10 +279,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the empty answer prod gets today and the permissions per section, Work Order and Delivery Note
     names included;
   - a fountain job, a Closed short shipment and a return-only delivery kept off the board;
-  - product amounts, control-panel orders placed once in the projects section, the product-quote
-    win rate and deals through their quotes;
-  - components judged on projected quantity, every query formatted with its parameters the way the
-    driver does, and the two CLAUDE.md rules.
+  - product amounts, and control-panel orders placed once in the projects section. That includes
+    a Build-type Project found through its order, two orders on one Project, links that disagree
+    and a Canceled Project. Its `get_all` honours filters, so which Projects each filter finds is
+    tested;
+  - the product-quote win rate with Expired quotes as lost, and deals through their quotes;
+  - components judged on projected quantity without the WIP warehouses (each source of them),
+    every query formatted with its parameters the way the driver does, and the two CLAUDE.md rules.
 - Both suites run in a new CI step. The Projects Dashboard harness
   (`scripts/test_projects_dashboard_toolbar.mjs`) drives the tab's real script. It covers asking
   once, the empty panels, grouping by stage, the stage and line filters, the remembered chips, the

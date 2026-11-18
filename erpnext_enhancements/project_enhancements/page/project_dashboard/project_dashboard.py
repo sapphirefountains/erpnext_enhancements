@@ -2158,6 +2158,40 @@ def _product_opportunities(open_quotes):
 	return {"rows": rows}
 
 
+def _wip_warehouses():
+	"""The warehouses a build moves parts into.
+
+	Manufacturing Settings' default (unset on prod on 2026-11-18), every Work Order's own
+	``wip_warehouse``, and the warehouse ERPNext creates for each company at setup under the name
+	"Work In Progress" (``Work In Progress - SF`` on prod). Each read is guarded: a failure leaves
+	that source out rather than the section.
+	"""
+	found = set()
+	try:
+		default = frappe.db.get_single_value("Manufacturing Settings", "default_wip_warehouse")
+		if default:
+			found.add(default)
+	except Exception:
+		pass
+	try:
+		for row in frappe.db.sql(
+			"""
+			SELECT DISTINCT wip_warehouse FROM `tabWork Order`
+			WHERE docstatus < 2 AND coalesce(wip_warehouse, '') <> ''
+			""",
+			as_dict=True,
+		):
+			found.add(row.wip_warehouse)
+	except Exception:
+		pass
+	try:
+		standard = frappe.get_all("Warehouse", filters={"warehouse_name": "Work In Progress"}, pluck="name")
+		found.update(standard)
+	except Exception:
+		pass
+	return found
+
+
 def _product_stock(source_column, committed):
 	"""Finished product units on hand, and the component stock of each product line.
 
@@ -2200,15 +2234,9 @@ def _product_stock(source_column, committed):
 		)
 
 	group_line = {group: line for line, groups in po.COMPONENT_GROUPS.items() for group in groups}
-	components = []
-	for row in frappe.db.sql(
+	items = frappe.db.sql(
 		"""
 		SELECT i.name AS item_code, i.item_name, i.item_group, i.stock_uom,
-			(SELECT COALESCE(SUM(b.actual_qty), 0) FROM `tabBin` b WHERE b.item_code = i.name) AS on_hand,
-			(
-				SELECT COALESCE(SUM(b.projected_qty), 0) FROM `tabBin` b WHERE b.item_code = i.name
-			) AS projected,
-			(SELECT COALESCE(SUM(b.ordered_qty), 0) FROM `tabBin` b WHERE b.item_code = i.name) AS on_order,
 			(
 				SELECT COALESCE(SUM(r.warehouse_reorder_level), 0) FROM `tabItem Reorder` r
 				WHERE r.parent = i.name AND r.parenttype = 'Item'
@@ -2219,7 +2247,24 @@ def _product_stock(source_column, committed):
 		""",
 		{"groups": tuple(sorted(group_line)) or ("",)},
 		as_dict=True,
-	):
+	)
+	# Summed per warehouse in Python, so a Work In Progress warehouse can be left out
+	# (po.stock_totals says why).
+	bins = []
+	if items:
+		bins = frappe.db.sql(
+			"""
+			SELECT item_code, warehouse, actual_qty, projected_qty, ordered_qty
+			FROM `tabBin`
+			WHERE item_code IN %(codes)s
+			""",
+			{"codes": tuple(row.item_code for row in items)},
+			as_dict=True,
+		)
+	totals = po.stock_totals(bins, _wip_warehouses())
+	components = []
+	for row in items:
+		total = totals.get(row.item_code) or {"on_hand": 0.0, "projected": 0.0, "on_order": 0.0}
 		components.append(
 			{
 				"item_code": row.item_code,
@@ -2227,11 +2272,11 @@ def _product_stock(source_column, committed):
 				"item_group": row.item_group,
 				"uom": row.stock_uom,
 				"line": group_line.get(row.item_group, po.LINE_OTHER),
-				"on_hand": flt(row.on_hand),
-				"projected": flt(row.projected),
-				"on_order": flt(row.on_order),
+				"on_hand": total["on_hand"],
+				"projected": total["projected"],
+				"on_order": total["on_order"],
 				"reorder_level": flt(row.reorder_level),
-				"state": po.component_state(row.projected, row.reorder_level),
+				"state": po.component_state(total["projected"], row.reorder_level),
 			}
 		)
 
@@ -2242,17 +2287,36 @@ def _product_stock(source_column, committed):
 	}
 
 
+#: The Project fields the control panel section reads.
+_PANEL_PROJECT_FIELDS = (
+	"name",
+	"project_name",
+	"customer",
+	"status",
+	"project_type",
+	"percent_complete",
+	"expected_start_date",
+	"expected_end_date",
+	"sales_order",
+)
+
+
 def _product_projects(today, panel_orders):
-	"""The control panel section: active Projects of type Products, and the product orders that
-	need a project, each listed once.
+	"""The control panel section: active Projects of type Products, the Projects the control-panel
+	orders are linked to (whatever their type), and every control-panel order, each once.
 
 	A product order that needs a project (``po.classify_lines``: a control panel on it) is not on
-	the order board; it shows here instead (product_orders' module docstring). It joins its
-	Project's row when the order names the Project (``Sales Order.project``) or the Project names
-	the order (``Project.sales_order``). An order with neither is a row of its own, marked "No
-	project yet". ``panel_orders`` is None when the person cannot read Sales Orders: the section
-	then lists the Projects alone.
+	the order board; it shows here instead (product_orders' module docstring). Its Project is found
+	through ``Sales Order.project`` or ``Project.sales_order``, **whatever its project type**: the
+	hand-off picks the type from the deal's value streams in the order Design, Build, Service,
+	Events, so a panel deal tagged Build + Products gets a Build project, and reading only type
+	Products left its order on "No project yet" and its Project nowhere. ``po.place_panel_orders``
+	puts each order on one Project (several orders may share one; when the links disagree the
+	order's own link wins). An order with no Project is a row of its own, "No project yet". A
+	Canceled Project is no project. ``panel_orders`` is None when the person cannot read Sales
+	Orders: the section then lists the Products Projects alone.
 	"""
+	fields = list(_PANEL_PROJECT_FIELDS)
 	projects = frappe.get_all(
 		"Project",
 		filters={
@@ -2260,36 +2324,42 @@ def _product_projects(today, panel_orders):
 			"is_active": "Yes",
 			"status": ["not in", ["Completed", "Canceled"]],
 		},
-		fields=[
-			"name",
-			"project_name",
-			"customer",
-			"status",
-			"percent_complete",
-			"expected_start_date",
-			"expected_end_date",
-			"sales_order",
-		],
+		fields=fields,
 	)
-	orders = {order["name"]: order for order in panel_orders or ()}
-	by_project = {}
-	for order in orders.values():
-		if order.get("project"):
-			by_project.setdefault(order["project"], order)
+	orders = list(panel_orders or ())
+	if orders:
+		seen = {project.get("name") for project in projects}
+		named = sorted({order["project"] for order in orders if order.get("project")} - seen)
+		linked = []
+		if named:
+			linked += frappe.get_all(
+				"Project", filters={"name": ["in", named], "status": ["!=", "Canceled"]}, fields=fields
+			)
+		order_names = [order["name"] for order in orders]
+		linked += frappe.get_all(
+			"Project",
+			filters={"sales_order": ["in", order_names], "status": ["!=", "Canceled"]},
+			fields=fields,
+		)
+		for project in linked:
+			if project.get("name") not in seen:
+				seen.add(project.get("name"))
+				projects.append(project)
 
+	placed, unplaced = po.place_panel_orders(orders, projects)
+	by_name = {order["name"]: order for order in orders}
 	today_iso = str(today)
-	rows, placed = [], set()
+	rows = []
 	for project in projects:
-		order = by_project.get(project.get("name")) or orders.get(project.get("sales_order"))
-		if order:
-			placed.add(order["name"])
 		end = _iso(project.get("expected_end_date"))
 		percent = flt(project.get("percent_complete"))
+		here = placed.get(project.get("name"), [])
 		rows.append(
 			{
 				"kind": "project",
 				"name": project.get("name"),
 				"project_name": project.get("project_name") or project.get("name"),
+				"project_type": project.get("project_type"),
 				"customer": project.get("customer"),
 				"status": project.get("status"),
 				"percent_complete": percent,
@@ -2297,17 +2367,17 @@ def _product_projects(today, panel_orders):
 				"expected_end_date": end,
 				"late": bool(end) and end < today_iso and percent < 100,
 				"line": po.LINE_PANELS,
-				"order": _panel_order_summary(order) if order else None,
+				"orders": [_panel_order_summary(by_name[name]) for name in here],
 			}
 		)
-	for order in orders.values():
-		if order["name"] in placed:
-			continue
+	for name in unplaced:
+		order = by_name[name]
 		rows.append(
 			{
 				"kind": "order",
-				"name": order["name"],
+				"name": name,
 				"project_name": None,
+				"project_type": None,
 				"customer": order.get("customer_name"),
 				"status": None,
 				"percent_complete": None,
@@ -2315,7 +2385,7 @@ def _product_projects(today, panel_orders):
 				"expected_end_date": order.get("delivery_date"),
 				"late": bool(order.get("late")),
 				"line": po.LINE_PANELS,
-				"order": _panel_order_summary(order),
+				"orders": [_panel_order_summary(order)],
 			}
 		)
 	# Soonest end first; undated last.

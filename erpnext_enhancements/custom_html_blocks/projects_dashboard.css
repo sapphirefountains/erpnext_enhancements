@@ -542,6 +542,8 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 .pd-pblock .pd-table th.pd-num { text-align: right; }
 .pd-psub { font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
 .pd-plink { white-space: nowrap; }
+/* A Project carrying several control-panel orders lists them one under another. */
+.pd-porder + .pd-porder { margin-top: var(--sf-space-5); }
 .pd-pcards { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .pd-card-s { margin-top: var(--sf-space-5); font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
 

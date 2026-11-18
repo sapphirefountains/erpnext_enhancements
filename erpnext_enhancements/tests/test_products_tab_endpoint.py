@@ -75,6 +75,7 @@ class Site:
 		self.get_all_calls = []
 		self.errors = []
 		self.raise_on = None
+		self.default_wip = None
 
 	def rows(self, key):
 		return [_Dict(row) for row in self.tables.get(key, [])]
@@ -90,7 +91,9 @@ _ROUTES = (
 	("FROM `tabQuotation Item` d\n", "quote_lines"),
 	("FROM `tabSales Order` so", "so_headers"),
 	("FROM `tabQuotation` q", "quote_headers"),
+	("SELECT DISTINCT wip_warehouse", "wip_orders"),
 	("FROM `tabWork Order`", "work_orders"),
+	("SELECT item_code, warehouse, actual_qty, projected_qty, ordered_qty", "component_bins"),
 	("FROM `tabSales Invoice Item` sii", "invoices"),
 	("SELECT item_code, SUM(actual_qty) AS qty", "on_hand"),
 	("FROM `tabOpportunity`\n", "opportunities"),
@@ -126,11 +129,31 @@ def _has_column(doctype, column):
 	return True
 
 
-def _get_all(doctype, filters=None, fields=None, **kwargs):
+def _matches(row, filters):
+	"""The few filter shapes the endpoint writes: a value, or [op, value] with =, !=, in, not in."""
+	for field, condition in (filters or {}).items():
+		value = row.get(field)
+		if isinstance(condition, (list, tuple)):
+			op, arg = condition[0], condition[1]
+			if (
+				(op == "in" and value not in arg)
+				or (op == "not in" and value in arg)
+				or (op == "!=" and value == arg)
+				or (op == "=" and value != arg)
+			):
+				return False
+		elif value != condition:
+			return False
+	return True
+
+
+def _get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
+	"""Unlike db.sql, get_all here honours its filters: the control panel section's whole point is
+	which Projects each filter finds (type Products, or linked to an order whatever its type)."""
 	SITE.get_all_calls.append((doctype, fields))
-	if doctype == "Project":
-		return SITE.rows("projects")
-	return []
+	table = {"Project": "projects", "Warehouse": "warehouses"}.get(doctype)
+	rows = [row for row in SITE.rows(table) if _matches(row, filters)] if table else []
+	return [row.get(pluck) for row in rows] if pluck else rows
 
 
 def setUpModule():
@@ -141,7 +164,16 @@ def setUpModule():
 	frappe.whitelist = lambda *a, **k: (lambda fn: fn) if not (a and callable(a[0])) else a[0]
 	frappe._ = lambda text, *a, **k: text
 	frappe._dict = _Dict
-	frappe.db = types.SimpleNamespace(sql=_sql, has_column=_has_column, get_value=lambda *a, **k: None)
+	frappe.db = types.SimpleNamespace(
+		sql=_sql,
+		has_column=_has_column,
+		get_value=lambda *a, **k: None,
+		get_single_value=lambda doctype, field, *a, **k: (
+			SITE.default_wip
+			if (doctype, field) == ("Manufacturing Settings", "default_wip_warehouse")
+			else None
+		),
+	)
 	frappe.get_all = _get_all
 	frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable
 	frappe.get_traceback = lambda *a, **k: "Traceback (most recent call last):\n  stub"
@@ -543,70 +575,104 @@ class TestTheBoard(Base):
 		self.assertIn("dn.posting_date >= %(since)s", query)
 
 
+def project(
+	name, project_name, *, project_type="Products", status="Active", sales_order=None, end=None, active="Yes"
+):
+	return {
+		"name": name,
+		"project_name": project_name,
+		"project_type": project_type,
+		"customer": "C",
+		"status": status,
+		"is_active": active,
+		"percent_complete": 10,
+		"expected_end_date": end,
+		"sales_order": sales_order,
+	}
+
+
 class TestControlPanels(Base):
 	"""A product order with a control panel needs a project: off the board, once in the projects."""
 
 	def setUp(self):
 		super().setUp()
-		SITE.tables["so_headers"] = [so("SO-P1", project="PRJ-1"), so("SO-P2"), so("SO-P3"), so("SO-E")]
+		SITE.tables["so_headers"] = [
+			so("SO-P1", project="PRJ-1"),
+			so("SO-P2"),  # no project yet (its only Project was Canceled)
+			so("SO-P3"),  # linked by Project.sales_order
+			so("SO-P4", project="PRJ-BUILD"),  # the hand-off made a Build project for it
+			so("SO-P5", project="PRJ-1"),  # a second order on PRJ-1
+			so("SO-P6", project="PRJ-3"),  # PRJ-4 names it too: the links disagree
+			so("SO-E"),
+		]
 		SITE.tables["so_lines"] = [
 			so_line("SO-P1", "PDT-0003", 28490),
 			so_line("SO-P2", "PDT-0011", 2500),
 			so_line("SO-P3", "PDT-0016", 9000),
+			so_line("SO-P4", "PDT-0002", 9950),
+			so_line("SO-P5", "PDT-0009", 2400),
+			so_line("SO-P6", "PDT-0020", 1800),
 			so_line("SO-E", "PDT-0040", 2200),
 		]
 		SITE.tables["projects"] = [
-			{
-				"name": "PRJ-1",
-				"project_name": "Splash Wizard Industrial",
-				"customer": "C",
-				"status": "Active",
-				"percent_complete": 40,
-				"expected_end_date": date(2026, 12, 20),
-				"sales_order": None,
-			},
-			{
-				"name": "PRJ-2",
-				"project_name": "Pool & Fountain Center",
-				"customer": "D",
-				"status": "Active",
-				"percent_complete": 10,
-				"expected_end_date": date(2026, 11, 1),
-				"sales_order": "SO-P3",
-			},
-			{
-				"name": "PRJ-3",
-				"project_name": "Custom panel, no order",
-				"customer": None,
-				"status": "Active",
-				"percent_complete": 0,
-				"expected_end_date": None,
-				"sales_order": None,
-			},
+			project("PRJ-1", "Splash Wizard Industrial", end=date(2026, 12, 20)),
+			project("PRJ-2", "Pool & Fountain Center", sales_order="SO-P3", end=date(2026, 11, 1)),
+			project("PRJ-3", "Level Master", end=date(2026, 12, 1)),
+			project("PRJ-4", "Level Master, second try", sales_order="SO-P6", end=date(2026, 12, 2)),
+			project("PRJ-BUILD", "Splash Wizard MAX", project_type="Build", end=date(2026, 12, 10)),
+			project("PRJ-OTHER", "A fountain build", project_type="Build"),
+			project(
+				"PRJ-CANCELED", "Old panel", project_type="Build", status="Canceled", sales_order="SO-P2"
+			),
 		]
+
+	def rows(self):
+		return {row["name"]: row for row in self.answer()["projects"]["rows"]}
+
+	def orders_of(self, row):
+		return [order["name"] for order in row["orders"]]
 
 	def test_control_panel_orders_are_not_on_the_board(self):
 		self.assertEqual([r["name"] for r in self.answer()["orders"]["rows"]], ["SO-E"])
 
-	def test_each_shows_once_in_the_projects_section(self):
-		rows = self.answer()["projects"]["rows"]
-		by_name = {r["name"]: r for r in rows}
-		# linked by Sales Order.project, and by Project.sales_order
-		self.assertEqual(by_name["PRJ-1"]["order"]["name"], "SO-P1")
-		self.assertEqual(by_name["PRJ-2"]["order"]["name"], "SO-P3")
-		self.assertIsNone(by_name["PRJ-3"]["order"])
-		# no project yet: a row of its own
-		self.assertEqual(by_name["SO-P2"]["kind"], "order")
-		self.assertEqual(by_name["SO-P2"]["order"]["product_amount"], 2500)
-		listed = [r["order"]["name"] for r in rows if r["order"]]
-		self.assertEqual(sorted(listed), ["SO-P1", "SO-P2", "SO-P3"], "every panel order once, none twice")
-		self.assertEqual([r["name"] for r in rows], ["PRJ-2", "SO-P2", "PRJ-1", "PRJ-3"], "soonest end first")
+	def test_a_linked_project_of_another_type_is_found(self):
+		# Manager re-review of #1464: the hand-off picks Build for a Build + Products deal, so
+		# reading type Products only left SO-P4 on "No project yet" and PRJ-BUILD nowhere.
+		rows = self.rows()
+		self.assertEqual(self.orders_of(rows["PRJ-BUILD"]), ["SO-P4"])
+		self.assertEqual(rows["PRJ-BUILD"]["project_type"], "Build")
+		self.assertNotIn("SO-P4", rows)
+		self.assertNotIn("PRJ-OTHER", rows, "an unlinked project of another type stays out")
 
-	def test_without_sales_order_read_the_projects_stand_alone(self):
+	def test_two_orders_on_one_project_both_show_on_it(self):
+		self.assertEqual(self.orders_of(self.rows()["PRJ-1"]), ["SO-P1", "SO-P5"])
+
+	def test_links_that_disagree_list_the_order_once(self):
+		rows = self.rows()
+		self.assertEqual(self.orders_of(rows["PRJ-3"]), ["SO-P6"], "the order's own link wins")
+		self.assertEqual(self.orders_of(rows["PRJ-4"]), [])
+
+	def test_a_canceled_project_is_no_project(self):
+		rows = self.rows()
+		self.assertNotIn("PRJ-CANCELED", rows)
+		self.assertEqual(rows["SO-P2"]["kind"], "order")
+		self.assertEqual(self.orders_of(rows["SO-P2"]), ["SO-P2"])
+		self.assertEqual(rows["SO-P2"]["orders"][0]["product_amount"], 2500)
+
+	def test_every_panel_order_shows_exactly_once(self):
+		listed = [order["name"] for row in self.answer()["projects"]["rows"] for order in row["orders"]]
+		self.assertEqual(sorted(listed), ["SO-P1", "SO-P2", "SO-P3", "SO-P4", "SO-P5", "SO-P6"])
+
+	def test_soonest_end_first(self):
+		names = [r["name"] for r in self.answer()["projects"]["rows"]]
+		# SO-P2 (promise 12/01) and PRJ-3 (end 12/01) tie on the date; the name breaks it.
+		self.assertEqual(names, ["PRJ-2", "PRJ-3", "SO-P2", "PRJ-4", "PRJ-BUILD", "PRJ-1"])
+
+	def test_without_sales_order_read_the_products_projects_stand_alone(self):
 		SITE.readable.discard("Sales Order")
 		rows = self.answer()["projects"]["rows"]
-		self.assertEqual([r["name"] for r in rows], ["PRJ-2", "PRJ-1", "PRJ-3"])
-		self.assertTrue(all(r["order"] is None for r in rows))
+		self.assertEqual([r["name"] for r in rows], ["PRJ-2", "PRJ-3", "PRJ-4", "PRJ-1"])
+		self.assertTrue(all(r["orders"] == [] for r in rows))
 
 
 class TestThePipeline(Base):
@@ -624,6 +690,8 @@ class TestThePipeline(Base):
 			quote(
 				"QTN-7", status="Lost", docstatus=1, transaction_date=date(2026, 10, 5)
 			),  # a lost job: not a product
+			quote("QTN-8", status="Expired", docstatus=1, transaction_date=date(2026, 8, 1)),  # expired: lost
+			quote("QTN-9", status="Expired", docstatus=1, transaction_date=date(2026, 7, 1)),  # expired: lost
 		]
 		SITE.tables["quote_lines"] = [
 			quote_line("QTN-1", "PDT-0040", 2200),
@@ -636,6 +704,8 @@ class TestThePipeline(Base):
 			quote_line("QTN-6", "PDT-0040", 1668),
 			quote_line("QTN-7", "PDT-0003", 28490),
 			quote_line("QTN-7", "PUMP-1", 50000),
+			quote_line("QTN-8", "PDT-0040", 1668),
+			quote_line("QTN-9", "PDT-0040", 1668),
 		]
 		SITE.tables["opportunities"] = [
 			{
@@ -671,8 +741,11 @@ class TestThePipeline(Base):
 		self.assertNotIn("grand_total", rows[0])
 
 	def test_the_win_rate_is_the_product_quotes_over_a_year(self):
+		# 1 ordered; 1 Lost and 2 Expired are lost (manager re-review: an unordered submitted quote
+		# expires and is never marked Lost). The job and the quote before the year do not count.
 		quotations = self.answer()["pipeline"]["quotations"]
-		self.assertEqual((quotations["won"], quotations["lost"], quotations["win_rate"]), (1, 1, 50))
+		self.assertEqual((quotations["won"], quotations["lost"], quotations["win_rate"]), (1, 3, 25))
+		self.assertNotIn("QTN-8", [q["name"] for q in quotations["rows"]], "an expired quote is not open")
 
 	def test_opportunities_come_through_their_product_quotes(self):
 		rows = self.answer()["pipeline"]["opportunities"]["rows"]
@@ -687,36 +760,68 @@ class TestThePipeline(Base):
 		self.assertFalse(any("tabValue Stream" in q for q in SITE.queries))
 
 
+def component(code, name):
+	return {
+		"item_code": code,
+		"item_name": name,
+		"item_group": "E-Stop Components",
+		"stock_uom": "Nos",
+		"reorder_level": 0,
+	}
+
+
+def bin_row(code, warehouse, actual=0, projected=0, ordered=0):
+	return {
+		"item_code": code,
+		"warehouse": warehouse,
+		"actual_qty": actual,
+		"projected_qty": projected,
+		"ordered_qty": ordered,
+	}
+
+
 class TestTheStock(Base):
+	def setUp(self):
+		super().setUp()
+		SITE.tables["components"] = [component("GRT6-M1", "Timer relay"), component("AF12Z", "Contactor")]
+		SITE.tables["warehouses"] = [
+			{"name": "Work In Progress - SF", "warehouse_name": "Work In Progress"},
+			{"name": "Stores - SF", "warehouse_name": "Stores"},
+		]
+
 	def test_components_are_judged_on_projected_quantity(self):
-		SITE.tables["components"] = [
+		SITE.tables["component_bins"] = [
 			# 3 on hand, all of it reserved for a build: projected 0, so short
-			{
-				"item_code": "GRT6-M1",
-				"item_name": "Timer relay",
-				"item_group": "E-Stop Components",
-				"stock_uom": "Nos",
-				"on_hand": 3,
-				"projected": 0,
-				"on_order": 0,
-				"reorder_level": 0,
-			},
+			bin_row("GRT6-M1", "Stores - SF", actual=3, projected=0),
 			# none on hand but 10 on a purchase order: projected 10, not short
-			{
-				"item_code": "AF12Z",
-				"item_name": "Contactor",
-				"item_group": "E-Stop Components",
-				"stock_uom": "Nos",
-				"on_hand": 0,
-				"projected": 10,
-				"on_order": 10,
-				"reorder_level": 0,
-			},
+			bin_row("AF12Z", "Stores - SF", actual=0, projected=10, ordered=10),
 		]
 		components = {c["item_code"]: c for c in self.answer()["stock"]["components"]}
 		self.assertEqual(components["GRT6-M1"]["state"], "out")
 		self.assertEqual(components["AF12Z"]["state"], "ok")
-		self.assertEqual(components["GRT6-M1"]["projected"], 0.0)
+		self.assertEqual(components["AF12Z"]["on_order"], 10.0)
+
+	def test_parts_moved_to_work_in_progress_are_not_counted_again(self):
+		# Manager re-review of #1464: summed over every warehouse, the 5 relays already moved to
+		# WIP for a build counted as available, and the shortage never showed.
+		SITE.tables["component_bins"] = [
+			bin_row("GRT6-M1", "Stores - SF", actual=0, projected=0),
+			bin_row("GRT6-M1", "Work In Progress - SF", actual=5, projected=5),
+		]
+		relay = {c["item_code"]: c for c in self.answer()["stock"]["components"]}["GRT6-M1"]
+		self.assertEqual((relay["on_hand"], relay["projected"], relay["state"]), (0.0, 0.0, "out"))
+
+	def test_every_wip_source_counts(self):
+		SITE.tables["warehouses"] = []
+		SITE.default_wip = "WIP Default - SF"
+		SITE.tables["wip_orders"] = [{"wip_warehouse": "Panel Bench - SF"}]
+		SITE.tables["component_bins"] = [
+			bin_row("GRT6-M1", "WIP Default - SF", actual=4, projected=4),
+			bin_row("GRT6-M1", "Panel Bench - SF", actual=2, projected=2),
+			bin_row("GRT6-M1", "Stores - SF", actual=1, projected=1),
+		]
+		relay = {c["item_code"]: c for c in self.answer()["stock"]["components"]}["GRT6-M1"]
+		self.assertEqual((relay["on_hand"], relay["projected"]), (1.0, 1.0))
 
 
 class TestTheCLAUDEmdRules(Base):

@@ -2529,26 +2529,31 @@
     //
     // A product order with a control panel on it needs a project (Nikolas, 2026-11-18), so it is
     // not on the order board: it shows here, once. On its Project's row when the two are linked
-    // (Sales Order.project, or Project.sales_order), or as its own row, "No project yet", until
-    // one is made (product_orders.py's module docstring).
+    // (Sales Order.project, or Project.sales_order), whatever the Project's type, or as its own
+    // row, "No project yet", until one is made (product_orders.py's module docstring). A Project
+    // may carry several orders.
 
-    function panel_order_cell(order) {
-        if (!order) return dash;
-        const promise = order.delivery_date ? __("Promise {0}", [fmt_date(order.delivery_date)]) : "";
-        return desk_link("sales-order", order.name) +
-            `<div class="pd-psub">${sf.esc(stage_word(order.stage))}${promise ? ` · ${sf.esc(promise)}` : ""}</div>`;
+    function panel_order_cell(orders) {
+        if (!Array.isArray(orders) || !orders.length) return dash;
+        return orders.map((order) => {
+            const promise = order.delivery_date ? __("Promise {0}", [fmt_date(order.delivery_date)]) : "";
+            return `<div class="pd-porder">${desk_link("sales-order", order.name)}` +
+                `<div class="pd-psub">${sf.esc(stage_word(order.stage))}${promise ? ` · ${sf.esc(promise)}` : ""}</div></div>`;
+        }).join("");
     }
 
     function product_project_row(p) {
         const end = p.expected_end_date
             ? `${sf.esc(fmt_date(p.expected_end_date))}${p.late ? '<span class="pd-late">Past due</span>' : ''}`
             : dash;
+        // A linked Project of another type (the hand-off picks Build for a Build + Products deal).
+        const type_note = p.project_type && p.project_type !== "Products" ? ` · ${sf.esc(p.project_type)}` : "";
         if (p.kind === "order") {
             return `
             <tr class="pd-row">
                 <td class="dashcol dashcol-p_project">${sf.chip(__("No project yet"), "warn")}</td>
                 <td class="dashcol dashcol-p_customer">${p.customer ? sf.esc(p.customer) : dash}</td>
-                <td class="dashcol dashcol-p_order">${panel_order_cell(p.order)}</td>
+                <td class="dashcol dashcol-p_order">${panel_order_cell(p.orders)}</td>
                 <td class="dashcol dashcol-p_status">${dash}</td>
                 <td class="dashcol dashcol-p_completion">${dash}</td>
                 <td class="dashcol dashcol-p_end pd-due">${end}</td>
@@ -2556,9 +2561,9 @@
         }
         return `
             <tr class="pd-row">
-                <td class="dashcol dashcol-p_project"><a href="${project_link(p)}" class="pd-pname">${sf.esc(p.project_name || p.name)}</a><div class="pd-psub">${sf.esc(p.name)}</div></td>
+                <td class="dashcol dashcol-p_project"><a href="${project_link(p)}" class="pd-pname">${sf.esc(p.project_name || p.name)}</a><div class="pd-psub">${sf.esc(p.name)}${type_note}</div></td>
                 <td class="dashcol dashcol-p_customer">${p.customer ? sf.esc(p.customer) : dash}</td>
-                <td class="dashcol dashcol-p_order">${panel_order_cell(p.order)}</td>
+                <td class="dashcol dashcol-p_order">${panel_order_cell(p.orders)}</td>
                 <td class="dashcol dashcol-p_status">${sf.chip(p.status || "", "neutral")}</td>
                 ${completion_cell(p, "p_completion")}
                 <td class="dashcol dashcol-p_end pd-due">${end}</td>
@@ -2592,7 +2597,7 @@
     function all_product_orders() {
         if (!products || !products.orders || !Array.isArray(products.orders.rows)) return null;
         const panels = products.projects && Array.isArray(products.projects.rows)
-            ? products.projects.rows.map((p) => p.order).filter(Boolean)
+            ? products.projects.rows.flatMap((p) => (Array.isArray(p.orders) ? p.orders : []))
             : [];
         return products.orders.rows.concat(panels);
     }
