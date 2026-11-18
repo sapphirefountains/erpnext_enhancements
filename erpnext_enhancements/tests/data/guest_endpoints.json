@@ -17,7 +17,7 @@
 	},
 	"erpnext_enhancements.api.telephony.get_gateway_config": {
 		"caller": "Triton call gateway",
-		"check": "none: public lookup"
+		"check": "API key (token scheme, no longer Guest)"
 	},
 	"erpnext_enhancements.api.telephony.get_telephony_routing": {
 		"caller": "Triton call gateway",
@@ -113,7 +113,7 @@
 	},
 	"erpnext_enhancements.quickbooks_time.api.qb_timesheet_webhook": {
 		"caller": "QuickBooks Time webhook",
-		"check": "shared secret token when configured"
+		"check": "shared secret token, refused while none is configured"
 	},
 	"erpnext_enhancements.sapphire_maintenance.service_call_approval.approve_service_call": {
 		"caller": "client approval page",
