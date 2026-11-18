@@ -41,11 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **What a product is (the proposed rule).** An Item is a product when the Product Configurator
     made it (`Item.custom_source_configuration` is set) or when its code is in a PDT product family:
     `PDT-` and four digits, then the end, a hyphen or a space. So `PDT-0040` and
-    `PDT-0040-1-1-1-2-0` match, and `PDT-00040 (deleted)` and `PDT-00XX` do not. Three codes are
-    left out: **PDT-0701, PDT-0400 and PDT-0030**. Prod, read on 2026-11-18, has PDT-0701 ("SERVICE -
-    FOUNTAIN MATERIALS & EQUIPMENT") on 325 invoice lines and PDT-0400 (chemicals) on 178, nearly all
-    of them service work. The obvious `LIKE 'PDT-%'` would have put most service quotes on the tab.
-    PDT-0030 ("BUILD - SAPPHIRE CONNECT HARDWARE") has the same catch-all shape. **The item group
+    `PDT-0040-1-1-1-2-0` match, and `PDT-00040 (deleted)` and `PDT-00XX` do not. Two codes are
+    left out: **PDT-0701 and PDT-0400**. Prod, read on 2026-11-18, has PDT-0701 ("SERVICE - FOUNTAIN
+    MATERIALS & EQUIPMENT") on 325 invoice lines and PDT-0400 (chemicals) on 178, nearly all of them
+    service work. The obvious `LIKE 'PDT-%'` would have put most service quotes on the tab. PDT-0030
+    ("BUILD - SAPPHIRE CONNECT HARDWARE") looks like the same catch-all, but Nikolas ruled the same
+    day that Sapphire Connect hardware is a product, so it counts, in the Other line. **The item group
     "Configured Products" is not a rule on its own.** On prod it holds 13 hand-made Items that are
     not products (a first aid kit, a pipe union, a heat exchanger), and none of them carries the
     configurator's mark. The configurator stamps that field on every Item it makes, so the field is

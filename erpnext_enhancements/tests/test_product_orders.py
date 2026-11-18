@@ -72,9 +72,15 @@ class TestProductLine(unittest.TestCase):
 			with self.subTest(code=code):
 				self.assertEqual(po.product_line(code), po.LINE_OTHER)
 
+	def test_sapphire_connect_hardware_is_a_product(self):
+		# PDT-0030 "BUILD - SAPPHIRE CONNECT HARDWARE" reads like a billing catch-all, but
+		# Nikolas ruled on 2026-11-18 that it is a product.
+		self.assertEqual(po.product_line("PDT-0030"), po.LINE_OTHER)
+		self.assertNotIn("0030", po.NOT_PRODUCT_FAMILIES)
+
 	def test_the_billing_catch_alls_are_not_products(self):
 		# PDT-0701 is on 325 invoice lines, PDT-0400 on 178: service work, not product sales.
-		for code in ("PDT-0701", "PDT-0400", "PDT-0030"):
+		for code in ("PDT-0701", "PDT-0400"):
 			with self.subTest(code=code):
 				self.assertIsNone(po.product_line(code))
 				self.assertFalse(po.is_product_item(code))

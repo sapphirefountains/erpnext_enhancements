@@ -71,8 +71,9 @@ CONTROL_PANEL_FAMILIES = frozenset(
 #: ("SERVICE - FOUNTAIN MATERIALS & EQUIPMENT") is on 325 invoice lines and PDT-0400
 #: ("CHEMICALS - CHLORINE, ACID") on 178, nearly all of them service work. Counting them would
 #: put most service quotes on the Products tab. PDT-0030 ("BUILD - SAPPHIRE CONNECT HARDWARE")
-#: has the same "<stream> - ..." catch-all shape.
-NOT_PRODUCT_FAMILIES = frozenset({"0030", "0400", "0701"})
+#: looks like the same "<stream> - ..." catch-all, but Nikolas ruled on 2026-11-18 that Sapphire
+#: Connect hardware is a product: it is in the Other line, not here.
+NOT_PRODUCT_FAMILIES = frozenset({"0400", "0701"})
 
 # "PDT-" and four digits, then the end, a hyphen or a space. "PDT-0040-1-1-1-2-0" is family
 # 0040; "PDT-00040 (deleted)" is not (its fifth character is a digit), and neither is "PDT-00XX".
