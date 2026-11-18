@@ -6,7 +6,7 @@
  * projects_dashboard.html (shell) + projects_dashboard.js.
  *
  * Mock B (v1.781.0; slimmed in v1.785.0): the navy head band — one slim row since
- * v1.785.0 — the five tabs, the stream chips with the Columns button at their right
+ * v1.785.0 — the six tabs (Products since v1.824.0), the stream chips with the Columns button at their right
  * end, the four tiles the Summary tab shows (off the band since v1.785.0, on the
  * surface tokens), and ONE table style for every list tab (13px Lato, 11px uppercase headers,
  * 40px rows, hover tint, --sf-rule hairlines); rank pills, completion bars, the
@@ -225,7 +225,8 @@
 .pd-controls { padding: var(--sf-space-10) var(--sf-space-20) 0; }
 .pd-filters { display: flex; align-items: center; gap: var(--sf-space-10); flex-wrap: wrap; padding: var(--sf-space-5) 0 var(--sf-space-10); }
 .pd-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pd-fchip {
+.pd-fchip,
+.pd-lchip {
     appearance: none;
     display: inline-flex;
     align-items: center;
@@ -244,14 +245,14 @@
     cursor: pointer;
     transition: background-color var(--sf-duration) var(--sf-ease), color var(--sf-duration) var(--sf-ease);
 }
-.pd-fchip b { font-weight: var(--sf-weight-regular); color: var(--sf-text-muted); }
-.pd-fchip b:empty { display: none; }
-.pd-fchip:hover { background: color-mix(in srgb, var(--sf-text) 8%, transparent); }
-.pd-fchip:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.pd-fchip b, .pd-lchip b { font-weight: var(--sf-weight-regular); color: var(--sf-text-muted); }
+.pd-fchip b:empty, .pd-lchip b:empty { display: none; }
+.pd-fchip:hover, .pd-lchip:hover { background: color-mix(in srgb, var(--sf-text) 8%, transparent); }
+.pd-fchip:focus-visible, .pd-lchip:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
 /* Pressed: the navy pill in light, sky-200 in dark (the themed neutral edge), text in the
    page colour, which is off-white in light and navy-900 in dark. */
-.pd-fchip[aria-pressed="true"] { background: var(--sf-chip-edge-neutral); border-color: var(--sf-chip-edge-neutral); color: var(--sf-bg); }
-.pd-fchip[aria-pressed="true"] b { color: inherit; opacity: 0.8; }
+.pd-fchip[aria-pressed="true"], .pd-lchip[aria-pressed="true"] { background: var(--sf-chip-edge-neutral); border-color: var(--sf-chip-edge-neutral); color: var(--sf-bg); }
+.pd-fchip[aria-pressed="true"] b, .pd-lchip[aria-pressed="true"] b { color: inherit; opacity: 0.8; }
 /* The pressed tile's filter, as a chip with an x beside the stream chips: the tiles live on
    the Summary tab, so this is how the Overview says it is narrowed, and how to clear it. */
 .pd-tile-filter {
@@ -507,6 +508,68 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 .pd-brow-bar i { display: block; height: 100%; background: var(--sf-primary); }
 .dashboard-empty-state { padding: var(--sf-space-10) 0; }
 
+/* ---- Products tab (v1.824.0) ------------------------------------------------
+   Four sections, each a heading over one or two blocks; a block is a small heading with its
+   own Columns button over the one table style (or its panel). The stage strip is drawn like
+   the Summary's tiles: surface, hairline, the number in the display face, the pressed one
+   edged in the primary. Late counts in the danger red, as Past expected end is. */
+.pd-psec { margin-bottom: var(--sf-space-20); }
+.pd-psec-title {
+    margin: 0 0 var(--sf-space-10);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-md);
+    font-weight: var(--sf-weight-bold);
+    color: var(--sf-heading);
+}
+.pd-pblock { margin-bottom: var(--sf-space-10); }
+.pd-pblock-head { display: flex; align-items: center; gap: var(--sf-space-10); flex-wrap: wrap; margin-bottom: var(--sf-space-5); }
+.pd-pblock-title {
+    margin: 0;
+    font-family: var(--sf-font-sans);
+    font-size: 11px;
+    font-weight: var(--sf-weight-bold);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sf-text-muted);
+}
+.pd-pblock-note { font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
+/* A block with nothing to list keeps the table's frame and a shorter panel, so an empty site
+   (prod when the tab shipped) is not a page of tall blank panels. Two classes, to outrank the
+   kit's .sf-state, which is adopted after this sheet. */
+.pd-pblock-state { padding: 0; }
+.pd-pblock-state .sf-state { padding: var(--sf-space-15) var(--sf-space-20); border: var(--sf-border-hairline) solid var(--sf-rule); background: var(--sf-surface); }
+/* A number column's header sits over its numbers: .pd-table th's left alignment outranks .pd-num. */
+.pd-pblock .pd-table th.pd-num { text-align: right; }
+.pd-psub { font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
+.pd-plink { white-space: nowrap; }
+/* A Project carrying several control-panel orders lists them one under another. */
+.pd-porder + .pd-porder { margin-top: var(--sf-space-5); }
+.pd-pcards { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.pd-card-s { margin-top: var(--sf-space-5); font-size: var(--sf-text-xs); color: var(--sf-text-muted); }
+
+.pd-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--sf-space-10); margin-bottom: var(--sf-space-10); }
+.pd-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: var(--sf-space-10) var(--sf-space-15);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    background: var(--sf-surface);
+    color: var(--sf-text);
+    font-family: var(--sf-font-sans);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--sf-duration) var(--sf-ease), border-color var(--sf-duration) var(--sf-ease);
+}
+.pd-stage:hover { background: color-mix(in srgb, var(--sf-text) 6%, var(--sf-surface)); }
+.pd-stage[aria-pressed="true"] { background: color-mix(in srgb, var(--sf-primary) 10%, var(--sf-surface)); border-color: var(--sf-primary); }
+.pd-stage:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 2px; }
+.pd-stage-n { font-family: var(--sf-font-display); font-size: var(--sf-display-md); line-height: 1; color: var(--sf-text-strong); }
+.pd-stage-l { font-size: 11px; font-weight: var(--sf-weight-bold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sf-text-muted); }
+.pd-stage-late { font-size: var(--sf-text-xs); font-weight: var(--sf-weight-bold); color: var(--sf-danger); }
+
 
 /* ========================================================================= */
 /* PORTFOLIO GANTT (embeddable Gantt widget — DHTMLX)                        */
@@ -657,5 +720,5 @@ body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; us
 
 /* ---- Reduced motion: nothing fades. ---- */
 @media (prefers-reduced-motion: reduce) {
-    .pd-icon-btn, .pd-btn, .pd-tile, .pd-fchip, .pd-tile-filter, .ee-col-resize-handle::after { transition: none; }
+    .pd-icon-btn, .pd-btn, .pd-tile, .pd-fchip, .pd-lchip, .pd-stage, .pd-tile-filter, .ee-col-resize-handle::after { transition: none; }
 }

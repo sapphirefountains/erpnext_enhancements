@@ -379,7 +379,7 @@ class TestProjectsDashboardFiles(unittest.TestCase):
 	in v1.785.0).
 
 	The seeder copies them whole, so what matters is that the shell, the script and the
-	stylesheet it ships still say what they should: five tabs always in the bar, no "View
+	stylesheet it ships still say what they should: six tabs always in the bar (Products since v1.824.0), no "View
 	More", the saved view read through try/catch, no hue-scale priority colour, a one-row
 	band with the tiles on the Summary tab and the Columns button on the chips row.
 	"""
@@ -394,11 +394,18 @@ class TestProjectsDashboardFiles(unittest.TestCase):
 		names = {name for name, _prefix in _load()["BLOCKS"]}
 		self.assertIn("Projects Dashboard", names)
 
-	def test_the_five_tab_routes_are_in_the_markup(self):
+	def test_the_six_tab_routes_are_in_the_markup(self):
 		routes = re.findall(r'class="pd-tab[^"]*"[^>]*data-route="([^"]+)"', self.html)
 		self.assertEqual(
 			routes,
-			["priority-overview", "portfolio-gantt", "active-internal-projects", "completed-projects", "summary"],
+			[
+				"priority-overview",
+				"portfolio-gantt",
+				"active-internal-projects",
+				"completed-projects",
+				"summary",
+				"products",
+			],
 		)
 		for route in routes:
 			self.assertNotRegex(self.html, rf'data-route="{route}"[^>]*\bhidden\b')

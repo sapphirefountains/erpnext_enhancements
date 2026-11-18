@@ -2542,10 +2542,25 @@ jobs:
       # icon button, Reset widths moved into its menu. The node harness runs the block's real
       # script and the real ColumnSelector against a recording jQuery stand-in and drives the
       # buttons; the unittest holds the markup, script and stylesheet in agreement. Files only.
+      # Since v1.824.0 the harness also drives the Products tab: asked for once when shown, an
+      # empty site's panels, orders grouped by stage, the stage and line filters, and a failed
+      # project read never drawn over it.
       - name: Projects Dashboard toolbar (node harness + shell agreement)
         run: |
           node scripts/test_projects_dashboard_toolbar.mjs
           python -m unittest erpnext_enhancements.tests.test_projects_dashboard_toolbar -v
+      # Products tab (v1.824.0): which Sales Orders are product orders, and which stage each is
+      # in. A PDT rule written the obvious way puts every service quote on the tab (PDT-0701 is on
+      # 325 invoice lines on prod); trusting the item group "Configured Products" puts a first aid
+      # kit on the board; a unit built for one order is counted again as shelf stock for the next.
+      # The rules suite is stub-free. The endpoint suite runs get_products_data on its own frappe
+      # stub (setUpModule, so its own process): the empty answer prod gets today, the per-section
+      # permissions, and the CLAUDE.md rules (no SQL function as a get_all string, no query naming
+      # the configurator's column on a site without it).
+      - name: Products tab rules + endpoint on a stub
+        run: |
+          python -m unittest erpnext_enhancements.tests.test_product_orders -v
+          python -m unittest erpnext_enhancements.tests.test_products_tab_endpoint -v
       # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
       # every block's status colours in both themes. Fails on any of the literal status hexes
       # (and their rgba() tints) the blocks used before, comments stripped so a note naming

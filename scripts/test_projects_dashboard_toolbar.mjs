@@ -256,7 +256,9 @@ const PROJECTS = [
 	{ name: "PRJ-G", project_name: "Golf Shop Reorg", project_type: "Internal", is_active: "Yes", status: "Completed", custom_company_priority: "", percent_complete: 100, expected_end_date: "2026-10-15" },
 ];
 
-async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = false } = {}) {
+// `answers` maps a method's last segment (get_products_data) to its message, or to a function
+// returning the promise frappe.call would; every other method answers as before.
+async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = false, answers = {} } = {}) {
 	const dom = makeDom();
 	const storage = new Map(Object.entries(stored));
 	const writes = [];
@@ -326,6 +328,12 @@ async function runBlock({ stored = {}, projects = PROJECTS, storageThrows = fals
 			require: (assets, cb) => cb(),
 			call: (opts) => {
 				calls.push(opts.method);
+				for (const suffix of Object.keys(answers)) {
+					if (opts.method.endsWith("." + suffix)) {
+						const answer = answers[suffix];
+						return typeof answer === "function" ? answer(opts) : Promise.resolve({ message: answer });
+					}
+				}
 				if (/get_priority_options$/.test(opts.method)) {
 					return Promise.resolve({ message: { project_priority: ["1", "2", "3"], company_priority: ["1", "2", "3"] } });
 				}
@@ -923,6 +931,295 @@ await test("Refresh asks the server again and the band says Updated just now", a
 	assert.equal(run.calls.length, before + 3);
 	assert.equal(run.dom.node("#btn-refresh").prop("disabled"), false, "re-enabled once the answer landed");
 	assert.deepEqual(run.intervals.map((i) => i.ms), [60000], "one tick a minute for the relative time");
+});
+
+console.log("\nprojects_dashboard.js: the Products tab (v1.824.0)");
+
+const STAGES = [
+	{ key: "ordered", label: "Ordered / Paid" },
+	{ key: "building", label: "Building" },
+	{ key: "testing", label: "Testing" },
+	{ key: "ready", label: "Ready" },
+	{ key: "delivered", label: "Delivered" },
+];
+const LINES = ["E-Stops", "Control Panels", "Other"];
+
+// Prod on 2026-11-18: no product Sales Order, no finished unit, no Products project.
+const EMPTY_PRODUCTS = {
+	today: TODAY,
+	lines: LINES,
+	stages: STAGES,
+	orders: { allowed: true, paid_visible: true, rows: [] },
+	pipeline: {
+		quotations: { allowed: true, open_days: 90, rows: [], won: 0, lost: 0, win_rate: null, window_days: 365 },
+		opportunities: { allowed: true, rows: [] },
+	},
+	stock: { allowed: true, units: [], components: [] },
+	projects: { allowed: true, rows: [] },
+};
+
+const estop = (qty = 1) => [{ item_code: "PDT-0040-1-1-1-2-0", qty, line: "E-Stops" }];
+const PRODUCTS = {
+	...EMPTY_PRODUCTS,
+	orders: {
+		allowed: true,
+		paid_visible: true,
+		rows: [
+			{ name: "SO-0002", customer_name: "Pool Builder", delivery_date: "2026-12-01", stage: "ready", note: "From stock", late: false, lines: ["E-Stops"], items: estop(), work_orders: [], deliveries: [], paid: "unpaid", product_amount: 1668 },
+			{ name: "SO-0001", customer_name: "Hotel Pools", delivery_date: "2026-11-01", stage: "building", note: "Work Order in process", late: true, lines: ["E-Stops"], items: estop(), work_orders: [{ name: "MFG-WO-1", status: "In Process", docstatus: 1 }], deliveries: [], paid: "paid", product_amount: 2005.24 },
+			{ name: "SO-0003", customer_name: "Fountain Co", delivery_date: "2026-11-20", stage: "ordered", note: "No Work Order yet", late: false, lines: ["Control Panels"], items: [{ item_code: "PDT-0003", qty: 1, line: "Control Panels" }], work_orders: [], deliveries: [], paid: "not_invoiced", product_amount: 18000 },
+		],
+	},
+	pipeline: {
+		quotations: { allowed: true, open_days: 90, won: 3, lost: 1, win_rate: 75, window_days: 365, rows: [{ name: "SAL-QTN-1", party: "Hotel Pools", lines: ["E-Stops"], transaction_date: "2026-11-17", status: "Draft", product_amount: 2200, opportunity: "CRM-OPP-1" }] },
+		opportunities: { allowed: true, rows: [{ name: "CRM-OPP-1", title: "Hotel pool E-Stop", party: "Hotel", lines: ["E-Stops"], status: "Qualification", product_amount: 2200, quotations: ["SAL-QTN-1"], expected_closing: null }] },
+	},
+	stock: {
+		allowed: true,
+		units: [{ item_code: "PDT-0040-1-1-1-2-0", item_name: "E-Stop", line: "E-Stops", on_hand: 2, committed: 1, free: 1, warehouses: "Build Room - SF" }],
+		components: [
+			{ item_code: "ZH-100806-03", item_name: "Enclosure", line: "E-Stops", on_hand: 14, on_order: 0, reorder_level: 0, state: "ok" },
+			{ item_code: "AF12Z-30-10-21", item_name: "Contactor", line: "E-Stops", on_hand: 0, on_order: 0, reorder_level: 0, state: "out" },
+		],
+	},
+};
+
+const stateText = (run, block) =>
+	run.dom.node(`html:<div class="dashboard-empty-state pd-pblock-state" data-state="${block}"></div>`)[0].textContent;
+const groupLabels = (html) => [...html.matchAll(/class="pd-group"[^>]*><td colspan="\d+">([^<]+)</g)].map((m) => m[1]);
+const orderNames = (html) => [...html.matchAll(/href="\/desk\/sales-order\/([^"]+)" class="pd-pname"/g)].map((m) => m[1]);
+function pressLine(run, line) {
+	const chip = run.dom.node(".pd-lchip");
+	chip.attr("data-line", line);
+	run.dom.fire(chip, "click");
+}
+// As with the headers: each render binds its own handler onto the stand-in's one `.pd-stage`.
+function pressStage(run, key) {
+	const node = run.dom.node(".pd-stage");
+	node.attr("data-stage", key);
+	const handlers = node[NODE].handlers.click || [];
+	handlers[handlers.length - 1].call(node, { preventDefault() {}, stopPropagation() {} });
+}
+const productCalls = (run) => run.calls.filter((m) => /\.get_products_data$/.test(m)).length;
+
+await test("the Products tab asks for its answer when first shown, once, and its chips show on it alone", async () => {
+	const run = await runBlock({ answers: { get_products_data: PRODUCTS } });
+	assert.equal(productCalls(run), 0, "not asked before the tab is shown");
+	assert.equal(run.dom.node("#products-controls")[NODE].display, "none");
+	clickTab(run, "products");
+	await settle();
+	assert.equal(productCalls(run), 1);
+	assert.ok(isActiveTab(run, "products"));
+	assert.equal(run.storage.get("chb_projects_dashboard_tab_v1"), JSON.stringify("products"));
+	assert.equal(run.dom.node("#products-controls")[NODE].display, "shown");
+	assert.equal(run.dom.node("#overview-controls")[NODE].display, "none");
+	clickTab(run, "summary");
+	await settle();
+	clickTab(run, "products");
+	await settle();
+	assert.equal(productCalls(run), 1, "coming back to the tab redraws the answer it has");
+	const before = run.calls.length;
+	run.dom.fire(run.dom.node("#btn-refresh"), "click");
+	await settle();
+	assert.equal(run.calls.length, before + 4, "Refresh on the tab asks for the projects and the products");
+});
+
+await test("an empty site: five stages at zero, and every section its own empty panel", async () => {
+	const run = await runBlock({ answers: { get_products_data: EMPTY_PRODUCTS } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	assert.equal((html.match(/class="pd-stage-n">0</g) || []).length, 5, "the strip reads before the first sale");
+	for (const stage of STAGES) assert.match(html, new RegExp(`pd-stage-l">${stage.label.replace("/", "\\/")}<`));
+	assert.equal(stateText(run, "orders"), "No product orders yet.");
+	assert.equal(stateText(run, "quotes"), "No open product quotations.");
+	assert.equal(stateText(run, "opportunities"), "No open opportunity has a product quotation yet.");
+	assert.equal(stateText(run, "units"), "No finished units on hand.");
+	assert.equal(stateText(run, "projects"), "No active control panel projects.");
+	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">—<\/div>\s*<div class="pd-card-s">No product quote won or lost yet</, "no rate before a quote is decided");
+	assert.equal(run.dom.node('[data-line-count=""]').text(), "0");
+	assert.doesNotMatch(html, /pd-late/);
+});
+
+await test("the orders are grouped by stage in board order, late first, with Late, the Work Order and Paid", async () => {
+	const run = await runBlock({ answers: { get_products_data: PRODUCTS } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	assert.deepEqual(groupLabels(html), ["Ordered / Paid", "Building", "Ready"], "empty stages draw no header row");
+	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"]);
+	const one = html.slice(html.indexOf("/desk/sales-order/SO-0001"), html.indexOf("/desk/sales-order/SO-0002"));
+	assert.match(one, /<span class="pd-late">Late<\/span>/);
+	assert.match(one, /href="\/desk\/work-order\/MFG-WO-1"/);
+	assert.match(one, /dashcol-p_paid">Paid</, "the paid chip (the stand-in draws its word)");
+	assert.equal((html.match(/pd-late/g) || []).length, 1);
+	assert.match(html, /class="pd-stage-late">1 late</, "the strip counts the late order under its stage");
+	assert.match(html, /<td colspan="7">Building<span>1 order<\/span>/);
+	assert.match(html, /dashcol-p_total pd-num" title="The product lines, before tax">\$18,000</, "the product value, not a grand total");
+	// the shortages list only what is short; the enclosure is in stock
+	assert.match(html, /\/desk\/item\/AF12Z-30-10-21/);
+	assert.doesNotMatch(html, /\/desk\/item\/ZH-100806-03/);
+	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">75%<\/div>\s*<div class="pd-card-s">3 won · 1 lost · last 12 months</);
+});
+
+await test("a stage press narrows the orders, and pressing it again clears it", async () => {
+	const run = await runBlock({ answers: { get_products_data: PRODUCTS } });
+	clickTab(run, "products");
+	await settle();
+	let from = mark(run);
+	pressStage(run, "building");
+	await settle();
+	let html = drawn(run, from);
+	assert.deepEqual(orderNames(html), ["SO-0001"]);
+	assert.match(html, /data-stage="building" aria-pressed="true"/);
+	from = mark(run);
+	pressStage(run, "building");
+	await settle();
+	html = drawn(run, from);
+	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"]);
+	assert.doesNotMatch(html, /aria-pressed="true"/);
+	assert.ok(![...run.storage.keys()].some((k) => /stage/.test(k)), "the pressed stage is not kept");
+});
+
+await test("the line chips narrow every section, count the orders, and are remembered", async () => {
+	const run = await runBlock({ answers: { get_products_data: PRODUCTS } });
+	clickTab(run, "products");
+	await settle();
+	assert.equal(run.dom.node('[data-line-count=""]').text(), "3");
+	assert.equal(run.dom.node('[data-line-count="E-Stops"]').text(), "2");
+	assert.equal(run.dom.node('[data-line-count="Control Panels"]').text(), "1");
+	assert.equal(run.dom.node('[data-line-count="Other"]').text(), "0");
+	const from = mark(run);
+	pressLine(run, "Control Panels");
+	await settle();
+	const html = drawn(run, from);
+	assert.deepEqual(orderNames(html), ["SO-0003"]);
+	assert.equal(stateText(run, "quotes"), "No open quotations in the lines picked.");
+	assert.doesNotMatch(html, /Hotel pool E-Stop/, "the deal's lines are its product quotes' lines: E-Stops");
+	assert.equal(stateText(run, "opportunities"), "No open opportunities in the lines picked.");
+	assert.equal(stateText(run, "units"), "No finished units in the lines picked.", "the shelf is not empty, only filtered");
+	assert.equal(run.dom.node('.pd-lchip[data-line="Control Panels"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-lchip[data-line=""]').attr("aria-pressed"), "false");
+	assert.equal(run.storage.get("chb_projects_dashboard_products_v1"), JSON.stringify({ lines: ["Control Panels"] }));
+	pressLine(run, "");
+	await settle();
+	assert.equal(run.storage.get("chb_projects_dashboard_products_v1"), JSON.stringify({ lines: [] }));
+	assert.equal(run.dom.node('.pd-lchip[data-line=""]').attr("aria-pressed"), "true");
+});
+
+await test("a control-panel order shows once, in the projects section, with or without its project", async () => {
+	const panel = (name, stage) => ({ name, stage, note: "No Work Order yet", delivery_date: "2026-12-20", late: false, product_amount: 28490, paid: null, lines: ["Control Panels"] });
+	const answer = {
+		...PRODUCTS,
+		projects: {
+			allowed: true,
+			rows: [
+				{ kind: "project", name: "PRJ-00901", project_name: "Splash Wizard Industrial", project_type: "Build", customer: "Demo City", status: "Active", percent_complete: 40, expected_end_date: "2026-12-20", late: false, line: "Control Panels", orders: [panel("SO-0101", "building"), panel("SO-0103", "ordered")] },
+				{ kind: "order", name: "SO-0102", project_name: null, project_type: null, customer: "Demo Pools", status: null, percent_complete: null, expected_end_date: "2026-12-01", late: false, line: "Control Panels", orders: [panel("SO-0102", "ordered")] },
+			],
+		},
+	};
+	const run = await runBlock({ answers: { get_products_data: answer } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	const project = html.slice(html.indexOf("/desk/project/PRJ-00901"));
+	assert.match(project, /href="\/desk\/sales-order\/SO-0101">SO-0101<\/a><div class="pd-psub">Building · Promise 2026-12-20</, "the project carries its order and the order's stage");
+	assert.match(project, /href="\/desk\/sales-order\/SO-0103">SO-0103<\/a>/, "and a second order on the same project");
+	assert.match(project, /<div class="pd-psub">PRJ-00901 · Build<\/div>/, "a linked project of another type says its type");
+	assert.match(html, /dashcol-p_project">No project yet<\/td>[\s\S]*?\/desk\/sales-order\/SO-0102/, "an order with no project yet is its own row");
+	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"], "neither panel order is on the board");
+	assert.equal(run.dom.node('[data-line-count="Control Panels"]').text(), "4", "the chips count the panel orders too");
+	assert.equal(run.dom.node('[data-line-count=""]').text(), "6");
+});
+
+await test("a line chip does not touch the Priority Overview's stream chips", async () => {
+	const run = await runBlock({ answers: { get_products_data: PRODUCTS } });
+	pressLine(run, "E-Stops");
+	await settle();
+	assert.equal(run.storage.get("chb_projects_dashboard_overview_v1"), undefined);
+	assert.equal(run.dom.node('.pd-fchip[data-stream=""]').attr("aria-pressed"), "true");
+});
+
+await test("remembered line chips are restored, pruned to the chips the bar has", async () => {
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_tab_v1: JSON.stringify("products"), chb_projects_dashboard_products_v1: JSON.stringify({ lines: ["Other", "Bogus"] }) },
+		answers: { get_products_data: PRODUCTS },
+	});
+	assert.equal(productCalls(run), 1, "a remembered Products tab asks on load, once");
+	assert.equal(run.dom.node('.pd-lchip[data-line="Other"]').attr("aria-pressed"), "true");
+	assert.equal(run.dom.node('.pd-lchip[data-line=""]').attr("aria-pressed"), "false");
+	assert.equal(stateText(run, "orders"), "No orders in the lines or stage picked.");
+	assert.ok(!run.writes.includes("chb_projects_dashboard_products_v1"), "restoring writes nothing back");
+});
+
+await test("a section the person cannot read draws no access, a failed one an error, and the rest still draw", async () => {
+	const answer = {
+		...PRODUCTS,
+		pipeline: { quotations: { allowed: false }, opportunities: PRODUCTS.pipeline.opportunities },
+		stock: { allowed: true, failed: true },
+		orders: { ...PRODUCTS.orders, paid_visible: false, rows: PRODUCTS.orders.rows.map((o) => ({ ...o, paid: null })) },
+	};
+	const run = await runBlock({ answers: { get_products_data: answer } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	assert.equal(stateText(run, "quotes"), "You do not have access to Quotations.");
+	assert.equal(stateText(run, "units"), "Could not load stock.");
+	assert.equal(stateText(run, "components"), "Could not load stock.");
+	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"], "the board still draws");
+	assert.match(html, /Paid needs read access to Sales Invoices/);
+	assert.match(html, /pd-card-l">Open quotations<\/div>\s*<div class="pd-card-n">—</);
+});
+
+await test("the tab's denial, and an answer that is not the tab's, draw its one panel", async () => {
+	const denied = await runBlock({ answers: { get_products_data: { error: "You do not have permission to view the Project Dashboard." } } });
+	clickTab(denied, "products");
+	await settle();
+	assert.equal(contentText(denied), "No access");
+	// The stand-in answers every other method with the project list: not a Products answer.
+	const odd = await runBlock();
+	clickTab(odd, "products");
+	await settle();
+	assert.equal(contentText(odd), "Could not load the products.");
+	const failed = await runBlock({ answers: { get_products_data: () => Promise.reject({ status: 500 }) } });
+	clickTab(failed, "products");
+	await settle();
+	assert.equal(contentText(failed), "Could not load the products: the request failed.");
+	const forbidden = await runBlock({ answers: { get_products_data: () => Promise.reject({ status: 403 }) } });
+	clickTab(forbidden, "products");
+	await settle();
+	assert.equal(contentText(forbidden), "No access");
+});
+
+await test("opening straight onto the Products tab draws its loading panel while it waits", async () => {
+	let release;
+	const pending = new Promise((resolve) => (release = resolve));
+	const run = await runBlock({
+		stored: { chb_projects_dashboard_tab_v1: JSON.stringify("products") },
+		answers: { get_products_data: () => pending },
+	});
+	assert.equal(contentText(run), "Loading…", "not a blank tab");
+	release({ message: EMPTY_PRODUCTS });
+	await settle();
+	assert.equal(stateText(run, "orders"), "No product orders yet.");
+});
+
+await test("a failed project read never covers the Products tab", async () => {
+	const run = await runBlock({
+		projects: null,
+		stored: { chb_projects_dashboard_tab_v1: JSON.stringify("products") },
+		answers: { get_products_data: EMPTY_PRODUCTS },
+	});
+	assert.notEqual(contentText(run), "Could not load the projects.");
+	assert.equal(stateText(run, "orders"), "No product orders yet.");
+	clickTab(run, "summary");
+	await settle();
+	assert.equal(contentText(run), "Could not load the projects.", "the projects' panel still stands on their tabs");
 });
 
 console.log("\nprojects_dashboard.js: the + menu");
