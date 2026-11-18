@@ -41,7 +41,17 @@ the bare marker string appears in two legitimate places here (a test fixture, an
 PEM block and `private_key_id` alongside it.
 
 A PEM private-key header is the one rule with no qualification. There is no benign reason
-for one to be in this repository.
+for one to be in this repository, and it is the one rule the fixture marker below cannot
+excuse: a test that needs PEM-shaped data assembles it at run time from fragments, the way
+this file does.
+
+Beside those, :data:`TOKEN_RULES` match credentials that carry their own shape wherever they
+appear (Stripe live and webhook keys, Google API keys, AWS access keys, GitHub and Slack
+tokens, JWTs, ``token key:secret`` pairs, ``user:pass@`` URLs, a Twilio auth token beside the
+word), and :data:`PASSWORD_RULES` match a ``password``-family assignment or command-line
+option with a literal value in documentation and configuration files (source code is left
+to review, where ``password = form.password`` is the normal shape). ``encryption_key`` is
+one more keyword rule in :data:`VALUE_RULES`.
 
 The known failure mode of a script like this is **passing because the pattern is wrong**, so:
 
@@ -239,7 +249,132 @@ VALUE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 		re.compile(r"""["']?[a-z0-9_]*client_secret["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
 		"an OAuth client secret. Field NAMES are fine; a value is not",
 	),
+	(
+		"encryption_key",
+		re.compile(r"""["']?[a-z0-9_]*encryption_key["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
+		"the key that decrypts every stored Password field. Field NAMES are fine; a value is not",
+	),
 )
+
+#: Credentials recognisable by their own shape, with no keyword needed beside them. Each is
+#: `(name, regex, why it matters)`; the whole match is the candidate value, and
+#: :func:`_is_placeholder` waves through the obvious stand-ins (a run of ``x``).
+#: The prefixes are the providers' published formats.
+TOKEN_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"stripe-live-key",
+		re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{16,}"),
+		"a live Stripe secret or restricted key",
+	),
+	(
+		"stripe-webhook-secret",
+		re.compile(r"\bwhsec_[A-Za-z0-9]{16,}"),
+		"a Stripe webhook signing secret",
+	),
+	(
+		"google-api-key",
+		re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+		"a Google API key",
+	),
+	(
+		"aws-access-key",
+		re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+		"an AWS access key id",
+	),
+	(
+		"github-token",
+		re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})"),
+		"a GitHub token",
+	),
+	(
+		"slack-token",
+		re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+		"a Slack token",
+	),
+	(
+		"jwt",
+		re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+		"a signed JWT",
+	),
+	(
+		"token-key-secret-pair",
+		re.compile(r"\btoken\s+[A-Za-z0-9]{12,}:[A-Za-z0-9]{12,}\b", re.IGNORECASE),
+		"an API key and secret in the `Authorization: token key:secret` form",
+	),
+	(
+		"url-with-password",
+		re.compile(r"""\b[a-z][a-z0-9+.\-]*://[^\s/:@"'<>\[\]{}$]+:([^\s/@"'<>\[\]{}$%]{3,})@[^\s/"'<>]+""", re.IGNORECASE),
+		"a URL with a literal password in its user:pass@ part",
+	),
+	(
+		"twilio-auth-token",
+		re.compile(r"twilio[^\n]{0,60}?(?<![0-9A-Za-z])[0-9a-f]{32}(?![0-9A-Za-z])", re.IGNORECASE),
+		"a 32-character hex string beside the word twilio, the shape of an auth token",
+	),
+)
+
+#: Words a documentation table or comment writes where a password would go. Compared whole and
+#: lower-cased, after :func:`_is_placeholder` has had its say.
+PASSWORD_STOPWORDS = frozenset(
+	{
+		"password", "passwd", "required", "optional", "secret", "hidden", "masked", "string",
+		"none", "null", "false", "true", "unset", "empty", "blank", "anything", "whatever",
+		"stored", "provided", "enabled", "disabled", "random", "generated", "automatic",
+	}
+)  # fmt: skip
+
+#: Characters that make a value an expression (a call, an interpolation, a template hole, a
+#: list) rather than a literal.
+_PASSWORD_NOT_LITERAL = r"""\s"'`$<>{}()\[\],;\\|&"""
+
+#: A password-sized literal: quoted or bare, six or more characters, in the named group ``pv1``
+#: (quoted) or ``pv2`` (bare); :func:`_password_value` reads whichever fired.
+_PASSWORD_VALUE = (
+	r"""(?:["'`](?P<pv1>[^""" + _PASSWORD_NOT_LITERAL + r"""]{6,})["'`]|"""
+	r"""(?P<pv2>[^""" + _PASSWORD_NOT_LITERAL + r"""*\-][^""" + _PASSWORD_NOT_LITERAL + r"""*]{5,}))"""
+)
+
+#: The name half of a password assignment: any identifier ending in ``password`` / ``passwd``
+#: (``db_password``, ``MYSQL_ROOT_PASSWORD``), as its own token. Group ``key``. Unquoted, it may not
+#: follow a quote, a colon or a slash (that is a sentence quoting a label, or ``user:password``);
+#: quoted, both quotes must be there (a JSON key).
+_PASSWORD_KEY = (
+	r"""(?:(?<![\w.\-:/"'])(?P<key>[A-Za-z0-9_.\-]*(?:password|passwd))\**"""
+	r"""|(?P<q>["'])(?P<qkey>[A-Za-z0-9_.\-]*(?:password|passwd))(?P=q))"""
+)
+
+#: ``password`` / ``passwd`` (with any prefix: ``db_password``, ``MYSQL_ROOT_PASSWORD``) assigned a
+#: literal with ``:`` or ``=``, the same in a Markdown table cell, the command-line option form
+#: (``--admin-password VALUE``), and a database client's ``-pVALUE``. Only applied outside
+#: source-code files: see :data:`CODE_SUFFIXES`. A bare ``password`` in running prose is judged
+#: by :func:`_is_prose_password`.
+PASSWORD_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"password-assignment",
+		re.compile(_PASSWORD_KEY + r"""\s*[:=]\**\s*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal. Say where it is stored instead",
+	),
+	(
+		"password-table-cell",
+		re.compile(r"""\|[^|\n]*?[A-Za-z][ \t]+(?P<key>(?:password|passwd))\**[ \t]*\|[ \t]*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal in a table row (a label cell, then the value). Say where it is stored instead",
+	),
+	(
+		"password-option",
+		re.compile(r"--[a-z0-9-]*(?:password|passwd)(?:=|\s+)" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password passed as a literal on a command line. Say where it is stored instead",
+	),
+	(
+		"database-client-password",
+		re.compile(r"""\b(?:mysql|mysqldump|mariadb|mariadb-dump)\b[^\n]*?\s-p["']?(?P<pv1>[^\s"'$<>]{4,})""", re.IGNORECASE),
+		"a database client password written into the command line",
+	),
+)
+
+#: Source-code files are left out of :data:`PASSWORD_RULES`: in code, ``password = form.password`` and
+#: ``password: str`` are the normal shapes, and a hard-coded one is a review comment. Documentation,
+#: configuration and scripts are where a pasted password actually lands.
+CODE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".cjs", ".ts", ".vue", ".html", ".jinja", ".css", ".scss"})
 
 #: A long unbroken base64 run — the shape of a key, a token or a signed blob.
 BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{64,}={0,2}")
@@ -272,7 +407,7 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 #:
 #: Segments are length-capped because a JWT is dot-separated too, and a JWT is a
 #: credential. Its segments run to hundreds of characters; an identifier does not.
-_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_]{0,39})+$")
+_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_-]{0,39})+$")
 
 #: Extensions whose contents are compiled or minified and produce base64-shaped noise.
 #:
@@ -359,6 +494,60 @@ def _value_of(match: re.Match[str]) -> str:
 	return match.group(1) or match.group(2) or ""
 
 
+def _token_of(rule: str, match: re.Match[str]) -> str:
+	"""The candidate a :data:`TOKEN_RULES` match is judged on: the password part of a URL, else the match."""
+	if rule == "url-with-password":
+		password = match.group(1)
+		# A name where a password goes (``user:pass@``, ``user:password@``) is documentation.
+		return "placeholder" if password.lower() in PASSWORD_STOPWORDS | {"pass", "pwd"} else password
+	if rule == "jwt":
+		# Dotted like an attribute chain, which _is_placeholder reads as a reference; a JWT is not one.
+		return match.group(0).replace(".", "~")
+	if rule in ("stripe-live-key", "stripe-webhook-secret"):
+		# Judge the part after the prefix, so ``sk_live_`` plus a run of zeros reads as the stand-in it is.
+		return match.group(0).split("_", 2)[-1]
+	return match.group(0)
+
+
+def _is_password_placeholder(value: str) -> bool:
+	"""Is this password-rule value a stand-in? The usual placeholders, plus the words a table writes."""
+	lowered = value.lower().strip(".,:")
+	if lowered in PASSWORD_STOPWORDS or lowered.startswith("-"):
+		return True
+	return _is_placeholder(value)
+
+
+def _password_value(match: re.Match[str]) -> str:
+	"""The literal a :data:`PASSWORD_RULES` match found, quoted form or bare."""
+	return match.group("pv1") or match.group("pv2") or ""
+
+
+def _is_prose_password(line: str, match: re.Match[str]) -> bool:
+	"""Is this the English word "password" in a sentence, rather than a name in a config line?
+
+	A compound identifier (``db_password``, ``--admin-password``, a quoted JSON key) is a
+	configuration key wherever it stands. The bare word is ambiguous, so it counts as an
+	assignment only when it sits near the front of its line (a list item, a label, a table row:
+	at most three words before it), which is where ``Root password: value`` lives and
+	``the field stored behind the password: present`` does not.
+	"""
+	key = match.groupdict().get("key")
+	if not key or key.lower() not in ("password", "passwd"):
+		return False
+	before = line[: match.start("key")]
+	return len(re.findall(r"[A-Za-z]\w*", before)) > 3
+
+
+def _is_code_path(where: str) -> bool:
+	"""Is this a source-code file, which :data:`PASSWORD_RULES` leave to review?
+
+	``where`` may carry a ``" (blob <sha>)"`` suffix; an unreachable blob has no path and is
+	read as configuration, which is the stricter reading.
+	"""
+	path = where.split(" (blob ", 1)[0].lower()
+	return any(path.endswith(suffix) for suffix in CODE_SUFFIXES)
+
+
 def _clip(text: str, width: int = 120) -> str:
 	"""Never print a whole secret into a CI log. The point is to locate it, not to copy it."""
 	collapsed = " ".join(text.split())
@@ -421,26 +610,31 @@ def scan_text(where: str, text: str) -> list[Finding]:
 
 	findings: list[Finding] = []
 	lines = text.splitlines()
-	if _has_file_level_marker(where, lines):
-		return []
-	has_key_material = bool(KEY_MATERIAL_RE.search(text))
 
+	# The PEM rule runs first and answers to neither form of FAKE_MARKER: a header or a
+	# neighbouring comment saying "fake" cannot make a private-key block acceptable.
 	for index, line in enumerate(lines):
-		window = _window(lines, index)
-		if FAKE_MARKER in window:
-			continue
-		line_no = index + 1
-
 		if PEM_RE.search(line):
 			findings.append(
 				Finding(
 					"pem-private-key",
 					"a PEM private-key block. There is no benign reason for one to be here",
 					where,
-					line_no,
+					index + 1,
 					_clip(line),
 				)
 			)
+
+	if _has_file_level_marker(where, lines):
+		return findings
+	has_key_material = bool(KEY_MATERIAL_RE.search(text))
+	check_passwords = not _is_code_path(where)
+
+	for index, line in enumerate(lines):
+		window = _window(lines, index)
+		if FAKE_MARKER in window:
+			continue
+		line_no = index + 1
 
 		if SERVICE_ACCOUNT_RE.search(line) and has_key_material:
 			findings.append(
@@ -457,6 +651,21 @@ def scan_text(where: str, text: str) -> list[Finding]:
 			match = pattern.search(line)
 			if match and not _is_placeholder(_value_of(match), name):
 				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		for name, pattern, why in TOKEN_RULES:
+			match = pattern.search(line)
+			if match and not _is_placeholder(_token_of(name, match)):
+				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		if check_passwords:
+			for name, pattern, why in PASSWORD_RULES:
+				match = pattern.search(line)
+				if (
+					match
+					and not _is_password_placeholder(_password_value(match))
+					and not _is_prose_password(line, match)
+				):
+					findings.append(Finding(name, why, where, line_no, _clip(line)))
 
 		# A long base64 run next to a Google endpoint: a signed JWT, an access token or a
 		# raw key, pasted into a request example that was then committed.

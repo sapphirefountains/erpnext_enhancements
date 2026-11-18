@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.7] - 2026-11-18
+
+### Added
+
+- **A register of guest-callable endpoints, checked in CI.** Every
+  `@frappe.whitelist(allow_guest=True)` function (34 today) is now listed in
+  `erpnext_enhancements/tests/data/guest_endpoints.json` with the caller it serves ("Stripe webhook",
+  "customer signing page") and the check that authenticates that caller ("signature header", "link
+  token", "API key"). `tests/test_guest_endpoint_register.py` reads the code by AST, no bench needed,
+  and fails when a guest endpoint is missing from the register, when the register names one that no
+  longer exists, or when an entry lacks either field. Adding or removing a guest endpoint now means
+  changing the register in the same pull request, which is where its authentication is written down.
+  Own step in the Standalone unit tests job.
+- **The committed-secrets scanner knows more shapes.** `scripts/check_no_committed_secrets.py` now
+  also matches, wherever they appear: Stripe live and webhook keys, Google API keys, AWS access key
+  ids, GitHub and Slack tokens, JWTs, `Authorization: token key:secret` pairs, URLs with a literal
+  `user:pass@`, and a Twilio-style auth token beside the word. `encryption_key` joins the keyword
+  rules. A `password` or `passwd` assignment with a literal value (a `db_password` key, a
+  `--admin-password` option, a `mysql -p` argument, a table row) is matched in documentation and
+  configuration files; source code is left to review. The existing `FAKE-DO-NOT-USE` marker works for
+  all of these as before. Run over the whole working tree the new rules produced 12 findings: 5 in the
+  test VM setup note and 7 in documentation or fixtures, all examples. Nothing is left after the
+  edits below, and the existing history and PR-range checks are unchanged in how they run.
+
+### Changed
+
+- **The scanner's PEM private-key rule can no longer be excused by the fixture marker**, in either
+  form (beside the value, or in a file header under `tests/` or `fixtures/`). A test that needs
+  PEM-shaped data assembles it at run time from fragments, as `tests/test_secret_scan.py` does.
+  New tests there cover each new rule, the placeholders that must stay quiet, and the marker.
+- `infra/assets/test-vm-setup.md` no longer carries database or site credential values in its prose,
+  its pasted `site_config.json` or its command lines; each now reads `<stored in the password manager>`.
+- `.github/workflows/ci.yml` declares `permissions: contents: read` for the whole workflow. No job
+  writes to the repository or calls the GitHub API (checkout reads, and the clean-blob cache uses the
+  Actions runtime token), so nothing else needs the default token's wider scope. `release.yml` keeps
+  its own `contents: write`.
+- The nine infrastructure and two upstream-update Cloud Build triggers in `infra/cloud_build.tf` watch
+  the anchored pattern `^manual-trigger-only$` (new variable `cloud_build_manual_branch`) instead of the
+  bare name. Cloud Build branch filters are regular expressions matched as a search, so an unanchored
+  name also matched any branch containing it; the deploy triggers were anchored the same way earlier.
+  The branch name that fires them is unchanged. **This changes nothing live until an operator applies
+  Terraform.**
+- Marker comments (`FAKE-DO-NOT-USE`) added beside five existing example values so the extended scanner
+  reads them as the stand-ins they are: the placeholder default of `cloud_build_github_token` in
+  `infra/variables.tf` and its README row, two examples in `modules/cloudsql-instance/README.md`, and two
+  sample values in `scripts/test_capture_scrub.js`. The scanner also reads a hyphenated Terraform
+  reference such as `module.kms.keys.key-regional.id` as a reference rather than a value.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added
