@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.826.0] - 2026-11-18
+
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466), and the notes below are theirs, grouped by kind.
+
+### Changed
+
+- **ERPNext Enhancements Settings is now writable by System Manager only.** Staff with the
+  System User role keep read access, and the page opens for them as before.
+  - The DocType's System User permission row is now read, print and email only. The write,
+    create, delete and share rights are removed. The DocType's `modified` stamp is bumped so
+    `bench migrate` applies the new rows, because the importer skips a file whose stamp is not
+    newer than the stored one. This DocType has no site-side permission overrides, so the JSON
+    rows are what applies after deploy.
+  - The controller's `validate` now calls `require_system_manager` first. A change submitted
+    through a request by a user without System Manager is refused, whatever permission rows the
+    site has. Administrator, patches, install and background jobs with no request pass, and
+    code that writes settings with `frappe.db.set_single_value` never reaches `validate`. This
+    keeps the rule true if a permission row is added back from the Desk.
+  - Every code path that writes this Single was checked: the patches and seeders use
+    `set_single_value` or run as Administrator during migrate, and no whitelisted endpoint or
+    Desk script saves it under a staff session, so no caller needed to change.
+  - `tests/test_settings_write_roles.py` pins, for every single DocType in the app whose name
+    ends in "Settings", the roles that hold write at permlevel 0 to a reviewed table, so a new
+    writer role has to be added on purpose. It also covers the new controller check. It runs as
+    its own `ci.yml` step.
+
 ## [1.824.0] - 2026-11-18
 
 ### Added
