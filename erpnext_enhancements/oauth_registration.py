@@ -42,11 +42,14 @@ accepted only in its ``xn--`` form, and only if listed so).
   user name are ignored.
 * ``oauth_registration_guard``: ``0`` turns this hook off; anything else, or no key, leaves it on.
 
-**Rate.** At most :data:`RATE_LIMIT` registration requests per client address per
-:data:`RATE_WINDOW_SECONDS`, counted before the body is judged. The address is
+**Rate.** Two counters per client address per :data:`RATE_WINDOW_SECONDS`. Refused requests
+count toward :data:`REFUSED_LIMIT`; once an address reaches it, every registration from that
+address is refused until the window ends. Accepted registrations count toward the larger
+:data:`ACCEPTED_LIMIT`, because the allow-listed clients register from their vendors' servers,
+so every staff member connecting shares those few addresses. The address is
 ``frappe.local.request_ip``, the same one every IP-keyed limit in this app uses; why that is the
-client and not the load balancer is in ``utils/client_ip.py``. The window is fixed: the counter's
-expiry is set on its first hit only.
+client and not the load balancer is in ``utils/client_ip.py``. The window is fixed: a counter's
+expiry is set on its first hit, and set again if the counter is ever found without one.
 
 **Refusals** end the request from the hook with a JSON body in RFC 7591's error shape:
 400 ``invalid_redirect_uri``, 400 ``invalid_client_metadata`` when the body is not a JSON object
@@ -67,7 +70,10 @@ ALLOWLIST_KEY = "oauth_registration_redirect_allowlist"
 
 METHOD_NAME = "register_client"
 
-RATE_LIMIT = 10
+#: Refused registration requests one address may make in a window.
+REFUSED_LIMIT = 10
+#: Accepted registrations one address may make in a window (vendors' servers are shared).
+ACCEPTED_LIMIT = 60
 RATE_WINDOW_SECONDS = 3600
 
 #: More redirect URIs than any real client sends in one registration.
@@ -245,17 +251,35 @@ def refused_redirect_uri(data, rules=BUILTIN_RULES):
 # ---------------------------------------------------------------- the rate
 
 
-def over_rate_limit(ip):
-	"""Count one registration request for ``ip``; True once the window's count exceeds the limit.
+def _count(ip, bucket, amount=1):
+	"""Add ``amount`` to ``ip``'s counter in ``bucket`` for this window and return the new count
+	(``amount=0`` reads it).
 
-	``incrby`` is raw redis, so ``make_key`` gives the counter the site's prefix, and the expiry is
-	set on the first hit only so a steady trickle cannot keep the window open.
+	``incrby`` is raw redis, so ``make_key`` gives the counter the site's prefix. The expiry is set
+	on the first hit so a steady trickle cannot keep the window open, and set again whenever the
+	counter is found without one, so a counter can never outlive its window.
 	"""
-	key = frappe.cache.make_key(f"ee_oauth_registration:{ip or 'unknown'}")
-	count = frappe.cache.incrby(key, 1)
-	if count == 1:
+	key = frappe.cache.make_key(f"ee_oauth_registration:{bucket}:{ip or 'unknown'}")
+	count = frappe.cache.incrby(key, amount)
+	if count == amount or frappe.cache.ttl(key) < 0:
 		frappe.cache.expire(key, RATE_WINDOW_SECONDS)
-	return count > RATE_LIMIT
+	return count
+
+
+def refused_too_often(ip):
+	"""True once ``ip`` has had :data:`REFUSED_LIMIT` registration requests refused this window."""
+	return _count(ip, "refused", 0) >= REFUSED_LIMIT
+
+
+def note_refusal(ip):
+	"""Count one refused registration request for ``ip``."""
+	return _count(ip, "refused")
+
+
+def over_accepted_limit(ip):
+	"""Count one accepted registration for ``ip``; True once the window's count exceeds
+	:data:`ACCEPTED_LIMIT`."""
+	return _count(ip, "accepted") > ACCEPTED_LIMIT
 
 
 # ---------------------------------------------------------------- the hook
@@ -279,11 +303,16 @@ def judge():
 	try:
 		if not _guard_enabled():
 			return None
-		if over_rate_limit(getattr(frappe.local, "request_ip", None)):
-			return (429, "too_many_requests", "Too many registration requests. Try again later.")
+		ip = getattr(frappe.local, "request_ip", None)
+		too_many = (429, "too_many_requests", "Too many registration requests. Try again later.")
+		if refused_too_often(ip):
+			return too_many
 		refusal = refused_redirect_uri(_request_json(), configured_rules())
 		if refusal:
+			note_refusal(ip)
 			return (400, *refusal)
+		if over_accepted_limit(ip):
+			return too_many
 		return None
 	except Exception:
 		return (400, "invalid_client_metadata", "The registration request could not be read.")

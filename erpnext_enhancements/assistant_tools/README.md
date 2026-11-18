@@ -410,7 +410,8 @@ every registered tool.
 Claude and Google's connector reach this site's MCP server over OAuth, and both register
 themselves first (RFC 7591). Frappe and FAC each expose a guest `register_client` endpoint for
 that. `erpnext_enhancements/oauth_registration.py` (`before_request`) lets a registration through
-only when every redirect URI is on its allow-list, and at most 10 an hour per client address:
+only when every redirect URI is on its allow-list, within hourly limits per client address
+(10 refused requests, 60 accepted registrations):
 
 - `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`
 - any path on `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com`

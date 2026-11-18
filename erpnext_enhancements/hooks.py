@@ -3430,7 +3430,7 @@ before_request = [
 	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
 	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
 	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
-	# `oauth_registration_redirect_allowlist`), at most 10 an hour per client address. A refusal
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
 	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
 	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
 	# and a string test and never raises. See oauth_registration.py.

@@ -73,6 +73,8 @@ class _Cache:
 		self.counts = {}
 		self.expiries = []
 		self.raises = False
+		self.drop_expires = 0
+		self.ttls = {}
 
 	def make_key(self, key):
 		return f"site|{key}"
@@ -84,7 +86,18 @@ class _Cache:
 		return self.counts[key]
 
 	def expire(self, key, seconds):
+		if self.raises:
+			raise RuntimeError("cache down")
+		if self.drop_expires:
+			self.drop_expires -= 1
+			return
 		self.expiries.append((key, seconds))
+		self.ttls[key] = seconds
+
+	def ttl(self, key):
+		if key not in self.counts:
+			return -2
+		return self.ttls.get(key, -1)
 
 
 class _PermissionError(Exception):
@@ -421,18 +434,44 @@ class TestRequestMatcher(unittest.TestCase):
 
 
 class TestRateLimit(_Base):
-	def test_ten_an_hour_per_address(self):
-		for _i in range(oauth.RATE_LIMIT):
-			self.assertFalse(oauth.over_rate_limit("203.0.113.7"))
-		self.assertTrue(oauth.over_rate_limit("203.0.113.7"))
-		self.assertFalse(oauth.over_rate_limit("198.51.100.4"))
-		key = "site|ee_oauth_registration:203.0.113.7"
+	def test_accepted_registrations_have_their_own_larger_limit(self):
+		self.assertGreaterEqual(oauth.ACCEPTED_LIMIT, 30)
+		for _i in range(oauth.ACCEPTED_LIMIT):
+			self.assertFalse(oauth.over_accepted_limit("203.0.113.7"))
+		self.assertTrue(oauth.over_accepted_limit("203.0.113.7"))
+		self.assertFalse(oauth.over_accepted_limit("198.51.100.4"))
+		key = "site|ee_oauth_registration:accepted:203.0.113.7"
 		self.assertEqual(self.frappe.cache.expiries.count((key, oauth.RATE_WINDOW_SECONDS)), 1)
 
+	def test_refusals_are_counted_apart_from_accepted_registrations(self):
+		for _i in range(oauth.REFUSED_LIMIT - 1):
+			oauth.note_refusal("203.0.113.7")
+		self.assertFalse(oauth.refused_too_often("203.0.113.7"))
+		oauth.note_refusal("203.0.113.7")
+		self.assertTrue(oauth.refused_too_often("203.0.113.7"))
+		self.assertFalse(oauth.refused_too_often("198.51.100.4"))
+		self.assertFalse(oauth.over_accepted_limit("203.0.113.7"))
+
 	def test_a_missing_address_shares_one_bucket(self):
-		oauth.over_rate_limit(None)
-		oauth.over_rate_limit("")
-		self.assertEqual(self.frappe.cache.counts, {"site|ee_oauth_registration:unknown": 2})
+		oauth.over_accepted_limit(None)
+		oauth.over_accepted_limit("")
+		self.assertEqual(self.frappe.cache.counts, {"site|ee_oauth_registration:accepted:unknown": 2})
+
+	def test_a_counter_found_without_an_expiry_gets_one(self):
+		key = "site|ee_oauth_registration:accepted:203.0.113.7"
+		self.frappe.cache.drop_expires = 1
+		oauth.over_accepted_limit("203.0.113.7")
+		self.assertEqual(self.frappe.cache.ttl(key), -1)
+		oauth.over_accepted_limit("203.0.113.7")
+		self.assertEqual(self.frappe.cache.ttl(key), oauth.RATE_WINDOW_SECONDS)
+		oauth.over_accepted_limit("203.0.113.7")
+		self.assertEqual(self.frappe.cache.expiries.count((key, oauth.RATE_WINDOW_SECONDS)), 1)
+
+	def test_reading_the_refused_count_keeps_its_window(self):
+		key = "site|ee_oauth_registration:refused:203.0.113.7"
+		self.assertFalse(oauth.refused_too_often("203.0.113.7"))
+		self.assertEqual(self.frappe.cache.counts[key], 0)
+		self.assertEqual(self.frappe.cache.ttl(key), oauth.RATE_WINDOW_SECONDS)
 
 
 class TestHook(_Base):
@@ -515,8 +554,8 @@ class TestHook(_Base):
 		self.request(body={"redirect_uris": [CLAUDE]})
 		self.assertEqual(self.refusal()[0], 400)
 
-	def test_the_eleventh_request_in_an_hour_gets_a_429(self):
-		for _i in range(oauth.RATE_LIMIT):
+	def test_accepted_registrations_past_the_limit_get_a_429(self):
+		for _i in range(oauth.ACCEPTED_LIMIT):
 			self.request(body={"redirect_uris": [CLAUDE]})
 			self.assertIsNone(oauth.guard_registration())
 		self.request(body={"redirect_uris": [CLAUDE]})
@@ -527,12 +566,19 @@ class TestHook(_Base):
 		self.request(body={"redirect_uris": [CLAUDE]})
 		self.assertIsNone(oauth.guard_registration())
 
-	def test_refused_requests_count_toward_the_rate(self):
-		for _i in range(oauth.RATE_LIMIT):
+	def test_an_address_refused_too_often_is_refused_for_the_window(self):
+		for _i in range(oauth.REFUSED_LIMIT):
 			self.request(body={"redirect_uris": ["https://other.example/cb"]})
 			self.assertEqual(self.refusal()[0], 400)
 		self.request(body={"redirect_uris": [CLAUDE]})
 		self.assertEqual(self.refusal()[0], 429)
+
+	def test_accepted_registrations_do_not_use_up_the_refused_count(self):
+		for _i in range(oauth.REFUSED_LIMIT + 5):
+			self.request(body={"redirect_uris": [CLAUDE]})
+			self.assertIsNone(oauth.guard_registration())
+		self.request(body={"redirect_uris": ["https://other.example/cb"]})
+		self.assertEqual(self.refusal()[0], 400)
 
 	def test_site_config_zero_turns_it_off(self):
 		for value in (0, "0", False):

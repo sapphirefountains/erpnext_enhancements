@@ -32,9 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Site config.** `oauth_registration_redirect_allowlist` adds entries (`host` or
     `host/path-prefix`; a loopback client only when `http://localhost` or `http://127.0.0.1` is listed
     explicitly, with any port). `oauth_registration_guard: 0` turns the hook off.
-  - **Rate.** Ten registration requests an hour per client address, counted before the body is
-    judged, keyed on `frappe.local.request_ip` like every other IP-keyed limit here (see
-    `utils/client_ip.py`).
+  - **Rate.** Two counters an hour per client address, keyed on `frappe.local.request_ip` like
+    every other IP-keyed limit here (see `utils/client_ip.py`). Ten refused requests refuse that
+    address for the rest of the window. Accepted registrations have their own limit of 60,
+    because the allow-listed clients register from their vendors' servers and every staff member
+    connecting shares those addresses. A counter's expiry is set on its first hit and set again
+    if the counter is ever found without one.
   - **How it refuses.** frappe v16's `application` sends a raised werkzeug `HTTPException`'s own
     response, so the hook ends the request with a JSON body in RFC 7591's error shape: 400
     `invalid_redirect_uri` naming the URI, 400 `invalid_client_metadata` when the body is not a JSON
