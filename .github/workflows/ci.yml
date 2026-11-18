@@ -59,6 +59,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only for the token every job gets. No job here writes to the repository, comments, tags or
+# calls the GitHub API: checkout reads, and the clean-blob cache action uses the Actions runtime
+# token rather than this one. `release.yml` declares what it needs for itself.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # Lint — advisory, but much closer to a gate than it was.
@@ -885,6 +891,12 @@ jobs:
       # state-changing endpoint is written POST-only on purpose rather than by default.
       - name: Whitelisted endpoints declare their HTTP methods
         run: python -m unittest erpnext_enhancements.tests.test_whitelist_methods_ratchet -v
+      # Every `@frappe.whitelist(allow_guest=True)` function is listed in
+      # tests/data/guest_endpoints.json with who calls it and what checks the caller. A new
+      # guest endpoint, or a removed one, fails the build until the register agrees. AST only,
+      # no frappe stub.
+      - name: Guest endpoint register (every guest endpoint has a caller and a check)
+        run: python -m unittest erpnext_enhancements.tests.test_guest_endpoint_register -v
       # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
       # given (a, b) it swaps them only when `a` contains a newline. So the legacy
       # log_error(message, title) stores a one-line message as the row's TITLE and

@@ -39,7 +39,7 @@ variable "cloud_build_connection" {
 }
 
 variable "cloud_build_github_token" {
-  description = "The GitHub Personal Access Token (PAT) for Cloud Build connection."
+  description = "The GitHub Personal Access Token (PAT) for Cloud Build connection. The default is a placeholder (FAKE-DO-NOT-USE)."
   type        = string
   default     = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
 }
@@ -544,6 +544,16 @@ variable "cloud_build_deploy_branch" {
   description = "Regex matching the branch that triggers CI/CD app deployment (deploy-test, deploy-prod)."
   type        = string
   default     = "^main$"
+}
+
+variable "cloud_build_manual_branch" {
+  # ANCHORED, for the same reason as `cloud_build_deploy_branch` above: a Cloud Build branch
+  # filter is a regex matched as a search, so the bare literal `manual-trigger-only` would also
+  # match any branch whose name merely contains it. The manual triggers (infra apply, destroy,
+  # refresh and the upstream-update runs) must only ever match a branch with exactly this name.
+  description = "Regex for the placeholder branch the manual-only Cloud Build triggers watch (exact name only)."
+  type        = string
+  default     = "^manual-trigger-only$"
 }
 
 variable "destroy_branch_regex" {

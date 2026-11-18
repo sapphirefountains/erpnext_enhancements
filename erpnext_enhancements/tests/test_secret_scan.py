@@ -374,5 +374,122 @@ class StagedTests(_TempTestCase):
 		self.assertIn("1 staged files scanned", out)
 
 
+def _load_scanner():
+	spec = importlib.util.spec_from_file_location("check_no_committed_secrets_rules", SCRIPT)
+	module = importlib.util.module_from_spec(spec)
+	sys.modules[spec.name] = module  # @dataclass looks its module up while decorating
+	try:
+		spec.loader.exec_module(module)
+	finally:
+		sys.modules.pop(spec.name, None)
+	return module
+
+
+class ProviderAndPasswordRuleTests(unittest.TestCase):
+	"""``scan_text`` against shaped credentials, password literals in docs, and the PEM rule's marker immunity.
+
+	Every planted value is assembled from fragments, as above, so this file stays clean.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.scanner = _load_scanner()
+
+	def rules(self, where, text):
+		return {finding.rule for finding in self.scanner.scan_text(where, text)}
+
+	# -- shaped credentials -------------------------------------------------------------------
+
+	def test_provider_shaped_credentials_fire(self):
+		mixed = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+		plants = {
+			"stripe-live-key": "KEY = '" + "sk_" + "live_" + mixed[:24] + "'",
+			"stripe-webhook-secret": "export HOOK=" + "whsec" + "_" + mixed[:24],
+			"google-api-key": "key=" + "AI" + "za" + mixed[:35],
+			"aws-access-key": "id: " + "AK" + "IA" + "7Q2M5X8B1C4D6E9F",
+			"github-token": "token " + "gh" + "p_" + mixed,
+			"slack-token": "SLACK=" + "xo" + "xb-" + "1234567890-AbCdEfGhIjKl",
+			"jwt": "Bearer " + "ey" + "JhbGciOiJIUzI1NiJ9." + "ey" + "JzdWIiOiJ4eXoifQ." + "Qm9ndXNTaWduYXR1cmU",
+			"token-key-secret-pair": "Authorization: token " + "k3Jd9Lm2Qp8Rx7V" + ":" + "b1Hs5Yw4Tn6Zc0A",
+			"url-with-password": "DATABASE_URL=postgres://app:" + "Zk3Pq9Lm" + "@db.internal:5432/app",
+			"twilio-auth-token": "TWILIO_AUTH_TOKEN=" + "9f3a7c1e5b2d4086" + "ae1c3b5d7f902468",
+			"encryption_key": 'encryption_' + 'key = "' + "Zk3Pq9LmXv2Wb7Nd4Rt8Yh1Gs6Jc5Ae0Uo3Ik9Pl2Q=" + '"',
+		}
+		for rule, text in plants.items():
+			with self.subTest(rule):
+				self.assertIn(rule, self.rules("config/notes.txt", text + "\n"))
+
+	def test_placeholders_do_not_fire(self):
+		clean = [
+			"KEY = '" + "sk_" + "live_" + "0" * 24 + "'",
+			"postgres://user:" + "pass" + "@host/db",
+			"postgres://user:${DB_PASSWORD}@host/db",
+			"TWILIO_AUTH_TOKEN=<stored in the password manager>",
+			"Authorization: token " + "api_key" + ":" + "api_secret",
+			'encryption_' + 'key = module.kms.keys.key-regional.id',
+		]
+		for text in clean:
+			with self.subTest(text):
+				self.assertEqual(self.rules("config/notes.txt", text + "\n"), set())
+
+	# -- password literals in docs and config ---------------------------------------------------
+
+	def test_password_literals_in_docs_and_config_fire(self):
+		value = "Zk3Pq9Lm"
+		plants = {
+			"password-assignment": ["db_" + "password: " + value, '"db_' + 'password": "' + value + '"',
+									"- **Root pass" + "word:** `" + value + "`"],
+			"password-option": ["bench new-site --admin-" + "password " + value],
+			"database-client-password": ["mysql -u root -p'" + value + "'"],
+			"password-table-cell": ["| MariaDB root pass" + "word | `" + value + "` |"],
+		}
+		for rule, lines in plants.items():
+			for line in lines:
+				with self.subTest(line.replace(value, "<value>")):
+					self.assertIn(rule, self.rules("docs/setup.md", line + "\n"))
+
+	def test_password_placeholders_and_prose_do_not_fire(self):
+		word = "pass" + "word"
+		clean = [
+			f"{word}: <stored in the password manager>",
+			f'"db_{word}": "<stored in the password manager>"',
+			f"{word}: required",
+			f"{word} = ${{DB_{word.upper()}}}",
+			f"mysql -u root -p'<stored in the password manager>'",
+			f"the field stored behind the {word}: present, absent, short or long",
+			f'"Pass' + f'word: case-sensitive." is prose',
+			f"decodes to `user:{word}`: letters and slashes",
+		]
+		for text in clean:
+			with self.subTest(text):
+				self.assertEqual(self.rules("docs/setup.md", text + "\n"), set())
+
+	def test_password_rules_leave_source_code_to_review(self):
+		line = "db_" + "password = 'Zk3Pq9Lm'\n"
+		self.assertEqual(self.rules("app/settings.py", line), set())
+		self.assertIn("password-assignment", self.rules("app/settings.sh", line))
+		self.assertIn("password-assignment", self.rules("(unreachable blob abc123)", line))
+
+	# -- the fixture marker ---------------------------------------------------------------------
+
+	def test_marker_beside_the_value_still_excuses_the_other_rules(self):
+		text = "# FAKE-DO-NOT-USE\nKEY = '" + "sk_" + "live_" + "A1b2C3d4E5f6G7h8I9j0K1l2" + "'\n"
+		self.assertEqual(self.rules("docs/example.md", text), set())
+		self.assertEqual(self.rules("erpnext_enhancements/tests/test_x.py", text), set())
+
+	def test_the_pem_rule_cannot_be_excused_by_the_marker(self):
+		pem = "-----BEGIN " + "PRIVATE KEY-----"
+		beside = f"# FAKE-DO-NOT-USE\nKEY = '{pem}'\n"
+		header = f"# FAKE-DO-NOT-USE\n{pem}\nbody\n"
+		for where, text in (
+			("docs/example.md", beside),
+			("erpnext_enhancements/tests/test_x.py", beside),
+			("erpnext_enhancements/tests/fixtures/key.pem", header),
+			("fixtures/key.pem", header),
+		):
+			with self.subTest(where):
+				self.assertEqual(self.rules(where, text), {"pem-private-key"})
+
+
 if __name__ == "__main__":
 	unittest.main()
