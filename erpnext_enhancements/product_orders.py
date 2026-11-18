@@ -11,11 +11,24 @@ without a bench:
 
 * ``product_line`` / ``is_product_item``: which Items are products, and which product line
   (E-Stops, Control Panels, Other) each one belongs to;
+* ``classify_lines`` (with ``is_product_document`` and ``skips_project``): **the shared rule**
+  for a whole Quotation or Sales Order. The Products tab reads it, and so does quote to order
+  (#1465), which must not keep its own copy. A document is a product sale only when every line is
+  a product or an incidental line (freight, delivery); a product beside anything else is a job,
+  and a job stays off the tab. ``needs_project`` is True for a product document with a control
+  panel on it;
 * ``order_stage``: the board column of one Sales Order (Ordered / Paid -> Building -> Testing
   -> Ready -> Delivered), with room for the pre-shipment test a later task records;
 * ``allocate_stock``: which orders the finished units on the shelf already cover;
 * ``paid_state``, ``is_late``, ``is_open_quotation``, ``is_open_opportunity``, ``win_rate``,
   ``component_state``: the smaller facts the tab shows.
+
+**Where a control-panel order shows, once.** A product Sales Order that needs a project (a
+control panel on it) is not on the order board. Its working record is its Project of type
+Products, so it shows in the tab's Control panel projects section: on its Project's row (with the
+order beside it), or, while it has no Project yet, as its own row marked "No project yet". The
+board holds the product orders that get no project (E-Stops and the other standard products), so
+no sale is listed twice and none is lost.
 
 Dates are compared as ISO ``YYYY-MM-DD`` strings, so a ``datetime.date`` and a string read the
 same way and nothing here depends on a time zone.
@@ -135,6 +148,103 @@ def lines_of(items):
 			given if given in LINES else product_line(item.get("item_code"), item.get("source_configuration"))
 		)
 	return [line for line in LINES if line in found]
+
+
+# ---------------------------------------------------------------------------------------------
+# The document rule: is this Quotation or Sales Order a product sale, and does it need a project?
+# ---------------------------------------------------------------------------------------------
+
+#: Lines that ride along with a product and do not make a document a job: freight and delivery.
+#: Item codes, read on prod on 2026-11-18. SRV-105 "BUILD - FREIGHT & DELIVERY" (23 quote lines),
+#: SRV-206 "SERVICE - FREIGHT & DELIVERY", SRV-401 "RENT - FREIGHT & DELIVERY" and the plain
+#: "Freight" Item. Kept explicit and short on purpose: a line not listed here makes the document a
+#: job, which is the safe way to be wrong (a job keeps its project and stays off the tab). Add the
+#: carrier-shipping Item here when quote to order adds one.
+INCIDENTAL_ITEMS = frozenset({"SRV-105", "SRV-206", "SRV-401", "Freight"})
+
+#: The PDT family test in SQL, for a count that cannot take a Python filter: MariaDB ``REGEXP``,
+#: the same shape as ``_FAMILY`` (case-insensitive under the site's ``_ci`` collation). The billing
+#: families are not excluded by it: add ``NOT REGEXP`` on ``NOT_PRODUCT_FAMILIES`` alongside.
+PDT_FAMILY_SQL_REGEXP = "^PDT-[0-9]{4}([- ]|$)"
+
+KIND_PRODUCT = "product"  # every line is a product or incidental, and at least one is a product
+KIND_JOB = "job"  # at least one product line, and at least one line that is neither
+KIND_NONE = "none"  # no product line at all (an empty document, or freight alone)
+
+
+def is_incidental_item(item_code):
+	return str(item_code or "").strip() in INCIDENTAL_ITEMS
+
+
+def classify_lines(lines):
+	"""Classify one Quotation's or Sales Order's lines. The rule #1464 and #1465 both read.
+
+	``lines``: dicts with ``item_code`` and, optionally, ``source_configuration`` (the Item's
+	``custom_source_configuration``), ``amount`` (the line's amount before tax) and ``line`` (a
+	product line already worked out).
+
+	* **A product document** (``KIND_PRODUCT``): every line is a product Item (``product_line``)
+	  or an incidental one (``INCIDENTAL_ITEMS``), and at least one is a product. A configured
+	  E-Stop plus freight is one; so is a hand-typed PDT-0040 E-Stop with no configuration.
+	* **A job** (``KIND_JOB``): a product line beside anything else. A fountain quote that carries
+	  one Splash Wizard (prod's SAL-QTN-2026-02070: $114,552.44 in all, $8,165.64 of it PDT-0002) is
+	  a job: it stays off the Products tab and keeps its project. Mixed means job.
+	* **Neither** (``KIND_NONE``): no product line.
+
+	**Does it need a project?** Nikolas, 2026-11-18 (decision pick 1): E-Stops and standard
+	products get no project; custom-engineered control panels keep a Project of type Products. So
+	``needs_project`` is True for a product document with a Control Panels line, and for nothing
+	else. A pure control-panel order is a product order **and** needs a project. (A job needs one
+	too, by the old rule, but that is the caller's business: this answers for product documents.)
+
+	Returns ``{"kind", "is_product", "needs_project", "lines", "product_lines",
+	"incidental_lines", "job_lines", "product_amount"}``: ``lines`` are the product lines in chip
+	order, ``product_lines`` the product line dicts (each with its ``line``), ``job_lines`` the item
+	codes that made it a job, and ``product_amount`` the sum of the product lines' ``amount``, never
+	the document's grand total.
+	"""
+	product, incidental, job = [], [], []
+	for item in lines or ():
+		code = item.get("item_code")
+		given = item.get("line")
+		line = given if given in LINES else product_line(code, item.get("source_configuration"))
+		if line is not None:
+			product.append(dict(item, line=line))
+		elif is_incidental_item(code):
+			incidental.append(item)
+		else:
+			job.append(code)
+	if not product:
+		kind = KIND_NONE
+	elif job:
+		kind = KIND_JOB
+	else:
+		kind = KIND_PRODUCT
+	is_product = kind == KIND_PRODUCT
+	return {
+		"kind": kind,
+		"is_product": is_product,
+		"needs_project": is_product and any(p["line"] == LINE_PANELS for p in product),
+		"lines": lines_of(product),
+		"product_lines": product,
+		"incidental_lines": incidental,
+		"job_lines": job,
+		"product_amount": sum(_num(p.get("amount")) for p in product),
+	}
+
+
+def is_product_document(lines):
+	"""Every line is a product or incidental, and at least one is a product."""
+	return classify_lines(lines)["is_product"]
+
+
+def skips_project(lines):
+	"""A product sale that gets no project: a product document with no control panel on it.
+
+	The answer quote to order (#1465) needs: True means "the Sales Order is the record".
+	"""
+	result = classify_lines(lines)
+	return result["is_product"] and not result["needs_project"]
 
 
 # ---------------------------------------------------------------------------------------------

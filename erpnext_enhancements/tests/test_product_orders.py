@@ -131,6 +131,104 @@ class TestProductLine(unittest.TestCase):
 		self.assertEqual(po.lines_of([{"item_code": "PDT-0040", "line": "Nonsense"}]), [po.LINE_ESTOPS])
 
 
+def line(code, amount=0, source=None):
+	return {"item_code": code, "amount": amount, "source_configuration": source}
+
+
+class TestTheDocumentRule(unittest.TestCase):
+	"""``classify_lines``: the one rule the Products tab and quote to order (#1465) both read."""
+
+	def test_a_fountain_job_with_one_splash_wizard_is_a_job(self):
+		# Prod's SAL-QTN-2026-02070 shape: $114,552.44 in all, one PDT-0002 line at $8,165.64.
+		result = po.classify_lines(
+			[
+				line("PDT-0002", 8165.64),
+				line("PUMP-123", 40000),
+				line("NOZZLE-9", 20000),
+				line("SRV-105", 900),
+			]
+		)
+		self.assertEqual(result["kind"], po.KIND_JOB)
+		self.assertFalse(result["is_product"])
+		self.assertFalse(result["needs_project"], "needs_project answers for product documents only")
+		self.assertEqual(result["job_lines"], ["PUMP-123", "NOZZLE-9"])
+		self.assertFalse(po.is_product_document(result["product_lines"] + [line("PUMP-123")]))
+
+	def test_a_configured_estop_plus_freight_is_a_product_with_no_project(self):
+		result = po.classify_lines([line("PDT-0040-1-1-1-2-0", 1668, "CFG-0001"), line("SRV-105", 85)])
+		self.assertEqual(result["kind"], po.KIND_PRODUCT)
+		self.assertTrue(result["is_product"])
+		self.assertFalse(result["needs_project"])
+		self.assertEqual(result["lines"], [po.LINE_ESTOPS])
+		self.assertEqual(result["product_amount"], 1668, "freight is not a product amount")
+		self.assertEqual([i["item_code"] for i in result["incidental_lines"]], ["SRV-105"])
+		self.assertTrue(po.skips_project([line("PDT-0040-1-1-1-2-0", 1668, "CFG-0001"), line("Freight", 85)]))
+
+	def test_a_hand_typed_pdt_0040_estop_is_a_product(self):
+		# Prod's E-Stops: PDT-0040 with no configuration, one line, mirrored from QuickBooks.
+		result = po.classify_lines([line("PDT-0040", 2200)])
+		self.assertTrue(result["is_product"])
+		self.assertFalse(result["needs_project"])
+		self.assertEqual(result["product_amount"], 2200)
+		self.assertTrue(po.skips_project([line("PDT-0040", 2200)]))
+
+	def test_a_pure_control_panel_order_is_a_product_and_needs_a_project(self):
+		result = po.classify_lines([line("PDT-0003", 28490), line("SRV-105", 500)])
+		self.assertTrue(result["is_product"])
+		self.assertTrue(result["needs_project"])
+		self.assertEqual(result["lines"], [po.LINE_PANELS])
+		self.assertFalse(po.skips_project([line("PDT-0003", 28490)]))
+
+	def test_an_estop_beside_a_control_panel_needs_a_project(self):
+		result = po.classify_lines([line("PDT-0040"), line("PDT-0011")])
+		self.assertTrue(result["is_product"])
+		self.assertTrue(result["needs_project"])
+		self.assertEqual(result["lines"], [po.LINE_ESTOPS, po.LINE_PANELS])
+
+	def test_a_billing_catch_all_beside_a_product_makes_a_job(self):
+		self.assertEqual(po.classify_lines([line("PDT-0040"), line("PDT-0701")])["kind"], po.KIND_JOB)
+		# and a configured Item with no PDT code is still a product line
+		self.assertTrue(po.is_product_document([line("SW-CUSTOM-7", source="CFG-9"), line("SRV-206")]))
+
+	def test_no_product_line_is_neither(self):
+		for lines in ([], None, [line("SRV-105")], [line("PDT-0701"), line("PDT-0400")]):
+			with self.subTest(lines=lines):
+				result = po.classify_lines(lines)
+				self.assertEqual(result["kind"], po.KIND_NONE)
+				self.assertFalse(result["is_product"])
+				self.assertFalse(result["needs_project"])
+				self.assertFalse(po.skips_project(lines))
+
+	def test_an_unlisted_or_blank_line_makes_a_job_the_safe_way(self):
+		# A line that is neither product nor listed incidental makes the document a job, and a job
+		# keeps its project. Freight items are matched by code, exactly.
+		self.assertEqual(po.classify_lines([line("PDT-0040"), line("")])["kind"], po.KIND_JOB)
+		self.assertEqual(po.classify_lines([line("PDT-0040"), line("freight")])["kind"], po.KIND_JOB)
+		self.assertTrue(po.is_incidental_item(" SRV-105 "))
+
+	def test_a_line_already_worked_out_is_kept(self):
+		result = po.classify_lines([{"item_code": "SW-CUSTOM-7", "line": po.LINE_OTHER, "amount": "12.5"}])
+		self.assertTrue(result["is_product"])
+		self.assertEqual(result["product_amount"], 12.5)
+
+	def test_the_sql_regexp_matches_what_the_python_rule_matches(self):
+		pattern = re.compile(po.PDT_FAMILY_SQL_REGEXP, re.IGNORECASE)
+		for code in (
+			"PDT-0040",
+			"PDT-0040-1-1-1-2-0",
+			"PDT-0008 VFD BYPASS",
+			"PDT-00040 (deleted)",
+			"PDT-00XX",
+			"X-PDT-0040",
+		):
+			with self.subTest(code=code):
+				self.assertEqual(bool(pattern.search(code)), po.pdt_family(code) is not None)
+
+	def test_the_incidental_items_are_freight_and_delivery_only(self):
+		self.assertEqual(po.INCIDENTAL_ITEMS, frozenset({"SRV-105", "SRV-206", "SRV-401", "Freight"}))
+		self.assertFalse(po.INCIDENTAL_ITEMS & {"PDT-0701", "PDT-0400"})
+
+
 class TestOrderStage(unittest.TestCase):
 	def test_sold_with_nothing_released_is_ordered(self):
 		self.assertEqual(po.order_stage(0, []), {"stage": po.STAGE_ORDERED, "note": "No Work Order yet"})
