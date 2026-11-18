@@ -81,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as drafts with a message saying which warehouse to set. A failure never stops the order: it is
     rolled back to a savepoint and logged, and the order's new **Create > Product Work Orders** runs
     the same plan again. Planning again never builds twice.
+  - **What the shelf can give.** Another open order's line with no Work Order claims what it still has
+    to deliver. A line being built for claims the units its Work Orders already made and not yet
+    delivered, because they sit on the same shelf (`rules.line_claim`). Two lines of one order share
+    what is left in turn.
+  - **No unit is built without a serial number.** A configured Item saved before this release has Has
+    Serial No off. While it has moved no stock, the plan turns serial numbers on first. Once stock has
+    moved, ERPNext refuses that, so nothing is built and the order says why: a unit with no serial
+    could never pass the gate.
   - **No hard-coded warehouse.** A new Single, **Product Build Settings**, holds the build,
     work-in-progress and finished units warehouses, all empty until Nikolas picks the Build Room
     shelves, and says on the page what each one is for. Empty, they fall back to Manufacturing
@@ -99,10 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is submitted while the unit is built, and an Update would check submit rights and could race an
     open form.
   - **Who built it.** `Work Order.custom_built_by` is recorded by **I'm building this** or by the
-    first step ticked. When the Manufacture entry is submitted, each serial number it made is stamped
-    with that builder (`Serial No.custom_built_by`) and with its Work Order (ERPNext's own
-    `Serial No.work_order`, which it fills itself only when Manufacturing Settings makes serials at
-    Work Order submit, off on prod).
+    first step ticked. It is read-only on the form. Once someone is recorded, only a Manufacturing
+    Manager can take it over (with a comment on the Work Order), because the builder is what keeps the
+    builder from testing the unit. When the Manufacture entry is submitted, each serial number it
+    made is stamped with that builder (`Serial No.custom_built_by`) and with its Work Order
+    (ERPNext's own `Serial No.work_order`, which it fills itself only when Manufacturing Settings makes
+    serials at Work Order submit, off on prod). The serials are read back from the entry's rows in the
+    database: a serial the Item's series makes is written to its row with `db.set_value` while the
+    ledger posts, so the document the hook is handed does not have it.
 - **Serial number, QC gate and warranty (TASK-2026-03230).**
   - **One serial number per unit.** A configured product kept in stock gets Has Serial No, the series
     `SF-.YY.-.#####` (SF-26-00001; a setting), a 365-day Warranty Period and the pre-shipment test
@@ -140,7 +152,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     itself, so it cannot see serial numbers, and it would make the built-ahead units wait for a
     Delivery Note before they could be tested. The gate also refuses to let ERPNext pick serials on
     its own at submit: "Auto Create Serial and Batch Bundle For Outward" is on, on prod, and first in,
-    first out would ship the oldest unit, tested or not. A return is never held. Product Build
+    first out would ship the oldest unit, tested or not. A return is never held. A **Sales Invoice
+    with Update Stock** (a counter or website sale) ships the unit itself, so it is held by the same
+    gate. Product Build
     Settings' **Require a Passed Test Before Delivery** switches the gate off.
   - **A printable test certificate**, "Pre-Shipment Test Certificate" on Quality Inspection, for the
     box: product, part number, serial, built by and tested by, every check with its criterion,
@@ -156,9 +170,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unit built for another order on the board is not counted as shelf stock. A product that is not
   configured, or the gate switched off, keeps the old rule: Ready as soon as it is built. The column
   never stops the board: a failure is logged and the stage rule keeps its own answer.
-- Tests: `test_product_fulfillment_rules` (41, stub-free) and `test_product_fulfillment_wiring` (30,
+- Tests: `test_product_fulfillment_rules` (43, stub-free) and `test_product_fulfillment_wiring` (40,
   on a frappe stub: the schema, the settings defaults against the code and the seed, the label and
-  certificate rendered, the gate and the plan glue), each in CI. `test_products_tab_endpoint` gains 13
+  certificate rendered, the gate and the plan glue), each in CI. `test_products_tab_endpoint` gains 15
   Testing-column cases, including that the board logs nothing.
 
 ### Notes

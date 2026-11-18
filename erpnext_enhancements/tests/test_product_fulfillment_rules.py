@@ -69,6 +69,19 @@ class TestPlanningALine(unittest.TestCase):
 		self.assertEqual(rules.free_stock(1, [2]), 0, "never negative")
 		self.assertEqual(rules.free_stock(None, None), 0)
 
+	def test_a_line_with_no_work_order_claims_what_it_still_has_to_deliver(self):
+		self.assertEqual(rules.line_claim(2, False), 2)
+		self.assertEqual(rules.line_claim(-1, False), 0)
+
+	def test_a_line_being_built_claims_only_its_finished_undelivered_units(self):
+		# Built for another order and waiting on the shelf: that unit is spoken for (review of #1470).
+		self.assertEqual(rules.line_claim(1, True, produced_qty=1), 1)
+		self.assertEqual(
+			rules.line_claim(2, True, produced_qty=1), 1, "the unit still being built is not on the shelf"
+		)
+		self.assertEqual(rules.line_claim(1, True, produced_qty=2, delivered_qty=1), 1)
+		self.assertEqual(rules.line_claim(1, True, produced_qty=0), 0)
+
 	def test_planned_counts_what_a_closed_work_order_produced(self):
 		work_orders = [
 			{"status": "Not Started", "docstatus": 1, "qty": 1},

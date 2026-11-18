@@ -971,6 +971,22 @@ class TestTheTestingColumn(Base):
 		rows = self.rows()
 		self.assertEqual((rows["SO-10"]["stage"], rows["SO-11"]["stage"]), ("ready", "testing"))
 
+	def test_a_shelf_order_with_no_unit_on_record_waits(self):
+		# Review of #1470: with no serial found at all, the shelf order used to read Ready.
+		SITE.tables["work_orders"] = []
+		SITE.tables["serials_wo"] = []
+		SITE.tables["serials_active"] = []
+		SITE.tables["tests"] = []
+		rows = self.rows()
+		self.assertEqual(rows["SO-11"]["stage"], "testing")
+
+	def test_one_tested_unit_makes_one_shelf_order_ready_not_two(self):
+		SITE.tables["so_headers"].append(so("SO-12", delivery_date="2026-12-09"))
+		SITE.tables["so_lines"].append(so_line("SO-12", CONFIGURED, 1668, source="CFG-1"))
+		SITE.tables["on_hand"] = {CONFIGURED: 3}
+		rows = self.rows()
+		self.assertEqual((rows["SO-11"]["stage"], rows["SO-12"]["stage"]), ("ready", "testing"))
+
 	def test_the_switch_off_brings_back_ready_as_soon_as_built(self):
 		SITE.settings = {"require_test": 0}
 		rows = self.rows()

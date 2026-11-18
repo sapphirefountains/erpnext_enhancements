@@ -317,6 +317,14 @@ def delivery_note_before_submit(doc, method=None):
 		)
 
 
+def sales_invoice_before_submit(doc, method=None):
+	"""The same gate on a Sales Invoice that ships stock itself (Update Stock ticked, the website or a
+	counter sale): it moves the unit out exactly as a Delivery Note does."""
+	if not cint(doc.get("update_stock")):
+		return
+	delivery_note_before_submit(doc, method)
+
+
 @frappe.whitelist()
 def delivery_gate_status(delivery_note):
 	"""What the gate would say about a Delivery Note now, for its form."""

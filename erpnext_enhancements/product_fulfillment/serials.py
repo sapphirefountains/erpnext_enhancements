@@ -73,6 +73,23 @@ def prepare_configured_item(doc, method=None):
 		frappe.log_error(title="Product Fulfillment: configured Item", message=frappe.get_traceback())
 
 
+def ensure_serial_numbers(item_code):
+	"""Turn serial numbers on for a configured Item before its first build. True when it has them.
+
+	A configured Item saved before this release has Has Serial No off. While it has no stock ledger,
+	saving it lets ``prepare_configured_item`` turn them on (with the series, warranty and template).
+	Once stock has moved, ERPNext refuses the change and this answers False.
+	"""
+	if frappe.db.get_value("Item", item_code, "has_serial_no"):
+		return True
+	if _has_stock_ledger(item_code):
+		return False
+	item = frappe.get_doc("Item", item_code)
+	item.flags.ignore_permissions = True
+	item.save()
+	return bool(frappe.db.get_value("Item", item_code, "has_serial_no"))
+
+
 def _has_stock_ledger(item_code):
 	return bool(frappe.db.exists("Stock Ledger Entry", {"item_code": item_code, "is_cancelled": 0}))
 
@@ -95,9 +112,17 @@ def stamp_builders(doc, method=None):
 			frappe.db.set_value(
 				"Work Order", doc.work_order, "custom_built_by", builder, update_modified=False
 			)
-		for row in doc.get("items") or ():
-			if not int(row.get("is_finished_item") or 0):
-				continue
+		# Read the finished rows back from the database, not from ``doc.items``. A serial the Item's
+		# series makes is created while the stock ledger is posted, and ERPNext writes the row's
+		# bundle (and, with "do not update serial/batch on auto bundle" off, its Serial No text) with
+		# ``frappe.db.set_value`` only (v16.54.0 ``SerialBatchBundle.set_serial_and_batch_bundle``):
+		# the document this hook is handed still has neither, so reading it stamped nothing.
+		rows = frappe.get_all(
+			"Stock Entry Detail",
+			filters={"parent": doc.name, "is_finished_item": 1},
+			fields=["serial_no", "serial_and_batch_bundle"],
+		)
+		for row in rows:
 			for serial in serials_of_row(row):
 				values = {"custom_built_by": builder}
 				if not frappe.db.get_value("Serial No", serial, "work_order"):

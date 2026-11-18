@@ -140,7 +140,10 @@ class BuildChecklistPage {
 		const builder = b.built_by
 			? `<b>${esc(b.built_by_name || b.built_by)}</b>`
 			: `<span class="pfb-muted">${__("Nobody yet")}</span>`;
-		const can_claim = b.can_edit && !b.manufactured && !PFB.same_person(b.built_by, b.me);
+		// Anyone may claim an unclaimed unit; only a manager may take it over from someone else (the
+		// server refuses anyone else, since the builder is what keeps the builder from testing it).
+		const can_claim =
+			b.can_edit && !b.manufactured && !PFB.same_person(b.built_by, b.me) && (!b.built_by || b.is_manager);
 		const header = `
 			<div class="pfb-card pfb-head">
 				<div class="pfb-part">${esc(b.production_item || "")}</div>

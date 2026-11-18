@@ -1834,6 +1834,10 @@ doc_events = {
 		# charged it again on submit. Runs inside the cancel's transaction and never commits
 		# (ERPNext's own before_cancel has written by then); a no-op while Stripe is off.
 		"before_cancel": "erpnext_enhancements.stripe_payments.core.card_element.before_invoice_cancel",
+		# v1.826.0 -- product_fulfillment: the QC gate on an invoice that ships stock itself (Update
+		# Stock ticked). Without it a configured unit could leave on an invoice untested. Does nothing
+		# when Update Stock is off, or on a return.
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.sales_invoice_before_submit",
 	},
 	# ai_governance (FAC 3.0.0 compat): give each of this app's assistant tools the FAC category
 	# its own annotations imply, at the moment FAC inserts its row. FAC seeds every external

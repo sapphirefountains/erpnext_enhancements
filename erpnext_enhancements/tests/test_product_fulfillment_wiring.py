@@ -536,10 +536,164 @@ class TestThePlanOnAStub(unittest.TestCase):
 		result = build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
 		self.assertEqual((self.made, result["missing_bom"]), ([], ["PDT-0040-1-1-1-2-0"]))
 
+	def test_two_lines_of_one_order_share_the_shelf_in_turn(self):
+		# Review of #1470: both lines used to take the same free unit.
+		self.on_hand = 1
+		row_a = _Row(
+			name="SOI-1",
+			item_code="PDT-0040-1-1-1-2-0",
+			stock_qty=1,
+			delivered_qty=0,
+			conversion_factor=1,
+			warehouse="FG",
+		)
+		row_b = _Row(
+			name="SOI-2",
+			item_code="PDT-0040-1-1-1-2-0",
+			stock_qty=1,
+			delivered_qty=0,
+			conversion_factor=1,
+			warehouse="FG",
+		)
+		result = build.plan_and_make(
+			_Row(name="SO-1", company="Sapphire", items=[row_a, row_b]), _Dict(wip_warehouse="WIP - SF")
+		)
+		self.assertEqual(result["from_stock"], [{"item_code": "PDT-0040-1-1-1-2-0", "qty": 1}])
+		self.assertEqual(len(self.made), 1)
+
+	def test_an_item_without_serial_numbers_is_not_built(self):
+		self.facts["PDT-0040-1-1-1-2-0"]["has_serial_no"] = 0
+		build._ensure_serial_numbers = lambda item: False
+		try:
+			result = build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
+		finally:
+			del build._ensure_serial_numbers
+		self.assertEqual((self.made, result["no_serial"]), ([], ["PDT-0040-1-1-1-2-0"]))
+
+	def test_an_item_whose_serial_numbers_can_still_be_turned_on_is_built(self):
+		self.facts["PDT-0040-1-1-1-2-0"]["has_serial_no"] = 0
+		build._ensure_serial_numbers = lambda item: True
+		try:
+			build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
+		finally:
+			del build._ensure_serial_numbers
+		self.assertEqual(len(self.made), 1)
+
 	def test_a_line_that_is_not_configured_is_left_to_erpnext(self):
 		self.facts["PDT-0040-1-1-1-2-0"]["source_configuration"] = None
 		result = build.plan_and_make(self.order(qty=1), _Dict(wip_warehouse="WIP - SF"))
 		self.assertEqual((self.made, result["created"]), ([], []))
+
+
+class TestTheBuilderStampOnAStub(unittest.TestCase):
+	"""Review of #1470: a series-made serial is written to the Stock Entry row with db.set_value while
+	the ledger posts, so the document the on_submit hook is handed has no serial on it."""
+
+	def setUp(self):
+		self.set_values = []
+		self.db_rows = [_Dict(serial_no=None, serial_and_batch_bundle="SABB-1")]
+		frappe_stub.db.set_value = lambda doctype, name, field, value=None, **k: self.set_values.append(
+			(doctype, name, field if isinstance(field, dict) else {field: value})
+		)
+		frappe_stub.db.get_value = (
+			lambda doctype, name, field, *a, **k: "logan.penrod@example.com"
+			if field == "custom_built_by"
+			else None
+		)
+		frappe_stub.get_all = lambda doctype, filters=None, fields=None, **k: list(self.db_rows)
+		self.saved = (serials.has_column, serials.serials_of_row, serials._warn_unfinished_checklist)
+		serials.has_column = lambda doctype, column: True
+		serials.serials_of_row = (
+			lambda row: ["SF-26-00001"] if row.get("serial_and_batch_bundle") == "SABB-1" else []
+		)
+		serials._warn_unfinished_checklist = lambda wo: None
+
+	def tearDown(self):
+		serials.has_column, serials.serials_of_row, serials._warn_unfinished_checklist = self.saved
+
+	def test_the_serial_is_read_from_the_database_rows(self):
+		doc = _Row(
+			name="STE-1",
+			purpose="Manufacture",
+			work_order="WO-1",
+			items=[_Row(is_finished_item=1, serial_no=None, serial_and_batch_bundle=None)],
+		)
+		serials.stamp_builders(doc)
+		stamped = [v for v in self.set_values if v[0] == "Serial No"]
+		self.assertEqual(
+			stamped,
+			[
+				(
+					"Serial No",
+					"SF-26-00001",
+					{"custom_built_by": "logan.penrod@example.com", "work_order": "WO-1"},
+				)
+			],
+		)
+
+	def test_only_a_manufacture_entry_against_a_work_order(self):
+		serials.stamp_builders(_Row(name="STE-2", purpose="Material Receipt", work_order=None, items=[]))
+		self.assertEqual(self.set_values, [])
+
+
+class TestTheInvoiceGateOnAStub(unittest.TestCase):
+	def setUp(self):
+		self.calls = []
+		self.saved = qc_gate.delivery_note_before_submit
+		qc_gate.delivery_note_before_submit = lambda doc, method=None: self.calls.append(doc.name)
+
+	def tearDown(self):
+		qc_gate.delivery_note_before_submit = self.saved
+
+	def test_an_invoice_that_ships_stock_is_gated(self):
+		qc_gate.sales_invoice_before_submit(_Row(name="SINV-1", update_stock=1))
+		self.assertEqual(self.calls, ["SINV-1"])
+
+	def test_an_invoice_that_only_bills_is_not(self):
+		qc_gate.sales_invoice_before_submit(_Row(name="SINV-2", update_stock=0))
+		self.assertEqual(self.calls, [])
+
+
+class TestClaimingABuildOnAStub(unittest.TestCase):
+	"""Review of #1470: the builder is what keeps the builder from testing the unit, so one person
+	cannot quietly replace another's name on it."""
+
+	def setUp(self):
+		self.checklist = importlib.import_module("erpnext_enhancements.product_fulfillment.checklist")
+		self.writes = []
+		self.doc = _Row(name="WO-1", custom_built_by="logan.penrod@example.com")
+		self.doc.add_comment = lambda *a, **k: None
+		self.saved = {
+			n: getattr(self.checklist, n)
+			for n in ("_load", "_can_edit", "_manufactured", "get_build", "_full_name")
+		}
+		self.checklist._load = lambda name: self.doc
+		self.checklist._can_edit = lambda doc: True
+		self.checklist._manufactured = lambda doc: False
+		self.checklist.get_build = lambda name: "build"
+		self.checklist._full_name = lambda user: user
+		frappe_stub.db.set_value = lambda *a, **k: self.writes.append(a)
+		frappe_stub.session.user = "nathan.cox@example.com"
+
+	def tearDown(self):
+		for name, fn in self.saved.items():
+			setattr(self.checklist, name, fn)
+
+	def test_someone_else_cannot_take_it_over(self):
+		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing User"]
+		with self.assertRaises(Thrown):
+			self.checklist.claim_build("WO-1")
+		self.assertEqual(self.writes, [])
+
+	def test_a_manager_can_correct_it(self):
+		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing Manager"]
+		self.assertEqual(self.checklist.claim_build("WO-1"), "build")
+		self.assertEqual(self.writes[0][2:4], ("custom_built_by", "nathan.cox@example.com"))
+
+	def test_an_unclaimed_unit_is_anyones(self):
+		self.doc["custom_built_by"] = None
+		frappe_stub.get_roles = lambda *a, **k: ["Manufacturing User"]
+		self.assertEqual(self.checklist.claim_build("WO-1"), "build")
 
 
 if __name__ == "__main__":
