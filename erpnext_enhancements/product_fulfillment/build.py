@@ -163,6 +163,13 @@ def plan_and_make(doc, settings, ignore_permissions=False):
 		warehouses = rules.resolve_warehouses(settings, row.warehouse, manufacturing)
 		pending = max(0.0, flt(row.stock_qty) - flt(row.delivered_qty) * (flt(row.conversion_factor) or 1.0))
 		planned = rules.planned_qty(_line_work_orders(row.name))
+		if warehouses["can_submit"]:
+			# Drafts left by an earlier run, from before the warehouses were set: ERPNext's own
+			# set_default_warehouse reads only the Company's defaults, so they never pick up Product
+			# Build Settings by themselves. Fill what they lack and start them.
+			for draft in [wo for wo in _line_work_orders(row.name) if int(wo.get("docstatus") or 0) == 0]:
+				if _start_draft(draft.name, warehouses, ignore_permissions):
+					result["submitted"].append(draft.name)
 		key = (row.item_code, warehouses["fg"])
 		if key not in free_left:
 			free_left[key] = rules.free_stock(
@@ -189,6 +196,26 @@ def _line_work_orders(so_item):
 		filters={"sales_order_item": so_item, "docstatus": ("<", 2)},
 		fields=["name", "status", "docstatus", "qty", "produced_qty"],
 	)
+
+
+def _start_draft(name, warehouses, ignore_permissions):
+	"""Give a draft Work Order the warehouses it lacks and submit it. True when it was submitted."""
+	wo = frappe.get_doc(WORK_ORDER, name)
+	if int(wo.docstatus or 0) != 0:
+		return False
+	if not wo.get("source_warehouse") and warehouses["source"]:
+		wo.source_warehouse = warehouses["source"]
+	if not wo.wip_warehouse:
+		wo.wip_warehouse = warehouses["wip"]
+	if not wo.fg_warehouse:
+		wo.fg_warehouse = warehouses["fg"]
+	wo.flags.ignore_permissions = ignore_permissions
+	wo.save()
+	if not (wo.wip_warehouse and wo.fg_warehouse):
+		return False
+	wo.flags.ignore_permissions = ignore_permissions
+	wo.submit()
+	return True
 
 
 def _on_hand(item_code, warehouse):
@@ -318,8 +345,12 @@ def _announce(result):
 	if result["drafts"]:
 		bits.append(
 			_(
-				"Work Orders left as drafts: {0}. Set the {1} warehouse in Product Build Settings, then submit them."
-			).format(", ".join(result["drafts"]), _(" and ").join(result["missing"]) or _("work-in-progress"))
+				"Work Orders left as drafts: {0}. They need a {1} warehouse. Set it in Product Build Settings, "
+				"then press Create > Product Work Orders on this order: the drafts are filled in and started. "
+				"(Or fill it on each draft and submit it.)"
+			).format(
+				", ".join(result["drafts"]), _(" and a ").join(result["missing"]) or _("work-in-progress")
+			)
 		)
 	for line in result["from_stock"]:
 		bits.append(

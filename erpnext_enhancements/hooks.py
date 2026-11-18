@@ -1326,7 +1326,12 @@ doc_events = {
 		# made with who built it (the Work Order's Built By, else the person submitting) and the
 		# Work Order that made it. The QC gate reads that builder: the tester must be someone else.
 		# Only Manufacture entries against a Work Order; never raises.
-		"on_submit": "erpnext_enhancements.product_fulfillment.serials.stamp_builders",
+		"on_submit": [
+			"erpnext_enhancements.product_fulfillment.serials.stamp_builders",
+			# v1.826.0 -- a Material Issue that takes out configured units without a passed test says
+			# so (a warning: issuing is also how a failed unit is scrapped). Never raises.
+			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
+		],
 	},
 	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
 	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
@@ -1408,6 +1413,17 @@ doc_events = {
 	# never a link. Never raises. Work Order had no doc_events before.
 	"Work Order": {
 		"before_insert": "erpnext_enhancements.product_fulfillment.build.fill_checklist",
+		# v1.826.0 -- Built By (custom_built_by) is written only by the Build Checklist's endpoints and
+		# the Manufacture stamp (db.set_value, no save). Any change through a document save -- form,
+		# frappe.client.set_value, REST, import, bulk edit -- is refused unless by a System Manager:
+		# both builders hold Manufacturing Manager, and the field is what stops a builder signing the
+		# test. A submitted Work Order runs before_update_after_submit instead of validate.
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+		"before_update_after_submit": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+	},
+	# v1.826.0 -- the same guard on the unit itself: Serial No.custom_built_by.
+	"Serial No": {
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
 	},
 	# v1.826.0 -- product_fulfillment: the Pre-Shipment Functional Test is ERPNext's own Quality
 	# Inspection, one per unit (ADR 0019). Only inspections of configured products are touched.

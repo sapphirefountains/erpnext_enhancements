@@ -111,14 +111,17 @@ class BuildChecklistPage {
 		this.$body.find(".pfb-input").on("keydown", (e) => e.key === "Enter" && go()).trigger("focus");
 	}
 
-	call(method, args) {
-		return frappe.call({ method: PFB_API + method, args, freeze: false }).then((r) => r && r.message);
+	// Reads go as GET (get_build takes GET only); writes as POST, Frappe's default.
+	call(method, args, type) {
+		return frappe
+			.call({ method: PFB_API + method, args, freeze: false, type: type || "POST" })
+			.then((r) => r && r.message);
 	}
 
 	load() {
 		const asked = this.work_order;
 		this.$body.html(`<div class="pfb-card pfb-muted">${__("Loading...")}</div>`);
-		this.call("checklist.get_build", { work_order: asked })
+		this.call("checklist.get_build", { work_order: asked }, "GET")
 			.then((build) => {
 				if (asked !== this.work_order) return; // the route moved on while this was loading
 				this.build = build;
@@ -140,7 +143,7 @@ class BuildChecklistPage {
 		const builder = b.built_by
 			? `<b>${esc(b.built_by_name || b.built_by)}</b>`
 			: `<span class="pfb-muted">${__("Nobody yet")}</span>`;
-		// Anyone may claim an unclaimed unit; only a manager may take it over from someone else (the
+		// Anyone may claim an unclaimed unit; only a System Manager may take it over from someone else (the
 		// server refuses anyone else, since the builder is what keeps the builder from testing it).
 		const can_claim =
 			b.can_edit && !b.manufactured && !PFB.same_person(b.built_by, b.me) && (!b.built_by || b.is_manager);

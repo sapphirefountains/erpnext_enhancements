@@ -103,12 +103,23 @@ def delivery_note_before_submit(doc, method=None):
 		)
 
 
+def ships_a_product(doc):
+	"""The note ships at least one configured product unit (the QC gate's own rows).
+
+	The two customer emails say the order passed its pre-shipment test and carries the product
+	warranty, which is true only of a configured product. A note that ships anything else, even marked
+	Carrier shipping, sends neither.
+	"""
+	return bool(qc_gate.gate_rows(doc))
+
+
 def delivery_note_on_submit(doc, method=None):
-	"""Shipped email for a carrier shipment; the delivery person's assignment for a Sapphire one."""
+	"""Shipped email for a carrier shipment of a product; the delivery person's assignment for a
+	Sapphire delivery (of anything)."""
 	if not _installed() or cint(doc.get("is_return")):
 		return
 	method = doc.get("custom_fulfillment_method")
-	if method == sr.CARRIER and cint(get_settings().get("send_shipped_email", 1)):
+	if method == sr.CARRIER and cint(get_settings().get("send_shipped_email", 1)) and ships_a_product(doc):
 		_send(doc, sr.SHIPPED, quiet=True)
 	elif method == sr.SAPPHIRE:
 		_assign_delivery(doc)
@@ -287,6 +298,8 @@ def send_ready_for_pickup(delivery_note):
 		frappe.throw(_("Send it from the draft, before the customer collects."))
 	if doc.get("custom_fulfillment_method") != sr.PICKUP:
 		frappe.throw(_("This note is not a pickup at the shop."))
+	if not ships_a_product(doc):
+		frappe.throw(_("This email is for a product order: nothing on this note is a configured product."))
 	problems = qc_gate.gate_problems(doc)
 	if problems:
 		frappe.throw("<br>".join([_("Not ready yet:"), *problems]), title=_("Ready for pickup"))
@@ -300,10 +313,12 @@ def resend_shipped(delivery_note):
 	doc.check_permission("write")
 	if cint(doc.docstatus) != 1 or doc.get("custom_fulfillment_method") != sr.CARRIER:
 		frappe.throw(_("Only a submitted Carrier shipping note has a Shipped email."))
+	if not ships_a_product(doc):
+		frappe.throw(_("This email is for a product order: nothing on this note is a configured product."))
 	return {"sent_to": _send(doc, sr.SHIPPED)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET"])
 def carrier_status(delivery_note):
 	"""What FedEx or UPS says about the note's tracking number now. Nothing is stored."""
 	doc = frappe.get_doc(DN, delivery_note)

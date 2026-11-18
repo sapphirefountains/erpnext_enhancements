@@ -55,7 +55,7 @@ def _manufactured(doc):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET"])
 def get_build(work_order):
 	"""Everything the Build Checklist page shows for one Work Order."""
 	doc = _load(work_order)
@@ -148,7 +148,7 @@ def claim_build(work_order):
 		# The builder is what keeps the builder from testing the unit, so one person cannot quietly
 		# take another's name off it. A manager can correct a mistake.
 		frappe.throw(
-			_("{0} is recorded as building this unit. Ask a Manufacturing Manager to change it.").format(
+			_("{0} is recorded as building this unit. Ask a System Manager to change it.").format(
 				_full_name(current)
 			)
 		)
@@ -164,4 +164,6 @@ def claim_build(work_order):
 
 
 def _is_manager():
-	return bool({"Manufacturing Manager", "System Manager"} & set(frappe.get_roles()))
+	"""Only a System Manager may take a unit over from someone else. Not Manufacturing Manager: both
+	builders hold it, and the builder is what keeps the builder from testing the unit."""
+	return "System Manager" in set(frappe.get_roles())

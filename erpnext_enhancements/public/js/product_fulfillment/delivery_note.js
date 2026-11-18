@@ -19,7 +19,8 @@ frappe.ui.form.on("Delivery Note", {
 		const group = __("Fulfillment");
 
 		if (frm.doc.docstatus === 0 && !frm.doc.is_return) {
-			frappe.call({ method: api + "qc_gate.delivery_gate_status", args: { delivery_note: frm.doc.name } }).then((r) => {
+			// GET: the endpoint takes GET only.
+			frappe.call({ method: api + "qc_gate.delivery_gate_status", args: { delivery_note: frm.doc.name }, type: "GET" }).then((r) => {
 				const answer = r && r.message;
 				if (!answer || !answer.rows) return;
 				if (!answer.problems.length) {
@@ -58,7 +59,7 @@ frappe.ui.form.on("Delivery Note", {
 				frm.add_custom_button(
 					__("Carrier Status"),
 					() =>
-						frappe.call({ method: api + "shipping.carrier_status", args: { delivery_note: frm.doc.name } }).then((r) => {
+						frappe.call({ method: api + "shipping.carrier_status", args: { delivery_note: frm.doc.name }, type: "GET" }).then((r) => {
 							const s = (r && r.message) || {};
 							const esc = frappe.utils.escape_html;
 							let text;

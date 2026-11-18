@@ -53,7 +53,7 @@ def prepare_configured_item(doc, method=None):
 		if not doc.get("custom_source_configuration") or not int(doc.get("is_stock_item") or 0):
 			return
 		settings = get_settings()
-		if not int(doc.get("has_serial_no") or 0) and (doc.is_new() or not _has_stock_ledger(doc.name)):
+		if not int(doc.get("has_serial_no") or 0) and (doc.is_new() or not _serials_locked(doc)):
 			doc.has_serial_no = 1
 		if int(doc.get("has_serial_no") or 0) and not doc.get("serial_no_series"):
 			series = settings.serial_no_series
@@ -82,16 +82,63 @@ def ensure_serial_numbers(item_code):
 	"""
 	if frappe.db.get_value("Item", item_code, "has_serial_no"):
 		return True
-	if _has_stock_ledger(item_code):
-		return False
 	item = frappe.get_doc("Item", item_code)
+	if _serials_locked(item):
+		return False
 	item.flags.ignore_permissions = True
 	item.save()
 	return bool(frappe.db.get_value("Item", item_code, "has_serial_no"))
 
 
-def _has_stock_ledger(item_code):
-	return bool(frappe.db.exists("Stock Ledger Entry", {"item_code": item_code, "is_cancelled": 0}))
+def _serials_locked(item):
+	"""ERPNext refuses to change Has Serial No on this Item: it asks its own check.
+
+	``Item.cant_change`` refuses once any submitted Delivery Note, Sales or POS Invoice (with stock),
+	Purchase Receipt or Invoice (with stock), Stock Entry or Stock Reconciliation names the Item
+	(``_get_linked_submitted_documents``, read at v16.54.0). Asking that method, rather than copying
+	its list, keeps this in step when ERPNext changes it. If a later version renames it, the stock
+	ledger stands in, which is the same answer for every stock movement.
+	"""
+	check = getattr(item, "_get_linked_submitted_documents", None)
+	if callable(check):
+		return bool(check(["has_serial_no"]))
+	return bool(frappe.db.exists("Stock Ledger Entry", {"item_code": item.name, "is_cancelled": 0}))
+
+
+BUILDER_FLAG = "product_fulfillment_builder_write"
+
+
+def guard_builder(doc, method=None):
+	"""Work Order ``validate`` / ``before_update_after_submit`` and Serial No ``validate``: Built By is
+	written only by this module.
+
+	The record of who built a unit is what stops its builder from signing its test, and Logan and
+	Nathan both hold Manufacturing Manager, Stock Manager and Item Manager, so the field being
+	read-only on the form is not enough: Frappe does not enforce read-only on the server, and
+	``frappe.client.set_value``, a REST PUT, a data import or a bulk edit would all save a new name.
+	This refuses any change to ``custom_built_by`` made through a document save, by anyone but a
+	System Manager. The Build Checklist's own endpoints and the Manufacture stamp never save the
+	document (they write the one value with ``db.set_value``), so they are not affected; code that
+	must save it can set ``frappe.flags.product_fulfillment_builder_write``.
+	"""
+	if not has_column(doc.doctype, "custom_built_by"):
+		return
+	new = (doc.get("custom_built_by") or "").strip()
+	old = (
+		"" if doc.is_new() else (frappe.db.get_value(doc.doctype, doc.name, "custom_built_by") or "").strip()
+	)
+	if new == old:
+		return
+	if frappe.flags.get(BUILDER_FLAG) or "System Manager" in set(frappe.get_roles()):
+		return
+	frappe.throw(
+		_(
+			"Built By is recorded by the Build Checklist and the Manufacture entry, and cannot be changed "
+			"here: it is what keeps the person who built a unit from signing its test. Ask a System Manager "
+			"if it is wrong."
+		),
+		title=_("Built By"),
+	)
 
 
 def stamp_builders(doc, method=None):

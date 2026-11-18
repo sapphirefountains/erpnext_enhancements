@@ -106,18 +106,20 @@
   },
   {
    "default": "1",
-   "description": "Refuse to submit a Delivery Note until every configured product unit on it has passed its test, tested by someone other than its builder.",
+   "description": "Refuse to submit a Delivery Note until every configured product unit on it has passed its test, tested by someone other than its builder. Only a System Manager can change it: either builder could otherwise switch the test off for a unit they built.",
    "fieldname": "require_test",
    "fieldtype": "Check",
-   "label": "Require a Passed Test Before Delivery"
+   "label": "Require a Passed Test Before Delivery",
+   "permlevel": 1
   },
   {
    "default": "Pre-Shipment Functional Test - E-Stop",
-   "description": "The Quality Inspection Template the test is made on. Configured Items get it as their Quality Inspection Template when theirs is blank. Empty: a test on any template counts.",
+   "description": "The Quality Inspection Template the test is made on. Configured Items get it as their Quality Inspection Template when theirs is blank. Empty: a test on any template counts. Only a System Manager can change it: either builder could otherwise switch the test off for a unit they built.",
    "fieldname": "test_template",
    "fieldtype": "Link",
    "label": "Pre-Shipment Test Template",
-   "options": "Quality Inspection Template"
+   "options": "Quality Inspection Template",
+   "permlevel": 1
   },
   {
    "fieldname": "shipping_section",
@@ -202,9 +204,40 @@
    "role": "Quality Manager",
    "share": 0,
    "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Manufacturing Manager",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Manufacturing User",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Quality Manager",
+   "write": 0
   }
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

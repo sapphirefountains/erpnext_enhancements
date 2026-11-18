@@ -60,8 +60,8 @@ inspection to have been made against **that Delivery Note**. So:
   against the Manufacture entry: Stock Entry references are never refused.)
 
 Instead `product_fulfillment.qc_gate.delivery_note_before_submit` refuses the submit unless every
-configured product line has one serial number per unit picked, and the newest submitted test of
-each serial is Accepted, on the configured template, for that Item, and signed by someone other
+configured product line (and packed item) has one serial number per unit picked, and the last
+submitted test of each serial is Accepted, on the configured template, for that Item, and signed by someone other
 than its builder (`rules.delivery_gate`). It also refuses to let ERPNext pick serials on its own at
 submit (`auto_create_serial_and_batch_bundle_for_outward` is on, on prod, first in first out), which
 would ship whichever unit is oldest, tested or not.

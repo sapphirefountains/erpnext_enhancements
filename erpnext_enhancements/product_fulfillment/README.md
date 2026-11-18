@@ -31,7 +31,8 @@ PRJ-00580. Decision record:
    Product Build Settings names. Submitting signs it, so the tester submits it. **Print
    Certificate** prints what goes in the box.
 5. **Shipped.** A Delivery Note shipping a configured product is refused until every unit on it has
-   its serial picked and the newest submitted test of each serial passed, signed by someone other
+   its serial picked (packed items of a Product Bundle included) and the last submitted test of each
+   serial passed, signed by someone other
    than its builder. Delivering the serial starts its warranty: ERPNext sets `warranty_expiry_date`
    from the Item's 365-day `warranty_period`.
 6. **To the customer** (v1.827.0). The Delivery Note's **Fulfillment** says how

@@ -488,6 +488,47 @@ class TestTheHooksOnAStub(unittest.TestCase):
 		self.assertIn("custom_shipped_email_sent_on", doc["db"])
 		self.assertTrue(doc["comments"])
 
+	def test_a_carrier_shipment_of_something_else_sends_no_product_email(self):
+		# Manager review of #1472: the Shipped email says the order passed its pre-shipment test and
+		# carries the product warranty, which is only true of a configured product.
+		self.product = False
+		shipping.delivery_note_on_submit(
+			_note(sr.CARRIER, docstatus=1, transporter="UPS", lr_no="1Z999AA10123456784")
+		)
+		self.assertEqual(frappe_stub.sent, [])
+
+	def test_resend_and_ready_refuse_a_note_with_no_product(self):
+		self.product = False
+		for kind, method, docstatus in (
+			(shipping.resend_shipped, sr.CARRIER, 1),
+			(shipping.send_ready_for_pickup, sr.PICKUP, 0),
+		):
+			doc = _note(method, docstatus=docstatus)
+			doc.check_permission = lambda ptype: None
+			shipping.frappe.get_doc = lambda doctype, name, d=doc: d
+			with self.assertRaises(Thrown) as caught:
+				kind(doc.name)
+			self.assertIn("nothing on this note is a configured product", str(caught.exception))
+		self.assertEqual(frappe_stub.sent, [])
+
+	def test_carrier_status_takes_get_only(self):
+		import ast
+
+		tree = ast.parse((APP / "product_fulfillment" / "shipping.py").read_text(encoding="utf-8"))
+		node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "carrier_status")
+		methods = [
+			kw.value
+			for d in node.decorator_list
+			if isinstance(d, ast.Call)
+			for kw in d.keywords
+			if kw.arg == "methods"
+		]
+		self.assertEqual([ast.literal_eval(m) for m in methods], [["GET"]])
+		form = (APP / "public" / "js" / "product_fulfillment" / "delivery_note.js").read_text(
+			encoding="utf-8"
+		)
+		self.assertIn('"shipping.carrier_status", args: { delivery_note: frm.doc.name }, type: "GET"', form)
+
 	def test_the_switch_off_sends_nothing(self):
 		shipping.get_settings = lambda: _Dict(send_shipped_email=0)
 		shipping.delivery_note_on_submit(
