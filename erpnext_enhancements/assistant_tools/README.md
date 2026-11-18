@@ -405,6 +405,23 @@ or `privileged` for `HIGH_RISK` — on insert and on every migrate. The contract
 `test_fac_category_reproduces_each_tools_own_hints` asserts the merge is a no-op for
 every registered tool.
 
+## Which OAuth clients may register (v1.826.9)
+
+Claude and Google's connector reach this site's MCP server over OAuth, and both register
+themselves first (RFC 7591). Frappe and FAC each expose a guest `register_client` endpoint for
+that. `erpnext_enhancements/oauth_registration.py` (`before_request`) lets a registration through
+only when every redirect URI is on its allow-list, and at most 10 an hour per client address:
+
+- `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`
+- any path on `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com`
+  and `oauth-redirect-test.googleusercontent.com`
+
+To connect another client, add its redirect address to site config
+`oauth_registration_redirect_allowlist` (a list of `host` or `host/path-prefix` strings; a local
+client needs `http://localhost` or `http://127.0.0.1` listed explicitly). `oauth_registration_guard: 0`
+turns the check off. A refused registration answers 400 `invalid_redirect_uri` naming the URI, or
+429 when over the rate. The module docstring has the full rule.
+
 ## Deployment notes
 
 - Tools are discovered on FAC startup after `bench restart`; skills are synced
