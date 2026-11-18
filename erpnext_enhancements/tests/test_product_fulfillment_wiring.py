@@ -272,10 +272,9 @@ class TestTheSeedTemplate(unittest.TestCase):
 
 class _FakeFrappe:
 	"""The handful of things the two print formats call, the names print Jinja exposes at v16.56.0
-	(``frappe.get_fullname``, ``frappe.utils.formatdate``, ``frappe.db.get_value``)."""
+	(``frappe.get_fullname`` and ``frappe.db.get_value``; dates go through the ``ps_date`` global)."""
 
 	def __init__(self):
-		self.utils = types.SimpleNamespace(formatdate=lambda value: str(value))
 		self.db = types.SimpleNamespace(
 			get_value=lambda doctype, name, field: {"item_name": "STILLWATER E-Stop"}.get(field)
 		)
@@ -299,7 +298,10 @@ def _render(template, doc):
 		value = value.func.value
 	html = ast.literal_eval(value)
 	env = jinja2.Environment(autoescape=False)
-	return env.from_string(html.strip()).render(doc=doc, frappe=_FakeFrappe())
+	# ps_date is the Jinja global every print format reaches dates through (print_style.ps_date).
+	return env.from_string(html.strip()).render(
+		doc=doc, frappe=_FakeFrappe(), ps_date=lambda value: f"date:{value}"
+	)
 
 
 def _certificate_doc(docstatus=1, status="Accepted"):

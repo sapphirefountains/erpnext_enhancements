@@ -69,7 +69,7 @@ CERTIFICATE_HTML = """
       <td style="padding:4px 8px; color:#555;">Part number</td>
       <td style="padding:4px 8px; font-weight:bold; font-family:'Courier New', monospace;">{{ doc.item_code | e }}</td>
       <td style="padding:4px 8px; color:#555;">Test date</td>
-      <td style="padding:4px 8px; font-weight:bold;">{{ frappe.utils.formatdate(doc.report_date) }}</td>
+      <td style="padding:4px 8px; font-weight:bold;">{{ ps_date(doc.report_date) }}</td>
     </tr>
     <tr>
       <td style="padding:4px 8px; color:#555;">Built by</td>

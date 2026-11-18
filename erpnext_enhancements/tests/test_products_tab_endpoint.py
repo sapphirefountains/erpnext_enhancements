@@ -873,10 +873,6 @@ class TestTheCLAUDEmdRules(Base):
 		self.assertIn("coalesce(i.custom_source_configuration, '') <> ''", query)
 
 
-if __name__ == "__main__":
-	unittest.main()
-
-
 def unit(name, item, built_by, work_order=None, status="Active"):
 	return {"name": name, "item_code": item, "work_order": work_order, "custom_built_by": built_by, "status": status}
 
@@ -983,3 +979,7 @@ class TestTheTestingColumn(Base):
 	def test_no_private_key_reaches_the_browser(self):
 		for row in self.rows().values():
 			self.assertNotIn("_tested_items", row)
+
+
+if __name__ == "__main__":
+	unittest.main()
