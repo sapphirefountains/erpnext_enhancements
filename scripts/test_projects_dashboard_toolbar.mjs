@@ -951,8 +951,8 @@ const EMPTY_PRODUCTS = {
 	stages: STAGES,
 	orders: { allowed: true, paid_visible: true, rows: [] },
 	pipeline: {
-		quotations: { allowed: true, open_days: 90, rows: [] },
-		opportunities: { allowed: true, rows: [], won: 0, lost: 0, win_rate: null, window_days: 365 },
+		quotations: { allowed: true, open_days: 90, rows: [], won: 0, lost: 0, win_rate: null, window_days: 365 },
+		opportunities: { allowed: true, rows: [] },
 	},
 	stock: { allowed: true, units: [], components: [] },
 	projects: { allowed: true, rows: [] },
@@ -965,14 +965,14 @@ const PRODUCTS = {
 		allowed: true,
 		paid_visible: true,
 		rows: [
-			{ name: "SO-0002", customer_name: "Pool Builder", delivery_date: "2026-12-01", stage: "ready", note: "From stock", late: false, lines: ["E-Stops"], items: estop(), work_orders: [], deliveries: [], paid: "unpaid", grand_total: 1668 },
-			{ name: "SO-0001", customer_name: "Hotel Pools", delivery_date: "2026-11-01", stage: "building", note: "Work Order in process", late: true, lines: ["E-Stops"], items: estop(), work_orders: [{ name: "MFG-WO-1", status: "In Process", docstatus: 1 }], deliveries: [], paid: "paid", grand_total: 2005.24 },
-			{ name: "SO-0003", customer_name: "Fountain Co", delivery_date: "2026-11-20", stage: "ordered", note: "No Work Order yet", late: false, lines: ["Control Panels"], items: [{ item_code: "PDT-0003", qty: 1, line: "Control Panels" }], work_orders: [], deliveries: [], paid: "not_invoiced", grand_total: 18000 },
+			{ name: "SO-0002", customer_name: "Pool Builder", delivery_date: "2026-12-01", stage: "ready", note: "From stock", late: false, lines: ["E-Stops"], items: estop(), work_orders: [], deliveries: [], paid: "unpaid", product_amount: 1668 },
+			{ name: "SO-0001", customer_name: "Hotel Pools", delivery_date: "2026-11-01", stage: "building", note: "Work Order in process", late: true, lines: ["E-Stops"], items: estop(), work_orders: [{ name: "MFG-WO-1", status: "In Process", docstatus: 1 }], deliveries: [], paid: "paid", product_amount: 2005.24 },
+			{ name: "SO-0003", customer_name: "Fountain Co", delivery_date: "2026-11-20", stage: "ordered", note: "No Work Order yet", late: false, lines: ["Control Panels"], items: [{ item_code: "PDT-0003", qty: 1, line: "Control Panels" }], work_orders: [], deliveries: [], paid: "not_invoiced", product_amount: 18000 },
 		],
 	},
 	pipeline: {
-		quotations: { allowed: true, open_days: 90, rows: [{ name: "SAL-QTN-1", party: "Hotel Pools", lines: ["E-Stops"], transaction_date: "2026-11-17", status: "Draft", grand_total: 2200 }] },
-		opportunities: { allowed: true, won: 7, lost: 0, win_rate: 100, window_days: 365, rows: [{ name: "CRM-OPP-1", title: "Hotel pool E-Stop", party: "Hotel", lines: [], status: "Qualification", amount: 0, expected_closing: null }] },
+		quotations: { allowed: true, open_days: 90, won: 3, lost: 1, win_rate: 75, window_days: 365, rows: [{ name: "SAL-QTN-1", party: "Hotel Pools", lines: ["E-Stops"], transaction_date: "2026-11-17", status: "Draft", product_amount: 2200, opportunity: "CRM-OPP-1" }] },
+		opportunities: { allowed: true, rows: [{ name: "CRM-OPP-1", title: "Hotel pool E-Stop", party: "Hotel", lines: ["E-Stops"], status: "Qualification", product_amount: 2200, quotations: ["SAL-QTN-1"], expected_closing: null }] },
 	},
 	stock: {
 		allowed: true,
@@ -1034,10 +1034,10 @@ await test("an empty site: five stages at zero, and every section its own empty 
 	for (const stage of STAGES) assert.match(html, new RegExp(`pd-stage-l">${stage.label.replace("/", "\\/")}<`));
 	assert.equal(stateText(run, "orders"), "No product orders yet.");
 	assert.equal(stateText(run, "quotes"), "No open product quotations.");
-	assert.equal(stateText(run, "opportunities"), "No open opportunities in the Products value stream.");
+	assert.equal(stateText(run, "opportunities"), "No open opportunity has a product quotation yet.");
 	assert.equal(stateText(run, "units"), "No finished units on hand.");
 	assert.equal(stateText(run, "projects"), "No active control panel projects.");
-	assert.match(html, /pd-card-l">Win rate, Products stream<\/div>\s*<div class="pd-card-n">—</, "no rate before a deal is decided");
+	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">—<\/div>\s*<div class="pd-card-s">No product quote won or lost yet</, "no rate before a quote is decided");
 	assert.equal(run.dom.node('[data-line-count=""]').text(), "0");
 	assert.doesNotMatch(html, /pd-late/);
 });
@@ -1057,11 +1057,11 @@ await test("the orders are grouped by stage in board order, late first, with Lat
 	assert.equal((html.match(/pd-late/g) || []).length, 1);
 	assert.match(html, /class="pd-stage-late">1 late</, "the strip counts the late order under its stage");
 	assert.match(html, /<td colspan="7">Building<span>1 order<\/span>/);
-	assert.match(html, /dashcol-p_total pd-num">\$18,000</);
+	assert.match(html, /dashcol-p_total pd-num" title="The product lines, before tax">\$18,000</, "the product value, not a grand total");
 	// the shortages list only what is short; the enclosure is in stock
 	assert.match(html, /\/desk\/item\/AF12Z-30-10-21/);
 	assert.doesNotMatch(html, /\/desk\/item\/ZH-100806-03/);
-	assert.match(html, /pd-card-l">Win rate, Products stream<\/div>\s*<div class="pd-card-n">100%</);
+	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">75%<\/div>\s*<div class="pd-card-s">3 won · 1 lost · last 12 months</);
 });
 
 await test("a stage press narrows the orders, and pressing it again clears it", async () => {
@@ -1097,7 +1097,8 @@ await test("the line chips narrow every section, count the orders, and are remem
 	const html = drawn(run, from);
 	assert.deepEqual(orderNames(html), ["SO-0003"]);
 	assert.equal(stateText(run, "quotes"), "No open quotations in the lines picked.");
-	assert.match(html, /Hotel pool E-Stop/, "an opportunity that names no item shows under every chip");
+	assert.doesNotMatch(html, /Hotel pool E-Stop/, "the deal's lines are its product quotes' lines: E-Stops");
+	assert.equal(stateText(run, "opportunities"), "No open opportunities in the lines picked.");
 	assert.equal(stateText(run, "units"), "No finished units in the lines picked.", "the shelf is not empty, only filtered");
 	assert.equal(run.dom.node('.pd-lchip[data-line="Control Panels"]').attr("aria-pressed"), "true");
 	assert.equal(run.dom.node('.pd-lchip[data-line=""]').attr("aria-pressed"), "false");
@@ -1106,6 +1107,31 @@ await test("the line chips narrow every section, count the orders, and are remem
 	await settle();
 	assert.equal(run.storage.get("chb_projects_dashboard_products_v1"), JSON.stringify({ lines: [] }));
 	assert.equal(run.dom.node('.pd-lchip[data-line=""]').attr("aria-pressed"), "true");
+});
+
+await test("a control-panel order shows once, in the projects section, with or without its project", async () => {
+	const panel = (name, stage) => ({ name, stage, note: "No Work Order yet", delivery_date: "2026-12-20", late: false, product_amount: 28490, paid: null, lines: ["Control Panels"] });
+	const answer = {
+		...PRODUCTS,
+		projects: {
+			allowed: true,
+			rows: [
+				{ kind: "project", name: "PRJ-00901", project_name: "Splash Wizard Industrial", customer: "Demo City", status: "Active", percent_complete: 40, expected_end_date: "2026-12-20", late: false, line: "Control Panels", order: panel("SO-0101", "building") },
+				{ kind: "order", name: "SO-0102", project_name: null, customer: "Demo Pools", status: null, percent_complete: null, expected_end_date: "2026-12-01", late: false, line: "Control Panels", order: panel("SO-0102", "ordered") },
+			],
+		},
+	};
+	const run = await runBlock({ answers: { get_products_data: answer } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	const project = html.slice(html.indexOf("/desk/project/PRJ-00901"));
+	assert.match(project, /href="\/desk\/sales-order\/SO-0101">SO-0101<\/a><div class="pd-psub">Building · Promise 2026-12-20</, "the project carries its order and the order's stage");
+	assert.match(html, /dashcol-p_project">No project yet<\/td>[\s\S]*?\/desk\/sales-order\/SO-0102/, "an order with no project yet is its own row");
+	assert.deepEqual(orderNames(html), ["SO-0003", "SO-0001", "SO-0002"], "neither panel order is on the board");
+	assert.equal(run.dom.node('[data-line-count="Control Panels"]').text(), "3", "the chips count the panel orders too");
+	assert.equal(run.dom.node('[data-line-count=""]').text(), "5");
 });
 
 await test("a line chip does not touch the Priority Overview's stream chips", async () => {

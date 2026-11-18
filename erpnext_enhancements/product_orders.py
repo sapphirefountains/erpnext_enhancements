@@ -20,8 +20,10 @@ without a bench:
 * ``order_stage``: the board column of one Sales Order (Ordered / Paid -> Building -> Testing
   -> Ready -> Delivered), with room for the pre-shipment test a later task records;
 * ``allocate_stock``: which orders the finished units on the shelf already cover;
-* ``paid_state``, ``is_late``, ``is_open_quotation``, ``is_open_opportunity``, ``win_rate``,
-  ``component_state``: the smaller facts the tab shows.
+* ``on_board``: which product Sales Orders the board shows (not Closed or Cancelled; delivered
+  ones for 30 days, by their last non-return Delivery Note);
+* ``pending_stock_qty``, ``paid_state``, ``is_late``, ``is_open_quotation``,
+  ``is_open_opportunity``, ``win_rate``, ``component_state``: the smaller facts the tab shows.
 
 **Where a control-panel order shows, once.** A product Sales Order that needs a project (a
 control panel on it) is not on the order board. Its working record is its Project of type
@@ -276,9 +278,9 @@ QC_PASSED = "passed"
 QC_PENDING = "pending"
 QC_FAILED = "failed"
 
-# Work Order states that mean the work is over. "Closed" is ERPNext's "stop and produce no
-# more": the build is finished as far as the order is concerned.
-_WO_DONE = ("Completed", "Closed")
+# A cancelled Work Order says nothing. "Closed" is ERPNext's "stop and produce no more": the work is
+# over, but only what it produced was built (a Closed Work Order with nothing produced built
+# nothing). "Completed" is set by ERPNext only once the full quantity is produced.
 _WO_GONE = ("Cancelled",)
 
 
@@ -290,29 +292,49 @@ def _num(value):
 
 
 def _work_order_done(wo):
-	if wo.get("status") in _WO_DONE:
+	"""Its whole quantity is produced."""
+	if wo.get("status") == "Completed":
 		return True
 	qty = _num(wo.get("qty"))
 	return qty > 0 and _num(wo.get("produced_qty")) >= qty
 
 
 def work_order_summary(work_orders):
-	"""Split an order's Work Orders into what moves the board.
+	"""Sort an order's Work Orders by what they mean for the board.
 
-	Returns ``(drafts, live, done)``: drafts are unsubmitted (docstatus 0) and move nothing;
-	live are submitted and not cancelled; done is True when there is at least one live Work
-	Order and every one of them is finished.
+	Returns a dict:
+
+	* ``drafts``: unsubmitted (docstatus 0); not released to the shop, they move nothing;
+	* ``in_progress``: submitted, not cancelled, not fully produced and not Closed: still being
+	  built (not started, in process, stopped);
+	* ``finished``: submitted and fully produced;
+	* ``closed_short``: Closed before the full quantity was produced: no more work is coming and
+	  what is missing was never built;
+	* ``built``: at least one finished Work Order, and none in progress or closed short;
+	* ``has_work_order``: one is in progress or finished. Such an order is being built for, so it
+	  claims nothing from the shelf (``allocate_stock``). A Closed-short one is not counted: that
+	  order is free to take a unit from the shelf.
 	"""
-	drafts, live = [], []
+	drafts, in_progress, finished, closed_short = [], [], [], []
 	for wo in work_orders or ():
 		if wo.get("status") in _WO_GONE or int(_num(wo.get("docstatus"))) == 2:
 			continue
 		if int(_num(wo.get("docstatus"))) == 0:
 			drafts.append(wo)
+		elif _work_order_done(wo):
+			finished.append(wo)
+		elif wo.get("status") == "Closed":
+			closed_short.append(wo)
 		else:
-			live.append(wo)
-	done = bool(live) and all(_work_order_done(wo) for wo in live)
-	return drafts, live, done
+			in_progress.append(wo)
+	return {
+		"drafts": drafts,
+		"in_progress": in_progress,
+		"finished": finished,
+		"closed_short": closed_short,
+		"built": bool(finished) and not in_progress and not closed_short,
+		"has_work_order": bool(in_progress or finished),
+	}
 
 
 def order_stage(per_delivered=0, work_orders=(), stock_covered=False, qc=None):
@@ -323,7 +345,7 @@ def order_stage(per_delivered=0, work_orders=(), stock_covered=False, qc=None):
 	* ``per_delivered``: the Sales Order's own percentage, which ERPNext keeps from its
 	  submitted Delivery Notes;
 	* ``work_orders``: the order's Work Orders, dicts with ``status``, ``docstatus``, ``qty``
-	  and ``produced_qty``;
+	  and ``produced_qty`` (``work_order_summary``);
 	* ``stock_covered``: the finished units on hand cover what is left to deliver
 	  (``allocate_stock``). A common configuration built ahead to the shelf ships from stock and
 	  has no Work Order of its own;
@@ -334,20 +356,21 @@ def order_stage(per_delivered=0, work_orders=(), stock_covered=False, qc=None):
 	The rules, in order:
 
 	1. Delivered when ``per_delivered`` reaches 100.
-	2. Building while a submitted Work Order is not finished (not started, in process or
+	2. Building while a submitted Work Order is still being built (not started, in process or
 	   stopped). A draft Work Order has not been released to the shop and moves nothing.
-	3. Built when every submitted Work Order is finished, or, with none, when stock covers the
-	   order. Built is Ready, unless the test is recorded and has not passed: then Testing.
-	4. Otherwise Ordered / Paid: sold, nothing released to the shop yet.
+	3. Built when every submitted Work Order produced its full quantity, or, with none being
+	   built for it, when stock covers the order. A Work Order Closed short builds nothing it did
+	   not produce. Built is Ready, unless the test is recorded and has not passed: then Testing.
+	4. Otherwise Ordered / Paid: sold, nothing (more) released to the shop.
 
 	Returns ``{"stage": ..., "note": ...}``.
 	"""
 	if _num(per_delivered) >= 100:
 		return {"stage": STAGE_DELIVERED, "note": "Delivered"}
 
-	drafts, live, done = work_order_summary(work_orders)
-	if live and not done:
-		unfinished = [wo for wo in live if not _work_order_done(wo)]
+	summary = work_order_summary(work_orders)
+	if summary["in_progress"]:
+		unfinished = summary["in_progress"]
 		if any(wo.get("status") == "Stopped" for wo in unfinished):
 			note = "Work Order stopped"
 		elif any(_num(wo.get("produced_qty")) > 0 or wo.get("status") == "In Process" for wo in unfinished):
@@ -356,27 +379,59 @@ def order_stage(per_delivered=0, work_orders=(), stock_covered=False, qc=None):
 			note = "Work Order not started"
 		return {"stage": STAGE_BUILDING, "note": note}
 
-	built = done or (not live and stock_covered)
+	built = summary["built"] or (not summary["has_work_order"] and stock_covered)
 	if built:
 		if qc is None or qc == QC_PASSED:
-			return {"stage": STAGE_READY, "note": "Built" if done else "From stock"}
+			return {"stage": STAGE_READY, "note": "Built" if summary["built"] else "From stock"}
 		return {
 			"stage": STAGE_TESTING,
 			"note": "Test failed" if qc == QC_FAILED else "Waiting for the pre-shipment test",
 		}
 
-	if drafts:
+	if summary["closed_short"]:
+		return {"stage": STAGE_ORDERED, "note": "Work Order closed short"}
+	if summary["drafts"]:
 		return {"stage": STAGE_ORDERED, "note": "Work Order not submitted"}
 	return {"stage": STAGE_ORDERED, "note": "No Work Order yet"}
+
+
+def pending_stock_qty(qty, delivered_qty, conversion_factor):
+	"""What is left to deliver, in the stock UOM the Bin counts in.
+
+	ERPNext keeps ``Sales Order Item.delivered_qty`` in the order's own UOM (16.54.0's
+	``status_updater`` divides the Delivery Note's stock qty by the order line's
+	``conversion_factor``), so the difference is converted once. A missing or zero factor is 1.
+	"""
+	factor = _num(conversion_factor) or 1.0
+	return max(0.0, _num(qty) - _num(delivered_qty)) * factor
+
+
+#: Sales Order statuses that take an order off the board whatever it delivered: a Closed order was
+#: stopped (a short shipment included) and a Cancelled one never ran.
+BOARD_OFF_STATUSES = ("Closed", "Cancelled")
+
+
+def on_board(status, docstatus, per_delivered, delivered_on, since):
+	"""Whether a product Sales Order belongs on the board.
+
+	Submitted, not Closed or Cancelled, and either not fully delivered, or fully delivered with
+	its last (non-return) Delivery Note on or after ``since`` (``DELIVERED_WINDOW_DAYS`` back).
+	A short-shipped order someone Closed does not come back as Late and never claims shelf stock.
+	"""
+	if int(_num(docstatus)) != 1 or status in BOARD_OFF_STATUSES:
+		return False
+	if _num(per_delivered) < 100:
+		return True
+	return bool(_iso(delivered_on)) and _iso(delivered_on) >= _iso(since)
 
 
 def allocate_stock(orders, on_hand):
 	"""The names of the orders that finished units on hand already cover.
 
-	``orders``: dicts with ``name``, ``delivery_date``, ``built`` (every submitted Work Order of
-	the order is finished), ``has_work_order`` (it has a submitted one) and ``lines``, each
-	``{"item_code", "pending_qty"}`` with the quantity still to deliver. ``on_hand``: finished
-	units per item code, across warehouses.
+	``orders``: dicts with ``name``, ``delivery_date``, ``built`` and ``has_work_order`` (both
+	from ``work_order_summary``) and ``lines``, each ``{"item_code", "pending_qty"}`` with the
+	quantity still to deliver in the stock UOM (``pending_stock_qty``). ``on_hand``: finished units
+	per item code, across warehouses, in the stock UOM (the Bin's ``actual_qty``).
 
 	An order built to order has its own units on the shelf, so those are set aside for it
 	first and never cover a second order. What is left goes to the orders with no Work Order,
@@ -448,13 +503,21 @@ def is_late(delivery_date, today, stage):
 # The sales pipeline
 # ---------------------------------------------------------------------------------------------
 
-#: The same won and lost as the Value Stream Performance report
-#: (kpi_dashboards/report/value_stream_performance), so the tab's win rate and the report's
-#: agree. tests/test_product_orders.py reads the report's constants and fails if they part.
+#: An Opportunity is open unless one of these says otherwise: the same won and lost as the Value
+#: Stream Performance report (kpi_dashboards/report/value_stream_performance), plus the two that
+#: end a deal without deciding it. The tab no longer reads the Products value stream: on prod the
+#: E-Stop deals carry Design + Build + Products and the control-panel jobs carry Products too, so
+#: the stream says nothing about what was sold. A deal is on the tab through its product quotes.
 WON_STATUSES = ("Closed Won",)
 LOST_STATUSES = ("Lost",)
-#: Statuses that end an Opportunity without winning or losing it.
 CLOSED_STATUSES = ("Closed", "Converted")
+
+#: The product-quote win rate: a submitted product Quotation that became an order is won, one
+#: marked Lost is lost. Drafts and Expired quotes decide nothing. Prod's product quotes are all
+#: QuickBooks-mirrored drafts, so the rate reads "none decided yet" until quote to order (#1465)
+#: makes real ones.
+QUOTE_WON_STATUSES = ("Ordered", "Partially Ordered")
+QUOTE_LOST_STATUSES = ("Lost",)
 
 #: Quotation statuses that are no longer open.
 QUOTE_CLOSED_STATUSES = ("Lost", "Ordered", "Expired", "Cancelled")
@@ -487,7 +550,7 @@ def is_open_opportunity(status):
 def win_rate(won, lost):
 	"""Won out of decided, as a whole percentage; None before anything is decided.
 
-	Open deals have not lost, so they are left out (the Value Stream Performance report's rule).
+	Open quotes have not lost, so they are left out (the Value Stream Performance report's rule).
 	"""
 	won, lost = int(_num(won)), int(_num(lost))
 	if won + lost == 0:
@@ -504,9 +567,15 @@ def win_rate(won, lost):
 COMPONENT_GROUPS = {LINE_ESTOPS: ("E-Stop Components",)}
 
 
-def component_state(on_hand, reorder_level):
-	"""``out`` at zero or below, ``low`` under a reorder level that is set, else ``ok``."""
-	qty = _num(on_hand)
+def component_state(projected, reorder_level):
+	"""``out`` at zero or below, ``low`` under a reorder level that is set, else ``ok``.
+
+	Judged on the Bin's ``projected_qty`` summed across warehouses (on hand, plus ordered and
+	planned, minus what orders and Work Orders have reserved), not on ``actual_qty``: the parts
+	already moved to Work In Progress for a build are spoken for, and a part on a purchase order is
+	on its way.
+	"""
+	qty = _num(projected)
 	if qty <= 0:
 		return "out"
 	level = _num(reorder_level)

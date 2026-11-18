@@ -57,10 +57,12 @@
  *                           five stage counts, Ordered / Paid, Building, Testing, Ready,
  *                           Delivered, each a filter, over the orders grouped by stage,
  *                           with the promise date and Late), the sales pipeline (open
- *                           product quotations, open Products-stream opportunities, the
- *                           win rate), stock and shortages (finished units on hand,
- *                           components out or under their reorder level) and the control
- *                           panel projects (project type Products). The product-line chips
+ *                           product quotations valued by their product lines, the deals
+ *                           they name, the product-quote win rate), stock and shortages
+ *                           (finished units on hand, components short by projected qty)
+ *                           and the control panel projects (project type Products, with
+ *                           the control-panel orders, which are not on the board: a
+ *                           control panel keeps a project). The product-line chips
  *                           (E-Stops, Control Panels, Other) narrow every section. Each
  *                           section draws its own empty, no-access or error panel: prod had
  *                           no product Sales Order when the tab shipped. The rules (what is a
@@ -2141,7 +2143,7 @@
             { key: "p_promise", label: "Promise date", width: 120 },
             { key: "p_progress", label: "Where it is", width: 170 },
             { key: "p_paid", label: "Paid", width: 80 },
-            { key: "p_total", label: "Total", width: 80, num: true },
+            { key: "p_total", label: "Product value", width: 90, num: true },
         ],
         quotes: [
             { key: "p_quote", label: "Quotation", locked: true, width: 160 },
@@ -2168,18 +2170,20 @@
             { key: "p_where", label: "Where", width: 200 },
         ],
         components: [
-            { key: "p_item", label: "Component", locked: true, width: 260 },
-            { key: "p_state", label: "Stock", width: 130 },
-            { key: "p_on_hand", label: "On hand", width: 90, num: true },
-            { key: "p_on_order", label: "On order", width: 90, num: true },
-            { key: "p_reorder", label: "Reorder level", width: 110, num: true },
+            { key: "p_item", label: "Component", locked: true, width: 240 },
+            { key: "p_state", label: "Stock", width: 120 },
+            { key: "p_on_hand", label: "On hand", width: 80, num: true },
+            { key: "p_projected", label: "Projected", width: 90, num: true },
+            { key: "p_on_order", label: "On order", width: 80, num: true },
+            { key: "p_reorder", label: "Reorder level", width: 100, num: true },
         ],
         projects: [
-            { key: "p_project", label: "Project", locked: true, width: 240 },
-            { key: "p_customer", label: "Customer", width: 180 },
-            { key: "p_status", label: "Status", width: 120 },
-            { key: "p_completion", label: "Completion", width: 170 },
-            { key: "p_end", label: "Expected end", width: 150 },
+            { key: "p_project", label: "Project", locked: true, width: 220 },
+            { key: "p_customer", label: "Customer", width: 160 },
+            { key: "p_order", label: "Order", width: 170 },
+            { key: "p_status", label: "Status", width: 110 },
+            { key: "p_completion", label: "Completion", width: 150 },
+            { key: "p_end", label: "Expected end", width: 140 },
         ],
     };
     const product_selectors = {};
@@ -2297,7 +2301,7 @@
                 <td class="dashcol dashcol-p_promise pd-due">${promise}</td>
                 <td class="dashcol dashcol-p_progress">${where.join(" · ")}</td>
                 <td class="dashcol dashcol-p_paid">${paid}</td>
-                <td class="dashcol dashcol-p_total pd-num">${money(o.grand_total)}</td>
+                <td class="dashcol dashcol-p_total pd-num" title="${sf.esc(__("The product lines, before tax"))}">${money(o.product_amount)}</td>
             </tr>`;
     }
 
@@ -2375,7 +2379,7 @@
                 <td class="dashcol dashcol-p_line">${lines_html(q.lines)}</td>
                 <td class="dashcol dashcol-p_date">${date_cell(q.transaction_date)}</td>
                 <td class="dashcol dashcol-p_status">${sf.chip(q.status || "", "neutral")}</td>
-                <td class="dashcol dashcol-p_value pd-num">${money(q.grand_total)}</td>
+                <td class="dashcol dashcol-p_value pd-num">${money(q.product_amount)}</td>
             </tr>`;
     }
 
@@ -2387,7 +2391,7 @@
                 <td class="dashcol dashcol-p_line">${lines_html(o.lines)}</td>
                 <td class="dashcol dashcol-p_close">${date_cell(o.expected_closing)}</td>
                 <td class="dashcol dashcol-p_status">${sf.chip(o.status || "", "neutral")}</td>
-                <td class="dashcol dashcol-p_value pd-num">${o.amount ? money(o.amount) : dash}</td>
+                <td class="dashcol dashcol-p_value pd-num">${money(o.product_amount)}</td>
             </tr>`;
     }
 
@@ -2400,44 +2404,56 @@
             </section>`;
     }
 
+    // The win rate is the product quotes': a submitted product quotation that became an order is
+    // won, one marked Lost is lost (not the Products value stream, which on prod tags E-Stop deals
+    // and control-panel jobs alike). An opportunity shows when an open product quotation names it.
     function render_pipeline_section($content, pending) {
         const pipeline = products.pipeline || {};
         const $section = product_section("pipeline", __("Sales pipeline"));
         const q_state = section_state(pipeline.quotations, __("Quotations"));
         const o_state = section_state(pipeline.opportunities, __("Opportunities"));
         const quotes = q_state ? [] : (pipeline.quotations.rows || []).filter((q) => in_picked_lines(q.lines));
-        const opps = o_state ? [] : (pipeline.opportunities.rows || []).filter((o) => in_picked_lines(o.lines, true));
+        const opps = o_state ? [] : (pipeline.opportunities.rows || []).filter((o) => in_picked_lines(o.lines));
 
-        const sum = (rows, field) => rows.reduce((total, r) => total + (parseFloat(r[field]) || 0), 0);
-        const opp = pipeline.opportunities || {};
-        const rate = !o_state && opp.win_rate !== null && opp.win_rate !== undefined ? `${opp.win_rate}%` : "—";
-        const rate_sub = o_state ? "" : __("{0} won · {1} lost · last 12 months", [opp.won || 0, opp.lost || 0]);
+        const sum = (rows) => rows.reduce((total, r) => total + (parseFloat(r.product_amount) || 0), 0);
+        const quoted = pipeline.quotations || {};
+        const decided = (quoted.won || 0) + (quoted.lost || 0);
+        const rate = !q_state && quoted.win_rate !== null && quoted.win_rate !== undefined ? `${quoted.win_rate}%` : "—";
+        let rate_sub = "";
+        if (!q_state) {
+            rate_sub = decided
+                ? __("{0} won · {1} lost · last 12 months", [quoted.won || 0, quoted.lost || 0])
+                : __("No product quote won or lost yet");
+        }
         $section.append(
             '<div class="pd-cards pd-pcards">' +
-            pipeline_card(__("Open quotations"), q_state ? "—" : String(quotes.length), q_state ? "" : fmt_money(sum(quotes, "grand_total"))) +
-            pipeline_card(__("Open opportunities"), o_state ? "—" : String(opps.length), o_state ? "" : fmt_money(sum(opps, "amount"))) +
-            pipeline_card(__("Win rate, Products stream"), rate, rate_sub) +
+            pipeline_card(__("Open quotations"), q_state ? "—" : String(quotes.length), q_state ? "" : fmt_money(sum(quotes))) +
+            pipeline_card(__("Open opportunities"), o_state ? "—" : String(opps.length), o_state ? "" : fmt_money(sum(opps))) +
+            pipeline_card(__("Win rate, product quotes"), rate, rate_sub) +
             "</div>"
         );
 
-        const open_days = (pipeline.quotations && pipeline.quotations.open_days) || 90;
+        const open_days = quoted.open_days || 90;
         let quote_state = q_state;
         if (!quote_state && !quotes.length) {
             quote_state = { kind: "empty", opts: {
-                title: (pipeline.quotations.rows || []).length ? __("No open quotations in the lines picked.") : __("No open product quotations."),
-                body: __("Open: not lost, ordered or expired, and dated in the last {0} days when it has no Valid Till.", [open_days]),
+                title: (quoted.rows || []).length ? __("No open quotations in the lines picked.") : __("No open product quotations."),
+                body: __("A product quotation has only product and freight lines. Open: not lost, ordered or expired, and dated in the last {0} days when it has no Valid Till.", [open_days]),
             } };
         }
-        const q_block = product_block("quotes", __("Open quotations"), "", quote_state, quotes.map(quote_row));
+        const q_block = product_block("quotes", __("Open quotations"), __("Values are the product lines"), quote_state, quotes.map(quote_row));
         $section.append(q_block.$block);
 
         let opp_state = o_state;
         if (!opp_state && !opps.length) {
-            opp_state = { kind: "empty", opts: {
-                title: (pipeline.opportunities.rows || []).length ? __("No open opportunities in the lines picked.") : __("No open opportunities in the Products value stream."),
-            } };
+            opp_state = { kind: "empty", opts: (pipeline.opportunities.rows || []).length
+                ? { title: __("No open opportunities in the lines picked.") }
+                : {
+                    title: __("No open opportunity has a product quotation yet."),
+                    body: __("An opportunity shows here once an open product quotation names it, as a quote made from the opportunity does."),
+                } };
         }
-        const o_block = product_block("opportunities", __("Open opportunities"), __("Value stream: Products"), opp_state, opps.map(opportunity_row));
+        const o_block = product_block("opportunities", __("Open opportunities"), __("From their product quotations"), opp_state, opps.map(opportunity_row));
         $section.append(o_block.$block);
         $content.append($section);
         [q_block, o_block].forEach((b) => { if (b.columns) pending.push(b.columns); });
@@ -2466,6 +2482,7 @@
                 <td class="dashcol dashcol-p_item">${desk_link("item", c.item_code, "pd-pname")}<div class="pd-psub">${sf.esc(c.item_name || "")}</div></td>
                 <td class="dashcol dashcol-p_state">${sf.chip(word[0], word[1])}</td>
                 <td class="dashcol dashcol-p_on_hand pd-num">${number(c.on_hand)}</td>
+                <td class="dashcol dashcol-p_projected pd-num">${number(c.projected)}</td>
                 <td class="dashcol dashcol-p_on_order pd-num">${c.on_order ? number(c.on_order) : dash}</td>
                 <td class="dashcol dashcol-p_reorder pd-num">${c.reorder_level ? number(c.reorder_level) : dash}</td>
             </tr>`;
@@ -2495,9 +2512,11 @@
         if (!comp_state && !components.length) {
             comp_state = { kind: "empty", opts: { title: __("No component group is set up for the lines picked."), body: __("E-Stop parts are in the item group E-Stop Components.") } };
         } else if (!comp_state && !short.length) {
-            comp_state = { kind: "empty", opts: { title: __("No component is out of stock or below its reorder level.") } };
+            comp_state = { kind: "empty", opts: { title: __("No component is projected out or below its reorder level.") } };
         }
-        const comp_note = state ? "" : __("{0} of {1} short", [short.length, components.length]);
+        // Judged on projected quantity (on hand, plus ordered, minus what is reserved), so parts
+        // already moved to a build are not counted twice and parts on order are counted.
+        const comp_note = state ? "" : __("{0} of {1} short, by projected quantity", [short.length, components.length]);
         // Out of stock first, then below reorder, each by item code.
         short.sort((a, b) => (a.state === b.state ? String(a.item_code).localeCompare(String(b.item_code)) : a.state === "out" ? -1 : 1));
         const c_block = product_block("components", __("Component shortages"), comp_note, comp_state, short.map(component_row));
@@ -2507,15 +2526,39 @@
     }
 
     // ---- control panel projects ----
+    //
+    // A product order with a control panel on it needs a project (Nikolas, 2026-11-18), so it is
+    // not on the order board: it shows here, once. On its Project's row when the two are linked
+    // (Sales Order.project, or Project.sales_order), or as its own row, "No project yet", until
+    // one is made (product_orders.py's module docstring).
+
+    function panel_order_cell(order) {
+        if (!order) return dash;
+        const promise = order.delivery_date ? __("Promise {0}", [fmt_date(order.delivery_date)]) : "";
+        return desk_link("sales-order", order.name) +
+            `<div class="pd-psub">${sf.esc(stage_word(order.stage))}${promise ? ` · ${sf.esc(promise)}` : ""}</div>`;
+    }
 
     function product_project_row(p) {
         const end = p.expected_end_date
             ? `${sf.esc(fmt_date(p.expected_end_date))}${p.late ? '<span class="pd-late">Past due</span>' : ''}`
             : dash;
+        if (p.kind === "order") {
+            return `
+            <tr class="pd-row">
+                <td class="dashcol dashcol-p_project">${sf.chip(__("No project yet"), "warn")}</td>
+                <td class="dashcol dashcol-p_customer">${p.customer ? sf.esc(p.customer) : dash}</td>
+                <td class="dashcol dashcol-p_order">${panel_order_cell(p.order)}</td>
+                <td class="dashcol dashcol-p_status">${dash}</td>
+                <td class="dashcol dashcol-p_completion">${dash}</td>
+                <td class="dashcol dashcol-p_end pd-due">${end}</td>
+            </tr>`;
+        }
         return `
             <tr class="pd-row">
                 <td class="dashcol dashcol-p_project"><a href="${project_link(p)}" class="pd-pname">${sf.esc(p.project_name || p.name)}</a><div class="pd-psub">${sf.esc(p.name)}</div></td>
                 <td class="dashcol dashcol-p_customer">${p.customer ? sf.esc(p.customer) : dash}</td>
+                <td class="dashcol dashcol-p_order">${panel_order_cell(p.order)}</td>
                 <td class="dashcol dashcol-p_status">${sf.chip(p.status || "", "neutral")}</td>
                 ${completion_cell(p, "p_completion")}
                 <td class="dashcol dashcol-p_end pd-due">${end}</td>
@@ -2530,20 +2573,34 @@
         if (!state && !(section.rows || []).length) {
             state = { kind: "empty", opts: {
                 title: __("No active control panel projects."),
-                body: __("Custom-engineered control panels are Projects of type Products; the active ones show here."),
+                body: __("Custom-engineered control panels are Projects of type Products. They show here with their Sales Order, and an order for a control panel with no Project yet shows here too."),
             } };
         } else if (!state && !rows.length) {
             state = { kind: "empty", opts: { title: __("Control panel projects are under the Control Panels line.") } };
         }
-        const block = product_block("projects", __("Active projects"), __("Project type: Products"), state, rows.map(product_project_row));
+        const waiting = rows.filter((p) => p.kind === "order").length;
+        let note = __("Project type: Products");
+        if (waiting === 1) note = __("Project type: Products · 1 order with no project yet");
+        else if (waiting > 1) note = __("Project type: Products · {0} orders with no project yet", [waiting]);
+        const block = product_block("projects", __("Projects and orders"), note, state, rows.map(product_project_row));
         $section.append(block.$block);
         $content.append($section);
         if (block.columns) pending.push(block.columns);
     }
 
-    // The line chips' counts are the orders on the board in each line; All is every order.
+    // Every product order: the board's, and the control-panel ones shown in the projects section.
+    function all_product_orders() {
+        if (!products || !products.orders || !Array.isArray(products.orders.rows)) return null;
+        const panels = products.projects && Array.isArray(products.projects.rows)
+            ? products.projects.rows.map((p) => p.order).filter(Boolean)
+            : [];
+        return products.orders.rows.concat(panels);
+    }
+
+    // The line chips count the product orders in each line, the control-panel ones in the projects
+    // section included; All is every product order.
     function render_line_chips() {
-        const orders = products && products.orders && Array.isArray(products.orders.rows) ? products.orders.rows : null;
+        const orders = all_product_orders();
         $root.find('[data-line-count=""]').text(orders ? String(orders.length) : "");
         PRODUCT_LINES.forEach((line) => {
             const n = orders ? orders.filter((o) => Array.isArray(o.lines) && o.lines.includes(line)).length : "";

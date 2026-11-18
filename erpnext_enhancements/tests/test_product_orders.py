@@ -261,9 +261,50 @@ class TestOrderStage(unittest.TestCase):
 		)
 
 	def test_finished_work_orders_are_ready_while_the_test_is_not_recorded(self):
-		for done in (wo("Completed", produced=1), wo("Closed"), wo("In Process", qty=2, produced=2)):
+		for done in (
+			wo("Completed", produced=1),
+			wo("Closed", produced=1),
+			wo("In Process", qty=2, produced=2),
+		):
 			with self.subTest(done=done):
 				self.assertEqual(po.order_stage(0, [done]), {"stage": po.STAGE_READY, "note": "Built"})
+
+	def test_a_closed_work_order_built_only_what_it_produced(self):
+		# Manager review of #1464: "Closed" with nothing produced was counted as built.
+		self.assertEqual(
+			po.order_stage(0, [wo("Closed", qty=1, produced=0)]),
+			{"stage": po.STAGE_ORDERED, "note": "Work Order closed short"},
+		)
+		self.assertEqual(po.order_stage(0, [wo("Closed", qty=3, produced=1)])["stage"], po.STAGE_ORDERED)
+		# closed short beside a finished one: still not built
+		self.assertEqual(
+			po.order_stage(0, [wo("Completed", produced=1), wo("Closed")])["stage"], po.STAGE_ORDERED
+		)
+		# the shelf can still cover an order whose Work Order was closed short
+		self.assertEqual(
+			po.order_stage(0, [wo("Closed")], stock_covered=True),
+			{"stage": po.STAGE_READY, "note": "From stock"},
+		)
+
+	def test_the_work_order_summary(self):
+		summary = po.work_order_summary(
+			[
+				wo("Draft", docstatus=0),
+				wo("In Process"),
+				wo("Completed", produced=1),
+				wo("Closed"),
+				wo("Cancelled", docstatus=2),
+			]
+		)
+		self.assertEqual(
+			[len(summary[key]) for key in ("drafts", "in_progress", "finished", "closed_short")], [1, 1, 1, 1]
+		)
+		self.assertFalse(summary["built"])
+		self.assertTrue(summary["has_work_order"])
+		closed = po.work_order_summary([wo("Closed")])
+		self.assertFalse(closed["built"])
+		self.assertFalse(closed["has_work_order"], "a closed-short order may take a unit from the shelf")
+		self.assertTrue(po.work_order_summary([wo("Completed", produced=1)])["built"])
 
 	def test_stock_on_the_shelf_makes_an_order_without_a_work_order_ready(self):
 		self.assertEqual(
@@ -364,6 +405,11 @@ class TestAllocateStock(unittest.TestCase):
 		orders = [self.order("SO-1", "2026-12-01", qty=0)]
 		self.assertEqual(po.allocate_stock(orders, {"PDT-0040-1-1-1-2-0": 3}), set())
 
+	def test_an_order_whose_work_order_closed_short_may_take_from_the_shelf(self):
+		summary = po.work_order_summary([wo("Closed")])
+		order = self.order("SO-1", "2026-12-01", built=summary["built"], has_wo=summary["has_work_order"])
+		self.assertEqual(po.allocate_stock([order], {"PDT-0040-1-1-1-2-0": 1}), {"SO-1"})
+
 	def test_dates_may_be_dates(self):
 		orders = [self.order("SO-2", date(2026, 12, 10)), self.order("SO-1", date(2026, 12, 1))]
 		self.assertEqual(po.allocate_stock(orders, {"PDT-0040-1-1-1-2-0": 1}), {"SO-1"})
@@ -440,6 +486,33 @@ class TestSmallFacts(unittest.TestCase):
 					found[node.targets[0].id] = ast.literal_eval(node.value)
 		self.assertEqual(found.get("WON_STATUSES"), po.WON_STATUSES)
 		self.assertEqual(found.get("LOST_STATUSES"), po.LOST_STATUSES)
+
+	def test_pending_stock_qty_is_in_the_stock_uom(self):
+		# delivered_qty is in the order's UOM (ERPNext 16.54.0 status_updater divides by the factor)
+		self.assertEqual(po.pending_stock_qty(2, 0, 1), 2)
+		self.assertEqual(po.pending_stock_qty(3, 1, 12), 24)  # a case of 12, one case delivered
+		self.assertEqual(po.pending_stock_qty(2, 0, 0), 2, "a missing factor is 1")
+		self.assertEqual(po.pending_stock_qty(2, 0, None), 2)
+		self.assertEqual(po.pending_stock_qty(1, 2, 1), 0, "over-delivery leaves nothing, not a negative")
+
+	def test_the_board_window(self):
+		since = "2026-10-19"
+		self.assertTrue(po.on_board("To Deliver and Bill", 1, 0, None, since))
+		self.assertTrue(po.on_board("On Hold", 1, 50, None, since))
+		self.assertTrue(po.on_board("To Bill", 1, 100, "2026-11-12", since))
+		self.assertTrue(po.on_board("Completed", 1, 100, "2026-10-19", since), "the window's first day")
+		self.assertFalse(po.on_board("Completed", 1, 100, "2026-10-18", since))
+		self.assertFalse(po.on_board("Completed", 1, 100, None, since), "delivered, but no non-return note")
+		# Manager review of #1464: a short-shipped order someone Closed came back as Late.
+		self.assertFalse(po.on_board("Closed", 1, 50, "2026-11-12", since))
+		self.assertFalse(po.on_board("Closed", 1, 0, None, since))
+		self.assertFalse(po.on_board("Cancelled", 2, 0, None, since))
+		self.assertFalse(po.on_board("Draft", 0, 0, None, since))
+
+	def test_the_product_quote_win_rate_statuses(self):
+		self.assertEqual(po.QUOTE_WON_STATUSES, ("Ordered", "Partially Ordered"))
+		self.assertEqual(po.QUOTE_LOST_STATUSES, ("Lost",))
+		self.assertFalse(set(po.QUOTE_WON_STATUSES) & set(po.QUOTE_LOST_STATUSES))
 
 	def test_component_state(self):
 		self.assertEqual(po.component_state(0, 0), "out")
