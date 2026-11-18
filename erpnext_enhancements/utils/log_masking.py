@@ -33,6 +33,7 @@ Idempotent: masking masked text changes nothing, so re-running the stored-row
 backfill is safe.
 """
 
+import json
 import re
 
 #: What a masked value becomes.
@@ -224,3 +225,105 @@ def mask_secrets(text):
 	if cut == -1:
 		cut = MAX_SCAN_CHARS
 	return _mask(text[:cut]) + text[cut:]
+
+
+#: How deep :func:`mask_json_text` follows nested objects, lists and JSON held in strings.
+MAX_JSON_DEPTH = 12
+
+#: frappe's own placeholder for a value it already replaced; left as it is.
+_ALREADY_REPLACED = frozenset("*")
+
+
+def _is_credential_name(name):
+	"""True when a JSON key reads as a credential name: it contains one of
+	:data:`NAME_WORDS`, or it is exactly one of :data:`EXACT_NAME_WORDS` (so ``sid`` is,
+	and an identifier such as ``call_sid`` is not)."""
+	lowered = str(name).strip().lower()
+	return lowered in EXACT_NAME_WORDS or any(word in lowered for word in NAME_WORDS)
+
+
+def _holds_json(text):
+	"""True when a string is itself a JSON object or list (followed, not replaced whole)."""
+	if text.lstrip()[:1] not in ("{", "["):
+		return False
+	try:
+		return isinstance(json.loads(text), (dict, list))
+	except ValueError:
+		return False
+
+
+def _mask_json_value(value, depth):
+	"""``(masked value, changed)`` for one decoded JSON value."""
+	if depth > MAX_JSON_DEPTH:
+		return value, False
+
+	if isinstance(value, dict):
+		out, changed = {}, False
+		for key, item in value.items():
+			# Only a text value is replaced: counts, flags and expiry numbers under such a
+			# key are kept, and so is frappe's own placeholder.
+			if (
+				_is_credential_name(key)
+				and isinstance(item, str)
+				and item not in ("", MARKER)
+				and not set(item) <= _ALREADY_REPLACED
+				and not _holds_json(item)
+			):
+				out[key], changed = MARKER, True
+				continue
+			out[key], item_changed = _mask_json_value(item, depth + 1)
+			changed = changed or item_changed
+		return out, changed
+
+	if isinstance(value, list):
+		out, changed = [], False
+		for item in value:
+			masked, item_changed = _mask_json_value(item, depth + 1)
+			out.append(masked)
+			changed = changed or item_changed
+		return out, changed
+
+	if isinstance(value, str) and value:
+		# A string that is itself a JSON object or list (a posted document, a job's
+		# arguments) is masked by its own keys, then written back as JSON text.
+		if value.lstrip()[:1] in ("{", "["):
+			try:
+				inner = json.loads(value)
+			except ValueError:
+				inner = None
+			if isinstance(inner, (dict, list)):
+				masked, changed = _mask_json_value(inner, depth + 1)
+				return (json.dumps(masked), True) if changed else (value, False)
+		masked = mask_secrets(value)
+		return masked, masked != value
+
+	return value, False
+
+
+def mask_json_text(text):
+	"""Mask a JSON document held as text, such as Error Log ``metadata``.
+
+	The document is decoded and masked by structure rather than as flat text: a
+	value whose *key* is a credential name becomes :data:`MARKER` (containers under
+	such a key are followed, not replaced), a string that holds JSON of its own is
+	masked the same way, and every other string goes through :func:`mask_secrets`.
+	The result is always valid JSON, written the way frappe writes it.
+
+	Text that is not a JSON object or list, or is longer than
+	:data:`MAX_SCAN_CHARS`, is handed to :func:`mask_secrets` instead. Unchanged
+	input is returned as the same string, and masking is idempotent.
+	"""
+	if not isinstance(text, str) or not text:
+		return text
+	if len(text) > MAX_SCAN_CHARS:
+		return mask_secrets(text)
+	try:
+		document = json.loads(text)
+	except ValueError:
+		return mask_secrets(text)
+	if not isinstance(document, (dict, list)):
+		return mask_secrets(text)
+	masked, changed = _mask_json_value(document, 0)
+	if not changed:
+		return text
+	return json.dumps(masked, indent=1, sort_keys=True, separators=(",", ": "))

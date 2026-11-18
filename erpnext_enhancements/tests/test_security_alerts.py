@@ -384,7 +384,7 @@ SECRET = "not-a-real-" + "value-123"
 
 
 class TestErrorLogMasking(unittest.TestCase):
-    """Error Log before_insert masks error and method (v1.826.6), and can never lose the row."""
+    """Error Log before_insert masks error, method and metadata (v1.826.6), and can never lose the row."""
 
     def setUp(self):
         import frappe
@@ -414,6 +414,37 @@ class TestErrorLogMasking(unittest.TestCase):
         security_alerts.mask_error_log(doc)
         self.assertEqual(doc.error, "ValidationError: Customer is required")
         self.assertIsNone(doc.method)
+
+    def test_metadata_is_masked_by_structure_and_stays_valid_json(self):
+        import json
+
+        posted_doc = json.dumps({"doctype": "User", "first_name": "Pat", "new_password": SECRET})
+        metadata = json.dumps(
+            {
+                "type": "http_request",
+                "path": "/api/method/frappe.desk.form.save.savedocs",
+                "form_dict": {"doc": posted_doc, "action": "Save", "api_secret": SECRET},
+                "user": "pat@example.com",
+            },
+            indent=1,
+        )
+        doc = types.SimpleNamespace(error="ValidationError: Email is required", method="t", metadata=metadata)
+        security_alerts.mask_error_log(doc)
+        self.assertNotIn(SECRET, doc.metadata)
+        stored = json.loads(doc.metadata)
+        self.assertEqual(stored["path"], "/api/method/frappe.desk.form.save.savedocs")
+        self.assertEqual(stored["user"], "pat@example.com")
+        self.assertEqual(stored["form_dict"]["action"], "Save")
+        inner = json.loads(stored["form_dict"]["doc"])
+        self.assertEqual(inner["first_name"], "Pat")
+        self.assertNotEqual(inner["new_password"], SECRET)
+        self.assertEqual(doc.error, "ValidationError: Email is required")
+
+    def test_clean_metadata_is_left_exactly_as_it_was(self):
+        metadata = '{\n "form_dict": {"cmd": "ping"},\n "type": "http_request"\n}'
+        doc = types.SimpleNamespace(error="x", method="y", metadata=metadata)
+        security_alerts.mask_error_log(doc)
+        self.assertEqual(doc.metadata, metadata)
 
     def test_a_failure_never_raises_and_never_logs(self):
         class Exploding:
@@ -460,11 +491,19 @@ class TestMaskStoredErrorLogs(unittest.TestCase):
             {"name": "e04", "error": None, "method": None},
         ]
         self.writes, self.commits, self.roles = [], [], []
+        self.queries = []
+        self.table_fields = {"error", "method", "metadata"}
 
         def sql(query, values=None, as_dict=False):
+            self.queries.append(query)
             after, limit = values
             matching = [dict(row) for row in self.rows if row["name"] > after]
             return matching[:limit]
+
+        self.saved_get_meta = getattr(frappe, "get_meta", None)
+        frappe.get_meta = lambda doctype: types.SimpleNamespace(
+            has_field=lambda field: field in self.table_fields
+        )
 
         def set_value(doctype, name, updates, update_modified=True):
             self.writes.append((doctype, name, updates, update_modified))
@@ -479,6 +518,35 @@ class TestMaskStoredErrorLogs(unittest.TestCase):
     def tearDown(self):
         self.frappe.db = self.saved_db
         self.frappe.only_for = self.saved_only_for
+        if self.saved_get_meta is None:
+            del self.frappe.get_meta
+        else:
+            self.frappe.get_meta = self.saved_get_meta
+
+    def test_metadata_is_read_and_masked_with_the_other_fields(self):
+        import json
+
+        self.rows = [
+            {
+                "name": "e01",
+                "error": "plain",
+                "method": "plain title",
+                "metadata": json.dumps({"form_dict": {"client_secret": SECRET, "cmd": "x"}}),
+            }
+        ]
+        result = security_alerts.mask_stored_error_logs(dry_run=0)
+        self.assertEqual(result["changed"], 1)
+        self.assertIn("`metadata`", self.queries[0])
+        (_doctype, _name, updates, _update_modified) = self.writes[0]
+        self.assertEqual(set(updates), {"metadata"})
+        self.assertNotIn(SECRET, updates["metadata"])
+        self.assertEqual(json.loads(updates["metadata"])["form_dict"]["cmd"], "x")
+
+    def test_a_table_without_a_metadata_column_is_still_processed(self):
+        self.table_fields = {"error", "method"}
+        result = security_alerts.mask_stored_error_logs()
+        self.assertEqual(result["changed"], 2)
+        self.assertNotIn("metadata", self.queries[0])
 
     def test_a_dry_run_counts_and_writes_nothing(self):
         result = security_alerts.mask_stored_error_logs()

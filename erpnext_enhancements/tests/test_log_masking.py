@@ -276,6 +276,90 @@ class TestLargeInput(unittest.TestCase):
         self.assertEqual(len(out), len(text) - len(PLAIN_SECRET) + len(MARKER))
 
 
+class TestJsonText(unittest.TestCase):
+    """mask_json_text masks a JSON document by structure and always returns valid JSON."""
+
+    VALUE = "not-a-real-" + "value-456"
+
+    def _mask(self, obj):
+        import json
+
+        text = json.dumps(obj, indent=1, sort_keys=True, separators=(",", ": "))
+        masked = log_masking.mask_json_text(text)
+        return text, masked, json.loads(masked)
+
+    def test_a_value_under_a_credential_key_is_replaced_and_the_rest_kept(self):
+        _text, masked, out = self._mask(
+            {"form_dict": {"db_password": self.VALUE, "customer": "ACME", "qty": 3}, "user": "pat@example.com"}
+        )
+        self.assertNotIn(self.VALUE, masked)
+        self.assertEqual(out["form_dict"]["db_password"], MARKER)
+        self.assertEqual(out["form_dict"]["customer"], "ACME")
+        self.assertEqual(out["form_dict"]["qty"], 3)
+        self.assertEqual(out["user"], "pat@example.com")
+
+    def test_json_held_in_a_string_is_masked_by_its_own_keys(self):
+        import json
+
+        inner = json.dumps({"doctype": "User", "new_password": self.VALUE, "first_name": "Pat"})
+        _text, masked, out = self._mask({"form_dict": {"doc": inner, "action": "Save"}})
+        self.assertNotIn(self.VALUE, masked)
+        doc = json.loads(out["form_dict"]["doc"])
+        self.assertEqual(doc["new_password"], MARKER)
+        self.assertEqual(doc["first_name"], "Pat")
+
+    def test_lists_and_job_arguments_are_followed(self):
+        _text, masked, out = self._mask(
+            {"type": "background_job", "kwargs": {"kwargs": {"rows": [{"api_secret": self.VALUE, "n": 1}]}}}
+        )
+        self.assertNotIn(self.VALUE, masked)
+        self.assertEqual(out["kwargs"]["kwargs"]["rows"][0], {"api_secret": MARKER, "n": 1})
+
+    def test_a_container_under_a_credential_key_is_followed_not_replaced(self):
+        _text, _masked, out = self._mask({"token": {"issued_to": "app", "value_token": self.VALUE}})
+        self.assertEqual(out["token"]["issued_to"], "app")
+        self.assertEqual(out["token"]["value_token"], MARKER)
+
+    def test_frappes_own_placeholder_empty_values_and_booleans_are_left(self):
+        text, masked, _out = self._mask(
+            {"password": "********", "secret": "", "use_token": True, "token_expiry": 3600, "call_sid": "CA123"}
+        )
+        self.assertEqual(masked, text)
+
+    def test_short_words_count_only_as_whole_words(self):
+        text, masked, out = self._mask({"inside": "kept", "consider": "kept", "sid": self.VALUE})
+        self.assertNotEqual(masked, text)
+        self.assertEqual((out["inside"], out["consider"], out["sid"]), ("kept", "kept", MARKER))
+
+    def test_other_strings_go_through_the_text_rules(self):
+        _text, masked, out = self._mask({"referrer": "https://example.com/cb?access_token=" + self.VALUE + "&x=1"})
+        self.assertNotIn(self.VALUE, masked)
+        self.assertTrue(out["referrer"].endswith("&x=1"))
+
+    def test_unchanged_input_is_returned_as_is_and_masking_is_idempotent(self):
+        clean = '{\n "form_dict": {"cmd": "ping"},\n "type": "http_request"\n}'
+        self.assertIs(log_masking.mask_json_text(clean), clean)
+        _text, masked, _out = self._mask({"client_secret": self.VALUE})
+        self.assertEqual(log_masking.mask_json_text(masked), masked)
+
+    def test_text_that_is_not_a_json_document_falls_back_to_the_text_rules(self):
+        for text in ("password='" + self.VALUE + "'", '"just a string"', "[1, 2", ""):
+            with self.subTest(text=text[:12]):
+                self.assertEqual(log_masking.mask_json_text(text), mask_secrets(text))
+        self.assertIsNone(log_masking.mask_json_text(None))
+
+    def test_deep_nesting_is_bounded_and_does_not_raise(self):
+        import json
+
+        obj = current = {}
+        for _ in range(log_masking.MAX_JSON_DEPTH + 30):
+            current["next"] = {}
+            current = current["next"]
+        current["password"] = self.VALUE
+        masked = log_masking.mask_json_text(json.dumps(obj))
+        json.loads(masked)
+
+
 class TestRepositoryScanner(unittest.TestCase):
     def test_the_secrets_scanner_finds_nothing_in_the_masker_or_these_tests(self):
         spec = importlib.util.spec_from_file_location(

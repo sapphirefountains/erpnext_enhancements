@@ -20,11 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Bearer` tokens and frappe's `token key:secret`; `name='value'` and `"name": "value"` pairs whose
   name is a credential word (the name is kept); credential URL query values; and the password in
   `user:password@host`.
-  - **Why a second line.** With `developer_mode` on, frappe's traceback records every frame's local
-    variables, and its own sanitizer masks a variable by its *name* only (`password`, `token`, `key`
-    and a few more). A value printed inside another object's repr, such as a connection's keyword
-    arguments or a client object that prints its own settings, carries a credential under an
-    innocent variable name. This rule goes by the shape of the value instead.
+  - **`metadata` is masked by structure.** The row's `metadata` (the request's form values or the
+    job's arguments, as JSON text) goes through `log_masking.mask_json_text`: a value under a
+    credential-named key becomes `[masked]` at any depth, a string that holds JSON of its own is
+    masked by its own keys, every other string goes through the text rules, and the result is
+    always valid JSON. Unchanged metadata is stored exactly as frappe wrote it.
+  - **How it complements frappe's own masking.** frappe masks by variable or top-level key name;
+    this goes by the shape of the value and by key names at any depth.
   - **Why a `doc_event`.** It is resolved by name when the row is inserted, so it applies in
     background workers that serve hooks from the cache, and to rows frappe pushes through
     `deferred_insert` and inserts later from the scheduler.
@@ -56,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pathological 1 MB inputs inside a time budget, text past the cap kept exactly, and the
   repository's secrets scanner clean on the masker and the test file. Every credential-shaped
   value in it is synthetic and assembled from fragments.
-- `tests/test_security_alerts.py`: the hook masks `error` and `method`, leaves other fields and
+- `tests/test_security_alerts.py`: the hook masks `error`, `method` and `metadata`, leaves other fields and
   clean rows alone, never raises or logs, and is registered on Error Log `before_insert`; the
   backfill's dry run, write path, cursor, limit clamp, role check, POST-only decorator and absence
   from the scheduler; the configuration check per setting, its daily throttle, its silence on a

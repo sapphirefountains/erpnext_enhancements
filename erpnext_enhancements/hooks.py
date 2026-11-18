@@ -1588,7 +1588,7 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
 	},
 	"Error Log": {
-		# v1.826.6: replace credential-shaped values in error and method with a fixed marker
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
 		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
 		# masks a traceback variable by its name only; this goes by the value's shape, including
 		# one printed inside another object's repr. A doc_event is resolved by name at insert

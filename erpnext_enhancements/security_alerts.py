@@ -52,7 +52,7 @@ of copying its rule, so the answer follows the installed framework. Quiet when
 there is nothing to report.
 
 **Error Log masking (v1.826.6).** :func:`mask_error_log` runs on every Error Log
-``before_insert`` and passes the row's ``error`` and ``method`` through
+``before_insert`` and passes the row's ``error``, ``method`` and ``metadata`` through
 ``utils.log_masking.mask_secrets``, which replaces credential-shaped values with a
 fixed marker and keeps the rest of the text. frappe masks a traceback variable by its
 name; this masks by the shape of the value, including one printed inside another
@@ -337,8 +337,13 @@ def check_two_factor_coverage():
 
 # ---------------------------------------------------------------- Error Log masking
 
-#: Error Log fields that carry free text worth masking.
-MASKED_ERROR_LOG_FIELDS = ("error", "method")
+#: Error Log fields that carry free text worth masking. ``metadata`` is the request's
+#: form values or the job's arguments as JSON text, and is masked by structure
+#: (``log_masking.mask_json_text``) so it stays valid JSON.
+MASKED_ERROR_LOG_FIELDS = ("error", "method", "metadata")
+
+#: The fields of :data:`MASKED_ERROR_LOG_FIELDS` that hold a JSON document.
+JSON_ERROR_LOG_FIELDS = ("metadata",)
 
 #: Rows read per query by :func:`mask_stored_error_logs`. One row can be hundreds of
 #: kilobytes, so batches stay small.
@@ -350,20 +355,28 @@ MASK_MAX_LIMIT = 5000
 
 def _masked_fields(values):
 	"""``{field: masked text}`` for each field of ``values`` that masking changes. Pure."""
-	from erpnext_enhancements.utils.log_masking import mask_secrets
+	from erpnext_enhancements.utils.log_masking import mask_json_text, mask_secrets
 
 	changed = {}
 	for field in MASKED_ERROR_LOG_FIELDS:
 		value = values.get(field)
 		if isinstance(value, str) and value:
-			masked = mask_secrets(value)
+			masked = mask_json_text(value) if field in JSON_ERROR_LOG_FIELDS else mask_secrets(value)
 			if masked != value:
 				changed[field] = masked
 	return changed
 
 
+def _stored_masked_fields():
+	"""The masked fields this site's Error Log table has, in order (``metadata`` is
+	newer than the other two, so the backfill asks before selecting it)."""
+	meta = frappe.get_meta("Error Log")
+	return [field for field in MASKED_ERROR_LOG_FIELDS if meta.has_field(field)]
+
+
 def mask_error_log(doc, method=None):
-	"""``Error Log`` ``before_insert``: mask credential-shaped values in ``error`` and ``method``.
+	"""``Error Log`` ``before_insert``: mask credential-shaped values in ``error``,
+	``method`` and ``metadata``.
 
 	Never raises and never logs (see the module docstring): any failure leaves the row as it
 	was built, because losing the row would be worse than storing it unmasked.
@@ -392,10 +405,12 @@ def mask_stored_error_logs(dry_run=1, limit=500, after=None):
 	cursor = after or ""
 	scanned = changed = 0
 	exhausted = False
+	# Column names come from MASKED_ERROR_LOG_FIELDS (a constant), never from the request.
+	columns = ", ".join(f"`{field}`" for field in _stored_masked_fields())
 
 	while scanned < limit:
 		rows = frappe.db.sql(
-			"""select name, error, method from `tabError Log`
+			f"""select name, {columns} from `tabError Log`
 			where name > %s order by name asc limit %s""",
 			(cursor, min(MASK_BATCH_SIZE, limit - scanned)),
 			as_dict=True,
