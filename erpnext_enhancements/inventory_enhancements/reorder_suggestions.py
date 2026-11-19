@@ -20,6 +20,16 @@ this module reads and writes:
   ERPNext validates it and the Item's version history records who changed it. Only an existing rule
   is changed: a suggestion is never a new rule. A page older than the Item writes nothing.
 
+  **Who that is, in practice.** ERPNext gives Item write to Item Manager alone, and production's
+  Custom DocPerms keep it so (Stock Manager has write 0). So Apply needs Item Manager *and* one of the
+  apply roles: 14 people on 2026-11-19, not counting Administrator and the service account. The page
+  says so to anyone else, and no permission is changed here.
+* **A variant's rule lives on its template.** ERPNext's reorder job gives a variant with no rule of its
+  own its template's rules (``get_reorder_levels_for_variants``), and the board lists them under the
+  variant. Changing one changes it for every variant of that template, which is not an item-by-item
+  approval, so such a line is marked with its template and has no Apply, and :func:`apply` refuses it
+  in those words.
+
 Tabs, per ``CLAUDE.md`` (new file).
 """
 
@@ -113,20 +123,37 @@ def read_ledger(item_codes, today):
 
 
 def _item_stamps(item_codes):
-	"""``{item_code: {modified, lead_time_days}}`` for the page's stale check and the lead time."""
+	"""``{item_code: {modified, lead_time_days, variant_of}}``: the page's stale check, the lead time, and
+	the template a variant's rule may come from."""
 	if not item_codes:
 		return {}
 	return {
 		r["name"]: r
 		for r in frappe.db.sql(
-			"select name, modified, lead_time_days from `tabItem` where name in %(codes)s",
+			"select name, modified, lead_time_days, variant_of from `tabItem` where name in %(codes)s",
 			{"codes": board._in(sorted(item_codes))},
 			as_dict=True,
 		)
 	}
 
 
-def _line(item_code, details, stamp, usage, start, days, rule=None):
+def _own_rules(item_codes):
+	"""``{(item_code, warehouse)}``: the rules each item holds itself. A rule the board lists that is not
+	here is a variant's, inherited from its template."""
+	if not item_codes:
+		return set()
+	return {
+		(r[0], r[1])
+		for r in frappe.db.sql(
+			"""select parent, warehouse from `tabItem Reorder`
+			where parenttype = 'Item' and parent in %(codes)s""",
+			{"codes": board._in(sorted(item_codes))},
+		)
+		or ()
+	}
+
+
+def _line(item_code, details, stamp, usage, start, days, rule=None, inherited_from=None):
 	whole = bool(details.get("stock_uom_whole"))
 	lead = (rule or {}).get("lead_time_days")
 	if lead is None:
@@ -151,6 +178,8 @@ def _line(item_code, details, stamp, usage, start, days, rule=None):
 		line.update(
 			{
 				"key": reorder_rules.line_key(item_code, rule.get("warehouse")),
+				# A variant's rule set on its template: shown, never applied from here.
+				"inherited_from": inherited_from,
 				"warehouse": rule.get("warehouse"),
 				"warehouse_group": rule.get("warehouse_group"),
 				"reorder_level": rule.get("reorder_level"),
@@ -181,6 +210,7 @@ def build(days=None, today=None):
 	codes = sorted(ruled | candidates)
 	details, _suppliers = board._item_details(codes, False)
 	stamps = _item_stamps(codes)
+	own = _own_rules(sorted(ruled))
 	ledger = read_ledger(codes, today)
 	since = tracking_since()
 
@@ -190,20 +220,42 @@ def build(days=None, today=None):
 	lines = []
 	for rule in rule_rows:
 		code = rule["item_code"]
-		usage = rules.item_usage(ledger.get(code), in_rule_shop(rule), sites, not_shop, first_day, today)
-		start, n_days = rules.basis(first_day, since, usage["first_seen"], today)
-		lines.append(_line(code, details.get(code) or {}, stamps.get(code) or {}, usage, start, n_days, rule))
+		stamp = stamps.get(code) or {}
+		usage = rules.measure(ledger.get(code), in_rule_shop(rule), sites, not_shop, first_day, since, today)
+		inherited = None
+		if (code, rule.get("warehouse")) not in own:
+			inherited = stamp.get("variant_of") or None
+		lines.append(
+			_line(
+				code,
+				details.get(code) or {},
+				stamp,
+				usage,
+				usage["basis_start"],
+				usage["basis_days"],
+				rule,
+				inherited,
+			)
+		)
 
 	def in_any_shop(w):
 		return bool(w) and w not in not_shop
 
 	unruled = []
 	for code in sorted(candidates):
-		usage = rules.item_usage(ledger.get(code), in_any_shop, sites, not_shop, first_day, today)
+		usage = rules.measure(ledger.get(code), in_any_shop, sites, not_shop, first_day, since, today)
 		if usage["used"] <= 0:
 			continue
-		start, n_days = rules.basis(first_day, since, usage["first_seen"], today)
-		unruled.append(_line(code, details.get(code) or {}, stamps.get(code) or {}, usage, start, n_days))
+		unruled.append(
+			_line(
+				code,
+				details.get(code) or {},
+				stamps.get(code) or {},
+				usage,
+				usage["basis_start"],
+				usage["basis_days"],
+			)
+		)
 
 	lines.sort(key=lambda l: (not l["suggestion"]["enough"], l["item_code"], l.get("warehouse") or ""))
 	unruled.sort(key=lambda l: (-l["used"], l["item_code"]))
@@ -289,6 +341,16 @@ def apply(item_code, warehouse, modified, level, qty):
 		None,
 	)
 	if target is None:
+		template = cstr(item.get("variant_of")).strip()
+		if template:
+			# ERPNext gives a variant with no rule of its own its template's rules; the board lists them
+			# under the variant. Changing the template's rule changes it for every variant.
+			raise board.BoardError(
+				_(
+					"{0} takes its reorder rule from its template, {1}. Change the rule on {1}; it applies to "
+					"every variant of it."
+				).format(code, template)
+			)
 		raise board.BoardError(
 			_("{0} has no reorder rule on {1} any more. Reload the page.").format(code, warehouse)
 		)

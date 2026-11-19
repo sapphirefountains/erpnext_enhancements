@@ -1174,17 +1174,20 @@ judgement is `reorder_suggest_rules.py` (no Frappe); `reorder_suggestions.py` re
 
 | | |
 |---|---|
-| **Used** | Stock that left the shop for a job or a customer, in the rule's scope (its `warehouse_group` and everything under it, else its warehouse; `reorder_rules.in_scope`): takes (Material Issue), deliveries (Delivery Note, Sales Invoice, POS Invoice taking stock out), and moves out to a job site or the Project Shelf; less moves back from a job site and stock added with a job picked (Material Receipt carrying a Project: Stock Scan's + with a job). The shop is everything but the job sites and the Project Shelf |
-| **Not used** | Count corrections (shown beside the suggestion, derived as ERPNext's Stock Ledger report does, never counted), moves between shop places, receipts, returns to a supplier, releases from the Project Shelf to a shop bin |
-| **Basis** | From the latest of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site recorded, and the item's first day in the shop, through today |
-| **Enough** | At least `MIN_USES` (3) uses over at least `MIN_DAYS` (14) days, and something used. Otherwise the rule is listed under "too little history" with its basis and the reason, and has no Apply |
+| **Used** | Stock that left the shop for a job or a customer, in the rule's scope (its `warehouse_group` and everything under it, else its warehouse; `reorder_rules.in_scope`): takes (Material Issue), deliveries (Delivery Note, Sales Invoice, POS Invoice taking stock out), and moves out to a job site or the Project Shelf; less stock added with a job picked (Material Receipt carrying a Project: Stock Scan's + with a job), in full, and moves back from a job site or the Project Shelf, **up to what the shop sent out to them in the same period** (the shelf also holds parts bought straight for a job, and a site can be stocked from the shelf; those were never the shop's to have used). The shop is everything but the job sites and the Project Shelf |
+| **Not used** | Count corrections (shown beside the suggestion, derived as ERPNext's Stock Ledger report does, never counted), moves between shop places, receipts, returns to a supplier |
+| **Basis** | One period for the uses and the days (`measure`): from the latest of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site recorded, and the item's first day in the shop, through today |
+| **Enough** | At least `MIN_USES` (3) uses over at least `MIN_DAYS` (14) days, and something used on balance. Otherwise the rule is listed under "too little history" with its basis and its one reason: not in the shop, not used, as much came back as went out, too few uses, too few days |
 | **Reorder at** | daily use × (lead time + `SAFETY_DAYS`, 7), rounded up |
 | **Buy** | daily use × `COVER_DAYS` (30), rounded up, never below one unit |
 | **Lead time** | The Item's `lead_time_days`; 7 days (`DEFAULT_LEAD_DAYS`) assumed when it is 0, and the page says so. On production on 2026-11-19 no rule item had one |
 
 - **Apply** (`api.reorder_board.apply_reorder_suggestion`, POST): Purchase Manager, Stock Manager or
-  System Manager (`APPLY_ROLES`), and the Item's own write permission (`item.check_permission("write")`;
-  on production Item write is Item Manager's). One `Item.save()` as the person, on the rule the row
+  System Manager (`APPLY_ROLES`), **and** the Item's own write permission (`item.check_permission("write")`).
+  ERPNext gives Item write to Item Manager alone, and production's Custom DocPerms keep it so (Stock
+  Manager has write 0), so Apply is in practice for people with Item Manager and an apply role: 14
+  on 2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+  without Apply and a sentence naming the role. One `Item.save()` as the person, on the rule the row
   showed only (never a new rule), with the Item's `modified` from the read: a stale page writes
   nothing. The dialog starts on the suggestion and the numbers can be changed before saving; Reorder
   at may be 0, Buy must be more than 0, both at most 100,000, whole for a whole-number unit.
@@ -1192,6 +1195,11 @@ judgement is `reorder_suggest_rules.py` (no Frappe); `reorder_suggestions.py` re
   `read_rules`, then one SQL read of the ledger per item code (the rule items' whole ledger, because a
   count's change needs the balance before it), the first recorded take, and the items with a possible
   use in the window. It is made only when someone opens the tab.
+- **A variant's rule from its template.** ERPNext's reorder job gives a variant with no rule of its
+  own its template's rules (`get_reorder_levels_for_variants`, v16.54.0), and the board lists them
+  under the variant. Changing one changes it for every variant, which is not an item-by-item
+  approval: the line is marked "Rule set on its template" (`inherited_from`, from the item's
+  `variant_of` and the rules it holds itself), has no Apply, and the endpoint refuses it in those words.
 - **Items used with no rule** are listed under the tab, read-only, with the same basis and
   suggestion; a rule is given from the Bin Manager's Reorder column.
 - **What production showed on 2026-11-19:** 53 rules, and no rule item with more than one recorded

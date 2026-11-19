@@ -122,7 +122,8 @@ const ROB = {
 	// The Reorder levels tab (v1.832.0). What a suggestion rests on, in words: "Used 12 Nos in 40 days (5 uses)".
 	basis_text(line) {
 		const days = Number(line.basis_days) || 0;
-		if (!days) return __("Not in the shop in this window");
+		// No days at all: the suggestion's own reason says so, once.
+		if (!days) return "";
 		const uom = line.stock_uom ? ` ${line.stock_uom}` : "";
 		const uses = Number(line.uses) || 0;
 		return __("Used {0} in {1} ({2})", [
@@ -649,7 +650,9 @@ class ReorderBoardPage {
 		}
 		if (!lv.can_apply && ready.length) {
 			parts.push(`<p class="text-muted">${this.esc(
-				__("Applying a suggestion needs Purchase Manager, Stock Manager or System Manager, and permission to edit Items.")
+				__(
+					"Applying a suggestion needs Purchase Manager, Stock Manager or System Manager, and permission to edit Items, which ERPNext gives only to the Item Manager role."
+				)
 			)}</p>`);
 		}
 		this.$body.html(parts.join(""));
@@ -665,14 +668,18 @@ class ReorderBoardPage {
 				}`
 			: `<span class="text-muted">${this.esc(__("not enough history"))}</span>`;
 		const basis = [ROB.basis_text(l), s.enough ? ROB.lead_text(s) : s.reason || "", ROB.counts_text(l)].filter(Boolean);
+		// A variant's rule set on its template: changing it would change every variant, so no Apply here.
+		const inherited = l.inherited_from
+			? `<div class="rob-sub">${this.esc(__("Rule set on its template, {0}. Change it there.", [l.inherited_from]))}</div>`
+			: "";
 		const apply =
-			with_apply && has_rule && s.enough && this.levels.can_apply && !l.matches
+			with_apply && has_rule && s.enough && this.levels.can_apply && !l.matches && !l.inherited_from
 				? `<button type="button" class="btn btn-default btn-xs rob-apply">${this.esc(__("Apply"))}</button>`
 				: "";
 		return `
 			<tr data-key="${this.esc(l.key || l.item_code)}">
 				<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div></td>
-				<td>${has_rule ? this.where(l) : ""}</td>
+				<td>${has_rule ? this.where(l) : ""}${inherited}</td>
 				<td class="rob-num">${this.esc(now)}${l.stock_uom ? `<div class="rob-sub">${this.esc(l.stock_uom)}</div>` : ""}</td>
 				<td class="rob-num">${suggested}</td>
 				<td>${basis.map((t, i) => (i ? `<div class="rob-sub">${this.esc(t)}</div>` : this.esc(t))).join("")}</td>

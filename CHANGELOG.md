@@ -19,27 +19,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **What counts as used.** Stock that left the shop for a job or a customer, inside the rule's
     scope (its warehouse group, as ERPNext reads its projected qty). That means takes (Material
     Issue), deliveries, and moves out to a job site or the Project Shelf, less what came back from a
-    job (a move back from a site, or stock added with a job picked). A **count correction is never
-    use**: the derived count change is shown beside the suggestion ("counts found 3 fewer, not
-    counted as use"), so a shelf that keeps coming up short is visible. Moves between shop places,
-    receipts, returns to a supplier, and releases from the Project Shelf are not use either.
+    job. Stock added with a job picked (Stock Scan's + with a job) comes off in full. A move back
+    from a job site or the Project Shelf comes off only up to what the shop sent out to them in the
+    same period: the shelf also holds parts bought straight for a job, and those were never the
+    shop's to have used. A **count correction is never use**: the derived count change is shown
+    beside the suggestion ("counts found 3 fewer, not counted as use"), so a shelf that keeps
+    coming up short is visible. Moves between shop places, receipts and returns to a supplier are
+    not use either.
   - **The suggestion.** Average daily use over the basis, times (lead time + 7 days) for Reorder
     at, and times 30 days for Buy. Both are rounded up, to whole units for a whole-number unit, and
     Buy is never below one unit. An item with no lead time gets 7 days, and the page says that was
     assumed. On production no rule item has a lead time set.
-  - **Honest about thin data.** The basis starts at the latest of three dates: the window's start
-    (30, 60, 90 or 180 days; 90 by default), the first take this site ever recorded, and the
-    item's first day in the shop. So the weeks before Stock Scan went live do not dilute the
-    average. A suggestion needs at least 3 uses over at least 14 days. A thinner rule is listed
-    under "too little history", with its basis and the reason, and has no Apply. Items used in the
-    window that have no rule are listed too, read-only.
+  - **Honest about thin data.** The use is counted, and averaged, over one period: from the latest
+    of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site ever
+    recorded, and the item's first day in the shop, to today. So the weeks before Stock Scan went
+    live neither dilute the average nor add uses to it. A suggestion needs at least 3 uses over at
+    least 14 days. A thinner rule is listed under "too little history", with its basis and the one
+    reason in words: not in the shop, not used, as much came back as went out, too few uses, or too
+    few days. Items used in the window that have no rule are listed too, read-only.
   - **Apply** opens a dialog with the suggested pair filled in and editable, then writes that one
-    rule: `api.reorder_board.apply_reorder_suggestion`, POST only. It is limited to Purchase
-    Manager, Stock Manager and System Manager, and the Item is checked against the person's own
-    write permission. The change is one `Item.save()` as the person, so ERPNext validates it and
-    the Item's version history records it. Only an existing rule is changed, and a page older than
-    the Item writes nothing. The read is `api.reorder_board.get_reorder_suggestions` (GET, the
-    board's roles). The ledger is read per item code, behind the role gate.
+    rule: `api.reorder_board.apply_reorder_suggestion`, POST only. It needs Purchase Manager,
+    Stock Manager or System Manager **and** the person's own write permission on the Item. ERPNext
+    gives Item write to Item Manager alone (production's Custom DocPerms keep Stock Manager at write
+    0), so in practice Apply is for people who hold Item Manager and an apply role: 14 on
+    2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+    without Apply and a sentence saying why. No permission is changed. The change is one
+    `Item.save()` as the person, so ERPNext validates it and the Item's version history records it.
+    Only an existing rule is changed, and a page older than the Item writes nothing. A variant whose
+    rule comes from its template (ERPNext's reorder job gives a variant with no rule of its own its
+    template's rules) is marked with the template and has no Apply, because changing that rule
+    changes every variant; the endpoint refuses it in those words. The read is
+    `api.reorder_board.get_reorder_suggestions` (GET, the board's roles). The ledger is read per item
+    code, behind the role gate.
   - **No schema change, no patch, no fixture.** Pure rules: `inventory_enhancements/reorder_suggest_rules.py`;
     reads and the write: `inventory_enhancements/reorder_suggestions.py`. Tests:
     `tests/test_reorder_board.py` (its existing CI step).

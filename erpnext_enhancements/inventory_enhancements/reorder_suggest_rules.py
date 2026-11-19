@@ -18,26 +18,30 @@ each item's reorder rule, a suggested level and quantity, the basis it rests on,
 
 minus what came back from a job:
 
-* a move from a **job site** back into a shop warehouse (leftovers);
 * stock added **with a job** (Stock Entry, Material Receipt carrying a Project) into a shop warehouse:
-  Stock Scan's + with a job picked is a return from that job.
+  Stock Scan's + with a job picked is a return from that job, taken off in full;
+* a move from a **job site or the Project Shelf** back into a shop warehouse (leftovers, or parts set
+  aside for a job and released again), taken off **up to what the shop sent out** to a site or the
+  shelf in the same period. The shelf also holds parts bought straight for a job, and a site can be
+  stocked from the shelf; neither was ever the shop's, so releasing them to a shop bin must not
+  cancel the shop's own takes. The cap keeps a move out and its move back netting to nothing without
+  letting parts the shop never sent out reduce what it used.
 
 **Not use:** a count correction (Stock Reconciliation: it says the shelf was wrong, not that
 anything was used, so it is shown beside the suggestion and never counted), a move between shop
-places, a receipt from a supplier, a return to a supplier, and stock released from the Project Shelf
-to a shop bin (it was bought for a job, not taken from the shop).
+places, a receipt from a supplier, and a return to a supplier.
 
 **The shop** is every warehouse that is not a job site or the Project Shelf (the board's own
 reading since v1.801.0 and v1.817.0). **The rule's scope** is where ERPNext reads its projected qty:
 the rule's ``warehouse_group`` and everything under it, or its own warehouse when it has no group
 (``reorder_rules.in_scope``).
 
-**The basis.** Usage is averaged over the days it could have been recorded: from the latest of the
-window's start, the first take this site ever recorded (Stock Scan went live in late September
-2026, so a 90-day window would otherwise count weeks when nobody recorded anything), and the first
-day the item was in the shop at all, through today. A suggestion needs at least :data:`MIN_USES`
-uses over at least :data:`MIN_DAYS` days; anything thinner is shown with its basis and marked, and
-has no Apply.
+**The basis.** Usage is counted, and averaged, over one period: from the latest of the window's
+start, the first take this site ever recorded (Stock Scan went live in late September 2026, so a
+90-day window would otherwise count weeks when nobody recorded anything), and the first day the item
+was in the shop at all, through today (:func:`measure`). The uses and the days are always the same
+days. A suggestion needs at least :data:`MIN_USES` uses over at least :data:`MIN_DAYS` days; anything
+thinner is shown with its basis and the reason in words, and has no Apply.
 
 **The suggestion.** ``daily = used / days``.
 
@@ -138,16 +142,20 @@ def item_usage(rows, in_shop_scope, sites, not_shop, start, today):
 	``not_shop``: the sites and the Project Shelf.
 
 	Returns ``{used, uses, gross_used, returned, counted_down, counted_up, first_seen}``: ``used`` is
-	what left minus what came back, never below 0; ``uses`` how many vouchers took some; the counts are
-	the units count corrections removed and added in the scope (derived as ERPNext's Stock Ledger
-	report does: a count's balance minus the balance before it); ``first_seen`` the first day the item
-	had any ledger row in the scope, at any date.
+	what left minus what came back, never below 0; ``uses`` how many vouchers took some; ``returned``
+	the stock added back with a job plus the moves back from a site or the shelf, those capped at what
+	the shop sent out to them in the same period; the counts are the units count corrections removed
+	and added in the scope (derived as ERPNext's Stock Ledger report does: a count's balance minus the
+	balance before it); ``first_seen`` the first day the item had any ledger row in the scope, at any
+	date. Call it through :func:`measure`, which picks ``start`` so the use and the days agree.
 	"""
 	balance = {}
 	moves = {}
 	first_seen = None
 	gross = 0.0
 	returned = 0.0
+	sent_out = 0.0
+	came_back = 0.0
 	counted_down = 0.0
 	counted_up = 0.0
 	use_vouchers = set()
@@ -191,10 +199,14 @@ def item_usage(rows, in_shop_scope, sites, not_shop, start, today):
 		to_a_job = any(c > 0 and w in not_shop for w, c, _shop in legs)
 		if out_of_shop > _EPS and to_a_job:
 			gross += out_of_shop
+			sent_out += out_of_shop
 			use_vouchers.add(voucher)
-		from_a_site = any(c < 0 and w in sites for w, c, _shop in legs)
-		if from_a_site:
-			returned += sum(c for _w, c, shop in legs if c > 0 and shop)
+		from_a_job = any(c < 0 and w in not_shop for w, c, _shop in legs)
+		if from_a_job:
+			came_back += sum(c for _w, c, shop in legs if c > 0 and shop)
+	# A move back is taken off only up to what the shop sent out: parts bought straight onto the shelf,
+	# or sent to a site from the shelf, were never the shop's to have used.
+	returned += min(came_back, sent_out)
 	return {
 		"used": max(gross - returned, 0.0),
 		"uses": len(use_vouchers),
@@ -204,6 +216,30 @@ def item_usage(rows, in_shop_scope, sites, not_shop, start, today):
 		"counted_up": counted_up,
 		"first_seen": first_seen,
 	}
+
+
+def first_seen_in(rows, in_shop_scope):
+	"""The first day the item had a ledger row in the scope, at any date, or ``None``."""
+	for row in rows or ():
+		day = as_date(row.get("posting_date"))
+		if day and in_shop_scope(row.get("warehouse")):
+			return day
+	return None
+
+
+def measure(rows, in_shop_scope, sites, not_shop, window_first_day, tracking_since, today):
+	"""One rule's use and the days it was measured over, the same period for both.
+
+	The period is :func:`basis`'s; the use is :func:`item_usage` over exactly those days, so "4 uses in 30
+	days" never pairs uses from 90 days with an average over 30. Returns ``item_usage``'s dict plus
+	``basis_start`` and ``basis_days`` (``None`` and 0, and nothing counted, when the item was never in
+	the scope).
+	"""
+	first = first_seen_in(rows, in_shop_scope)
+	start, days = basis(window_first_day, tracking_since, first, today)
+	usage = item_usage(rows, in_shop_scope, sites, not_shop, start or today + _dt.timedelta(days=1), today)
+	usage.update({"first_seen": first, "basis_start": start, "basis_days": days})
+	return usage
 
 
 def basis(window_first_day, tracking_since, first_seen, today):
@@ -217,6 +253,27 @@ def basis(window_first_day, tracking_since, first_seen, today):
 	return start, (today - start).days + 1
 
 
+def _times(n):
+	return "1 time" if n == 1 else f"{n} times"
+
+
+def _days(n):
+	return "1 day" if n == 1 else f"{n} days"
+
+
+def _thin_reason(used, uses, days):
+	"""Why there is no suggestion yet, one cause in words, or ``None`` when there is enough."""
+	if uses <= 0:
+		return f"Not used in these {_days(days)}."
+	if used <= _EPS:
+		return f"Used {_times(uses)}, but as much came back as went out: nothing used on balance."
+	if uses < MIN_USES:
+		return f"Used {_times(uses)} in {_days(days)}: a suggestion needs at least {MIN_USES} uses."
+	if days < MIN_DAYS:
+		return f"Only {_days(days)} of history: a suggestion needs at least {MIN_DAYS} days."
+	return None
+
+
 def _round_up(value, whole):
 	if whole:
 		return float(math.ceil(value - _EPS))
@@ -226,10 +283,10 @@ def _round_up(value, whole):
 def suggest(used, uses, days, lead_time_days, whole):
 	"""The suggestion for one rule, or the reason there is none.
 
-	Returns ``{enough, level, qty, daily, lead_days, lead_assumed, reason}``. ``enough`` False means the
-	history is too thin (fewer than :data:`MIN_USES` uses or :data:`MIN_DAYS` days, or nothing used):
-	``level`` and ``qty`` are then None and ``reason`` says why in words. ``lead_assumed`` is True when
-	the item has no lead time and :data:`DEFAULT_LEAD_DAYS` was used.
+	Returns ``{enough, level, qty, daily, lead_days, lead_assumed, reason}``. ``enough`` False means there
+	is no suggestion: ``level`` and ``qty`` are then None and ``reason`` gives the one cause, in this
+	order: not in the shop at all, not used, used but as much came back as left, too few uses, too few
+	days. ``lead_assumed`` is True when the item has no lead time and :data:`DEFAULT_LEAD_DAYS` was used.
 	"""
 	lead = int(flt(lead_time_days))
 	lead_assumed = lead <= 0
@@ -247,14 +304,12 @@ def suggest(used, uses, days, lead_time_days, whole):
 	uses = int(flt(uses))
 	days = int(flt(days))
 	if days <= 0:
-		out["reason"] = "Not in stock in the shop during this window."
+		out["reason"] = "Not in the shop during this window."
 		return out
 	out["daily"] = used / days
-	if uses < MIN_USES or days < MIN_DAYS or used <= _EPS:
-		out["reason"] = (
-			f"Used {uses} time{'' if uses == 1 else 's'} in {days} day{'' if days == 1 else 's'}: "
-			f"a suggestion needs at least {MIN_USES} uses over {MIN_DAYS} days."
-		)
+	reason = _thin_reason(used, uses, days)
+	if reason:
+		out["reason"] = reason
 		return out
 	daily = used / days
 	level = _round_up(daily * (lead_days + SAFETY_DAYS), whole)

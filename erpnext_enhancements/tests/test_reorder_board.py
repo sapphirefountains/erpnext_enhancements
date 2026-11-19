@@ -1388,14 +1388,54 @@ class TestWhatCountsAsUsed(unittest.TestCase):
 				led(SHOP_BIN, 2, 6, D(35), purpose="Material Receipt", voucher="SE-2", project="PRJ-90001"),
 				# Added without a PO and without a job: not a return.
 				led(SHOP_BIN, 5, 11, D(34), purpose="Material Receipt", voucher="SE-3"),
-				# Leftovers moved back from the job's site.
+				# Moved back from the job's site, but the shop sent nothing out to it in this period:
+				# that stock was never the shop's (it reached the site from the shelf), so it takes
+				# nothing off.
 				led(SITE, -1, 0, D(30), purpose="Material Transfer", voucher="SE-4"),
 				led(SHOP_BIN, 1, 12, D(30), purpose="Material Transfer", voucher="SE-4"),
 			]
 		)
-		self.assertEqual((u["gross_used"], u["returned"], u["used"], u["uses"]), (6.0, 3.0, 3.0, 1))
+		self.assertEqual((u["gross_used"], u["returned"], u["used"], u["uses"]), (6.0, 2.0, 4.0, 1))
 
-	def test_a_release_from_the_shelf_is_not_a_return(self):
+	def test_leftovers_back_from_a_site_come_off_up_to_what_was_sent(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 6, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SITE, 4, 4, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SITE, -1, 3, D(30), purpose="Material Transfer", voucher="SE-T2"),
+				led(SHOP_BIN, 1, 7, D(30), purpose="Material Transfer", voucher="SE-T2"),
+			]
+		)
+		self.assertEqual((u["gross_used"], u["returned"], u["used"], u["uses"]), (4.0, 1.0, 3.0, 1))
+
+	def test_a_release_from_the_shelf_comes_off_up_to_what_the_shop_set_aside(self):
+		# Shop -> shelf is use (parts set aside for a job); shelf -> shop gives it back, but never more
+		# than the shop set aside: the rest was bought straight onto the shelf for a job.
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 6, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHELF, 4, 4, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHELF, -2, 2, D(30), purpose="Material Transfer", voucher="SE-T2"),
+				led(SHOP_BIN, 2, 8, D(30), purpose="Material Transfer", voucher="SE-T2"),
+			]
+		)
+		self.assertEqual((u["gross_used"], u["returned"], u["used"]), (4.0, 2.0, 2.0))
+		capped = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -2, 8, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHELF, 2, 2, D(40), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHELF, -5, 0, D(30), purpose="Material Transfer", voucher="SE-T2"),
+				led(SHOP_BIN, 5, 13, D(30), purpose="Material Transfer", voucher="SE-T2"),
+				led(SHOP_BIN, -3, 10, D(20), purpose="Material Issue", voucher="SE-I1"),
+			]
+		)
+		# 2 set aside + 3 taken = 5; the release of 5 gives back only the 2 the shop set aside.
+		self.assertEqual((capped["gross_used"], capped["returned"], capped["used"]), (5.0, 2.0, 3.0))
+
+	def test_a_release_of_parts_the_shop_never_set_aside_is_not_a_return(self):
 		u = self.usage(
 			[
 				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
@@ -1464,19 +1504,44 @@ class TestSuggestion(unittest.TestCase):
 		self.assertEqual(s["qty"], 1.0)
 		self.assertGreaterEqual(s["level"], 1.0)
 
-	def test_thin_history_has_no_suggestion_and_says_why(self):
-		for used, uses, days in ((5, 2, 60), (5, 3, 10), (0, 3, 60)):
+	def test_thin_history_has_no_suggestion_and_says_its_one_cause(self):
+		cases = [
+			# (used, uses, days) -> the one reason
+			((0, 0, 0), "Not in the shop during this window."),
+			((0, 0, 60), "Not used in these 60 days."),
+			((0, 4, 30), "Used 4 times, but as much came back as went out: nothing used on balance."),
+			((5, 2, 60), "Used 2 times in 60 days: a suggestion needs at least 3 uses."),
+			((1, 1, 1), "Used 1 time in 1 day: a suggestion needs at least 3 uses."),
+			((5, 3, 10), "Only 10 days of history: a suggestion needs at least 14 days."),
+			((5, 3, 1), "Only 1 day of history: a suggestion needs at least 14 days."),
+		]
+		for (used, uses, days), reason in cases:
 			with self.subTest(used=used, uses=uses, days=days):
 				s = srules.suggest(used, uses, days, 7, whole=True)
 				self.assertFalse(s["enough"])
 				self.assertIsNone(s["level"])
 				self.assertIsNone(s["qty"])
-				self.assertIn(f"{srules.MIN_USES} uses over {srules.MIN_DAYS} days", s["reason"])
-		never = srules.suggest(0, 0, 0, 7, whole=True)
-		self.assertFalse(never["enough"])
-		self.assertIn("Not in stock", never["reason"])
+				self.assertEqual(s["reason"], reason)
+		self.assertIsNone(srules.suggest(30, 6, 60, 7, whole=True)["reason"])
+
+	def test_the_uses_and_the_days_are_the_same_period(self):
+		# Takes 60 and 50 days ago are inside the 90-day window but before the first recorded take on
+		# the site (40 days ago, say a test entry): averaged over 41 days they must not be counted.
+		rows = [
+			led(SHOP_BIN, 20, 20, D(80), "Purchase Receipt"),
+			led(SHOP_BIN, -5, 15, D(60), purpose="Material Issue", voucher="SE-a"),
+			led(SHOP_BIN, -5, 10, D(50), purpose="Material Issue", voucher="SE-b"),
+			led(SHOP_BIN, -1, 9, D(30), purpose="Material Issue", voucher="SE-c"),
+			led(SHOP_BIN, 0, 7, D(20), "Stock Reconciliation", voucher="SR-1"),
+		]
+		m = srules.measure(rows, shop, SITES, NOT_SHOP, srules.window_start(TODAY, 90), D(40), TODAY)
+		self.assertEqual((m["basis_start"], m["basis_days"], m["first_seen"]), (D(40), 41, D(80)))
+		self.assertEqual((m["used"], m["uses"]), (1.0, 1))
+		# Counts are over the same days, and still derived from the whole ledger's balance.
+		self.assertEqual(m["counted_down"], 2.0)
+		never = srules.measure([], shop, SITES, NOT_SHOP, START, D(40), TODAY)
 		self.assertEqual(
-			srules.suggest(1, 1, 1, 7, whole=True)["reason"].split(":")[0], "Used 1 time in 1 day"
+			(never["basis_start"], never["basis_days"], never["used"], never["uses"]), (None, 0, 0.0, 0)
 		)
 
 	def test_direction(self):
@@ -1609,9 +1674,20 @@ class _SuggestCase(unittest.TestCase):
 				for row in self.ledger.get(code, []):
 					out.append(dict(row, item_code=code))
 			return out
-		if "select name, modified, lead_time_days from `tabItem`" in q:
+		if "from `tabItem Reorder`" in q:
+			own = getattr(self, "own_rules", None)
+			if own is None:
+				own = {(r["item_code"], r["warehouse"]) for r in self.RULES}
+			return [[c, w] for c, w in sorted(own) if c in values["codes"]]
+		if "select name, modified, lead_time_days, variant_of from `tabItem`" in q:
+			variants = getattr(self, "variants", {})
 			return [
-				{"name": c, "modified": dt.datetime(2026, 10, 1, 9, 0, 0), "lead_time_days": 0}
+				{
+					"name": c,
+					"modified": dt.datetime(2026, 10, 1, 9, 0, 0),
+					"lead_time_days": 0,
+					"variant_of": variants.get(c),
+				}
 				for c in values["codes"]
 			]
 		if "from `tabUOM`" in q:
@@ -1651,6 +1727,13 @@ class TestSuggestionsRead(_SuggestCase):
 		)
 		b = next(l for l in suggestions.build(days=90, today=TODAY)["lines"] if l["item_code"] == "ITEM-B")
 		self.assertEqual((b["used"], b["uses"]), (1.0, 1))
+
+	def test_a_variants_rule_from_its_template_is_marked_and_not_applied_here(self):
+		self.own_rules = {("ITEM-B", SHOP_BIN)}
+		self.variants = {"ITEM-A": "TEMPLATE-A"}
+		by_code = {l["item_code"]: l for l in suggestions.build(days=90, today=TODAY)["lines"]}
+		self.assertEqual(by_code["ITEM-A"]["inherited_from"], "TEMPLATE-A")
+		self.assertIsNone(by_code["ITEM-B"]["inherited_from"])
 
 	def test_used_items_without_a_rule(self):
 		data = suggestions.build(days=90, today=TODAY)
@@ -1724,6 +1807,24 @@ class TestApplySuggestion(_SuggestCase):
 		r = self.apply(modified="2026-09-30 09:00:00")
 		self.assertFalse(r["ok"])
 		self.assertIn("changed by someone else", r["message"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_a_variant_is_told_where_its_rule_is(self):
+		STATE["docs"][("Item", "VAR-A")] = {
+			"doctype": "Item",
+			"name": "VAR-A",
+			"stock_uom": "Nos",
+			"variant_of": "TEMPLATE-A",
+			"modified": dt.datetime(2026, 10, 1, 9, 0, 0),
+			"reorder_levels": [],
+		}
+		r = self.apply(item_code="VAR-A")
+		self.assertFalse(r["ok"])
+		self.assertEqual(
+			r["message"],
+			"VAR-A takes its reorder rule from its template, TEMPLATE-A. Change the rule on TEMPLATE-A; it "
+			"applies to every variant of it.",
+		)
 		self.assertEqual(STATE["saves"], [])
 
 	def test_a_rule_that_is_gone(self):
@@ -1918,7 +2019,7 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		)
 		self.assertEqual(
 			out["basis"],
-			["Used 12 Nos in 40 days (3 uses)", "Used 1 in 1 day (1 use)", "Not in the shop in this window"],
+			["Used 12 Nos in 40 days (3 uses)", "Used 1 in 1 day (1 use)", ""],
 		)
 		self.assertEqual(out["lead"], ["lead time 7 days (assumed: none set on the item)", "lead time 1 day"])
 		self.assertEqual(
