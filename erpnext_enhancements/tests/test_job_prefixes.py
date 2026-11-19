@@ -9,7 +9,7 @@ What fails expensively and quietly here, and so is pinned:
 
 * the seed patch **raising** (it aborts ``bench migrate``, which is the deploy), **re-creating** a rule
   somebody disabled, or starting a counter **at or below a name that exists** (a duplicate-name error
-  on the next job, mid-hand-off);
+  on the next job, mid-hand-off), or SRV- **among QuickBooks' own old SRV-00000 to SRV-00015 jobs**;
 * the patch **touching the PRJ- rule**, its counter, or **renaming** any Project;
 * the conditional rules **not outranking** the PRJ- rule (every job stays PRJ- and nothing errors);
 * the template fill **overwriting a type somebody chose**, raising, or running **before** the move-job
@@ -141,7 +141,7 @@ def fresh():
 
 def test_the_rules_are_service_and_events_only(fresh):
 	_frappe, jp, _patch = fresh
-	assert dict(jp.RULES) == {"SRV-": "Service", "EVT-": "Events"}
+	assert {prefix: project_type for prefix, project_type, _start in jp.RULES} == {"SRV-": "Service", "EVT-": "Events"}
 	assert jp.DEFAULT_PREFIX == "PRJ-"
 	assert jp.DIGITS == 5, "the same width as PRJ-#####"
 	assert jp.PRIORITY > 0, "the PRJ- rule is priority 0; Frappe tries rules highest priority first"
@@ -163,14 +163,15 @@ def test_patch_creates_both_rules_with_one_condition_each(fresh):
 	patch.execute()
 	rules = {r.prefix: r for r in frappe.site["inserted"]}
 	assert set(rules) == {"SRV-", "EVT-"}
-	for prefix, project_type in jp.RULES:
+	for prefix, project_type, _start in jp.RULES:
 		rule = rules[prefix]
 		assert rule.document_type == "Project"
 		assert rule.prefix_digits == 5
 		assert rule.priority == jp.PRIORITY
 		assert rule.disabled == 0
-		assert rule.counter == 0, "no SRV-/EVT- project exists, so the first is 00001"
 		assert rule.conditions == [{"field": "project_type", "condition": "=", "value": project_type}]
+	assert rules["SRV-"].counter == 100, "the first new Service job is SRV-00101"
+	assert rules["EVT-"].counter == 0, "the first new Events job is EVT-00001"
 	assert frappe.site["errors"] == []
 
 
@@ -193,13 +194,28 @@ def test_patch_is_safe_twice():
 	assert frappe.site["inserted"] == []
 
 
+def test_srv_starts_above_quickbooks_own_old_srv_jobs():
+	"""QuickBooks holds ten old customer-jobs named SRV-00000 to SRV-00015 (prod, 2026-11-19, review
+	of #1488). The QBO matcher reads PRJ numbers only, so they can never link to a new job; starting
+	SRV- after 100 also keeps a person from mistaking an old QuickBooks SRV-00003 for a new job."""
+	frappe = install_frappe_stub()
+	jp, patch = _load(frappe)
+	starts = {prefix: start for prefix, _type, start in jp.RULES}
+	assert starts["SRV-"] >= 15, "above SRV-00015, the highest QuickBooks number"
+	assert starts == {"SRV-": 100, "EVT-": 0}, "QuickBooks has no EVT- names"
+
+
 def test_counter_starts_after_the_highest_existing_name():
-	frappe = install_frappe_stub(highest={"SRV-": 7})
+	frappe = install_frappe_stub(highest={"SRV-": 7, "EVT-": 4})
 	_jp, patch = _load(frappe)
 	patch.execute()
 	rules = {r.prefix: r for r in frappe.site["inserted"]}
-	assert rules["SRV-"].counter == 7, "the next SRV- job is SRV-00008, never a name in use"
-	assert rules["EVT-"].counter == 0
+	assert rules["SRV-"].counter == 100, "the floor is higher than SRV-00007"
+	assert rules["EVT-"].counter == 4, "the next EVT- job is EVT-00005, never a name in use"
+	frappe = install_frappe_stub(highest={"SRV-": 250})
+	_jp, patch = _load(frappe)
+	patch.execute()
+	assert {r.prefix: r.counter for r in frappe.site["inserted"]}["SRV-"] == 250
 	query, values = frappe.site["sql"][0]
 	assert "%(pattern)s" in query and "%(start)s" in query, "bound, never built into the SQL"
 	assert values == {"start": 5, "pattern": "SRV-%"}
@@ -264,7 +280,7 @@ def test_service_and_events_jobs_take_their_prefix_and_the_rest_stay_prj(fresh):
 		_name(rules, counters, {"project_type": t})
 		for t in ("Service", "Events", "Build", None, "Design", "Service", "Products")
 	]
-	assert names == ["SRV-00001", "EVT-00001", "PRJ-00788", "PRJ-00789", "PRJ-00790", "SRV-00002", "PRJ-00791"]
+	assert names == ["SRV-00101", "EVT-00001", "PRJ-00788", "PRJ-00789", "PRJ-00790", "SRV-00102", "PRJ-00791"]
 
 
 # ---------------------------------------------------------------------- the template fill

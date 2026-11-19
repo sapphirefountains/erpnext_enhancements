@@ -1713,8 +1713,9 @@ erpnext_enhancements.patches.seed_estop_pre_shipment_test
 erpnext_enhancements.patches.backfill_product_build_settings_defaults
 # v1.831.0 -- Job number prefixes (Nik, 2026-11-19 Ops Review): seed two Document Naming Rules on Project, SRV- (condition
 # project_type = Service) and EVT- (project_type = Events), 5 digits, priority 10 so Frappe tries them before the
-# unconditional PRJ- rule (priority 0). Each counts on its own from after the highest existing Project with that prefix
-# (none on prod, so SRV-00001 and EVT-00001). Create-only per prefix: an existing or disabled rule is left alone, the PRJ-
+# unconditional PRJ- rule (priority 0). Each counts on its own; SRV- starts after 100 (QuickBooks holds old customer-jobs
+# named SRV-00000 to SRV-00015), EVT- after 0, or after the highest existing Project with that prefix if higher (none on
+# prod, so SRV-00101 and EVT-00001). Create-only per prefix: an existing or disabled rule is left alone, the PRJ-
 # rule and its counter are never touched, and NO Project is renamed or retyped. Cannot raise (one Error Log row per
 # failed prefix), safe twice. See project_enhancements/job_prefixes.py.
 erpnext_enhancements.patches.seed_job_prefix_naming_rules

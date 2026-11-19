@@ -2996,6 +2996,16 @@ def _is_qbo_customer_job(payload) -> bool:
 # Numeric token of a "PRJ-###" label, with any leading zeros dropped, so a QBO job
 # leaf ("PRJ-401 ...") matches an ERPNext project id ("PRJ-00401") -- both reduce to
 # "401". Case-insensitive; tolerates the optional hyphen ("PRJ419").
+#
+# PRJ ONLY, ON PURPOSE (v1.831.0). New Service and Events jobs are numbered SRV-##### and
+# EVT-##### (project_enhancements/job_prefixes.py), but none of them can have a QuickBooks
+# counterpart: ERPNext never pushes a job to QuickBooks, and the QBO-to-ERPNext job link is
+# the cutover's, for the PRJ- jobs that already existed. QuickBooks DOES hold ten old
+# customer-jobs of its own named SRV-00000 to SRV-00015 ("Wasatch Retail & Hospitality:
+# SRV-00003 - 4-17-13", checked on prod 2026-11-19), linked to their parent Customers by
+# job_merge_no_project. Teaching this to read SRV- would match QBO job 1504 to a new ERPNext
+# SRV-00003 at confidence 95, and the remediation's invoice tagging could then stamp that
+# customer's invoices, and their GL rows, with an unrelated project.
 _PRJ_NUMBER_RE = re.compile(r"PRJ-?0*(\d+)", re.IGNORECASE)
 
 

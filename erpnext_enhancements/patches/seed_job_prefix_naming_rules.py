@@ -11,8 +11,11 @@ yet (enabled or disabled, so a rule somebody switched off stays off):
 * ``document_type`` Project, ``prefix`` ``SRV-`` or ``EVT-``, 5 digits;
 * one condition, ``project_type = Service`` or ``= Events``;
 * ``priority`` 10, above the unconditional ``PRJ-`` rule's 0;
-* ``counter`` after the highest existing Project already carrying that prefix, so a re-created rule
-  can never hand out a name that exists. On production there are none, so the first is ``00001``.
+* ``counter`` after the rule's floor (100 for SRV-, 0 for EVT-; see ``job_prefixes.RULES``) or the
+  highest existing Project already carrying that prefix, whichever is higher, so a re-created rule
+  can never hand out a name that exists. On production there are none, so the first new Service
+  job is ``SRV-00101``, above QuickBooks' own old SRV-00000 to SRV-00015, and the first Events job
+  ``EVT-00001``.
 
 What it never does: touch the ``PRJ-`` rule or its counter, rename a Project, or change any
 Project's type. A Document Naming Rule is a record with a live counter, so it is seeded here and
@@ -37,7 +40,7 @@ def _highest_existing(prefix):
 	return int((row and row[0] and row[0][0]) or 0)
 
 
-def seed_rule(prefix, project_type):
+def seed_rule(prefix, project_type, start=0):
 	"""Create the rule for one prefix. Returns ``"created"`` or ``"exists"``; raises on a failure."""
 	if frappe.db.exists("Document Naming Rule", {"document_type": "Project", "prefix": prefix}):
 		return "exists"
@@ -47,16 +50,16 @@ def seed_rule(prefix, project_type):
 	rule.prefix_digits = job_prefixes.DIGITS
 	rule.priority = job_prefixes.PRIORITY
 	rule.disabled = 0
-	rule.counter = _highest_existing(prefix)
+	rule.counter = max(int(start or 0), _highest_existing(prefix))
 	rule.append("conditions", {"field": "project_type", "condition": "=", "value": project_type})
 	rule.insert(ignore_permissions=True)
 	return "created"
 
 
 def execute():
-	for prefix, project_type in job_prefixes.RULES:
+	for prefix, project_type, start in job_prefixes.RULES:
 		try:
-			result = seed_rule(prefix, project_type)
+			result = seed_rule(prefix, project_type, start)
 			frappe.logger().info(f"seed_job_prefix_naming_rules: {prefix} {result}")
 		except Exception:
 			try:

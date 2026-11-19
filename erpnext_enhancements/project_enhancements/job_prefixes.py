@@ -27,8 +27,13 @@ creates the two rules once.
 
 The number sequence
 -------------------
-**Each prefix counts on its own**: the first new Service job is ``SRV-00001``, the first new Events
-job ``EVT-00001``, and PRJ- carries on from 787. A Document Naming Rule keeps its own ``counter``
+**Each prefix counts on its own**: the first new Service job is ``SRV-00101``, the first new Events
+job ``EVT-00001``, and PRJ- carries on from 787. SRV- starts after 100 because QuickBooks already
+holds ten old customer-jobs of its own named ``SRV-00000`` to ``SRV-00015`` (checked on prod
+2026-11-19). The QuickBooks matcher reads PRJ numbers only, so they can never be linked to a new job
+(``quickbooks_online/core/mapping.py``, ``_PRJ_NUMBER_RE``), and starting above them keeps a person
+from confusing an old QuickBooks SRV-00003 with a new SRV-00003. QuickBooks holds no EVT- names, so
+EVT- starts at 1 (:data:`RULES`). A Document Naming Rule keeps its own ``counter``
 and locks that one row while it takes the next number, so this needs no code and cannot hand two
 inserts the same name. Continuing the PRJ counter across all three (``SRV-00788``, ``PRJ-00789``)
 would need a counter the three rules share, which Frappe does not have: it would mean replacing the
@@ -54,7 +59,10 @@ Every path that creates a Project sets it by then:
 * **Project templates**: :func:`fill_type_from_template` (``before_insert``, after the move-job hook)
   gives a Project with no type the type of the template it is made from. So a job made from
   *Service Project Template*, *Service Call* or *Fountain Move* is SRV-, one from *Rent Project
-  Template* EVT-. It never overwrites a type somebody chose.
+  Template* EVT-. It never overwrites a type somebody chose. ERPNext copies the template's type
+  too, but in ``copy_from_template``, which runs in ``after_insert`` (erpnext v16.54.0
+  ``project.py``), after the Project is named; without this hook such a job would end up typed
+  Service and numbered PRJ-.
 * **Desk Quick Entry and the full form**: the Project Type field (labelled "Project Stage") is in
   Quick Entry, so whatever is picked there is read at insert. Left blank, the job is PRJ-.
 * **AI tools** (FAC ``create_document``, Triton): the values arrive with the insert, so a
@@ -69,10 +77,12 @@ Service everywhere.
 
 import frappe
 
-#: (prefix, Project Type). The prefix ends in a hyphen, as the PRJ- rule's does.
+#: (prefix, Project Type, the number the counter starts after). The prefix ends in a hyphen, as the
+#: PRJ- rule's does. SRV- starts after 100, above the ten old QuickBooks customer-jobs named
+#: SRV-00000 to SRV-00015 (see the module docstring); QuickBooks has no EVT- names.
 RULES = (
-	("SRV-", "Service"),
-	("EVT-", "Events"),
+	("SRV-", "Service", 100),
+	("EVT-", "Events", 0),
 )
 
 #: The prefix every other Project gets, from the rule ``patches/seed_project_naming_rule`` seeds.
@@ -88,7 +98,7 @@ PRIORITY = 10
 def prefix_for(project_type):
 	"""The prefix a Project inserted with ``project_type`` is numbered under: SRV-, EVT- or PRJ-."""
 	wanted = (project_type or "").strip()
-	for prefix, rule_type in RULES:
+	for prefix, rule_type, _start in RULES:
 		if wanted == rule_type:
 			return prefix
 	return DEFAULT_PREFIX
@@ -105,9 +115,10 @@ def fill_type_from_template(doc, method=None, *args, **kwargs):
 	"""``before_insert``: a Project with no type takes the type of the template it is made from.
 
 	The type is read once, when the Project is named, to choose SRV-, EVT- or PRJ- (see the module
-	docstring), and ERPNext never copies a template's type onto the Project. So a job made from
-	*Service Project Template* with the type left blank was PRJ- with no type for good. Only fills a
-	blank: a type somebody chose always stands, even if the template says otherwise.
+	docstring). ERPNext copies a template's type onto a typeless Project only in ``after_insert``
+	(``copy_from_template``), after the name is given, so a job made from *Service Project Template*
+	with the type left blank was typed Service and numbered PRJ-. Only fills a blank: a type somebody
+	chose always stands, even if the template says otherwise.
 
 	Never raises, so a template that cannot be read never stops a Project being created.
 	"""

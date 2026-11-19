@@ -251,7 +251,9 @@ class TestParse(unittest.TestCase):
 			"00707": (None, "707"),
 			"PRJ-707": ("PRJ", "707"),
 			"prj 707": ("PRJ", "707"),
-			"p707": ("PRJ", "707"),
+			"p707": ("JOB", "707"),
+			"project 707": ("JOB", "707"),
+			"job 707": ("JOB", "707"),
 			"opp 58": ("OPP", "58"),
 			"SO 12": ("ORD", "12"),
 			"inv 149": ("SINV", "149"),
@@ -363,6 +365,22 @@ class TestQuery(unittest.TestCase):
 		self.assertTrue(sql.split(" order by ")[1].startswith("_number_hit desc"))
 		_sql, values = self.build("Contact", "707")
 		self.assertNotIn("num_re", values)
+
+	def test_a_word_for_a_job_looks_under_every_job_prefix(self):
+		"""v1.831.0: "project 12" finds PRJ-00012, SRV-00012 and EVT-00012; "PRJ-12" only the PRJ one."""
+		sql, values = self.build("Project", "project 12")
+		self.assertEqual(
+			[values[f"num_prefix_{i}"] for i in range(3)], ["%PRJ-%", "%SRV-%", "%EVT-%"]
+		)
+		self.assertIn(
+			"(name regexp %(num_re)s and (name like %(num_prefix_0)s or name like %(num_prefix_1)s"
+			" or name like %(num_prefix_2)s))",
+			sql,
+		)
+		self.assertNotIn("num_prefix", values)
+		_sql, values = self.build("Project", "PRJ-12")
+		self.assertEqual(values["num_prefix"], "%PRJ-%")
+		self.assertNotIn("num_prefix_1", values)
 
 	def test_canceled_documents_are_left_out(self):
 		sql, _values = self.build("Sales Invoice", "dana")
