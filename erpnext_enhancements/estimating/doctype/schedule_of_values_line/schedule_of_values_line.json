@@ -94,7 +94,7 @@
   {
    "description": "The estimate lines this row was made from.",
    "fieldname": "source_lines",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Estimate Lines",
    "read_only": 1
   },

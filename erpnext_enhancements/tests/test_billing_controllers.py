@@ -128,6 +128,8 @@ def _match(row, filters):
 				return False
 			if op == "!=" and have == val:
 				return False
+			if op == "in" and have not in val:
+				return False
 		elif have != want:
 			return False
 	return True
@@ -326,6 +328,21 @@ class TestScheduleOfValues(unittest.TestCase):
 			doc.validate()
 		self.assertIn("Pumps", str(cm.exception))
 
+	def test_a_locked_schedule_keeps_how_the_job_bills(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.status = "Locked"
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		doc.billing_mode = "Milestones"
+		with self.assertRaises(Thrown):
+			doc.validate()
+
+	def test_billed_to_date_is_never_taken_from_the_form(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.__dict__["_before"].lines[1]["billed_to_date"] = 1500
+		doc.lines[1]["billed_to_date"] = 99  # a stale copy from a form open across a certify
+		doc.validate()
+		self.assertEqual(doc.lines[1].billed_to_date, 1500)
+
 	def test_lock_problems(self):
 		doc = saved(schedule(contract_sum=9000), "SOV-1")
 		self.assertEqual(len(doc.lock_problems()), 1)
@@ -469,6 +486,41 @@ class TestPayApplication(unittest.TestCase):
 		certify(pa2)
 		pa3 = application("PAY-3", period_to="2026-12-31")
 		self.assertEqual((pa3.co_this_month, pa3.co_previous_months), (0.0, 1500.0))
+
+	def test_a_canceled_or_later_change_order_leaves_a_draft(self):
+		sov = locked_schedule()
+		sov.append("lines", {"item_no": "CO-01", "description": "Change order 1", "scheduled_value": 1500, "change_order": "CO-1", "approved_on": "2026-11-15", "line_key": "kco"})
+		pa = application("PAY-1", period_to="2026-11-30")
+		self.assertIn("kco", [r.line_key for r in pa.lines])
+		pa.period_to = "2026-11-10"  # moved earlier: the change order is after the period now
+		pa.validate()
+		self.assertNotIn("kco", [r.line_key for r in pa.lines])
+		self.assertEqual(pa.net_change_orders, 0.0)
+		pa.period_to = "2026-11-30"
+		pa.validate()
+		pct(pa, "kco", 50)
+		STORE["Change Order"]["CO-1"] = {"docstatus": 2}
+		pa.validate()
+		# typed on, so kept, and refused by name at certify
+		self.assertIn("kco", [r.line_key for r in pa.lines])
+		with self.assertRaises(Thrown) as cm:
+			pa.before_submit()
+		self.assertIn("No longer on the schedule", str(cm.exception))
+		STORE["Change Order"] = {}
+
+	def test_a_bad_retainage_override_is_refused_by_name(self):
+		locked_schedule()
+		pa = application("PAY-1")
+		pa.work_retainage_override = "abc"
+		with self.assertRaises(Thrown) as cm:
+			pa.validate()
+		self.assertIn("not a percent", str(cm.exception))
+		pa.work_retainage_override = " 7.5 % "
+		pa.validate()
+		self.assertEqual((pa.work_retainage_override, pa.work_retainage_pct), ("7.5", 7.5))
+		pa.lines[0]["work_retainage_override"] = "150"
+		with self.assertRaises(Thrown):
+			pa.validate()
 
 	def test_milestones_bill_their_percent_of_every_line(self):
 		locked_schedule(billing_mode="Milestones", milestones=[{"milestone": "Deposit", "percent": 50}, {"milestone": "Rough-in", "percent": 40}])

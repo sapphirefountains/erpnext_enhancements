@@ -159,7 +159,7 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
 | `pay_app_math.py` | `sov_rows` (the projection, an exact partition), `price_application` (G703 + G702), `resolve_rates`, `refusals`. Pure | both controllers, `api/estimating.py`; twin in `public/js/estimating/pay_app_math.js` |
 | `doctype/schedule_of_values/` (+ `_line`, `retainage_step`) | The schedule; lock and change-order rules; reuses `Contract Milestone` for milestones | form; `api/estimating.py` |
 | `doctype/pay_application/` (+ `_line`) | The chain, the line sync from the schedule, pricing, certify refusals, the latest-only cancel | form; `api/estimating.py` |
-| `links.py` `guard_change_order_cancel` | A change order billed on a certified application cannot be canceled | Change Order `doc_events` |
+| `links.py` `guard_change_order_cancel`, `drop_canceled_change_order` | A change order on a certified application cannot be canceled; one canceled earlier leaves every schedule | Change Order `doc_events` (`before_cancel`, `on_cancel`) |
 | `../public/js/estimating/pay_app_editor.js` | The PM's editor: phases fold, percent per line, REST, past-scheduled highlight, Amount Due panel, Send to Accounting / Certify | `pay_app_editor.bundle.js` + `.css`, loaded by `pay_application.js` |
 
 ## Tests (bench-free, in CI)

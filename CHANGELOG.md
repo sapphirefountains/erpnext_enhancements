@@ -48,8 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the job turns them on.
   - **Change orders join from the application whose period reaches their approval date**, and
     "approved this month" means "not on the previous application", so a change order approved in March
-    and added in June moves line 2 in June, the month it actually moved. A change order billed on a
-    certified application cannot be canceled (Change Order `before_cancel`, naming the application).
+    and added in June moves line 2 in June, the month it actually moved. A change order on a
+    certified application cannot be canceled (Change Order `before_cancel`, naming the application),
+    because it moved that certificate's contract sum to date; one canceled earlier leaves every
+    schedule (`on_cancel`), and a draft drops it, or refuses it by name when a percent was typed on it.
+    Moving a draft's period earlier drops a change order approved after it the same way.
+  - **Accounting owns the certification.** The amount certified (and its "certified for less" tick)
+    is at permlevel 1: accounting writes it, project managers read it. Retainage overrides are cleaned
+    as typed (blank inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule
+    also keeps its project, billing mode, stored-materials setting and milestones; its retainage can
+    still change, for the next application only. A percent typed on a "by others" line, or stored
+    materials on a job that does not bill them, is set back to 0 rather than billed.
   - **Certify refuses with every reason at once**: the schedule not locked, the previous application
     not certified, a period that overlaps the last one, a line no longer on the schedule, a line billed
     past its scheduled value, a negative amount without a note, work on a line scheduled at nothing,

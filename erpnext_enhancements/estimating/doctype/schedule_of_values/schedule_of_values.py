@@ -120,6 +120,10 @@ class ScheduleofValues(Document):
 			return
 		old = {r.line_key: r for r in before.lines if r.line_key}
 		new = {r.line_key: r for r in self.lines if r.line_key}
+		# Billed to date is written by the pay application (refresh_billed) without touching modified, so a
+		# form open across a certify would save its stale copy back. The stored figure always wins.
+		for key, row in new.items():
+			row.billed_to_date = old[key].billed_to_date if key in old else 0
 		billed = billed_keys(self.name)
 		gone = [r for key, r in old.items() if key not in new]
 		billed_gone = [_name(r) for r in gone if r.line_key in billed]
@@ -133,6 +137,20 @@ class ScheduleofValues(Document):
 			return
 		if flt(before.contract_sum) != flt(self.contract_sum):
 			frappe.throw(_("The schedule is locked: its contract sum changes only through a change order."))
+		for field, label in (
+			("project", _("project")),
+			("billing_mode", _("billing mode")),
+			("stored_materials", _("stored materials setting")),
+		):
+			if (before.get(field) or "") != (self.get(field) or ""):
+				frappe.throw(
+					_(
+						"The schedule is locked: its {0} is part of how the job bills and cannot change."
+					).format(label)
+				)
+		milestones = lambda doc: [((m.milestone or "").strip(), flt(m.percent)) for m in doc.milestones or []]  # noqa: E731
+		if milestones(before) != milestones(self):
+			frappe.throw(_("The schedule is locked: its milestones cannot change."))
 		changed = []
 		for key, row in new.items():
 			prior = old.get(key)

@@ -48,7 +48,12 @@ export function compute(frm) {
 	const lines = frm.doc.lines || [];
 	const previous = {};
 	for (const l of lines) previous[l.line_key] = l.from_previous || 0;
-	return pm.price_application(schedule(frm), frm.doc, lines, previous);
+	try {
+		return pm.price_application(schedule(frm), frm.doc, lines, previous);
+	} catch (e) {
+		// A retainage override typed as text in the table view: the server refuses it by name on save.
+		return null;
+	}
 }
 
 export function group_of(line) {
@@ -165,6 +170,12 @@ export function draw(frm) {
 		return;
 	}
 	const priced = compute(frm);
+	if (!priced) {
+		field.$wrapper.html(
+			`<div class="alert alert-warning">${esc(__("A retainage override is not a percent. Correct it in the table below."))}</div>`
+		);
+		return;
+	}
 	const byKey = {};
 	lines.forEach((l, i) => (byKey[l.line_key] = priced.lines[i]));
 	const st = state(frm);
@@ -220,6 +231,10 @@ export function numbers(frm) {
 	const root = field.$wrapper.get(0);
 	const lines = frm.doc.lines || [];
 	const priced = compute(frm);
+	if (!priced || !root.querySelector(".sf-pay")) {
+		draw(frm);
+		return;
+	}
 	const byKey = {};
 	lines.forEach((l, i) => (byKey[l.line_key] = priced.lines[i]));
 	root.querySelectorAll(".row[data-key]").forEach((el) => {

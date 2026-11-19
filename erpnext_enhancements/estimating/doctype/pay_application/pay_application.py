@@ -196,6 +196,7 @@ class PayApplication(Document):
 		prev = self.previous_doc()
 		self.sync_lines(sov)
 		self.apply_milestone(sov)
+		self.clean_overrides()
 		previous_work = {r.line_key: flt(r.work_completed_to_date) for r in (prev.lines if prev else [])}
 		self.less_previous_certificates = pm.next_previous_certificates(prev.as_dict() if prev else None)
 		context = schedule_context(sov)
@@ -231,7 +232,15 @@ class PayApplication(Document):
 		existing = {r.line_key: r for r in self.lines if r.line_key}
 		rows = []
 		on_schedule = set()
+		orders = [line.change_order for line in sov.lines if line.change_order]
+		canceled = set(
+			frappe.get_all("Change Order", filters={"name": ["in", orders], "docstatus": 2}, pluck="name")
+			if orders
+			else []
+		)
 		for line in sov.lines:
+			if line.change_order in canceled:
+				continue
 			if line.change_order and line.approved_on and end and getdate(line.approved_on) > end:
 				continue
 			on_schedule.add(line.line_key)
@@ -245,7 +254,15 @@ class PayApplication(Document):
 			else:
 				row.update(values)
 				rows.append(row)
-		rows += [r for key, r in existing.items() if key not in on_schedule]
+		# A line that left (a change order approved after this period once the period moved earlier, or
+		# one canceled) drops out when nothing was typed on it, and is kept to be refused, by name, when
+		# something was.
+		rows += [
+			r
+			for key, r in existing.items()
+			if key not in on_schedule and (flt(r.this_period_pct) or flt(r.stored))
+		]
+		self.flags.on_schedule = on_schedule
 		# Existing rows go back as themselves (same child row names), new ones as dicts. append() keeps an
 		# existing row's old idx (frappe v16.56 Document.append), so renumber after.
 		self.set("lines", rows)
@@ -274,12 +291,35 @@ class PayApplication(Document):
 		for row in self.lines:
 			row.this_period_pct = 0 if row.by_others else flt(match[0].percent)
 
+	def clean_overrides(self):
+		"""Retainage overrides as typed: blank inherits, a number 0 to 100 is a rate, anything else is
+		refused by name (the Estimate's override rule), so a typo never reaches the engine."""
+		targets = [(self, ("work_retainage_override", "stored_retainage_override"), _("this application"))]
+		targets += [
+			(row, ("work_retainage_override", "stored_retainage_override"), _("line {0}").format(row.idx))
+			for row in self.lines
+		]
+		for doc, fields, where in targets:
+			for field in fields:
+				raw = doc.get(field)
+				try:
+					value = pm.em.parse_rate(raw)
+				except (TypeError, ValueError):
+					frappe.throw(
+						_("Retainage override on {0} is not a percent: {1}").format(where, escape_html(raw))
+					)
+				if value is not None and not 0 <= value <= 100:
+					frappe.throw(_("Retainage override on {0} must be 0 to 100%.").format(where))
+				doc.set(field, "" if value is None else f"{value:g}")
+
 	# ------------------------------------------------------------------ certify
 	def before_submit(self):
+		if not self.flags.priced:
+			self.validate()
 		sov, prev, priced = self.flags.sov, self.flags.prev, self.flags.priced
 		context = {
 			"schedule_locked": sov.status == "Locked",
-			"schedule_keys": [r.line_key for r in sov.lines],
+			"schedule_keys": sorted(self.flags.on_schedule or ()),
 			"previous": {
 				"name": prev.name,
 				"docstatus": prev.docstatus,

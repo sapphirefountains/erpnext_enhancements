@@ -278,14 +278,19 @@ class TestBillingDocuments(unittest.TestCase):
 					continue  # a classification of the work, carries no money
 				for word in ("cost", "markup", "margin", "commission", "contingency", "insurance", "fee", "labor_rate"):
 					self.assertNotIn(word, fn, f"{name}.{fn}")
-				self.assertEqual(field.get("permlevel", 0), 0, f"{name}.{fn}")
+				if fn in ("certified_less", "amount_certified"):
+					self.assertEqual(field.get("permlevel"), 1, fn)  # accounting's to write
+				else:
+					self.assertEqual(field.get("permlevel", 0), 0, f"{name}.{fn}")
 
 	def test_only_accounting_certifies(self):
 		perms = doctype_json("Pay Application")["permissions"]
 		submit = {p["role"] for p in perms if p.get("submit")}
 		self.assertEqual(submit, {"System Manager", "Finance Team", "Executive Team", "Accounts Manager"})
-		writers = {p["role"] for p in perms if p.get("write")}
+		writers = {p["role"] for p in perms if p.get("write") and not p.get("permlevel")}
 		self.assertTrue({"Projects Manager", "Project Manager"} <= writers)
+		certifiers = {p["role"] for p in perms if p.get("write") and p.get("permlevel") == 1}
+		self.assertEqual(certifiers, submit)
 
 	def test_controllers_write_only_real_fields(self):
 		src = open(os.path.join(DOCTYPES, "pay_application", "pay_application.py")).read()

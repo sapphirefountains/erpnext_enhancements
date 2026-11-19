@@ -394,10 +394,11 @@
    "label": "Certification"
   },
   {
-   "description": "Tick when the general contractor certified less than the payment due. The shortfall carries into the next application.",
+   "description": "Tick when the general contractor certified less than the payment due. The shortfall carries into the next application. Accounting's to set.",
    "fieldname": "certified_less",
    "fieldtype": "Check",
-   "label": "Certified for Less Than Due"
+   "label": "Certified for Less Than Due",
+   "permlevel": 1
   },
   {
    "depends_on": "certified_less",
@@ -405,7 +406,8 @@
    "fieldname": "amount_certified",
    "fieldtype": "Currency",
    "label": "Amount Certified",
-   "no_copy": 1
+   "no_copy": 1,
+   "permlevel": 1
   },
   {
    "fieldname": "certification_note",
@@ -562,6 +564,45 @@
    "report": 1,
    "role": "Accounts User",
    "share": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Finance Team",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Executive Team",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Project Manager"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Accounts User"
   }
  ],
  "search_fields": "project,customer,application_no,status",

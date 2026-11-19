@@ -290,6 +290,8 @@ def setUpModule():
 	utils = types.ModuleType("frappe.utils")
 	utils.escape_html = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 	utils.nowdate = lambda: TODAY.isoformat()
+	utils.flt = lambda v, *a: float(v or 0)
+	utils.now_datetime = lambda: datetime.datetime(2026, 11, 20, 12, 0)
 	utils.getdate = lambda d: d if isinstance(d, datetime.date) else datetime.date.fromisoformat(str(d))
 	frappe.utils = utils
 

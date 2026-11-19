@@ -302,6 +302,15 @@ def _schedule(schedule, ptype="write"):
 	return sov
 
 
+def _co_description(co):
+	"""What the change order adds, in the customer's words: the first line of its scope addendum."""
+	from frappe.utils import strip_html
+
+	text = " ".join(strip_html(co.scope_addendum or "").split())
+	label = _("Change order {0}").format(co.co_number or co.name)
+	return (f"{label}: {text}" if text else label)[:140]
+
+
 @frappe.whitelist(methods=["POST"])
 def add_change_orders(schedule):
 	"""Add a row for every approved change order of the project not yet on the schedule.
@@ -327,9 +336,7 @@ def add_change_orders(schedule):
 			"lines",
 			{
 				"item_no": f"CO-{number:02d}" if number else co.name,
-				"description": (
-					_("Change order {0}").format(number or co.name) + (f": {co.cause}" if co.cause else "")
-				)[:140],
+				"description": _co_description(co),
 				"scheduled_value": flt(co.cost_impact),
 				"change_order": co.name,
 				"approved_on": getdate(co.customer_approved_on) if co.customer_approved_on else None,
