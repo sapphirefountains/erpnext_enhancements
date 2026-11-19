@@ -391,6 +391,14 @@ jobs:
       # every employee on this site holds it.
       - name: KPI Snapshot permissions (widened reads stay department-scoped)
         run: python -m unittest erpnext_enhancements.tests.test_kpi_snapshot_permissions -v
+      # Revenue and margin figures on the KPI dashboards go to Accounts Manager and System
+      # Manager only (kpi_dashboards/money.py). Reads every aggregator's source, so a new
+      # money-looking KPI must be restricted or listed as reviewed, and runs the rule through
+      # the cockpit endpoint, snapshot reads, the KPI Snapshot and KPI Target list conditions
+      # (in SQLite), the executive widgets, the assistant tool and the wall band.
+      # Its own step: it installs its own frappe stub and restores sys.modules afterward.
+      - name: KPI revenue and margin figures (Accounts Manager / System Manager only)
+        run: python -m unittest erpnext_enhancements.tests.test_kpi_money_roles -v
       # Three UOM patches whose ORDER is load-bearing: the Gallon rename has to
       # land before the disable pass, or that pass sees `Gallon` unused and
       # switches off a UOM three live documents point at. Also pins that the

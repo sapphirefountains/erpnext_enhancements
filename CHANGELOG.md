@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.832.0] - 2026-11-19
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -170,6 +170,42 @@ Hardening changes released together. Each was written and reviewed as its own pu
   - **A notice never blocks anything.** A failure to write the Comment or send the notice is logged
     (no token, no link) and the send and the Finish go on. Who may send, the token, its lifetime and
     the signing page are unchanged.
+- **Revenue and margin figures on the KPI dashboards go to Accounts Manager and System Manager
+  only (Nikolas, 2026-11-19).** Every other role that may open a department's dashboard keeps
+  everything else that department shows, other money figures included: receivables, payables,
+  cash collected, spend, stock value, pipeline, closed-won value, deal size, backlog,
+  change-order value, marketing pipeline, marketing spend and cost per lead. The revenue and
+  margin figures are left out of the answer by the server, so the tile is absent rather than
+  zeroed. The department gate (`DEPARTMENT_ROLES`) is unchanged.
+  - **One registry, one helper.** `kpi_dashboards/money.py` lists the eight keys that state
+    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, catalog revenue 30
+    days and one year, rental revenue booked, rental revenue per fountain, revenue per employee,
+    gross margin) and every other key whose name, label or unit reads like money, with the
+    reason it is not a revenue or margin figure (`REVIEWED_UNRESTRICTED`). `can_see_revenue` is
+    the role rule and `without_revenue` is the filter; every read path below calls them.
+  - **Read paths.** The cockpit endpoints (`get_kpi_dashboard`, `refresh_kpi_dashboard`) and the
+    assistant tool `kpi_dashboard_status` (through them); KPI Snapshot document reads, which open
+    with those rows left out (`KPISnapshot.apply_fieldlevel_read_permissions`); the Executive
+    Dashboard widgets (scorecard counts, cash and receivables, risk queue); and the Task Dashboard
+    wall band.
+  - **Lists and reports.** A KPI Snapshot list, Report View or count, including one that selects,
+    filters, sorts or totals by KPI Snapshot Value columns, returns for these callers only the
+    snapshots that hold no revenue or margin row (the parent's `permission_query_conditions`). A
+    query on KPI Snapshot Value itself leaves those rows out.
+  - **KPI Target.** A target for a revenue or margin figure is listed, opened, created, edited and
+    deleted by Accounts Manager and System Manager only (`permission_query_conditions` and
+    `has_permission` on KPI Target). Sales Manager keeps every other target.
+  - **What a user notices.** An Accounts User opening Finance sees receivables, payables, cash
+    collected and the counts, without the two revenue tiles. Item Manager, Stock Manager and Sales
+    Manager open Product without catalog revenue, rental revenue and gross margin. Sales Manager
+    opens Executive without revenue and revenue per employee. In the KPI Snapshot list these
+    roles see only the snapshots that hold no revenue or margin row. A dashboard whose figures are all revenue or
+    margin shows "Nothing to show for your role." The snapshots themselves are stored whole; the
+    rule applies on read.
+  - **Tests.** `tests/test_kpi_money_roles.py` reads every aggregator and fails the build when a
+    key or label that reads like money is in neither table, or when one that names revenue or
+    margin is not restricted; it runs the rule through each read path, and runs the KPI Snapshot
+    and KPI Target list conditions in SQLite against sample rows.
 
 ## [1.831.0] - 2026-11-19
 

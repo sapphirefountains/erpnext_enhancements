@@ -3668,7 +3668,18 @@ permission_query_conditions = {
 	# -- without this, `read` on the doctype would have meant read on every
 	# department. api/kpi.py::_can_view decides which; this enforces it where Frappe
 	# actually checks reads.
+	# The same condition also holds revenue and margin figures (kpi_dashboards/money.py) to
+	# Accounts Manager and System Manager: for anyone else a KPI Snapshot list, report or
+	# count, including one by KPI Snapshot Value columns, returns only snapshots that hold
+	# none. The snapshot document read leaves those rows out
+	# (KPISnapshot.apply_fieldlevel_read_permissions).
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.get_permission_query_conditions",
+	# KPI Snapshot Value: a query whose own doctype is the child table leaves the revenue
+	# and margin rows out for the same callers.
+	"KPI Snapshot Value": "erpnext_enhancements.kpi_dashboards.permissions.get_value_permission_query_conditions",
+	# KPI Target: a target for a revenue or margin figure is listed for Accounts Manager and
+	# System Manager only. has_permission below is the single-document counterpart.
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.get_target_permission_query_conditions",
 	# Training Assignment: a learner sees only their own; a supervisor also sees
 	# their direct reports (Employee.reports_to), which is what makes the sign-off
 	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
@@ -3776,6 +3787,9 @@ has_permission = {
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.has_permission",
+	# A KPI Target for a revenue or margin figure: read, write, create and delete by
+	# Accounts Manager and System Manager only (Sales Manager keeps every other target).
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.target_has_permission",
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",
