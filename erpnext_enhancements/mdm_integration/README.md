@@ -88,6 +88,16 @@ The sync creates any device it cannot match as **Discovered**, with ownership
 defaulting to **Company**. The BYOD guard is only as good as that field, so every
 action is refused until a Device Manager clicks **Confirm Discovered Device**
 on the form and says who owns it (`api.confirm_device`, recorded on the timeline).
+The prompt preselects nothing, so the person confirming has to choose.
+
+After that, the field is held to the same care as the rule that reads it
+(`ManagedDevice._guard_ownership_change`, since v1.832.0): changing ownership from
+BYOD to Company requires a System Manager, and a save made with `ignore_permissions`
+(server code, such as the sync) never makes that change. Company to BYOD stays open
+to Device Managers. Every change of ownership is noted on the device's timeline (who,
+from what, to what, when). The sync never writes ownership on an existing device; a
+provider's hint seeds only a device the sync creates.
+
 Until v1.506.0 the next hourly sync promoted every Discovered device to Managed
 by itself. All four devices on production were promoted that way, and nobody ever
 confirmed one.

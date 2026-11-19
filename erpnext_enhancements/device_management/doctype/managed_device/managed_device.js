@@ -62,6 +62,8 @@ frappe.ui.form.on('Managed Device', {
 		// A device the MDM sync created stays Discovered until a Device Manager confirms
 		// it and says who owns it. Ownership defaults to Company, so until then the server
 		// refuses every device action: the BYOD guard is only as good as that field.
+		// Nothing is preselected (the blank first option), and the field is required, so the
+		// person confirming has to choose.
 		if (frm.doc.mdm_link_state === 'Discovered') {
 			frm.add_custom_button(__('Confirm Discovered Device'), () =>
 				frappe.prompt(
@@ -69,8 +71,7 @@ frappe.ui.form.on('Managed Device', {
 						fieldname: 'ownership',
 						label: __('Who owns this device?'),
 						fieldtype: 'Select',
-						options: 'Company\nBYOD',
-						default: frm.doc.ownership || 'Company',
+						options: '\nCompany\nBYOD',
 						reqd: 1,
 						description: __('BYOD = personally owned. A BYOD device can be located and locked, and nothing else.'),
 					}],

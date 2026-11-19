@@ -15,6 +15,9 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements.api.device_management import MANAGER_ROLES
+from erpnext_enhancements.device_management.doctype.managed_device.managed_device import (
+	CONFIRMING_DISCOVERED_FLAG,
+)
 from erpnext_enhancements.mdm_integration.actions import execute_device_action
 from erpnext_enhancements.mdm_integration.client import get_provider
 from erpnext_enhancements.mdm_integration.sync import clear_provider_auth_block, run_device_sync
@@ -99,6 +102,12 @@ def confirm_device(device, ownership):
 	ownership defaulting to Company. Until confirmed, every device action is refused
 	(``actions.execute_device_action``), because the BYOD guard is only as good as
 	that ownership field. Recorded on the device's timeline.
+
+	This is the one save in which a Device Manager may set ownership to Company on a device
+	stored as BYOD (a provider can hint BYOD when the sync creates it). Elsewhere that change
+	requires a System Manager (``ManagedDevice._guard_ownership_change``). The controller
+	allows it only when ``frappe.flags`` names this device and the stored link state is
+	Discovered, and the flag is cleared as soon as the save returns.
 	"""
 	_check_manager()
 	if ownership not in ("Company", "BYOD"):
@@ -108,6 +117,10 @@ def confirm_device(device, ownership):
 		frappe.throw(_("{0} is not awaiting confirmation.").format(doc.name), frappe.ValidationError)
 	doc.ownership = ownership
 	doc.mdm_link_state = "Managed"
-	doc.save()
+	setattr(frappe.flags, CONFIRMING_DISCOVERED_FLAG, doc.name)
+	try:
+		doc.save()
+	finally:
+		setattr(frappe.flags, CONFIRMING_DISCOVERED_FLAG, None)
 	doc.add_comment("Info", _("Confirmed as a {0} device by {1}.").format(ownership, frappe.session.user))
 	return {"device": doc.name, "ownership": doc.ownership, "mdm_link_state": doc.mdm_link_state}

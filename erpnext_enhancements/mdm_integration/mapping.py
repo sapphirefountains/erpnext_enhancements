@@ -61,7 +61,12 @@ def _find_device(pd):
 
 
 def _apply_provider_fields(doc, pd):
-	"""Overwrite the provider-owned posture + link fields on an existing device."""
+	"""Overwrite the provider-owned posture + link fields on an existing device.
+
+	``ownership`` is not one of them. On an existing device it is what a person stated, and the
+	controller refuses BYOD to Company on a save made with ``ignore_permissions``
+	(``ManagedDevice._guard_ownership_change``). A provider's hint seeds only a device the
+	sync creates (``_create_discovered``)."""
 	doc.mdm_provider = pd.provider
 	doc.mdm_provider_device_id = pd.provider_id
 	if doc.mdm_link_state != "Discovered":

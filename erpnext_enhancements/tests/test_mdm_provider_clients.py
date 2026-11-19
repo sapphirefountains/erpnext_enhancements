@@ -41,7 +41,14 @@ API_KEY = "1_AaDf234sdf8!4"  # the spec's own example key; note the '!' encodes 
 ORG = "29ccb73d-fd7f-4e06-afa9-28d637de8a34"
 ENDPOINT = "bd7a6e9f-4658-4399-ac34-5d98caa81ac2"
 
-STUBBED = ("frappe", "frappe.utils", "requests", "erpnext_enhancements.api.device_management")
+STUBBED = (
+	"frappe",
+	"frappe.utils",
+	"frappe.model",
+	"frappe.model.document",
+	"requests",
+	"erpnext_enhancements.api.device_management",
+)
 OURS = (
 	"erpnext_enhancements.mdm_integration.client",
 	"erpnext_enhancements.mdm_integration.routing",
@@ -49,6 +56,9 @@ OURS = (
 	"erpnext_enhancements.mdm_integration.mapping",
 	"erpnext_enhancements.mdm_integration.actions",
 	"erpnext_enhancements.mdm_integration.sync",
+	"erpnext_enhancements.mdm_integration.api",
+	"erpnext_enhancements.device_management.compliance",
+	"erpnext_enhancements.device_management.doctype.managed_device.managed_device",
 	"erpnext_enhancements.utils.error_throttle",
 )
 
@@ -56,6 +66,10 @@ client = None
 mapping = None
 actions = None
 sync = None
+api = None
+controller = None
+#: The stand-in ``frappe`` module, for tests that set its flags, roles or database.
+fstub = None
 #: Per-test state for the executor/sync stubs.
 STATE = {}
 _saved = {}
@@ -81,6 +95,87 @@ class RequestException(Exception):
 
 class FakePermissionError(Exception):
 	pass
+
+
+class FakeValidationError(Exception):
+	pass
+
+
+class AttrDict(dict):
+	"""``frappe._dict``: missing keys read as None."""
+
+	def __getattr__(self, key):
+		return self.get(key)
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
+class StubDocument:
+	"""Enough of ``frappe.model.document.Document`` to run a controller's save the way v16 does:
+	the stored row is loaded as the doc before save, then ``validate``, then the row is stored,
+	then ``on_update``. Rows live in ``STATE["devices"]``. A missing field reads as None."""
+
+	doctype = "Managed Device"
+
+	def __init__(self, fields=None):
+		self.__dict__.update(fields or {})
+		self.__dict__["flags"] = AttrDict()
+		self.__dict__["_doc_before_save"] = None
+
+	def __getattr__(self, key):
+		if key.startswith("__"):
+			raise AttributeError(key)
+		return None
+
+	def get(self, key, default=None):
+		value = self.__dict__.get(key)
+		return default if value is None else value
+
+	def set(self, key, value):
+		setattr(self, key, value)
+
+	def as_dict(self):
+		return self._fields()
+
+	def is_new(self):
+		return self.name not in STATE.get("devices", {})
+
+	def get_doc_before_save(self):
+		return self._doc_before_save
+
+	def _fields(self):
+		return {k: v for k, v in self.__dict__.items() if k not in ("flags", "_doc_before_save")}
+
+	def _store(self):
+		self.validate()
+		STATE.setdefault("devices", {})[self.name] = self._fields()
+		self.on_update()
+
+	def save(self, ignore_permissions=None):
+		if ignore_permissions is not None:
+			self.flags.ignore_permissions = ignore_permissions
+		stored = STATE.get("devices", {}).get(self.name)
+		self.__dict__["_doc_before_save"] = type(self)(dict(stored)) if stored else None
+		self._store()
+		return self
+
+	def insert(self, ignore_permissions=None):
+		if ignore_permissions is not None:
+			self.flags.ignore_permissions = ignore_permissions
+		if not self.name:
+			self.name = f"DEV-{len(STATE.get('devices', {})) + 1}"
+		self._store()
+		return self
+
+	def validate(self):
+		pass
+
+	def on_update(self):
+		pass
+
+	def add_comment(self, comment_type, text=None, **kwargs):
+		STATE.setdefault("comments", []).append((comment_type, text))
 
 
 class FakeDevice(dict):
@@ -120,26 +215,45 @@ class FakeSettings(dict):
 
 def _install_stubs():
 	frappe = types.ModuleType("frappe")
+
+	def get_value(doctype, filters, fieldname=None, **kwargs):
+		# Only the sync's lookups of a Managed Device by its fields reach this.
+		for name, row in STATE.get("devices", {}).items():
+			if all(row.get(key) == value for key, value in filters.items()):
+				return name
+		return None
+
 	frappe.db = types.SimpleNamespace(
 		commit=lambda: None,
 		set_value=lambda *a, **k: STATE.setdefault("set_value", []).append(a),
+		get_value=get_value,
 	)
 	frappe.get_single = lambda doctype: STATE.get("settings") or FakeSettings()
 	frappe.log_error = lambda *a, **k: None
 	frappe.local = types.SimpleNamespace(conf=types.SimpleNamespace(get=lambda key: "test"))
 	frappe._ = lambda text: text
 	frappe.PermissionError = FakePermissionError
+	frappe.ValidationError = FakeValidationError
 	frappe.session = types.SimpleNamespace(user="manager@example.com")
-	frappe.get_roles = lambda user=None: ["Device Manager"]
+	frappe.flags = AttrDict()
+	frappe.get_roles = lambda user=None: list(STATE.get("roles") or ["Device Manager"])
 	frappe.get_traceback = lambda: "traceback"
+	frappe.whitelist = lambda *a, **k: (lambda f: f)
 
-	def throw(message, exc=Exception):
-		raise exc(message)
+	def throw(message, exc=None, title=None, **kwargs):
+		raise (exc or FakeValidationError)(message)
 
 	def get_doc(doctype, name=None):
 		if isinstance(doctype, dict):  # a Device Action Log being written
 			return types.SimpleNamespace(insert=lambda **k: STATE.setdefault("logs", []).append(doctype))
+		if doctype == "Managed Device" and "devices" in STATE:
+			return controller.ManagedDevice(dict(STATE["devices"][name]))
 		return STATE["device"]
+
+	def new_doc(doctype):
+		return controller.ManagedDevice({})
+
+	frappe.new_doc = new_doc
 
 	def get_all(doctype, filters=None, fields=None, **kwargs):
 		STATE.setdefault("get_all", []).append(filters)
@@ -157,6 +271,11 @@ def _install_stubs():
 		seconds=seconds
 	)
 	frappe.utils = utils
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+	document.Document = StubDocument
+	model.document = document
+	frappe.model = model
 
 	requests = types.ModuleType("requests")
 	requests.RequestException = RequestException
@@ -181,6 +300,8 @@ def _install_stubs():
 	for name, module in (
 		("frappe", frappe),
 		("frappe.utils", utils),
+		("frappe.model", model),
+		("frappe.model.document", document),
 		("requests", requests),
 		("erpnext_enhancements.api.device_management", device_management),
 	):
@@ -188,11 +309,13 @@ def _install_stubs():
 
 
 def setUpModule():
-	global client, mapping, actions, sync
+	global client, mapping, actions, sync, api, controller, fstub
 	for name in STUBBED + OURS:
 		_saved[name] = sys.modules.pop(name, None)
 	_install_stubs()
+	from erpnext_enhancements.device_management.doctype.managed_device import managed_device
 	from erpnext_enhancements.mdm_integration import actions as actions_module
+	from erpnext_enhancements.mdm_integration import api as api_module
 	from erpnext_enhancements.mdm_integration import client as client_module
 	from erpnext_enhancements.mdm_integration import mapping as mapping_module
 	from erpnext_enhancements.mdm_integration import sync as sync_module
@@ -201,6 +324,9 @@ def setUpModule():
 	mapping = mapping_module
 	actions = actions_module
 	sync = sync_module
+	api = api_module
+	controller = managed_device
+	fstub = sys.modules["frappe"]
 
 
 def tearDownModule():
@@ -806,6 +932,175 @@ class ExecutorTests(unittest.TestCase):
 		with self.assertRaises(client.MDMProviderError):
 			actions.execute_device_action("DEV-1", "locate", source="UI")
 		self.assertFalse(self._provider_was_called())
+
+
+def _stored_device(ownership, link_state="Managed", roles=("Device Manager",), **extra):
+	"""One stored Managed Device, DEV-1, for the real controller to load and save."""
+	STATE.clear()
+	STATE["roles"] = list(roles)
+	STATE["devices"] = {
+		"DEV-1": {
+			"name": "DEV-1",
+			"device_name": "Crew phone",
+			"device_type": "Phone",
+			"platform": "Android",
+			"status": "In Stock",
+			"ownership": ownership,
+			"mdm_provider": "Miradore",
+			"mdm_provider_device_id": "1001",
+			"mdm_link_state": link_state,
+			**extra,
+		}
+	}
+	fstub.flags = AttrDict()
+
+
+def _stored(field):
+	return STATE["devices"]["DEV-1"][field]
+
+
+class OwnershipRuleTests(unittest.TestCase):
+	"""``ManagedDevice._guard_ownership_change``, run over the real controller's save."""
+
+	def _change(self, old, new, roles, **save_kwargs):
+		_stored_device(old, roles=roles)
+		doc = fstub.get_doc("Managed Device", "DEV-1")
+		doc.ownership = new
+		return doc.save(**save_kwargs)
+
+	def test_byod_to_company_by_a_device_manager_is_refused_and_says_who_can(self):
+		with self.assertRaises(FakePermissionError) as ctx:
+			self._change("BYOD", "Company", ("Device Manager",))
+		self.assertIn("Only a System Manager", str(ctx.exception))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_byod_to_company_by_a_system_manager_is_saved_and_noted(self):
+		self._change("BYOD", "Company", ("System Manager",))
+		self.assertEqual(_stored("ownership"), "Company")
+		((comment_type, text),) = STATE["comments"]
+		self.assertEqual(comment_type, "Info")
+		self.assertIn("from BYOD to Company", text)
+		self.assertIn("manager@example.com", text)
+		self.assertIn("2026-09-22 12:00:00", text)
+
+	def test_company_to_byod_is_open_to_a_device_manager_and_a_system_manager_and_noted(self):
+		for roles in (("Device Manager",), ("System Manager",)):
+			with self.subTest(roles=roles):
+				self._change("Company", "BYOD", roles)
+				self.assertEqual(_stored("ownership"), "BYOD")
+				((_type, text),) = STATE["comments"]
+				self.assertIn("from Company to BYOD", text)
+
+	def test_a_save_that_leaves_ownership_alone_writes_no_comment(self):
+		for roles in (("Device Manager",), ("System Manager",)):
+			for ownership in ("Company", "BYOD"):
+				with self.subTest(roles=roles, ownership=ownership):
+					_stored_device(ownership, roles=roles)
+					doc = fstub.get_doc("Managed Device", "DEV-1")
+					doc.notes = "moved to the north shelf"
+					doc.save()
+					self.assertEqual(_stored("notes"), "moved to the north shelf")
+					self.assertNotIn("comments", STATE)
+
+	def test_a_save_with_ignore_permissions_never_turns_byod_into_company(self):
+		# Server code runs as Administrator, who holds System Manager; the role alone is not enough.
+		with self.assertRaises(FakePermissionError):
+			self._change("BYOD", "Company", ("Administrator", "System Manager"), ignore_permissions=True)
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_new_device_may_start_as_either(self):
+		for ownership in ("Company", "BYOD"):
+			with self.subTest(ownership=ownership):
+				STATE.clear()
+				doc = fstub.new_doc("Managed Device")
+				doc.device_name = "New phone"
+				doc.status = "In Stock"
+				doc.ownership = ownership
+				doc.insert()
+				self.assertEqual(STATE["devices"][doc.name]["ownership"], ownership)
+				self.assertNotIn("comments", STATE)
+
+	def test_confirm_device_lets_a_device_manager_set_company_on_a_discovered_device(self):
+		# The provider hinted BYOD when the sync created it; the person confirming says Company.
+		_stored_device("BYOD", link_state="Discovered")
+		result = api.confirm_device("DEV-1", "Company")
+		self.assertEqual(result["ownership"], "Company")
+		self.assertEqual((_stored("ownership"), _stored("mdm_link_state")), ("Company", "Managed"))
+		texts = [text for _type, text in STATE["comments"]]
+		self.assertEqual(len(texts), 2)
+		self.assertIn("from BYOD to Company", texts[0])
+		self.assertIn("Confirmed as a Company device", texts[1])
+		self.assertIsNone(getattr(fstub.flags, controller.CONFIRMING_DISCOVERED_FLAG, None))
+
+	def test_confirm_device_on_a_discovered_device_either_way(self):
+		for stored, chosen, comments in (("Company", "BYOD", 2), ("Company", "Company", 1), ("BYOD", "BYOD", 1)):
+			with self.subTest(stored=stored, chosen=chosen):
+				_stored_device(stored, link_state="Discovered")
+				api.confirm_device("DEV-1", chosen)
+				self.assertEqual(_stored("ownership"), chosen)
+				self.assertEqual(len(STATE["comments"]), comments)
+
+	def test_confirm_device_on_a_device_no_longer_discovered_is_refused(self):
+		_stored_device("BYOD", link_state="Managed")
+		with self.assertRaises(FakeValidationError) as ctx:
+			api.confirm_device("DEV-1", "Company")
+		self.assertIn("not awaiting confirmation", str(ctx.exception))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_the_confirm_flag_opens_only_its_own_device_while_stored_as_discovered(self):
+		flag = controller.CONFIRMING_DISCOVERED_FLAG
+		for link_state, named in (("Managed", "DEV-1"), ("Unmanaged", "DEV-1"), ("Discovered", "DEV-2")):
+			with self.subTest(link_state=link_state, named=named):
+				_stored_device("BYOD", link_state=link_state)
+				setattr(fstub.flags, flag, named)
+				doc = fstub.get_doc("Managed Device", "DEV-1")
+				doc.ownership = "Company"
+				with self.assertRaises(FakePermissionError):
+					doc.save()
+				self.assertEqual(_stored("ownership"), "BYOD")
+
+	def test_confirm_device_clears_its_flag_when_the_save_fails(self):
+		# An Assigned device with no assignee fails another rule in validate.
+		_stored_device("BYOD", link_state="Discovered", status="Assigned")
+		with self.assertRaises(FakeValidationError):
+			api.confirm_device("DEV-1", "Company")
+		self.assertIsNone(getattr(fstub.flags, controller.CONFIRMING_DISCOVERED_FLAG, None))
+		self.assertEqual(_stored("ownership"), "BYOD")
+
+	def test_the_sync_never_changes_ownership_on_an_existing_device(self):
+		# Run as Administrator (System Manager) with a provider hint of Company.
+		_stored_device("BYOD", roles=("Administrator", "System Manager"))
+		pd = client.ProviderDevice(provider="Miradore", provider_id="1001", os_version="15", ownership_hint="Company")
+		result = mapping.upsert_device(pd)
+		self.assertEqual((result["action"], result["device"]), ("updated", "DEV-1"))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertEqual(_stored("os_version"), "15")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_provider_hint_still_sets_ownership_on_a_device_the_sync_creates(self):
+		for hint, expected in (("BYOD", "BYOD"), ("Company", "Company"), (None, "Company"), ("Personal", "Company")):
+			with self.subTest(hint=hint):
+				STATE.clear()
+				STATE["devices"] = {}
+				pd = client.ProviderDevice(provider="Miradore", provider_id="2002", platform="Android", ownership_hint=hint)
+				result = mapping.upsert_device(pd)
+				self.assertEqual(result["action"], "created")
+				row = STATE["devices"][result["device"]]
+				self.assertEqual((row["ownership"], row["mdm_link_state"]), (expected, "Discovered"))
+
+	def test_the_confirm_prompt_preselects_nothing_and_requires_a_choice(self):
+		source = (
+			Path(__file__).resolve().parents[1]
+			/ "device_management" / "doctype" / "managed_device" / "managed_device.js"
+		).read_text(encoding="utf-8")
+		start = source.index("if (frm.doc.mdm_link_state === 'Discovered') {")
+		block = source[start : source.index("mdm_integration.api.confirm_device", start)]
+		self.assertIn("options: '\\nCompany\\nBYOD',", block)
+		self.assertIn("reqd: 1,", block)
+		self.assertNotIn("default:", block)
 
 
 class SyncTests(unittest.TestCase):
