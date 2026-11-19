@@ -55,7 +55,7 @@ Two paths converge on `actions.execute_device_action`:
 
 The executor **always**:
 - rejects an action the provider can't do (`supports()`);
-- forces a **selective** wipe for BYOD (never full);
+- sends a personally owned (**BYOD**) device only **Locate** and **Lock** (`actions.BYOD_ACTIONS`): every other action, any wipe mode included, is refused, and the form does not draw those buttons. To remove company data from a personal device, use the provider's own console;
 - refuses **every** action (any wipe mode, lock, locate, reboot, run script, deploy patch) on a **Discovered** device;
 - adds a Comment to the device's timeline for a **locate** (who asked and when), before anything is sent;
 - writes a Device Action Log row, whether the action succeeds or fails;

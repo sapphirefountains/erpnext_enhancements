@@ -1,9 +1,9 @@
 """remote_wipe_device — gated AI tool: remotely wipe a managed mobile device.
 
 Routes to Miradore via ``mdm_integration.actions.execute_device_action``. WRITES
-and **HIGH risk** (irreversible). The executor enforces the BYOD guard: a
-personally-owned device is always coerced to a selective (corporate-data-only)
-wipe and a full wipe is refused — the model cannot override this. Gated like
+and **HIGH risk** (irreversible). The executor never wipes a personally owned
+(BYOD) device, in any mode: such a device accepts Locate and Lock only, and the
+model cannot override this. Gated like
 ``remote_lock_device``: nothing is wiped until a human confirms in the desk.
 """
 
@@ -28,8 +28,8 @@ class RemoteWipeDevice(BaseTool):
 			"and safest: removes company apps/data and unenrolls the device from "
 			"Miradore, keeping personal data; refused on a fully managed Android or a "
 			"supervised iPad, where it would factory-reset) or 'full' (factory reset; "
-			"refused until the device is confirmed). BYOD/personally-owned devices "
-			"are ALWAYS selective. This WRITES, is IRREVERSIBLE, and is gated: it "
+			"refused until the device is confirmed). A personally owned (BYOD) device "
+			"is never wiped, in either mode. This WRITES, is IRREVERSIBLE, and is gated: it "
 			"wipes nothing until a human confirms in ERPNext."
 		)
 		self.category = "Device Management"
@@ -44,7 +44,7 @@ class RemoteWipeDevice(BaseTool):
 					"type": "string",
 					"enum": list(_MODES),
 					"default": "selective",
-					"description": "'selective' (company data only; unenrolls) or 'full' (factory reset). BYOD is forced selective.",
+					"description": "'selective' (company data only; unenrolls) or 'full' (factory reset). Refused on a personally owned (BYOD) device.",
 				},
 			},
 			"required": ["device"],

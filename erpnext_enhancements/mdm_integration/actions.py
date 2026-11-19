@@ -9,10 +9,12 @@ tools (``assistant_tools/remote_*``) call ``execute_device_action``. It:
 2. refuses every action on a **Discovered** device (any wipe mode, lock, locate,
    reboot, run script, deploy patch): nobody has confirmed whose device it is yet,
    and its ownership defaults to Company. Confirming the device clears this;
-3. enforces the **BYOD wipe guard** (``routing.resolve_wipe_mode``) before the
-   API call — a personally-owned device is never full-wiped. The
-   provider applies its own guard on top: Miradore refuses a selective wipe on an
-   enrollment where it would factory-reset (``routing.miradore_selective_wipe_refusal``);
+3. sends a **personally owned (BYOD) device** nothing but Locate and Lock
+   (:data:`BYOD_ACTIONS`; owner decision, 2026-11-19): every other action, any wipe
+   mode included, is refused before the API call. For a company device the wipe mode
+   is resolved by ``routing.resolve_wipe_mode``, and the provider applies its own
+   guard on top: Miradore refuses a selective wipe on an enrollment where it would
+   factory-reset (``routing.miradore_selective_wipe_refusal``);
 4. dispatches to the provider, and writes an immutable **Device Action Log** row
    on every attempt (success or failure). A locate request also leaves a Comment
    on the device's timeline (who asked, and when) before anything is sent;
@@ -39,6 +41,11 @@ from erpnext_enhancements.mdm_integration.utils import get_settings
 
 # Actions that warrant notifying Device Managers when they succeed.
 _NOTIFY_ON_SUCCESS = {"wipe", "lock", "locate"}
+
+#: Everything a personally owned (BYOD) device accepts: it can be found and locked. An
+#: allowlist, so a wipe in any mode, a reboot, a script, a patch and any action added later
+#: are refused on a personal device unless they are named here.
+BYOD_ACTIONS = frozenset({"locate", "lock"})
 
 
 def execute_device_action(
@@ -70,7 +77,13 @@ def execute_device_action(
 			f"{doc.name} was discovered by the {key} sync and nobody has confirmed who owns it. "
 			f"Confirm the device (and its ownership) on its form before running a '{action}' action.")
 
-	# BYOD wipe guard — resolve the effective mode (or refuse) BEFORE any API call.
+	# A personally owned device accepts Locate and Lock, and nothing else.
+	if (doc.get("ownership") or "") == "BYOD" and action not in BYOD_ACTIONS:
+		_fail(doc, action, mode, key, source, requested_by, pending_action,
+			f"{doc.name} is personally owned (BYOD). A personal device accepts only Locate and Lock, "
+			f"so the '{action}' action was not sent.")
+
+	# Wipe mode — resolve the effective mode (or refuse) BEFORE any API call.
 	effective_mode = mode
 	if action == "wipe":
 		effective_mode, err = resolve_wipe_mode(
