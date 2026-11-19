@@ -47,7 +47,8 @@ function schedule(frm) {
 export function compute(frm) {
 	const lines = frm.doc.lines || [];
 	const previous = {};
-	for (const l of lines) previous[l.line_key] = l.from_previous || 0;
+	// D and the retainage already held, as the server stored them at the last save (keep holding).
+	for (const l of lines) previous[l.line_key] = { work: l.from_previous || 0, retainage_work: l.retainage_previous || 0 };
 	try {
 		return pm.price_application(schedule(frm), frm.doc, lines, previous);
 	} catch (e) {

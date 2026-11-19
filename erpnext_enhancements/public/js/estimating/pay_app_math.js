@@ -2,7 +2,8 @@
  * The pay application's G703 and G702, line for line the same as
  * erpnext_enhancements/estimating/pay_app_math.py (read its docstring for the model and the reasons:
  * column D is the earlier applications' WORK completed, stored material is a balance, retainage steps
- * by the percent complete at the START of the period, finishing a line closes it to the cent).
+ * by the percent complete at the START of the period and earlier retainage stays held at its own rate
+ * (Nik, 2026-11-19: keep holding), finishing a line closes it to the cent).
  *
  * The editor uses this only to show totals while a project manager types; the server prices the
  * application again on every save and its numbers are the ones stored. Both are held to the same
@@ -66,16 +67,19 @@ export function resolve_rates(schedule, application, pct_start) {
 
 export function price_application(schedule, application, lines, previous) {
 	const stored_on = !!schedule.stored_materials;
-	const prepared = (lines || []).map((line) => [
-		line,
-		cents(line.scheduled_value),
-		cents((previous || {})[line.line_key] || 0),
-	]);
+	const prepared = (lines || []).map((line) => {
+		const entry = (previous || {})[line.line_key];
+		if (entry !== null && typeof entry === "object") {
+			const held = entry.retainage_work;
+			return [line, cents(line.scheduled_value), cents(entry.work), held === null || held === undefined ? null : cents(held)];
+		}
+		return [line, cents(line.scheduled_value), cents(entry || 0), null];
+	});
 	const contract_to_date = prepared.reduce((s, [, c]) => s + c, 0);
 	const start_pct = percent(prepared.reduce((s, [, , d]) => s + d, 0), contract_to_date) || 0;
 	const [job_work, job_stored, source] = resolve_rates(schedule, application, start_pct);
 
-	const out = prepared.map(([line, c, d]) => {
+	const out = prepared.map(([line, c, d, prior]) => {
 		const by_others = !!num(line.by_others);
 		const pct = by_others ? 0 : num(line.this_period_pct);
 		const remaining = percent(c - d, c);
@@ -90,12 +94,16 @@ export function price_application(schedule, application, lines, previous) {
 		}
 		wp = wp === null ? job_work : wp;
 		sp = sp === null ? job_stored : sp;
-		const rw = share(d + e, wp);
+		// Keep holding (Nik, 2026-11-19): earlier retainage stays at the rate it was held at.
+		const held = prior === null ? share(d, wp) : prior;
+		let rw = held + share(e, wp);
+		if (c >= 0 && rw < 0) rw = 0;
 		const rs = share(f, sp);
 		return {
 			line_key: line.line_key,
 			scheduled_value: dollars(c),
 			from_previous: dollars(d),
+			retainage_previous: dollars(held),
 			this_period_pct: pct,
 			this_period: dollars(e),
 			stored: dollars(f),

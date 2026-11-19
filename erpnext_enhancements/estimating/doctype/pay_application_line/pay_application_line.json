@@ -24,6 +24,7 @@
   "retainage_work",
   "retainage_stored",
   "retainage",
+  "retainage_previous",
   "work_completed_to_date",
   "phase_number",
   "is_change_order",
@@ -158,6 +159,13 @@
    "fieldname": "retainage",
    "fieldtype": "Currency",
    "label": "Retainage",
+   "read_only": 1
+  },
+  {
+   "description": "Held by the earlier applications at the rates in force then; stays held until release.",
+   "fieldname": "retainage_previous",
+   "fieldtype": "Currency",
+   "label": "Retainage on Work Held Before This Period",
    "read_only": 1
   },
   {

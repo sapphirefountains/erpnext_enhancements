@@ -48,8 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     was due the shortfall is in the next payment due by construction. No six-month limit.
   - **Retainage** (D16) resolves line → application → the schedule's rate → none, and may **step
     down** (for example 10% until 50% complete, then 5%), chosen by the percent complete at the
-    **start** of the period so a month's own work never changes the rate it is billed at. The rate used
-    is stored on every line; a certified application never re-rates. Stored materials are off unless
+    **start** of the period so a month's own work never changes the rate it is billed at. **A step-down
+    keeps holding** (Nik, 2026-11-19: "Keep holding it"): work billed before the step stays held at the
+    old rate until final release, and only work after it is held at the new rate. So retainage on work
+    is cumulative per line, what the earlier applications held plus this period's work at the rate in
+    force, never `(D + E) x` today's rate, which would have paid out half of everything held in the
+    month the job crossed the step. The rate used and the retainage held before are stored on every
+    line; a certified application never re-rates. Stored materials are off unless
     the job turns them on.
   - **Change orders join from the application whose period reaches their approval date**, and
     "approved this month" means "not on the previous application", so a change order approved in March

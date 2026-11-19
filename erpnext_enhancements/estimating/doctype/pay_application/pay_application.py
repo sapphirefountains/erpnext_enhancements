@@ -40,6 +40,7 @@ LINE_SYNC = ("item_no", "description", "phase_number", "scheduled_value", "by_ot
 LINE_RESULTS = (
 	"scheduled_value",
 	"from_previous",
+	"retainage_previous",
 	"this_period",
 	"stored",
 	"total_completed",
@@ -218,7 +219,12 @@ class PayApplication(Document):
 		self.sync_lines(sov)
 		self.apply_milestone(sov)
 		self.clean_overrides()
-		previous_work = {r.line_key: flt(r.work_completed_to_date) for r in (prev.lines if prev else [])}
+		# Work completed and retainage held, per line, as the previous application stored them: earlier
+		# retainage stays held at its own rate (keep holding, Nik 2026-11-19).
+		previous_work = {
+			r.line_key: {"work": flt(r.work_completed_to_date), "retainage_work": flt(r.retainage_work)}
+			for r in (prev.lines if prev else [])
+		}
 		self.less_previous_certificates = pm.next_previous_certificates(prev.as_dict() if prev else None)
 		context = schedule_context(sov)
 		priced = pm.price_application(

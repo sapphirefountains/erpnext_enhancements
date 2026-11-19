@@ -23,8 +23,8 @@ The G703, per line *i* of application *n* (TASK-2026-02125)::
     G completed and stored    = D + E + F
     H percent                 = G / C        (None when C is 0: never 0%, never a huge number)
     I balance to finish       = C - G
-    retainage on work         = (D + E) x work %
-    retainage on stored       = F x stored %
+    retainage on work         = what earlier applications held on this line + E x work % in force now
+    retainage on stored       = F x stored %   (stored is a balance, so its retainage is too)
 
 **Column D is the earlier applications' work completed, not their column G.** Stored material
 moves into completed work as it is installed, so carrying column G forward counts it twice. The
@@ -51,8 +51,16 @@ schedule's rate in force -> 0 when the job holds no retainage, and the rate actu
 on the line. The schedule may step down (10% until 50% complete, then 5%): the step in force is
 chosen by the **cumulative percent complete at the START of the period**, i.e. columns D over the
 contract sum to date before this period's work, so a month's own progress never changes the rate it
-is billed at. A certified application keeps the rates it was certified at; a changed rate affects
-the next application only.
+is billed at.
+
+**Keep holding (Nik, 2026-11-19).** Retainage on work is cumulative: each application holds what the
+one before it held on the line, plus this period's work at the rate in force now. So when retainage
+steps down from 10% to 5% at 50% complete, the work billed before the step stays held at 10% until
+final release, and only work after it is held at 5%; a step-down, or an override, never releases
+earlier retainage. (Re-rating all work to date, ``(D + E) x rate``, would have let the application
+that crosses the step pay out half of everything held so far.) A line whose work goes down releases
+retainage at today's rate, never below zero. Retainage on stored materials stays ``F x rate``,
+because stored is a balance.
 
 **Finishing a line.** A percent of C seldom lands on the exact cents left. When the percent typed is
 the percent remaining (to two places), E is the balance itself, so a line marked finished always
@@ -246,21 +254,29 @@ def price_application(schedule, application, lines, previous):
 	:func:`resolve_rates`. ``application``: ``less_previous_certificates`` and the two overrides.
 	``lines``: ``line_key``, ``scheduled_value``, ``this_period_pct``, ``stored``, ``by_others``,
 	``is_change_order``, ``work_retainage_override``, ``stored_retainage_override``.
-	``previous``: ``{line_key: work completed to date}`` from the application before (its D + E).
+	``previous``: per line key, from the application before, either ``{"work": its D + E,
+	"retainage_work": the retainage on work it held}`` or a bare number (work completed, with no
+	retainage history: an opening balance, held at today's rate).
 	"""
 	stored_on = bool(schedule.get("stored_materials"))
 	prepared = []
 	for line in lines or []:
 		c = cents(line.get("scheduled_value"))
-		d = cents((previous or {}).get(line.get("line_key")) or 0)
-		prepared.append((line, c, d))
+		entry = (previous or {}).get(line.get("line_key"))
+		if isinstance(entry, dict):
+			d = cents(entry.get("work"))
+			held = entry.get("retainage_work")
+			held = None if held is None else cents(held)
+		else:
+			d, held = cents(entry or 0), None
+		prepared.append((line, c, d, held))
 
-	contract_to_date = sum(c for _line, c, _d in prepared)
-	start_pct = percent(sum(d for _line, _c, d in prepared), contract_to_date) or 0
+	contract_to_date = sum(p[1] for p in prepared)
+	start_pct = percent(sum(p[2] for p in prepared), contract_to_date) or 0
 	job_work, job_stored, source = resolve_rates(schedule, application, start_pct)
 
 	out = []
-	for line, c, d in prepared:
+	for line, c, d, held in prepared:
 		by_others = bool(line.get("by_others"))
 		pct = 0.0 if by_others else float(line.get("this_period_pct") or 0)
 		remaining = percent(c - d, c)
@@ -276,13 +292,20 @@ def price_application(schedule, application, lines, previous):
 			work_pct, stored_pct = 0.0, 0.0
 		work_pct = job_work if work_pct is None else work_pct
 		stored_pct = job_stored if stored_pct is None else stored_pct
-		ret_work = share(d + e, work_pct)
+		# Keep holding (Nik, 2026-11-19): what was held stays held at the rate it was held at, and only this
+		# period's work is held at the rate in force now. A step-down never releases earlier retainage.
+		if held is None:
+			held = share(d, work_pct)  # an opening balance with no history: held at today's rate
+		ret_work = held + share(e, work_pct)
+		if c >= 0 and ret_work < 0:
+			ret_work = 0
 		ret_stored = share(f, stored_pct)
 		out.append(
 			{
 				"line_key": line.get("line_key"),
 				"scheduled_value": dollars(c),
 				"from_previous": dollars(d),
+				"retainage_previous": dollars(held),
 				"this_period_pct": pct,
 				"this_period": dollars(e),
 				"stored": dollars(f),

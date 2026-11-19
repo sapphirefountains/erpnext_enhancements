@@ -6,7 +6,8 @@ No frappe. What it holds, all in made-up numbers:
 * **column D is the earlier applications' work completed, never their column G**: stored material is
   a balance, so a stored amount installed next month is not counted twice;
 * line 7 sums what was certified, so a short certification carries into the next payment due;
-* retainage steps down by the percent complete at the START of the period, never the end;
+* retainage steps down by the percent complete at the START of the period, never the end, and a
+  step-down keeps holding what was held at the old rate (Nik, 2026-11-19);
 * a line finished with the percent remaining closes to the cent;
 * the projection from an estimate is a partition: rows sum to the lines exactly, the same estimate in
   any order gives the same rows, "by others" lines are rows worth nothing;
@@ -35,7 +36,9 @@ class TestSharedCases(unittest.TestCase):
 	def test_every_case(self):
 		for case in CASES:
 			with self.subTest(case["name"]):
-				got = pm.price_application(case["schedule"], case["application"], case["lines"], case["previous"])
+				got = pm.price_application(
+					case["schedule"], case["application"], case["lines"], case["previous"]
+				)
 				self.assertEqual(got, case["expected"])
 
 
@@ -47,7 +50,9 @@ class TestG703(unittest.TestCase):
 		self.assertEqual(m1["lines"][0]["total_completed"], 1000.0)
 		self.assertEqual(m1["lines"][0]["work_completed_to_date"], 0.0)
 		# D for month 2 is month 1's WORK completed (0), not its column G (1,000)
-		m2 = pm.price_application(schedule, {}, [L("p", 4000, 25, stored=0)], {"p": m1["lines"][0]["work_completed_to_date"]})
+		m2 = pm.price_application(
+			schedule, {}, [L("p", 4000, 25, stored=0)], {"p": m1["lines"][0]["work_completed_to_date"]}
+		)
 		self.assertEqual(m2["lines"][0]["from_previous"], 0.0)
 		self.assertEqual(m2["lines"][0]["total_completed"], 1000.0)
 
@@ -76,18 +81,46 @@ class TestG703(unittest.TestCase):
 		self.assertEqual(app1["totals"]["current_payment_due"], 3800.0)
 		prev = {"less_previous_certificates": 0, "amount_certified": 3500}  # the GC certified 300 less
 		line7 = pm.next_previous_certificates(prev)
-		app2 = pm.price_application(SCHEDULE, {"less_previous_certificates": line7}, [L("a", 10000, 10)], {"a": 4000})
+		app2 = pm.price_application(
+			SCHEDULE, {"less_previous_certificates": line7}, [L("a", 10000, 10)], {"a": 4000}
+		)
 		# earned 5000 - 250 = 4750, less 3500 certified = 1250: this month's 950 plus the 300 shortfall
 		self.assertEqual(app2["totals"]["current_payment_due"], 1250.0)
 
 	def test_retainage_steps_by_the_start_of_the_period(self):
-		steps = [{"from_percent_complete": 0, "work_pct": 10, "stored_pct": 10}, {"from_percent_complete": 50, "work_pct": 5, "stored_pct": 5}]
+		steps = [
+			{"from_percent_complete": 0, "work_pct": 10, "stored_pct": 10},
+			{"from_percent_complete": 50, "work_pct": 5, "stored_pct": 5},
+		]
 		schedule = dict(SCHEDULE, steps=steps)
 		# starts at 45%, ends at 75%: still billed at 10%, because the start decides
 		got = pm.price_application(schedule, {}, [L("a", 10000, 30)], {"a": 4500})
 		self.assertEqual(got["totals"]["work_retainage_pct"], 10.0)
 		self.assertEqual(got["totals"]["percent_complete_at_start"], 45.0)
 		self.assertEqual(got["totals"]["retainage_source"], "step from 0%")
+
+	def test_a_step_down_keeps_holding_what_was_held(self):
+		# Nik, 2026-11-19: "Keep holding it." 10% until 50% complete, then 5%, on a 10,000 job.
+		steps = [
+			{"from_percent_complete": 0, "work_pct": 10, "stored_pct": 10},
+			{"from_percent_complete": 50, "work_pct": 5, "stored_pct": 5},
+		]
+		schedule = dict(SCHEDULE, steps=steps)
+		previous, line7, held = {}, 0.0, []
+		for pct in (40, 20, 10):
+			got = pm.price_application(
+				schedule, {"less_previous_certificates": line7}, [L("a", 10000, pct)], previous
+			)
+			row, totals = got["lines"][0], got["totals"]
+			held.append(row["retainage_work"])
+			previous = {"a": {"work": row["work_completed_to_date"], "retainage_work": row["retainage_work"]}}
+			line7 = pm.next_previous_certificates(
+				{"less_previous_certificates": line7, "amount_certified": totals["current_payment_due"]}
+			)
+		# 4,000 and 2,000 held at 10% stay held; the 1,000 after the step adds 5%. Re-rating all work at
+		# 5% would have held 350 and paid out 250 more than the month earned.
+		self.assertEqual(held, [400.0, 600.0, 650.0])
+		self.assertEqual(totals["current_payment_due"], 950.0)
 
 	def test_clearing_an_override_falls_back(self):
 		got = pm.price_application(SCHEDULE, {"work_retainage_override": "  "}, [L("a", 10000, 10)], {})
@@ -161,7 +194,9 @@ class TestRefusals(unittest.TestCase):
 	def test_negative_completed_or_stored_is_refused(self):
 		codes = self.codes([L("a", 1000, -60, adjustment_note="credit")], {"a": 500})
 		self.assertIn("COMPLETED_BELOW_ZERO", codes)
-		codes = self.codes([L("a", 1000, 0, stored=-50)], schedule=dict(SCHEDULE, stored_materials=1), stored_materials=True)
+		codes = self.codes(
+			[L("a", 1000, 0, stored=-50)], schedule=dict(SCHEDULE, stored_materials=1), stored_materials=True
+		)
 		self.assertIn("STORED_NEGATIVE", codes)
 
 	def test_a_negative_payment_due_is_refused(self):
@@ -172,12 +207,31 @@ class TestRefusals(unittest.TestCase):
 
 
 ESTIMATE_LINES = [
-	{"idx": 1, "phase_number": 120, "cost_type": "Labor", "description": "Schematic design", "amount": 1000.0},
+	{
+		"idx": 1,
+		"phase_number": 120,
+		"cost_type": "Labor",
+		"description": "Schematic design",
+		"amount": 1000.0,
+	},
 	{"idx": 2, "phase_number": 500, "cost_type": "Equipment", "description": "Pump", "amount": 2717.39},
 	{"idx": 3, "phase_number": 500, "cost_type": "Equipment", "description": "Filter", "amount": 1000.01},
 	{"idx": 4, "phase_number": 500, "cost_type": "Labor", "description": "Install", "amount": 750.0},
-	{"idx": 5, "phase_number": 700, "cost_type": "Subcontract", "description": "Tile", "amount": 0, "by_others": 1},
-	{"idx": 6, "phase_number": 100, "cost_type": "Labor", "description": "Project management", "amount": 333.33},
+	{
+		"idx": 5,
+		"phase_number": 700,
+		"cost_type": "Subcontract",
+		"description": "Tile",
+		"amount": 0,
+		"by_others": 1,
+	},
+	{
+		"idx": 6,
+		"phase_number": 100,
+		"cost_type": "Labor",
+		"description": "Project management",
+		"amount": 333.33,
+	},
 ]
 PHASES = [{"phase_number": 500, "label": "Mechanical room"}]
 
@@ -214,7 +268,15 @@ class TestProjection(unittest.TestCase):
 		self.assertEqual(check["difference"], 199.27)
 
 	def test_an_event_without_phases_numbers_plainly(self):
-		lines = [{"idx": 1, "phase_number": 0, "cost_type": "Equipment", "description": "Fountain rental", "amount": 900}]
+		lines = [
+			{
+				"idx": 1,
+				"phase_number": 0,
+				"cost_type": "Equipment",
+				"description": "Fountain rental",
+				"amount": 900,
+			}
+		]
 		rows, _ = pm.sov_rows([], lines)
 		self.assertEqual(rows[0]["item_no"], "1")
 

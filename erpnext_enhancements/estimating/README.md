@@ -133,7 +133,7 @@ to [`tests/data/pay_app_math_cases.json`](../tests/data/pay_app_math_cases.json)
 ```
 D from previous      = earlier applications' WORK completed   (not their G: stored is a balance)
 E this period        = C x this period's %                     (the percent left closes the line)
-G completed + stored = D + E + F            retainage = (D + E) x work % + F x stored %
+G completed + stored = D + E + F            retainage = held before + E x work % now + F x stored %
 G702 line 7          = what earlier applications were CERTIFIED for (a short one carries forward)
 ```
 
@@ -141,8 +141,11 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
 
 - **Column D is work completed, never column G.** Carrying G forward counts stored materials twice;
   the old workbook does.
-- **Retainage steps by the percent complete at the start of the period**, and the rate used is stored
-  per line, so a certified application never re-rates.
+- **Retainage steps by the percent complete at the start of the period, and keeps holding** (Nik,
+  2026-11-19, "Keep holding it"). When 10% steps down to 5% at 50% complete, work billed before the
+  step stays held at 10% until final release and only later work is held at 5%. Each line carries what
+  the earlier applications held (`retainage_previous`) and adds this period's work at the rate in force;
+  a step-down or an override never releases earlier retainage. Release is a later PR (B9).
 - **The chain is a stored link** (`previous_application`), never inferred from dates, and lines chain
   by `line_key`, so a reordered schedule never repoints a billed line. **It is derived again on every
   save**, because read_only is not enforced on a save at v16.56: a blanked link would bill the job twice.
