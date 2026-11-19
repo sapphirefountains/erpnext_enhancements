@@ -82,6 +82,11 @@ const BM_BOARD_ROUTE = "reorder-board";
 // The Warehouse Map (v1.818.0): the same roles as this page, so the link is shown to everyone here.
 const BM_MAP_ROUTE = "warehouse-map";
 const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "System Manager"];
+// The Warehouse Transactions report (v1.831.0): a bin's movements, a job's, or the picker's job or item. Shown
+// only to a person the Desk says may open the report (frappe.boot.allowed_reports, the same dict the Desk's
+// own report links are built from), and only when the bundle has transactions_route (an older copy in a tab
+// open across a deploy draws the page without the link). The route is the pure module's.
+const BM_TRANSACTIONS_REPORT = "Warehouse Transactions";
 const BM_SEARCH_DELAY_MS = 250;
 
 class BinManagerPage {
@@ -311,6 +316,34 @@ class BinManagerPage {
 		}
 	}
 
+	// Whether this person may open the Warehouse Transactions report, and this copy of the bundle can route there.
+	// Anything unreadable is "no".
+	can_open_transactions() {
+		try {
+			const allowed = frappe.boot && frappe.boot.allowed_reports;
+			return !!(
+				allowed &&
+				Object.prototype.hasOwnProperty.call(allowed, BM_TRANSACTIONS_REPORT) &&
+				this.bm &&
+				typeof this.bm.transactions_route === "function"
+			);
+		} catch (e) {
+			return false;
+		}
+	}
+
+	// The link to the report, or nothing. One frappe.set_route, its own history entry: Back lands here again.
+	transactions_link() {
+		if (!this.can_open_transactions()) return "";
+		return `<button type="button" class="btn btn-sm btn-default bm-transactions-link" data-act="transactions"
+			title="${this.esc(__("Every stock movement here and who made it (Warehouse Transactions)"))}">${this.esc(__("Movements"))}</button>`;
+	}
+
+	open_transactions() {
+		if (!this.can_open_transactions()) return;
+		frappe.set_route(...this.bm.transactions_route(this.ctl.state.target, this.ctl.state.filters));
+	}
+
 	// The link to the Reorder Board, or nothing. One frappe.set_route: the board is its own history entry, so
 	// Back lands here again (on this bin, when it was one).
 	board_link() {
@@ -388,6 +421,7 @@ class BinManagerPage {
 			else if (act === "retry") this.ctl.refresh();
 			else if (act === "reorder-toggle") this.toggle_reorder();
 			else if (act === "reorder-board") frappe.set_route(BM_BOARD_ROUTE);
+			else if (act === "transactions") this.open_transactions();
 			else if (act === "open-map") frappe.set_route(BM_MAP_ROUTE);
 			// "Show on map" on a bin: the map page asks the server which map and box show it.
 			else if (act === "show-on-map") frappe.set_route(BM_MAP_ROUTE, { w: this.ctl.state.target.warehouse });
@@ -497,6 +531,7 @@ class BinManagerPage {
 							placeholder="${this.esc(__("Find a bin: type part of its name"))}"
 							aria-label="${this.esc(__("Find a bin"))}">
 						${this.board_link()}
+						${this.transactions_link()}
 					</div>
 					<div class="bm-filters"></div>
 					<div class="bm-list"></div>
@@ -599,6 +634,7 @@ class BinManagerPage {
 				.join(" ") +
 				toggle +
 				(this.board_link() ? ` ${this.board_link()}` : "") +
+				(this.transactions_link() ? ` ${this.transactions_link()}` : "") +
 				(this.map_offered(false)
 					? ` <button type="button" class="btn btn-sm btn-default bm-map-link" data-act="show-on-map">${this.esc(__("Show on map"))}</button>`
 					: "")
@@ -973,6 +1009,7 @@ class BinManagerPage {
 							<h2 class="bm-name"></h2>
 							<div class="bm-trail"></div>
 						</div>
+						<div class="bm-bin-actions bm-project-actions">${this.transactions_link()}</div>
 					</div>
 					<div class="bm-notice"></div>
 					<div class="bm-project-body"></div>

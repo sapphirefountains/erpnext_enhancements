@@ -688,6 +688,8 @@ function loadPage(options) {
 		},
 		get_route: () => world.route(),
 		set_route: (...args) => world.set_route(args.length === 1 ? args[0] : args),
+		// frappe.boot, when the test gives one: { allowed_reports: {...} } is the reports the Desk lets this person open.
+		boot: (options || {}).desk_boot,
 		// The Desk's own role check (boot's roles). { roles: [...] } is who the person is; none = no board link.
 		user: {
 			has_role: (role) => {
@@ -731,7 +733,14 @@ function loadPage(options) {
 				html: (kind) => `<div class="sf-state sf-state--${kind}"></div>`,
 			},
 		},
-		sf_bin_manager: Object.assign({ version: 2, Controller, views }, logic),
+		// { old_bundle: true }: a copy of the bundle from before v1.831.0, without transactions_route.
+		sf_bin_manager: (options || {}).old_bundle
+			? (() => {
+					const old = Object.assign({ version: 2, Controller, views }, logic);
+					delete old.transactions_route;
+					return old;
+			  })()
+			: Object.assign({ version: 3, Controller, views }, logic),
 		// The reorder bundle, when the test asks for it: the real modules over this stand-in's root, which
 		// has no querySelectorAll (nothing is drawn into a real DOM here).
 		sf_reorder: (options || {}).reorder
@@ -2199,6 +2208,82 @@ test("by project: no job is sent on a move to or from the job's site", async () 
 	await settle();
 	await plain.ctl.project_submit("to_site", sections.shelf.rows[0], { qty: 1 }, "bm-proj-0000013");
 	check("a site without the release: no job sent", "project" in plain.server.writes().pop().args, false);
+});
+
+// ------------------------------------------------------------------ Warehouse Transactions (v1.831.0)
+
+const TXN = "Warehouse Transactions";
+const TXN_BOOT = { allowed_reports: { [TXN]: { title: TXN } } };
+const txnLinkIn = (html) => (String(html).match(/data-act="transactions"/g) || []).length;
+const queryOf = (world) => Object.fromEntries(new URLSearchParams(world.query()));
+const BLANK_TXN = { view: "Movements", item_code: "", warehouse: "", project: "", user: "", kind: "" };
+
+test("transactions_route: a bin, a job, the picker's job or item, every other filter blank", () => {
+	check("a bin", logic.transactions_route({ screen: "bin", warehouse: BIN_A }), ["query-report", TXN, Object.assign({}, BLANK_TXN, { warehouse: BIN_A })]);
+	check("a job", logic.transactions_route({ screen: "project", project: "PRJ-90001" }), ["query-report", TXN, Object.assign({}, BLANK_TXN, { project: "PRJ-90001" })]);
+	check(
+		"the picker filtered to a job and an item",
+		logic.transactions_route({ screen: "picker" }, { q: "pump", kind: "job_site", project: "PRJ-90001", item: "PDT-0001", quick: "has_stock" }),
+		["query-report", TXN, Object.assign({}, BLANK_TXN, { project: "PRJ-90001", item_code: "PDT-0001" })]
+	);
+	check("the bare picker", logic.transactions_route({ screen: "picker" }, {}), ["query-report", TXN, BLANK_TXN]);
+	for (const screen of ["projects", "sites", "problems"]) check(`${screen}: no filter`, logic.transactions_route({ screen }), ["query-report", TXN, BLANK_TXN]);
+	check("nothing at all", logic.transactions_route(null, null), ["query-report", TXN, BLANK_TXN]);
+	check("the report's name", logic.TRANSACTIONS_REPORT, TXN);
+});
+
+test("the real page: Movements opens the report for this bin as a new history entry, and Back returns", async () => {
+	const { world, registry, click } = loadPage({ desk_boot: TXN_BOOT });
+	world.go_to("/desk/bin-manager");
+	await settle();
+	check("one link on the picker", txnLinkIn(registry.root.__state.html), 1);
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	check("one link on a bin", txnLinkIn(registry.found[".bm-bin-actions"][0].innerHTML), 1);
+	check("its words", />Movements<\/button>/.test(registry.found[".bm-bin-actions"][0].innerHTML), true);
+	const entries = world.entries.length;
+	click({ "data-act": "transactions" });
+	await settle();
+	check("it routes to the report", world.route(), ["query-report", TXN]);
+	check("with this bin and every other filter blank", queryOf(world), Object.assign({}, BLANK_TXN, { warehouse: BIN_A }));
+	check("as a new history entry", [world.entries.length, world.index], [entries + 1, entries]);
+	world.back();
+	await settle();
+	check("Back lands on the bin again", world.route(), ["bin-manager", BIN_A]);
+});
+
+test("the real page: Movements on one job opens the report for the job", async () => {
+	const { world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { desk_boot: TXN_BOOT }));
+	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	check("one link on the job", txnLinkIn(registry.root.__state.html), 1);
+	click({ "data-act": "transactions" });
+	await settle();
+	check("it routes to the report", world.route(), ["query-report", TXN]);
+	check("with the job", queryOf(world), Object.assign({}, BLANK_TXN, { project: "PRJ-90001" }));
+});
+
+test("the real page: no Movements link without the report, with an old bundle, or with no boot", async () => {
+	for (const [name, options] of [
+		["no boot", {}],
+		["the report not allowed", { desk_boot: { allowed_reports: { "Stock Ledger": {} } } }],
+		["no allowed_reports", { desk_boot: {} }],
+		["an old bundle", { desk_boot: TXN_BOOT, old_bundle: true }],
+	]) {
+		const { world, registry, click } = loadPage(options);
+		world.go_to("/desk/bin-manager");
+		await settle();
+		check(`${name}: none on the picker`, txnLinkIn(registry.root.__state.html), 0);
+		check(`${name}: the picker still draws`, /bm-filter/.test(registry.root.__state.html), true);
+		world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+		await settle();
+		check(`${name}: none on a bin`, txnLinkIn(registry.found[".bm-bin-actions"][0].innerHTML), 0);
+		// A stale click (an old link left on screen) goes nowhere and throws nothing.
+		const at = world.route();
+		click({ "data-act": "transactions" });
+		await settle();
+		check(`${name}: a click goes nowhere`, world.route(), at);
+	}
 });
 
 // ------------------------------------------------------------------ run

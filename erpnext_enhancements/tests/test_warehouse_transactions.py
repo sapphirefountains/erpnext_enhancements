@@ -29,6 +29,13 @@ What is held:
   stamp, and the force-import patch is registered after model sync, imports each workspace in its
   own savepoint, rolls a failed import back, restores ``frappe.flags.in_import`` and never raises.
 
+* **v1.831.0.** ``stock_movement_rules`` (each kind, what counts as use, the room trail, who keeps
+  stock, the totals by person and by item, a move counted once from either side); the Project
+  filter's two halves (rows carrying the job OR rows at its site, the other filters still narrowing
+  both, a job with no site, no site field yet); a room covering its shelves with the Room / Rack
+  column; the Kind column and filter from a permission-checked Stock Entry read; and both views,
+  with everyone who keeps stock listed at zero and the service account left out.
+
 The ``frappe`` stub holds a small in-memory ledger and applies ``get_list``'s filters, ordering and
 field list to it, so a query that asked for the wrong rows or too few fields fails here. Installed
 in ``setUpModule`` and removed afterwards.
@@ -49,6 +56,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
+
+# Pure (no Frappe): the kinds and totals the report's new views are built from.
+from erpnext_enhancements.inventory_enhancements import stock_movement_rules as rules
 
 APP = REPO_ROOT / "erpnext_enhancements"
 REPORT_DIR = APP / "inventory_enhancements" / "report" / "warehouse_transactions"
@@ -133,13 +143,35 @@ class _Thrown(Exception):
 	pass
 
 
-def _reset(ledger=(), items=None, users=None, descendants=None):
+def _reset(
+	ledger=(),
+	items=None,
+	users=None,
+	descendants=None,
+	warehouses=None,
+	stock_entries=None,
+	has_role=None,
+	user_rows=None,
+	uoms=None,
+	site_column=True,
+):
 	STATE.clear()
 	STATE.update(
 		ledger=[dict(row) for row in ledger],
 		items=items or {},
 		users=users or {},
 		descendants=descendants or {},
+		# Warehouse rows: {name, warehouse_name, parent_warehouse, custom_job_site_project}.
+		warehouses=[dict(row) for row in (warehouses or [])],
+		# {Stock Entry name: purpose}: the Stock Entries the reader may see.
+		stock_entries=stock_entries or {},
+		# [(user, role)] rows of Has Role.
+		has_role=list(has_role or []),
+		# {user: {full_name, enabled, user_type}} for the By person view's list of people.
+		user_rows=user_rows or {},
+		uoms=uoms or {},
+		# True, False, or "raise" (frappe.db.has_column raises on a missing table).
+		site_column=site_column,
 		get_list=[],
 		get_all=[],
 		logged=[],
@@ -154,24 +186,36 @@ def _reset(ledger=(), items=None, users=None, descendants=None):
 		frappe_stub.flags.in_import = False
 
 
+def _cond(value, op, arg):
+	if op == "in":
+		return value in arg
+	if op == "between":
+		return arg[0] <= value <= arg[1]
+	if op == "<=":
+		return value <= arg
+	if op == "=":
+		return value == arg
+	raise AssertionError(f"stub does not know {op}")
+
+
 def _matches(row, filters):
 	for field, cond in (filters or {}).items():
 		value = row.get(field)
 		if isinstance(cond, list):
 			op, arg = cond
-			if op == "in":
-				ok = value in arg
-			elif op == "between":
-				ok = arg[0] <= value <= arg[1]
-			elif op == "<=":
-				ok = value <= arg
-			else:
-				raise AssertionError(f"stub does not know {op}")
+			ok = _cond(value, op, arg)
 		else:
 			ok = value == cond
 		if not ok:
 			return False
 	return True
+
+
+def _matches_any(row, or_filters):
+	"""frappe.get_list's or_filters: [[field, op, value], ...], any one holding."""
+	if not or_filters:
+		return True
+	return any(_cond(row.get(field), op, arg) for field, op, arg in or_filters)
 
 
 def _ordered(rows, order_by):
@@ -195,20 +239,51 @@ def setUpModule():
 		raise _Thrown(message)
 
 	def get_list(doctype, filters=None, fields=None, order_by=None, **kwargs):
-		assert doctype == "Stock Ledger Entry", doctype
 		STATE["get_list"].append(
 			dict(doctype=doctype, filters=filters, fields=fields, order_by=order_by, **kwargs)
 		)
-		rows = _ordered([r for r in STATE["ledger"] if _matches(r, filters)], order_by)
+		if doctype == "Stock Entry":
+			# Only the Stock Entries the reader may see: a missing one is a permission miss.
+			assert fields == ["name", "purpose"], fields
+			names = filters["name"][1]
+			known = STATE["stock_entries"]
+			return [_Dict(name=n, purpose=known[n]) for n in names if n in known]
+		assert doctype == "Stock Ledger Entry", doctype
+		rows = [
+			r for r in STATE["ledger"] if _matches(r, filters) and _matches_any(r, kwargs.get("or_filters"))
+		]
+		rows = _ordered(rows, order_by)
 		# Only the fields asked for, so code that relies on an unrequested field reads None here.
 		return [_Dict({f: r.get(f) for f in fields}) for r in rows]
 
-	def get_all(doctype, filters=None, fields=None, **kwargs):
-		STATE["get_all"].append(dict(doctype=doctype, filters=filters, fields=fields))
-		source = {"Item": STATE["items"], "User": STATE["users"]}[doctype]
-		field = fields[1]
+	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
+		STATE["get_all"].append(dict(doctype=doctype, filters=filters, fields=fields, pluck=pluck))
+		if doctype == "Warehouse":
+			rows = [r for r in STATE["warehouses"] if _matches(r, filters)]
+			if pluck:
+				return [r.get(pluck) for r in rows]
+			return [_Dict({f: r.get(f) for f in fields}) for r in rows]
+		if doctype == "Has Role":
+			assert filters["parenttype"] == "User" and pluck == "parent", (filters, pluck)
+			roles = filters["role"][1]
+			return [user for user, role in STATE["has_role"] if role in roles]
 		names = filters["name"][1]
+		if doctype == "User" and len(fields) > 2:
+			rows = STATE["user_rows"]
+			return [_Dict(name=n, **{f: rows[n].get(f) for f in fields[1:]}) for n in names if n in rows]
+		field = fields[1]
+		source = {
+			("Item", "item_name"): STATE["items"],
+			("Item", "stock_uom"): STATE["uoms"],
+			("User", "full_name"): STATE["users"],
+		}[(doctype, field)]
 		return [_Dict({"name": n, field: source[n]}) for n in names if n in source]
+
+	def has_column(doctype, column):
+		assert (doctype, column) == ("Warehouse", "custom_job_site_project"), (doctype, column)
+		if STATE["site_column"] == "raise":
+			raise RuntimeError("Table 'tabWarehouse' doesn't exist")
+		return bool(STATE["site_column"])
 
 	def get_descendants(doctype, name):
 		assert doctype == "Warehouse"
@@ -225,7 +300,9 @@ def setUpModule():
 	frappe.throw = throw
 	frappe.get_list = get_list
 	frappe.get_all = get_all
-	frappe.db = types.SimpleNamespace(get_descendants=get_descendants, savepoint=savepoint, rollback=rollback)
+	frappe.db = types.SimpleNamespace(
+		get_descendants=get_descendants, savepoint=savepoint, rollback=rollback, has_column=has_column
+	)
 	frappe.get_app_path = lambda app, *parts: str(APP.joinpath(*parts))
 	frappe.log_error = lambda title=None, message=None, **kw: STATE["logged"].append((title, message))
 	frappe.get_traceback = lambda: "traceback"
@@ -300,6 +377,7 @@ def sle(
 	voucher_type="Stock Entry",
 	cancelled=0,
 	name=None,
+	project=None,
 ):
 	"""One Stock Ledger Entry as the table holds it. A reconciliation stores ``actual_qty = 0``,
 	as ERPNext 16.52.1 writes it, so pass ``qty=0`` and the counted balance as ``after``."""
@@ -319,11 +397,17 @@ def sle(
 		"voucher_no": f"{voucher_type[:3].upper()}-{seq:04d}",
 		"owner": owner,
 		"is_cancelled": cancelled,
+		"project": project,
 	}
 
 
 def count(item="ITEM-A", after=0.0, **kw):
 	return sle(item=item, qty=0, after=after, voucher_type=SR, **kw)
+
+
+def _ledger_reads():
+	"""The Stock Ledger Entry reads, without the Stock Entry purpose read beside them."""
+	return [c for c in STATE["get_list"] if c["doctype"] == "Stock Ledger Entry"]
 
 
 def rows_by_name(result):
@@ -434,18 +518,20 @@ class TestExecute(unittest.TestCase):
 			with self.subTest(call=called):
 				self.assertNotIn(called, {"frappe.db.sql", "frappe.db.multisql", "frappe.qb.from_"})
 				self.assertNotIn("ignore_permissions", [k.arg for k in node.keywords])
-				# get_all skips permissions, so it may only fetch display names: directly with a
-				# literal doctype, or through _lookup, whose callers name Item and User.
+				# get_all skips permissions, so it may only fetch display names and structure: item
+				# names and units, people's names and who holds a stock role, and the warehouse tree
+				# (names, parents, which job a site is). Directly with a literal doctype, or through
+				# _lookup, whose callers name Item and User. Never a ledger or a voucher.
 				first = node.args[0] if node.args else None
 				if called == "frappe.get_all" and isinstance(first, ast.Constant):
-					self.assertIn(first.value, {"Item", "User"})
+					self.assertIn(first.value, {"Item", "User", "Warehouse", "Has Role"})
 				if called == "_lookup":
 					self.assertIn(ast.literal_eval(first), {"Item", "User"})
 				if called == "frappe.get_list":
 					get_lists += 1
-					self.assertEqual(ast.literal_eval(first), "Stock Ledger Entry")
-		# The report's rows and the balances before a count.
-		self.assertEqual(get_lists, 2)
+					self.assertIn(ast.literal_eval(first), {"Stock Ledger Entry", "Stock Entry"})
+		# The report's rows, the balances before a count, and the Stock Entries' purposes.
+		self.assertEqual(get_lists, 3)
 
 	def test_shapes_rows_with_names(self):
 		_reset(
@@ -469,8 +555,8 @@ class TestExecute(unittest.TestCase):
 		)
 		self.assertEqual([r["qty_change"] for r in rows], [3, -1, -2, 5])
 		self.assertEqual([r["balance_after"] for r in rows], [3, 4, 8, 5])
-		# One lookup per doctype, each name once.
-		self.assertEqual([c["doctype"] for c in STATE["get_all"]], ["Item", "User"])
+		# One lookup per doctype, each name once; then the warehouse tree for the Room / Rack column.
+		self.assertEqual([c["doctype"] for c in STATE["get_all"]], ["Item", "User", "Warehouse"])
 		self.assertEqual(STATE["get_all"][0]["filters"]["name"][1], ["GONE", "ITEM-A", "ITEM-B"])
 		self.assertEqual(
 			STATE["get_all"][1]["filters"]["name"][1], ["a@example.com", "b@example.com", "gone@example.com"]
@@ -611,13 +697,13 @@ class TestCountAdjustments(unittest.TestCase):
 		rows = report.execute({})[1]
 		self.assertEqual(rows[0]["qty_change"], -5)
 		# Nothing to derive, so no second ledger read.
-		self.assertEqual(len(STATE["get_list"]), 1)
+		self.assertEqual(len(_ledger_reads()), 1)
 
 	def test_the_balance_read_is_permission_checked_and_in_ledger_order(self):
 		_reset(ledger=[sle("A", 5, after=5, time="08:00"), count("A", after=3, time="10:00")])
 		report.execute({"item_code": "A"})
-		self.assertEqual(len(STATE["get_list"]), 2)
-		call = STATE["get_list"][1]
+		self.assertEqual(len(_ledger_reads()), 2)
+		call = _ledger_reads()[1]
 		self.assertEqual(call["doctype"], "Stock Ledger Entry")
 		self.assertEqual(call["filters"]["is_cancelled"], 0)
 		self.assertEqual(call["filters"]["item_code"], ["in", ["A"]])
@@ -684,12 +770,22 @@ class TestColumnsAndFilters(unittest.TestCase):
 		text = REPORT_JS.read_text(encoding="utf-8")
 		self.assertIn(f'frappe.query_reports["{NAME}"]', text)
 		fieldnames = re.findall(r'fieldname:\s*"(\w+)"', text)
-		self.assertEqual(fieldnames, ["from_date", "to_date", "item_code", "warehouse", "user"])
+		self.assertEqual(
+			fieldnames, ["from_date", "to_date", "view", "item_code", "warehouse", "project", "user", "kind"]
+		)
 		# Only the two dates are required; one reqd per date block.
 		self.assertEqual(text.count("reqd: 1"), 2)
 		self.assertIn(f"add_days(frappe.datetime.get_today(), -{report.DEFAULT_DAYS})", text)
-		for doctype in ("Item", "Warehouse", "User"):
+		for doctype in ("Item", "Warehouse", "User", "Project"):
 			self.assertIn(f'options: "{doctype}"', text)
+		# The two Select filters offer exactly what the Python accepts, in its order.
+		view_block = text[text.index('fieldname: "view"') : text.index('fieldname: "item_code"')]
+		views = re.findall(r'"([^"]+)"', view_block.split("options:")[1].split("]")[0])
+		self.assertEqual(views, list(rules.VIEWS))
+		self.assertIn('default: "Movements"', view_block)
+		kind_block = text[text.index('fieldname: "kind"') :]
+		kinds = re.findall(r'"([^"]*)"', kind_block.split("options:")[1].split("]")[0])
+		self.assertEqual(kinds, ["", *rules.KINDS])
 
 
 class TestWhereToFindIt(unittest.TestCase):
@@ -780,6 +876,493 @@ class TestWhereToFindIt(unittest.TestCase):
 			"python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v",
 			CI.read_text(encoding="utf-8"),
 		)
+
+
+# --- v1.831.0: a job, a room or rack, kinds, and totals by person and by item ---------------------
+
+SITE = "Job Site PRJ-90001 Water Wall - X"
+SHELF = "Project Shelf - X"
+
+#: A small tree: a room with a rack of two shelves, the shop's group, the job sites' group.
+TREE = [
+	{"name": "All Warehouses - X", "warehouse_name": "All Warehouses", "parent_warehouse": None},
+	{"name": "Atrium - X", "warehouse_name": "Atrium", "parent_warehouse": "All Warehouses - X"},
+	{"name": "North Rack 1 - X", "warehouse_name": "North Rack 1", "parent_warehouse": "Atrium - X"},
+	{"name": "Shelf NR1-1 - X", "warehouse_name": "Shelf NR1-1", "parent_warehouse": "North Rack 1 - X"},
+	{"name": "Shelf NR1-2 - X", "warehouse_name": "Shelf NR1-2", "parent_warehouse": "North Rack 1 - X"},
+	{"name": "Bin A1 - X", "warehouse_name": "Bin A1", "parent_warehouse": "All Warehouses - X"},
+	{"name": SHELF, "warehouse_name": "Project Shelf", "parent_warehouse": "All Warehouses - X"},
+	{"name": "Job Sites - X", "warehouse_name": "Job Sites", "parent_warehouse": "All Warehouses - X"},
+	{
+		"name": SITE,
+		"warehouse_name": "Job Site PRJ-90001 Water Wall",
+		"parent_warehouse": "Job Sites - X",
+		"custom_job_site_project": "PRJ-90001",
+	},
+]
+
+
+class TestMovementKinds(unittest.TestCase):
+	"""stock_movement_rules.movement_kind: what each ledger line was."""
+
+	def test_the_table(self):
+		cases = [
+			(("Stock Reconciliation", None, -3), "Count"),
+			(("Stock Reconciliation", None, 4), "Count"),
+			(("Stock Entry", "Material Issue", -1), "Take"),
+			(("Stock Entry", "Material Receipt", 2), "Add"),
+			(("Stock Entry", "Material Transfer", -2), "Move"),
+			(("Stock Entry", "Material Transfer", 2), "Move"),
+			(("Stock Entry", "Material Transfer for Manufacture", 2), "Move"),
+			(("Stock Entry", "Repack", 2), "Other"),
+			(("Stock Entry", "Receive from Customer", 2), "Other"),
+			# A Stock Entry the reader may not see: no purpose, so Other rather than a guess.
+			(("Stock Entry", None, -1), "Other"),
+			(("Purchase Receipt", None, 5), "Receive"),
+			(("Purchase Invoice", None, 5), "Receive"),
+			(("Purchase Receipt", None, -5), "Return to supplier"),
+			(("Delivery Note", None, -1), "Delivered"),
+			(("Sales Invoice", None, -1), "Delivered"),
+			(("Delivery Note", None, 1), "Other"),
+			(("Landed Cost Voucher", None, 0), "Other"),
+			((None, None, None), "Other"),
+		]
+		for args, kind in cases:
+			with self.subTest(args=args):
+				self.assertEqual(rules.movement_kind(*args), kind)
+				self.assertIn(kind, rules.KINDS)
+
+	def test_use_is_takes_and_deliveries_only(self):
+		# A count correction says the shelf was wrong, not that anything was used.
+		self.assertEqual(rules.USE_KINDS, {"Take", "Delivered"})
+		self.assertNotIn("Count", rules.USE_KINDS)
+		self.assertNotIn("Move", rules.USE_KINDS)
+
+	def test_clean_view_and_kind(self):
+		self.assertEqual(rules.clean_view("By person"), "By person")
+		self.assertEqual(rules.clean_view("By item"), "By item")
+		for odd in (None, "", "by person", "Everything"):
+			self.assertEqual(rules.clean_view(odd), "Movements")
+		self.assertEqual(rules.clean_kind("Take"), "Take")
+		self.assertIsNone(rules.clean_kind(""))
+		self.assertIsNone(rules.clean_kind("take"))
+
+	def test_group_trail(self):
+		parents = {r["name"]: r["parent_warehouse"] for r in TREE}
+		labels = {r["name"]: r["warehouse_name"] for r in TREE}
+		self.assertEqual(rules.group_trail("Shelf NR1-1 - X", parents, labels), "Atrium › North Rack 1")
+		self.assertEqual(rules.group_trail("North Rack 1 - X", parents, labels), "Atrium")
+		# Directly under the root: nothing worth naming.
+		self.assertEqual(rules.group_trail("Bin A1 - X", parents, labels), "")
+		self.assertEqual(rules.group_trail("All Warehouses - X", parents, labels), "")
+		# Unknown, and a loop in the tree, end the walk.
+		self.assertEqual(rules.group_trail("Nowhere", parents, labels), "")
+		self.assertEqual(rules.group_trail("A", {"A": "B", "B": "A"}), "B")
+		# Without labels, the docname.
+		self.assertEqual(rules.group_trail("Shelf NR1-1 - X", parents), "Atrium - X › North Rack 1 - X")
+
+	def test_stock_people(self):
+		users = [
+			{"name": "a@example.com", "full_name": "Alex Able", "enabled": 1, "user_type": "System User"},
+			{"name": "b@example.com", "full_name": "Bo Baker", "enabled": 0, "user_type": "System User"},
+			{"name": "c@example.com", "full_name": "Cy Cole", "enabled": 1, "user_type": "Website User"},
+			{"name": "Administrator", "full_name": "Administrator", "enabled": 1, "user_type": "System User"},
+			{"name": "bot@example.com", "full_name": "Bot", "enabled": 1, "user_type": "System User"},
+			{"name": "d@example.com", "full_name": "", "enabled": 1, "user_type": "System User"},
+			{"name": "e@example.com", "full_name": "Ed Eel", "enabled": 1, "user_type": "System User"},
+		]
+		holders = [
+			"a@example.com",
+			"b@example.com",
+			"c@example.com",
+			"Administrator",
+			"bot@example.com",
+			"d@example.com",
+		]
+		got = rules.stock_people(users, holders, {"administrator", "bot@example.com"})
+		# Disabled, a website user, Frappe's own and a service account are left out; e holds no role.
+		self.assertEqual(got, {"a@example.com": "Alex Able", "d@example.com": "d@example.com"})
+
+
+def _people_rows():
+	"""Movement rows as the report shapes them, for the totals."""
+	day = TODAY
+	return [
+		# Alex: two takes on one Stock Entry (two items), a move of one item (both legs), a count.
+		{
+			"user": "a@example.com",
+			"full_name": "Alex Able",
+			"voucher_no": "SE-1",
+			"item_code": "A",
+			"qty_change": -2,
+			"kind": "Take",
+			"posting_date": day,
+		},
+		{
+			"user": "a@example.com",
+			"full_name": "Alex Able",
+			"voucher_no": "SE-1",
+			"item_code": "B",
+			"qty_change": -1,
+			"kind": "Take",
+			"posting_date": day,
+		},
+		{
+			"user": "a@example.com",
+			"full_name": "Alex Able",
+			"voucher_no": "SE-2",
+			"item_code": "A",
+			"qty_change": -3,
+			"kind": "Move",
+			"posting_date": day - dt.timedelta(days=2),
+		},
+		{
+			"user": "a@example.com",
+			"full_name": "Alex Able",
+			"voucher_no": "SE-2",
+			"item_code": "A",
+			"qty_change": 3,
+			"kind": "Move",
+			"posting_date": day - dt.timedelta(days=2),
+		},
+		{
+			"user": "a@example.com",
+			"full_name": "Alex Able",
+			"voucher_no": "SR-1",
+			"item_code": "B",
+			"qty_change": -4,
+			"kind": "Count",
+			"posting_date": day - dt.timedelta(days=5),
+		},
+		# Bo: one receipt.
+		{
+			"user": "b@example.com",
+			"full_name": "Bo Baker",
+			"voucher_no": "PR-1",
+			"item_code": "A",
+			"qty_change": 10,
+			"kind": "Receive",
+			"posting_date": day - dt.timedelta(days=1),
+		},
+	]
+
+
+class TestTotalsByPerson(unittest.TestCase):
+	def test_counts_per_person(self):
+		people = rules.by_person(_people_rows(), {"c@example.com": "Cy Cole", "a@example.com": "Alex Able"})
+		self.assertEqual([p["user"] for p in people], ["a@example.com", "b@example.com", "c@example.com"])
+		alex, bo, cy = people
+		self.assertEqual(
+			{
+				k: alex[k]
+				for k in ("saves", "lines", "takes", "receipts", "moves", "counts", "others", "items")
+			},
+			{
+				"saves": 3,
+				"lines": 5,
+				"takes": 2,
+				"receipts": 0,
+				"moves": 1,
+				"counts": 1,
+				"others": 0,
+				"items": 2,
+			},
+		)
+		self.assertEqual(alex["days_active"], 3)
+		self.assertEqual(alex["last_movement"], TODAY)
+		self.assertEqual((bo["saves"], bo["receipts"], bo["full_name"]), (1, 1, "Bo Baker"))
+		# Someone who keeps stock and made nothing is a row of zeros, not a missing row.
+		self.assertEqual(
+			{k: cy[k] for k in ("full_name", "saves", "lines", "takes", "last_movement")},
+			{"full_name": "Cy Cole", "saves": 0, "lines": 0, "takes": 0, "last_movement": None},
+		)
+
+	def test_a_move_seen_from_one_side_is_still_one_move(self):
+		rows = [r for r in _people_rows() if not (r["kind"] == "Move" and r["qty_change"] > 0)]
+		alex = rules.by_person(rows)[0]
+		self.assertEqual(alex["moves"], 1)
+
+	def test_people_with_none_sort_last_by_name(self):
+		people = rules.by_person([], {"z@example.com": "Zed", "y@example.com": "Amy", "x@example.com": ""})
+		self.assertEqual([p["full_name"] for p in people], ["Amy", "x@example.com", "Zed"])
+
+
+class TestTotalsByItem(unittest.TestCase):
+	def test_quantities_per_item(self):
+		items = rules.by_item(_people_rows(), {"A": "Nos", "B": "Ft"})
+		self.assertEqual([i["item_code"] for i in items], ["A", "B"])
+		a, b = items
+		self.assertEqual(
+			{
+				k: a[k]
+				for k in (
+					"stock_uom",
+					"used",
+					"uses",
+					"received",
+					"moved",
+					"counted",
+					"net_change",
+					"people",
+					"lines",
+				)
+			},
+			{
+				"stock_uom": "Nos",
+				"used": 2.0,
+				"uses": 1,
+				"received": 10.0,
+				"moved": 3.0,
+				"counted": 0.0,
+				"net_change": 8.0,
+				"people": 2,
+				"lines": 4,
+			},
+		)
+		# A count correction is never use: B was used once (1) and counted down by 4.
+		self.assertEqual((b["used"], b["uses"], b["counted"], b["net_change"]), (1.0, 1, -4.0, -5.0))
+
+	def test_a_move_with_only_its_source_leg_shown(self):
+		rows = [r for r in _people_rows() if not (r["kind"] == "Move" and r["qty_change"] > 0)]
+		a = next(i for i in rules.by_item(rows) if i["item_code"] == "A")
+		self.assertEqual(a["moved"], 3.0)
+		self.assertEqual(a["net_change"], 5.0)
+
+	def test_returns(self):
+		rows = [
+			{
+				"item_code": "A",
+				"voucher_no": "PR-2",
+				"qty_change": -2,
+				"kind": "Return to supplier",
+				"user": "a",
+			}
+		]
+		a = rules.by_item(rows)[0]
+		self.assertEqual((a["returned"], a["used"], a["net_change"]), (2.0, 0.0, -2.0))
+
+
+class TestKindsInTheReport(unittest.TestCase):
+	def ledger(self):
+		return [
+			sle("A", -1, after=4, voucher_type="Stock Entry", time="08:00", name="SLE-T"),
+			sle("A", 2, after=6, voucher_type="Stock Entry", time="08:30", name="SLE-H"),
+			sle("A", 5, after=11, voucher_type="Purchase Receipt", time="09:00"),
+			count("A", after=10, time="10:00"),
+		]
+
+	def test_each_row_says_what_it_was(self):
+		ledger = self.ledger()
+		vouchers = {r["name"]: r["voucher_no"] for r in ledger}
+		# The second Stock Entry is one the reader may not see.
+		_reset(ledger=ledger, stock_entries={vouchers["SLE-T"]: "Material Issue"})
+		rows = report.execute({})[1]
+		self.assertEqual([r["kind"] for r in rows], ["Count", "Receive", "Other", "Take"])
+		purpose_reads = [c for c in STATE["get_list"] if c["doctype"] == "Stock Entry"]
+		self.assertEqual(len(purpose_reads), 1)
+		self.assertEqual(
+			sorted(purpose_reads[0]["filters"]["name"][1]), sorted([vouchers["SLE-T"], vouchers["SLE-H"]])
+		)
+
+	def test_the_kind_filter_keeps_one(self):
+		ledger = self.ledger()
+		_reset(ledger=ledger, stock_entries={ledger[0]["voucher_no"]: "Material Issue"})
+		rows = report.execute({"kind": "Take"})[1]
+		self.assertEqual([r["qty_change"] for r in rows], [-1])
+		# The count still works out its change from the whole ledger.
+		counted = report.execute({"kind": "Count"})[1]
+		self.assertEqual([r["qty_change"] for r in counted], [-1])
+		# An unknown kind is no filter.
+		self.assertEqual(len(report.execute({"kind": "Juggling"})[1]), 4)
+
+	def test_no_stock_entries_no_purpose_read(self):
+		_reset(ledger=[sle("A", 5, voucher_type="Purchase Receipt")])
+		report.execute({})
+		self.assertEqual([c["doctype"] for c in STATE["get_list"]], ["Stock Ledger Entry"])
+
+
+class TestRoomOrRack(unittest.TestCase):
+	def test_a_room_includes_every_shelf_under_it_and_says_where(self):
+		_reset(
+			ledger=[
+				sle("A", -1, warehouse="Shelf NR1-1 - X", time="08:00"),
+				sle("B", -2, warehouse="Shelf NR1-2 - X", time="09:00"),
+				sle("C", -3, warehouse="Bin A1 - X", time="10:00"),
+			],
+			descendants={"Atrium - X": ["North Rack 1 - X", "Shelf NR1-1 - X", "Shelf NR1-2 - X"]},
+			warehouses=TREE,
+		)
+		rows = report.execute({"warehouse": "Atrium - X"})[1]
+		self.assertEqual([r["item_code"] for r in rows], ["B", "A"])
+		self.assertEqual({r["where"] for r in rows}, {"Atrium › North Rack 1"})
+		everything = report.execute({})[1]
+		self.assertEqual({r["item_code"]: r["where"] for r in everything}["C"], "")
+
+	def test_the_location_filter_is_labeled_for_rooms_and_racks(self):
+		text = REPORT_JS.read_text(encoding="utf-8")
+		block = text[text.index('fieldname: "warehouse"') : text.index('fieldname: "project"')]
+		self.assertIn("room, rack or bin", block)
+
+
+class TestProjectFilter(unittest.TestCase):
+	def ledger(self):
+		return [
+			# Tagged with the job: a take at a shop bin, a receipt onto the Project Shelf.
+			sle("A", -1, warehouse="Bin A1 - X", project="PRJ-90001", time="08:00"),
+			sle("B", 4, warehouse=SHELF, project="PRJ-90001", voucher_type="Purchase Receipt", time="08:10"),
+			# At the job's site with no tag: a count there is still the job's movement.
+			count("C", after=2, warehouse=SITE, time="08:20"),
+			# Another job, and untagged shop stock: never the job's.
+			sle("D", -1, warehouse="Bin A1 - X", project="PRJ-80000", time="08:30"),
+			sle("E", -1, warehouse="Bin A1 - X", time="08:40"),
+			count("F", after=1, warehouse=SHELF, time="08:50"),
+		]
+
+	def test_rows_carrying_the_job_and_everything_at_its_site(self):
+		_reset(ledger=self.ledger(), warehouses=TREE)
+		rows = report.execute({"project": "PRJ-90001"})[1]
+		self.assertEqual(sorted(r["item_code"] for r in rows), ["A", "B", "C"])
+		call = STATE["get_list"][0]
+		self.assertNotIn("project", call["filters"])
+		self.assertEqual(call["or_filters"], [["project", "=", "PRJ-90001"], ["warehouse", "in", [SITE]]])
+		self.assertEqual({r["project"] for r in rows if r["item_code"] != "C"}, {"PRJ-90001"})
+
+	def test_the_other_filters_still_narrow_both_halves(self):
+		_reset(ledger=self.ledger(), warehouses=TREE)
+		rows = report.execute({"project": "PRJ-90001", "warehouse": SHELF})[1]
+		self.assertEqual([r["item_code"] for r in rows], ["B"])
+		rows = report.execute({"project": "PRJ-90001", "item_code": "C"})[1]
+		self.assertEqual([r["item_code"] for r in rows], ["C"])
+
+	def test_a_job_without_a_site_is_a_plain_condition(self):
+		_reset(ledger=self.ledger(), warehouses=TREE)
+		rows = report.execute({"project": "PRJ-80000"})[1]
+		self.assertEqual([r["item_code"] for r in rows], ["D"])
+		call = STATE["get_list"][0]
+		self.assertEqual(call["filters"]["project"], "PRJ-80000")
+		self.assertNotIn("or_filters", call)
+
+	def test_before_the_site_field_exists(self):
+		for state in (False, "raise"):
+			with self.subTest(site_column=state):
+				_reset(ledger=self.ledger(), warehouses=TREE, site_column=state)
+				rows = report.execute({"project": "PRJ-90001"})[1]
+				self.assertEqual(sorted(r["item_code"] for r in rows), ["A", "B"])
+				self.assertFalse(any(c["doctype"] == "Warehouse" and c["pluck"] for c in STATE["get_all"]))
+
+	def test_no_project_reads_no_sites(self):
+		_reset(ledger=self.ledger(), warehouses=TREE)
+		report.execute({})
+		self.assertFalse(any(c.get("pluck") for c in STATE["get_all"]))
+		self.assertNotIn("or_filters", STATE["get_list"][0])
+
+
+STAFF = {
+	"a@example.com": {"full_name": "Alex Able", "enabled": 1, "user_type": "System User"},
+	"b@example.com": {"full_name": "Bo Baker", "enabled": 1, "user_type": "System User"},
+	"c@example.com": {"full_name": "Cy Cole", "enabled": 1, "user_type": "System User"},
+	"gone@example.com": {"full_name": "Gone Away", "enabled": 0, "user_type": "System User"},
+	"triton@sapphirefountains.com": {"full_name": "Service", "enabled": 1, "user_type": "System User"},
+	"Administrator": {"full_name": "Administrator", "enabled": 1, "user_type": "System User"},
+}
+ROLES = [
+	("a@example.com", "Stock User"),
+	("b@example.com", "Stock Manager"),
+	("c@example.com", "Inventory Clerk"),
+	("c@example.com", "Stock User"),
+	("gone@example.com", "Stock User"),
+	("triton@sapphirefountains.com", "Stock Manager"),
+	("Administrator", "Stock Manager"),
+	("d@example.com", "Sales User"),
+]
+
+
+class TestByPersonView(unittest.TestCase):
+	def setUp(self):
+		_reset(
+			ledger=[
+				sle("A", -1, owner="a@example.com", time="08:00", voucher_type="Stock Entry"),
+				sle("B", 2, owner="a@example.com", time="09:00", voucher_type="Purchase Receipt"),
+				sle("A", -1, owner="outsider@example.com", time="10:00", voucher_type="Stock Entry"),
+			],
+			users={
+				"a@example.com": "Alex Able",
+				"outsider@example.com": "Out Sider",
+				"b@example.com": "Bo Baker",
+			},
+			has_role=ROLES,
+			user_rows=STAFF,
+		)
+		STATE["stock_entries"] = {
+			r["voucher_no"]: "Material Issue" for r in STATE["ledger"] if r["voucher_type"] == "Stock Entry"
+		}
+
+	def test_everyone_who_keeps_stock_is_listed_with_zeros(self):
+		columns, people, message, chart, summary = report.execute({"view": "By person"})
+		names = [p["full_name"] for p in people]
+		# Movers first (most saves); then the people who keep stock and made none, by name. The
+		# disabled account, the service account and Administrator are not listed.
+		self.assertEqual(names, ["Alex Able", "Out Sider", "Bo Baker", "Cy Cole"])
+		alex = people[0]
+		self.assertEqual((alex["saves"], alex["takes"], alex["receipts"]), (2, 1, 1))
+		self.assertEqual(people[2]["saves"], 0)
+		self.assertEqual({c["fieldname"] for c in columns}, set(people[0]))
+		cards = {c["label"]: c["value"] for c in summary}
+		self.assertEqual(cards["People with movements"], 2)
+		self.assertEqual(cards["People with none"], 2)
+		self.assertEqual(cards["Saves"], 3)
+		self.assertEqual(cards["Ledger lines"], 3)
+		user_column = next(c for c in columns if c["fieldname"] == "user")
+		self.assertEqual(user_column["fieldtype"], "Data")
+
+	def test_a_user_filter_lists_that_person_even_with_none(self):
+		people = report.execute({"view": "By person", "user": "b@example.com"})[1]
+		self.assertEqual([(p["full_name"], p["saves"]) for p in people], [("Bo Baker", 0)])
+		self.assertFalse(any(c["doctype"] == "Has Role" for c in STATE["get_all"]))
+
+	def test_other_filters_narrow_the_counts_but_keep_the_people(self):
+		people = report.execute({"view": "By person", "kind": "Receive"})[1]
+		self.assertEqual([(p["full_name"], p["saves"]) for p in people][:1], [("Alex Able", 1)])
+		self.assertEqual(len(people), 3)
+
+	def test_the_roles_asked_for(self):
+		report.execute({"view": "By person"})
+		call = next(c for c in STATE["get_all"] if c["doctype"] == "Has Role")
+		self.assertEqual(set(call["filters"]["role"][1]), {"Stock User", "Stock Manager", "Inventory Clerk"})
+
+
+class TestByItemView(unittest.TestCase):
+	def test_one_row_per_item_in_its_unit(self):
+		ledger = [
+			sle("A", -2, after=8, voucher_type="Stock Entry", time="08:00"),
+			sle("A", -1, after=7, voucher_type="Stock Entry", time="09:00"),
+			sle("B", 6, voucher_type="Purchase Receipt", time="09:30"),
+			count("B", after=5, time="10:00"),
+		]
+		_reset(
+			ledger=ledger,
+			items={"A": "Pump", "B": "Nozzle"},
+			uoms={"A": "Nos", "B": "Ft"},
+			stock_entries={
+				r["voucher_no"]: "Material Issue" for r in ledger if r["voucher_type"] == "Stock Entry"
+			},
+		)
+		columns, items, message, chart, summary = report.execute({"view": "By item"})
+		self.assertEqual([i["item_code"] for i in items], ["A", "B"])
+		a, b = items
+		self.assertEqual((a["item_name"], a["stock_uom"], a["used"], a["uses"]), ("Pump", "Nos", 3.0, 2))
+		self.assertEqual((b["received"], b["counted"], b["used"]), (6.0, -1.0, 0.0))
+		self.assertEqual({c["fieldname"] for c in columns}, set(a))
+		cards = {c["label"]: c["value"] for c in summary}
+		self.assertEqual((cards["Items moved"], cards["Items used"], cards["Ledger lines"]), (2, 1, 4))
+		self.assertEqual(next(c for c in columns if c["fieldname"] == "item_code")["options"], "Item")
+
+	def test_the_movements_view_is_the_default(self):
+		_reset(ledger=[sle("A", -1)])
+		for view in (None, "", "Movements", "nonsense"):
+			with self.subTest(view=view):
+				columns = report.execute({"view": view})[0]
+				self.assertEqual(columns, report.get_columns())
 
 
 if __name__ == "__main__":
