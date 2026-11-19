@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.831.0] - 2026-11-19
+
+### Added
+
+- **New Service jobs are numbered `SRV-#####` and new Events jobs `EVT-#####`.** Design, Build and
+  every other type keep `PRJ-#####`. At the 2026-11-19 Weekly Operations Review, James said 35 open
+  Service projects make the design/build backlog look bigger than it is, and Nik picked these
+  prefixes. **Only new jobs change.** No Project is renamed, so the 35 open Service and 3 open Events
+  projects keep their PRJ numbers.
+  - **How it works.** Production doesn't name Projects from the naming series. It uses one Document
+    Naming Rule: prefix `PRJ-`, no conditions, priority 0, counter 787. `tabSeries` has no `PRJ-` row
+    at all. Frappe tries a doctype's rules highest priority first, and the first rule whose
+    conditions match names the document. A new patch, `patches/seed_job_prefix_naming_rules`, adds
+    two rules with priority 10: `SRV-` when `project_type = Service`, and `EVT-` when
+    `project_type = Events`. Nothing runs at naming time.
+  - **Numbering.** Each prefix counts on its own. The first new Service job is **SRV-00101**, the
+    first Events job EVT-00001, and PRJ- carries on from 787.
+    - SRV- starts after 100 because QuickBooks already holds ten old customer-jobs of its own named
+      SRV-00000 to SRV-00015 (checked on prod), and a person should never mistake one of those for a
+      new job. QuickBooks has no EVT- names.
+    - A rule keeps and locks its own counter, so this needs no code and can't give two jobs one
+      name. One shared count would need our own naming code in place of Frappe's rules.
+    - The cost: a bare number such as "12" can now mean up to three jobs. Desk search shows all of
+      them: "12", "project 12" or "job 12" look under PRJ-, SRV- and EVT-, and "SRV 12",
+      "service 12" or "EVT 12" narrows the search.
+  - **When the prefix is picked.** Once, when the Project is created. A type set or changed later
+    never renames the job, because a rename would orphan the Drive folder, the QuickBooks job, the
+    visit numbers and people's notes. Reports and the Projects Dashboard group by type, never by
+    prefix, so a PRJ- Service job still counts as Service.
+  - **Every way a Project is created now gets its type before it is named:**
+    - the Closed Won hand-off (unchanged);
+    - service calls (Service);
+    - rentals' "create project" (Events);
+    - Fountain Move jobs (Service);
+    - Quick Entry (the "Project Stage" field);
+    - the AI tools (the values arrive with the insert).
+  - **Templates.** A new `before_insert` hook, `job_prefixes.fill_type_from_template`, gives a
+    Project with no type its template's type. So a job made from *Service Project Template*,
+    *Service Call* or *Fountain Move* is SRV-, and one from *Rent Project Template* is EVT-. ERPNext
+    copies the template's type too, but in `copy_from_template` during `after_insert`, after the
+    job is named, so without this hook such a job would be typed Service and numbered PRJ-. The
+    hook only fills a blank and never raises.
+  - **Not covered:** the Desk's "Create > Project" from an Opportunity goes through
+    `opportunity_enhancements.make_project`, which imports a `make_project` that ERPNext 16.54
+    doesn't define. That path can't create anything today; it's left for a separate change.
+
+### Fixed
+
+- **Code that reads a job number out of a name now knows SRV- and EVT-, except QuickBooks, which
+  must not.** Every parser was audited:
+  - **QuickBooks job matching stays PRJ-only, on purpose** (`quickbooks_online/core/mapping.py`,
+    `_PRJ_NUMBER_RE`, now commented with the reason).
+    - ERPNext never pushes a job to QuickBooks, so a new SRV- or EVT- job can never have a QBO
+      counterpart.
+    - QuickBooks does hold ten old customer-jobs named SRV-00000 to SRV-00015, for example
+      "Wasatch Retail & Hospitality:SRV-00003 - 4-17-13", each linked to its parent Customer.
+    - A prefix-aware matcher would have linked QBO job 1504 to a new SRV-00003 at confidence 95,
+      and the remediation's invoice tagging could then have stamped that customer's invoices and
+      GL rows with an unrelated project.
+    - Two tests pin it: "SRV-00003 - 4-17-13" yields no number, and `_match_project` never runs
+      the number query for it.
+  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Riverton Splash Pad"
+    now matches "Riverton Splash Pad" the way a PRJ- folder does. "Service" and "Events" are never taken
+    for a job number.
+  - **Desk search.** A word for a job ("p", "proj", "project" and now "job") looks under all
+    three prefixes, so "project 12" finds PRJ-00012, SRV-00012 and EVT-00012. The series' own
+    letters stay in their series ("PRJ-12" only finds PRJ-00012), and SRV, SERVICE, EVT, EVENT and
+    EVENTS are new aliases.
+  - **The Time Kiosk's project picker** placeholder now reads "Search project name or number". The
+    search already matched any part of the name.
+  - **Already prefix-agnostic, unchanged:** visit numbers (`<project>-YYYY-V###`), change orders
+    (`<project>-CO-###`), PO PDF names, Drive folder names, the Project ID mirror, and the kiosk's
+    substring search.
+
+### Deploy notes
+
+- **Migrate effect:** one patch creates the SRV- rule (counter 100, so the first job is SRV-00101)
+  and the EVT- rule (counter 0).
+  - It creates nothing if a rule with that prefix already exists.
+  - It never touches the PRJ- rule or its counter, and never renames or retypes a Project.
+  - It cannot raise: a failure writes one Error Log row and the deploy goes on.
+  - **Check after deploy:** ``SELECT name, prefix, counter, priority FROM `tabDocument Naming Rule`
+    WHERE document_type='Project'`` should show three rules.
+  - No fixtures change.
+- **Note for people:** the Item code family `SRV-###` (POL-0602 service items, three digits) shares
+  the letters with the new `SRV-#####` job numbers (five digits). They are different doctypes and
+  don't clash, but people may confuse them.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
