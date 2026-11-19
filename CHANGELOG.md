@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.831.0] - 2026-11-19
+
+### Added
+
+- **New Service jobs are numbered `SRV-#####` and new Events jobs `EVT-#####`.** Design, Build and
+  every other type keep `PRJ-#####`. At the 2026-11-19 Weekly Operations Review, James said 35 open
+  Service projects make the design/build backlog look bigger than it is, and Nik picked these
+  prefixes. **Only new jobs change.** No Project is renamed, so the 35 open Service and 3 open Events
+  projects keep their PRJ numbers.
+  - **How it works.** Production doesn't name Projects from the naming series. It uses one Document
+    Naming Rule: prefix `PRJ-`, no conditions, priority 0, counter 787. `tabSeries` has no `PRJ-` row
+    at all. Frappe tries a doctype's rules highest priority first, and the first rule whose
+    conditions match names the document. A new patch, `patches/seed_job_prefix_naming_rules`, adds
+    two rules with priority 10: `SRV-` when `project_type = Service`, and `EVT-` when
+    `project_type = Events`. Nothing runs at naming time.
+  - **Numbering.** Each prefix counts on its own: SRV-00001, EVT-00001, and PRJ- carries on from 787.
+    A rule keeps and locks its own counter, so this needs no code and can't give two jobs one name.
+    One shared count would need our own naming code in place of Frappe's rules.
+    The cost: a bare number such as "12" can now mean up to three jobs. Desk search shows all of
+    them, and "SRV 12", "service 12" or "EVT 12" narrows the search.
+  - **When the prefix is picked.** Once, when the Project is created. A type set or changed later
+    never renames the job, because a rename would orphan the Drive folder, the QuickBooks job, the
+    visit numbers and people's notes. Reports and the Projects Dashboard group by type, never by
+    prefix, so a PRJ- Service job still counts as Service.
+  - **Every way a Project is created now gets its type before it is named:**
+    - the Closed Won hand-off (unchanged);
+    - service calls (Service);
+    - rentals' "create project" (Events);
+    - Fountain Move jobs (Service);
+    - Quick Entry (the "Project Stage" field);
+    - the AI tools (the values arrive with the insert).
+  - **Templates.** A new `before_insert` hook, `job_prefixes.fill_type_from_template`, gives a
+    Project with no type its template's type. So a job made from *Service Project Template*,
+    *Service Call* or *Fountain Move* is SRV-, and one from *Rent Project Template* is EVT-. ERPNext
+    never copies the template's type itself. The hook only fills a blank and never raises.
+
+### Fixed
+
+- **Code that reads a job number out of a name now knows SRV- and EVT-.** Every parser was audited.
+  These are the ones that would have broken:
+  - **QuickBooks job matching** (`quickbooks_online/core/mapping.py`). A QBO job named "SRV-12 …"
+    would never have linked to SRV-00012. The live sync never creates a Project, so the job would
+    sit unlinked under its customer. `_prj_number` is now `_job_number`, which returns the prefix
+    with the digits. The match pattern carries the prefix, so "SRV-12" can't link PRJ-00012.
+  - **QuickBooks titles.** `strip_prj_prefix` and the title remediation's prefilter now strip SRV-
+    and EVT- numbers too, from one shared `JOB_PREFIXES` list.
+  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Viviano"
+    now matches "Viviano" the way "PRJ-00012 Viviano" does. "Service" and "Events" are never taken
+    for a job number.
+  - **Desk search** gains the aliases SRV, SERVICE, EVT, EVENT and EVENTS.
+  - **The Time Kiosk's project picker** placeholder now reads "Search project name or number". The
+    search already matched any part of the name.
+  - **Already prefix-agnostic, unchanged:** visit numbers (`<project>-YYYY-V###`), change orders
+    (`<project>-CO-###`), PO PDF names, Drive folder names, the Project ID mirror, and the kiosk's
+    substring search.
+
+### Deploy notes
+
+- **Migrate effect:** one patch creates the SRV- and EVT- rules. It creates nothing if a rule with
+  that prefix already exists, never touches the PRJ- rule or its counter, never renames or retypes a
+  Project, and cannot raise. No fixtures change.
+- **Note for people:** the Item code family `SRV-###` (POL-0602 service items, three digits) shares
+  the letters with the new `SRV-#####` job numbers (five digits). They are different doctypes and
+  don't clash, but people may confuse them.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

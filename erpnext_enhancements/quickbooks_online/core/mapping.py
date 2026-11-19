@@ -2993,16 +2993,27 @@ def _is_qbo_customer_job(payload) -> bool:
 	)
 
 
-# Numeric token of a "PRJ-###" label, with any leading zeros dropped, so a QBO job
-# leaf ("PRJ-401 ...") matches an ERPNext project id ("PRJ-00401") -- both reduce to
-# "401". Case-insensitive; tolerates the optional hyphen ("PRJ419").
-_PRJ_NUMBER_RE = re.compile(r"PRJ-?0*(\d+)", re.IGNORECASE)
+# The prefixes an ERPNext job number carries: PRJ- for every Project until 2026-11-19, and since
+# v1.831.0 SRV- for a new Service job and EVT- for a new Events job (Nik's pick at that day's Ops
+# Review; project_enhancements/job_prefixes.py). One alternation, kept here so the matcher, the
+# title stripper and the title remediation's prefilter cannot drift apart.
+JOB_PREFIXES = ("PRJ", "SRV", "EVT")
+_JOB_PREFIX_ALT = "|".join(JOB_PREFIXES)
+
+# Prefix and numeric token of a "PRJ-###" (or SRV-/EVT-) label, with any leading zeros dropped, so
+# a QBO job leaf ("PRJ-401 ...") matches an ERPNext project id ("PRJ-00401") -- both reduce to
+# ("PRJ", "401"). Case-insensitive; tolerates the optional hyphen ("PRJ419"). The prefix is part of
+# the answer because the three count separately: SRV-00012 and PRJ-00012 are different jobs.
+_JOB_NUMBER_RE = re.compile(rf"({_JOB_PREFIX_ALT})-?0*(\d+)", re.IGNORECASE)
 
 
-def _prj_number(text) -> str | None:
-	"""Return the digits of a 'PRJ-###' token in ``text`` (zero-padding stripped), or None."""
-	match = _PRJ_NUMBER_RE.search(text or "")
-	return match.group(1) if match else None
+def _job_number(text) -> tuple[str, str] | None:
+	"""Return ``(prefix, digits)`` of the first PRJ-/SRV-/EVT-### token in ``text``, or None.
+
+	The prefix comes back upper case and the digits without their zero-padding.
+	"""
+	match = _JOB_NUMBER_RE.search(text or "")
+	return (match.group(1).upper(), match.group(2)) if match else None
 
 
 # A QBO job's DisplayName mirrors the ERPNext project it belongs to and is prefixed
@@ -3013,7 +3024,8 @@ def _prj_number(text) -> str | None:
 # the title can be stripped clean. Anchored to the start; the optional separator and
 # zero-padding tolerate every format the data carries ("PRJ-96", "PRJ00097",
 # "PRJ-111 District ...").
-_PRJ_PREFIX_RE = re.compile(r"^\s*PRJ-?0*\d+\s*[-–—:]?\s*", re.IGNORECASE)
+# SRV- and EVT- numbers (v1.831.0) are stripped the same way.
+_PRJ_PREFIX_RE = re.compile(rf"^\s*(?:{_JOB_PREFIX_ALT})-?0*\d+\s*[-–—:]?\s*", re.IGNORECASE)
 
 
 def strip_prj_prefix(text):
@@ -4870,23 +4882,26 @@ def _match_project(payload, settings):
 
 	Sapphire's QBO jobs are named after ERPNext projects (e.g. ``PRJ-401 ...``), so the
 	number links the bulk of them to the existing project. ERPNext ids are zero-padded
-	(``PRJ-00401``), which ``_prj_number`` normalises, so the regexp matches both
+	(``PRJ-00401``), which ``_job_number`` normalises, so the regexp matches both
 	``name`` and ``project_name``. A unique hit is a high-confidence match; multiple
 	hits are ambiguous (manual review). With no number it falls back to an exact
 	``project_name`` under the resolved parent customer.
 	"""
 	leaf = payload.get("DisplayName") or _display_name(payload)
-	number = _prj_number(leaf)
-	if number:
-		# ``number`` is digits-only (from _prj_number); the pattern is bound as a
-		# parameter, never string-built into the SQL. The boundary keeps "401" from
-		# matching "4010".
+	found = _job_number(leaf)
+	if found:
+		# ``prefix`` is one of JOB_PREFIXES and ``number`` digits only (both from
+		# _job_number), so the pattern is safe; it is bound as a parameter, never
+		# string-built into the SQL. The boundary keeps "401" from matching "4010", and
+		# the prefix keeps "SRV-12" from linking PRJ-00012 (v1.831.0: each prefix counts
+		# on its own, so the same number is a different job under each).
+		prefix, number = found
 		names = [
 			row.name
 			for row in frappe.db.sql(
 				"""select name from `tabProject`
 				   where name regexp %(pat)s or project_name regexp %(pat)s""",
-				{"pat": f"PRJ-?0*{number}([^0-9]|$)"},
+				{"pat": f"{prefix}-?0*{number}([^0-9]|$)"},
 				as_dict=True,
 			)
 		]

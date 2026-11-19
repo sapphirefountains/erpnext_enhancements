@@ -258,6 +258,12 @@ class TestParse(unittest.TestCase):
 			"quote 17": ("QTN", "17"),
 			"contract 3": ("MNT-CON", "3"),
 			"TASK-12": ("TASK", "12"),
+			# v1.831.0: new Service and Events jobs are SRV-##### and EVT-#####.
+			"SRV-12": ("SRV", "12"),
+			"service 12": ("SRV", "12"),
+			"evt 3": ("EVT", "3"),
+			"event 3": ("EVT", "3"),
+			"events 3": ("EVT", "3"),
 		}
 		for txt, (prefix, number) in cases.items():
 			p = NS["parse_query"](txt)

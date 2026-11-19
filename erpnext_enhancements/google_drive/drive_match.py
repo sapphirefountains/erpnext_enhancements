@@ -32,8 +32,11 @@ TIER_LOW = 50
 # multi-segment id forms this app mints (e.g. "CRM-OPP-2026-00112"): a keyword,
 # then any run of digits/dashes/colons/spaces — requiring at least one digit so a
 # real word like "Oppenheimer" or "Custom Homes" is never mistaken for an id.
+# srv and evt (v1.831.0): new Service and Events jobs are numbered SRV-##### and
+# EVT-##### (project_enhancements/job_prefixes.py), so their folders lead with it.
+# No word starts "srv" or "evt" and then a digit, so "Service" and "Events" survive.
 _ID_PREFIX = re.compile(
-	r"^(?:prj|crm-opp|opp|cust|hd-?ticket)[\s\-–—:]*\d[\s\-–—:\d]*\s*", re.I
+	r"^(?:prj|srv|evt|crm-opp|opp|cust|hd-?ticket)[\s\-–—:]*\d[\s\-–—:\d]*\s*", re.I
 )
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 

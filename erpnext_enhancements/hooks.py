@@ -813,6 +813,12 @@ doc_events = {
 			# Opportunity ticks it too), so ERPNext's after_insert copies the move tasks in the same
 			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
 			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
+			# Job number prefixes (v1.831.0, Nik 2026-11-19): a Project with no type takes its
+			# template's, because the type is read ONCE, when the Project is named right after these
+			# hooks, to choose SRV- (Service), EVT- (Events) or PRJ- (the Document Naming Rules
+			# patches/seed_job_prefix_naming_rules seeds). After apply_on_insert, which may fill the
+			# template. Only fills a blank, never raises. See project_enhancements/job_prefixes.py.
+			"erpnext_enhancements.project_enhancements.job_prefixes.fill_type_from_template",
 		],
 		"after_insert": [
 			"erpnext_enhancements.process_steps.announce_seeded_steps",

@@ -89,6 +89,14 @@ NUMBER_PREFIXES = {
 	"PRJ": "PRJ",
 	"PROJ": "PRJ",
 	"PROJECT": "PRJ",
+	# New Service and Events jobs are SRV-##### and EVT-##### (v1.831.0, job_prefixes.py). "SRV 12"
+	# and "EVT 12" already reach them as typed; these let the word find them too. A bare number
+	# finds a job under every prefix, because each prefix counts on its own.
+	"SRV": "SRV",
+	"SERVICE": "SRV",
+	"EVT": "EVT",
+	"EVENT": "EVT",
+	"EVENTS": "EVT",
 	"O": "OPP",
 	"OPP": "OPP",
 	"OPPORTUNITY": "OPP",
