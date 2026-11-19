@@ -2662,6 +2662,10 @@ jinja = {
 		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
 		"erpnext_enhancements.water_engineering.packet.we_standard_notes",
 		"erpnext_enhancements.water_engineering.packet.we_standard_details",
+		# A stored drawing (SVG text) reduced to the elements and attributes the module's own
+		# drawing code emits, or "" when it is not one well-formed SVG: every Water Feature Design
+		# format and the packet place a drawing only through it (water_engineering/svg_safe.py).
+		"erpnext_enhancements.water_engineering.svg_safe.we_safe_svg",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO

@@ -44,6 +44,8 @@ PACKET_PF = prints.PF_PACKET
 # text is escaped here with `|e` (prints.py hands over plain Unicode, so an ampersand prints once).
 # frappe renders with DebugUndefined, which PRINTS a missing name with its braces, so every value
 # printed here is a key prints.py always sets; optional keys are only ever tested in an `if`.
+# A drawing is the one block printed as markup, and only after `we_safe_svg` (svg_safe.clean_svg) has
+# reduced it to the SVG this module draws; the standard details' drawings go through it the same way.
 _H3 = f"margin:12px 0 4px;font-size:13px;font-weight:700;color:{ps.DEEP_SEA_BLUE};page-break-after:avoid"
 _HEADING = (f"margin:18px 0 6px;padding-top:6px;border-top:2px solid {ps.DEEP_SEA_BLUE};font-size:14px;font-weight:700;"
             f"color:{ps.DEEP_SEA_BLUE};page-break-after:avoid")
@@ -82,7 +84,8 @@ BLOCK_MACRO = (
     '<td style="' + ps.TD + ';{{ f.style }}">{{ f.value|e }}</td></tr>{% endfor %}</table>'
     '{%- else %}<p style="' + _EMPTY + '">{{ b.empty|e }}</p>{% endif -%}'
     "{%- elif b.kind == 'drawing' -%}"
-    '{%- if b.svg %}<div class="we-drawing" style="page-break-inside:avoid;margin:0 0 8px;text-align:center">{{ b.svg }}</div>'
+    "{%- set svg = we_safe_svg(b.svg) if b.svg else '' -%}"
+    '{%- if svg %}<div class="we-drawing" style="page-break-inside:avoid;margin:0 0 8px;text-align:center">{{ svg }}</div>'
     '{%- else %}<p style="' + _EMPTY + '">{{ b.empty|e }}</p>{% endif -%}'
     "{%- elif b.kind == 'list' -%}"
     '{%- if b.entries %}<table style="' + _TABLE + '">{% for i in b.entries %}<tr>'
@@ -371,7 +374,7 @@ PACKET_DETAILS_HTML = (
     + "{% for row in details|batch(2) %}<tr>{% for d in row %}"
     + '<td style="width:50%;vertical-align:top;padding:6px !important;page-break-inside:avoid">'
     + f'<div style="{ps.LABEL};margin-bottom:4px">{{{{ (d.title or d.detail_key)|e }}}}</div>'
-    + f'<div class="we-drawing" style="border:1px solid {ps.BORDER_100};padding:6px">{{{{ d.svg }}}}</div></td>'
+    + f'<div class="we-drawing" style="border:1px solid {ps.BORDER_100};padding:6px">{{{{ we_safe_svg(d.svg) }}}}</div></td>'
     + "{% endfor %}</tr>{% endfor %}</table>"
 )
 

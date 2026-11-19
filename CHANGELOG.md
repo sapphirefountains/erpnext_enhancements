@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.6] - 2026-11-19
+
+### Changed
+
+- **Water Feature Design drawings print only as the SVG the Fountain Designer draws (hardening).** A
+  design keeps its drawings as SVG text (the charts in `results_json`, and each Standard Detail's
+  `svg`), and the print formats and the submittal packet place that text in their HTML. Each drawing
+  now passes `water_engineering/svg_safe.clean_svg` first:
+  - **An allowlist built from the module's own drawing code.** It keeps only the elements and
+    attributes `engine/drawings.py` (which the electrical and controls packages draw through) and the
+    seeded Standard Details emit, `style` on the root with only `max-width` and `font-family`, and a
+    reference only as a same-drawing `url(#id)`; everything else is dropped, an element together with
+    its content. Text and attribute values are written back escaped.
+  - **It fails closed.** Text that is not one well-formed SVG root (malformed, a DOCTYPE, anything
+    after the root, too long) prints the drawing's "nothing to show" sentence, never the original.
+  - **Standard library only** (`xml.etree`), as the host installs no packages.
+  - **Every print path uses it.** The formats and the packet call the new Jinja method `we_safe_svg`
+    (`hooks.py`), and `prints.drawing`, `we_circulation_schematic`, `we_electrical_oneline` and
+    `we_standard_details` call `clean_svg` too, so a drawing stored by an earlier release is held to
+    the same list when it is printed.
+  - The drawings the derive makes print exactly as before: the new suite runs the real derive over
+    four designs and every print drawing and checks that nothing they contain is lost. A Standard
+    Detail someone drew by hand with an element off the list (a `g` group, for one) prints without
+    that part.
+- **Preview Packet opens in a dialog.** The Water Feature Design form's **Submittal > Preview Packet**
+  now shows the packet in a sandboxed frame inside a dialog, where the packet's HTML runs no script and
+  has an origin of its own, instead of writing it into a new window of the site. The dialog's
+  **Print** opens the packet format in frappe's print view, as other formats print. **Generate Packet
+  PDF** is unchanged. A private letterhead image may not show in the preview; it prints.
+- Tests: `tests/test_water_svg_safe.py` (pytest, in the print formats' CI step) runs the allowlist over
+  samples off the list assembled at run time, over the real generator's drawings, and holds every
+  format, the packet helpers and the preview to it. `test_water_prints` registers `we_safe_svg` as
+  frappe does.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
