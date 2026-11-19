@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.832.0] - 2026-11-19
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -294,6 +294,61 @@ Hardening changes released together. Each was written and reviewed as its own pu
   an invoice carrying that note.
 - **Charge Saved Method on the Customer is unchanged**, with the same operator check, and charges a
   held invoice as before.
+- **Time changed or entered by hand now waits for approval before it counts (hardening).** When an
+  employee moves the start or end of their own Job Interval from the Time Kiosk
+  (`update_interval_times`), adds time by hand (`add_manual_interval`) or starts work backdated
+  (`start_backdated`), the interval is marked **Waiting** on a new *Edit Approval* block with who
+  edited it, when, and the start and end before the edit. The same applies to an edit of another
+  person's time by someone who may not approve that person's edits, a Projects Manager included. A
+  change of activity alone moves no hours and does not wait; a time sent back unchanged to the minute
+  is treated as unchanged and the stored value is kept. The rule lives in `workforce/time_edits.py`.
+- **Who approves.** The employee's `reports_to` supervisor (an enabled user), or anyone holding HR
+  Manager or System Manager (`time_edits.may_approve`), and never the employee or the person who made
+  the edit. Projects Manager is not an approver of hand edits. This is its own rule: the Time
+  Correction Request gate (`permissions.can_review`) is unchanged. An employee with no supervisor, or
+  whose supervisor's login is disabled, is decided by HR Manager or System Manager. An approver's edit
+  to someone else's time needs no approval and settles a waiting one as approved; an approver's edit
+  to their own time still waits.
+- **The approver is told when an entry starts waiting**, once per waiting spell (a Sent Back entry
+  edited again starts a new one): a bell notification that opens the approvals page and one email in
+  the app's email design, saying who, which day, the project, what changed, the reason given and who
+  edited it. It goes to the supervisor, or to the HR Managers when there is no supervisor to tell, and
+  never to the employee or the editor. It is sent from `JobInterval.on_update`, after the save, on
+  every path that can start a wait (the three kiosk endpoints and the Desk form); a refused save tells
+  nobody, and a notice that fails is logged and never fails the edit.
+- **New Desk page: Time Edit Approvals** (`/desk/time-edit-approvals`, Workforce). Stacked cards, one
+  per waiting entry the session user may decide (a supervisor's direct reports, or everyone for HR
+  Manager and System Manager): employee, day, project, the times before and now (or *Added by hand*),
+  the reason given, who edited it and when, with **Approve** and **Send Back** (optional note). It
+  reads through one new endpoint, `time_edits.get_waiting_edits` (GET), which picks the rows on the
+  server by the same rule and returns only what the page shows, so a supervisor needs no read
+  permission on Job Interval. The page opens to Employee, HR Manager and System Manager.
+- **A waiting entry is left out of payroll at the source.** `payroll_export` leaves Waiting and Sent
+  Back intervals out of every total, the overtime split included, and the workbook gains a third
+  sheet, **Waiting for Approval** (employee, day, hours, status, what changed, reason, who edited),
+  marked as not part of the submission; the provider sheet's columns are unchanged. The Payroll Hours
+  Export report lists the same entries above its table. `sync_interval_to_timesheet` writes no
+  Timesheet line for a held interval (its `sync_status` reads `Held - Not Approved`, a new option),
+  so it is not submitted with the day and does not reach a project's labour actuals; an edit to an
+  interval that already had a Draft line takes that line off until the edit is approved.
+- **Approve Edit / Send Back on the Job Interval form too.** `approve_time_edit` and
+  `send_back_time_edit` (both POST; the decider comes from the session) accept an approver who is
+  neither the interval's employee nor the person who made the edit, record who and when with an
+  optional note, and re-sync the Timesheet line. Sending back restores nothing: the entry stays out
+  and the employee is emailed. The form shows what changed and draws the buttons only for a reader
+  who may decide. The kiosk's My Day rows read *Waiting for approval* or *Sent back*, and the edit
+  toast says when an edit waits.
+- **The Job Interval form follows the same rule.** A save made through the DocType's own write
+  permission (the Desk form, the REST resource) is checked in `JobInterval.validate`
+  (`time_edits.guard_direct_save`). A change to the employee, start, end or paused time is a hand
+  edit and waits on the same terms, an interval entered there for oneself waits, and the *Edit
+  Approval* fields keep their stored values whatever the save sent. When the save changes whether
+  the interval is held, `on_update` re-syncs its Timesheet line. Saves by this app's endpoints, the
+  sweeper and an approved correction are not affected: they save with `ignore_permissions`.
+- **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
+  existing row reads blank, which counts exactly as before. Bench-free suite
+  `tests/test_time_edit_approval.py`, in its own CI step; `tests/test_s3_page_css.py` holds the new
+  page's stylesheet to the design tokens.
 
 ## [1.831.0] - 2026-11-19
 
