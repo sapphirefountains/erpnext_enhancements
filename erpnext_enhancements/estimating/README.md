@@ -98,7 +98,8 @@ as one "Estimating seed: <step>" Error Log that says what to do by hand.
 - **EST-SCOPE keeps a 0 list price.** Prod auto-inserts a missing Item Price from the first
   transaction's rate, which would make the first phase price ever issued the item's list price. The
   seed puts a 0 price on the default list and Issue Quotation adds one on any other list before the
-  insert; a 0 list price never overrides a line's own rate.
+  insert; a 0 list price never overrides a line's own rate. The rows get their rate only after
+  `set_missing_values`: ERPNext's `insert_item_price` runs there and skips only a row with no rate.
 - **An Estimate and its Quotation Link each other**, so `delete_doc` would refuse both. The `on_trash`
   hooks in `links.py` clear the pointing field first (`on_trash` runs before the link check), so either
   can go first.

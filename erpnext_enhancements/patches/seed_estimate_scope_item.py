@@ -26,7 +26,9 @@ def execute():
 		"Item EST-SCOPE",
 		seed.seed_scope_item,
 		"create Item EST-SCOPE (non-stock, sales only, group Service, unit Unit), named "
-		f"{seed.SCOPE_ITEM_NAME!r}.",
+		f"{seed.SCOPE_ITEM_NAME!r}, and give it an Item Price of 0 on the default selling price list "
+		"(Standard Selling). The next step needs the Item and skips without it; Issue Quotation also "
+		"adds the 0 price on the first issue.",
 	)
 	seed.run(
 		"seed_estimate_scope_item",

@@ -690,18 +690,13 @@ export async function copy_rates(frm, card) {
 	draw(frm);
 }
 
-// Save first, and say whether the form is now clean. frm.save() at v16 swallows a server refusal (a
+// Save first, and say whether the form is now clean. frm.save() at v16.56 swallows a server refusal (a
 // cost code the catalog does not know, say) and resolves anyway, so "it resolved" proves nothing: the
 // form is still dirty or new after a failed save, and carrying on would issue the quotation from the
-// last stored version and then reload over the unsaved edits.
+// last stored version and then reload over the unsaved edits. No try/catch: save() never rejects, and a
+// failed mandatory check never settles the promise at all, which leaves the caller waiting harmlessly.
 export async function saved(frm) {
-	if (frm.is_dirty() || frm.is_new()) {
-		try {
-			await frm.save();
-		} catch (e) {
-			return false;
-		}
-	}
+	if (frm.is_dirty() || frm.is_new()) await frm.save();
 	return !(frm.is_dirty() || frm.is_new());
 }
 

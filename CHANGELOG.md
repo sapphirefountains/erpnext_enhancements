@@ -82,12 +82,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Missing" on, so without it the first quotation an Estimate issued would have made the first
     phase's price EST-SCOPE's list price, and every EST-SCOPE line added by hand would default to it. A
     0 list price never overrides a line's own rate, and with "Update Existing Price List Rate" off (as
-    on prod) ERPNext leaves an existing price alone.
+    on prod) ERPNext leaves an existing price alone. The quotation rows carry no rate until after
+    `set_missing_values`, because ERPNext's `insert_item_price` runs there and skips only a row with no
+    rate.
 - **An Estimate and its Quotation can be deleted, either one first.** They Link each other
   (`Estimate.quotation`, `Quotation.custom_estimate`), so `delete_doc` refused both. Their `on_trash`
   hooks (`estimating/links.py`; Quotation's through `doc_events`) clear the pointing field first, since
   `on_trash` runs before the link check. Deleting the quotation sets an "Issued" estimate back to
-  "Draft"; deleting the newest revision makes the one before it editable again.
+  "Draft". Deleting a middle revision points the next one at the one before, so the chain survives.
+  Deleting the newest makes the one before it editable again: "Issued" when its quotation still holds
+  its own prices, "Draft" when the deleted revision had issued onto the same draft quotation.
 - **Issue Quotation and New Revision stop when the save before them fails.** At frappe v16.56
   `frm.save()` swallows a server refusal (a cost code the catalog does not know, say) and resolves
   anyway, so the editor carried on: it issued from the last stored version and then reloaded over

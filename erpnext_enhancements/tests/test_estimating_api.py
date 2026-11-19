@@ -145,6 +145,19 @@ class FakeDoc:
 	def check_permission(self, ptype):
 		self.calls.append(f"check_permission:{ptype}")
 
+	def auto_insert_prices(self):
+		"""ERPNext's insert_item_price with prod's settings (auto-insert on, update-existing off): a row
+		with a rate, on a list with no price for its item, makes an Item Price at that rate. It runs from
+		set_missing_values and again from validate on insert/save."""
+		for item in self.get("items") or []:
+			if not item.get("rate") or not self.selling_price_list:
+				continue
+			key = {"item_code": item["item_code"], "price_list": self.selling_price_list}
+			if not _find("Item Price", key):
+				STORE["Item Price"][f"AUTO-{len(STORE['Item Price']) + 1}"] = dict(
+					key, uom=item.get("stock_uom"), price_list_rate=item["rate"]
+				)
+
 	def run_method(self, method):
 		self.calls.append(method)
 		if self.doctype == "Quotation" and method == "set_missing_values":
@@ -155,11 +168,14 @@ class FakeDoc:
 			if not self.taxes_and_charges:
 				self.taxes_and_charges = "Utah Sales Tax"
 				self.append("taxes", {"charge_type": "On Net Total", "rate": 7.25})
+			self.auto_insert_prices()
 		self.calls.append(f"after:{method}:{len(STORE['Item Price'])}")
 
 	def insert(self, ignore_permissions=False):
 		if self.doctype in FAIL_INSERT:
 			raise ValidationError_(f"{self.doctype} refused")
+		if self.doctype == "Quotation":
+			self.auto_insert_prices()  # validate runs set_missing_values again
 		FakeDoc.counter += 1
 		name = (
 			self.get("item_code")
@@ -177,6 +193,8 @@ class FakeDoc:
 		return self
 
 	def save(self, ignore_permissions=False):
+		if self.doctype == "Quotation":
+			self.auto_insert_prices()
 		STORE[self.doctype][self.name].update(self.__dict__["_f"])
 		self.calls.append("save")
 		return self
@@ -397,6 +415,21 @@ class TestIssueQuotation(unittest.TestCase):
 		self.assertEqual(len(prices), 1)
 		self.assertEqual((prices[0]["price_list"], prices[0]["price_list_rate"], prices[0]["uom"]), ("Standard Selling", 0, "Unit"))
 
+	def test_a_price_list_without_a_price_gets_zero_not_the_first_phase_price(self):
+		# Auto-insert is on (prod): were the rate on the row during set_missing_values, ERPNext would
+		# make "EST-SCOPE / <list>" at 1000 before the zero price could go in.
+		make_estimate()
+		STORE["Singles"][("Selling Settings", "selling_price_list")] = None
+		quotation = FakeDoc("Quotation", selling_price_list="Example Customer List")
+		real_new_doc = sys.modules["frappe"].new_doc
+		sys.modules["frappe"].new_doc = lambda dt, **f: quotation if dt == "Quotation" else real_new_doc(dt, **f)
+		try:
+			issued()
+		finally:
+			sys.modules["frappe"].new_doc = real_new_doc
+		prices = [(p["price_list"], p["price_list_rate"]) for p in STORE["Item Price"].values()]
+		self.assertEqual(prices, [("Example Customer List", 0)])
+
 	def test_a_draft_quotation_is_refreshed_and_a_submitted_one_left_alone(self):
 		make_estimate()
 		first, _q = issued()
@@ -527,7 +560,7 @@ class TestDeleteLinks(unittest.TestCase):
 		self.assertEqual(STORE["Estimate"]["EST-2"]["status"], "Draft")
 		self.assertEqual(STORE["Estimate"]["EST-3"]["quotation"], "QTN-2")
 
-	def test_deleting_the_estimate_unlinks_its_quotations_and_revisions(self):
+	def test_deleting_the_estimate_unlinks_its_quotations_and_keeps_the_revision_chain(self):
 		STORE["Quotation"] = {"QTN-1": {"custom_estimate": "EST-2", "docstatus": 1}, "QTN-2": {"custom_estimate": "EST-9"}}
 		STORE["Estimate"] = {
 			"EST-1": {"status": "Superseded", "quotation": "QTN-0"},
@@ -537,8 +570,25 @@ class TestDeleteLinks(unittest.TestCase):
 		links.release_estimate(FakeDoc("Estimate", name="EST-2", status="Superseded", previous_revision="EST-1"))
 		self.assertIsNone(STORE["Quotation"]["QTN-1"]["custom_estimate"])
 		self.assertEqual(STORE["Quotation"]["QTN-2"]["custom_estimate"], "EST-9")
-		self.assertIsNone(STORE["Estimate"]["EST-3"]["previous_revision"])
+		self.assertEqual(STORE["Estimate"]["EST-3"]["previous_revision"], "EST-1")  # the chain survives
 		self.assertEqual(STORE["Estimate"]["EST-1"]["status"], "Superseded")  # not the newest: untouched
+		# ...so deleting the newest next still reopens the first
+		links.release_estimate(FakeDoc("Estimate", name="EST-3", status="Draft", previous_revision="EST-1"))
+		self.assertEqual(STORE["Estimate"]["EST-1"]["status"], "Issued")
+
+	def test_a_draft_quotation_repriced_by_the_deleted_revision_reopens_as_draft(self):
+		# A new revision takes over the old one's draft quotation; issuing it put the new prices on it.
+		STORE["Estimate"] = {"EST-1": {"status": "Superseded", "quotation": "QTN-1"}}
+		links.release_estimate(
+			FakeDoc("Estimate", name="EST-2", status="Issued", quotation="QTN-1", previous_revision="EST-1")
+		)
+		self.assertEqual(STORE["Estimate"]["EST-1"], {"status": "Draft", "quotation": "QTN-1"})
+		# Never issued after the revision: the shared draft still holds EST-1's prices.
+		STORE["Estimate"] = {"EST-1": {"status": "Superseded", "quotation": "QTN-1"}}
+		links.release_estimate(
+			FakeDoc("Estimate", name="EST-2", status="Draft", quotation="QTN-1", previous_revision="EST-1")
+		)
+		self.assertEqual(STORE["Estimate"]["EST-1"]["status"], "Issued")
 
 	def test_deleting_the_newest_revision_reopens_the_one_before(self):
 		STORE["Estimate"] = {

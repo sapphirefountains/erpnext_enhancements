@@ -16,10 +16,15 @@ any *other* record that Links to either one still refuses the delete, as it shou
 * Deleting a **Quotation** (a draft, or a cancelled one) clears ``quotation`` on every Estimate that
   names it, and an estimate that was "Issued" goes back to "Draft", because what it issued is gone.
 * Deleting an **Estimate** clears ``custom_estimate`` on every Quotation that names it, submitted
-  ones included (it is a read-only back-reference, not part of what was quoted), and clears
-  ``previous_revision`` on the revision that followed it, so revisions can be deleted in any order.
-  If it was the newest revision, the one before it is editable again (Superseded becomes Issued when
-  it still has a quotation, else Draft): otherwise deleting the newest would leave nothing editable.
+  ones included (it is a read-only back-reference, not part of what was quoted), and points the
+  revision that followed it at the one before it, so the chain survives and revisions can be deleted
+  in any order.
+* If it was the **newest** revision, the one before it is editable again; otherwise deleting the
+  newest would leave nothing editable. It comes back **Issued** when its quotation still holds its
+  own prices, and **Draft** otherwise: with no quotation, or when the deleted revision had issued
+  onto the same draft quotation (a new revision takes the draft over), because that quotation now
+  holds the deleted revision's prices. The link to that draft is kept, so the next Issue refreshes it
+  rather than leaving a second draft.
 """
 
 import frappe
@@ -47,10 +52,14 @@ def release_estimate(doc):
 	if frappe.get_meta("Quotation").has_field("custom_estimate"):
 		for name in frappe.get_all("Quotation", filters={"custom_estimate": doc.name}, pluck="name"):
 			frappe.db.set_value("Quotation", name, "custom_estimate", None, update_modified=False)
+	prev = doc.get("previous_revision") or None
 	for name in frappe.get_all("Estimate", filters={"previous_revision": doc.name}, pluck="name"):
-		frappe.db.set_value("Estimate", name, "previous_revision", None, update_modified=False)
-	prev = doc.get("previous_revision")
+		frappe.db.set_value("Estimate", name, "previous_revision", prev, update_modified=False)
 	if prev and doc.get("status") != "Superseded":
 		row = frappe.db.get_value("Estimate", prev, ["status", "quotation"], as_dict=True)
 		if row and row.status == "Superseded":
-			frappe.db.set_value("Estimate", prev, "status", "Issued" if row.quotation else "Draft")
+			repriced = (
+				doc.get("status") == "Issued" and row.quotation and row.quotation == doc.get("quotation")
+			)
+			issued = row.quotation and not repriced
+			frappe.db.set_value("Estimate", prev, "status", "Issued" if issued else "Draft")

@@ -161,7 +161,10 @@ def issue_quotation(estimate):
 				"uom": item.stock_uom,
 				"stock_uom": item.stock_uom,
 				"conversion_factor": 1,
-				"rate": row["amount"],
+				# No "rate" yet, on purpose: set_missing_values passes each row to ERPNext's
+				# insert_item_price, which (auto-insert on, as on prod) makes an Item Price at the row's
+				# rate on any list without one, and skips only when the rate is empty. The rate is set
+				# below, after _hold_zero_price has put a 0 price on the quotation's list.
 			},
 		)
 	quotation.set("taxes", [])
