@@ -1,0 +1,209 @@
+{
+ "actions": [],
+ "creation": "2026-11-18 12:00:00.000000",
+ "description": "How product orders are built, numbered, tested and shipped: the build warehouses, the serial number series, the warranty and the pre-shipment test.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "build_section",
+  "build_help",
+  "make_work_orders",
+  "build_warehouse",
+  "wip_warehouse",
+  "column_break_build",
+  "finished_warehouse",
+  "serial_section",
+  "serial_no_series",
+  "column_break_serial",
+  "warranty_days",
+  "test_section",
+  "test_help",
+  "require_test",
+  "test_template"
+ ],
+ "fields": [
+  {
+   "fieldname": "build_section",
+   "fieldtype": "Section Break",
+   "label": "Build"
+  },
+  {
+   "fieldname": "build_help",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">When a product Sales Order is submitted, each configured product line gets one Work Order per unit from its Item's default BOM, unless finished units on the shelf cover it. The three warehouses below are empty until you pick them; nothing here is hard-coded.</p><ul class=\"text-muted small\"><li><b>Build warehouse</b>: where the builder picks parts (a Build Room shelf). Empty: each part comes from its own Item Default warehouse.</li><li><b>Work-in-progress warehouse</b>: where parts sit while a unit is being built. Empty: Manufacturing Settings' default, which is empty on this site today.</li><li><b>Finished units warehouse</b>: where a built unit lands and ships from, including the built-ahead units of the common configuration. Product order lines deliver from it too. Empty: the Sales Order line's own warehouse.</li></ul><p class=\"text-muted small\">ERPNext will not start a Work Order without a work-in-progress and a finished warehouse, so until both resolve the Work Orders are left as drafts and the Sales Order says why.</p>"
+  },
+  {
+   "default": "1",
+   "description": "When on, submitting a product Sales Order makes its Work Orders (one per unit to build). Off: use the Sales Order's Make Work Orders button.",
+   "fieldname": "make_work_orders",
+   "fieldtype": "Check",
+   "label": "Make Work Orders When a Product Order Is Submitted"
+  },
+  {
+   "description": "Where the builder picks parts from, for example a Build Room shelf.",
+   "fieldname": "build_warehouse",
+   "fieldtype": "Link",
+   "label": "Build Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "description": "Where parts sit while a unit is being built.",
+   "fieldname": "wip_warehouse",
+   "fieldtype": "Link",
+   "label": "Work-in-Progress Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "column_break_build",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Where finished units land and ship from, including the built-ahead units of the common configuration.",
+   "fieldname": "finished_warehouse",
+   "fieldtype": "Link",
+   "label": "Finished Units Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "serial_section",
+   "fieldtype": "Section Break",
+   "label": "Serial Numbers and Warranty"
+  },
+  {
+   "default": "SF-.YY.-.#####",
+   "description": "The series configured Items count their serial numbers in. SF-.YY.-.##### gives SF-26-00001. An Item keeps the series it was given; this only fills a blank one.",
+   "fieldname": "serial_no_series",
+   "fieldtype": "Data",
+   "label": "Serial Number Series"
+  },
+  {
+   "fieldname": "column_break_serial",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "365",
+   "description": "Parts and labor at the shop, from the delivery date. Filled into a configured Item's Warranty Period when it is blank; ERPNext sets each serial number's Warranty Expiry Date when it is delivered.",
+   "fieldname": "warranty_days",
+   "fieldtype": "Int",
+   "label": "Warranty (Days)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "test_section",
+   "fieldtype": "Section Break",
+   "label": "Pre-Shipment Test"
+  },
+  {
+   "fieldname": "test_help",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">The test is ERPNext's own Quality Inspection, made against the unit's serial number on the template below. A Delivery Note that ships a configured product can only be submitted when every unit on it has a serial number picked, and the newest submitted test of each serial is Accepted and was signed by someone other than the person who built it. The template's checks are a starter set: edit them on the Quality Inspection Template itself.</p>"
+  },
+  {
+   "default": "1",
+   "description": "Refuse to submit a Delivery Note until every configured product unit on it has passed its test, tested by someone other than its builder. Only a System Manager can change it: either builder could otherwise switch the test off for a unit they built.",
+   "fieldname": "require_test",
+   "fieldtype": "Check",
+   "label": "Require a Passed Test Before Delivery",
+   "permlevel": 1
+  },
+  {
+   "default": "Pre-Shipment Functional Test - E-Stop",
+   "description": "The Quality Inspection Template the test is made on. Configured Items get it as their Quality Inspection Template when theirs is blank. Empty: a test on any template counts. Only a System Manager can change it: either builder could otherwise switch the test off for a unit they built.",
+   "fieldname": "test_template",
+   "fieldtype": "Link",
+   "label": "Pre-Shipment Test Template",
+   "options": "Quality Inspection Template",
+   "permlevel": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-18 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Fulfillment",
+ "name": "Product Build Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Manufacturing Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 0,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Manufacturing User",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "create": 0,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "create": 0,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Quality Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Manufacturing Manager",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Manufacturing User",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 0
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Quality Manager",
+   "write": 0
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

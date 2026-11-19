@@ -359,7 +359,17 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/sales_order_enhancements.js",
+		# v1.828.0 -- product_fulfillment: Make Work Orders on a submitted order with configured
+		# product lines (the same plan its on_submit hook runs; never builds twice).
+		"public/js/product_fulfillment/sales_order.js",
 	],
+	# v1.828.0 -- product_fulfillment: the Build Checklist button and progress headline on a
+	# configured product's Work Order; Print Label and Start Test on a product unit's serial
+	# number; the builder beside Inspected By on its test; the QC gate's verdict on a Delivery Note.
+	"Work Order": ["public/js/product_fulfillment/work_order.js"],
+	"Serial No": ["public/js/product_fulfillment/serial_no.js"],
+	"Quality Inspection": ["public/js/product_fulfillment/quality_inspection.js"],
+	"Delivery Note": ["public/js/product_fulfillment/delivery_note.js"],
 	"Task": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -1105,6 +1115,12 @@ doc_events = {
 	# Proposed Item Code, and accounting_intake.review checks every line first. `validate`
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
+		# v1.828.0 -- product_fulfillment: a configured product kept in stock gets serial numbers
+		# (series from Product Build Settings, default SF-.YY.-.#####), a 365-day warranty period and
+		# the Pre-Shipment Functional Test template, each only where blank. before_validate, so
+		# ERPNext's own Item.validate sees the values (it refuses to change Has Serial No once stock
+		# has moved; this only turns it on for an Item with no stock ledger). Never raises.
+		"before_validate": "erpnext_enhancements.product_fulfillment.serials.prepare_configured_item",
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
 		# v1.809.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
 		# page's memory of it) link to the Item, and Frappe refuses to delete a document that is
@@ -1311,6 +1327,16 @@ doc_events = {
 	"Stock Entry": {
 		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+		# v1.828.0 -- product_fulfillment: a unit's Manufacture entry stamps each serial number it
+		# made with who built it (the Work Order's Built By, else the person submitting) and the
+		# Work Order that made it. The QC gate reads that builder: the tester must be someone else.
+		# Only Manufacture entries against a Work Order; never raises.
+		"on_submit": [
+			"erpnext_enhancements.product_fulfillment.serials.stamp_builders",
+			# v1.828.0 -- a Material Issue that takes out configured units without a passed test says
+			# so (a warning: issuing is also how a failed unit is scrapped). Never raises.
+			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
+		],
 	},
 	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
 	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
@@ -1349,6 +1375,53 @@ doc_events = {
 	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
 	"Delivery Note": {
 		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
+		# v1.828.0 -- product_fulfillment, the QC gate (Nik 2026-11-18): a Delivery Note that ships a
+		# configured product is refused until every unit on it has its serial number picked and the
+		# newest submitted Pre-Shipment Functional Test of each serial is Accepted and signed by
+		# someone other than its builder. Ours, not ERPNext's inspection_required_before_delivery,
+		# which checks one inspection per line and cannot see serials (ADR 0019). Returns pass;
+		# Product Build Settings' Require a Passed Test Before Delivery switches it off.
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.delivery_note_before_submit",
+	},
+	# v1.828.0 -- product_fulfillment (TASK-2026-03229): a configured product line on a submitted
+	# Sales Order gets one Work Order per unit from its Item's default BOM, unless finished units on
+	# the shelf cover it. Made as the system and released at once when a WIP and a finished
+	# warehouse resolve; drafts otherwise. Never stops the order: a failure rolls back to a
+	# savepoint, logs, and the order's Make Work Orders button runs the same plan again (it never
+	# builds twice). validate: a product line on a draft order delivers from Product Build
+	# Settings' finished units warehouse, when one is set. Sales Order had no doc_events before.
+	"Sales Order": {
+		"validate": "erpnext_enhancements.product_fulfillment.build.on_sales_order_validate",
+		"on_submit": "erpnext_enhancements.product_fulfillment.build.on_sales_order_submit",
+	},
+	# v1.828.0 -- product_fulfillment: a new Work Order for a configured product copies its
+	# configuration's build steps into custom_build_steps (the Build Checklist page ticks them),
+	# whoever made it -- our Sales Order hook or ERPNext's own Sales Order > Work Order. A copy,
+	# never a link. Never raises. Work Order had no doc_events before.
+	"Work Order": {
+		"before_insert": "erpnext_enhancements.product_fulfillment.build.fill_checklist",
+		# v1.828.0 -- Built By (custom_built_by) is written only by the Build Checklist's endpoints and
+		# the Manufacture stamp (db.set_value, no save). Any change through a document save -- form,
+		# frappe.client.set_value, REST, import, bulk edit -- is refused unless by a System Manager:
+		# both builders hold Manufacturing Manager, and the field is what stops a builder signing the
+		# test. A submitted Work Order runs before_update_after_submit instead of validate.
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+		"before_update_after_submit": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+	},
+	# v1.828.0 -- the same guard on the unit itself: Serial No.custom_built_by.
+	"Serial No": {
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+	},
+	# v1.828.0 -- product_fulfillment: the Pre-Shipment Functional Test is ERPNext's own Quality
+	# Inspection, one per unit (ADR 0019). Only inspections of configured products are touched.
+	# before_validate names the Stock Entry row that holds the serial, so a re-test after a failure
+	# is not refused as "every row already has a Quality Inspection", and tidies Pass/N/A readings.
+	# validate: the serial is the Item's, the tester is not the builder (refused), one Rejected
+	# reading rejects the unit. before_submit: the person submitting is the tester it names.
+	"Quality Inspection": {
+		"before_validate": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_before_validate",
+		"validate": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_validate",
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_before_submit",
 	},
 	# v1.807.0 -- Supplier Returns: the refund. A submitted Payment Entry that RECEIVES money from
 	# a Supplier and names a Supplier Return's Debit Note (or the already-paid bill that note was
@@ -1780,6 +1853,10 @@ doc_events = {
 		# charged it again on submit. Runs inside the cancel's transaction and never commits
 		# (ERPNext's own before_cancel has written by then); a no-op while Stripe is off.
 		"before_cancel": "erpnext_enhancements.stripe_payments.core.card_element.before_invoice_cancel",
+		# v1.828.0 -- product_fulfillment: the QC gate on an invoice that ships stock itself (Update
+		# Stock ticked). Without it a configured unit could leave on an invoice untested. Does nothing
+		# when Update Stock is off, or on a return.
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.sales_invoice_before_submit",
 	},
 	# ai_governance (FAC 3.0.0 compat): give each of this app's assistant tools the FAC category
 	# its own annotations imply, at the moment FAC inserts its row. FAC seeds every external
@@ -2944,6 +3021,10 @@ after_migrate = [
 	# Create Quotation attaches to the Quotation.
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
+	# product_fulfillment (v1.828.0): the Product Unit Label (Serial No) and the Pre-Shipment Test
+	# Certificate (Quality Inspection). Upserted so template edits deploy; guarded. ABOVE
+	# ensure_chrome_pdf_generator, like the rest.
+	"erpnext_enhancements.product_fulfillment.setup_print_formats.ensure_print_formats",
 	# enhancements_core: the supplier-facing Purchase Order print format. Procurement
 	# has no module of its own (po_approval / po_segregation / procurement_project sit
 	# at the app root) and a Print Format needs a real Module Def, so it lands in the

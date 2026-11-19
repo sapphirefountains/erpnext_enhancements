@@ -51,6 +51,11 @@ REVIEWED_WRITERS = {
 	"Travel Settings": {"System Manager", "Travel Coordinator"},
 	"Water Engineering Settings": {"System Manager", "Water Engineer"},
 	"Time Kiosk Settings": {"HR Manager", "System Manager"},
+	# v1.828.0 (E-Stop build and ship, #1470): Manufacturing Manager writes the build warehouses,
+	# the Work Order switch, the serial series and the warranty. The two fields that could switch the
+	# pre-shipment test off (require_test, test_template) sit at permlevel 1, which only System
+	# Manager writes: both builders hold Manufacturing Manager.
+	"Product Build Settings": {"Manufacturing Manager", "System Manager"},
 }
 
 SETTINGS_DIR = APP_DIR / "enhancements_core" / "doctype" / "erpnext_enhancements_settings"
