@@ -2625,6 +2625,12 @@ jobs:
         run: |
           python -m unittest erpnext_enhancements.tests.test_product_orders -v
           python -m unittest erpnext_enhancements.tests.test_products_tab_endpoint -v
+      # Projects Dashboard bulk edit (v1.835.9): update_multiple_docs accepts only the fields the
+      # dashboard's own grid edits (Project and Task); one other field refuses the whole request.
+      # Runs the endpoint on its own frappe stub (setUpModule, so its own process) and holds the
+      # field lists to the JavaScript that sends them.
+      - name: Projects Dashboard bulk edit fields (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_dashboard_bulk_edit_fields -v
       # Build, test and ship a product unit (v1.828.0, TASK-2026-03229 / -03230). The rules suite is
       # stub-free: the person who built a unit signs its test (or a case difference in the user id lets
       # them), a unit that failed a re-test ships on its old pass, ERPNext's FIFO auto-pick ships an
