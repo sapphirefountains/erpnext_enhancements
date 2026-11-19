@@ -78,6 +78,12 @@ class Site:
 		self.raise_on = None
 		self.default_wip = None
 		self.settings = None  # Product Build Settings; None: the DocType is not installed
+		self.has_priority_column = True  # Sales Order.custom_build_priority (v1.832.0)
+		self.orders = {}  # set_build_priority's view of Sales Orders: name -> {docstatus, priority}
+		self.writes = []
+		self.comments = []
+		self.denied_orders = set()  # orders the person may read but not write
+		self.unsubmittable_orders = set()  # orders the person may write but not submit
 
 	def rows(self, key):
 		return [_Dict(row) for row in self.tables.get(key, [])]
@@ -141,6 +147,8 @@ def _has_column(doctype, column):
 		return SITE.has_source_column
 	if (doctype, column) == ("Quotation", "custom_source_opportunity"):
 		return SITE.has_quote_source_column
+	if (doctype, column) == ("Sales Order", "custom_build_priority"):
+		return SITE.has_priority_column
 	return True
 
 
@@ -347,7 +355,7 @@ class TestAnEmptySite(Base):
 		self.assertEqual(
 			[s["key"] for s in answer["stages"]], ["ordered", "building", "testing", "ready", "delivered"]
 		)
-		self.assertEqual(answer["orders"], {"rows": [], "paid_visible": True, "allowed": True})
+		self.assertEqual(answer["orders"], {"rows": [], "paid_visible": True, "priority_editable": True, "allowed": True})
 		quotations = answer["pipeline"]["quotations"]
 		self.assertEqual(quotations["rows"], [])
 		self.assertIsNone(quotations["win_rate"])
@@ -1024,6 +1032,195 @@ class TestTheTestingColumn(Base):
 	def test_no_private_key_reaches_the_browser(self):
 		for row in self.rows().values():
 			self.assertNotIn("_tested_items", row)
+
+
+class TestBuildPriorityProgressAndEnd(TestTheBoard):
+	"""What a product order shows instead of a job's company and value-stream priority (v1.832.0,
+	the 2026-11-19 Ops Review): a build priority, a percent complete and an expected end."""
+
+	def test_the_build_priority_comes_from_the_sales_order_and_unranked_is_none(self):
+		for header in SITE.tables["so_headers"]:
+			header["build_priority"] = {"SO-1": 2, "SO-3": 1}.get(header["name"], 0)
+		rows = self.rows()
+		self.assertEqual((rows["SO-1"]["build_priority"], rows["SO-3"]["build_priority"]), (2, 1))
+		self.assertIsNone(rows["SO-5"]["build_priority"], "0 on the order is not ranked")
+		self.assertTrue(self.answer()["orders"]["priority_editable"])
+
+	def test_the_query_names_the_column_only_where_it_exists(self):
+		self.answer()
+		header_sql = [q for q in SITE.queries if "FROM `tabSales Order` so" in q]
+		self.assertTrue(header_sql and all("so.custom_build_priority AS build_priority" in q for q in header_sql))
+		SITE.queries = []
+		SITE.has_priority_column = False
+		answer = self.answer()
+		self.assertFalse(any("custom_build_priority" in q for q in SITE.queries))
+		self.assertFalse(answer["orders"]["priority_editable"], "nothing to save it into")
+		self.assertTrue(all(row["build_priority"] is None for row in answer["orders"]["rows"]))
+
+	def test_editing_needs_sales_order_write_and_submit(self):
+		"""Every order on the board is submitted, and v16 saves an allow-on-submit field only with both."""
+		readable = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable  # noqa: E731
+		try:
+			for missing in ("write", "submit"):
+				dashboard.frappe.has_permission = lambda doctype=None, ptype="read", *a, _m=missing, **k: (
+					doctype in SITE.readable and ptype != _m
+				)
+				self.assertFalse(self.answer()["orders"]["priority_editable"], missing)
+		finally:
+			dashboard.frappe.has_permission = readable
+
+	def test_percent_complete_follows_the_stage_the_work_orders_and_the_delivery(self):
+		SITE.tables["work_orders"][0]["qty"] = 2
+		SITE.tables["work_orders"][0]["produced_qty"] = 1
+		rows = self.rows()
+		self.assertEqual(rows["SO-5"]["percent_complete"], 0, "sold, nothing released")
+		self.assertEqual(rows["SO-3"]["percent_complete"], 40, "half its Work Order produced")
+		self.assertEqual(rows["SO-1"]["percent_complete"], 80, "built (from stock), not delivered")
+		self.assertEqual(rows["SO-4"]["percent_complete"], 100)
+
+	def test_the_expected_end_is_the_work_orders_planned_end_or_the_promise(self):
+		SITE.tables["work_orders"][0]["planned_end_date"] = "2026-11-28 17:00:00"
+		rows = self.rows()
+		self.assertEqual(
+			(rows["SO-3"]["expected_end"], rows["SO-3"]["expected_end_source"], rows["SO-3"]["after_promise"]),
+			("2026-11-28", "work_order", True),
+		)
+		self.assertEqual(
+			(rows["SO-1"]["expected_end"], rows["SO-1"]["expected_end_source"]), ("2026-11-25", "promise")
+		)
+		self.assertEqual(
+			(rows["SO-4"]["expected_end"], rows["SO-4"]["expected_end_source"]), ("2026-11-12", "delivered")
+		)
+		self.assertTrue(any("planned_end_date" in q for q in SITE.queries if "FROM `tabWork Order`" in q))
+
+	def test_a_work_order_without_a_planned_end_falls_back_to_the_promise(self):
+		rows = self.rows()
+		self.assertEqual(
+			(rows["SO-3"]["expected_end"], rows["SO-3"]["expected_end_source"], rows["SO-3"]["after_promise"]),
+			("2026-11-10", "promise", False),
+		)
+
+
+class TestSetBuildPriority(Base):
+	"""set_build_priority: the order board's one write (v1.832.0)."""
+
+	def setUp(self):
+		super().setUp()
+		SITE.orders = {"SO-1": {"docstatus": 1, "custom_build_priority": 0}, "SO-9": {"docstatus": 2, "custom_build_priority": 0}}
+		db = dashboard.frappe.db
+
+		def get_value(doctype, name, fields=None, as_dict=False, **kwargs):
+			if doctype != "Sales Order" or name not in SITE.orders:
+				return None
+			return _Dict(SITE.orders[name])
+
+		def set_value(doctype, name, field, value=None, update_modified=True, **kwargs):
+			SITE.writes.append((doctype, name, field, value, update_modified))
+			SITE.orders[name][field] = value
+
+		class _Order:
+			def __init__(self, name):
+				self.name = name
+
+			def add_comment(self, comment_type, text=None, **kwargs):
+				SITE.comments.append((self.name, comment_type, text))
+
+		self._saved = (db.get_value, getattr(db, "set_value", None), getattr(dashboard.frappe, "get_doc", None), dashboard.frappe.has_permission)
+		db.get_value = get_value
+		db.set_value = set_value
+		dashboard.frappe.get_doc = lambda doctype, name=None, *a, **k: _Order(name)
+		dashboard.frappe.has_permission = lambda doctype=None, ptype="read", doc=None, *a, **k: (
+			doctype in SITE.readable
+			and not (ptype == "write" and doc in SITE.denied_orders)
+			and not (ptype == "submit" and doc in SITE.unsubmittable_orders)
+		)
+
+	def tearDown(self):
+		db = dashboard.frappe.db
+		db.get_value, set_value, get_doc, dashboard.frappe.has_permission = self._saved
+		if set_value is None:
+			del db.set_value
+		else:
+			db.set_value = set_value
+		if get_doc is None:
+			del dashboard.frappe.get_doc
+		else:
+			dashboard.frappe.get_doc = get_doc
+
+	def test_it_is_a_post_endpoint(self):
+		source = MODULE_FILE.read_text(encoding="utf-8")
+		self.assertIn('@frappe.whitelist(methods=["POST"])\ndef set_build_priority(', source)
+
+	def test_sets_it_without_touching_modified_and_notes_it_on_the_timeline(self):
+		result = dashboard.set_build_priority("SO-1", "2")
+		self.assertEqual(result, {"status": "success", "build_priority": 2})
+		self.assertEqual(SITE.writes, [("Sales Order", "SO-1", "custom_build_priority", 2, False)])
+		self.assertEqual(SITE.comments, [("SO-1", "Info", "Build priority set to 2 from the Products tab.")])
+		dashboard.set_build_priority("SO-1", "")
+		self.assertEqual(SITE.writes[-1][3], 0, "blank clears it")
+		self.assertEqual(SITE.comments[-1][2], "Build priority cleared from the Products tab. It was 2.")
+
+	def test_the_same_value_writes_nothing(self):
+		SITE.orders["SO-1"]["custom_build_priority"] = 3
+		self.assertEqual(dashboard.set_build_priority("SO-1", 3), {"status": "success", "build_priority": 3})
+		self.assertEqual((SITE.writes, SITE.comments), ([], []))
+
+	def test_refuses_what_is_not_a_rank(self):
+		for bad in ("first", "1.5", "-1", "1000", "nan", "inf"):
+			result = dashboard.set_build_priority("SO-1", bad)
+			self.assertEqual(result["status"], "error", bad)
+		self.assertEqual(SITE.writes, [])
+
+	def test_refuses_without_write_on_that_order(self):
+		SITE.denied_orders = {"SO-1"}
+		result = dashboard.set_build_priority("SO-1", 1)
+		self.assertEqual(result["status"], "error")
+		self.assertEqual(SITE.writes, [])
+
+	def test_a_submitted_order_also_needs_submit(self):
+		"""The order's own form saves an allow-on-submit field as update_after_submit, which checks submit;
+		db.set_value skips that check, so the endpoint makes it."""
+		SITE.unsubmittable_orders = {"SO-1"}
+		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
+		self.assertEqual(SITE.writes, [])
+		SITE.orders["SO-D"] = {"docstatus": 0, "custom_build_priority": 0}
+		SITE.unsubmittable_orders = {"SO-D"}
+		self.assertEqual(
+			dashboard.set_build_priority("SO-D", 1), {"status": "success", "build_priority": 1}, "a draft needs write only"
+		)
+
+	def test_refuses_without_the_page_role(self):
+		dashboard.check_permission = lambda: False
+		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
+		self.assertEqual(SITE.writes, [])
+
+	def test_refuses_a_cancelled_or_missing_order_or_a_site_without_the_column(self):
+		self.assertEqual(dashboard.set_build_priority("SO-9", 1)["status"], "error")
+		self.assertEqual(dashboard.set_build_priority("SO-404", 1)["status"], "error")
+		self.assertEqual(dashboard.set_build_priority(None, 1)["status"], "error")
+		SITE.has_priority_column = False
+		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
+		self.assertEqual(SITE.writes, [])
+
+	def test_a_failed_comment_never_reads_as_a_failed_save(self):
+		class _Broken:
+			def add_comment(self, *a, **k):
+				raise RuntimeError("comment table locked")
+
+		dashboard.frappe.get_doc = lambda *a, **k: _Broken()
+		result = dashboard.set_build_priority("SO-1", 4)
+		self.assertEqual(result, {"status": "success", "build_priority": 4})
+		self.assertEqual(SITE.writes, [("Sales Order", "SO-1", "custom_build_priority", 4, False)])
+		self.assertEqual([e["title"] for e in SITE.errors], ["Products tab: could not note a build priority"])
+
+	def test_a_failed_write_is_logged_not_raised(self):
+		def boom(*a, **k):
+			raise RuntimeError("deadlock")
+
+		dashboard.frappe.db.set_value = boom
+		result = dashboard.set_build_priority("SO-1", 1)
+		self.assertEqual(result["status"], "error")
+		self.assertEqual([e["title"] for e in SITE.errors], ["Products tab: could not set a build priority"])
 
 
 if __name__ == "__main__":

@@ -1056,12 +1056,112 @@ await test("the orders are grouped by stage in board order, late first, with Lat
 	assert.match(one, /dashcol-p_paid">Paid</, "the paid chip (the stand-in draws its word)");
 	assert.equal((html.match(/pd-late/g) || []).length, 1);
 	assert.match(html, /class="pd-stage-late">1 late</, "the strip counts the late order under its stage");
-	assert.match(html, /<td colspan="7">Building<span>1 order<\/span>/);
+	assert.match(html, /<td colspan="9">Building<span>1 order<\/span>/);
 	assert.match(html, /dashcol-p_total pd-num" title="The product lines, before tax">\$18,000</, "the product value, not a grand total");
 	// the shortages list only what is short; the enclosure is in stock
 	assert.match(html, /\/desk\/item\/AF12Z-30-10-21/);
 	assert.doesNotMatch(html, /\/desk\/item\/ZH-100806-03/);
 	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">75%<\/div>\s*<div class="pd-card-s">3 won · 1 lost · last 12 months</);
+});
+
+// v1.832.0 (the 2026-11-19 Ops Review): a build priority, a percent complete and an expected end
+// for each product order, in place of a job's company and value-stream priority.
+const ranked = (name, build_priority, extra = {}) => ({
+	name,
+	customer_name: "Customer " + name,
+	delivery_date: "2026-12-01",
+	stage: "building",
+	note: "Work Order in process",
+	late: false,
+	lines: ["E-Stops"],
+	items: estop(),
+	work_orders: [],
+	deliveries: [],
+	paid: "paid",
+	product_amount: 1668,
+	build_priority,
+	percent_complete: 0,
+	expected_end: "2026-12-01",
+	expected_end_source: "promise",
+	after_promise: false,
+	...extra,
+});
+const RANKED = {
+	...EMPTY_PRODUCTS,
+	orders: {
+		allowed: true,
+		paid_visible: true,
+		priority_editable: true,
+		rows: [
+			ranked("SO-0010", null, { delivery_date: "2026-11-20", expected_end: "2026-11-20" }),
+			ranked("SO-0011", 2, { percent_complete: 40, expected_end: "2026-12-04", expected_end_source: "work_order", after_promise: true }),
+			ranked("SO-0012", 1),
+			ranked("SO-0013", null, { stage: "delivered", note: "Delivered", delivered_on: "2026-11-12", percent_complete: 100, expected_end: "2026-11-12", expected_end_source: "delivered" }),
+		],
+	},
+};
+const buildCells = (html) => [...html.matchAll(/<td class="dashcol dashcol-p_build[^"]*"[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+
+await test("the build priority orders a stage, 1 first and unranked last, with the percent complete and the expected end", async () => {
+	const run = await runBlock({ answers: { get_products_data: RANKED } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	assert.deepEqual(orderNames(html), ["SO-0012", "SO-0011", "SO-0010", "SO-0013"], "rank first, then the promise");
+	const cells = buildCells(html);
+	assert.match(cells[0], /class="pd-build-rank"[^>]*><span class="pd-rank">1<\/span><\/button>/);
+	assert.match(cells[2], /<span class="pd-named">Not set<\/span>/);
+	assert.doesNotMatch(cells[3], /pd-build-rank/, "a delivered order's priority is not edited");
+	const eleven = html.slice(html.indexOf("/desk/sales-order/SO-0011"), html.indexOf("/desk/sales-order/SO-0010"));
+	assert.match(eleven, /<span class="pd-pct">40%<\/span>/);
+	// The kit's stand-in draws a chip as its word.
+	assert.match(eleven, /dashcol-p_promise pd-due">2026-12-04 After promise<div class="pd-psub">Work Order plan · promised 2026-12-01<\/div>/);
+	const thirteen = html.slice(html.indexOf("/desk/sales-order/SO-0013"));
+	assert.match(thirteen, /<div class="pd-psub">Delivered<\/div>/);
+	// The header row is built into the table's own markup, not appended to a body.
+	const built = run.dom.log.created.join("\n");
+	assert.match(built, /<th class="dashcol dashcol-p_build">Build priority<\/th>/);
+	assert.match(built, /<th class="dashcol dashcol-p_promise">Expected end<\/th>/);
+});
+
+await test("the rank opens a number box, and Enter saves it through set_build_priority and draws it", async () => {
+	const asked = [];
+	const run = await runBlock({
+		answers: {
+			get_products_data: RANKED,
+			set_build_priority: (opts) => {
+				asked.push(opts.args);
+				return Promise.resolve({ message: { status: "success", build_priority: 3 } });
+			},
+		},
+	});
+	clickTab(run, "products");
+	await settle();
+	const rank = run.dom.node(".pd-build-rank");
+	run.dom.node("closest .pd-build").attr("data-order", "SO-0010");
+	run.dom.fire(rank, "click");
+	const input = run.dom.node(".pd-build-input");
+	assert.equal(input.prop("hidden"), false, "the box opens");
+	input.val("3");
+	const from = mark(run);
+	run.dom.fire(input, "keydown", { key: "Enter" });
+	run.dom.fire(input, "blur");
+	await settle();
+	// The args were built inside the block's own realm: compare their JSON, not their prototypes.
+	assert.equal(JSON.stringify(asked), JSON.stringify([{ sales_order: "SO-0010", priority: 3 }]), "saved once, not again on blur");
+	assert.deepEqual(orderNames(drawn(run, from)), ["SO-0012", "SO-0011", "SO-0010", "SO-0013"], "redrawn at its new rank");
+});
+
+await test("without write on Sales Orders the rank is plain text and nothing is bound", async () => {
+	const run = await runBlock({ answers: { get_products_data: { ...RANKED, orders: { ...RANKED.orders, priority_editable: false } } } });
+	const from = mark(run);
+	clickTab(run, "products");
+	await settle();
+	const html = drawn(run, from);
+	assert.doesNotMatch(html, /pd-build-rank/);
+	assert.match(buildCells(html)[0], /^<span class="pd-rank">1<\/span>$/);
+	assert.equal(run.dom.node(".pd-build-input")[NODE].handlers.keydown, undefined);
 });
 
 await test("a stage press narrows the orders, and pressing it again clears it", async () => {

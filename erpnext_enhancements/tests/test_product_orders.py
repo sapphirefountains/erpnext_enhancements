@@ -642,5 +642,94 @@ class TestTheBlockAgrees(unittest.TestCase):
 		)
 
 
+def _wo(status="In Process", docstatus=1, qty=1, produced=0, planned_end=None):
+	return {"status": status, "docstatus": docstatus, "qty": qty, "produced_qty": produced, "planned_end_date": planned_end}
+
+
+class TestBuildPriority(unittest.TestCase):
+	"""v1.832.0 (2026-11-19 Ops Review): which open product order to build first, kept on the order."""
+
+	def test_blank_none_and_zero_are_not_ranked(self):
+		for value in (None, "", "  ", "0", 0, 0.0):
+			self.assertEqual(po.clean_build_priority(value), 0, repr(value))
+
+	def test_a_whole_number_in_range_is_kept(self):
+		self.assertEqual(po.clean_build_priority(" 3 "), 3)
+		self.assertEqual(po.clean_build_priority(2.0), 2)
+		self.assertEqual(po.clean_build_priority(po.BUILD_PRIORITY_MAX), po.BUILD_PRIORITY_MAX)
+
+	def test_anything_else_is_refused_not_guessed(self):
+		for value in ("first", "1.5", "-1", -2, po.BUILD_PRIORITY_MAX + 1, "nan", "inf", "1e9", [1]):
+			self.assertIsNone(po.clean_build_priority(value), repr(value))
+
+
+class TestPercentComplete(unittest.TestCase):
+	def test_the_build_is_most_of_it_and_the_delivery_the_rest(self):
+		self.assertEqual(po.BUILD_SHARE, 80)
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, 0, []), 0)
+		self.assertEqual(po.order_percent_complete(po.STAGE_BUILDING, 0, [_wo(qty=2, produced=1)]), 40)
+		self.assertEqual(po.order_percent_complete(po.STAGE_READY, 0, []), 80)
+		self.assertEqual(po.order_percent_complete(po.STAGE_TESTING, 0, []), 80)
+		self.assertEqual(po.order_percent_complete(po.STAGE_DELIVERED, 100, []), 100)
+
+	def test_a_part_delivery_counts_in_both_shares(self):
+		self.assertEqual(po.order_percent_complete(po.STAGE_READY, 50, []), 90, "one of two delivered, the other built")
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, 50, []), 50, "a delivered unit was built")
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, 100, []), 100)
+
+	def test_only_submitted_work_orders_count_as_the_stage_rule_counts_them(self):
+		works = [_wo(docstatus=0, qty=4, produced=4), _wo(status="Cancelled", qty=4, produced=4), _wo(qty=2, produced=0)]
+		self.assertEqual(po.order_percent_complete(po.STAGE_BUILDING, 0, works), 0)
+		closed_short = [_wo(status="Closed", qty=4, produced=1)]
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, 0, closed_short), 20, "1 of 4 produced")
+
+	def test_overproduction_and_odd_values_stay_in_range(self):
+		self.assertEqual(po.order_percent_complete(po.STAGE_BUILDING, 0, [_wo(qty=1, produced=5)]), 80)
+		self.assertEqual(po.order_percent_complete(po.STAGE_BUILDING, "x", [{"qty": None}]), 0)
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, -5, None), 0)
+		self.assertEqual(po.order_percent_complete(po.STAGE_ORDERED, 250, None), 100)
+
+
+class TestExpectedEnd(unittest.TestCase):
+	def test_a_work_order_still_running_sets_it_from_its_planned_end(self):
+		end = po.order_expected_end(
+			po.STAGE_BUILDING,
+			"2026-12-01",
+			None,
+			[_wo(planned_end="2026-11-28 17:00:00"), _wo(planned_end=date(2026, 11, 30))],
+		)
+		self.assertEqual(end, {"date": "2026-11-30", "source": "work_order", "after_promise": False})
+
+	def test_a_planned_end_after_the_promise_says_so(self):
+		end = po.order_expected_end(po.STAGE_BUILDING, "2026-12-01", None, [_wo(planned_end="2026-12-04 09:00:00")])
+		self.assertEqual(end, {"date": "2026-12-04", "source": "work_order", "after_promise": True})
+
+	def test_otherwise_it_is_the_promise_date(self):
+		for works in ([], [_wo()], [_wo(docstatus=0, planned_end="2026-12-09")], [_wo(status="Completed", produced=1, planned_end="2026-12-09")]):
+			end = po.order_expected_end(po.STAGE_READY, date(2026, 12, 1), None, works)
+			self.assertEqual(end, {"date": "2026-12-01", "source": "promise", "after_promise": False})
+		self.assertEqual(po.order_expected_end(po.STAGE_ORDERED, None, None, []), {"date": "", "source": "", "after_promise": False})
+
+	def test_a_delivered_order_ended_the_day_it_was_delivered(self):
+		end = po.order_expected_end(po.STAGE_DELIVERED, "2026-12-01", "2026-11-12", [_wo(planned_end="2026-12-09")])
+		self.assertEqual(end, {"date": "2026-11-12", "source": "delivered", "after_promise": False})
+
+
+class TestTheBoardScript(unittest.TestCase):
+	"""The order board draws the three new facts and sorts by build priority within each stage."""
+
+	def test_the_orders_table_has_the_new_columns(self):
+		table = BLOCK_JS[BLOCK_JS.index("orders: [") :]
+		table = table[: table.index("],")]
+		keys = re.findall(r'key: "(p_\w+)"', table)
+		self.assertEqual(
+			keys, ["p_order", "p_build", "p_customer", "p_product", "p_promise", "p_complete", "p_progress", "p_paid", "p_total"]
+		)
+		self.assertIn('label: "Expected end"', table)
+
+	def test_the_script_saves_through_the_endpoint(self):
+		self.assertIn("api_call('set_build_priority'", BLOCK_JS)
+
+
 if __name__ == "__main__":
 	unittest.main()

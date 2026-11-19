@@ -1742,6 +1742,9 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 
 #: Custom-engineered control panels are Projects of this type.
 PRODUCTS_PROJECT_TYPE = "Products"
+#: Which open product order to build first (v1.832.0, the 2026-11-19 Ops Review). A Custom Field on
+#: Sales Order, allowed on submit, set from the order board through set_build_priority below.
+BUILD_PRIORITY_FIELD = "custom_build_priority"
 #: The SQL prefilter for product item codes; product_orders.product_line has the final word.
 _PDT_LIKE = "PDT-%"
 
@@ -1899,10 +1902,14 @@ def _product_orders(today, source_column):
 	"""
 	since = add_days(today, -po.DELIVERED_WINDOW_DAYS)
 	_source_select, product_where = _product_match("i", "soi", source_column)
+	# The build priority's column arrives with the fixture at migrate; until then it reads as unranked.
+	has_priority = _sales_order_has_build_priority()
+	priority_select = f"so.{BUILD_PRIORITY_FIELD}" if has_priority else "0"
 	headers = frappe.db.sql(
 		f"""
 		SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
-			so.status, so.docstatus, so.per_delivered, so.per_billed, so.currency, so.project
+			so.status, so.docstatus, so.per_delivered, so.per_billed, so.currency, so.project,
+			{priority_select} AS build_priority
 		FROM `tabSales Order` so
 		WHERE so.docstatus = 1
 			AND so.status NOT IN %(off)s
@@ -1930,7 +1937,21 @@ def _product_orders(today, source_column):
 		as_dict=True,
 	)
 	paid_visible = bool(frappe.has_permission("Sales Invoice", "read"))
-	empty = {"rows": [], "paid_visible": paid_visible, "_committed": {}, "_panel_orders": []}
+	# The board offers to change the build priority only to someone who could save it on the order's own
+	# form: every order on the board is submitted, and v16 saves an allow-on-submit field only with write
+	# AND submit (check_docstatus_transition). The endpoint checks the order itself again.
+	priority_editable = (
+		has_priority
+		and bool(frappe.has_permission("Sales Order", "write"))
+		and bool(frappe.has_permission("Sales Order", "submit"))
+	)
+	empty = {
+		"rows": [],
+		"paid_visible": paid_visible,
+		"priority_editable": priority_editable,
+		"_committed": {},
+		"_panel_orders": [],
+	}
 	if not headers:
 		return empty
 
@@ -1972,6 +1993,8 @@ def _product_orders(today, source_column):
 			"per_billed": flt(header.per_billed),
 			"currency": header.currency,
 			"project": header.project,
+			# 0 is "not ranked" on the Sales Order; the board reads that as no priority.
+			"build_priority": cint(header.get("build_priority")) or None,
 			"needs_project": verdict["needs_project"],
 			"lines": verdict["lines"],
 			"product_amount": verdict["product_amount"],
@@ -2002,7 +2025,7 @@ def _product_orders(today, source_column):
 	work_orders = {}
 	for wo in frappe.db.sql(
 		"""
-		SELECT name, sales_order, production_item, status, docstatus, qty, produced_qty
+		SELECT name, sales_order, production_item, status, docstatus, qty, produced_qty, planned_end_date
 		FROM `tabWork Order`
 		WHERE sales_order IN %(names)s AND docstatus < 2
 		ORDER BY creation
@@ -2057,10 +2080,17 @@ def _product_orders(today, source_column):
 		)
 		dns = order.pop("_deliveries")
 		order.pop("_tested_items", None)
+		end = po.order_expected_end(stage["stage"], order["delivery_date"], order["delivered_on"], wos)
 		order.update(
 			{
 				"stage": stage["stage"],
 				"note": stage["note"],
+				# What a product order shows in place of a job's company and value-stream priority
+				# (v1.832.0): build_priority (above), how far along it is, and when it should be done.
+				"percent_complete": po.order_percent_complete(stage["stage"], order["per_delivered"], wos),
+				"expected_end": end["date"] or None,
+				"expected_end_source": end["source"],
+				"after_promise": end["after_promise"],
 				"late": po.is_late(order["delivery_date"], today, stage["stage"]),
 				"partly_delivered": 0 < order["per_delivered"] < 100,
 				"on_hold": order["status"] == "On Hold",
@@ -2082,7 +2112,93 @@ def _product_orders(today, source_column):
 			)
 		(panels if order["needs_project"] else board).append(order)
 
-	return {"rows": board, "paid_visible": paid_visible, "_committed": committed, "_panel_orders": panels}
+	return {
+		"rows": board,
+		"paid_visible": paid_visible,
+		"priority_editable": priority_editable,
+		"_committed": committed,
+		"_panel_orders": panels,
+	}
+
+
+def _sales_order_has_build_priority():
+	"""Whether Sales Order has the build priority column yet (it arrives with the fixture at migrate).
+
+	has_column takes a doctype and raises on an unknown table rather than answering False.
+	"""
+	try:
+		return bool(frappe.db.has_column("Sales Order", BUILD_PRIORITY_FIELD))
+	except Exception:
+		return False
+
+
+@frappe.whitelist(methods=["POST"])
+def set_build_priority(sales_order, priority=None):
+	"""Set which open product order to build first, from the Products tab's order board (v1.832.0).
+
+	``priority``: a whole number from 1 (built first) to ``po.BUILD_PRIORITY_MAX``; blank or 0
+	clears it. Ties are allowed: two orders at 1 are both "build first", and the board orders them
+	by promise date.
+
+	Gates: the page's own (``check_permission``), then what saving the field on the order's own form
+	needs: **write** on that Sales Order and, once it is submitted, **submit** too. Frappe v16 saves an
+	allow-on-submit field of a submitted document as ``update_after_submit``, which checks submit
+	(``check_docstatus_transition``), and ``db.set_value`` below skips that check, so it is made here.
+	Sales User has both on prod, and so do Logan, Brian, James, Nathan and Nikolas. A cancelled order
+	is refused.
+
+	The value is written with ``db.set_value`` and ``update_modified=False``: the order is submitted,
+	and a full save would run its whole update-after-submit chain for one ranking number, and bumping
+	``modified`` would make anyone with the order open hit "Document has been modified" on their next
+	save. So the change goes on the order's timeline as a comment instead, naming the old and new rank.
+	The comment is written after the value, in its own try: a comment that fails is logged and never
+	reported as a failed save. The cost, accepted for now (manager review, 2026-11-19): someone who
+	already had the order's form open and then saves an allow-on-submit edit there writes back the rank
+	their form loaded.
+
+	Returns ``{"status": "success", "build_priority": n or None}``, or ``{"status": "error",
+	"message": ...}``.
+	"""
+	if not check_permission():
+		return {"status": "error", "message": _("You do not have permission to perform this action.")}
+	name = sales_order.strip() if isinstance(sales_order, str) else ""
+	value = po.clean_build_priority(priority)
+	if value is None:
+		return {
+			"status": "error",
+			"message": _("A build priority is a whole number from 1 to {0}, or blank.").format(po.BUILD_PRIORITY_MAX),
+		}
+	if not name or not _sales_order_has_build_priority():
+		return {"status": "error", "message": _("This order cannot take a build priority.")}
+	current = frappe.db.get_value("Sales Order", name, ["docstatus", BUILD_PRIORITY_FIELD], as_dict=True)
+	if not current:
+		return {"status": "error", "message": _("Sales Order {0} was not found.").format(name)}
+	if cint(current.get("docstatus")) == 2:
+		return {"status": "error", "message": _("Sales Order {0} is cancelled.").format(name)}
+	submitted = cint(current.get("docstatus")) == 1
+	if not frappe.has_permission("Sales Order", "write", doc=name) or (
+		submitted and not frappe.has_permission("Sales Order", "submit", doc=name)
+	):
+		return {"status": "error", "message": _("You do not have permission to change this order.")}
+	before = cint(current.get(BUILD_PRIORITY_FIELD))
+	if before == value:
+		return {"status": "success", "build_priority": value or None}
+	try:
+		frappe.db.set_value("Sales Order", name, BUILD_PRIORITY_FIELD, value, update_modified=False)
+	except Exception:
+		frappe.log_error(title="Products tab: could not set a build priority", message=frappe.get_traceback())
+		return {"status": "error", "message": _("Could not save the build priority. Please check the logs.")}
+	try:
+		if value:
+			note = _("Build priority set to {0} from the Products tab.").format(value)
+		else:
+			note = _("Build priority cleared from the Products tab.")
+		if before:
+			note += " " + _("It was {0}.").format(before)
+		frappe.get_doc("Sales Order", name).add_comment("Info", note)
+	except Exception:
+		frappe.log_error(title="Products tab: could not note a build priority", message=frappe.get_traceback())
+	return {"status": "success", "build_priority": value or None}
 
 
 def _product_qc(orders, work_orders, covered):
