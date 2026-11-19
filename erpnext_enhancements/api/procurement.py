@@ -25,8 +25,8 @@ ALLOWED_ROLES = frozenset(
 )
 
 #: Roles that may save a supplier purchase link without write permission on the Item
-#: (Nikolas, 2026-11-19: "Item or purchase roles"). A buyer records where a part is bought and
-#: does not otherwise edit Items, so purchasing staff hold these roles and not Item write.
+#: (Nikolas, 2026-11-19: "Item or purchase roles"). A buyer records where a part is bought, and
+#: a buyer who holds a purchase role but may not edit Items must still be able to do that.
 #: Everybody else in ``ALLOWED_ROLES`` saves a link only on an Item they may write.
 PURCHASE_ROLES = frozenset({"Purchase User", "Purchase Manager", "Purchase Master Manager"})
 

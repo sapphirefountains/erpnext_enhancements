@@ -266,7 +266,7 @@ class TestSaveItemLink(unittest.TestCase):
 
 	SOURCE = APP / "api" / "procurement.py"
 
-	#: Purchasing staff as they are set up: all three purchase roles and no Item Manager.
+	#: A buyer with all three purchase roles and no Item Manager, the case that must keep working.
 	BUYER = ("Employee", "Purchase User", "Purchase Manager", "Purchase Master Manager")
 	URL = "https://supplier.example/p/1"
 
