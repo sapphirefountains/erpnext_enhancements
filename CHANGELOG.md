@@ -28,15 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     results and Dashboard Chart data. The REST list routes (`GET /api/resource/<doctype>`,
     `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`) answer 403 in place of their
     body by the same rule, from `after_request`.
-  - **Consistent with frappe 16.56.0.** frappe's query engine already applies this rule to the
-    query's own doctype; the wrappers add the parent's levels for a child table's fields (written
-    `` `tabChild`.`field` ``, or on a child table read through its parent), and the same rule for
-    `frappe.client.get` by filters, `get_value` and `get_single_value` on a Single, and
-    `get_next`'s sort field, none of which go through that engine for the names they are given.
-    On a Single that hides fields from the caller, `get_value` now accepts only readable field
-    names, and the whole-record dict a lookup by filters answers with leaves without the fields
-    the caller cannot read. Plain field names in `fields` stay with frappe, which leaves out of
-    the result what the caller cannot read.
+  - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
+    doctype; the wrappers hold every route above to it in one way. A child table's fields answer to
+    the parent's levels in every notation, and a document looked up by filters, a value read from
+    a Single and the next-record sort field follow the same levels. On a Single that hides fields
+    from the caller, `get_value` accepts only readable field names, and the whole-record dict a
+    lookup by filters answers with leaves without the fields the caller cannot read. Plain field
+    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read.
   - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
     frappe reads a bare value as a document name.
   - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as

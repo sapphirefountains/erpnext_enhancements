@@ -9,22 +9,17 @@ permission message. A field of a child table answers to the parent doctype's lev
 of its child tables) leaves on the first check, Administrator included, and server-side code never
 passes through here.
 
-**What frappe 16.56.0 already enforces, and what this adds.** ``frappe.get_list`` builds its query
+**How this sits beside frappe 16.56.0.** ``frappe.get_list`` builds its query
 with ``frappe.model.qb_query.DatabaseQuery`` (``frappe/__init__.py`` 1376-1378), which hands it to
-``frappe.database.query.Engine.get_query``. With permissions applied, the Engine checks a field named
+``frappe.database.query.Engine.get_query``. With permissions applied, the Engine holds a field named
 in a filter (``_validate_and_prepare_filter_field``, query.py 863-1006), in ``order_by`` and
 ``group_by`` (``_validate_and_parse_field_for_clause``, 1315-1378) and inside an aggregate
-(``SQLFunctionParser._validate_string_argument``, 2481-2557) against the caller's readable levels,
-and it refuses a SQL function written as a string in ``fields`` (2257-2282). Its check
-(``_check_field_permission``, 1020-1057) reads a child table's levels from the parent where the
-parent is passed to it. This module applies the parent's levels in every position, including
-`` `tabChild`.`field` `` notation and a child table read through its parent, and applies the same
-rule in four routes that do not go through the Engine for the names they are given:
-``frappe.client.get`` with ``filters``
-(client.py 109-110, then ``Document.load_from_db``, document.py 524-530), ``frappe.client.get_value``
-on a Single (client.py 153-154, ``Database.get_values_from_single``, database.py 726-786),
-``frappe.client.get_single_value`` (client.py 175-180) and ``frappe.desk.form.utils.get_next``,
-whose ``sort_field`` is read and sorted on outside the Engine (utils.py 98-123).
+(``SQLFunctionParser._validate_string_argument``, 2481-2557) to the caller's readable levels,
+and it refuses a SQL function written as a string in ``fields`` (2257-2282). This module holds
+every route listed below to one rule, whatever path the route takes inside frappe: a child table's
+fields answer to the parent's levels in every notation, and a document looked up by ``filters``, a
+value read from a Single and the next-record sort field follow the same levels
+(``frappe.client.get``, ``get_value``, ``get_single_value``, ``frappe.desk.form.utils.get_next``).
 
 A plain name in ``fields`` is left to frappe, which drops a field the caller cannot read from what
 it selects (query.py 1447-1531; ``reportview.validate_fields``, reportview.py 151-181).
@@ -577,10 +572,9 @@ def client_get(doctype, name=None, filters=None, parent=None):
 def client_get_value(doctype, fieldname, filters=None, as_dict=True, debug=False, parent=None):
 	"""``frappe.client.get_value``, its fields and filters checked.
 
-	A Single is read straight from its stored values, past frappe's field-level read, so for a
-	Single that hides fields from the caller every requested name and filter is checked, and the
-	whole-record dict a lookup by filters returns (``get_values_from_single``) leaves without the
-	fields the caller cannot read.
+	For a Single that hides fields from the caller, every requested name and filter is checked,
+	and the whole-record dict a lookup by filters returns (``get_values_from_single``) leaves
+	without the fields the caller cannot read.
 	"""
 	from frappe import client
 
