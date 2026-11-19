@@ -400,7 +400,12 @@ that the interval is theirs, and that a new request names the filer's own Employ
 the filer may review that employee's requests), the supervisor is emailed, and a reviewer decides on the desk
 form. Reviewers are HR Manager, Projects Manager, System Manager **or the employee's
 `reports_to` user**, who need hold none of those roles (`permissions.can_review`; the
-`has_permission` hook grants them read on the row).
+`has_permission` hook grants them read on the row). Since v1.832.0 a reviewer never decides a
+request for their own hours or one they filed, whatever their roles
+(`permissions.may_decide_request`): the review endpoints refuse it, the controller refuses a
+status change to Approved or Declined saved on the form or through the REST resource, and the
+form draws Approve / Decline only when `onload` says the user may decide. A manager may still
+file a request for themself; somebody else decides it.
 
 `corrections.approve_request` refuses when the interval's Timesheet line is on a
 **submitted** Timesheet (cancel or amend it first — the message says so), records the

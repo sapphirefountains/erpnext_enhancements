@@ -3704,7 +3704,9 @@ jobs:
       # returns only what the caller may decide; approve and send back record who and when;
       # the payroll export's totals and overtime split leave Waiting and Sent Back entries
       # out and list them on their own sheet; the Timesheet sync writes no line for them;
-      # and rows from before the field read blank and count.
+      # and rows from before the field read blank and count. Also a Time Correction Request
+      # (v1.832.0): never decided by the employee it is for or by its filer, through the
+      # review endpoints or a status saved on the form, and the form's buttons follow.
       - name: Workforce hand-edit approval (payroll + Timesheet exclusion)
         run: python -m unittest erpnext_enhancements.tests.test_time_edit_approval -v
       # Semi-monthly commission periods. Every failure mode here is a *plausible*

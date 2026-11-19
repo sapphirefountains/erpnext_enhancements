@@ -1028,6 +1028,205 @@ class TestWhoMayApprove(unittest.TestCase):
 		self.assertEqual(set(time_edits.APPROVER_ROLES), {"HR Manager", "System Manager"})
 
 
+# ----------------------------------------------------------------- deciding a correction request
+
+
+TCR = "Time Correction Request"
+
+
+def _corrections():
+	import importlib
+
+	return importlib.import_module("erpnext_enhancements.workforce.corrections")
+
+
+def _request(new=False, before_status="Requested", **values):
+	"""A Time Correction Request built on the real controller class, so ``validate`` and
+	``onload`` are the controller's own. ``save`` runs ``validate`` first, as Frappe does."""
+	from erpnext_enhancements.workforce.doctype.time_correction_request.time_correction_request import (
+		TimeCorrectionRequest,
+	)
+
+	class Request(TimeCorrectionRequest):
+		def __init__(self, **v):
+			base = {
+				"doctype": TCR, "name": "TCR-2026-00001", "employee": "EMP-T", "employee_name": None,
+				"owner": "tech@example.test", "status": "Requested", "request_type": "Missed Entry",
+				"job_interval": None, "proposed_start": dt.datetime(2026, 11, 18, 8, 0),
+				"proposed_end": dt.datetime(2026, 11, 18, 12, 0), "proposed_project": "PROJ-1",
+				"requested_on": NOW, "reason": "forgot to clock in",
+			}
+			base.update(v)
+			self.__dict__.update(base)
+			self.flags = _Dict()
+			self.meta = types.SimpleNamespace(get_label=lambda fieldname: fieldname)
+			self.saves = 0
+			self.onload_values = {}
+
+		def get(self, key, default=None):
+			return self.__dict__.get(key, default)
+
+		def is_new(self):
+			return new
+
+		def get_doc_before_save(self):
+			return None if new else types.SimpleNamespace(status=before_status)
+
+		def set_onload(self, key, value):
+			self.onload_values[key] = value
+
+		def save(self, ignore_permissions=False):
+			self.validate()
+			self.saves += 1
+
+	return Request(**values)
+
+
+class TestDecidingACorrectionRequest(unittest.TestCase):
+	"""A Time Correction Request is decided by a reviewer (``permissions.can_review``: HR
+	Manager, Projects Manager, System Manager or the employee's ``reports_to`` login) who is
+	neither the employee it is for nor the person who filed it, on every path that records a
+	decision: the two review endpoints and a status change saved on the form or through the
+	REST resource."""
+
+	def setUp(self):
+		self.corrections = _corrections()
+		self.applied = []
+		self.told = []
+		self._apply = self.corrections.apply_request
+		self._notify = self.corrections._notify_employee
+		self.corrections.apply_request = lambda doc: self.applied.append(doc.name) or types.SimpleNamespace(
+			name="JOB-INT-00009"
+		)
+		self.corrections._notify_employee = lambda doc, approved: self.told.append((doc.name, approved))
+		self._docs = dict(frappe.docs)
+
+	def tearDown(self):
+		self.corrections.apply_request = self._apply
+		self.corrections._notify_employee = self._notify
+		frappe.docs.clear()
+		frappe.docs.update(self._docs)
+
+	def _filed(self, **values):
+		doc = _request(**values)
+		frappe.docs[(TCR, doc.name)] = doc
+		return doc
+
+	def test_the_employee_it_is_for_is_refused_even_as_a_manager(self):
+		"""EMP-HR holds HR Manager; a System Manager filed the request for them."""
+		for endpoint in ("approve_request", "decline_request"):
+			with self.subTest(endpoint=endpoint):
+				doc = self._filed(employee="EMP-HR", owner="sys@example.test")
+				_as("hr@example.test")
+				with self.assertRaises(frappe.PermissionError):
+					getattr(self.corrections, endpoint)(doc.name, note="ok")
+				self.assertEqual(doc.status, "Requested")
+				self.assertEqual(doc.saves, 0)
+		self.assertEqual(self.applied, [], "nothing reached the interval")
+		self.assertEqual(self.told, [])
+
+	def test_the_filer_is_refused_on_another_employees_request(self):
+		for endpoint in ("approve_request", "decline_request"):
+			with self.subTest(endpoint=endpoint):
+				doc = self._filed(employee="EMP-T", owner="hr@example.test")
+				_as("hr@example.test")
+				with self.assertRaises(frappe.PermissionError):
+					getattr(self.corrections, endpoint)(doc.name)
+				self.assertEqual(doc.status, "Requested")
+		self.assertEqual(self.applied, [])
+
+	def test_a_different_reviewer_decides_it(self):
+		doc = self._filed(employee="EMP-T", owner="hr@example.test")
+		_as("hr2@example.test")
+		result = self.corrections.approve_request(doc.name, note="fine")
+		self.assertEqual(result, {"status": "Approved", "applied_interval": "JOB-INT-00009"})
+		self.assertEqual((doc.status, doc.reviewer, doc.saves), ("Approved", "hr2@example.test", 1))
+		self.assertEqual(self.applied, [doc.name])
+		self.assertEqual(self.told, [(doc.name, True)])
+
+		doc = self._filed(name="TCR-2026-00002", employee="EMP-T", owner="tech@example.test")
+		_as("lead@example.test")  # the reports_to supervisor, no manager role
+		self.assertEqual(self.corrections.decline_request(doc.name, note="no")["status"], "Declined")
+		self.assertEqual(doc.reviewer, "lead@example.test")
+
+	def test_who_may_review_is_otherwise_unchanged(self):
+		"""Projects Manager still reviews; someone with no role who is not the supervisor does not."""
+		doc = self._filed(employee="EMP-T", owner="tech@example.test")
+		_as("pm@example.test")
+		self.assertEqual(self.corrections.decline_request(doc.name, note="no")["status"], "Declined")
+		doc = self._filed(name="TCR-2026-00002", employee="EMP-T", owner="tech@example.test")
+		_as("other.tech@example.test")
+		with self.assertRaises(frappe.PermissionError) as raised:
+			self.corrections.approve_request(doc.name)
+		self.assertIn("supervisor", str(raised.exception))
+
+	def test_a_status_saved_on_the_form_is_held_to_the_same_rule(self):
+		cases = (
+			# (user, employee, filer, allowed)
+			("hr@example.test", "EMP-HR", "sys@example.test", False),  # their own hours
+			("hr@example.test", "EMP-T", "hr@example.test", False),  # they filed it
+			("tech@example.test", "EMP-T", "tech@example.test", False),  # not a reviewer either
+			("hr2@example.test", "EMP-T", "hr@example.test", True),
+			("lead@example.test", "EMP-T", "tech@example.test", True),
+		)
+		for status in ("Approved", "Declined"):
+			for user, employee, filer, allowed in cases:
+				with self.subTest(status=status, user=user, employee=employee, filer=filer):
+					_as(user)
+					doc = _request(employee=employee, owner=filer)
+					doc.status = status
+					if allowed:
+						doc.save()
+						self.assertEqual(doc.saves, 1)
+					else:
+						with self.assertRaises(frappe.PermissionError):
+							doc.save()
+
+	def test_a_request_is_never_filed_already_decided(self):
+		_as("hr@example.test")
+		doc = _request(new=True, employee="EMP-T", owner=None, status="Approved")
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+
+	def test_a_manager_may_still_file_for_themself(self):
+		_as("hr@example.test")
+		doc = _request(new=True, employee="EMP-HR", owner=None, status="Requested")
+		doc.save()
+		self.assertEqual(doc.saves, 1)
+
+	def test_a_save_that_records_no_decision_is_unaffected(self):
+		"""A reviewer's later note on a decided request, and the employee's cancel."""
+		_as("hr@example.test")
+		doc = _request(employee="EMP-HR", owner="hr@example.test", before_status="Approved", status="Approved")
+		doc.review_note = "late note"
+		doc.save()
+		_as("tech@example.test")
+		doc = _request(employee="EMP-T", owner="tech@example.test")
+		doc.flags.ee_review = True
+		doc.status = "Canceled"
+		doc.save()
+		self.assertEqual(doc.saves, 1)
+
+	def test_the_form_is_told_whether_to_draw_the_buttons(self):
+		for user, employee, filer, expected in (
+			("hr@example.test", "EMP-HR", "sys@example.test", False),
+			("hr@example.test", "EMP-T", "hr@example.test", False),
+			("other.tech@example.test", "EMP-T", "tech@example.test", False),
+			("hr2@example.test", "EMP-T", "hr@example.test", True),
+			("lead@example.test", "EMP-T", "tech@example.test", True),
+		):
+			with self.subTest(user=user, employee=employee, filer=filer):
+				_as(user)
+				doc = _request(employee=employee, owner=filer)
+				doc.onload()
+				self.assertIs(doc.onload_values["ee_may_decide"], expected)
+		js = (APP / "workforce" / "doctype" / "time_correction_request" / "time_correction_request.js").read_text(
+			encoding="utf-8"
+		)
+		body = js[js.index("ee_review_buttons(frm) {") :]
+		self.assertLess(body.index("ee_may_decide === false) return;"), body.index("draw();"))
+
+
 # ----------------------------------------------------------------- telling the approver
 
 
