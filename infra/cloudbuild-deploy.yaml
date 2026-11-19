@@ -5,6 +5,15 @@
 #   * not yet: it runs `honcho start` on the development Procfile (`bench serve`).
 # The deploy user's sudoers line allows exactly that command (deploy_user_sudo_command).
 # Runbook: infra/docs/production-web-tier.md.
+#
+# Before anything on the VM changes, infra/bench_update.sh takes a database-only backup of
+# every site into <bench>/pre-migrate-backups and keeps the newest five. When it fails, or
+# there is not enough free disk, the `&&` chain stops there: no code reset, migrate, build,
+# redis flush or restart, so the site keeps running the release it had.
+# The order is fetch, backup, reset. After the fetch only the script itself is checked out
+# of the fetched commit, so the backup is always taken by the script being deployed (and the
+# first deploy that carries the script can run it); the app's code moves after the backup.
+# Runbook: infra/README.md, section 13.
 steps:
   - name: 'google/cloud-sdk:latest'
     id: 'Deploy'
@@ -40,15 +49,19 @@ steps:
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
-            git -C apps/erpnext_enhancements fetch upstream main && git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && \
             export PATH=\$$PATH:/home/frappe/.local/bin && \
+            git -C apps/erpnext_enhancements fetch upstream main && \
+            git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh backup && \
+            git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && \
             bench --site all migrate && \
             bench build && \
             redis-cli -p 13000 FLUSHDB && redis-cli -p 11000 FLUSHDB' && \
             sudo systemctl restart frappe-bench"
         echo "✅  $$VM updated"
 
-timeout: '600s'
+# 1200s, up from 600s, for the backup: a timeout ends the SSH session mid-migrate.
+timeout: '1200s'
 options:
   logging: CLOUD_LOGGING_ONLY
 

@@ -360,6 +360,9 @@ module "cloud_build_connection" {
         }
 
         # --- App Upstream Update Triggers (manual) ---
+        # _FRAPPE_TAG and _ERPNEXT_TAG are blank here on purpose: each run names the two
+        # release tags it installs (v16.MINOR.PATCH), and a run that leaves either blank
+        # refuses before it connects. See infra/cloudbuild-upstream.yaml.
         "app-upstream-test" = {
           description     = "Update upstream apps on test VM"
           service_account = local.cb_service_account
@@ -368,9 +371,11 @@ module "cloud_build_connection" {
             branch = var.cloud_build_manual_branch
           }
           substitutions = {
-            _VM_NAME    = var.spot_vm_name
-            _VM_ZONE    = local.spot_vm_zone
-            _ALLOW_SKIP = "true"
+            _VM_NAME     = var.spot_vm_name
+            _VM_ZONE     = local.spot_vm_zone
+            _ALLOW_SKIP  = "true"
+            _FRAPPE_TAG  = ""
+            _ERPNEXT_TAG = ""
           }
           tags = ["app", "upstream", "test"]
         }
@@ -383,9 +388,11 @@ module "cloud_build_connection" {
             branch = var.cloud_build_manual_branch
           }
           substitutions = {
-            _VM_NAME    = var.standard_vm_name
-            _VM_ZONE    = local.standalone_vm_zone
-            _ALLOW_SKIP = "false"
+            _VM_NAME     = var.standard_vm_name
+            _VM_ZONE     = local.standalone_vm_zone
+            _ALLOW_SKIP  = "false"
+            _FRAPPE_TAG  = ""
+            _ERPNEXT_TAG = ""
           }
           tags = ["app", "upstream", "production"]
         }
