@@ -43,7 +43,7 @@ def _warehouse_map_flag():
 
 
 def _configurable_products():
-	"""``frappe.boot.ee_configurable_products`` (v1.825.0): ``[{name, product_name}]`` for the
+	"""``frappe.boot.ee_configurable_products`` (v1.827.0): ``[{name, product_name}]`` for the
 	Configurable Products that are switched on, while the Product Configurator is. The Opportunity's
 	"Quote <product>" action reads it for its label and its product choice, and is not offered when it
 	is empty. One small read (one row on prod); cosmetic, since ``quoting.start_configuration``

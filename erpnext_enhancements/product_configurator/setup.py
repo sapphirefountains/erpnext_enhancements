@@ -12,14 +12,14 @@ is, so a label somebody changed on the site survives a migrate.
   configurator-owned so a regenerate can safely reuse it, and a hand-made Item
   with a colliding code is never touched.
 * ``Quotation Item.custom_product_configuration`` and the same field on
-  ``Sales Order Item`` (v1.825.0) — the configuration a line was quoted from.
+  ``Sales Order Item`` (v1.827.0) — the configuration a line was quoted from.
   ``quoting.create_quotation`` sets it on the Quotation line; ERPNext's Make
   Sales Order copies every same-named field across, so the Sales Order line
   carries it too, which is how the Work Order step will find the exact
   configuration a unit is built to. Not ``no_copy`` for that reason. The Item
   alone cannot say: two configurations with the same part number share one
   Item.
-* ``Quotation.custom_source_opportunity`` (v1.825.0) — the deal a configurator
+* ``Quotation.custom_source_opportunity`` (v1.827.0) — the deal a configurator
   quote belongs to. Deliberately not ERPNext's ``Quotation.opportunity``: a
   Quotation linked that way drives, and once ordered freezes, the deal's stage
   (``engine.quote.quotation_header`` says how). Indexed: the product-sale rule

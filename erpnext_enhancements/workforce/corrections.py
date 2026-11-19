@@ -74,7 +74,7 @@ def _refuse_if_timesheet_submitted(interval):
 # ------------------------------------------------------------------ endpoints
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_request(name, note=None):
 	"""Approve and apply. Returns ``{"status", "applied_interval"}``."""
 	doc = _load(name)
@@ -94,7 +94,7 @@ def approve_request(name, note=None):
 	return {"status": doc.status, "applied_interval": interval.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decline_request(name, note=None):
 	"""Decline. Same gate; nothing on the interval changes."""
 	doc = _load(name)

@@ -1,4 +1,4 @@
-"""Bench-free tests for the E-Stop quote-to-order slice (v1.825.0).
+"""Bench-free tests for the E-Stop quote-to-order slice (v1.827.0).
 
 Plain pytest functions, so CI runs this file in its own ``python -m pytest`` step (``python -m
 unittest`` would collect nothing from it). What it holds:

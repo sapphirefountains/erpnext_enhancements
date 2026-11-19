@@ -151,7 +151,7 @@ one Workstation at the product's labor rate, `with_operations = 1`,
 `time_in_mins = module hours × 60` — then remove labor from the quote or
 reconcile deliberately.
 
-**Stock (v1.825.0).** The configured Item is a stock item (set explicitly, not
+**Stock (v1.827.0).** The configured Item is a stock item (set explicitly, not
 left to the site's default) with a submitted default BOM, so built-ahead stock
 and Work Orders can use it. It also gets an Item Default warehouse for the
 company: Manufacturing Settings' Default Finished Goods Warehouse, else Stock
@@ -164,7 +164,7 @@ it and reported where it does not; `Item.default_bom` is re-asserted on every ru
 ERPNext locks `has_serial_no` once stock moves, so the Work Order step must turn
 it on before the first unit is built.
 
-## Quote to order (v1.825.0)
+## Quote to order (v1.827.0)
 
 Decision 2026-11-18: **the Sales Order is the record** for a product sale, and
 there is no project per unit. The flow:
@@ -244,7 +244,7 @@ endpoints/buttons that create ERPNext masters. Server guards:
 4. Configure away: **Product Configuration → New**, pick PDT-0040, tick/adjust
    options, Save → **Create → Item + BOM + Selling Price**; print the Build
    Sheet / QC Checklist / Pricing Summary from the View menu.
-5. To sell one (v1.825.0): **Opportunity → Quote STILLWATER E-Stop**, adjust the
+5. To sell one (v1.827.0): **Opportunity → Quote STILLWATER E-Stop**, adjust the
    options, Save → **Create Quotation**. Set **Manufacturing Settings → Default
    Finished Goods Warehouse** if finished units should not live in
    `Finished Goods - <abbr>`.

@@ -618,7 +618,7 @@ doc_events = {
 	},
 	"Quotation": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
-		# v1.825.0: a quote made ERPNext's way (Create > Quotation sets `opportunity`) also names its
+		# v1.827.0: a quote made ERPNext's way (Create > Quotation sets `opportunity`) also names its
 		# deal in custom_source_opportunity, the field configurator quotes use instead, so the
 		# Opportunity's Connections list every quote through one field. Never raises. See
 		# crm_enhancements/product_sale.py.
@@ -1465,7 +1465,7 @@ doc_events = {
 			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
 			# so the SLA data is already meaningful whenever a switch is flipped.
 			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
-			# v1.825.0: right after it. A tick or untick of Product Sale (No Project) on the form
+			# v1.827.0: right after it. A tick or untick of Product Sale (No Project) on the form
 			# lifts or restores the hand-off gate exactly as handoff.mark_product_sale does, so a
 			# hand-ticked won deal is not left gated (Create Project Anyway refused, the escalation
 			# still calling it overdue). Never raises.
@@ -1596,6 +1596,17 @@ doc_events = {
 		# than on_session_creation because this row is written for failed attempts
 		# too, and the failures are the early warning.
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
+	},
+	"Error Log": {
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
+		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
+		# masks a traceback variable by its name only; this goes by the value's shape, including
+		# one printed inside another object's repr. A doc_event is resolved by name at insert
+		# time, so it also applies in workers and to rows frappe defers and inserts later. Never
+		# raises and never logs (a row is never lost to it, and it cannot feed itself);
+		# linear-time, and work on a very large row is capped without shortening the text. Rows
+		# already stored: security_alerts.mask_stored_error_logs, run by hand.
+		"before_insert": "erpnext_enhancements.security_alerts.mask_error_log",
 	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
@@ -2326,6 +2337,11 @@ scheduler_events = {
 		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
 		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
+		# security (v1.826.6): email the same recipients while developer_mode, server_script_enabled
+		# or allow_tests is on in the site configuration, at most once per setting per day. Password
+		# sign-in is the two-factor check's (above) and is not repeated. Quiet when nothing is on;
+		# never raises. See security_alerts.check_site_configuration.
+		"erpnext_enhancements.security_alerts.check_site_configuration",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -2921,7 +2937,7 @@ after_migrate = [
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 	# product_configurator: Item provenance field (marks configurator-generated
-	# Items so regenerate can safely reuse them), and since v1.825.0 the
+	# Items so regenerate can safely reuse them), and since v1.827.0 the
 	# configuration link on Quotation Item and Sales Order Item (Make Sales Order
 	# copies it across) + the Build Instructions / QC Checklist / Pricing Summary
 	# Print Formats (idempotent + guarded). The Pricing Summary is also what
@@ -3439,6 +3455,15 @@ before_request = [
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).
 	"erpnext_enhancements.monkeypatches.ensure_applied",
+	# OAuth client registration (v1.826.9, Nikolas 2026-11-18): dynamic registration stays on, but a
+	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
+	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
+	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
+	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
+	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
+	# and a string test and never raises. See oauth_registration.py.
+	"erpnext_enhancements.oauth_registration.guard_registration",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled

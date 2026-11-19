@@ -13,7 +13,7 @@ import frappe
 from frappe import _
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_shortcut_to_workspace(workspace, label, type, link_to, doc_type=None):
     """Append a shortcut to a Workspace's ``shortcuts`` child table.
 

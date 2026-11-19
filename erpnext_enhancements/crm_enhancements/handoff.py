@@ -368,7 +368,7 @@ def project_meeting_attendees(project):
 	return resolve_project_attendees(project)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_project_meeting(project, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the project launch meeting and invite the team.
 
@@ -1088,7 +1088,7 @@ def _cancel_meeting(event_name):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the hand-off meeting and invite Sales, Production and Billing.
 
@@ -1238,7 +1238,7 @@ def _mirror_onto_project(opportunity, when, by, skip_reason):
 		frappe.log_error(frappe.get_traceback(), "Hand-off: mirror onto project failed")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_handoff_complete(opportunity):
 	"""Record that the hand-off meeting happened. This is what opens the gate."""
 	doc = frappe.get_doc("Opportunity", opportunity)
@@ -1254,7 +1254,7 @@ def mark_handoff_complete(opportunity):
 	return {"already": False, "on": str(stamped), "by": frappe.session.user}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def skip_handoff(opportunity, reason):
 	"""Skip the hand-off meeting, on the record, with a reason.
 
@@ -1304,7 +1304,7 @@ def handoff_state(opportunity):
 	# A deal still on a Lead cannot hand off cleanly: the Project takes the Lead as its customer
 	# and no Google Drive folder is made. The Closed Won prompt warns (Nik, 2026-10-13).
 	on_lead = frappe.db.get_value("Opportunity", opportunity, "opportunity_from") == "Lead"
-	# Product sale (v1.825.0, product_sale.py): a person's tick, which linked quotes can overrule.
+	# Product sale (v1.827.0, product_sale.py): a person's tick, which linked quotes can overrule.
 	# is_product_sale: the prompt asks nothing and the tab offers only Create Project Anyway.
 	# product_sale_suggested: the prompt and the tab ask the person. product_sale_conflict: ticked,
 	# but a linked quote carries something else, so the deal is a job. Both branches, like the two
@@ -1379,7 +1379,7 @@ def handoff_state(opportunity):
 
 @frappe.whitelist(methods=["POST"])
 def mark_product_sale(opportunity, ticked=1):
-	"""Tick or untick Product Sale (No Project) on a deal: a person's decision (v1.825.0).
+	"""Tick or untick Product Sale (No Project) on a deal: a person's decision (v1.827.0).
 
 	Called by the Closed Won prompt, the Hand-Off Process tab and the question after Create Quotation.
 	Needs write on the deal. Written with ``set_value`` (which moves ``modified``, so a stale open
@@ -1418,7 +1418,7 @@ def mark_product_sale(opportunity, ticked=1):
 
 
 def product_sale_gate_updates(ticked, row, is_product):
-	"""What the hand-off gate becomes when Product Sale is ticked or unticked (v1.825.0).
+	"""What the hand-off gate becomes when Product Sale is ticked or unticked (v1.827.0).
 
 	Only on a won deal with no project and no recorded meeting: elsewhere the gate is either not
 	stamped yet (it is at the win) or already done with.
@@ -1546,7 +1546,7 @@ def stamp_handoff_gate(doc, method=None):
 	approval on the link wins the deal, and there is no hand-off meeting to hold for a pump swap.
 	The guard never raises (:func:`_is_service_call_deal`).
 
-	Not for a product sale either (v1.825.0; decision 2026-11-18): a deal a person has ticked
+	Not for a product sale either (v1.827.0; decision 2026-11-18): a deal a person has ticked
 	Product Sale (No Project), with nothing else on its linked quotes, has its Sales Order as the
 	record, so there is no project to hand off to (:mod:`.product_sale`, which never raises).
 	"""
@@ -1590,7 +1590,7 @@ def _is_service_call_deal(doc):
 
 
 def _is_product_sale_deal(doc):
-	"""A product sale's Opportunity (v1.825.0), or False; never raises, like the guard above.
+	"""A product sale's Opportunity (v1.827.0), or False; never raises, like the guard above.
 
 	The deal's own tick, as this save holds it, checked against its linked documents
 	(:func:`.product_sale.is_product_sale_doc`).

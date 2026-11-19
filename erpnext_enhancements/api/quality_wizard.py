@@ -183,7 +183,7 @@ def _template_instructions(template):
     return {"safety": row.get("safety_instructions"), "wrapup": row.get("wrapup_instructions")}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_inspection(inspection, patch, modified=None):
     """Apply a wizard step's changes and return the re-validated state.
 
@@ -227,7 +227,7 @@ def save_inspection(inspection, patch, modified=None):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def finish_inspection(inspection, modified=None):
     """Submit the inspection, which is what turns it into evidence.
 

@@ -59,7 +59,7 @@ class AssetOutofService(Document):
 			asset_name=self.asset,
 		)
 
-	@frappe.whitelist()
+	@frappe.whitelist(methods=["POST"])
 	def return_to_service(self):
 		"""The form's Return to Service button."""
 		self.check_permission("write")

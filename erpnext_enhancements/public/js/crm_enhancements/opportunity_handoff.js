@@ -48,7 +48,7 @@
  *    from hand-off warnings. Its buttons stay, all plain (none primary), so a
  *    deal behind a closed gate can still book or skip the meeting and then
  *    create its project.
- *  - A product sale (v1.825.0, `is_product_sale` from handoff_state; see
+ *  - A product sale (v1.827.0, `is_product_sale` from handoff_state; see
  *    crm_enhancements/product_sale.py: a person ticked Product Sale (No Project) and
  *    nothing else is on the deal's linked quotes) with no Project reads the same quiet
  *    way, "Not needed (product sale)". Its one button is the escape, Create Project
@@ -184,7 +184,7 @@
 			// Pre-ERPNext and untouched for 90 days (crm_enhancements/historical.py).
 			// Reported on both branches of handoff_state; the doc is the fallback.
 			historical: !!(state && "is_historical" in s ? s.is_historical : frm.doc.custom_is_historical),
-			// v1.825.0: a product sale gets no hand-off and no project (crm_enhancements/product_sale.py).
+			// v1.827.0: a product sale gets no hand-off and no project (crm_enhancements/product_sale.py).
 			// Known only from the server; without it the tab reads as it always did.
 			product_sale: !!s.is_product_sale,
 			product_suggested: !!s.product_sale_suggested,
@@ -345,7 +345,7 @@
 		if (!f.won) return by_step;
 		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
 
-		// v1.825.0, a product sale with no Project: nothing to book, and the one button is the
+		// v1.827.0, a product sale with no Project: nothing to book, and the one button is the
 		// escape, which unticks Product Sale and creates the project (enqueue_project_creation's
 		// create_anyway). Someone who may only read the deal gets none (the server refuses them).
 		if (f.product_sale && !f.project) {
@@ -410,7 +410,7 @@
 
 	// The dialog shows the creation's progress and reloads this form when the project exists
 	// (create_project_prompt.js, v1.749.0), so there is no on_success reload here.
-	// v1.825.0, the escape: a deal ticked Product Sale (No Project) gets its project after all. The
+	// v1.827.0, the escape: a deal ticked Product Sale (No Project) gets its project after all. The
 	// server unticks it in the same request that queues the creation (enqueue_project_creation).
 	function create_project_anyway(frm) {
 		// Saved first, as create_project below does: the job saves this opportunity too.
@@ -426,7 +426,7 @@
 		);
 	}
 
-	// v1.825.0: the person's answer to the configurator's suggestion (handoff.mark_product_sale).
+	// v1.827.0: the person's answer to the configurator's suggestion (handoff.mark_product_sale).
 	function mark_product_sale(frm) {
 		if (frm.is_dirty()) {
 			frappe.msgprint(__("Save your changes to this opportunity first."));

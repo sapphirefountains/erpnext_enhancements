@@ -26,7 +26,7 @@ frappe.ui.form.on("Product Configuration", {
 		if (frm.is_new()) return;
 
 		if (frappe.boot.ee_product_configurator) {
-			// v1.825.0: the sale's next step. The Item, BOM and price are made on the way, and the
+			// v1.827.0: the sale's next step. The Item, BOM and price are made on the way, and the
 			// Quotation opens; once it exists this becomes a way back to it.
 			if (frm.doc.quotation) {
 				frm.add_custom_button(__("Open Quotation"), () =>
@@ -209,7 +209,7 @@ function pc_render_preview(frm, data) {
 		</div>`);
 }
 
-// v1.825.0: one click from a configuration to its draft Quotation. What is typed saves first; the
+// v1.827.0: one click from a configuration to its draft Quotation. What is typed saves first; the
 // server makes (or refreshes) the Item, BOM and price, makes the Quotation and opens it. Anything it
 // could not do alongside (the attached Pricing Summary, the Products tag on the deal) comes back as a
 // note, never as a failed quote. A refusal (the Product Engineer role, say) is the server's own words.
@@ -235,7 +235,7 @@ function pc_create_quotation(frm) {
 					indicator: out.existing ? "blue" : "green",
 				});
 				const open_quote = () => frappe.set_route("Form", "Quotation", out.quotation);
-				// v1.825.0: everything quoted on the deal in ERPNext is a product. Ask, never assume:
+				// v1.827.0: everything quoted on the deal in ERPNext is a product. Ask, never assume:
 				// the deal may have other work, or a quote that lives in QuickBooks
 				// (crm_enhancements/product_sale.py). Either answer opens the Quotation.
 				if (!out.suggest_product_sale || !out.opportunity) {

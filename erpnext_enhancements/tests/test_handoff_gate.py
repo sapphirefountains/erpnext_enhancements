@@ -674,7 +674,7 @@ class TestServiceCallDeals(unittest.TestCase):
 
 
 class TestProductSaleTick(unittest.TestCase):
-	"""Product Sale (No Project), v1.825.0: the button and a tick on the form move the hand-off gate
+	"""Product Sale (No Project), v1.827.0: the button and a tick on the form move the hand-off gate
 	the same way. Behavioural, because a grep of the source passed while every call raised: the
 	endpoint's parameter was named ``product_sale`` and shadowed the module it reads ``MARKER`` from.
 	"""

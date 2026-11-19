@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.825.0] - 2026-11-18
+## [1.827.0] - 2026-11-19
 
 ### Added
 
@@ -136,6 +136,449 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A configuration's title follows its part number** until somebody types their own. A
   configuration started from a deal is saved on the default options first, so a title fixed at the
   first save named the wrong setup. Picking an Opportunity on the form fills the Account or Lead.
+
+## [1.826.0] - 2026-11-18
+
+Hardening changes released together. Each was written and reviewed as its own pull request (#1466, #1473, #1475, #1476, #1468, #1469, #1477, #1474, #1471), and the notes below are theirs, grouped by kind.
+
+From #1468: Hardening of the inbound webhook and gateway checks. Nothing changes for the callers that
+production uses today: the Triton gateway still authenticates with its own API key, and the
+Twilio auth token, the Stripe signing secret and the QuickBooks tokens are all configured.
+
+### Changed
+
+- **ERPNext Enhancements Settings is now writable by System Manager only.** Staff with the
+  System User role keep read access, and the page opens for them as before.
+  - The DocType's System User permission row is now read, print and email only. The write,
+    create, delete and share rights are removed. The DocType's `modified` stamp is bumped so
+    `bench migrate` applies the new rows, because the importer skips a file whose stamp is not
+    newer than the stored one. This DocType has no site-side permission overrides, so the JSON
+    rows are what applies after deploy.
+  - The controller's `validate` now calls `require_system_manager` first. A change submitted
+    through a request by a user without System Manager is refused, whatever permission rows the
+    site has. Administrator, patches, install and background jobs with no request pass, and
+    code that writes settings with `frappe.db.set_single_value` never reaches `validate`. This
+    keeps the rule true if a permission row is added back from the Desk.
+  - Every code path that writes this Single was checked: the patches and seeders use
+    `set_single_value` or run as Administrator during migrate, and no whitelisted endpoint or
+    Desk script saves it under a staff session, so no caller needed to change.
+  - `tests/test_settings_write_roles.py` pins, for every single DocType in the app whose name
+    ends in "Settings", the roles that hold write at permlevel 0 to a reviewed table, so a new
+    writer role has to be added on purpose. It also covers the new controller check. It runs as
+    its own `ci.yml` step.
+- **State-changing endpoints now require POST.** 250 whitelisted endpoints that create,
+  update, delete, send, approve or sync something were declared with a bare `@frappe.whitelist()`,
+  which Frappe answers for GET, POST, PUT and DELETE alike. Each now declares
+  `methods=["POST"]`, consistent with the endpoints that already did, so it answers only the
+  request the Desk sends for a change. They span payments, accounting and bank sync, Google
+  Drive, device management, the Triton widget, e-signature and contracts, projects, comments
+  and drafts, CRM, rentals, travel, maintenance, quality, time, inventory, procurement,
+  training, telephony, HR, and the delete and merge actions. One of them,
+  `kanban_order.update_order`, stands in for a Frappe method through
+  `override_whitelisted_methods`, and the Desk calls it with POST.
+  Every caller was checked before the change. All of them go through `frappe.call`,
+  `frappe.xcall`, `sf_kit.call` or a `fetch` that already sends POST (the time kiosk's `api()`
+  helper, its service worker's batch upload, the Triton widget's stream and the customer card
+  page included), or through `frm.call` for the two controller methods. Triton's `run_method`,
+  the one outside client of these paths, also sends POST.
+- **`mdm_integration.api.remote_action` also refuses a request authenticated by an
+  `Authorization` header**, the same rule `assistant_tools.gating_api` applies. The Managed Device
+  form signs in with the session cookie and never sends that header.
+- **Left as they were on purpose:**
+  - every read endpoint;
+  - the two addresses an outside service sends the browser to, which arrive as a GET
+    (`quickbooks_online.core.api.oauth_callback` and `disconnect_callback`);
+  - the gateway and provider webhooks, which are checked against a shared secret or a signature;
+  - `fieldlevel_read.apply_workflow`, which stands in for Frappe's own `apply_workflow` and
+    mirrors its declaration, as `tests/test_fieldlevel_read.py` requires;
+  - the document-mapper `make_*` functions. They build an unsaved document and store nothing,
+    and `frappe.model.open_mapped_doc` reaches them with a POST to
+    `frappe.model.mapper.make_mapped_doc`, which checks only that the mapper is whitelisted, so
+    a `methods=` on the mapper itself is not consulted on that path.
+    (`asset_management.rental_sales.make_rental_agreement` shares the prefix but saves a record,
+    so it does declare POST.)
+- **Operations-side endpoints now check access before they read or write.** Hardening, consistent
+  with the checks the neighboring endpoints already make. Each rule below is pinned by
+  `tests/test_access_checks_ops.py` (bench-free, AST over the source, plus the access helpers
+  executed against a fake `frappe`), which has its own CI step.
+  - **Maintenance visit briefing** (`get_dashboard_context`) requires read permission on the
+    Project and one of the roles that see every visit (`sapphire_maintenance.permissions.VIEW_ALL_ROLES`).
+    The role is checked before the project is looked up. The desk form asks for the briefing
+    only when the user holds one of those roles and can read Projects.
+  - **Visit checklist payload** (`get_visit_payload`) requires create or write permission on
+    Sapphire Maintenance Record, or read permission on each of the contract, project and service
+    call it names. The desk form fills a draft only for a user who can create or write visits.
+  - Both are now thin checked wrappers over unchecked builders (`build_dashboard_context`,
+    `build_visit_payload`). The Visit Wizard's bootstrap calls the builders directly, after its
+    own read check on the visit, so the wizard behaves as before.
+  - **Create > Maintenance Contract** from a Sales Order, a Project Contract or a Project requires
+    read permission on the source document and create permission on Sapphire Maintenance Contract.
+    The signing hook that drafts the contract when an agreement is Signed maps through the
+    unchecked `map_contract_from_project_contract`, so it works as before.
+  - **Task tree on the Task form** (`get_child_tasks_html`) requires read permission on the Task,
+    checked before its `try` so a refusal is raised rather than drawn, and reads at most 2,000
+    descendants and 50 levels.
+  - **Change Orders on This Project, Budget Reallocations for a project, and a subcontractor's
+    scorecard history** each also require read permission on their own doctype. The scorecard
+    history clamps `limit` to 1..120.
+  - **Project Planner publish and Reset baseline** require write permission on the Project named,
+    in addition to the existing role gate and Task write.
+  - **Project comments** (`get_project_comments`, `add_project_comment`) require read permission
+    on the Project. No browser code calls them today.
+  - **Projects Dashboard per-project readers** (`get_project_tasks`, `get_task_children`,
+    `get_gantt_tasks_for_project`, `get_resource_allocation_data`, `get_project_health_metrics`)
+    require read permission on the Project, resolved from the parent task where the call names a
+    task, and on the task itself when it has no Project. Their callers are the Project form, which
+    already needs that read.
+  - **The Portfolio Gantt reader** (`get_all_projects_for_gantt`) has the dashboard's page gate
+    again, now that `check_permission()` falls back to Project Dashboard Settings' roles, and
+    reads through `frappe.get_list`, as the dashboard widget's own Gantt query does. No browser
+    code calls it since the Portfolio Gantt moved to that widget.
+  - **Master project ordering** (`update_master_project_structure`) writes only projects that
+    belong to that master and that the caller may write; any other name comes back in `skipped`.
+  - **Opportunity tag sync** (`sync_opportunity_tags_for_existing`) requires write permission on
+    the Opportunity and no longer moves `modified`, so the open form does not go stale. The form
+    calls it only for a user who can write the record.
+  - **Asset Booking availability** (`check_availability`) requires read permission on Asset
+    Booking.
+  - **Supervisor sign-off requests** (`request_signoff`): a learner asks about a course they can
+    open (`api.training._visible_course_names`), with their own attempt and their own open
+    assignment for that course. Training, System and HR Managers raising a request for someone
+    else are unchanged.
+  - **"Expand with AI" on the feedback form** (`draft_description`) is for System Users, with at
+    most 30 drafts per person per hour (`_enforce_draft_rate`, the same counter shape as the
+    filing limit). The bootstrap offers the button only to System Users.
+  - **Unlink and Delete preview** (`get_blocking_links`) requires read permission on the
+    document; `unlink_and_delete`, which checks delete permission first, uses the unchecked list.
+    **Merge Project preview** (`get_merge_stats`) requires read permission on Project, checked
+    before either name is looked up, and on both projects.
+- **Access checks tightened on the people-facing endpoints.** Hardening, consistent with how
+  `timeoff.who_is_out` and `permits.open_permits` already check employment. Each endpoint below
+  now enforces the rule named:
+  - **Tier reviews** (`hr_enhancements/tier_review.py`): `open_review`, `reviewers_for` and
+    `send_to_reviewer` require an active Employee (or HR Manager / System Manager) and take
+    names as plain strings. A permission refusal reads the same whatever is named.
+  - **Confined-space permits** (`hr_enhancements/permits.py`): `open_permit`, `close_permit` and
+    `cancel_permit` are for a Maintenance Manager, HR Manager or System Manager, or an active
+    Employee named on the permit as its entrant, attendant or supervisor. The entrant can call
+    an entry off, and a manager can close a permit when the named people are away.
+  - **Incident and hazard reports**: `safety.report_incident` and `hazards.report_hazard`
+    require an active Employee (or HR Manager / System Manager) and are rate limited per user.
+    `hazards.safety_brief` returns an empty brief to anybody else, keeping its promise never to
+    raise on the visit screen.
+  - **Telephony** (`api/telephony.py`): `log_call_transcript`, `send_voicemail_email` and
+    `get_employee_number` are callable only by the Triton gateway, through
+    `@validate_webhook_secret`. They stay ordinary whitelisted methods, not guest endpoints,
+    because a request authenticated with an API key is never Guest. Nothing in the browser or in
+    Triton calls them today. `log_call_transcript` no longer switches the session user; it sets
+    the Communication's sender, and hands its owner to the Triton service user after insert.
+    `get_employee_number` escapes the LIKE wildcards in the name it is given. `trigger_outbound_call` and `log_call_details` require an
+    active Employee. `trigger_outbound_call` no longer falls back to a User's phone fields for a
+    login with no Employee, and its `docname` is annotated `str`. `log_call_details` attaches a
+    call only to a Customer, Contact or Lead the caller can read. `trigger_outbound_call`,
+    `send_sms` and `send_voicemail_email` are rate limited per user.
+  - **The desk softphone**: `get_softphone_token` returns None to a caller who is neither an
+    active Employee nor a System Manager. When `Triton Settings.softphone_users` is empty, only a
+    System Manager gets the shared legacy identity's token, and everybody else gets None. The
+    client already treats None as "no answer device here" and keeps the call notifications. **A
+    site that relies on the empty list to ring every desk needs its answerers listed in
+    `softphone_users`.**
+  - **The SMS reply drafter**: `communication.suggest_sms_reply` requires a System User who can
+    read the Communication, and is rate limited per user.
+  - **The time kiosk** (`api/time_kiosk.py`): the legacy `log_geolocation` takes the employee
+    from the session, as `log_geolocation_batch` does. It honours a supplied `employee` only for
+    a `TIMELINE_MANAGER_ROLES` holder. `get_tasks_for_project` and `get_maintenance_context`
+    require a session Employee and Project read on the project named, the same projects the
+    kiosk's picker lists. `get_my_visits_today` and `get_nearby_visit` answer empty to a login
+    with no Employee, so the Visit Wizard's picker still draws for one. The context logic moved
+    into the unchecked `maintenance_context`. The hourly
+    `tasks.nudge_unsubmitted_maintenance_forms` calls that helper directly, so one employee's
+    project permissions cannot stop its loop.
+  - **Time correction requests**: a new request must name the filer's own Employee, unless the
+    filer may review that employee's requests (`workforce/permissions.can_review`).
+  - **Triton widget**: `triton_chat.user_has_widget_access`, which `triton_attachments` and
+    `api/triton_frame` also use, now also requires a System User, with the allow-list on or off.
+    `stream_query` and `morning_briefing` are rate limited per user.
+  - **Training assistant tools**: `training_learner_record` and `training_compliance_status`
+    apply the Desk's row scoping from `training/permissions.py`. A caller sees their own rows
+    and their direct reports' rows, unless they hold an unscoped training role. The scoping
+    covers assignments, certificates and the per-course counts.
+- **`api/telephony.validate_webhook_secret` now also requires the authenticated user to be a
+  gateway user.** The API key Frappe verified must belong to `triton@sapphirefountains.com`
+  (the account the handlers already `set_user` to), or to a user named in the new site config
+  key `telephony_gateway_users` (a list, or one comma-separated string), which replaces the
+  default when it names anyone. User names compare case-insensitively. Every endpoint behind
+  the decorator is covered, `call_intelligence.process_call_intelligence` included.
+- **`api/telephony.get_gateway_config` is now behind `@validate_webhook_secret`**, like the
+  other gateway endpoints. Nothing calls it today (see the comment above
+  `_DEFAULT_VOICE_MODEL_ID`); it was moved below the decorator's definition so the decorator
+  can apply.
+- **`api/telephony.validate_twilio_request` refuses every request while no Twilio auth token
+  is stored**, instead of checking the signature against an empty token.
+- **`api/telephony.receive_mms` downloads `MediaUrl0` only from an https `api.twilio.com` or
+  `*.twilio.com` URL** (`_is_twilio_media_url`), streamed, with a timeout and a 10 MB cap
+  (`_MMS_MEDIA_MAX_BYTES`). Any other URL is skipped with one Error Log row, and the webhook
+  still answers "OK".
+- **The voicemail download uses a URL only when it names this account's recordings on
+  Twilio's API host.** `api/call_recording_export.is_twilio_recording_url` accepts
+  `https://api.twilio.com/2010-04-01/Accounts/<configured Account SID>/Recordings/<RE sid>`,
+  with an optional extension or query string, and nothing else; with no Account SID
+  configured it accepts nothing. `process_call_intelligence` checks it before queueing the
+  Drive export, and `_voicemail_audio` checks it again before the authenticated request. A
+  refused URL is still stored on the Call Log; only the download is skipped.
+- **`api/call_intelligence.process_call_intelligence` resolves the caller through
+  `telephony._get_caller_info`,** the in-process lookup the other server-side callers use,
+  instead of the whitelisted wrapper. The endpoint's own decorator has already checked the
+  request, so a site that names a different gateway user in `telephony_gateway_users` still
+  gets its missed-call and voicemail payloads recorded.
+- **`stripe_payments/core/utils.get_secret` and `quickbooks_online/core/utils.get_secret`
+  read with `get_password(fieldname, raise_exception=False)` and return None for a missing,
+  empty, undecryptable or `*`-only value.** Every caller already
+  treats None as "not configured": the Stripe and QuickBooks webhook signature checks refuse,
+  and the API clients throw their "not configured" / "reconnect" messages. A value set in
+  memory and not yet saved is still returned, by `get_password` itself. The Stripe signature
+  check is unchanged.
+- **`quickbooks_time/api.qb_timesheet_webhook` refuses every request while the site config
+  key `qb_time_webhook_secret` is unset.** It accepts the secret from the new
+  `X-QB-Time-Webhook-Secret` header as well as the existing `token` parameter, compares with
+  `hmac.compare_digest`, answers a refusal with a fixed 401 body and no Error Log row, and an
+  accepted request that fails returns a fixed error body instead of the exception text (the
+  traceback still goes to the Error Log).
+- **`triton_chat.confirm_action` and `cancel_action` check `action_id` before it goes into
+  the Triton URL path**: letters, digits, `-` and `_`, at most 64 characters (Triton's ids are
+  UUIDs). Anything else throws "Invalid action id.", like `_custom_persona_path` does for
+  persona ids.
+- **The scanner's PEM private-key rule can no longer be excused by the fixture marker**, in either
+  form (beside the value, or in a file header under `tests/` or `fixtures/`). A test that needs
+  PEM-shaped data assembles it at run time from fragments, as `tests/test_secret_scan.py` does.
+  New tests there cover each new rule, the placeholders that must stay quiet, the marker, the
+  reviewed-blob list (what it excuses and, mostly, what it does not) and the quick triggers.
+- `infra/assets/test-vm-setup.md` no longer carries database or site credential values in its prose,
+  its pasted `site_config.json` or its command lines; each now reads `<stored in the password manager>`.
+- `.github/workflows/ci.yml` declares `permissions: contents: read` for the whole workflow. No job
+  writes to the repository or calls the GitHub API (checkout reads, and the clean-blob cache uses the
+  Actions runtime token), so nothing else needs the default token's wider scope. `release.yml` keeps
+  its own `contents: write`.
+- The nine infrastructure and two upstream-update Cloud Build triggers in `infra/cloud_build.tf` watch
+  the anchored pattern `^manual-trigger-only$` (new variable `cloud_build_manual_branch`) instead of the
+  bare name. Cloud Build branch filters are regular expressions matched as a search, so an unanchored
+  name also matched any branch containing it; the deploy triggers were anchored the same way earlier.
+  The branch name that fires them is unchanged. **This changes nothing live until an operator applies
+  Terraform.**
+- Marker comments (`FAKE-DO-NOT-USE`) added beside five existing example values so the extended scanner
+  reads them as the stand-ins they are: the placeholder default of `cloud_build_github_token` in
+  `infra/variables.tf` and its README row, two examples in `modules/cloudsql-instance/README.md`, and two
+  sample values in `scripts/test_capture_scrub.js`. The scanner also reads a hyphenated Terraform
+  reference such as `module.kms.keys.key-regional.id` as a reference rather than a value.
+- **HR records: HR Manager and System Manager see every record; everyone else is scoped.**
+  Hardening, by the owner's decision of 2026-11-18. `HR User` is held by nearly every staff
+  account, so it now counts as an ordinary staff role in the HR Enhancements module:
+  - `hr_enhancements/permissions.py`: `UNSCOPED_ROLES` is System Manager and HR Manager. A
+    holder of `HR User` goes through the same row scoping as everyone else: their own
+    records, and their direct reports' where the hook for that doctype already has that arm
+    (time off, onboarding, credentials, work restrictions, incidents). Tier Review stays own
+    and named reviewer; Policy Acknowledgement stays own.
+  - The `HR User` DocPerm rows on Safety Incident, Work Restriction, Tier Review, Employee
+    Credential, Time Off Request, Onboarding Checklist and Policy Acknowledgement now grant
+    exactly what the `Employee` row on the same doctype grants, no more. Filing credentials
+    and work restrictions, editing incidents and creating acknowledgements by hand is HR
+    Manager's (the module's endpoints for acknowledgements and incidents are unchanged).
+    Each JSON's `modified` is bumped so `bench migrate` re-imports the rows.
+  - The `OSHA 300 Log` and `OSHA 300A Summary` reports are for System Manager and HR Manager
+    only, the same as `OSHA Privacy Case List`. They read incidents without row scoping, so
+    the role list is their whole gate.
+  - `safety.raise_action` now accepts write on the incident (HR Manager, System Manager) or
+    the supervisor (`reports_to`) of the person the incident names, and refuses anyone else.
+    It used to check write only, which `HR User` no longer grants.
+  - `permissions.incident_has_permission` allows the create check on a new incident.
+    `reported_by` is stamped in `before_insert`, after Frappe's create check, so a near miss
+    filed from the Desk by someone without an unscoped role was refused. Who may create is
+    still bounded by the DocPerm.
+- **A new Time Off Request, Tier Review or Policy Acknowledgement starts at its first status.**
+  A record created outside the module's own buttons starts as `Draft` / `Draft` /
+  `Requested`, with its decision, approval, signature and applied fields empty; a Desk
+  duplicate of a decided record starts the same way. A new time-off request takes its
+  approver from `reports_to`. A new tier review has no reviewer until `send_to_reviewer`
+  names one.
+  - **A tier review created by hand goes through the Start button's checks.** The person,
+    HR, or somebody senior on that ladder may start it; its from and to rungs and its
+    requirement lines are read from the ladder (`_ladder_snapshot`), and it is refused when
+    the target rung lists no requirements.
+  - **Imports of historical records keep their statuses.** A Data Import run by HR Manager or
+    System Manager keeps the status and decision columns in the file, so approved leave and
+    paper-signed acknowledgements from before the module can be loaded. Migrations, installs
+    and patches are exempt as before.
+- **`tier_review.apply_promotion` requires an eligible reviewer.** Applying is for HR Manager
+  or System Manager, or the named reviewer while they are in `progression.eligible_reviewers`
+  for that person, the same predicate `send_to_reviewer` uses.
+- **OAuth client registration is limited to allow-listed redirect addresses, at a limited rate.**
+  Nikolas, 2026-11-18: dynamic client registration (RFC 7591) stays on, because Claude and Google's
+  connector both register themselves before they connect to this site's MCP server, but only for
+  clients whose redirect addresses are on an allow-list. A new `before_request` hook,
+  `oauth_registration.guard_registration`, judges every POST to a method path
+  (`/api/method/...`, `/api/v1/method/...`, `/api/v2/method/...`) or `cmd` whose dotted name ends
+  in `register_client`. That covers frappe's `frappe.integrations.oauth2.register_client`, Frappe
+  Assistant Core's `frappe_assistant_core.api.oauth_registration.register_client`, and any second
+  dotted name for either, the same reasoning as `fieldlevel_read.seal_wrapped_originals`.
+  - **Every redirect URI must match.** Built in: `https://claude.ai/api/mcp/auth_callback` and
+    `https://claude.com/api/mcp/auth_callback` (exact path), and any path on
+    `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com` and
+    `oauth-redirect-test.googleusercontent.com`. A URI must be https with exactly that host (letter
+    case aside), and is refused with a port, a user name, a trailing dot, a fragment, a dot segment, a
+    percent-encoded dot, slash or backslash, or a character outside RFC 3986's set, so an
+    internationalized host counts only in its `xn--` form. One entry off the list refuses the whole
+    registration. Claude's single callback and Google's six addresses in one request both pass
+    unchanged.
+  - **Site config.** `oauth_registration_redirect_allowlist` adds entries (`host` or
+    `host/path-prefix`; a loopback client only when `http://localhost` or `http://127.0.0.1` is listed
+    explicitly, with any port). `oauth_registration_guard: 0` turns the hook off.
+  - **Rate.** Two counters an hour per client address, keyed on `frappe.local.request_ip` like
+    every other IP-keyed limit here (see `utils/client_ip.py`). Ten refused requests refuse that
+    address for the rest of the window. Accepted registrations have their own limit of 60,
+    because the allow-listed clients register from their vendors' servers and every staff member
+    connecting shares those addresses. A counter's expiry is set on its first hit and set again
+    if the counter is ever found without one.
+  - **How it refuses.** frappe v16's `application` sends a raised werkzeug `HTTPException`'s own
+    response, so the hook ends the request with a JSON body in RFC 7591's error shape: 400
+    `invalid_redirect_uri` naming the URI, 400 `invalid_client_metadata` when the body is not a JSON
+    object with a non-empty list, or 429. A matching request fails closed: an unreadable body or any
+    unexpected error refuses it. Every other request returns after a method check and a string test,
+    and nothing on that path raises.
+
+### Added
+
+- **`tests/test_whitelist_methods_ratchet.py`**, a bench-free AST test with its own CI step, in
+  three parts.
+  - **The baseline.** Every whitelisted function must declare `methods=` or be listed in
+    `tests/data/whitelist_methods_baseline.txt`. A new endpoint without `methods=`, or a baseline
+    line for an endpoint that now declares it or no longer exists, fails the build.
+  - **The ceiling.** The baseline's length is also kept as a number in the test. The build fails
+    unless the two agree, and `--write` refuses to write a longer list, so the number only goes
+    down and every change to it is a line in a diff.
+  - **The names.** An endpoint that answers GET, declared or not, and whose name reads as a
+    change (`create_`, `send_`, `delete_` and so on) must be in the test's reviewed list with the
+    reason it is a read. Declaring `methods=["GET"]` on a change does not pass.
+- **`utils/user_rate_limit.py`**, a per-user rate limit for whitelisted endpoints. Frappe's own
+  `rate_limit` keys its counter on the client address or on a form value the client chooses.
+  The whole office shares one public address, so an address-keyed limit on a staff endpoint is
+  one bucket for everybody. This one counts per session user, in the style of
+  `api/feedback.py`'s filing limit. It counts only inside a web request, lets the call through
+  when redis cannot be read (it is a ceiling on volume, not an access check), and keeps the
+  wrapped function's signature.
+- **`tests/test_people_access_checks.py`** (its own CI step) runs the rate limit against a stub
+  and pins each rule above at source level. `test_triton_personas` gains the System User cases.
+  The kiosk suites call `maintenance_context` for the context logic, and the Visit Wizard case
+  for a login with no Employee is pinned in `test_maintenance_visit_crews`.
+- **Error Log rows are masked before they are stored.** A new `Error Log` `before_insert` hook,
+  `security_alerts.mask_error_log`, passes each row's `error` and `method` through
+  `utils/log_masking.mask_secrets`, which replaces credential-shaped values with `[masked]` and keeps
+  the rest of the text: PEM private-key blocks; Google API key, OAuth client secret, access and
+  refresh token shapes; Stripe secret, restricted and webhook-signing keys; a 32-hex value after
+  `auth_token` or `api_secret` (account and key identifiers are kept); `Authorization` header values,
+  `Bearer` tokens and frappe's `token key:secret`; `name='value'` and `"name": "value"` pairs whose
+  name is a credential word (the name is kept); credential URL query values; and the password in
+  `user:password@host`.
+  - **`metadata` is masked by structure.** The row's `metadata` (the request's form values or the
+    job's arguments, as JSON text) goes through `log_masking.mask_json_text`: a value under a
+    credential-named key becomes `[masked]` at any depth, a string that holds JSON of its own is
+    masked by its own keys, every other string goes through the text rules, and the result is
+    always valid JSON. Unchanged metadata is stored exactly as frappe wrote it.
+  - **How it complements frappe's own masking.** frappe masks by variable or top-level key name;
+    this goes by the shape of the value and by key names at any depth.
+  - **Why a `doc_event`.** It is resolved by name when the row is inserted, so it applies in
+    background workers that serve hooks from the cache, and to rows frappe pushes through
+    `deferred_insert` and inserts later from the scheduler.
+  - **It can never cost the row or feed itself.** The hook is wrapped whole in `try/except` and
+    falls through to the row as frappe built it, and it never calls `log_error`: an Error Log hook
+    that logged would insert another Error Log and run again (the same family as the Notification
+    loop fixed in v1.360.0). A test walks both functions for a `log_error` call.
+  - **Cost.** Every pattern has bounded quantifiers and runs in linear time, and a rule is skipped
+    unless a substring test says it could match; a 1 MB traceback takes about 0.1 s. Text past
+    2,000,000 characters is kept unscanned rather than cut, so the stored text is never shortened.
+    Masking is idempotent.
+- **`security_alerts.mask_stored_error_logs`** applies the same masking to rows already stored.
+  System Manager only, POST only, a dry run by default; examines up to `limit` rows (at most 5,000)
+  in name order from an `after` cursor, rewrites changed fields without touching `modified`, commits
+  each batch, and returns counts and the next cursor, never row content. No patch and no scheduler
+  entry: an administrator runs it by hand.
+- **A daily site-configuration check.** `security_alerts.check_site_configuration` (scheduler
+  `daily`) emails the admin alert recipients while `developer_mode`, `server_script_enabled` or
+  `allow_tests` is on in the site configuration, at most once per setting per day, through the
+  module's recipient helper and a per-setting cache claim (`_claim_once`, which the Administrator
+  login throttle now uses too, unchanged in behavior). Quiet when nothing is on; never raises.
+  Password sign-in being on is already reported every day by `check_two_factor_coverage` (v1.755.0)
+  and is not repeated, so one setting never produces two emails a day.
+- **A register of guest-callable endpoints, checked in CI.** Every
+  `@frappe.whitelist(allow_guest=True)` function (34 today) is now listed in
+  `erpnext_enhancements/tests/data/guest_endpoints.json` with the caller it serves ("Stripe webhook",
+  "customer signing page") and the check that authenticates that caller ("signature header", "link
+  token", "API key"). `tests/test_guest_endpoint_register.py` reads the code by AST, no bench needed,
+  and fails when a guest endpoint is missing from the register, when the register names one that no
+  longer exists, or when an entry lacks either field. Adding or removing a guest endpoint now means
+  changing the register in the same pull request, which is where its authentication is written down.
+  Own step in the Standalone unit tests job.
+- **The committed-secrets scanner knows more shapes.** `scripts/check_no_committed_secrets.py` now
+  also matches, wherever they appear: Stripe live and webhook keys, Google API keys, AWS access key
+  ids, GitHub and Slack tokens, JWTs, `Authorization: token key:secret` pairs, URLs with a literal
+  `user:pass@`, and a Twilio-style auth token beside the word. `encryption_key` joins the keyword
+  rules. A `password` or `passwd` assignment with a literal value (a `db_password` key, a
+  `--admin-password` option, a `mysql -p` argument, a table row) is matched in documentation and
+  configuration files; source code is left to review. The existing `FAKE-DO-NOT-USE` marker works for
+  all of these as before. Run over the whole working tree the new rules produced 12 findings, in one
+  setup note and in documentation and fixtures. Nothing is left in the tree after the edits below.
+  The rules apply in every mode: the working tree, staged files, the PR range and the full-history
+  walk.
+- **Older blobs that match the new rules, where nothing can be edited.** Run over every blob in the
+  repository, the new rules matched earlier versions of seven files (43 blobs), and a full-history
+  walk that cannot go green is a gate nobody reads. They are handled two ways.
+  - Two shapes that are never a credential are now read as stand-ins by the rules themselves: a
+    value holding twenty or more characters of the digits and the alphabet typed out in order (the
+    placeholder default of `cloud_build_github_token`, 36 blobs), and the sudoers tag `NOPASSWD:`,
+    which is followed by a command and not a password (2 blobs).
+  - The five blobs that remain are listed by content hash in the new
+    `scripts/secret_scan_reviewed_blobs.txt`, each after a person read its findings: earlier
+    versions of `scripts/test_capture_scrub.js`, `modules/cloudsql-instance/README.md` and
+    `infra/assets/test-vm-setup.md`. The list names exact blobs, never paths, so every other version
+    of those files is still read. Only the full-history walk reads it: the working tree, the staged
+    files and the PR range never do, so nothing a pull request adds can be excused by it. A listed
+    blob that is still in the tree is not excused, an entry that excuses nothing fails the run, and
+    a listed blob is never recorded in the clean-blob cache.
+  With both, the full-history walk passes on a fresh clone of the repository with every branch
+  (25,437 blobs).
+- **The provider and password rules skip a line that cannot match.** Each has a substring its
+  pattern requires (`_QUICK_TRIGGERS`), looked for before the regex runs. Without it the full walk
+  took about twice as long as with the old rules, which is past the CI job's time limit on the first
+  run after a rule change, when the clean-blob cache starts empty. With it the walk takes about a
+  tenth longer than before (one pass over a fresh clone, split across twenty processes: 75 s with
+  the old rules, 141 s with the new ones, 84 s with the triggers). The findings are the same with and
+  without it: a test holds that on shaped lines and on the largest files, and it was checked once
+  over every blob in the repository. The full-history job's limit goes from 30 to 60 minutes for
+  that one run (it took 17 minutes with the old rules on 2026-11-02): a job killed at its limit
+  saves no cache, so too short a limit fails the same way on every run after it.
+
+### Tests
+
+- `tests/test_webhook_auth.py` covers the gateway-user rule and its site config override,
+  `get_gateway_config` behind the decorator, the empty-token refusal, and `receive_mms`'s host
+  rule, streaming, timeout and size cap.
+- New `tests/test_inbound_secret_checks.py` (its own unittest step in `ci.yml`) covers the
+  recording URL rule and `_voicemail_audio`, the guard before the export is queued, both
+  `get_secret` readers, and the QuickBooks Time webhook.
+- `tests/test_triton_personas.py` covers the action id check.
+- `tests/test_log_masking.py` (new CI step): each value shape, the name kept and only the value
+  masked, ordinary tracebacks and identifiers unchanged, idempotence, a 1 MB traceback and nine
+  pathological 1 MB inputs inside a time budget, text past the cap kept exactly, and the
+  repository's secrets scanner clean on the masker and the test file. Every credential-shaped
+  value in it is synthetic and assembled from fragments.
+- `tests/test_security_alerts.py`: the hook masks `error`, `method` and `metadata`, leaves other fields and
+  clean rows alone, never raises or logs, and is registered on Error Log `before_insert`; the
+  backfill's dry run, write path, cursor, limit clamp, role check, POST-only decorator and absence
+  from the scheduler; the configuration check per setting, its daily throttle, its silence on a
+  clean site, its no-recipient and failure paths, and its daily schedule.
+- `tests/test_oauth_registration.py` (bench-free, own CI step): allowed and refused URIs, mixed
+  lists, unusual forms, site-config entries, the path and `cmd` matcher, the rate, and the hook
+  (other requests untouched, refusals with their status and body, fail-closed cases, the off
+  switch, and the response built by the real werkzeug when it is installed).
 
 ## [1.824.0] - 2026-11-18
 

@@ -45,7 +45,7 @@ def _notify_recipients(users):
 
 
 # The enqueue function now accepts 'project_template' and passes it on.
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enqueue_project_creation(opportunity_name, users=None, project_template=None, create_anyway=None):
 	"""Queue background creation of a Project from an Opportunity.
 
@@ -61,7 +61,7 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 			Project. Required.
 		create_anyway: Truthy from the Hand-Off Process tab's "Create Project
 			Anyway": a deal ticked Product Sale (No Project) gets its project
-			after all, and the tick is cleared (v1.825.0, see below).
+			after all, and the tick is cleared (v1.827.0, see below).
 
 	Returns:
 		dict: ``{"status": "queued", "phase", "state", "steps"}`` once the job is
@@ -69,10 +69,10 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		for this Opportunity is already queued or running (nothing new is
 		queued); ``{"status": "exists", "project"}`` when it already has its
 		Project; ``{"status": "product_sale", "message"}`` when the deal is a
-		product sale and ``create_anyway`` is not set (v1.825.0, see below). The
+		product sale and ``create_anyway`` is not set (v1.827.0, see below). The
 		client draws its progress bar from ``steps``.
 
-	A product sale skips project creation (v1.825.0; decision 2026-11-18, "the
+	A product sale skips project creation (v1.827.0; decision 2026-11-18, "the
 	Sales Order is the record"). Recognized by
 	:func:`~erpnext_enhancements.crm_enhancements.product_sale.is_product_opportunity`:
 	a person ticked Product Sale (No Project) and nothing else is on the deal's
@@ -170,7 +170,7 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 
 
 def _clear_product_sale(opportunity_name):
-	"""Untick Product Sale (No Project) for Create Project Anyway (v1.825.0). Never raises."""
+	"""Untick Product Sale (No Project) for Create Project Anyway (v1.827.0). Never raises."""
 	try:
 		if frappe.db.has_column("Opportunity", product_sale.MARKER) and frappe.db.get_value(
 			"Opportunity", opportunity_name, product_sale.MARKER
@@ -225,7 +225,7 @@ def sync_opportunity_tags(doc, method=None):
 		doc._user_tags = None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_opportunity_tags_for_existing(opportunity_name):
 	"""Sync tags for an existing Opportunity without triggering a full save.
 
@@ -241,11 +241,15 @@ def sync_opportunity_tags_for_existing(opportunity_name):
 		str | None: The recomputed ``_user_tags`` value.
 
 	Side effects:
-		DB write to ``Opportunity._user_tags``.
+		DB write to ``Opportunity._user_tags``, without touching ``modified``.
+
+	Requires write permission on the Opportunity (the form only calls it for someone who can
+	save the record).
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity_name)
+	doc.check_permission("write")
 	sync_opportunity_tags(doc)
-	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags)
+	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags, update_modified=False)
 	return doc._user_tags
 
 
@@ -609,7 +613,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 			# Derive a single Project.project_type from the (possibly multiple)
 			# selected value streams, picking the highest-priority one present
-			# (Design, Build, Service, Events). v1.825.0: a deal whose linked quotes
+			# (Design, Build, Service, Events). v1.827.0: a deal whose linked quotes
 			# are a control-panel product order gets "Products" instead (decision
 			# 2026-11-18 pick 1; the Products tab lists panel projects by that type).
 			# See product_sale.project_type_for; it never raises.

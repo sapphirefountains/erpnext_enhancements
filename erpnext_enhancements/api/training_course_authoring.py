@@ -119,7 +119,7 @@ def list_starters():
     return {"starters": templates_gallery.list_templates()}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_from_starter(starter, course_title=None):
     """Build a draft course from a starter shape.
 
@@ -143,7 +143,7 @@ def create_from_starter(starter, course_title=None):
     return author_course_from_spec(templates_gallery.spec_for(starter, course_title))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def author_course_from_spec(spec):
     """Create a Training Course and an unpublished draft from a Course Spec.
 

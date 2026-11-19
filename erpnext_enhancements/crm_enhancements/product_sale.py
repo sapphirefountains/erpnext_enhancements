@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Is this Opportunity a product sale? A product sale gets no project (v1.825.0).
+"""Is this Opportunity a product sale? A product sale gets no project (v1.827.0).
 
 Decision 2026-11-18, pick 1: for the E-Stop and other standard products **the Sales Order is the
 record**; there is no project per unit. Custom-engineered control panels keep a Project of type
@@ -46,7 +46,7 @@ with the Products tab, so the two never disagree about a line.
 """
 
 MARKER = "custom_product_sale"
-#: How a configurator Quotation names its deal (v1.825.0): not ERPNext's ``Quotation.opportunity``,
+#: How a configurator Quotation names its deal (v1.827.0): not ERPNext's ``Quotation.opportunity``,
 #: so ERPNext never moves or freezes the deal's stage from it (``quoting.py`` says why).
 SOURCE_OPPORTUNITY = "custom_source_opportunity"
 
@@ -92,7 +92,7 @@ def deal_facts(opportunities):
 
 	Three reads whatever the count: the ticks, the linked configurations, and the lines of the live
 	Quotations linked to the deal. A Quotation is linked by ``custom_source_opportunity`` (how the
-	configurator links its quotes, v1.825.0) or by ERPNext's own ``Quotation.opportunity`` (what
+	configurator links its quotes, v1.827.0) or by ERPNext's own ``Quotation.opportunity`` (what
 	Create > Quotation sets); QuickBooks quotes set neither. Raises on a database problem; the callers
 	below are the ones that must not.
 	"""
@@ -160,7 +160,7 @@ PRODUCTS_TYPE = "Products"
 
 
 def project_type_for(value_streams, quoted_lines):
-	"""The Project Type a deal's project gets (v1.825.0).
+	"""The Project Type a deal's project gets (v1.827.0).
 
 	**Products** when the deal's live linked quote lines, taken together, are a product order that
 	needs a project: every line a product or incidental, and a control panel among them
@@ -228,7 +228,7 @@ def documents_agree(opportunity):
 
 
 def mirror_deal_link(doc, method=None):
-	"""Quotation ``validate``: a quote linked ERPNext's way also names its deal in our field (v1.825.0).
+	"""Quotation ``validate``: a quote linked ERPNext's way also names its deal in our field (v1.827.0).
 
 	Configurator quotes name their deal only in ``custom_source_opportunity`` (``Quotation.opportunity``
 	would let ERPNext move and freeze the deal's stage). ERPNext's own Create > Quotation still sets
@@ -248,7 +248,7 @@ def mirror_deal_link(doc, method=None):
 
 
 def add_dashboard_links(data):
-	"""The Opportunity's Connections (v1.825.0): Quotations through ``custom_source_opportunity``, so a
+	"""The Opportunity's Connections (v1.827.0): Quotations through ``custom_source_opportunity``, so a
 	configurator quote shows on its deal (its ``opportunity`` is empty), and the deal's Product
 	Configurations (their own ``opportunity`` field, the dashboard's default). Each only once the field
 	exists on the site; a reader that fails leaves ERPNext's dashboard as it was."""

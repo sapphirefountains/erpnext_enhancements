@@ -148,7 +148,7 @@ def quotation_header(
 	rewrite it on save. Trade and distributor prices, when they come, are price lists, not rules.
 
 	**The deal is linked by ``custom_source_opportunity``, and ERPNext's ``opportunity`` is cleared**
-	(v1.825.0), on purpose. A Quotation linked through ERPNext's own field (or an item's
+	(v1.827.0), on purpose. A Quotation linked through ERPNext's own field (or an item's
 	``prevdoc_docname``) drives the deal's status: submitting it writes ``Quotation``, its Sales Order
 	``Converted``, declaring it lost ``Lost``, none through validation; and once it is ordered,
 	``Opportunity.validate_status_against_quotations`` refuses every other status, so the deal could

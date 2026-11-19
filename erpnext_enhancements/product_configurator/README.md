@@ -16,12 +16,12 @@ code map.
 | `engine/partnumber.py` | Part-number construction (`PDT-0040-{mounting}-{estop_qty}-…`) and selection validation, over the option context that Quantity and Choice options build |
 | `engine/conditions.py` | Restricted expression evaluator — a ~50-line AST whitelist (see below) |
 | `engine/buildsteps.py` | Filters and renders step templates into flat printable rows |
-| `engine/quote.py` | What a configured product looks like on a Quotation (v1.825.0), pure: the one line format (`description_lines`: the part number, then one plain line per option, zeros included), who the quote is for (`quotation_party`: the configuration's Customer, else the Opportunity's party, else its Lead), the header and line (`price_list_rate` equal to `rate`, `ignore_pricing_rule`, the finished-goods warehouse), options given as data (`apply_selections`) and refusals in plain words (`missing_permission_message`) |
-| `erp_integration.py` | Generates the ERPNext Item, BOM and Selling Price from a configuration. The Item is a stock item with an Item Default warehouse (`finished_goods_warehouse`) and its BOM is re-asserted as `Item.default_bom`, which a Sales Order and a Work Order need (v1.825.0) |
-| `quoting.py` | The sale (v1.825.0): `start_configuration` (a configuration for a deal, party filled in, options optional) and `create_quotation` (Item + BOM + price, then a draft Quotation linked both ways, the Pricing Summary attached). No commits; the attachment runs in a savepoint and degrades to a warning. It writes nothing on the deal: it returns `suggest_product_sale`, and the form asks the person whether the deal is a product sale (`crm_enhancements/product_sale.py`) |
+| `engine/quote.py` | What a configured product looks like on a Quotation (v1.827.0), pure: the one line format (`description_lines`: the part number, then one plain line per option, zeros included), who the quote is for (`quotation_party`: the configuration's Customer, else the Opportunity's party, else its Lead), the header and line (`price_list_rate` equal to `rate`, `ignore_pricing_rule`, the finished-goods warehouse), options given as data (`apply_selections`) and refusals in plain words (`missing_permission_message`) |
+| `erp_integration.py` | Generates the ERPNext Item, BOM and Selling Price from a configuration. The Item is a stock item with an Item Default warehouse (`finished_goods_warehouse`) and its BOM is re-asserted as `Item.default_bom`, which a Sales Order and a Work Order need (v1.827.0) |
+| `quoting.py` | The sale (v1.827.0): `start_configuration` (a configuration for a deal, party filled in, options optional) and `create_quotation` (Item + BOM + price, then a draft Quotation linked both ways, the Pricing Summary attached). No commits; the attachment runs in a savepoint and degrades to a warning. It writes nothing on the deal: it returns `suggest_product_sale`, and the form asks the person whether the deal is a product sale (`crm_enhancements/product_sale.py`) |
 | `api/configurator.py` | Whitelisted desk endpoints — thin adapters over the controller, `erp_integration` and `quoting` (`start_configuration` and `create_quotation` are POST-only, for the Desk now and the phone page and Triton later) |
 | `seed_data.py` | The PDT-0040 STILLWATER E-Stop seed definition (stdlib only) |
-| `setup.py` | `after_migrate` — `Item.custom_source_configuration`; `custom_product_configuration` on Quotation Item and Sales Order Item (v1.825.0; Make Sales Order copies it across); and `Quotation.custom_source_opportunity`, the deal a configurator quote belongs to, kept off ERPNext's own `opportunity` so the quote never moves or freezes the deal's stage. Insert-only |
+| `setup.py` | `after_migrate` — `Item.custom_source_configuration`; `custom_product_configuration` on Quotation Item and Sales Order Item (v1.827.0; Make Sales Order copies it across); and `Quotation.custom_source_opportunity`, the deal a configurator quote belongs to, kept off ERPNext's own `opportunity` so the quote never moves or freezes the deal's stage. Insert-only |
 | `setup_print_formats.py` | `after_migrate` — three print formats per configuration |
 | `dev_checks.py` | Plain assertion functions runnable via `bench execute` |
 
@@ -99,7 +99,7 @@ conditional logic in Jinja, because steps are pre-filtered and pre-rendered serv
 
 ```bash
 python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
-python -m pytest erpnext_enhancements/tests/test_product_quote.py -q   # quote to order (v1.825.0)
+python -m pytest erpnext_enhancements/tests/test_product_quote.py -q   # quote to order (v1.827.0)
 ```
 
 `bench run-tests` is broken under Python 3.14 on the dev bench, which is why `dev_checks.py`

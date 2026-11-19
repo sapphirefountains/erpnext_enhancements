@@ -3,7 +3,7 @@
 
 """Quote a configured product: start a configuration from a deal, then make its draft Quotation.
 
-The first E-Stop sales slice (v1.825.0; decision 2026-11-18, "the Sales Order is the record"). A sale
+The first E-Stop sales slice (v1.827.0; decision 2026-11-18, "the Sales Order is the record"). A sale
 runs Opportunity -> Product Configuration -> draft Quotation -> ERPNext's own Make Sales Order. The
 whitelisted adapters are in ``api/configurator.py``: the Opportunity's "Quote <product>" action and
 the configuration's "Create Quotation" button call them today, and the phone quick-quote page and

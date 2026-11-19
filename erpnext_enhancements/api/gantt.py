@@ -842,7 +842,7 @@ def _widen_parent_project_window(doc):
 	project_window.widen_for_task(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_gantt_row(config, ref_doctype, ref_name, changes, modified=None):
 	"""Apply a drag (dates and/or progress) to one row's document.
 

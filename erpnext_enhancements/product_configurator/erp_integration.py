@@ -23,7 +23,7 @@ already carries labor + markup, and BOM operations would double-count it. To
 add operations later: one Workstation at the product's labor rate, one
 "Assembly" Operation, ``with_operations = 1``.
 
-Stock, for the Sales Order and the Work Order (v1.825.0): the configured Item is
+Stock, for the Sales Order and the Work Order (v1.827.0): the configured Item is
 a stock item with a submitted default BOM, which is what built-ahead stock and
 Work Orders need. Three gaps closed then:
 
@@ -200,7 +200,7 @@ def _assert_config_ready(cfg):
 def _assert_generation_permitted():
 	"""Fail fast with one clean message instead of a mid-flight PermissionError.
 
-	The message is in plain words (v1.825.0): what the person can't do yet and which role to ask
+	The message is in plain words (v1.827.0): what the person can't do yet and which role to ask
 	for, rather than "Item (create), BOM (submit)" (``engine.quote.missing_permission_message``).
 	"""
 	missing = [
@@ -397,7 +397,7 @@ def _compose_description(cfg, product):
 	"""What a Quotation line says: the part number, then one plain line per option.
 
 	The same format the Quotation line gets (``engine.quote.description_lines``), so a line somebody
-	adds to a Quotation or Sales Order by hand reads like one the configurator made. Until v1.825.0
+	adds to a Quotation or Sales Order by hand reads like one the configurator made. Until v1.827.0
 	this was the product name and the options on one line, split by " | ".
 	"""
 	lines = description_lines(

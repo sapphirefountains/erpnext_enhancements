@@ -47,7 +47,7 @@ frappe.provide("erpnext_enhancements.crm");
 	const EVENT = "ee_prompt_create_project";
 	const open_prompts = {}; // opportunity_name -> true while a prompt/dialog is showing
 
-	// v1.825.0: what a product sale (crm_enhancements/product_sale.py) is told instead of a project:
+	// v1.827.0: what a product sale (crm_enhancements/product_sale.py) is told instead of a project:
 	// a deal a person ticked Product Sale (No Project), with nothing else on its linked quotes.
 	const PRODUCT_SALE_TEXT =
 		"This deal is marked a product sale, so it gets no project: its Sales Order is the record. If it needs one after all, use Create Project Anyway on the Hand-Off Process tab.";
@@ -143,7 +143,7 @@ frappe.provide("erpnext_enhancements.crm");
 				opportunity: opportunity_name,
 			})
 			.then(function (state) {
-				// v1.825.0: a product sale gets no project (crm_enhancements/product_sale.py), unless
+				// v1.827.0: a product sale gets no project (crm_enhancements/product_sale.py), unless
 				// this is the Hand-Off Process tab's Create Project Anyway.
 				if (state && state.is_product_sale && !opts.create_anyway) {
 					frappe.msgprint({
@@ -315,7 +315,7 @@ frappe.provide("erpnext_enhancements.crm");
 								// server validates exactly what passed here.
 								users: addresses.join(", "),
 								project_template: values.project_template,
-								// v1.825.0: Create Project Anyway on a deal ticked Product Sale.
+								// v1.827.0: Create Project Anyway on a deal ticked Product Sale.
 								create_anyway: opts.create_anyway ? 1 : 0,
 							},
 						})
@@ -328,7 +328,7 @@ frappe.provide("erpnext_enhancements.crm");
 								report(opportunity_name, { status: "exists", project: result.project }, opts);
 								return;
 							}
-							// v1.825.0: the server found a product sale, which gets no project.
+							// v1.827.0: the server found a product sale, which gets no project.
 							if (result.status === "product_sale") {
 								tracker.cancel();
 								frappe.msgprint({
@@ -862,7 +862,7 @@ frappe.provide("erpnext_enhancements.crm");
 			});
 		};
 
-		// v1.825.0: the deal's quotes in ERPNext are all products (crm_enhancements/product_sale.py
+		// v1.827.0: the deal's quotes in ERPNext are all products (crm_enhancements/product_sale.py
 		// suggests it). Is it a product sale? Yes ticks Product Sale (No Project) and asks nothing more;
 		// "It needs a project" goes on to the hand-off question. Closing it (Esc) decides nothing, and
 		// leaves a fresh win won: a product question is not the "un-win" No of the questions below.
@@ -928,7 +928,7 @@ frappe.provide("erpnext_enhancements.crm");
 					done();
 					return;
 				}
-				// v1.825.0: a product sale gets no project and no hand-off, so there is no next step
+				// v1.827.0: a product sale gets no project and no hand-off, so there is no next step
 				// to ask about. A fresh win says so once; reopening the deal asks nothing.
 				if (state && state.is_product_sale) {
 					done();
@@ -950,7 +950,7 @@ frappe.provide("erpnext_enhancements.crm");
 					if (needs_meeting) ask_schedule();
 					else ask_create();
 				};
-				// v1.825.0: the configurator only suggests a product sale; the person decides here.
+				// v1.827.0: the configurator only suggests a product sale; the person decides here.
 				if (state && state.product_sale_suggested) ask_product_sale(next_step);
 				else next_step();
 			})

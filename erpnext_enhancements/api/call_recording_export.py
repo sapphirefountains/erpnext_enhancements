@@ -20,7 +20,8 @@ the feature switch.
 Audio sources: answered calls are read back from the private File already
 saved on the call's Communication; voicemails are fetched from Twilio with
 the account's Basic-auth credentials (Triton Settings), since their bytes
-never reach ERPNext otherwise.
+never reach ERPNext otherwise, and only from this account's recording URLs on
+``api.twilio.com`` (``is_twilio_recording_url``).
 
 Idempotent per call: filenames embed the Twilio Call SID, and a file with the
 same SID already in the month folder short-circuits the job (Triton retries
@@ -28,6 +29,8 @@ its webhooks on failures).
 """
 
 import io
+import re
+from urllib.parse import urlparse
 
 import frappe
 import requests
@@ -132,14 +135,66 @@ def _already_uploaded(service, folder_id, drive_id, call_sid, is_voicemail):
 	return any(f.get("name", "").startswith("Voicemail") == bool(is_voicemail) for f in files)
 
 
-def _voicemail_audio(twilio_audio_url):
-	"""Download voicemail audio from Twilio (Basic auth from Triton Settings)."""
-	settings = frappe.get_doc("Triton Settings")
-	account_sid = (
+#: A Twilio recording URL: ``/2010-04-01/Accounts/<AC sid>/Recordings/<RE sid>``,
+#: with an optional file extension. The query string is not part of the path.
+_TWILIO_RECORDING_PATH = re.compile(
+	r"^/2010-04-01/Accounts/(AC[0-9a-fA-F]{32})/Recordings/RE[0-9a-fA-F]{32}(\.[A-Za-z0-9]{1,5})?$"
+)
+
+
+def _twilio_account_sid(settings=None):
+	"""The configured Twilio Account SID (Triton Settings, then site config), or ""."""
+	settings = settings or frappe.get_doc("Triton Settings")
+	return (
 		getattr(settings, "twilio_account_sid", None)
 		or frappe.conf.get("twilio_account_sid")
 		or ""
-	)
+	).strip()
+
+
+def is_twilio_recording_url(url, account_sid=None):
+	"""True only for ``https://api.twilio.com/2010-04-01/Accounts/<the configured
+	Account SID>/Recordings/<RE sid>``, optionally with an extension or a query.
+
+	A URL is used for the voicemail download only when it names this account's
+	recordings on Twilio's API host. False when no Account SID is configured.
+	"""
+	if account_sid is None:
+		account_sid = _twilio_account_sid()
+	if not account_sid or not isinstance(url, str):
+		return False
+	try:
+		parsed = urlparse(url.strip())
+		port = parsed.port
+	except ValueError:
+		return False
+	if (
+		parsed.scheme != "https"
+		or (parsed.hostname or "").lower() != "api.twilio.com"
+		or port not in (None, 443)
+		or parsed.username
+		or parsed.password
+		or parsed.fragment
+	):
+		return False
+	match = _TWILIO_RECORDING_PATH.match(parsed.path)
+	return bool(match) and match.group(1) == account_sid
+
+
+def _voicemail_audio(twilio_audio_url):
+	"""Download voicemail audio from Twilio (Basic auth from Triton Settings).
+
+	Returns None, without any request, unless ``is_twilio_recording_url``
+	accepts the URL for the configured Account SID."""
+	settings = frappe.get_doc("Triton Settings")
+	account_sid = _twilio_account_sid(settings)
+	if not is_twilio_recording_url(twilio_audio_url, account_sid):
+		frappe.log_error(
+			title="Call Recording Export",
+			message="The voicemail URL is not a Twilio recording URL for the configured "
+			"account; it was not downloaded.",
+		)
+		return None
 	auth_token = settings.get_password("twilio_auth_token", raise_exception=False) or ""
 	url = twilio_audio_url if twilio_audio_url.endswith(".wav") else twilio_audio_url + ".wav"
 	resp = requests.get(url, auth=(account_sid, auth_token), timeout=60)

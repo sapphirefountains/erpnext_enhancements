@@ -1484,7 +1484,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-23 08:00:00.000000",
+ "modified": "2026-11-18 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",
@@ -1501,14 +1501,10 @@
    "write": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "print": 1,
    "read": 1,
-   "role": "System User",
-   "share": 1,
-   "write": 1
+   "role": "System User"
   }
  ],
  "sort_field": "modified",

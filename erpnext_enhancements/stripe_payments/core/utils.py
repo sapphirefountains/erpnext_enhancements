@@ -32,13 +32,18 @@ def is_enabled(settings=None) -> bool:
 def get_secret(settings, fieldname: str) -> str | None:
 	"""Read an encrypted Password field from Settings, decrypting it.
 
-	Used for ``secret_key`` / ``webhook_signing_secret``. Falls back to the raw
-	field value when decryption is unavailable, returning None when absent.
+	Used for ``secret_key`` / ``webhook_signing_secret``. Returns None -- "not
+	configured" -- when nothing is stored, when the stored value cannot be
+	decrypted, or when the value is empty or only the ``*`` placeholder, so every
+	caller (the webhook signature check among them) refuses rather than proceeds.
 	"""
 	try:
-		return settings.get_password(fieldname)
+		value = settings.get_password(fieldname, raise_exception=False)
 	except Exception:
-		return settings.get(fieldname)
+		return None
+	if not isinstance(value, str) or not value.strip() or not value.strip("*"):
+		return None
+	return value
 
 
 def to_minor_units(amount, currency: str = "USD") -> int:

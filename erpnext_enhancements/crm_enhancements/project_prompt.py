@@ -51,7 +51,7 @@ def prompt_create_project_on_won(doc, method=None):
 	prompt). Fire-and-forget: a missed event is recovered by the form's
 	reopen-on-load check (see the client script).
 
-	Never for a product sale (v1.825.0, ``product_sale``): a deal a person ticked
+	Never for a product sale (v1.827.0, ``product_sale``): a deal a person ticked
 	Product Sale (No Project), with nothing else on its linked quotes. Its record is
 	the Sales Order, so there is no project to offer. Asked last, after the cheap
 	checks, because it reads the database. A deal the configurator only suggests is
@@ -81,7 +81,7 @@ def prompt_create_project_on_won(doc, method=None):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revert_won_status(opportunity_name, previous_status=None):
 	"""Roll an Opportunity back out of "Closed Won" (the popup's "No").
 

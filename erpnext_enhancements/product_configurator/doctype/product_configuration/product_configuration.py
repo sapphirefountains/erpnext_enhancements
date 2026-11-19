@@ -38,7 +38,7 @@ class ProductConfiguration(Document):
 		previous_part_number = before.part_number if before else None
 		self.sync_option_rows()
 		self.recompute()
-		# The title follows the part number until somebody types their own (v1.825.0). A
+		# The title follows the part number until somebody types their own (v1.827.0). A
 		# configuration started from an Opportunity is saved on the product's defaults first, so a
 		# title fixed at the first save would name the default setup, not the one quoted.
 		title = (self.config_title or "").strip()
@@ -46,7 +46,7 @@ class ProductConfiguration(Document):
 			self.config_title = self.part_number
 
 	def fill_party_from_opportunity(self):
-		"""Customer or Lead from the linked Opportunity, when neither is set (v1.825.0)."""
+		"""Customer or Lead from the linked Opportunity, when neither is set (v1.827.0)."""
 		if not self.get("opportunity") or self.get("customer") or self.get("lead"):
 			return
 		row = frappe.db.get_value(

@@ -29,11 +29,11 @@ answer to "can I send this person":
   the four Junior Technicians he is responsible for all report to the Project
   Manager.
 
-Unscoped for the managers who administer this: System Manager, HR Manager, HR
-User. HR User is on that list and Training's equivalent list does not carry it —
-the difference is intentional. Training records are performance data; a credential
-register is the filing cabinet, and the person filing is exactly who needs to see
-all of it.
+Unscoped for the managers who administer this: System Manager and HR Manager.
+Every other role, ``HR User`` included, is scoped by the arms each hook below
+states, the same as Training's equivalent list. The ``HR User`` DocPerm rows on the
+scoped doctypes grant no more than the ``Employee`` rows on the same doctype, so
+holding ``HR User`` adds nothing here (v1.826.8).
 
 Note what a ``has_permission`` hook can and cannot do (same as everywhere else in
 this app): it can only **restrict** what role DocPerms already grant. The role
@@ -42,7 +42,7 @@ rows in the doctype JSON remain the outer bound.
 
 import frappe
 
-UNSCOPED_ROLES = {"System Manager", "HR Manager", "HR User"}
+UNSCOPED_ROLES = {"System Manager", "HR Manager"}
 
 
 def _resolve(user):
@@ -310,6 +310,11 @@ def incident_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(resolved):
 		return True
 	if doc.get("reported_by") == resolved:
+		return True
+	if ptype == "create" and not doc.get("reported_by"):
+		# `reported_by` is stamped in before_insert, after the create check runs,
+		# so it is empty on a NEW row. Filing one is open to every role the DocPerm
+		# lets create, and the row is stamped as the caller's own report.
 		return True
 	if not doc.get("employee"):
 		# A near miss with nobody named. Whoever filed it can see it; the rest is

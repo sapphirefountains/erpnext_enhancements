@@ -45,7 +45,7 @@
  *                 frappe.desk.notifications.get_open_count), each opening its list filtered to this
  *                 record
  *   Actions menu  the Create menu (form_kit/record_tools.js RECORD_TOOLS, frappe.model.open_mapped_doc),
- *                 Generate Contract, Quote <product> (an Opportunity, v1.825.0), Open Drive Folder,
+ *                 Generate Contract, Quote <product> (an Opportunity, v1.827.0), Open Drive Folder,
  *                 Set Reminder (global_enhancements/record_actions.js, which the form's buttons call
  *                 too), New Email, Print, Customize,
  *                 and the full form for the rest (rename, duplicate, delete, merge)
@@ -1779,7 +1779,7 @@ export class RecordTools {
 			add(__("Generate Contract"), () => this.leave(() => this.dialog(() => record_actions.open_generate_contract(doctype, name))));
 		}
 		if (record_actions.can_quote_product(doctype, values)) {
-			// v1.825.0, the deal's "Quote <product>": saves first, then starts a Product Configuration for
+			// v1.827.0, the deal's "Quote <product>": saves first, then starts a Product Configuration for
 			// the deal and opens it. Only a product choice (several products) is a dialog to guard.
 			add(record_actions.quote_product_label(), () =>
 				this.leave(() => {

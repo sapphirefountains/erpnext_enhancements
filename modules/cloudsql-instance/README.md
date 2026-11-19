@@ -150,6 +150,7 @@ module "db" {
     }
     # assign a password to user2
     user2 = {
+      # example value, FAKE-DO-NOT-USE
       password = "mypassword"
     }
     # IAM Service Account
@@ -394,6 +395,7 @@ module "db" {
   terraform_deletion_protection = false
 
   root_password = {
+    # example value, FAKE-DO-NOT-USE
     # password = "ExplitPassword123!"
     random_password = true
   }

@@ -722,7 +722,7 @@ def calendar_status():
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def connect_google_calendar():
 	"""Create (or reuse) the session user's Google Calendar and start Frappe's authorize flow.
 

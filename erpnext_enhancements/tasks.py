@@ -238,7 +238,9 @@ def nudge_unsubmitted_maintenance_forms():
 	if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_sms_nudges")):
 		return
 
-	from erpnext_enhancements.api.time_kiosk import get_maintenance_context
+	# The unchecked helper, not the kiosk endpoint: this runs as each employee in turn
+	# and must not stop on one whose project they cannot open.
+	from erpnext_enhancements.api.time_kiosk import maintenance_context
 
 	now = now_datetime()
 	intervals = frappe.get_all(
@@ -263,7 +265,7 @@ def nudge_unsubmitted_maintenance_forms():
 
 		frappe.set_user(user_id)
 		try:
-			context = get_maintenance_context(project=interval.project, since=interval.start_time)
+			context = maintenance_context(project=interval.project, since=interval.start_time)
 		finally:
 			frappe.set_user("Administrator")
 

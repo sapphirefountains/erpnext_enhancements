@@ -9,7 +9,7 @@ gate on the ``product_configurator_enabled`` master switch (previews and
 option loading always work: the switch guards mutations, not math — the
 "data at rest is ungated" convention).
 
-Quoting (v1.825.0): ``start_configuration`` and ``create_quotation`` are the two
+Quoting (v1.827.0): ``start_configuration`` and ``create_quotation`` are the two
 calls a sale makes, from the Opportunity's "Quote <product>" action and the
 configuration's "Create Quotation" button today, and from the phone quick-quote
 page and the Triton tool later. They are thin adapters over ``quoting.py``,
@@ -129,7 +129,7 @@ def preview_configuration(payload):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_erpnext_records(configuration):
 	"""Create/refresh the Item, default BOM and selling Item Price."""
 	throw_if_product_configurator_disabled()
@@ -161,7 +161,7 @@ def create_quotation(configuration):
 	return quoting.create_quotation(configuration)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def ensure_component_items(product):
 	"""Create missing Suppliers and component Items for a product definition."""
 	throw_if_product_configurator_disabled()

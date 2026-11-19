@@ -10,7 +10,7 @@ on. A template could only put every line on every visit. Pinned here, through th
 * ``visit_days``: the days a line names, written any reasonable way, and refused when a word
   is not a day; a blank or unreadable value keeps the line on every visit;
 * the Section controller stores the days one way and refuses a misspelt one where it was typed;
-* ``get_visit_payload`` leaves a line off a visit on another weekday, by the visit's own date;
+* ``build_visit_payload`` leaves a line off a visit on another weekday, by the visit's own date;
 * ``agreement_scope``: the schedule, chosen services and Exhibit A for the wizard's card, no
   rates, and nothing for an agreement that is not a maintenance one or that the user cannot read;
 * section 2.4's "not included" lines still match the agreement template word for word;
@@ -379,7 +379,7 @@ class TestPayloadByWeekday(unittest.TestCase):
 		)
 
 	def _tasks(self, visit_date=None):
-		payload = record_module.get_visit_payload(maintenance_contract="MNT-1", visit_date=visit_date)
+		payload = record_module.build_visit_payload(maintenance_contract="MNT-1", visit_date=visit_date)
 		return [row["task"] for row in payload["tasks"]], [row["reading"] for row in payload["readings"]]
 
 	def test_tuesday_gets_tuesday_lines_and_every_day_lines(self):
@@ -478,7 +478,7 @@ class TestOncePerSiteVisit(unittest.TestCase):
 		)
 
 	def tasks(self, **kwargs):
-		payload = record_module.get_visit_payload(
+		payload = record_module.build_visit_payload(
 			maintenance_contract="MNT-HW", visit_date="2026-10-24", **kwargs
 		)
 		return [(row["task"], row["serial_no"]) for row in payload["tasks"]]
@@ -518,7 +518,7 @@ class TestOncePerSiteVisit(unittest.TestCase):
 		STATE["docs"][("Sapphire Maintenance Section", "Steps")].items = [
 			_item("Acid", "", 1, 1, item="ACID", default_qty=0, qty_step=1)
 		]
-		payload = record_module.get_visit_payload(maintenance_contract="MNT-HW", visit_date="2026-10-24")
+		payload = record_module.build_visit_payload(maintenance_contract="MNT-HW", visit_date="2026-10-24")
 		self.assertEqual(
 			[(row["serial_no"], row["warehouse"]) for row in payload["consumables"]], [(None, None)]
 		)
