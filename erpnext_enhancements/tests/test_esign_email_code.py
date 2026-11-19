@@ -531,14 +531,70 @@ class PortalCodeStep(unittest.TestCase):
     def test_begin_takes_no_parameter_that_states_the_bot_check_outcome(self):
         self.assertEqual(list(inspect.signature(portal.begin_signing).parameters), ["ref", "turnstile_token", "esign_sid"])
 
-    def test_the_page_cannot_skip_the_bot_check_by_saying_the_widget_failed(self):
+    def test_a_request_with_no_token_goes_on_to_the_code_and_is_recorded_as_not_checked_in_the_browser(self):
         STATE["secret"] = "configured"
-        result = self._begin(widget_unavailable=1, turnstile_token=None)
+        for token in (None, "", "   "):
+            result = self._begin(turnstile_token=token)
+            self.assertEqual(result["verdict"], "Unavailable")
+            self.assertTrue(portal.turnstile.accepts(result["verdict"]))
+            session = portal._get_session(result["esign_sid"])
+            self.assertEqual(session["turnstile"], {"errors": portal.turnstile.NO_TOKEN_DETAIL})
+            self.assertIn("no bot-check token", session["turnstile"]["errors"].lower())
+
+    def test_a_no_token_session_can_be_sent_a_code_verify_it_sign_and_decline(self):
+        STATE["secret"] = "configured"
+        sid = self._begin()["esign_sid"]
+        self.assertTrue(self._send(sid)["ok"])
+        self.assertTrue(_call(portal.verify_signing_code, esign_sid=sid, code=self._last_code())["ok"])
+        self.assertTrue(self._sign(sid)["ok"])
+        evidence = STATE["executed"][-1]
+        self.assertEqual(evidence.turnstile["verdict"], "Unavailable")
+        self.assertEqual(evidence.turnstile["errors"], portal.turnstile.NO_TOKEN_DETAIL)
+
+        other = self._begin(esign_sid="Declinesession123")["esign_sid"]
+        self._send(other)
+        _call(portal.verify_signing_code, esign_sid=other, code=self._last_code())
+        self.request.status = "Sent"
+        self.assertTrue(_call(portal.decline_contract, esign_sid=other, reason="no")["ok"])
+        self.assertEqual(self.request.status, "Declined")
+
+    def test_a_token_that_is_sent_and_fails_is_still_refused_at_the_code_step(self):
+        STATE["secret"] = "configured"
+        result = self._begin(turnstile_token="wrong-token")
         self.assertEqual(result["verdict"], "Failed")
         sent = self._send(result["esign_sid"])
         self.assertFalse(sent["ok"])
         self.assertTrue(sent.get("retry_captcha"))
-        self.assertEqual(STATE["mail"], [], "a code was emailed without a passed bot check")
+        checked = _call(portal.verify_signing_code, esign_sid=result["esign_sid"], code="123456")
+        self.assertFalse(checked["ok"])
+        self.assertEqual(STATE["mail"], [], "a code was emailed without an accepted bot check")
+
+    def test_a_no_token_session_keeps_every_code_limit(self):
+        STATE["secret"] = "configured"
+        sid = self._begin()["esign_sid"]
+        for _ in range(email_code.MAX_SENDS):
+            self.assertTrue(self._send(sid)["ok"])
+        self.assertFalse(self._send(sid)["ok"])
+        self.assertEqual(len(STATE["mail"]), email_code.MAX_SENDS)
+
+        CLOCK["now"] += email_code.CODE_TTL * 100
+        STATE["email_attempts"] = 0
+        other = self._begin(esign_sid="Limitsession1234")["esign_sid"]
+        self._send(other)
+        code = self._last_code()
+        wrong = f"{(int(code) + 3) % 1_000_000:06d}"
+        for _ in range(email_code.MAX_TRIES):
+            _call(portal.verify_signing_code, esign_sid=other, code=wrong)
+        self.assertEqual(
+            _call(portal.verify_signing_code, esign_sid=other, code=code), {"ok": False, "error": portal.CODE_FAILURE}
+        )
+        CLOCK["now"] += 3601  # past the hourly entry cap, so only the lifetime limit is in play
+        STATE["email_attempts"] = portal.CODE_ENTRIES_LIFETIME
+        third = self._begin(esign_sid="Lifetimesession12")["esign_sid"]
+        self._send(third)
+        result = _call(portal.verify_signing_code, esign_sid=third, code=self._last_code())
+        self.assertEqual(result, {"ok": False, "error": portal.CODE_FAILURE})
+        self.assertEqual(STATE["locked"], [self.request.name])
 
     def test_a_passed_bot_check_lets_the_code_be_sent(self):
         STATE["secret"] = "configured"
@@ -548,7 +604,7 @@ class PortalCodeStep(unittest.TestCase):
 
     def test_a_site_without_a_secret_keeps_its_behaviour(self):
         STATE["secret"] = None
-        result = self._begin(widget_unavailable=1)
+        result = self._begin(turnstile_token=None)
         self.assertEqual(result["verdict"], "Not Checked")
         self.assertTrue(self._send(result["esign_sid"])["ok"])
 

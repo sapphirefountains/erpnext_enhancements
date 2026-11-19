@@ -33,8 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     verified code for the session's current link and no longer take an email address.
   - **The bot check is decided by the server alone.** `begin_signing` takes the challenge token and
     nothing else about it: the verdict comes from `turnstile.verify` on the site's own settings.
-    A site with no bot-check secret keeps its behaviour ("Not Checked", accepted). The code can be
-    sent only on an accepted verdict.
+    A site with no bot-check secret keeps its behaviour ("Not Checked", accepted). A request that
+    carries no bot-check token goes on to the emailed code, which is the identity check, under the
+    same limits: it is recorded as "Unavailable" with a detail saying no token was sent, which the
+    evidence record and the staff alert show. A token that is sent and fails is "Failed" and is
+    refused. The code can be sent only on an accepted verdict.
   - **The code email** (`templates/emails/project_enhancements/contract_signing_code.html`) goes
     through the email shell: the code, the document's name, how long it works, and "Didn't ask for
     a code? You can ignore this email." It is sent straight after the commit, with the body

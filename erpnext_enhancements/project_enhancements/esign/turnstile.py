@@ -22,16 +22,19 @@ the code we email to that address. Automated abuse is not the residual threat on
 both hold. So an ``Unavailable`` verdict — Cloudflare unreachable as observed by the
 server, not a failed challenge —
 **accepts the signature**, records the verdict on the evidence record and flags
-it in the staff alert. Refusing would cost a real, certain contract to defend
+it in the staff alert. A request that carries no bot-check token at all (the widget
+did not load or errored in the browser) is recorded the same way, with a detail that
+says no token was sent, and goes on to the emailed code, which is the identity check,
+under the same limits. Refusing would cost a real, certain contract to defend
 against a threat the token has already eliminated, and the blast radius is
 bounded anyway: the operational Maintenance Contract that signing creates is a
 **Draft** a human still has to activate.
 
-``Failed`` (Cloudflare actively said no) still refuses.
+``Failed`` (a token was sent and Cloudflare said no) still refuses.
 
 The verdict always comes from :func:`verify`, on the server's own configuration: with no
-secret configured it is "Not Checked", otherwise the token is checked, and a missing
-token is "Failed". The page has no way to state the outcome itself.
+secret configured it is "Not Checked", with a secret and no token it is "Unavailable",
+and otherwise the token is checked. The page has no way to state the outcome itself.
 """
 
 import frappe
@@ -39,6 +42,8 @@ import frappe
 TURNSTILE_ACTION = "contract-sign"
 SECRET_FIELD = "contract_esign_turnstile_secret_key"
 SITE_KEY_FIELD = "contract_esign_turnstile_site_key"
+
+NO_TOKEN_DETAIL = "No bot-check token was sent by the browser."
 
 # Verdicts that let a signature through. "Not Checked" means no keys are
 # configured at all, which is only reachable on a site that turned the page on
@@ -51,10 +56,18 @@ def site_key():
 
 
 def verify(token):
-	"""Return ``(verdict, detail)`` for a signing-page challenge."""
+	"""Return ``(verdict, detail)`` for a signing-page challenge.
+
+	A request with no token (None or blank) on a site that has a secret is
+	"Unavailable" with a detail saying no token was sent, not "Failed": only a token
+	that was sent and rejected is a failed challenge.
+	"""
 	from erpnext_enhancements.crm_enhancements.fountain_move.intake import _verify_turnstile
 
-	return _verify_turnstile(token, action=TURNSTILE_ACTION, secret_field=SECRET_FIELD)
+	verdict, detail = _verify_turnstile(token, action=TURNSTILE_ACTION, secret_field=SECRET_FIELD)
+	if verdict == "Failed" and not str(token or "").strip():
+		return "Unavailable", {"errors": NO_TOKEN_DETAIL}
+	return verdict, detail
 
 
 def accepts(verdict):

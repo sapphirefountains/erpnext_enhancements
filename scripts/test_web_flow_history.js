@@ -4103,7 +4103,7 @@ function loadContractSign(state, opts) {
 		prompt: () => "",
 		devicePixelRatio: 1,
 		console,
-		setTimeout,
+		setTimeout: opts.setTimeout || setTimeout,
 		clearTimeout,
 		setInterval,
 		clearInterval,
@@ -4111,6 +4111,7 @@ function loadContractSign(state, opts) {
 		JSON,
 		Date,
 	});
+	if (opts.turnstile) win.turnstile = opts.turnstile;
 	const source = fs.readFileSync(path.join(APP, "public", "js", "contract_sign", "contract_sign.js"), "utf8");
 	runInPage(source, win, "contract_sign.js");
 	document.dispatch("DOMContentLoaded");
@@ -4288,6 +4289,41 @@ async function testContractSign() {
 	const resent = await p.answer("send_signing_code", { ok: true, sent_to: "j\u2022\u2022\u2022@example.com", minutes: 10 });
 	check("...and the new code is asked for on it", resent.body, { esign_sid: "sid2" });
 	check("no reload and no history entry for any of it", [p.browser.reloads, p.browser.calls.length], [0, 0]);
+
+	// The bot-check widget errors: the page opens the session with no token and goes on to the code.
+	let widget = null;
+	p = loadContractSign("signable", {
+		boot: { turnstile_sitekey: "site-key" },
+		turnstile: { render: (host, options) => ((widget = options), "w1"), reset() {} },
+	});
+	check("the widget is rendered and nothing is opened before it answers", [!!widget, p.posts.length], [true, 0]);
+	widget["error-callback"]();
+	const unchecked = await p.answer("begin_signing", { esign_sid: "sid1", verdict: "Unavailable" });
+	check("a widget that errors opens the session with no token", unchecked.body, { ref: REF, turnstile_token: null, esign_sid: null });
+	check("...and the code step is on screen", [p.$("cs-verify").hidden, p.$("cs-code-send").hidden, p.$("cs-code-error").hidden], [false, false, true]);
+	p.$("cs-code-send").click();
+	const sentNoToken = await p.answer("send_signing_code", { ok: true, sent_to: "j•••@example.com", minutes: 10 });
+	check("...a code can be asked for", sentNoToken.body, { esign_sid: "sid1" });
+	p.$("cs-code").value = "123456";
+	p.$("cs-code-form").dispatch("submit");
+	await p.answer("verify_signing_code", { ok: true, agreement_html: "<p>The agreement as sent</p>" });
+	check("...entered, and the form shows", [p.$("cs-form").hidden, p.$("cs-verified").hidden], [false, false]);
+	p.$("cs-decline").click();
+	await p.answer("decline_contract", { ok: true });
+	check("Decline works on that path", [p.$("cs-form").hidden, p.$("cs-declined").hidden], [true, false]);
+
+	// The widget script never loads: after the wait the session opens with no token, too.
+	const timers = [];
+	p = loadContractSign("signable", {
+		boot: { turnstile_sitekey: "site-key" },
+		setTimeout: (fn, ms) => timers.push({ fn, ms }),
+	});
+	check("a widget script that never loads opens nothing at first", p.posts.length, 0);
+	timers.filter((t) => t.ms === 10000).forEach((t) => t.fn());
+	const timedOut = await p.answer("begin_signing", { esign_sid: "sid1", verdict: "Unavailable" });
+	check("...and after the wait opens the session with no token", timedOut.body.turnstile_token, null);
+	await confirmCode(p);
+	check("...then the right code shows the form", p.$("cs-form").hidden, false);
 }
 
 // ---------------------------------------------------------------------------- /visit-sign-off

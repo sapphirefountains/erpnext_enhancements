@@ -25,7 +25,9 @@ expired link as simply absent.
 3. a Turnstile check, which is *tertiary* here (see ``esign.turnstile`` for why an
    ``Unavailable`` verdict lets the signature through rather than blocking it).
    Whether it applies is decided by the server from its own configuration: the
-   verdict comes from ``turnstile.verify`` alone, never from a value the page sends,
+   verdict comes from ``turnstile.verify`` alone, never from a value the page sends.
+   A request that carries no bot-check token goes on to the emailed code, which is the
+   identity check, under the same limits; a token that is sent and fails is refused,
 4. the contract still being submitted, unsigned and not void — re-read under a row
    lock inside the transaction, which is what makes two simultaneous signers safe.
 
@@ -110,9 +112,10 @@ def begin_signing(ref=None, turnstile_token=None, esign_sid=None):
 	load-bearing.
 
 	The verdict is the server's own: ``turnstile.verify`` returns "Not Checked" when
-	the site has no bot-check secret configured (accepted, as before) and checks the
-	token otherwise. No parameter lets the page state the outcome; a missing token on a
-	site with a secret is "Failed".
+	the site has no bot-check secret configured (accepted, as before), "Unavailable"
+	(accepted, with a detail saying no token was sent) when a secret is configured and the
+	request carries no token, and checks the token otherwise; a token that is sent and
+	fails is "Failed" and refused. No parameter lets the page state the outcome.
 	"""
 	_require_public_page()
 

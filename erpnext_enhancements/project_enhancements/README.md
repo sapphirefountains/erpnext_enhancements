@@ -688,7 +688,7 @@ or sent for the client to sign in their own time.
   exhausted code gets one message, and entries also count against the request's persisted limit
   (`email_attempts`), which pauses the link when spent. The page shows the address masked, and the
   agreement before the code with that address masked; the right code returns it as stored. The
-  bot-check verdict is the server's own (`turnstile.verify`). The request records
+  bot-check verdict is the server's own (`turnstile.verify`): a request with no bot-check token goes on to the code under the same limits, recorded as "Unavailable". The request records
   `email_code_verified` and `email_code_verified_on`. The Contract Builder's own signing
   (`sign_in_person`) asks for no code and records none.
 - **Executed copies and template changes.** An e-signed contract prints the copy stored on its
