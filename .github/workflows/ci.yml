@@ -3212,6 +3212,12 @@ jobs:
       # bills somebody's receipt to a real vendor and looks ordinary until it is paid.
       - name: Intake reimbursement (the dead Expense Claim path, and why no name matching)
         run: python -m unittest erpnext_enhancements.tests.test_intake_reimbursement -v
+      # Access checks on the Document Intake endpoints (v1.835.1): the upload and mobile
+      # endpoints accept a File only when the caller can read it, re-extract refuses a
+      # document past extraction and is rate limited per user, and reject refuses a posted
+      # one. The real modules run over a frappe stub, so this has its own step.
+      - name: Document Intake access checks (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_intake_access_checks -v
       # Two reasons not to send somebody -- approved time off and restricted duty --
       # were both already recorded and nothing read them when a visit was scheduled.
       # This pins three decisions: warn NEVER block (a hard gate moves the work off the

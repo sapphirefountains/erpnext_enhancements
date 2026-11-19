@@ -68,6 +68,18 @@ Approval is deliberately split by competence, not merged into one button:
 2. **Accounts Manager** — `approve_document`, which moves the record to `Approved` and
    triggers posting.
 
+Access rules on the endpoints (v1.835.1): `ingest_upload` and `ingest_mobile_photo` accept a
+File only when the caller has read permission on it (`intake.require_file_read`, in the
+whitelisted wrappers; `ingest_document` itself does no check, because the email and Drive
+channels call it in-process). `reprocess` resets only a document still being worked up
+(Received, Extracting, Needs Item Review, Needs Review, Failed) and is rate limited per user;
+`reject_document` and `reprocess` refuse a Posting or Posted document, or one that names the
+record it created. A person who sets or changes **Source File** on the form or through the REST
+resource must be able to read that file (`DocumentIntake.validate`, the same rule); the channels
+save with `ignore_permissions` and are not asked, and a save that leaves the file as it was is
+not asked, so a reviewer works a document whoever sent it in. Tests:
+`tests/test_intake_access_checks.py`.
+
 ## Matching is advisory, always
 
 A suggested supplier or purchase order is a suggestion. The reviewer decides, and **a
