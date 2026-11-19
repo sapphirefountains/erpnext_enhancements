@@ -2862,6 +2862,11 @@ jobs:
       # people a Google 404 (PRJ-00706).
       - name: Drive link reconciliation (dead folders are flagged on the record)
         run: python -m unittest erpnext_enhancements.tests.test_drive_link_reconcile -v
+      # Own step for the same reason -- its own frappe stub in setUpModule. Runs the
+      # validate hook that decides who may set custom_drive_folder_id on Customer, Project
+      # and Opportunity (google_drive/folder_link_guard.py).
+      - name: Drive folder link (who may set it)
+        run: python -m unittest erpnext_enhancements.tests.test_drive_folder_link_guard -v
       # THREE separate steps, not one `unittest a b c`. Each installs its own
       # frappe stub in setUpModule, and running them in one process cross-talks:
       # the roles suite imports the real erpnext_enhancements.training.roles, and

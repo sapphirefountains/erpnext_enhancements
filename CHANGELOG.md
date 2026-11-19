@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.2] - 2026-11-19
+
+### Changed
+
+- **The Drive folder link on Customer, Project and Opportunity is set only by the Google Drive
+  integration and System Managers (hardening).** `custom_drive_folder_id` was read-only in the
+  form only; a new `validate` hook, `google_drive/folder_link_guard.guard_drive_folder_link`,
+  now holds the same rule on the server for every save and insert:
+  - A save from anyone other than a System Manager that carries a different folder is refused
+    with "The Drive folder link on this record is set by the Google Drive integration."
+  - A save that carries the field empty while the record has a folder keeps the stored folder.
+    A form opened before the integration linked the folder used to clear the link when saved;
+    the save now goes through and the link stays.
+  - A new record from anyone other than a System Manager keeps no folder value, so a Duplicate
+    of a Project starts unlinked instead of sharing the original's folder.
+  - Unchanged for the integration: the provisioners, the backfill, the Drive Link Manager and the
+    Opportunity hand-off job all write the field with `frappe.db.set_value` / `db_set`, which run
+    no controller. Server code that saves one of these documents with a new folder sets
+    `doc.flags.drive_folder_update`. Migrate, install and patches pass, and a site without the
+    column is a no-op.
+  - Bench-free tests run the hook (`tests/test_drive_folder_link_guard.py`, own CI step).
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
