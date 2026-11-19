@@ -619,12 +619,13 @@ def _enforce_filing_rate(user):
 
     Counted before validation, so a script cannot probe forever with payloads that are
     refused. ``make_key`` gives the counter the site's prefix — ``incrby`` is raw redis — and
-    the expiry is set on the first hit only, so the window is fixed rather than sliding
-    forever under a steady trickle. The deploy's FLUSHDB resets it, which is harmless.
+    the expiry is set on the first hit, and again whenever the counter is found without one,
+    so the window is fixed rather than sliding forever under a steady trickle. The deploy's
+    FLUSHDB resets it, which is harmless.
     """
     key = frappe.cache.make_key(f"ee_feedback_filing:{user}")
     count = frappe.cache.incrby(key, 1)
-    if count == 1:
+    if count == 1 or frappe.cache.ttl(key) < 0:
         frappe.cache.expire(key, FILING_RATE_WINDOW_SECONDS)
     if count > FILING_RATE_LIMIT:
         frappe.throw(
@@ -635,11 +636,11 @@ def _enforce_filing_rate(user):
 
 def _enforce_draft_rate(user):
     """``DRAFT_RATE_LIMIT`` drafts an hour per person, then a 429. Same counter shape as
-    :func:`_enforce_filing_rate`: a site-prefixed key, the expiry set on the first hit, so the
-    window is fixed."""
+    :func:`_enforce_filing_rate`: a site-prefixed key, the expiry set on the first hit and again
+    whenever the counter is found without one, so the window is fixed."""
     key = frappe.cache.make_key(f"ee_feedback_draft:{user}")
     count = frappe.cache.incrby(key, 1)
-    if count == 1:
+    if count == 1 or frappe.cache.ttl(key) < 0:
         frappe.cache.expire(key, DRAFT_RATE_WINDOW_SECONDS)
     if count > DRAFT_RATE_LIMIT:
         frappe.throw(
