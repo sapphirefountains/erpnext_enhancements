@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.5] - 2026-11-19
+
+### Changed
+
+- **Read requests are held to field-level read on the field names they carry (hardening).** A
+  request that names a field the caller cannot read at its permlevel, in `filters`, `or_filters`,
+  `order_by`, `group_by`, an aggregate or another `fields` expression, is now refused with a plain
+  "You do not have permission to filter, sort, group or total by a field you cannot read" message.
+  A field of a child table answers to the parent doctype's levels, the rule `fieldlevel_read.py`
+  already applies to documents. New `fieldlevel_filters.py`; nothing changes for a caller who can
+  read every field of the doctype and its child tables (Administrator included), and server-side
+  code never passes through it.
+  - **Where.** Nineteen frappe read routes, through `override_whitelisted_methods` wrappers that
+    check the request and then call frappe's own function unchanged: the report view (`get`,
+    `get_list`, `get_count`, `export_query`, sidebar stats, filter dashboard), the list sidebar's
+    group-by counts, `frappe.client.get_list`, `get_count`, `get`, `get_value` and
+    `get_single_value`, link search (`search_link`, `search_widget`, including the search field
+    and the filters handed to a custom query), the form's next/previous record, Number Card
+    results and Dashboard Chart data. The REST list routes (`GET /api/resource/<doctype>`,
+    `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`) answer 403 in place of their
+    body by the same rule, from `after_request`.
+  - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
+    doctype; the wrappers hold every route above to it in one way. A child table's fields answer to
+    the parent's levels in every notation, and a document looked up by filters, a value read from
+    a Single and the next-record sort field follow the same levels. On a Single that hides fields
+    from the caller, `get_value` accepts only readable field names, and the whole-record dict a
+    lookup by filters answers with leaves without the fields the caller cannot read. Plain field
+    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read.
+  - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
+    frappe reads a bare value as a document name.
+  - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
+    `fieldlevel_read.seal_wrapped_originals`), so no other dotted name for frappe's function
+    answers HTTP.
+  - What a user may notice: a list, report, chart or search that filters, sorts or totals by a
+    field above the user's permission level shows the permission message instead of results.
+- **New `tests/test_fieldlevel_filters.py`** (bench-free, `frappe` stub, its own CI step): the
+  wiring against frappe 16.56.0's signatures and methods, the seal, both hooks, and the rule run
+  over stand-in metadata in every position and notation, for a caller with hidden fields and one
+  without.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
