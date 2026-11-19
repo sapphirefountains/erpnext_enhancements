@@ -3630,7 +3630,10 @@ jobs:
       # registered. Runs the rule over stand-in metadata: a field the caller cannot read is
       # refused in filters, or_filters, order_by, group_by and aggregates, in child-table and
       # backtick notation and on a child table read through its parent; malformed input is
-      # refused for such a caller; a caller who reads everything is untouched.
+      # refused for such a caller; a caller who reads everything is untouched. Ordinary Desk and
+      # ERPNext requests (ERPNext's item, supplier and customer searches with their custom query,
+      # lists, reports, sidebar, next/previous, cards, charts, REST lists) must pass for a caller
+      # with hidden fields.
       - name: Field-level read on the field names a read request carries
         run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the

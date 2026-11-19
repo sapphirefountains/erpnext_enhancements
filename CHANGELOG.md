@@ -23,9 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     check the request and then call frappe's own function unchanged: the report view (`get`,
     `get_list`, `get_count`, `export_query`, sidebar stats, filter dashboard), the list sidebar's
     group-by counts, `frappe.client.get_list`, `get_count`, `get`, `get_value` and
-    `get_single_value`, link search (`search_link`, `search_widget`, including the search field
-    and the filters handed to a custom query), the form's next/previous record, Number Card
-    results and Dashboard Chart data. The REST list routes (`GET /api/resource/<doctype>`,
+    `get_single_value`, link search (`search_link`, `search_widget`), the form's next/previous
+    record, Number Card results and Dashboard Chart data. The REST list routes (`GET /api/resource/<doctype>`,
     `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`) answer 403 in place of their
     body by the same rule, from `after_request`.
   - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
@@ -35,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     from the caller, `get_value` accepts only readable field names, and the whole-record dict a
     lookup by filters answers with leaves without the fields the caller cannot read. Plain field
     names in `fields` stay with frappe, which leaves out of the result what the caller cannot read.
+  - **A name the doctype does not have is read the way frappe reads it.** frappe's query engine
+    looks a plain filter name its doctype lacks up in the doctype's child tables, using the first
+    table, in field order, that has a field of that name, so in filters that reach the engine such
+    a name answers to that child field's level. Everywhere else (a sort, a grouping, an aggregate, a
+    search field, a Single's filters, a filter that names its own doctype) a name the doctype lacks
+    is not one of its fields and is not refused, and the standard columns (`name`, `owner`,
+    `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the rest)
+    never are. Ordinary searches and lists, such as item search on sales and buying documents,
+    keep working for a user who cannot read a table like `allowed_companies`.
+  - **Link search follows frappe's choice of path.** With a custom query (the request's `query`,
+    or a query the doctype registers through the `standard_queries` hook), the filters are that
+    query's arguments and are not read as field names. Without one they are checked as frappe's
+    query engine reads them. The search field is checked on both paths.
   - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
     frappe reads a bare value as a document name.
   - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
@@ -45,7 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New `tests/test_fieldlevel_filters.py`** (bench-free, `frappe` stub, its own CI step): the
   wiring against frappe 16.56.0's signatures and methods, the seal, both hooks, and the rule run
   over stand-in metadata in every position and notation, for a caller with hidden fields and one
-  without.
+  without. A set of ordinary Desk and ERPNext requests (the item, supplier and customer searches
+  ERPNext v16.54.0 sets up, list view, Kanban, report view group-by, sidebar counts and tags,
+  next/previous, number cards, charts, REST lists, standard columns) runs for a caller who cannot
+  read Item, Customer and Supplier's `allowed_companies` table and must pass; the same routes
+  naming a hidden field must still be refused.
 
 ## [1.830.0] - 2026-11-19
 

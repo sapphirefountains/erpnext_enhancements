@@ -24,6 +24,17 @@ value read from a Single and the next-record sort field follow the same levels
 A plain name in ``fields`` is left to frappe, which drops a field the caller cannot read from what
 it selects (query.py 1447-1531; ``reportview.validate_fields``, reportview.py 151-181).
 
+**A name the doctype does not have is read as frappe reads it.** frappe's query engine looks a plain
+filter name its doctype lacks up in the doctype's child tables, for a filter that names no doctype
+(query.py 966-1002), so in ``filters`` and ``or_filters`` that reach the engine such a name is held to
+the child field it resolves to. Every caller of ``check_request`` states whether its filters reach
+the engine (``child_names``). Anywhere else (sort, grouping, an aggregate, a search field, a Single's
+filters, a filter that names its own doctype) a name the doctype lacks is not one of its fields and
+is not refused, and neither is a standard column (``name``, ``owner``, ``_assign`` and the rest).
+**Link search** follows frappe's own choice of path (search.py 125-133): with a custom query, the
+``query`` argument or the doctype's ``standard_queries`` hook, the filters are that query's arguments
+and are not read as field names; the search field is checked on both paths.
+
 **How each route is reached.** The RPC routes are whitelisted methods, wrapped here through
 ``override_whitelisted_methods`` exactly as in ``fieldlevel_read``: each wrapper restates frappe's
 parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0),
@@ -98,6 +109,29 @@ _REST_V1_LIST = re.compile(r"^/api/(?:v1/)?resource/([^/]+)/?$")
 _REST_V2_LIST = re.compile(r"^/api/v2/document/([^/]+)/?$")
 _REST_V2_COUNT = re.compile(r"^/api/v2/doctype/([^/]+)/count/?$")
 
+#: Columns every doctype has: ``default_fields``, ``optional_fields`` and ``child_table_fields``,
+#: frappe/model/__init__.py 84-98 at v16.56.0. frappe's query engine never looks one of these up in a
+#: child table (query.py 980), and none is a field a permlevel can hide.
+_STANDARD_NAMES = frozenset(
+	(
+		"doctype",
+		"name",
+		"owner",
+		"creation",
+		"modified",
+		"modified_by",
+		"docstatus",
+		"idx",
+		"parent",
+		"parentfield",
+		"parenttype",
+		"_user_tags",
+		"_assign",
+		"_liked_by",
+		"_seen",
+	)
+)
+
 _SEALED = set()
 _seal_failure_logged = False
 
@@ -126,6 +160,9 @@ class _Hidden:
 		#: caller cannot read hides every field of its child doctype.
 		self.tables = {}
 		self.children = {}
+		#: (fieldnames of the child, the hidden ones) per table field, in the doctype's field order:
+		#: the order frappe searches for a filter name the doctype lacks (query.py 983-1002).
+		self.child_order = []
 		for df in meta.fields:
 			if df.fieldtype not in _TABLE_FIELDTYPES or not df.options:
 				continue
@@ -136,14 +173,16 @@ class _Hidden:
 				hidden = {cdf.fieldname for cdf in child_fields}
 			self.tables[df.fieldname] = df.options
 			self.children.setdefault(df.options, set()).update(hidden)
+			self.child_order.append(({cdf.fieldname for cdf in child_fields}, hidden))
 
 	# -- one field reference --------------------------------------------
 
-	def names(self, ref, doctype=None, strict=True):
+	def names(self, ref, doctype=None, strict=True, child_names=False):
 		"""Whether ``ref``, one field reference in one of frappe's forms, names a hidden field.
 
 		``doctype`` is the first element of a ``[doctype, field, operator, value]`` filter. A reference
 		in no form frappe reads raises ``_Unknown`` when ``strict``, and is not hidden otherwise.
+		``child_names``: see ``_own_or_child``.
 		"""
 		if not isinstance(ref, str):
 			if strict:
@@ -162,7 +201,8 @@ class _Hidden:
 				if not strict:
 					return False
 				return self._in_doctype(doctype, ref)
-			return self._own_or_child(ref)
+			# A filter that names its own doctype is resolved on that doctype only (query.py 977-979).
+			return self._own_or_child(ref, child_names and not doctype)
 		match = _DOTTED.match(ref)
 		if match:
 			table, fieldname = match.groups()
@@ -176,11 +216,26 @@ class _Hidden:
 			raise _Unknown(ref)
 		return False
 
-	def _own_or_child(self, fieldname):
+	def _own_or_child(self, fieldname, child_names):
+		"""A plain name: a field of this doctype, else, with ``child_names`` only, a child table's.
+
+		frappe's query engine looks a filter name its doctype lacks up in the doctype's child tables,
+		for a filter that names no doctype and a name that is not a standard column, and uses the
+		first table, in field order, whose child has a field of that name
+		(``_validate_and_prepare_filter_field``, query.py 966-1002). That is the one place such a name
+		refers to this doctype's data. A sort, group or aggregate name is resolved on the doctype's own
+		table (1315-1378, 2481-2557), a Single's filters are compared with its stored values, and a
+		search with a custom query hands its filters to that query: there a name the doctype lacks is
+		simply not one of its fields.
+		"""
 		if fieldname in self.fields:
 			return fieldname in self.hidden
-		# frappe looks a name its doctype lacks up in the child tables (query.py 977-1002).
-		return any(fieldname in hidden for hidden in self.children.values())
+		if not child_names or fieldname in _STANDARD_NAMES:
+			return False
+		for child_fieldnames, hidden in self.child_order:
+			if fieldname in child_fieldnames:
+				return fieldname in hidden
+		return False
 
 	def _in_doctype(self, doctype, fieldname):
 		if doctype == self.doctype:
@@ -195,8 +250,12 @@ class _Hidden:
 
 	# -- the positions a request names fields in ---------------------------
 
-	def in_filters(self, filters):
-		"""``filters`` / ``or_filters`` in every shape frappe's Engine accepts."""
+	def in_filters(self, filters, child_names=False):
+		"""``filters`` / ``or_filters`` in every shape frappe's Engine accepts.
+
+		``child_names``: whether these filters reach frappe's query engine, which looks a plain name
+		the doctype lacks up in its child tables (``_own_or_child``).
+		"""
 		if filters is None or filters == "":
 			return False
 		if isinstance(filters, str):
@@ -206,20 +265,20 @@ class _Hidden:
 				return False  # a document name: frappe reads a bare value as {"name": value}
 			if isinstance(parsed, str):
 				return False
-			return self.in_filters(parsed)
+			return self.in_filters(parsed, child_names)
 		if isinstance(filters, int | float | bool):
 			return False
 		if isinstance(filters, dict):
-			return any(self.names(key) for key in filters)
+			return any(self.names(key, child_names=child_names) for key in filters)
 		if isinstance(filters, list | tuple):
 			if not filters:
 				return False
 			if not isinstance(filters[0], list | tuple | dict):
-				return self._flat(filters)
-			return any(self._condition(item) for item in filters)
+				return self._flat(filters, child_names)
+			return any(self._condition(item, child_names) for item in filters)
 		raise _Unknown(type(filters).__name__)
 
-	def _flat(self, items):
+	def _flat(self, items, child_names):
 		"""A top-level list that starts with a plain value: one condition, or a list of names.
 
 		``[field, operator, value]`` and ``[doctype, field, operator, value(, x)]`` are conditions;
@@ -227,30 +286,30 @@ class _Hidden:
 		reads as a hidden field.
 		"""
 		if len(items) == 3:
-			return self.names(items[0], strict=False)
+			return self.names(items[0], strict=False, child_names=child_names)
 		if len(items) in (4, 5):
 			doctype = items[0] if isinstance(items[0], str) else None
-			return self.names(items[1], doctype=doctype, strict=False)
+			return self.names(items[1], doctype=doctype, strict=False, child_names=child_names)
 		return False
 
-	def _condition(self, item):
+	def _condition(self, item, child_names):
 		"""One element of a list of conditions, or of a nested ``[cond, "and"|"or", cond]`` group."""
 		if isinstance(item, str):
 			if item.strip().lower() in ("and", "or"):
 				return False
 			raise _Unknown(item)
 		if isinstance(item, dict):
-			return self.in_filters(item)
+			return self.in_filters(item, child_names)
 		if isinstance(item, list | tuple):
 			if not item:
 				raise _Unknown(item)
 			if isinstance(item[0], list | tuple | dict):
-				return any(self._condition(part) for part in item)
+				return any(self._condition(part, child_names) for part in item)
 			if len(item) in (2, 3):
-				return self.names(item[0])
+				return self.names(item[0], child_names=child_names)
 			if len(item) in (4, 5):
 				doctype = item[0] if isinstance(item[0], str) else None
-				return self.names(item[1], doctype=doctype)
+				return self.names(item[1], doctype=doctype, child_names=child_names)
 		raise _Unknown(item)
 
 	def in_clause(self, clause):
@@ -284,11 +343,19 @@ class _Hidden:
 
 	def in_expression(self, value):
 		if isinstance(value, dict):
-			return any(
-				self.in_expression(part)
-				for key, part in value.items()
-				if not (isinstance(key, str) and key.strip().lower() == "as")
-			)
+			for key, part in value.items():
+				if isinstance(key, str) and key.strip().lower() == "as":
+					continue
+				if isinstance(key, str) and key in self.tables:
+					# A child query, {table_field: [fields of that child]} (query.py 1231-1248).
+					child = self.tables[key]
+					parts = part if isinstance(part, list | tuple) else [part]
+					if any(self.names(p, doctype=child, strict=False) for p in parts):
+						return True
+					continue
+				if self.in_expression(part):
+					return True
+			return False
 		if isinstance(value, list | tuple):
 			return any(self.in_expression(part) for part in value)
 		if isinstance(value, str):
@@ -321,6 +388,7 @@ def check_request(
 	doctype,
 	parent=None,
 	*,
+	child_names,
 	filters=None,
 	or_filters=None,
 	order_by=None,
@@ -331,16 +399,19 @@ def check_request(
 ):
 	"""Refuse a request on ``doctype`` that names a field the session user cannot read.
 
-	``references`` are single field references in filter, sort or group position (strict);
-	``expressions`` are aggregate arguments, read as ``fields`` expressions are.
+	``child_names`` is stated by every caller: True when ``filters`` and ``or_filters`` reach frappe's
+	query engine, which looks a plain filter name the doctype lacks up in its child tables
+	(``_Hidden._own_or_child``). It applies to those two only. ``references`` are single field
+	references in sort, group or search-field position (strict); ``expressions`` are aggregate
+	arguments, read as ``fields`` expressions are.
 	"""
 	hidden = _hidden_for(doctype, parent)
 	if hidden is None:
 		return
 	try:
 		named = (
-			hidden.in_filters(filters)
-			or hidden.in_filters(or_filters)
+			hidden.in_filters(filters, child_names)
+			or hidden.in_filters(or_filters, child_names)
 			or hidden.in_clause(order_by)
 			or hidden.in_clause(group_by)
 			or hidden.in_fields(fields)
@@ -373,6 +444,7 @@ def _check_report_form(form, doctype=None):
 	check_request(
 		doctype,
 		form.get("parent_doctype"),
+		child_names=True,
 		filters=form.get("filters"),
 		or_filters=form.get("or_filters"),
 		order_by=form.get("order_by"),
@@ -470,7 +542,7 @@ def reportview_get_sidebar_stats(stats, doctype, filters=None):
 	"""``frappe.desk.reportview.get_sidebar_stats``: its filters and grouped columns checked."""
 	from frappe.desk import reportview
 
-	check_request(doctype, filters=filters, references=_stats_references(stats))
+	check_request(doctype, child_names=True, filters=filters, references=_stats_references(stats))
 	return reportview.get_sidebar_stats(stats, doctype, filters)
 
 
@@ -479,7 +551,7 @@ def reportview_get_stats(stats, doctype, filters=None):
 	"""``frappe.desk.reportview.get_stats``: its filters and grouped columns checked."""
 	from frappe.desk import reportview
 
-	check_request(doctype, filters=filters, references=_stats_references(stats))
+	check_request(doctype, child_names=True, filters=filters, references=_stats_references(stats))
 	return reportview.get_stats(stats, doctype, filters)
 
 
@@ -488,7 +560,7 @@ def reportview_get_filter_dashboard_data(stats, doctype, filters=None):
 	"""``frappe.desk.reportview.get_filter_dashboard_data``: its filters and grouped columns checked."""
 	from frappe.desk import reportview
 
-	check_request(doctype, filters=filters, references=_stats_references(stats, key="name"))
+	check_request(doctype, child_names=True, filters=filters, references=_stats_references(stats, key="name"))
 	return reportview.get_filter_dashboard_data(stats, doctype, filters)
 
 
@@ -497,7 +569,7 @@ def listview_get_group_by_count(doctype, current_filters, field):
 	"""``frappe.desk.listview.get_group_by_count``: its filters and grouped field checked."""
 	from frappe.desk import listview
 
-	check_request(doctype, filters=current_filters, references=[field])
+	check_request(doctype, child_names=True, filters=current_filters, references=[field])
 	return listview.get_group_by_count(doctype, current_filters, field)
 
 
@@ -527,6 +599,7 @@ def client_get_list(
 	check_request(
 		doctype,
 		parent,
+		child_names=True,
 		filters=filters,
 		or_filters=or_filters,
 		order_by=order_by,
@@ -554,17 +627,18 @@ def client_get_count(doctype, filters=None, debug=False, cache=False):
 	"""``frappe.client.get_count``, its filters checked."""
 	from frappe import client
 
-	check_request(doctype, filters=filters)
+	check_request(doctype, child_names=True, filters=filters)
 	return client.get_count(doctype, filters, debug, cache)
 
 
 @frappe.whitelist(methods=["GET", "POST", "PUT", "DELETE"])
 def client_get(doctype, name=None, filters=None, parent=None):
-	"""``frappe.client.get``; a document looked up by ``filters`` has them checked first."""
+	"""``frappe.client.get``; a document looked up by ``filters`` has them checked first (frappe
+	finds it through ``frappe.db.get_value``, whose query engine reads the filters)."""
 	from frappe import client
 
 	if not name and filters:
-		check_request(doctype, parent, filters=filters)
+		check_request(doctype, parent, child_names=True, filters=filters)
 	return client.get(doctype, name, filters, parent)
 
 
@@ -593,7 +667,8 @@ def _check_get_value(doctype, fieldname, filters, parent):
 		return None
 	fields = _parsed(fieldname)
 	if not getattr(frappe.get_meta(doctype), "issingle", False):
-		check_request(doctype, parent, filters=filters, fields=fields)
+		# Answered by frappe.client.get_list, whose query engine reads the filters (client.py 155-164).
+		check_request(doctype, parent, child_names=True, filters=filters, fields=fields)
 		return None
 	# frappe.client.get_value's own normalisation (client.py 138-151, get_safe_filters).
 	lookup = _parsed(filters)
@@ -606,7 +681,11 @@ def _check_get_value(doctype, fieldname, filters, parent):
 		named = any(
 			not isinstance(n, str) or n.strip() == "*" or hidden.names(n, strict=False) for n in names
 		)
-		named = named or hidden.in_filters(lookup if isinstance(lookup, dict | list | tuple) else None)
+		# A Single's filters are compared with its stored values (database.py 760-765), never looked
+		# up in a child table.
+		named = named or hidden.in_filters(
+			lookup if isinstance(lookup, dict | list | tuple) else None, child_names=False
+		)
 	except _Unknown:
 		named = True
 	if named:
@@ -630,6 +709,47 @@ def client_get_single_value(doctype, field):
 # ---------------------------------------------------------------------------
 
 
+def _takes_custom_query(doctype, query):
+	"""Whether frappe's link search hands this search to a query function, as frappe decides it.
+
+	frappe 16.56.0, ``frappe/desk/search.py``: ``search_link`` passes ``query`` and ``filters`` to
+	``search_widget`` unchanged (52-62). ``search_widget`` reads the ``standard_queries`` hook
+	(125), takes the doctype's registered query when the request names none (127-128: ``if not query
+	and doctype in standard_queries``), and takes the custom path ``if query:`` (133), where
+	``filters`` is passed to that function as its argument (152-164). frappe itself registers one for
+	User (frappe/hooks.py 180). ``get_hooks(name)`` gives the same mapping as
+	``get_hooks().standard_queries``, or an empty list when no app declares it.
+	"""
+	if query:
+		return True
+	return doctype in (frappe.get_hooks("standard_queries") or {})
+
+
+def _search_filters(doctype, filters):
+	"""``filters`` of a search with no custom query, as frappe hands them to its query engine.
+
+	A JSON string is decoded (search.py 116-117); a dict becomes ``[doctype, key, operator, value]``
+	rows, ``include_disabled`` taken out first (190-196, ``make_filter_tuple`` in frappe/utils/data.py
+	2446-2451). Only the doctype and the key of each row are read here. A list goes as given.
+	"""
+	filters = _parsed(filters)
+	if isinstance(filters, dict):
+		return [[doctype, key, "=", value] for key, value in filters.items() if key != "include_disabled"]
+	return filters
+
+
+def _check_search(doctype, query, filters, searchfield):
+	"""A link search: ``searchfield`` is a field reference on both of frappe's paths. With a custom
+	query, ``filters`` are that query's arguments and are not read as field names; without one they
+	reach frappe's query engine and are checked as it reads them."""
+	check_request(
+		doctype,
+		child_names=True,
+		filters=None if _takes_custom_query(doctype, query) else _search_filters(doctype, filters),
+		references=[searchfield] if searchfield else (),
+	)
+
+
 @frappe.whitelist(methods=["GET", "POST", "PUT", "DELETE"])
 def search_link(
 	doctype,
@@ -643,10 +763,11 @@ def search_link(
 	*,
 	link_fieldname=None,
 ):
-	"""``frappe.desk.search.search_link``: its filters and search field checked."""
+	"""``frappe.desk.search.search_link``: its search field, and its filters unless a custom query
+	takes them (``_check_search``)."""
 	from frappe.desk import search
 
-	check_request(doctype, filters=filters, references=[searchfield] if searchfield else ())
+	_check_search(doctype, query, filters, searchfield)
 	return search.search_link(
 		doctype,
 		txt,
@@ -678,10 +799,11 @@ def search_widget(
 	for_link_validation=False,
 	query_filters_as_dict=False,
 ):
-	"""``frappe.desk.search.search_widget``: its filters and search field checked."""
+	"""``frappe.desk.search.search_widget``: its search field, and its filters unless a custom query
+	takes them (``_check_search``)."""
 	from frappe.desk import search
 
-	check_request(doctype, filters=filters, references=[searchfield] if searchfield else ())
+	_check_search(doctype, query, filters, searchfield)
 	return search.search_widget(
 		doctype,
 		txt,
@@ -705,7 +827,9 @@ def form_get_next(doctype, value, prev, filters=None, sort_order="desc", sort_fi
 	"""``frappe.desk.form.utils.get_next``: its filters and sort field checked."""
 	from frappe.desk.form import utils
 
-	check_request(doctype, filters=filters, references=[sort_field])
+	# The filters go to frappe.qb.get_query (utils.py 119-120); the sort field is a column of the
+	# doctype's own table (101-105).
+	check_request(doctype, child_names=True, filters=filters, references=[sort_field])
 	return utils.get_next(doctype, value, prev, filters, sort_order, sort_field)
 
 
@@ -719,6 +843,7 @@ def number_card_get_result(doc, filters, to_date=None):
 		check_request(
 			card.get("document_type"),
 			card.get("parent_document_type"),
+			child_names=True,
 			filters=filters,
 			expressions=[card.get("aggregate_function_based_on")],
 		)
@@ -747,6 +872,7 @@ def number_card_get_percentage_difference(doc, filters, result):
 		check_request(
 			stored.get("document_type"),
 			stored.get("parent_document_type"),
+			child_names=True,
 			filters=filters,
 			expressions=[stored.get("aggregate_function_based_on")],
 		)
@@ -781,6 +907,7 @@ def _check_chart(config, filters):
 	check_request(
 		config.get("document_type"),
 		config.get("parent_document_type"),
+		child_names=True,
 		filters=filters,
 		or_filters=config.get("filters_json"),
 		references=[ref for ref in references if ref],
@@ -876,6 +1003,7 @@ def refuse_rest_list_references(response=None, request=None):
 			check_request(
 				doctype,
 				form.get("parent"),
+				child_names=True,
 				filters=form.get("filters"),
 				or_filters=form.get("or_filters"),
 				order_by=form.get("order_by"),
@@ -885,6 +1013,7 @@ def refuse_rest_list_references(response=None, request=None):
 		elif v2_list:
 			check_request(
 				doctype,
+				child_names=True,
 				filters=form.get("filters"),
 				order_by=form.get("order_by"),
 				group_by=form.get("group_by"),

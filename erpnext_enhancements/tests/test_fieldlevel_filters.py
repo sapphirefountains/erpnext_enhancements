@@ -18,6 +18,12 @@ Two halves, as in ``test_fieldlevel_read.py``:
   input refused for a caller with hidden fields and left to frappe otherwise; a caller who reads
   everything, and Administrator, untouched; each wrapper refusing before frappe's function runs
   and passing its arguments through unchanged otherwise; the REST after_request hook.
+* **Ordinary requests**, from a caller who cannot read the level-1 ``allowed_companies`` table that
+  ERPNext v16.54.0's Item, Customer and Supplier carry: the link searches ERPNext sets up (with the
+  ``query`` and ``filters`` it sends), searches with no custom query, list view, Kanban, report-view
+  group-by, sidebar counts and tags, next/previous, number cards, charts, REST lists and standard
+  columns all pass (``TestOrdinaryRequests``); the same routes naming a field hidden from that
+  caller are still refused (``TestStillRefused``).
 
 Bench-free: installs a ``frappe`` stub in ``setUpModule``, so it has its own CI step.
 
@@ -270,18 +276,128 @@ METAS = {
 	),
 	"Pay Settings": _Meta(
 		"Pay Settings",
-		[_df("company"), _df("default_rate", 1, "Currency")],
+		[
+			_df("company"),
+			_df("default_rate", 1, "Currency"),
+			_df("rate_rows", 1, "Table", "Employee Pay Rate"),
+		],
 		[_perm("HR User"), _perm("HR Manager"), _perm("HR Manager", 1)],
 		issingle=True,
 	),
 	"Department": _Meta("Department", [_df("department_name")], [_perm("All")]),
 	"Other Child": _Meta("Other Child", [_df("x")], istable=True),
 	"ToDo": _Meta("ToDo", [_df("description")], [_perm("All")]),
+	# ERPNext v16.54.0's shapes (stock/doctype/item, selling/doctype/customer, buying/doctype/supplier):
+	# each has a level-1 `allowed_companies` table (Company Restriction, whose one field is `company`),
+	# after level-0 tables whose child doctypes also have a `company` field. Trimmed to what is read.
+	"Item": _Meta(
+		"Item",
+		[
+			_df("item_name"),
+			_df("item_group", 0, "Link", "Item Group"),
+			_df("is_stock_item", 0, "Check"),
+			_df("is_sales_item", 0, "Check"),
+			_df("is_purchase_item", 0, "Check"),
+			_df("has_variants", 0, "Check"),
+			_df("disabled", 0, "Check"),
+			_df("item_defaults", 0, "Table", "Item Default"),
+			_df("supplier_items", 0, "Table", "Item Supplier"),
+			_df("company_restrictions_section", 1, "Section Break"),
+			_df("restrict_to_companies", 1, "Check"),
+			_df("allowed_companies", 1, "Table", "Company Restriction"),
+		],
+		[
+			_perm("Stock User"),
+			_perm("Sales User"),
+			_perm("Purchase User"),
+			_perm("Item Manager"),
+			_perm("Item Manager", 1),
+		],
+	),
+	"Item Default": _Meta(
+		"Item Default",
+		[_df("company", 0, "Link", "Company"), _df("default_warehouse", 0, "Link", "Warehouse")],
+		istable=True,
+	),
+	"Item Supplier": _Meta("Item Supplier", [_df("supplier", 0, "Link", "Supplier")], istable=True),
+	"Company Restriction": _Meta("Company Restriction", [_df("company", 0, "Link", "Company")], istable=True),
+	"Customer": _Meta(
+		"Customer",
+		[
+			_df("customer_name"),
+			_df("customer_group", 0, "Link", "Customer Group"),
+			_df("disabled", 0, "Check"),
+			_df("companies", 0, "Table", "Allowed To Transact With"),
+			_df("accounts", 0, "Table", "Party Account"),
+			_df("restrict_to_companies", 1, "Check"),
+			_df("allowed_companies", 1, "Table", "Company Restriction"),
+		],
+		[
+			_perm("Sales User"),
+			_perm("Accounts User"),
+			_perm("Sales Master Manager"),
+			_perm("Sales Master Manager", 1),
+		],
+	),
+	"Supplier": _Meta(
+		"Supplier",
+		[
+			_df("supplier_name"),
+			_df("supplier_group", 0, "Link", "Supplier Group"),
+			_df("disabled", 0, "Check"),
+			_df("companies", 0, "Table", "Allowed To Transact With"),
+			_df("accounts", 0, "Table", "Party Account"),
+			_df("restrict_to_companies", 1, "Check"),
+			_df("allowed_companies", 1, "Table", "Company Restriction"),
+		],
+		[_perm("Purchase User"), _perm("Purchase Master Manager"), _perm("Purchase Master Manager", 1)],
+	),
+	"Allowed To Transact With": _Meta(
+		"Allowed To Transact With", [_df("company", 0, "Link", "Company")], istable=True
+	),
+	"Party Account": _Meta(
+		"Party Account",
+		[_df("company", 0, "Link", "Company"), _df("account", 0, "Link", "Account")],
+		istable=True,
+	),
+	"Project": _Meta(
+		"Project",
+		[
+			_df("project_name"),
+			_df("status", 0, "Select"),
+			_df("customer", 0, "Link", "Customer"),
+			_df("expected_end_date", 0, "Date"),
+			_df("percent_complete", 0, "Percent"),
+			_df("estimated_costing", 1, "Currency"),
+		],
+		[_perm("Projects User"), _perm("Projects Manager"), _perm("Projects Manager", 1)],
+	),
+	# A stand-in whose level-1 table comes before a level-0 table with a field of the same name, so the
+	# order frappe searches child tables in decides the answer.
+	"Rate Card": _Meta(
+		"Rate Card",
+		[
+			_df("title"),
+			_df("restricted_rows", 1, "Table", "Company Restriction"),
+			_df("default_rows", 0, "Table", "Item Default"),
+		],
+		[_perm("Stock User"), _perm("Item Manager"), _perm("Item Manager", 1)],
+	),
+	# A stand-in child doctype with a field that shares a standard column's name: frappe never looks a
+	# standard column up in a child table (query.py 980), so neither may the rule.
+	"Odd Row": _Meta("Odd Row", [_df("owner"), _df("_assign"), _df("idx", 0, "Int")], istable=True),
+	"Odd Parent": _Meta(
+		"Odd Parent",
+		[_df("title"), _df("odd_rows", 1, "Table", "Odd Row")],
+		[_perm("Stock User"), _perm("Item Manager"), _perm("Item Manager", 1)],
+	),
 }
 
 HR_USER = ("hr.user@example.com", ("HR User", "All"))
 HR_MANAGER = ("hr.manager@example.com", ("HR Manager", "All"))
 PROJECTS_USER = ("pu@example.com", ("Projects User", "All"))
+#: Reads level 0 of Item, Supplier and Project, and nothing of Customer (no Sales User role).
+STAFF = ("staff@example.com", ("Stock User", "Purchase User", "Projects User", "All"))
 
 
 def _whitelist(allow_guest=False, methods=None, **_kwargs):
@@ -342,6 +458,8 @@ def _install_frappe_stub():
 	frappe.PermissionError = _PermissionError
 	frappe.DoesNotExistError = _DoesNotExistError
 	frappe.db = types.SimpleNamespace(get_value=_db_get_value)
+	# frappe.get_hooks(name): that hook's merged value, or [] when no app declares it.
+	frappe.get_hooks = lambda hook=None, *a, **k: STATE["hooks"].get(hook, [])
 
 	def _record(name):
 		def fn(*args, **kwargs):
@@ -422,6 +540,7 @@ def _reset(who=HR_USER, form=None):
 		stored={},
 		get_attr_raises=False,
 		returns={},
+		hooks={},
 	)
 
 
@@ -546,8 +665,8 @@ class TestRule(unittest.TestCase):
 	def setUp(self):
 		_reset()
 
-	def refused(self, doctype="Employee", parent=None, **kwargs):
-		return _refused(ff.check_request, doctype, parent, **kwargs)
+	def refused(self, doctype="Employee", parent=None, child_names=True, **kwargs):
+		return _refused(ff.check_request, doctype, parent, child_names=child_names, **kwargs)
 
 	def test_a_hidden_field_is_refused_in_every_position(self):
 		cases = {
@@ -916,8 +1035,20 @@ class TestWrappers(unittest.TestCase):
 		self.assert_refused_before_frappe(ff.search_link, "Employee", "a", searchfield="ctc")
 		_reset()
 		self.assert_refused_before_frappe(
-			ff.search_widget, "Employee", "a", query="some.custom.query", filters=json.dumps({"ctc": 1})
+			ff.search_widget, "Employee", "a", query="some.custom.query", searchfield="ctc"
 		)
+		# With a custom query, the filters are that query's arguments and are not read as field names.
+		_reset()
+		call = self.assert_passed_through(
+			ff.search_widget,
+			"search.search_widget",
+			"Employee",
+			"a",
+			query="some.custom.query",
+			filters=json.dumps({"ctc": 1}),
+		)
+		self.assertEqual(call[1][2], "some.custom.query")
+		self.assertEqual(call[1][6], json.dumps({"ctc": 1}))
 		_reset()
 		call = self.assert_passed_through(
 			ff.search_link,
@@ -1127,6 +1258,539 @@ class TestRestLists(unittest.TestCase):
 	def test_missing_request_or_response_is_a_no_op(self):
 		ff.refuse_rest_list_references(response=None, request=None)
 		ff.refuse_rest_list_references(response=_Response(), request=None)
+
+
+# ---------------------------------------------------------------------------
+# Ordinary Desk and ERPNext requests, from a caller with hidden fields
+# ---------------------------------------------------------------------------
+
+COMPANY = "Test Company"
+ITEM_QUERY = "erpnext.controllers.queries.item_query"
+PARTY_QUERY = "erpnext.controllers.queries.party_query"
+SALES_ITEM_FILTERS = {"is_sales_item": 1, "customer": "CUST-0001", "has_variants": 0, "company": COMPANY}
+
+#: The link searches ERPNext v16.54.0 sets up, each as (doctype, reference_doctype, query, filters).
+#: Read from erpnext/public/js/utils/sales_common.js 41-48 and 77-90, public/js/controllers/buying.js
+#: 85 and 92-115, public/js/queries.js 15-33, accounts/doctype/sales_invoice/sales_invoice.js 327-336,
+#: stock/doctype/material_request/material_request.js 25-30 and 796-814 and
+#: stock/doctype/stock_reconciliation/stock_reconciliation.js 20-28.
+ERPNEXT_SEARCHES = {
+	"item on Quotation": ("Item", "Quotation Item", ITEM_QUERY, SALES_ITEM_FILTERS),
+	"item on Sales Order": ("Item", "Sales Order Item", ITEM_QUERY, SALES_ITEM_FILTERS),
+	"item on Sales Invoice": ("Item", "Sales Invoice Item", ITEM_QUERY, SALES_ITEM_FILTERS),
+	"item on Sales Invoice, timesheet dialog": (
+		"Item",
+		"Sales Invoice",
+		ITEM_QUERY,
+		{"is_sales_item": 1, "customer": "CUST-0001", "has_variants": 0},
+	),
+	"item on Purchase Order": (
+		"Item",
+		"Purchase Order Item",
+		ITEM_QUERY,
+		{"supplier": "SUP-0001", "is_purchase_item": 1, "has_variants": 0, "company": COMPANY},
+	),
+	"item on a subcontracted Purchase Order": (
+		"Item",
+		"Purchase Order Item",
+		ITEM_QUERY,
+		{"supplier": "SUP-0001", "company": COMPANY, "is_stock_item": 0},
+	),
+	"item on Material Request": ("Item", "Material Request Item", ITEM_QUERY, {"company": COMPANY}),
+	"item on a Manufacture Material Request": (
+		"Item",
+		"Material Request Item",
+		ITEM_QUERY,
+		{"is_stock_item": 1, "company": COMPANY, "include_item_in_manufacturing": 1},
+	),
+	"item on Stock Reconciliation": (
+		"Item",
+		"Stock Reconciliation Item",
+		ITEM_QUERY,
+		{"is_stock_item": 1, "company": COMPANY},
+	),
+	"supplier on Purchase Order": (
+		"Supplier",
+		"Purchase Order",
+		PARTY_QUERY,
+		{"disabled": 0, "company": COMPANY},
+	),
+	"customer on Sales Invoice": (
+		"Customer",
+		"Sales Invoice",
+		PARTY_QUERY,
+		{"disabled": 0, "company": COMPANY},
+	),
+}
+
+#: frappe 16.56.0's list view filters: [doctype, field, operator, value], from filter_area.get()
+#: (base_list.js 497-501), with the Assigned To and Tags filters on _assign and _user_tags.
+PROJECT_FILTERS = [
+	["Project", "status", "=", "Open"],
+	["Project", "_assign", "like", "%staff@example.com%"],
+	["Project", "_user_tags", "like", "%Urgent%"],
+	["Project", "customer", "=", "CUST-0001"],
+]
+
+STANDARD_NAMES = (
+	"name",
+	"owner",
+	"creation",
+	"modified",
+	"modified_by",
+	"docstatus",
+	"idx",
+	"parent",
+	"parenttype",
+	"parentfield",
+	"_assign",
+	"_user_tags",
+	"_comments",
+	"_liked_by",
+	"_seen",
+)
+
+
+class _RouteCase(unittest.TestCase):
+	def setUp(self):
+		_reset(STAFF)
+
+	def passes(self, fn, *args, **kwargs):
+		"""``fn`` is not refused and calls frappe's function once."""
+		calls_before = len(STATE["calls"])
+		self.assertFalse(_refused(fn, *args, **kwargs), f"{fn.__name__} refused {args} {kwargs}")
+		self.assertEqual(len(STATE["calls"]), calls_before + 1)
+
+	def refuses(self, fn, *args, **kwargs):
+		calls_before = len(STATE["calls"])
+		self.assertTrue(_refused(fn, *args, **kwargs), f"{fn.__name__} passed {args} {kwargs}")
+		self.assertEqual(len(STATE["calls"]), calls_before, "frappe's function must not run")
+
+	def rest(self, path, form):
+		_reset(STAFF, form=form)
+		response = _Response()
+		ff.refuse_rest_list_references(response=response, request=_Request("GET", path))
+		return response.status_code
+
+
+class TestOrdinaryRequests(_RouteCase):
+	"""What the Desk and ERPNext send every day, from STAFF, who cannot read the level-1
+	``allowed_companies`` table on Item, Customer and Supplier, or Project's level-1 field."""
+
+	def test_erpnext_link_searches_with_their_custom_query(self):
+		"""The link control sends the query's filters as JSON on a GET and as a dict on a POST
+		(frappe 16.56.0 controls/link.js 437-479 and 790-843)."""
+		for label, (doctype, reference_doctype, query, filters) in ERPNEXT_SEARCHES.items():
+			with self.subTest(label, route="search_link GET"):
+				_reset(STAFF)
+				self.passes(
+					ff.search_link,
+					doctype,
+					"",
+					query=query,
+					filters=json.dumps(filters),
+					page_length=10,
+					reference_doctype=reference_doctype,
+					link_fieldname="item_code" if doctype == "Item" else doctype.lower(),
+				)
+			with self.subTest(label, route="search_link POST"):
+				_reset(STAFF)
+				self.passes(ff.search_link, doctype, "abc", query=query, filters=dict(filters))
+			with self.subTest(label, route="search_widget"):
+				_reset(STAFF)
+				self.passes(ff.search_widget, doctype, "abc", query=query, filters=dict(filters))
+
+	def test_the_same_filters_without_a_custom_query(self):
+		"""frappe makes each key of a dict a ``[doctype, key, operator, value]`` row (search.py 190-196),
+		so a key the doctype lacks is never looked up in a child table."""
+		for label, (doctype, _ref, _query, filters) in ERPNEXT_SEARCHES.items():
+			with self.subTest(label):
+				_reset(STAFF)
+				self.passes(ff.search_link, doctype, "", filters=json.dumps(filters))
+
+	def test_link_search_with_ordinary_filters(self):
+		for doctype, filters in (
+			("Item", {"is_stock_item": 1, "disabled": 0, "item_group": "Products"}),
+			("Item", {"include_disabled": 1, "item_group": "Products"}),
+			("Item", [["Item", "item_group", "=", "Products"], ["Item Default", "company", "=", COMPANY]]),
+			("Item", [["item_group", "=", "Products"]]),
+			("Item", [["company", "=", COMPANY]]),
+			("Supplier", {"supplier_group": "Local", "company": COMPANY}),
+			("Project", {"status": "Open", "customer": "CUST-0001"}),
+			("Rate Card", {"company": COMPANY}),
+			("Rate Card", [["Rate Card", "company", "=", COMPANY]]),
+		):
+			with self.subTest(doctype=doctype, filters=filters):
+				_reset(STAFF)
+				self.passes(ff.search_link, doctype, "a", filters=json.dumps(filters))
+				_reset(STAFF)
+				self.passes(ff.search_widget, doctype, "a", filters=filters, searchfield="item_name")
+
+	def test_a_registered_standard_query_takes_the_custom_path(self):
+		"""frappe uses the doctype's ``standard_queries`` hook when the request names no query
+		(search.py 125-128), and hands it the filters as arguments."""
+		STATE["hooks"]["standard_queries"] = {"Item": ["custom_app.queries.item_search"]}
+		self.passes(ff.search_link, "Item", "a", filters=json.dumps({"restrict_to_companies": 1}))
+		_reset(STAFF)
+		STATE["hooks"]["standard_queries"] = {"Item": ["custom_app.queries.item_search"]}
+		self.passes(ff.search_widget, "Item", "a", query="", filters={"restrict_to_companies": 1})
+
+	def test_list_view_kanban_and_count(self):
+		list_form = {
+			"doctype": "Project",
+			"fields": json.dumps(
+				[f"`tabProject`.`{name}`" for name in ("name", "status", "project_name", *STANDARD_NAMES[1:])]
+			),
+			"filters": json.dumps(PROJECT_FILTERS),
+			"order_by": "`tabProject`.`modified` desc",
+			"start": 0,
+			"page_length": 20,
+			"view": "List",
+			"group_by": None,
+			"with_comment_count": 1,
+		}
+		kanban_form = dict(
+			list_form,
+			view="Kanban",
+			filters=json.dumps([*PROJECT_FILTERS, ["Project", "name", "in", ["PROJ-0001", "PROJ-0002"]]]),
+		)
+		item_form = {
+			"doctype": "Item",
+			"fields": json.dumps(["`tabItem`.`name`", "`tabItem Default`.`company`"]),
+			"filters": json.dumps([["Item", "disabled", "=", 0], ["Item Default", "company", "=", COMPANY]]),
+			"order_by": "`tabItem`.`modified` desc",
+			"group_by": "`tabItem`.`name`",
+		}
+		for form in (list_form, kanban_form, item_form):
+			for fn in (ff.reportview_get, ff.reportview_get_list, ff.reportview_get_count):
+				with self.subTest(fn=fn.__name__, view=form.get("view"), doctype=form["doctype"]):
+					_reset(STAFF, form=form)
+					self.passes(fn)
+
+	def test_report_view_group_by_and_aggregate(self):
+		"""``group_by.js`` set_args (frappe 16.56.0, ui/group_by/group_by.js 286-319)."""
+		base = {
+			"doctype": "Project",
+			"fields": json.dumps(["`tabProject`.`status`"]),
+			"filters": json.dumps(PROJECT_FILTERS),
+			"with_comment_count": False,
+			"aggregate_on_doctype": "Project",
+			"group_by": "`tabProject`.`status`",
+			"order_by": "_aggregate_column desc",
+		}
+		for on_field, function in (
+			("name", "count"),
+			("percent_complete", "sum"),
+			("percent_complete", "avg"),
+		):
+			with self.subTest(aggregate_on_field=on_field, aggregate_function=function):
+				_reset(STAFF, form=dict(base, aggregate_on_field=on_field, aggregate_function=function))
+				self.passes(ff.reportview_get)
+
+	def test_sidebar_group_by_counts_and_tags(self):
+		for field in ("status", "customer", "assigned_to", "owner"):
+			with self.subTest(field=field):
+				_reset(STAFF)
+				self.passes(ff.listview_get_group_by_count, "Project", json.dumps(PROJECT_FILTERS), field)
+		for fn in (ff.reportview_get_sidebar_stats, ff.reportview_get_stats):
+			with self.subTest(fn=fn.__name__):
+				_reset(STAFF)
+				self.passes(fn, json.dumps(["_user_tags"]), "Project", json.dumps(PROJECT_FILTERS))
+		_reset(STAFF)
+		self.passes(
+			ff.reportview_get_filter_dashboard_data,
+			json.dumps([{"name": "status", "type": "Select"}, {"name": "owner", "type": "Link"}]),
+			"Project",
+			json.dumps(PROJECT_FILTERS),
+		)
+
+	def test_form_previous_and_next(self):
+		"""form.js 1591-1616: the list view's filters and sort, or the saved list settings (whose
+		filters keep a fifth, hidden flag)."""
+		saved = json.dumps([["Project", "status", "=", "Open", False]])
+		for filters in (json.dumps(PROJECT_FILTERS), saved, None):
+			for sort_field in ("modified", "creation", "name", "idx", "docstatus", "owner", "status"):
+				with self.subTest(filters=filters, sort_field=sort_field):
+					_reset(STAFF)
+					self.passes(ff.form_get_next, "Project", "PROJ-0001", 1, filters, "desc", sort_field)
+		_reset(STAFF)
+		self.passes(ff.form_get_next, "Project", "PROJ-0001", 0)
+
+	def test_number_cards_and_charts(self):
+		card = {
+			"name": "Open Projects",
+			"document_type": "Project",
+			"function": "Count",
+			"aggregate_function_based_on": None,
+			"filters_json": json.dumps(PROJECT_FILTERS),
+		}
+		self.passes(ff.number_card_get_result, json.dumps(card), json.dumps(PROJECT_FILTERS))
+		_reset(STAFF)
+		summed = dict(card, function="Sum", aggregate_function_based_on="percent_complete")
+		self.passes(ff.number_card_get_result, json.dumps(summed), json.dumps(PROJECT_FILTERS))
+		_reset(STAFF)
+		STATE["stored"][("Number Card", "Open Projects")] = summed
+		self.passes(
+			ff.number_card_get_percentage_difference, json.dumps(card), json.dumps(PROJECT_FILTERS), 4
+		)
+		group_by = {
+			"name": "Projects by Status",
+			"document_type": "Project",
+			"chart_type": "Group By",
+			"group_by_type": "Count",
+			"group_by_based_on": "status",
+			"filters_json": json.dumps([["Project", "status", "!=", "Canceled"]]),
+		}
+		timeseries = {
+			"name": "New Projects",
+			"document_type": "Project",
+			"chart_type": "Count",
+			"based_on": "creation",
+			"filters_json": "[]",
+		}
+		for chart in (
+			group_by,
+			timeseries,
+			dict(timeseries, chart_type="Sum", value_based_on="percent_complete"),
+		):
+			with self.subTest(chart=chart["name"], chart_type=chart["chart_type"], by="name"):
+				_reset(STAFF)
+				STATE["stored"][("Dashboard Chart", chart["name"])] = chart
+				self.passes(
+					ff.dashboard_chart_get, chart_name=chart["name"], filters=chart["filters_json"], refresh=1
+				)
+			with self.subTest(chart=chart["name"], chart_type=chart["chart_type"], by="passed"):
+				_reset(STAFF)
+				self.passes(ff.dashboard_chart_get, chart=json.dumps(chart), no_cache=1)
+
+	def test_rest_list_routes(self):
+		for path, form in (
+			("/api/resource/Project", {"order_by": "modified desc"}),
+			(
+				"/api/resource/Project",
+				{
+					"fields": json.dumps(["name", "project_name", "status"]),
+					"filters": json.dumps([["status", "=", "Open"]]),
+					"order_by": "creation asc",
+					"limit_page_length": 20,
+				},
+			),
+			("/api/v1/resource/Item", {"filters": json.dumps({"company": COMPANY, "disabled": 0})}),
+			(
+				"/api/v2/document/Project",
+				{"order_by": "creation desc", "filters": json.dumps({"_assign": "x"})},
+			),
+			("/api/v2/doctype/Project/count", {"filters": json.dumps(PROJECT_FILTERS)}),
+		):
+			with self.subTest(path=path, form=form):
+				self.assertEqual(self.rest(path, form), 200)
+
+	def test_client_reads(self):
+		"""A plain filter name the doctype lacks is resolved the way frappe's query engine resolves it:
+		the first child table, in field order, that has such a field (query.py 983-1002). On Item that
+		is Item Default, and on Customer and Supplier Allowed To Transact With, all level 0."""
+		for doctype in ("Item", "Customer", "Supplier"):
+			with self.subTest(doctype=doctype):
+				_reset(STAFF)
+				self.passes(ff.client_get_list, doctype, filters={"company": COMPANY})
+				_reset(STAFF)
+				self.passes(ff.client_get_count, doctype, json.dumps([["company", "=", COMPANY]]))
+				_reset(STAFF)
+				self.passes(
+					ff.client_get_value, doctype, "name", json.dumps({"company": COMPANY, "disabled": 0})
+				)
+				_reset(STAFF)
+				self.passes(ff.client_get, doctype, filters=json.dumps({"company": COMPANY}))
+		_reset(STAFF)
+		self.passes(ff.client_get_value, "Item", json.dumps(["item_name", "item_group"]), "ITEM-0001")
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Item", ["name", {"item_defaults": ["company"]}], {"disabled": 0})
+
+	def test_standard_columns_are_never_refused(self):
+		"""Even beside a hidden child table with fields of those names (a stand-in)."""
+		for name in STANDARD_NAMES:
+			for doctype in ("Odd Parent", "Item", "Project"):
+				with self.subTest(name=name, doctype=doctype):
+					for kwargs in (
+						{"filters": {name: "x"}},
+						{"filters": [[name, "=", "x"]]},
+						{"filters": [name, "=", "x"]},
+						{"filters": [[doctype, name, "=", "x"]]},
+						{"or_filters": {name: "x"}},
+						{"order_by": f"{name} desc"},
+						{"group_by": name},
+						{"fields": [{"COUNT": name}]},
+					):
+						_reset(STAFF)
+						self.passes(ff.client_get_list, doctype, **kwargs)
+					_reset(STAFF)
+					self.passes(ff.form_get_next, doctype, "X-1", 1, json.dumps({name: "x"}), "desc", name)
+					_reset(STAFF)
+					self.passes(ff.client_get_value, doctype, name, json.dumps({name: "x"}))
+
+	def test_a_singles_filters_are_its_stored_values(self):
+		"""A Single's filters are compared with its stored values, never looked up in a child table
+		(database.py 760-765): a name only a hidden child table has is not refused."""
+		_reset(HR_USER)
+		self.passes(ff.client_get_value, "Pay Settings", "company", json.dumps({"hourly_rate": 5}))
+		_reset(HR_USER)
+		self.passes(ff.client_get_single_value, "Pay Settings", "hourly_rate")
+		# Its own hidden fields are still refused, the table field included.
+		for filters in (json.dumps({"rate_rows": 1}), json.dumps({"default_rate": 1})):
+			with self.subTest(filters=filters):
+				_reset(HR_USER)
+				self.refuses(ff.client_get_value, "Pay Settings", "company", filters)
+
+
+class TestStillRefused(_RouteCase):
+	"""The same routes, from the same caller, naming a field hidden from it."""
+
+	def test_search_without_a_custom_query(self):
+		for filters in (
+			{"restrict_to_companies": 1},
+			[["Item", "restrict_to_companies", "=", 1]],
+			[["Company Restriction", "company", "=", COMPANY]],
+			[["`tabCompany Restriction`.`company`", "=", COMPANY]],
+			{"allowed_companies.company": COMPANY},
+		):
+			with self.subTest(filters=filters):
+				_reset(STAFF)
+				self.refuses(ff.search_link, "Item", "a", filters=json.dumps(filters))
+				_reset(STAFF)
+				self.refuses(ff.search_widget, "Item", "a", filters=filters)
+		# A standard query registered for another doctype changes nothing here.
+		_reset(STAFF)
+		STATE["hooks"]["standard_queries"] = {"Customer": ["custom_app.queries.customer_search"]}
+		self.refuses(ff.search_link, "Item", "a", filters=json.dumps({"restrict_to_companies": 1}))
+
+	def test_a_hidden_search_field_with_or_without_a_custom_query(self):
+		for query in (ITEM_QUERY, None):
+			with self.subTest(query=query):
+				_reset(STAFF)
+				self.refuses(
+					ff.search_link,
+					"Item",
+					"a",
+					query=query,
+					filters=SALES_ITEM_FILTERS,
+					searchfield="restrict_to_companies",
+				)
+				_reset(STAFF)
+				self.refuses(ff.search_widget, "Item", "a", query=query, searchfield="restrict_to_companies")
+
+	def test_engine_routes_by_child_table_notation(self):
+		for kwargs in (
+			{"filters": [["Company Restriction", "company", "=", COMPANY]]},
+			{"filters": [["`tabCompany Restriction`.`company`", "=", COMPANY]]},
+			{"filters": {"allowed_companies.company": COMPANY}},
+			{"or_filters": {"allowed_companies.company": COMPANY}},
+			{"order_by": "allowed_companies.company desc"},
+			{"group_by": "`tabCompany Restriction`.`company`"},
+			{"fields": [{"allowed_companies": ["company"]}]},
+			{"fields": [{"COUNT": "`tabCompany Restriction`.`company`"}]},
+			{"filters": {"restrict_to_companies": 0}},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				_reset(STAFF)
+				self.refuses(ff.client_get_list, "Item", **kwargs)
+		_reset(
+			STAFF,
+			form={
+				"doctype": "Item",
+				"filters": json.dumps([["Company Restriction", "company", "=", COMPANY]]),
+			},
+		)
+		self.refuses(ff.reportview_get)
+
+	def test_a_plain_name_frappe_resolves_to_a_hidden_child_field(self):
+		"""On Rate Card the first child table with a ``company`` field is the hidden one."""
+		for filters in ({"company": COMPANY}, [["company", "=", COMPANY]], ["company", "=", COMPANY]):
+			with self.subTest(filters=filters):
+				_reset(STAFF)
+				self.refuses(ff.client_get_list, "Rate Card", filters=filters)
+				_reset(STAFF)
+				self.refuses(ff.client_get_count, "Rate Card", json.dumps(filters))
+				_reset(STAFF)
+				self.refuses(ff.client_get, "Rate Card", filters=json.dumps(filters))
+				_reset(STAFF)
+				self.refuses(ff.form_get_next, "Rate Card", "RC-1", 1, json.dumps(filters))
+		_reset(STAFF)
+		self.refuses(ff.search_link, "Rate Card", "a", filters=json.dumps([["company", "=", COMPANY]]))
+		self.assertEqual(
+			self.rest("/api/v2/document/Rate Card", {"filters": json.dumps({"company": COMPANY})}), 403
+		)
+		# A filter that names its own doctype, and a sort, are resolved on Rate Card itself.
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Rate Card", filters=[["Rate Card", "company", "=", COMPANY]])
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Rate Card", order_by="company desc")
+
+	def test_other_routes(self):
+		self.refuses(
+			ff.form_get_next,
+			"Project",
+			"PROJ-0001",
+			1,
+			json.dumps(PROJECT_FILTERS),
+			"desc",
+			"estimated_costing",
+		)
+		_reset(STAFF)
+		self.refuses(
+			ff.form_get_next,
+			"Project",
+			"PROJ-0001",
+			1,
+			json.dumps([["Project", "estimated_costing", ">", 1]]),
+		)
+		_reset(STAFF)
+		self.refuses(ff.listview_get_group_by_count, "Project", "[]", "estimated_costing")
+		_reset(STAFF)
+		self.refuses(
+			ff.number_card_get_result,
+			json.dumps(
+				{
+					"document_type": "Project",
+					"function": "Sum",
+					"aggregate_function_based_on": "estimated_costing",
+				}
+			),
+			"[]",
+		)
+		_reset(STAFF)
+		self.refuses(
+			ff.dashboard_chart_get,
+			chart=json.dumps(
+				{
+					"name": "Cost",
+					"document_type": "Project",
+					"chart_type": "Sum",
+					"based_on": "creation",
+					"value_based_on": "estimated_costing",
+				}
+			),
+			no_cache=1,
+		)
+		_reset(
+			STAFF,
+			form={
+				"doctype": "Project",
+				"aggregate_on_field": "estimated_costing",
+				"aggregate_function": "sum",
+				"group_by": "`tabProject`.`status`",
+			},
+		)
+		self.refuses(ff.reportview_get)
+		for path, form in (
+			("/api/resource/Project", {"order_by": "estimated_costing desc"}),
+			(
+				"/api/resource/Item",
+				{"filters": json.dumps([["Company Restriction", "company", "=", COMPANY]])},
+			),
+			("/api/v2/doctype/Item/count", {"filters": json.dumps({"restrict_to_companies": 1})}),
+		):
+			with self.subTest(path=path, form=form):
+				self.assertEqual(self.rest(path, form), 403)
 
 
 # ---------------------------------------------------------------------------
