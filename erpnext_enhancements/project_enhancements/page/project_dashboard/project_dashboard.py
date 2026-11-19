@@ -32,6 +32,12 @@ EDITABLE_PROJECT_FIELDS = frozenset(
 	{"status", "custom_project_priority", "custom_company_priority"}
 )
 
+# Fields the Tasks tree's inline editor may write through update_multiple_docs(): the three
+# cells it draws as editable (start date, end date, expected time). A request naming any other
+# Task field is refused whole. tests/test_dashboard_bulk_edit_fields.py reads the tree's source
+# and fails when the cells it edits and this list drift apart.
+EDITABLE_TASK_FIELDS = frozenset({"exp_start_date", "exp_end_date", "expected_time"})
+
 @frappe.whitelist()
 def check_permission():
 	"""Checks if the current user has permission to view the Project Dashboard.
@@ -1552,7 +1558,8 @@ def update_multiple_docs(project_updates, task_updates):
 	    project_updates (str): A JSON string representing a dictionary of
 	        project updates. Example: '{"PROJ-001": {"status": "Completed"}}'
 	    task_updates (str): A JSON string representing a dictionary of
-	        task updates. Example: '{"TASK-001": {"status": "Working"}}'
+	        task updates. Example: '{"TASK-001": {"expected_time": 4}}'
+	        Only EDITABLE_PROJECT_FIELDS and EDITABLE_TASK_FIELDS are accepted.
 
 	Returns:
 	    dict: A dictionary indicating the status of the operation.
@@ -1563,6 +1570,20 @@ def update_multiple_docs(project_updates, task_updates):
 	try:
 		project_updates = json.loads(project_updates or "{}")
 		task_updates = json.loads(task_updates or "{}")
+
+		# Every field is checked before the first write: a request that names a field the
+		# dashboard does not edit is refused as a whole.
+		for label, updates, allowed in (
+			("Project", project_updates, EDITABLE_PROJECT_FIELDS),
+			("Task", task_updates, EDITABLE_TASK_FIELDS),
+		):
+			if not isinstance(updates, dict) or not all(isinstance(c, dict) for c in updates.values()):
+				return {"status": "error", "message": f"The {label} updates are not in the expected format."}
+			if any(field not in allowed for changes in updates.values() for field in changes):
+				return {
+					"status": "error",
+					"message": f"The {label} updates name a field that is not editable from the dashboard. Nothing was saved.",
+				}
 
 		for doc_name, changes in project_updates.items():
 			if not frappe.has_permission("Project", ptype="write", doc=doc_name):

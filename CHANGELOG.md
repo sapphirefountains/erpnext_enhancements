@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.9] - 2026-11-19
+
+### Changed
+
+- **The Projects Dashboard's bulk edit accepts only the fields the dashboard edits (hardening).**
+  `update_multiple_docs` now checks every field name in the request before it writes anything:
+  - A Project may be changed only in `EDITABLE_PROJECT_FIELDS`, the list `update_project_details`
+    already uses (status and the two priorities).
+  - A Task may be changed only in the new `EDITABLE_TASK_FIELDS`: `exp_start_date`, `exp_end_date`
+    and `expected_time`, the three cells the Tasks tree's inline editor saves.
+  - A request that names any other field, or whose changes are not a name-to-fields mapping, is
+    refused as a whole with a message and nothing is saved. The per-record write check, the
+    parent-dates rule and the POST-only declaration are as before.
+  - The Tasks tree's Save changes button is unaffected: it sends only those three fields.
+  - `tests/test_dashboard_bulk_edit_fields.py` (bench-free, wired into CI) runs the endpoint on a
+    stand-in `frappe` and reads the page's JavaScript, so the lists and the grid cannot drift apart.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
