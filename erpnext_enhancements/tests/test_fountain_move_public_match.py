@@ -582,3 +582,44 @@ def test_a_confirmed_request_skips_the_matcher_even_with_several_candidates(worl
 	assert world.inserted[0][1]["party_name"] == "Second Household"
 	assert world.saved_existing == []
 	assert world.foreign_writes == []
+
+
+def test_the_digest_lists_a_request_left_queued(world, monkeypatch):
+	"""Confirm Match and Retry leave the request Queued until the job starts. A deploy empties the
+	job queue, so the daily digest lists a request still Queued after an hour: timed from the
+	confirmation when there is one, from the last change otherwise."""
+	notify = importlib.import_module("erpnext_enhancements.crm_enhancements.fountain_move.notify")
+	monkeypatch.setattr(notify, "add_to_date", lambda value=None, **k: "2026-11-19 09:00:00")
+	asked = []
+
+	def get_all(doctype, filters=None, **k):
+		asked.append(filters)
+		if filters.get("status") != "Queued":
+			return []
+		if filters.get("match_confirmed_on") == ["<", "2026-11-19 09:00:00"]:
+			return [{"name": "FMR-CONFIRMED"}]
+		return [{"name": "FMR-RETRIED"}]
+
+	monkeypatch.setattr(notify.frappe, "get_all", get_all)
+	assert [row["name"] for row in notify._stalled_queued()] == ["FMR-CONFIRMED", "FMR-RETRIED"]
+	assert asked == [
+		{"status": "Queued", "match_confirmed_on": ["<", "2026-11-19 09:00:00"]},
+		{
+			"status": "Queued",
+			"match_confirmed_on": ["is", "not set"],
+			"modified": ["<", "2026-11-19 09:00:00"],
+		},
+	]
+
+	sent = []
+	monkeypatch.setattr(notify, "_fallback_owner", lambda: "owner@example.test")
+	monkeypatch.setattr(notify, "_recipients", lambda owner: [owner])
+	monkeypatch.setattr(notify.frappe, "render_template", lambda path, context: context, raising=False)
+	monkeypatch.setattr(notify.frappe, "sendmail", lambda **kw: sent.append(kw), raising=False)
+	notify.digest_stuck_requests()
+	assert len(sent) == 1
+	buckets = sent[0]["message"]["buckets"]
+	assert [row["name"] for row in buckets["Queued (not started over an hour)"]] == [
+		"FMR-CONFIRMED",
+		"FMR-RETRIED",
+	]

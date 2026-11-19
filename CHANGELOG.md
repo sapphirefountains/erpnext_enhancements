@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Two new read-only fields on Fountain Move Request, **Match Confirmed By** and **Match Confirmed
     On**, with no default: existing rows read blank. Requests already waiting in Duplicate Review
     can now be finished with Confirm Match instead of being edited and retried.
+  - **The daily digest lists a request left Queued.** Confirm Match and Retry mark the request
+    Queued just before the conversion job is enqueued, and a deploy empties the job queue, so the
+    job can be lost. `notify.digest_stuck_requests` now has a "Queued (not started over an hour)"
+    section, timed from the confirmation when there is one and from the last change otherwise.
+    Retry on the request starts it again.
   - New bench-free suite `tests/test_fountain_move_public_match.py`, in its own CI step.
 
 ## [1.830.0] - 2026-11-19
