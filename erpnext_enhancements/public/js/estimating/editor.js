@@ -96,7 +96,12 @@ export function phase_tree(phases, lines) {
 }
 
 function state(frm) {
-	if (!frm.__estimate_editor) frm.__estimate_editor = { open: null, more: new Set(), codes: null };
+	// Kept on the form object, which Desk reuses for every Estimate opened in the tab, so it starts over
+	// when the document changes (after New Revision, say) instead of carrying one estimate's folds to the next.
+	const s = frm.__estimate_editor;
+	if (!s || s.doc !== frm.doc.name) {
+		frm.__estimate_editor = { doc: frm.doc.name, open: null, more: new Set(), codes: s ? s.codes : null };
+	}
 	return frm.__estimate_editor;
 }
 

@@ -28,7 +28,7 @@ Things this is careful about, including the ones that look like bugs:
 
 import frappe
 from frappe import _
-from frappe.utils import escape_html, nowdate
+from frappe.utils import escape_html, getdate, nowdate
 
 from erpnext_enhancements.estimating import rules
 
@@ -54,6 +54,10 @@ def _line_dicts(estimate):
 
 def _phase_dicts(estimate):
 	return [phase.as_dict() for phase in estimate.phases]
+
+
+def _still_valid(date):
+	return date if date and getdate(date) >= getdate(nowdate()) else None
 
 
 def _default_taxes(quotation):
@@ -82,7 +86,10 @@ def issue_quotation(estimate):
 		frappe.throw(_("This revision is superseded. Issue the quotation from the newer revision."))
 	if not frappe.db.exists("Item", SCOPE_ITEM):
 		frappe.throw(
-			_("The Item {0} that quotation lines use is missing. Run bench migrate.").format(SCOPE_ITEM)
+			_(
+				"The Item {0} that quotation lines use is missing. Create it as a non-stock, sales-only Item "
+				"(the seed patch logged why it could not)."
+			).format(SCOPE_ITEM)
 		)
 
 	doc.save()  # price it again, exactly as stored
@@ -91,7 +98,9 @@ def issue_quotation(estimate):
 		frappe.throw(_("Add a line before issuing a quotation."))
 	unpriced = rules.unpriced_lines(lines, lines)
 	if unpriced:
-		names = ", ".join(f"{line.get('idx')} {line.get('description')}" for line in unpriced[:8])
+		names = ", ".join(
+			escape_html(f"{line.get('idx')} {line.get('description')}") for line in unpriced[:8]
+		)
 		frappe.throw(
 			_("These lines have no cost and no sheet price, so they would be quoted at nothing: {0}").format(
 				names
@@ -116,7 +125,8 @@ def issue_quotation(estimate):
 			"party_name": party_name,
 			"company": doc.company,
 			"transaction_date": nowdate(),
-			"valid_till": doc.valid_till or quotation.get("valid_till"),
+			# ERPNext refuses a quotation valid until a day before it is dated; an old revision's date is dropped.
+			"valid_till": _still_valid(doc.valid_till) or _still_valid(quotation.get("valid_till")),
 			"order_type": "Sales",
 		}
 	)
@@ -147,6 +157,9 @@ def issue_quotation(estimate):
 		_default_taxes(quotation)
 	quotation.terms = (doc.terms or "") + rules.exclusions_html(exclusions)
 
+	# The estimate's price is the price: a selling Pricing Rule added later (a blanket discount) would
+	# otherwise reprice these lines in validate, after the rates below are set.
+	quotation.ignore_pricing_rule = 1
 	quotation.run_method("set_missing_values")
 	if doc.job_kind != "Product":
 		# set_missing_values copies the customer's tax template in (update_if_missing) and, outside
@@ -186,7 +199,16 @@ def new_revision(estimate):
 	new.revision = (old.revision or 1) + 1
 	new.previous_revision = old.name
 	new.status = "Draft"
-	new.quotation = None
+	new.transaction_date = nowdate()
+	new.valid_till = None
+	new.prepared_by = frappe.session.user
+	# A quotation still in draft follows the newest revision, so issuing refreshes it rather than
+	# leaving a second draft pointing at the superseded one.
+	new.quotation = (
+		old.quotation
+		if old.quotation and frappe.db.get_value("Quotation", old.quotation, "docstatus") == 0
+		else None
+	)
 	new.insert()
 
 	old.flags.from_revision = True

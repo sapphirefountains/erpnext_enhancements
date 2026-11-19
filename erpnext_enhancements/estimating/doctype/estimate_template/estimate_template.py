@@ -12,6 +12,7 @@ copy happens in the form (``estimate.js``); nothing here is priced. Three templa
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import escape_html
 
 from erpnext_enhancements.estimating import estimate_math as em
 from erpnext_enhancements.estimating import rules
@@ -32,16 +33,18 @@ class EstimateTemplate(Document):
 			line.cost_code = rules.normalize_code(line.cost_code)
 			problem = rules.code_problem(line.cost_code)
 			if problem:
-				frappe.throw(_("Line {0} ({1}): {2}").format(line.idx, line.description, problem))
+				frappe.throw(
+					_("Line {0} ({1}): {2}").format(line.idx, escape_html(line.description), problem)
+				)
 			if numbers and line.phase_number and line.phase_number not in numbers:
 				frappe.throw(
 					_("Line {0} ({1}) is in phase {2}, which this template does not list.").format(
-						line.idx, line.description, line.phase_number
+						line.idx, escape_html(line.description), line.phase_number
 					)
 				)
 			if not numbers and line.phase_number:
 				frappe.throw(
 					_(
 						"Line {0} ({1}) has a phase, but this template has no phases. Use 0 or add the phase."
-					).format(line.idx, line.description)
+					).format(line.idx, escape_html(line.description))
 				)

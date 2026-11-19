@@ -118,6 +118,6 @@ const line_handlers = { lines_remove: redraw, lines_add: redraw };
 ["phase_number", "description", "cost_type", "cost_code", "basis", "by_others", "uom"].forEach((f) => (line_handlers[f] = redraw));
 frappe.ui.form.on("Estimate Line", line_handlers);
 
-const phase_handlers = { phases_remove: redraw, phase_number: redraw, label: redraw };
+const phase_handlers = { phases_add: redraw, phases_remove: redraw, phase_number: redraw, label: redraw };
 ["contingency_override", "insurance_override", "fee_override", "commission_override"].forEach((f) => (phase_handlers[f] = refresh_numbers));
 frappe.ui.form.on("Estimate Phase", phase_handlers);

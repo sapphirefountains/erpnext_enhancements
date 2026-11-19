@@ -22,6 +22,12 @@ def execute():
 		group = frappe.db.get_value("Item Group", {"is_group": 0}, "name", order_by="lft asc")
 	uom = "Nos" if frappe.db.exists("UOM", "Nos") else "Unit"
 	if not group or not frappe.db.exists("UOM", uom):
+		# Not silent: this patch runs once, so a skip here is permanent and Issue Quotation will refuse
+		# until somebody creates the Item by hand (item code EST-SCOPE, non-stock, sales only).
+		frappe.log_error(
+			title="Estimating: Item EST-SCOPE not seeded",
+			message=f"No leaf Item Group or no UOM {uom}; create Item {ITEM} by hand (non-stock, sales only).",
+		)
 		return
 	item = frappe.new_doc("Item")
 	item.item_code = ITEM

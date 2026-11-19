@@ -116,11 +116,19 @@ def setUpModule():
 				return STORED_STATUS.get(filters)
 			return None
 
+		def exists(self, doctype, name=None):
+			return doctype == "Estimate Rate Card" and name == "Standard"
+
 		def get_single_value(self, *a):
 			return "Example Co"
 
 	frappe.db = DB()
 	frappe.get_cached_doc = lambda doctype, name: Row(RATE_CARD)
+	utils = types.ModuleType("frappe.utils")
+	utils.escape_html = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+	frappe.utils = utils
+	sys.modules["frappe.utils"] = utils
+
 	model = types.ModuleType("frappe.model")
 	document = types.ModuleType("frappe.model.document")
 	document.Document = FakeDocument
@@ -135,7 +143,7 @@ def setUpModule():
 
 
 def tearDownModule():
-	for name in ("frappe", "frappe.model", "frappe.model.document"):
+	for name in ("frappe", "frappe.model", "frappe.model.document", "frappe.utils"):
 		sys.modules.pop(name, None)
 
 
@@ -264,6 +272,28 @@ class TestEstimateController(unittest.TestCase):
 		with self.assertRaises(Thrown) as ctx:
 			doc.validate()
 		self.assertIn("Line 1", str(ctx.exception))
+
+	def test_a_missing_rate_card_is_named(self):
+		doc = new_estimate([], rate_card="Nope")
+		with self.assertRaises(Thrown) as ctx:
+			doc.before_insert()
+		self.assertIn("Nope", str(ctx.exception))
+
+	def test_typed_text_in_errors_is_escaped(self):
+		doc = new_estimate(
+			[
+				{
+					"phase_number": 300,
+					"description": "<img src=x>",
+					"cost_type": "Material",
+					"cost_code": "22 5214",
+					"qty": 1,
+				}
+			]
+		)
+		with self.assertRaises(Thrown) as ctx:
+			doc.validate()
+		self.assertIn("&lt;img src=x&gt;", str(ctx.exception))
 
 	def test_codes_are_checked(self):
 		for code, words in (("22 5214", "not in the cost code catalog"), ("FEE", "computed")):

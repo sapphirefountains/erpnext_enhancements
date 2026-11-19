@@ -29,6 +29,7 @@ Things this is careful about:
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import escape_html
 
 from erpnext_enhancements.estimating import estimate_math as em
 from erpnext_enhancements.estimating import rules
@@ -103,6 +104,8 @@ class Estimate(Document):
 			self.copy_rates_from(self.rate_card)
 
 	def copy_rates_from(self, rate_card):
+		if not frappe.db.exists("Estimate Rate Card", rate_card):
+			frappe.throw(_("Rate card {0} was not found.").format(escape_html(rate_card)))
 		card = frappe.get_cached_doc("Estimate Rate Card", rate_card)
 		for field in RATE_FIELDS:
 			self.set(field, card.get(field) or 0)
@@ -140,20 +143,22 @@ class Estimate(Document):
 			line.cost_code = rules.normalize_code(line.cost_code)
 			problem = rules.code_problem(line.cost_code)
 			if problem:
-				frappe.throw(_("Line {0} ({1}): {2}").format(line.idx, line.description, problem))
+				frappe.throw(
+					_("Line {0} ({1}): {2}").format(line.idx, escape_html(line.description), problem)
+				)
 			if not line.cost_type:
 				line.cost_type = rules.default_cost_type(line.cost_code) or "Material"
 			if line.cost_type not in em.COST_TYPES:
 				frappe.throw(
 					_("Line {0}: cost type {1} is not one of {2}.").format(
-						line.idx, line.cost_type, ", ".join(em.COST_TYPES)
+						line.idx, escape_html(line.cost_type), ", ".join(em.COST_TYPES)
 					)
 				)
 			if (line.qty or 0) < 0 or (line.unit_cost or 0) < 0 or (line.sheet_price or 0) < 0:
 				frappe.throw(
 					_(
 						"Line {0} ({1}): quantity, cost and price cannot be negative. A credit belongs on a change order."
-					).format(line.idx, line.description)
+					).format(line.idx, escape_html(line.description))
 				)
 			for field in LINE_OVERRIDES:
 				line.set(field, self.clean_override(line.get(field), _("Line {0}").format(line.idx), field))
@@ -177,7 +182,9 @@ class Estimate(Document):
 		except (TypeError, ValueError):
 			label = field.replace("_override", "").replace("_", " ")
 			frappe.throw(
-				_("{0}: the {1} override must be a number or blank, not {2}.").format(where, label, raw)
+				_("{0}: the {1} override must be a number or blank, not {2}.").format(
+					where, label, escape_html(raw)
+				)
 			)
 		if value is None:
 			return ""

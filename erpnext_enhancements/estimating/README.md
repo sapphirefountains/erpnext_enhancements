@@ -43,6 +43,10 @@ Cost, markup, margin, commission and every rate are at **permlevel 1**, readable
 four roles are also the only ones that can open an Estimate, a template or a rate card at all. The
 Quotation carries one price per phase and never a cost.
 
+**The Estimator role is meant to be paired with a selling role** (Sales User or Sales Manager). On its
+own it grants nothing outside this module: issuing a Quotation needs Quotation create, and the form's
+Account, Opportunity and Project pickers need read on those doctypes.
+
 ## File map
 
 | File | Purpose | Wiring |
@@ -79,6 +83,13 @@ Plus the fixture Custom Field `Quotation.custom_estimate` (read-only Link back t
   issuing again after a change makes a new draft.
 - **The editor never redraws under your finger.** Edits update numbers in place; a redraw waits a tick
   and restores focus, and the form script's table-view handlers stand by while the editor writes.
+- **A selling Pricing Rule never reprices an estimate's quotation** (`ignore_pricing_rule = 1`), and a
+  "valid until" already in the past is dropped rather than refused by ERPNext. A new revision is dated
+  today and takes over the old revision's draft quotation, so issuing refreshes it instead of leaving
+  a second draft behind.
+- **Taxes can come back on a later Desk save of the quotation** if a Tax Rule or "Add Taxes from Taxes
+  and Charges Template" is ever turned on (both off on prod, 2026-11-19): `taxes_and_charges` is
+  refilled from the customer in validate and the flag that stops it is not saved.
 - **The form script checks the bundle's API level** (`REQUIRED_EDITOR_LEVEL` = bundle `VERSION`), so a
   tab open across a deploy says "reload" instead of throwing. Bump both together.
 

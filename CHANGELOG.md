@@ -44,8 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     quotation, because use tax is already inside the prices; after `set_missing_values` the builder
     clears any tax template the customer's details pulled in. A draft Quotation is refreshed in place;
     a submitted one is never touched. A line priced at nothing stops the issue.
-  - **Revisions.** New Revision copies the estimate as revision n+1; the old one becomes Superseded
-    and read-only, the record of what was quoted.
+  - **Revisions.** New Revision copies the estimate as revision n+1, dated today; the old one becomes
+    Superseded and read-only, the record of what was quoted. A quotation still in draft moves to the
+    new revision, so issuing refreshes it instead of leaving a second draft behind.
+  - **The quotation keeps the estimate's prices**: `ignore_pricing_rule` is set, so a selling Pricing
+    Rule added later cannot reprice it in validate, and a "valid until" already in the past is dropped
+    (ERPNext refuses a quotation valid until before its own date).
+  - The **Estimator** role is meant to be paired with a selling role: it grants nothing on Quotation,
+    Customer, Opportunity or Project.
   - **The lines editor** (the v2 Estimate board), in the Estimate form: phases fold (open by default
     only where work is missing, or all on a short estimate), line rows turn into labelled cards under
     720px with 44px inputs and Save / Issue Quotation stuck to the bottom, cost codes from the catalog
