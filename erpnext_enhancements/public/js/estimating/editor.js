@@ -314,7 +314,7 @@ function draw(frm) {
 			zeroRates
 				? `<div class="banner warn"><span><b>Every rate on this estimate is zero</b>, so prices equal cost. Set the markups and overheads under Rates below, or on the rate card${
 						frm.doc.rate_card
-							? ` <a href="/app/estimate-rate-card/${encodeURIComponent(frm.doc.rate_card)}">${esc(frm.doc.rate_card)}</a>`
+							? ` <a href="/desk/estimate-rate-card/${encodeURIComponent(frm.doc.rate_card)}">${esc(frm.doc.rate_card)}</a>`
 							: ""
 				  } for every new estimate.</span></div>`
 				: ""
@@ -457,7 +457,7 @@ function numbers(frm) {
 				ok
 					? "Every line is priced and coded. This revision can be accepted into a contract."
 					: "A quotation can be issued now. Accepting it into a contract needs every line priced and coded."
-			}${frm.doc.quotation ? ` Quotation: <a href="/app/quotation/${encodeURIComponent(frm.doc.quotation)}">${esc(frm.doc.quotation)}</a>.` : ""}</div>`;
+			}${frm.doc.quotation ? ` Quotation: <a href="/desk/quotation/${encodeURIComponent(frm.doc.quotation)}">${esc(frm.doc.quotation)}</a>.` : ""}</div>`;
 	}
 }
 
@@ -697,7 +697,7 @@ async function issue(frm) {
 	await frm.reload_doc();
 	frappe.show_alert({
 		message: __("Quotation {0} is ready as a draft.", [
-			`<a href="/app/quotation/${encodeURIComponent(r.message)}">${esc(r.message)}</a>`,
+			`<a href="/desk/quotation/${encodeURIComponent(r.message)}">${esc(r.message)}</a>`,
 		]),
 		indicator: "green",
 	}, 10);
