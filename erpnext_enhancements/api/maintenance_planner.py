@@ -1012,7 +1012,7 @@ def _technicians(cards):
 	return [{"user": u.name, "name": u.full_name or u.name, "enabled": bool(u.enabled)} for u in users]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def move_visit(
 	record,
 	date=None,
@@ -1586,7 +1586,7 @@ def _move_assignment(doc, prior):
 		assign_to_technician(doc.name, doc.technician)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def move_projected(contract, from_date, to_date, serial_no=None, reason=None, draft=0):
 	"""Move a contract's next (not yet drafted) visit to another day.
 

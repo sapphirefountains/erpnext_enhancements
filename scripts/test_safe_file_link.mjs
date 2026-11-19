@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Escaping of record values in the browser's attachment and purchase-link HTML (v1.826.4),
+ * Escaping of record values in the browser's attachment and purchase-link HTML (v1.830.0),
  * executed against stubs rather than grepped.
  *
  *   1. global_enhancements/safe_file_link.js: `safeFileHref` answers an address unchanged when it

@@ -25,7 +25,15 @@ because every defect worth guarding here was invisible from inside the app:
 ``Bearer <admin_webhook_secret>`` branch was dead twice over: Frappe 401s the
 header first, and it compared against the Password field's masked ``****``
 placeholder rather than the secret. It now accepts only a caller Frappe has
-already authenticated with an API key (``token key:secret``, what Triton sends).
+already authenticated with an API key (``token key:secret``, what Triton sends),
+and since v1.826.5 only when that key belongs to a gateway user (the Triton user,
+or the site config ``telephony_gateway_users`` list). ``get_gateway_config`` sits
+behind it too.
+
+**Twilio webhooks** (``validate_twilio_request``, ``receive_mms``). The signature
+check refuses every request while no auth token is stored, and ``receive_mms``
+downloads ``MediaUrl0`` only from an https Twilio host, streamed, with a timeout
+and a size cap.
 
 The stubs are installed in ``setUpModule`` and removed in ``tearDownModule``, so
 they never leak into a suite sharing the process.
@@ -157,6 +165,10 @@ def _install_stubs():
 		response=AttrDict(), conf=types.SimpleNamespace(get=lambda key: "test")
 	)
 	frappe.session = types.SimpleNamespace(user="Guest")
+	frappe.conf = types.SimpleNamespace(
+		get=lambda key, default=None: STATE.get("conf", {}).get(key, default)
+	)
+	frappe.form_dict = AttrDict()
 	frappe.request = Request()
 	frappe.get_request_header = lambda name, default=None: STATE["headers"].get(name, default)
 	frappe.get_single = lambda doctype: STATE["settings"]
@@ -488,6 +500,223 @@ class TelephonyDecoratorTests(unittest.TestCase):
 		endpoint, calls = self._call(None, user="Guest")
 		with self.assertRaises(FakePermissionError):
 			endpoint()
+
+	def test_an_api_key_of_another_user_is_refused(self):
+		endpoint, calls = self._call("token key:secret", user="someone@example.com")
+		with self.assertRaises(FakePermissionError):
+			endpoint()
+		self.assertEqual(calls, [])
+
+	def test_the_gateway_user_matches_case_insensitively(self):
+		endpoint, calls = self._call("token key:secret", user="Triton@SapphireFountains.com")
+		self.assertEqual(endpoint(), "ran")
+
+	def test_site_config_replaces_the_default_gateway_users(self):
+		endpoint, calls = self._call("token key:secret", user="gateway@example.com")
+		STATE["conf"] = {"telephony_gateway_users": ["gateway@example.com"]}
+		self.assertEqual(endpoint(), "ran")
+		# The default is replaced, not extended.
+		endpoint, calls = self._call("token key:secret", user="triton@sapphirefountains.com")
+		STATE["conf"] = {"telephony_gateway_users": ["gateway@example.com"]}
+		with self.assertRaises(FakePermissionError):
+			endpoint()
+		self.assertEqual(calls, [])
+
+	def test_site_config_may_be_a_comma_separated_string(self):
+		endpoint, calls = self._call("token key:secret", user="b@example.com")
+		STATE["conf"] = {"telephony_gateway_users": "a@example.com, b@example.com"}
+		self.assertEqual(endpoint(), "ran")
+
+	def test_an_empty_site_config_list_keeps_the_default(self):
+		endpoint, calls = self._call("token key:secret", user="triton@sapphirefountains.com")
+		STATE["conf"] = {"telephony_gateway_users": []}
+		self.assertEqual(endpoint(), "ran")
+		endpoint, calls = self._call("token key:secret", user="someone@example.com")
+		STATE["conf"] = {"telephony_gateway_users": ["", "  "]}
+		with self.assertRaises(FakePermissionError):
+			endpoint()
+
+	def test_gateway_config_requires_the_gateway_user(self):
+		_reset()
+		frappe = sys.modules["frappe"]
+		frappe.request.headers = {}
+		frappe.session.user = "Guest"
+		with self.assertRaises(FakePermissionError):
+			telephony.get_gateway_config()
+		frappe.request.headers = {"Authorization": "token key:secret"}
+		frappe.session.user = "someone@example.com"
+		with self.assertRaises(FakePermissionError):
+			telephony.get_gateway_config()
+		frappe.session.user = "triton@sapphirefountains.com"
+		STATE["triton_settings"] = types.SimpleNamespace(
+			master_system_prompt="prompt", forwarding_phone_number="+10000000000", voice_model_id="m"
+		)
+		self.assertEqual(telephony.get_gateway_config()["master_system_prompt"], "prompt")
+
+
+class FakeValidator:
+	"""``twilio.request_validator.RequestValidator``: records the token it was built with."""
+
+	built = []
+
+	def __init__(self, token):
+		FakeValidator.built.append(token)
+
+	def validate(self, url, post_vars, signature):
+		return signature == "good"
+
+
+class TwilioRequestTests(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		self._saved_validator = telephony.RequestValidator
+		telephony.RequestValidator = FakeValidator
+		FakeValidator.built = []
+		frappe = sys.modules["frappe"]
+		frappe.request.url = "https://example.test/api/method/x"
+		frappe.request.form = {}
+
+	def tearDown(self):
+		telephony.RequestValidator = self._saved_validator
+
+	def _endpoint(self, token, signature):
+		frappe = sys.modules["frappe"]
+		frappe.request.headers = {"X-Twilio-Signature": signature}
+		STATE["triton_settings"] = types.SimpleNamespace(
+			get_password=lambda fieldname, raise_exception=True: token
+		)
+		calls = []
+
+		@telephony.validate_twilio_request
+		def endpoint():
+			calls.append(1)
+			return "ran"
+
+		return endpoint, calls
+
+	def test_a_valid_signature_with_a_stored_token_is_accepted(self):
+		endpoint, calls = self._endpoint("auth-token", "good")
+		self.assertEqual(endpoint(), "ran")
+		self.assertEqual(FakeValidator.built, ["auth-token"])
+
+	def test_a_bad_signature_is_refused(self):
+		endpoint, calls = self._endpoint("auth-token", "bad")
+		with self.assertRaises(FakePermissionError):
+			endpoint()
+		self.assertEqual(calls, [])
+
+	def test_an_unset_token_refuses_without_checking_any_signature(self):
+		for token in (None, "", "   "):
+			endpoint, calls = self._endpoint(token, "good")
+			with self.assertRaises(FakePermissionError):
+				endpoint()
+			self.assertEqual(calls, [])
+		self.assertEqual(FakeValidator.built, [], "no validator may be built on an empty token")
+
+
+class FakeStream:
+	def __init__(self, status_code=200, chunks=(b"img",)):
+		self.status_code = status_code
+		self.chunks = list(chunks)
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, *exc):
+		return False
+
+	def iter_content(self, chunk_size=None):
+		return iter(self.chunks)
+
+
+class ReceiveMMSTests(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		frappe = sys.modules["frappe"]
+		self._saved = (telephony.locate_customer, frappe.get_doc, getattr(telephony.requests, "get", None))
+		telephony.locate_customer = lambda number: "CUST-0001"
+		self.saved_files = []
+
+		class FakeFile(types.SimpleNamespace):
+			def save(inner, ignore_permissions=False):
+				self.saved_files.append(inner)
+
+		frappe.get_doc = lambda spec: FakeFile(**spec)
+		frappe.utils.now = lambda: "now"
+		self.fetched = []
+		self.response = FakeStream()
+
+		def fake_get(url, **kwargs):
+			self.fetched.append((url, kwargs))
+			return self.response
+
+		telephony.requests.get = fake_get
+
+	def tearDown(self):
+		frappe = sys.modules["frappe"]
+		telephony.locate_customer, frappe.get_doc, get = self._saved
+		if get is None:
+			del telephony.requests.get
+		else:
+			telephony.requests.get = get
+
+	def _receive(self, media_url):
+		frappe = sys.modules["frappe"]
+		frappe.form_dict = AttrDict({"From": "+10000000000", "MediaUrl0": media_url})
+		# Past the signature decorator, which TwilioRequestTests covers.
+		return telephony.receive_mms.__wrapped__()
+
+	def test_twilio_media_hosts_are_accepted(self):
+		for url in (
+			"https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1",
+			"https://media.twilio.com/v1/x",
+			"https://API.TWILIO.COM:443/x",
+		):
+			self.assertTrue(telephony._is_twilio_media_url(url), url)
+
+	def test_other_urls_are_refused(self):
+		for url in (
+			"http://api.twilio.com/x",
+			"https://twilio.com.example.com/x",
+			"https://example.com/api.twilio.com/x",
+			"https://api.twilio.com.example.com/x",
+			"https://eviltwilio.com/x",
+			"https://api.twilio.com@example.com/x",
+			"https://user:pass@api.twilio.com/x",
+			"https://api.twilio.com:8443/x",
+			"https://[::1/x",
+			"file:///etc/hosts",
+			"",
+			None,
+		):
+			self.assertFalse(telephony._is_twilio_media_url(url), url)
+
+	def test_media_from_twilio_is_streamed_with_a_timeout_and_attached(self):
+		url = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
+		self.assertEqual(self._receive(url), "OK")
+		((fetched_url, kwargs),) = self.fetched
+		self.assertEqual(fetched_url, url)
+		self.assertTrue(kwargs.get("stream"))
+		self.assertTrue(kwargs.get("timeout"))
+		(doc,) = self.saved_files
+		self.assertEqual((doc.content, doc.attached_to_name, doc.is_private), (b"img", "CUST-0001", 1))
+
+	def test_media_elsewhere_is_never_fetched(self):
+		self.assertEqual(self._receive("https://example.com/image.jpg"), "OK")
+		self.assertEqual(self.fetched, [])
+		self.assertEqual(self.saved_files, [])
+
+	def test_media_over_the_cap_is_not_attached(self):
+		chunk = b"x" * (1024 * 1024)
+		self.response = FakeStream(chunks=[chunk] * (telephony._MMS_MEDIA_MAX_BYTES // len(chunk) + 1))
+		self._receive("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1")
+		self.assertEqual(len(self.fetched), 1)
+		self.assertEqual(self.saved_files, [])
+
+	def test_a_non_200_answer_is_not_attached(self):
+		self.response = FakeStream(status_code=404)
+		self._receive("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1")
+		self.assertEqual(self.saved_files, [])
 
 	def test_the_decorator_names_no_bearer_and_no_secret(self):
 		tree = ast.parse(TELEPHONY.read_text(encoding="utf-8"))

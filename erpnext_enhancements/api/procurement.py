@@ -80,7 +80,7 @@ def get_item_links(item_codes, supplier=None):
 
     return grouped_links
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_item_link(item_code, supplier, url):
     """
     Updates or creates an Item Supplier row with the given URL.

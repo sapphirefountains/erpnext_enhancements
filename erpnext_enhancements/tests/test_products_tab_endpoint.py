@@ -71,11 +71,13 @@ class Site:
 		self.tables = {}
 		self.readable = set(READABLE)
 		self.has_source_column = True
+		self.has_quote_source_column = True  # Quotation.custom_source_opportunity (quote to order)
 		self.queries = []
 		self.get_all_calls = []
 		self.errors = []
 		self.raise_on = None
 		self.default_wip = None
+		self.settings = None  # Product Build Settings; None: the DocType is not installed
 
 	def rows(self, key):
 		return [_Dict(row) for row in self.tables.get(key, [])]
@@ -93,6 +95,11 @@ _ROUTES = (
 	("FROM `tabQuotation` q", "quote_headers"),
 	("SELECT DISTINCT wip_warehouse", "wip_orders"),
 	("FROM `tabWork Order`", "work_orders"),
+	# The Testing column (v1.828.0): the units a finished Work Order made, the tested units on the
+	# shelf, and their submitted pre-shipment tests.
+	("WHERE work_order IN %(wos)s", "serials_wo"),
+	("WHERE item_code IN %(items)s AND status = 'Active'", "serials_active"),
+	("FROM `tabQuality Inspection`", "tests"),
 	("SELECT item_code, warehouse, actual_qty, projected_qty, ordered_qty", "component_bins"),
 	("FROM `tabSales Invoice Item` sii", "invoices"),
 	("SELECT item_code, SUM(actual_qty) AS qty", "on_hand"),
@@ -113,6 +120,12 @@ def _sql(query, values=None, as_dict=False, **_kwargs):
 		if phrase in query:
 			if SITE.raise_on == key:
 				raise RuntimeError("boom: " + key)
+			if key == "quote_headers" and "COALESCE(NULLIF(q.custom_source_opportunity" in query:
+				# What the SELECT asks for: the configurator's link, else ERPNext's own.
+				return [
+					_Dict(row, opportunity=row.get("custom_source_opportunity") or row.get("opportunity"))
+					for row in SITE.rows(key)
+				]
 			if key == "on_hand":
 				return [
 					_Dict(item_code=code, qty=qty) for code, qty in SITE.tables.get("on_hand", {}).items()
@@ -126,6 +139,8 @@ def _has_column(doctype, column):
 		raise Exception("TableMissingError: tab" + doctype)  # has_column takes a doctype
 	if (doctype, column) == ("Item", "custom_source_configuration"):
 		return SITE.has_source_column
+	if (doctype, column) == ("Quotation", "custom_source_opportunity"):
+		return SITE.has_quote_source_column
 	return True
 
 
@@ -175,6 +190,13 @@ def setUpModule():
 		),
 	)
 	frappe.get_all = _get_all
+
+	def get_cached_doc(doctype, *args, **kwargs):
+		if doctype == "Product Build Settings" and SITE.settings is not None:
+			return _Dict(SITE.settings)
+		raise Exception("DoesNotExistError: " + doctype)
+
+	frappe.get_cached_doc = get_cached_doc
 	frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable
 	frappe.get_traceback = lambda *a, **k: "Traceback (most recent call last):\n  stub"
 	frappe.get_roles = lambda *a, **k: []
@@ -288,6 +310,7 @@ def quote(
 	transaction_date=date(2026, 11, 17),
 	valid_till=None,
 	opportunity=None,
+	source_opportunity=None,
 ):
 	return {
 		"name": name,
@@ -300,6 +323,7 @@ def quote(
 		"docstatus": docstatus,
 		"currency": "USD",
 		"opportunity": opportunity,
+		"custom_source_opportunity": source_opportunity,
 	}
 
 
@@ -512,6 +536,16 @@ class TestTheBoard(Base):
 
 	def test_only_product_documents_are_on_the_board(self):
 		self.assertEqual(sorted(self.rows()), ["SO-1", "SO-3", "SO-4", "SO-5"])
+
+	def test_the_board_logs_nothing(self):
+		# The Testing column (v1.828.0) runs its own queries; one the stub does not know would be
+		# swallowed into the Error Log and the column would silently never fill.
+		self.rows()
+		self.assertEqual(SITE.errors, [])
+
+	def test_a_hand_made_product_from_stock_is_not_held_for_a_test(self):
+		# SO-1's PDT-0040-1-1-1-2-0 here carries no configuration: the gate does not apply to it.
+		self.assertEqual(self.rows()["SO-1"]["stage"], "ready")
 
 	def test_a_fountain_job_with_one_product_line_stays_off(self):
 		# Manager review of #1464: SO-6 would have shown at its full value and then turned Late.
@@ -755,6 +789,24 @@ class TestThePipeline(Base):
 		self.assertEqual(rows[0]["product_amount"], 2200)
 		self.assertEqual(rows[0]["lines"], ["E-Stops"])
 
+	def test_a_configurator_quote_brings_its_deal_through_its_own_link(self):
+		"""Quote to order (#1465) names the deal in custom_source_opportunity and leaves ERPNext's
+		opportunity empty, so a deal quoted through the configurator must still show."""
+		SITE.tables["quote_headers"][0] = quote("QTN-1", source_opportunity="CRM-OPP-1")
+		rows = self.answer()["pipeline"]["opportunities"]["rows"]
+		self.assertEqual([o["name"] for o in rows], ["CRM-OPP-1"])
+		self.assertEqual(rows[0]["quotations"], ["QTN-1"])
+		query = next(q for q in SITE.queries if "FROM `tabQuotation` q" in q)
+		self.assertIn(
+			"COALESCE(NULLIF(q.custom_source_opportunity, ''), q.opportunity) AS opportunity", query
+		)
+
+	def test_a_site_without_the_link_column_never_names_it(self):
+		SITE.has_quote_source_column = False
+		rows = self.answer()["pipeline"]["opportunities"]["rows"]
+		self.assertEqual([o["name"] for o in rows], ["CRM-OPP-1"])  # ERPNext's own link still works
+		self.assertFalse(any("custom_source_opportunity" in q for q in SITE.queries))
+
 	def test_no_query_reads_the_products_value_stream(self):
 		self.answer()
 		self.assertFalse(any("tabValue Stream" in q for q in SITE.queries))
@@ -848,6 +900,130 @@ class TestTheCLAUDEmdRules(Base):
 		self.answer()
 		query = next(q for q in SITE.queries if "FROM `tabSales Order` so" in q)
 		self.assertIn("coalesce(i.custom_source_configuration, '') <> ''", query)
+
+
+def unit(name, item, built_by, work_order=None, status="Active"):
+	return {"name": name, "item_code": item, "work_order": work_order, "custom_built_by": built_by, "status": status}
+
+
+def test_row(serial, item, status, by, day="2026-11-17", template="Pre-Shipment Functional Test - E-Stop", created=None):
+	return {
+		"name": "QI-" + serial + "-" + by + "-" + status,
+		"item_serial_no": serial,
+		"item_code": item,
+		"status": status,
+		"docstatus": 1,
+		"inspected_by": by,
+		"report_date": day,
+		"creation": created or day + " 10:00:00",
+		"quality_inspection_template": template,
+	}
+
+
+CONFIGURED = "PDT-0040-1-1-1-2-0"
+LOGAN = "logan@example.com"
+NATHAN = "nathan@example.com"
+
+
+class TestTheTestingColumn(Base):
+	"""v1.828.0: a built configured unit waits in Testing until its pre-shipment test passes, signed by
+	someone other than its builder. A unit from the shelf passes when tested units on hand cover it."""
+
+	def setUp(self):
+		super().setUp()
+		SITE.tables["so_headers"] = [so("SO-10"), so("SO-11", delivery_date="2026-12-05")]
+		SITE.tables["so_lines"] = [
+			so_line("SO-10", CONFIGURED, 1668, source="CFG-1"),
+			so_line("SO-11", CONFIGURED, 1668, source="CFG-1"),
+		]
+		SITE.tables["work_orders"] = [
+			{
+				"name": "WO-10",
+				"sales_order": "SO-10",
+				"production_item": CONFIGURED,
+				"status": "Completed",
+				"docstatus": 1,
+				"qty": 1,
+				"produced_qty": 1,
+			}
+		]
+		SITE.tables["on_hand"] = {CONFIGURED: 2}  # SO-10's built unit, plus one built ahead
+		SITE.tables["serials_wo"] = [unit("SN-1", CONFIGURED, LOGAN, work_order="WO-10")]
+		SITE.tables["serials_active"] = [unit("SN-2", CONFIGURED, NATHAN)]
+		SITE.tables["tests"] = [test_row("SN-2", CONFIGURED, "Accepted", LOGAN)]
+
+	def rows(self):
+		answer = self.answer()
+		self.assertEqual(SITE.errors, [])
+		return {row["name"]: row for row in answer["orders"]["rows"]}
+
+	def test_built_and_untested_waits_in_testing(self):
+		row = self.rows()["SO-10"]
+		self.assertEqual((row["stage"], row["note"]), ("testing", "Waiting for the pre-shipment test"))
+
+	def test_passed_by_someone_else_is_ready(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", NATHAN))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "ready")
+
+	def test_tested_by_its_builder_does_not_count(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", LOGAN))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "testing")
+
+	def test_a_failed_test_says_so(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Rejected", NATHAN))
+		row = self.rows()["SO-10"]
+		self.assertEqual((row["stage"], row["note"]), ("testing", "Test failed"))
+
+	def test_fixed_and_tested_again_is_ready(self):
+		SITE.tables["tests"] += [
+			test_row("SN-1", CONFIGURED, "Rejected", NATHAN, day="2026-11-16"),
+			test_row("SN-1", CONFIGURED, "Accepted", NATHAN, day="2026-11-17"),
+		]
+		self.assertEqual(self.rows()["SO-10"]["stage"], "ready")
+
+	def test_a_test_on_another_template_does_not_count(self):
+		SITE.tables["tests"].append(test_row("SN-1", CONFIGURED, "Accepted", NATHAN, template="Incoming"))
+		self.assertEqual(self.rows()["SO-10"]["stage"], "testing")
+
+	def test_from_the_shelf_a_tested_unit_on_hand_makes_it_ready(self):
+		row = self.rows()["SO-11"]
+		self.assertEqual((row["stage"], row["note"]), ("ready", "From stock"))
+
+	def test_from_the_shelf_with_no_tested_unit_it_waits(self):
+		SITE.tables["tests"] = []
+		self.assertEqual(self.rows()["SO-11"]["stage"], "testing")
+
+	def test_a_unit_built_for_another_order_is_not_shelf_stock(self):
+		# SN-1 is SO-10's own unit: passing it must not make SO-11's shelf unit read tested.
+		SITE.tables["serials_active"].append(unit("SN-1", CONFIGURED, LOGAN, work_order="WO-10"))
+		SITE.tables["tests"] = [test_row("SN-1", CONFIGURED, "Accepted", NATHAN)]
+		rows = self.rows()
+		self.assertEqual((rows["SO-10"]["stage"], rows["SO-11"]["stage"]), ("ready", "testing"))
+
+	def test_a_shelf_order_with_no_unit_on_record_waits(self):
+		# Review of #1470: with no serial found at all, the shelf order used to read Ready.
+		SITE.tables["work_orders"] = []
+		SITE.tables["serials_wo"] = []
+		SITE.tables["serials_active"] = []
+		SITE.tables["tests"] = []
+		rows = self.rows()
+		self.assertEqual(rows["SO-11"]["stage"], "testing")
+
+	def test_one_tested_unit_makes_one_shelf_order_ready_not_two(self):
+		SITE.tables["so_headers"].append(so("SO-12", delivery_date="2026-12-09"))
+		SITE.tables["so_lines"].append(so_line("SO-12", CONFIGURED, 1668, source="CFG-1"))
+		SITE.tables["on_hand"] = {CONFIGURED: 3}
+		rows = self.rows()
+		self.assertEqual((rows["SO-11"]["stage"], rows["SO-12"]["stage"]), ("ready", "testing"))
+
+	def test_the_switch_off_brings_back_ready_as_soon_as_built(self):
+		SITE.settings = {"require_test": 0}
+		rows = self.rows()
+		self.assertEqual((rows["SO-10"]["stage"], rows["SO-11"]["stage"]), ("ready", "ready"))
+
+	def test_no_private_key_reaches_the_browser(self):
+		for row in self.rows().values():
+			self.assertNotIn("_tested_items", row)
 
 
 if __name__ == "__main__":

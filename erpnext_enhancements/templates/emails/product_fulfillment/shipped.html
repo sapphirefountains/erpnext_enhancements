@@ -1,0 +1,24 @@
+{# Shipped: the customer's product order is on its way, with the carrier's tracking link.
+
+   A FRAGMENT: chrome comes from email_style.render() in product_fulfillment/shipping.py.
+   Context: greeting_name, units [(label, serials)], references [(label, value)], carrier,
+   tracking_number, tracking_url (may be empty: a carrier with no public page), ship_date.
+
+   NOTE: frappe's Jinja env has NO autoescape. The macros below escape their own text arguments, so
+   values passed into them need no second |e. The button checks its own URL (url_safety). #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Hi " ~ greeting_name ~ "," if greeting_name else "Hello,") }}
+
+{{ ee.p("Your order has shipped. It passed its pre-shipment test before it left our shop.") }}
+
+{{ ee.kv([("Carrier", carrier), ("Tracking number", tracking_number), ("Shipped", ship_date)] + references) }}
+
+{% if tracking_url %}
+{{ ee.button(tracking_url, "TRACK YOUR PACKAGE") }}
+{{ ee.button_fallback(tracking_url) }}
+{% endif %}
+
+{{ ee.table(["Product", "Serial number"], units) }}
+
+{{ ee.note("The test certificate is in the box. Your warranty is one year, parts and labor at our shop, from the day it is delivered. Keep the serial number for any warranty claim. Questions? Just reply to this email.") }}

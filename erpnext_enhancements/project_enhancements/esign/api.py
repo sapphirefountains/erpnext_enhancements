@@ -41,7 +41,7 @@ INVITE_TEMPLATE = (
 )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def send_for_signature(project_contract, recipient_email=None, message=None):
 	"""Email a signing link for a submitted contract.
@@ -123,7 +123,7 @@ def send_for_signature(project_contract, recipient_email=None, message=None):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def resend_for_signature(request_name, recipient_email=None, message=None, reset_attempts=True):
 	"""Issue a fresh link, retiring the previous one.
@@ -208,7 +208,7 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def start_in_person_signing(project_contract, signer_email=None):
 	"""Open the signing page on this device, for a client who is here to sign now.
@@ -403,7 +403,7 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	return {"ok": True, "request": request.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def void_signature_request(request_name, reason=None):
 	"""Kill a live signing link (wrong address, superseded terms, changed mind)."""
 	throw_if_contract_esign_disabled()

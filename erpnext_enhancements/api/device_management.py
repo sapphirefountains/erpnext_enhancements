@@ -110,7 +110,7 @@ def get_console_bootstrap():
 # ---------------------------------------------------------------------------
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def check_out(device, employee, condition_note=None):
 	"""Assign an In-Stock (or just-repaired) device to an employee."""
 	_check_manager()
@@ -128,7 +128,7 @@ def check_out(device, employee, condition_note=None):
 	return _device_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def check_in(device, condition_note=None):
 	"""Release an assigned device back to stock."""
 	_check_manager()
@@ -143,7 +143,7 @@ def check_in(device, condition_note=None):
 	return _device_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def transfer(device, new_employee, condition_note=None):
 	"""Hand an assigned device directly to another employee (no stock gap)."""
 	_check_manager()
@@ -162,7 +162,7 @@ def transfer(device, new_employee, condition_note=None):
 	return _device_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_repair(device, note=None):
 	"""Send a device for repair (pulled from its holder if assigned)."""
 	_check_manager()
@@ -180,7 +180,7 @@ def mark_repair(device, note=None):
 	return _device_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_lost(device, note=None):
 	"""Flag a device lost/stolen — clears the holder and forces Non-Compliant.
 
@@ -203,7 +203,7 @@ def mark_lost(device, note=None):
 	return _device_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retire(device, note=None):
 	"""Retire a device (terminal). Closes any open custody row and unassigns."""
 	_check_manager()
@@ -243,7 +243,7 @@ def get_my_devices():
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def attest_device(device, screen_lock, encryption, os_version=None):
 	"""Record the caller's self-attested posture for a device they hold.
 

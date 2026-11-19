@@ -285,7 +285,7 @@ def _ref_name(ref, made):
 	return made[ref["name"]] if ref["kind"] == "new" else ref["name"]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def import_template(project, template, parent_task=None, start_date=None):
 	"""Add ``template``'s tasks to ``project`` under ``parent_task`` (blank: the project's root),
 	dated from ``start_date`` (blank: the project's expected start, else today).
@@ -431,7 +431,7 @@ def _assignees(value):
 	return [_text(user) for user in value or [] if _text(user)]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task(project, values):
 	"""Create one Task on ``project`` from the dialog's ``values`` (:func:`clean_add_values`), as
 	the caller. A parent that is not a group becomes one. ``assign_to`` (a user, or a list) is
@@ -505,7 +505,7 @@ def delete_preview(project, tasks):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_tasks(project, tasks):
 	"""Delete ``tasks`` (a JSON list of names on ``project``) and every Task under them, deepest
 	first, each under a savepoint. Returns ``{"deleted": [names], "kept": [{name, subject,
@@ -605,7 +605,7 @@ def _descendants(rows, root):
 	return out
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def move_tasks(project, tasks):
 	"""The Tasks Tree's drag-and-drop and *Move under…* save (v1.787.0): ``tasks`` is a JSON list of
 	``{name, parent_task, custom_subtask_order}``, as the tree holds them after the drop (``parent_task``

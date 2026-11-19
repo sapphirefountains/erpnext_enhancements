@@ -27,6 +27,20 @@
 
 const EE_SECTION_TABLES = ["maintenance_results", "chemistry_readings", "cleaning_tasks", "consumables"];
 
+// What get_dashboard_context requires: one of these roles (sapphire_maintenance/permissions.py
+// VIEW_ALL_ROLES; tests/test_access_checks_ops.py holds the two lists equal) and read on Project.
+// Without both the form skips the briefing rather than asking for it and being refused.
+const EE_BRIEFING_ROLES = ["System Manager", "Projects Manager", "Maintenance Supervisor", "Maintenance User"];
+
+function ee_sees_briefing() {
+	return frappe.user.has_role(EE_BRIEFING_ROLES) && frappe.model.can_read("Project");
+}
+
+// get_visit_payload is for the people who fill a visit form in: create or write on the doctype.
+function ee_fills_visits(frm) {
+	return frappe.model.can_create(frm.doctype) || frappe.model.can_write(frm.doctype);
+}
+
 function ee_tables_empty(frm) {
 	return EE_SECTION_TABLES.every((table) => !(frm.doc[table] || []).length);
 }
@@ -406,7 +420,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 	},
 
 	populate_from_template: function (frm) {
-		if (frm.doc.docstatus !== 0) return;
+		if (frm.doc.docstatus !== 0 || !ee_fills_visits(frm)) return;
 		if (!frm.doc.project && !frm.doc.maintenance_contract && !frm.doc.service_call) return;
 
 		const fill = () => {
@@ -443,7 +457,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 	},
 
 	render_dashboard: function (frm) {
-		if (!frm.doc.project) return;
+		if (!frm.doc.project || !ee_sees_briefing()) return;
 
 		frappe.call({
 			method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_dashboard_context",

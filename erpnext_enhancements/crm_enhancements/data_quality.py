@@ -227,7 +227,7 @@ def _bulk_context():
 # ------------------------------------------------------------- assisted fixes
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def bulk_assign(customers, fieldname, value):
 	"""Apply one human-chosen value to a set of human-selected Customers.
 
@@ -285,7 +285,7 @@ def bulk_assign(customers, fieldname, value):
 	return {"updated": updated, "skipped": skipped}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def assign_value_streams(customers, value_streams):
 	"""Append value streams to the ``custom_value_stream`` Table MultiSelect.
 

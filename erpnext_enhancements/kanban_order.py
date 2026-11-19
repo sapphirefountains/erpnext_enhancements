@@ -63,7 +63,7 @@ import frappe
 NEWEST_FIRST_BOARDS = ("Opportunity",)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_order(board_name: str, order: str | dict):
 	"""frappe's ``update_order``, minus the ``set_value`` on every card in the wrong column.
 

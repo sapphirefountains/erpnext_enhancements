@@ -372,6 +372,20 @@ class TestPublishProjectSchedule(_P3):
 		self.assertEqual(self.frappe.saved, [])
 		self.assertEqual(self._baseline_writes(), [])
 
+	def test_both_need_write_on_the_project_itself(self):
+		"""Task write is not enough: publishing and resetting a baseline write to the Project."""
+
+		def no_project_write(doctype, ptype="read", doc=None, *a, **k):
+			return not (doctype == "Project" and ptype == "write")
+
+		with mock.patch.object(self.frappe, "has_permission", no_project_write):
+			with self.assertRaises(h._PermissionError):
+				self.api.publish_project_schedule("PRJ-1")
+			with self.assertRaises(h._PermissionError):
+				self.api.reset_baseline("PRJ-1")
+		self.assertEqual(self.frappe.saved, [])
+		self.assertEqual(self._baseline_writes(), [])
+
 
 class TestResetBaseline(_P3):
 	def setUp(self):

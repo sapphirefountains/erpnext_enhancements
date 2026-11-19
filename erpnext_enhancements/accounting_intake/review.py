@@ -27,7 +27,7 @@ def _require(roles):
 		frappe.throw(_("You are not permitted to perform this action."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_items(docname):
 	"""Inventory clerk: create Items for rows marked Approved, then advance the
 	document to Needs Review once no proposed Item is still Pending."""
@@ -229,7 +229,7 @@ def _reimbursement_issues(doc):
 	return []
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_document(docname):
 	"""Accountant: approve the proposed action and move to Approved, then enqueue
 	``actions.base.post_document`` to create the draft ERPNext record."""
@@ -257,7 +257,7 @@ def approve_document(docname):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reject_document(docname, reason=None):
 	_require(_APPROVE_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
@@ -271,7 +271,7 @@ def reject_document(docname, reason=None):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reprocess(docname):
 	"""Re-run extraction for a stuck/failed/changed document."""
 	_require(_APPROVE_ROLES | _ITEM_ROLES)

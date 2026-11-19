@@ -26,6 +26,17 @@ frappe.ui.form.on("Product Configuration", {
 		if (frm.is_new()) return;
 
 		if (frappe.boot.ee_product_configurator) {
+			// v1.827.0: the sale's next step. The Item, BOM and price are made on the way, and the
+			// Quotation opens; once it exists this becomes a way back to it.
+			if (frm.doc.quotation) {
+				frm.add_custom_button(__("Open Quotation"), () =>
+					frappe.set_route("Form", "Quotation", frm.doc.quotation)
+				);
+			} else {
+				frm.add_custom_button(__("Create Quotation"), () => pc_create_quotation(frm)).addClass(
+					"btn-primary"
+				);
+			}
 			frm.add_custom_button(
 				__("Item + BOM + Selling Price"),
 				() => pc_generate(frm),
@@ -54,15 +65,28 @@ frappe.ui.form.on("Product Configuration", {
 		});
 
 		if (frm.doc.item) {
-			frm.dashboard.set_headline(
-				__("Generated: {0} · {1}", [
-					frappe.utils.get_form_link("Item", frm.doc.item, true),
-					frm.doc.bom
-						? frappe.utils.get_form_link("BOM", frm.doc.bom, true)
-						: __("no BOM"),
-				])
-			);
+			const generated = __("Generated: {0} · {1}", [
+				frappe.utils.get_form_link("Item", frm.doc.item, true),
+				frm.doc.bom ? frappe.utils.get_form_link("BOM", frm.doc.bom, true) : __("no BOM"),
+			]);
+			const quoted = frm.doc.quotation
+				? " · " + __("Quoted on {0}", [frappe.utils.get_form_link("Quotation", frm.doc.quotation, true)])
+				: "";
+			frm.dashboard.set_headline(generated + quoted);
 		}
+	},
+
+	// Picking the deal fills who the quote is for, as the server does when neither is set.
+	opportunity(frm) {
+		if (!frm.doc.opportunity || frm.doc.customer || frm.doc.lead) return;
+		frappe.db
+			.get_value("Opportunity", frm.doc.opportunity, ["opportunity_from", "party_name", "company"])
+			.then((r) => {
+				const opp = (r && r.message) || {};
+				if (opp.opportunity_from === "Customer") frm.set_value("customer", opp.party_name);
+				else if (opp.opportunity_from === "Lead") frm.set_value("lead", opp.party_name);
+				if (opp.company && !frm.doc.company) frm.set_value("company", opp.company);
+			});
 	},
 
 	product(frm) {
@@ -183,6 +207,67 @@ function pc_render_preview(frm, data) {
 			</table>
 			${warnings}
 		</div>`);
+}
+
+// v1.827.0: one click from a configuration to its draft Quotation. What is typed saves first; the
+// server makes (or refreshes) the Item, BOM and price, makes the Quotation and opens it. Anything it
+// could not do alongside (the attached Pricing Summary, the Products tag on the deal) comes back as a
+// note, never as a failed quote. A refusal (the Product Engineer role, say) is the server's own words.
+function pc_create_quotation(frm) {
+	const go = () =>
+		frappe
+			.call({
+				method: PC_API + "create_quotation",
+				args: { configuration: frm.doc.name },
+				freeze: true,
+				freeze_message: __("Making the item, its bill of materials and the quotation…"),
+			})
+			.then((r) => {
+				const out = r && r.message;
+				if (!out || !out.quotation) return;
+				(out.warnings || []).forEach((text) =>
+					frappe.show_alert({ message: frappe.utils.escape_html(text), indicator: "orange" }, 12)
+				);
+				frappe.show_alert({
+					message: out.existing
+						? __("This configuration was already quoted on {0}.", [out.quotation])
+						: __("Draft Quotation {0} made.", [out.quotation]),
+					indicator: out.existing ? "blue" : "green",
+				});
+				const open_quote = () => frappe.set_route("Form", "Quotation", out.quotation);
+				// v1.827.0: everything quoted on the deal in ERPNext is a product. Ask, never assume:
+				// the deal may have other work, or a quote that lives in QuickBooks
+				// (crm_enhancements/product_sale.py). Either answer opens the Quotation.
+				if (!out.suggest_product_sale || !out.opportunity) {
+					open_quote();
+					return;
+				}
+				frappe.confirm(
+					__(
+						"Is {0} only this product, with no other work? A product sale gets no project or hand-off meeting: its Sales Order is the record.",
+						[frappe.utils.escape_html(out.opportunity)]
+					),
+					() =>
+						frappe
+							.xcall("erpnext_enhancements.crm_enhancements.handoff.mark_product_sale", {
+								opportunity: out.opportunity,
+								ticked: 1,
+							})
+							.then(() => {
+								frappe.show_alert({
+									message: __("{0} is marked a product sale: no project.", [out.opportunity]),
+									indicator: "blue",
+								});
+								open_quote();
+							}, open_quote),
+					open_quote
+				);
+			});
+	if (frm.is_dirty()) {
+		frm.save().then(go);
+	} else {
+		go();
+	}
 }
 
 function pc_generate(frm) {

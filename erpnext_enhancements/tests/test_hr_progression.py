@@ -526,6 +526,26 @@ class TestATierReviewIsEvidenceForAPermissionGrant(unittest.TestCase):
         self.assertIn("eligible_reviewers", body)
         self.assertIn("PermissionError", body)
 
+    def test_applying_rechecks_that_the_reviewer_outranks_them(self):
+        """v1.826.8: the named reviewer applies only while they are still an
+        eligible reviewer for that person; HR Manager and System Manager need not be."""
+        body = _fn("apply_promotion", self.ENDPOINTS)
+        at = body.index("eligible_reviewers(doc.user)")
+        self.assertLess(at, body.index("employee.save("))
+        self.assertIn("doc.reviewer_user != me", body[:at])
+
+    def test_a_new_review_starts_as_a_draft_with_no_decision(self):
+        """v1.826.8: an insert that did not come through `open_review` cannot
+        arrive already decided, reviewed or applied."""
+        guard = _fn("_guard_status", self.TR_PY)
+        self.assertNotIn("or self.is_new()", guard)
+        self.assertIn("self._start_as_draft()", guard)
+        reset = _fn("_start_as_draft", self.TR_PY)
+        self.assertIn("self.status = DRAFT", reset)
+        for field in ("decision", "decided_by", "decided_on", "applied_on", "reviewer_user"):
+            with self.subTest(field=field):
+                self.assertIn(f'"{field}"', reset)
+
     def test_an_applied_promotion_cannot_be_cancelled_away(self):
         body = _fn("cancel_review", self.ENDPOINTS)
         self.assertIn("applied_on", body)

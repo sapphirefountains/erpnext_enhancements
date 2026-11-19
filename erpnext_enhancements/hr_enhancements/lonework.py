@@ -50,7 +50,7 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_session(where, expected_out_by, customer=None, maintenance_record=None, notes=None):
 	"""Declare that you are going somewhere alone. Four fields, on purpose.
 
@@ -79,7 +79,7 @@ def start_session(where, expected_out_by, customer=None, maintenance_record=None
 	return {"name": doc.name, "expected_out_by": str(doc.expected_out_by)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def check_out(session=None, notes=None):
 	"""I am out. Closes your own open session, or a named one.
 
@@ -117,7 +117,7 @@ def check_out(session=None, notes=None):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def extend(session, expected_out_by):
 	"""Still working. Moves the clock and resets the escalation.
 

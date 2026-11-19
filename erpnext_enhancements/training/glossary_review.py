@@ -149,7 +149,7 @@ def get_glossary_queue(start=0, only_traps=0):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def accept_term(
 	term,
 	short_definition=None,
@@ -185,7 +185,7 @@ def accept_term(
 	return {"term": doc.name, "reviewed_by": user, "pending": frappe.db.count(DOCTYPE, PENDING_FILTER)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def disable_term(term, reason):
 	"""Take an entry out of use without destroying what it said.
 
@@ -246,7 +246,7 @@ def get_collisions():
 	return {"clusters": clusters, "total": len(clusters)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def drop_alias(term, alias):
 	"""Remove one spelling from one entry.
 
@@ -264,7 +264,7 @@ def drop_alias(term, alias):
 	return {"term": doc.name, "aliases": doc.aliases}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def merge_terms(loser, winner):
 	"""Fold one entry into another, and leave nothing pointing at a name that no longer exists.
 

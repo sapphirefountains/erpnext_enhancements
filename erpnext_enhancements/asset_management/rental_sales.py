@@ -37,7 +37,7 @@ def settings():
 # ---------------------------------------------------------------- agreement
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def make_rental_agreement(booking):
 	"""Create (or return) the Events Agreement for a booking, filled from it. Returns its name."""
 	from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
@@ -364,7 +364,7 @@ def _link(booking, kind, invoice):
 		booking.db_set(field, invoice, update_modified=False)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def draft_rental_invoice(booking, kind):
 	"""The booking form's Draft Deposit / Draft Balance buttons."""
 	if kind not in (DEPOSIT, BALANCE):

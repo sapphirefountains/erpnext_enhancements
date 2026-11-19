@@ -1,4 +1,4 @@
-"""Bench-free tests for the escaping of record values in rendered HTML (v1.826.4).
+"""Bench-free tests for the escaping of record values in rendered HTML (v1.830.0).
 
 Record values (file names, supplier names, notes typed into a portal form, a lesson's text) reach
 a page in four ways, and each now has one rule:
@@ -246,13 +246,14 @@ class TestChildTaskTree(unittest.TestCase):
 		self.assertIn('<div class="task-tree-col task-tree-col-status">Open</div>', out)
 		self.assertIn('<div class="task-tree-col task-tree-col-user">crew@example.com</div>', out)
 
-	def test_the_error_text_is_escaped_and_the_endpoint_gained_no_check(self):
+	def test_the_error_text_is_escaped_and_the_read_check_stays(self):
 		source = _read(self.SOURCE)
 		self.assertIn('{frappe.utils.escape_html(str(e))}', source)
 		self.assertNotIn("{e}</div>", source)
+		# The endpoint's own read check (v1.826.0) comes before anything this change escapes.
 		body = source[source.index("def get_child_tasks_html") : source.index("def _get_all_descendants")]
-		self.assertNotIn("has_permission", body)
-		self.assertNotIn("check_permission", body)
+		self.assertIn('task.check_permission("read")', body)
+		self.assertLess(body.index('task.check_permission("read")'), body.index("_get_all_descendants("))
 
 
 class TestSaveItemLink(unittest.TestCase):

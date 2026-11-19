@@ -209,7 +209,7 @@ def _enqueue(backup_type):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def run_backup_now(backup_type="Manual Full"):
 	"""Start a manual backup from the settings form.
 

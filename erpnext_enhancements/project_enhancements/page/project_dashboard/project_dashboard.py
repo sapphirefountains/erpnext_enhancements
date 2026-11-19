@@ -66,6 +66,13 @@ def check_permission():
 		return False
 
 
+def _require_project_read(project):
+	"""Raise unless the caller may read ``project``: the per-project readers below show that
+	project's tasks, so they ask what its form asks."""
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read {0}").format(project), frappe.PermissionError)
+
+
 def _get_assignee_names(doctype, docname):
 	"""Retrieves the full names of users assigned to a document via ToDo."""
 	try:
@@ -212,7 +219,7 @@ def get_project_data(is_active=None):
 		return {"error": "Could not fetch project data. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_inline_task(project, subject, parent_task=None):
 	"""Instantly creates a task from the inline 'Quick Add' row."""
 	if not project or not subject:
@@ -236,7 +243,7 @@ def create_inline_task(project, subject, parent_task=None):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_assignee(project_name, user_id):
 	"""Assigns a user to a project with permission checks.
 
@@ -271,7 +278,7 @@ def add_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_project_assignee(project_name, user_id):
 	"""Removes a user's assignment from a project with permission checks.
 
@@ -306,7 +313,7 @@ def remove_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_details(project_name, field, value):
 	"""Updates a single field for a specified project document.
 
@@ -342,7 +349,7 @@ def update_project_details(project_name, field, value):
 		return {"status": "error", "message": "Could not update project. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_status(task_name, status):
 	"""Updates the status of a single task."""
 	if not check_permission():
@@ -358,7 +365,7 @@ def update_task_status(task_name, status):
 		return {"status": "error", "message": "Could not update task status."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_priority(task_name, priority):
 	"""Updates the priority of a single task."""
 	if not check_permission():
@@ -526,9 +533,17 @@ def _fetch_all_project_tasks(project_name):
 
 @frappe.whitelist()
 def get_task_children(parent_task):
-	"""Fetches direct children of a task for lazy loading."""
+	"""Fetches direct children of a task for lazy loading.
+
+	Requires read permission on the parent task's Project, or on the task itself when it has
+	no Project."""
 	if not parent_task:
 		return []
+	project = frappe.db.get_value("Task", parent_task, "project")
+	if project:
+		_require_project_read(project)
+	else:
+		frappe.has_permission("Task", "read", doc=parent_task, throw=True)
 
 	task_fields = [
 		"name", "subject", "status", "priority", "exp_start_date",
@@ -561,9 +576,10 @@ def get_task_children(parent_task):
 
 @frappe.whitelist()
 def get_resource_allocation_data(project_name):
-	"""Aggregates expected time and task list by assignee per day."""
+	"""Aggregates expected time and task list by assignee per day. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -610,9 +626,10 @@ def get_resource_allocation_data(project_name):
 
 @frappe.whitelist()
 def get_project_health_metrics(project_name):
-	"""Calculates key health indicators for a project."""
+	"""Calculates key health indicators for a project. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -661,9 +678,11 @@ def get_project_tasks(project, parent=None):
 	"""
 	Fetches tasks for a project. If 'parent' is provided, fetches only 
 	its direct children (Lazy Loading). Otherwise, fetches root tasks.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project:
 		return {"error": "Project name is required."}
+	_require_project_read(project)
 
 	try:
 		task_fields = [
@@ -904,9 +923,13 @@ def get_master_project_projects(master_project):
 		return {"error": "Could not fetch projects for master project."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_master_project_structure(master_project, projects):
-	"""Updates ordering for projects under a Master Project."""
+	"""Updates ordering for projects under a Master Project.
+
+	Writes only projects that belong to ``master_project`` (``custom_master_project``) and that
+	the caller may write; any other name in ``projects`` is left alone and listed in
+	``skipped``."""
 	if not master_project or not projects:
 		return {"status": "error", "message": "Master Project name and project data are required."}
 
@@ -917,11 +940,18 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": "No permission to modify this Master Project."}
 
 	try:
+		skipped = []
 		for p_data in projects:
 			p_name = p_data.get("name")
-			if p_name:
-				frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
-		return {"status": "success"}
+			if not p_name:
+				continue
+			if frappe.db.get_value("Project", p_name, "custom_master_project") != master_project or not (
+				frappe.has_permission("Project", ptype="write", doc=p_name)
+			):
+				skipped.append(p_name)
+				continue
+			frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
+		return {"status": "success", "skipped": skipped}
 	except Exception as e:
 		frappe.log_error(
 			title=f"Error updating master project structure for {master_project}",
@@ -930,7 +960,7 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_date(task_name, field, value):
 	"""Updates a task's start or end date with permission checks.
 
@@ -994,7 +1024,7 @@ def update_task_date(task_name, field, value):
 		return {"status": "error", "message": "Could not update task date. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_expected_time(task_name, expected_time):
 	"""Updates a task's expected time with permission and validation checks.
 
@@ -1042,7 +1072,7 @@ def update_task_expected_time(task_name, expected_time):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_assignee(task_name, user_id):
 	"""Assigns a user to a task with permission checks.
 
@@ -1078,7 +1108,7 @@ def add_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_task_assignee(task_name, user_id):
 	"""Removes a user's assignment from a task with permission checks.
 
@@ -1114,7 +1144,7 @@ def remove_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_structure(project_name, tasks):
 	"""Updates the parent and ordering for a list of tasks.
 
@@ -1157,7 +1187,7 @@ def update_task_structure(project_name, tasks):
 	return {"status": "success", "moved": out.get("moved", []), "converted": out.get("converted", [])}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_dates_from_gantt(task_name, start_date, end_date):
 	"""
 	Updates a task's start and end dates from the Gantt chart and 
@@ -1239,7 +1269,7 @@ def _shift_successors(predecessor_name, day_diff, processed=None):
 		_shift_successors(task_name, day_diff, processed)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_dates_from_gantt(project_name, start_date, end_date):
 	"""Updates a project's expected start/end dates from a Gantt drag.
 
@@ -1298,7 +1328,7 @@ def _task_has_dependency_path(start_task, target_task, visited=None):
 	return False
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_dependency(task_name, depends_on_task):
 	"""Creates a dependency so that `task_name` depends on `depends_on_task`.
 
@@ -1357,9 +1387,11 @@ def get_gantt_tasks_for_project(project_name):
 	"""
 	Fetches all tasks for a specific project, formatted for the frappe-gantt library.
 	Optimized with bulk-fetching for dependencies and assignees.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project_name:
 		return {"error": "Project name is required."}
+	_require_project_read(project_name)
 
 	try:
 		# Check if baseline fields exist in Task doctype to avoid DB errors
@@ -1467,7 +1499,7 @@ def get_gantt_tasks_for_project(project_name):
 		return {"error": "Could not fetch tasks for Gantt board."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_progress_from_gantt(task_name, progress):
 	"""
 	Updates a task's progress from the Gantt chart.
@@ -1510,7 +1542,7 @@ def update_task_progress_from_gantt(task_name, progress):
 		return {"status": "error", "message": "Could not update task progress. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_multiple_docs(project_updates, task_updates):
 	"""Updates multiple project and task documents in a single transaction.
 
@@ -1561,7 +1593,7 @@ def update_multiple_docs(project_updates, task_updates):
 		frappe.log_error(title="Error in batch update", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_task(task_name):
 	"""Deletes a single task.
 
@@ -1607,11 +1639,15 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 	Fetches all active projects (and optionally child tasks) for the Gantt view.
 	Supports status filtering and detailed view expansion.
 	"""
-	# Note: legacy check_permission() gate removed here in favour of native Page
-	# Role permissions, mirroring get_project_data(). The previous gate returned
-	# an error whenever the "Project Dashboard" Custom Role was not configured,
-	# which left the Portfolio Gantt empty even though every other tab (fed by
-	# get_project_data) loaded fine.
+	# The page gate, as get_project_data() has it. An earlier version dropped this gate
+	# because it returned an error whenever the "Project Dashboard" Custom Role was not
+	# configured, which left the Portfolio Gantt empty while get_project_data loaded fine;
+	# check_permission() now falls back to Project Dashboard Settings' roles, so the two
+	# agree. The reads go through get_list, so they follow the caller's Project and Task
+	# read permissions, as the widget's own Gantt query (get_gantt_data) already does. No
+	# browser code calls this endpoint since the Portfolio Gantt moved to that widget.
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
 	try:
 		include_tasks = int(include_tasks)
 
@@ -1628,7 +1664,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 			if status_list:
 				filters["status"] = ["in", status_list]
 
-		projects = frappe.get_all(
+		projects = frappe.get_list(
 			"Project",
 			fields=[
 				"name",
@@ -1641,12 +1677,13 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 				"project_type",
 			],
 			filters=filters,
+			limit_page_length=0,
 		)
 
 		tasks = []
 		if include_tasks and projects:
 			project_names = [p.name for p in projects]
-			tasks = frappe.get_all(
+			tasks = frappe.get_list(
 				"Task",
 				fields=[
 					"name",
@@ -1659,6 +1696,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 					"parent_task",
 				],
 				filters={"project": ["in", project_names], "status": ["not in", ["Completed", "Canceled"]]},
+				limit_page_length=0,
 			)
 
 		return {
@@ -1774,6 +1812,24 @@ def _item_has_source_configuration():
 		return bool(frappe.db.has_column("Item", "custom_source_configuration"))
 	except Exception:
 		return False
+
+
+def _quote_deal_select():
+	"""The SELECT expression for the deal a quotation belongs to (v1.827.0, quote to order).
+
+	Configurator quotes name their deal in ``custom_source_opportunity`` and leave ERPNext's own
+	``opportunity`` empty on purpose (a quote linked ERPNext's way drives the deal's status and, once
+	ordered, freezes it), so the deal is that field, else ``opportunity`` (ERPNext's own Create >
+	Quotation). product_configurator/setup.py adds the field in after_migrate, so a site can lack it
+	for a while, and has_column raises on an unknown table rather than answering False.
+	"""
+	try:
+		has_source = bool(frappe.db.has_column("Quotation", "custom_source_opportunity"))
+	except Exception:
+		has_source = False
+	if not has_source:
+		return "q.opportunity"
+	return "COALESCE(NULLIF(q.custom_source_opportunity, ''), q.opportunity)"
 
 
 def _product_match(item_alias, line_alias, source_column):
@@ -1933,6 +1989,10 @@ def _product_orders(today, source_column):
 				for item in verdict["product_lines"]
 			],
 			"_deliveries": dns,
+			# The configured lines' Items: the units the pre-shipment test applies to (_product_qc).
+			"_tested_items": {
+				item.get("item_code") for item in verdict["product_lines"] if item.get("source_configuration")
+			},
 			"delivered_on": delivered_on,
 		}
 	if not orders:
@@ -1986,13 +2046,17 @@ def _product_orders(today, source_column):
 			for item in fact["lines"]:
 				committed[item["item_code"]] = committed.get(item["item_code"], 0) + item["pending_qty"]
 
+	qc_by_order = _product_qc(orders, work_orders, covered)
 	show_work_orders = bool(frappe.has_permission("Work Order", "read"))
 	show_deliveries = bool(frappe.has_permission("Delivery Note", "read"))
 	board, panels = [], []
 	for order in orders.values():
 		wos = work_orders.get(order["name"], [])
-		stage = po.order_stage(order["per_delivered"], wos, order["name"] in covered, qc=None)
+		stage = po.order_stage(
+			order["per_delivered"], wos, order["name"] in covered, qc=qc_by_order.get(order["name"])
+		)
 		dns = order.pop("_deliveries")
+		order.pop("_tested_items", None)
 		order.update(
 			{
 				"stage": stage["stage"],
@@ -2021,6 +2085,116 @@ def _product_orders(today, source_column):
 	return {"rows": board, "paid_visible": paid_visible, "_committed": committed, "_panel_orders": panels}
 
 
+def _product_qc(orders, work_orders, covered):
+	"""The pre-shipment test result of each built order, for the board's Testing column (v1.828.0).
+
+	``{order: "passed" | "pending" | "failed"}``, and nothing for an order not built yet (the stage
+	rule only asks once the build is done). Product Build Settings' Require a Passed Test Before
+	Delivery off, or a site without the serial's Built By column: every order is left out, and the
+	stage rule keeps its old answer (Ready as soon as it is built).
+
+	* **Built to order:** the units its finished Work Orders made (``Serial No.work_order``, which the
+	  Manufacture entry's hook stamps), each judged by ``product_fulfillment.rules.unit_state`` on its
+	  submitted tests and its recorded builder; ``rules.order_qc`` folds them.
+	* **From the shelf:** whether enough units of the Item in stock have passed
+	  (``rules.stock_qc``). Which unit ships is picked on the Delivery Note.
+
+	Never raises: the board without a Testing column is better than no board.
+	"""
+	try:
+		from erpnext_enhancements.product_fulfillment import rules as pf
+		from erpnext_enhancements.product_fulfillment.settings import get_settings
+
+		settings = get_settings()
+		if not cint(settings.require_test) or not frappe.db.has_column("Serial No", "custom_built_by"):
+			return {}
+		template = settings.test_template or None
+		tested = {name: order.get("_tested_items") or set() for name, order in orders.items()}
+		finished = {}
+		for name, wos in work_orders.items():
+			summary = po.work_order_summary(wos)
+			made = [wo.name for wo in summary["finished"] if wo.production_item in tested.get(name, ())]
+			if summary["built"] and made:
+				finished[name] = made
+		shelf = [
+			order
+			for name, order in orders.items()
+			if name in covered and tested.get(name) and not work_orders.get(name)
+		]
+		wo_names = tuple(sorted({wo for names in finished.values() for wo in names}))
+		item_codes = tuple(
+			sorted({item["item_code"] for order in shelf for item in order["items"] if item["item_code"] in tested[order["name"]]})
+		)
+		units = []
+		if wo_names:
+			units += frappe.db.sql(
+				"""
+				SELECT name, item_code, work_order, custom_built_by, status
+				FROM `tabSerial No`
+				WHERE work_order IN %(wos)s
+				""",
+				{"wos": wo_names},
+				as_dict=True,
+			)
+		if item_codes:
+			units += frappe.db.sql(
+				"""
+				SELECT name, item_code, work_order, custom_built_by, status
+				FROM `tabSerial No`
+				WHERE item_code IN %(items)s AND status = 'Active'
+				""",
+				{"items": item_codes},
+				as_dict=True,
+			)
+		units = list({u.name: u for u in units}.values())  # a unit can come back from both queries
+		tests = {}
+		if units:
+			for test in frappe.db.sql(
+				"""
+				SELECT name, item_serial_no, item_code, status, docstatus, inspected_by, report_date,
+					modified, creation, quality_inspection_template
+				FROM `tabQuality Inspection`
+				WHERE item_serial_no IN %(serials)s AND docstatus = 1
+				""",
+				{"serials": tuple(sorted({u.name for u in units}))},
+				as_dict=True,
+			):
+				tests.setdefault(test.item_serial_no, []).append(test)
+		state = {
+			u.name: pf.unit_state(tests.get(u.name), u.custom_built_by, u.item_code, template) for u in units
+		}
+		out = {}
+		for name, wo_list in finished.items():
+			made = [u.name for u in units if u.work_order in wo_list]
+			out[name] = pf.order_qc([state[s] for s in made]) or po.QC_PENDING
+		# A unit built for an order on the board is that order's, not the shelf's.
+		spoken_for = set(wo_names)
+		passed_on_hand = {}
+		for u in units:
+			if u.status == "Active" and u.work_order not in spoken_for and state[u.name] == pf.UNIT_PASSED:
+				passed_on_hand[u.item_code] = passed_on_hand.get(u.item_code, 0) + 1
+		# Shelf orders in board order (promise date first, as the shelf was allocated), each taking its
+		# tested units from what is left, so one tested unit never makes two orders Ready.
+		for order in shelf:
+			needs = {}
+			for item in order["items"]:
+				if item["item_code"] in tested[order["name"]] and flt(item["pending_qty"]) > 0:
+					needs[item["item_code"]] = needs.get(item["item_code"], 0) + flt(item["pending_qty"])
+			if not needs:
+				continue
+			verdicts = [pf.stock_qc(passed_on_hand.get(code, 0), qty) for code, qty in needs.items()]
+			if all(v == po.QC_PASSED for v in verdicts):
+				out[order["name"]] = po.QC_PASSED
+				for code, qty in needs.items():
+					passed_on_hand[code] = passed_on_hand.get(code, 0) - qty
+			else:
+				out[order["name"]] = po.QC_PENDING
+		return out
+	except Exception:
+		frappe.log_error(title="Projects Dashboard: product test results", message=frappe.get_traceback())
+		return {}
+
+
 def _product_quotations(today, source_column):
 	"""Open product quotations, and the product-quote win rate over ``po.WIN_RATE_DAYS``.
 
@@ -2033,7 +2207,7 @@ def _product_quotations(today, source_column):
 	headers = frappe.db.sql(
 		f"""
 		SELECT q.name, q.quotation_to, q.party_name, q.customer_name, q.transaction_date,
-			q.valid_till, q.status, q.docstatus, q.currency, q.opportunity
+			q.valid_till, q.status, q.docstatus, q.currency, {_quote_deal_select()} AS opportunity
 		FROM `tabQuotation` q
 		WHERE q.docstatus < 2
 			AND (
@@ -2105,13 +2279,15 @@ def _product_quotations(today, source_column):
 
 
 def _product_opportunities(open_quotes):
-	"""Open Opportunities that an open product quotation names (``Quotation.opportunity``).
+	"""Open Opportunities that an open product quotation names: its ``custom_source_opportunity``
+	(how quote to order links a configurator quote), else ERPNext's ``Quotation.opportunity``
+	(``_quote_deal_select``).
 
 	Not the Products value stream: on prod the E-Stop deals carry Design + Build + Products and the
 	control-panel jobs carry Products too, and quote to order tags mixed deals with it, so the
 	stream says nothing about what was sold. A deal is a product deal through its quotes, judged by
 	the shared rule. None of prod's 705 Quotations names an Opportunity yet (the QuickBooks mapper
-	never set it), so this is empty until quote to order (#1465) makes linked quotes.
+	never set either field), so this is empty until quote to order (#1465) makes linked quotes.
 	"""
 	by_opportunity = {}
 	for quote in open_quotes or ():

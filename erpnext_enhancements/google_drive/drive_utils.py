@@ -144,7 +144,7 @@ def get_service_account_info():
 		return None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_service_account_key(key_json):
 	"""Store the Drive key, after checking it is actually a usable one.
 

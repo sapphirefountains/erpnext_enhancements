@@ -26,7 +26,24 @@ def _check_manager():
 		frappe.throw(_("You are not permitted to manage the MDM integration."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+def _require_desk_session():
+	"""Refuse a request authenticated by an ``Authorization`` header (token or API key).
+
+	Device actions are requested from the Managed Device form, which authenticates with the
+	session cookie and never sends that header. Outside a web request (a job, the console,
+	a test run) there is no header and this does nothing. Same rule as
+	``assistant_tools.gating_api._require_desk_session``.
+	"""
+	if getattr(getattr(frappe, "local", None), "request", None) is None:
+		return
+	if frappe.get_request_header("Authorization"):
+		frappe.throw(
+			_("Device actions are requested from the Managed Device form, signed in as yourself."),
+			frappe.PermissionError,
+		)
+
+
+@frappe.whitelist(methods=["POST"])
 def test_connection(provider):
 	"""List a provider's devices once and report the count (or the error)."""
 	_check_manager()
@@ -46,7 +63,7 @@ def test_connection(provider):
 		return {"ok": False, "provider": provider, "mode": settings.provider_mode, "error": str(exc)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def trigger_sync(provider):
 	"""Run one provider's device sync now and return the log counters."""
 	_check_manager()
@@ -63,9 +80,10 @@ def trigger_sync(provider):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remote_action(device, action, mode=None, script=None, patch=None):
 	"""Manager-UI entry into the action executor (the form button calls this)."""
+	_require_desk_session()
 	_check_manager()
 	return execute_device_action(
 		device, action, mode=mode, source="UI", script=script, patch=patch, requested_by=frappe.session.user
