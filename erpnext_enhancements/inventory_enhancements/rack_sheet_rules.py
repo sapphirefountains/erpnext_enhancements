@@ -20,21 +20,26 @@ shelf exactly as a sticker on the shelf would, and the in-page scanner reads it 
 * a child that is a group (a bay's ``Shelf B1-2``) is one shelf with a code for every location under
   it, left to right.
 
-**Shelf 1 is the top shelf** (Nik, 2026-11-12, and the map's default). The shelf number is the row's
-place in that order; the sheet lists rows top to bottom as you face the rack. Where the Warehouse
-Map has a box for the rack, the box decides, as the map's own front view does
-(``warehouse_map_rules.rows_as_seen``): *Shelf 1 is at the* Bottom turns the rows over, *Bin 1 is at
-the* Right turns each row around, and the box's own order (*Order As You Face It*) comes first.
+**Shelf 1 is the top shelf** (Nik, 2026-11-12, and the map's default); the sheet lists rows top to
+bottom as you face the rack. **A shelf's number is the one its name ends in** (``Shelf NLR1-3`` is
+shelf 3), so a disabled shelf in the middle leaves a gap instead of renumbering the shelves below it
+beside codes captioned with their real names; a shelf whose name ends in no number takes its place in
+the order. Where the Warehouse Map has a box for the rack, the box decides, as the map's own front
+view does (``warehouse_map_rules.rows_as_seen``): *Shelf 1 is at the* Bottom turns the rows over,
+*Bin 1 is at the* Right turns each row around, and the box's own order (*Order As You Face It*) comes
+first.
 
 **One page per rack.** The group the button is pressed on is the rack. A group whose map box is a
 **Room** (production's Atrium and Build Room) prints one page for each group inside it instead, so
-the Atrium's button prints its six racks. A disabled or Transit location is left off, as on the
-labels.
+the Atrium's button prints its six racks, and one more page, named after the room, for any shelves
+standing in the room loose rather than on a rack. A disabled or Transit location is left off, as on
+the labels.
 
 **How big.** The codes are as large as the page allows, up to :data:`MAX_QR` (1.8 in, readable from
 a step back) and never below :data:`MIN_QR` (0.8 in, about a shelf sticker's code). A shelf with many
 locations wraps onto more lines; a rack that cannot fit on one page at the smallest size runs onto a
-second page, a shelf never split between them.
+second page, a shelf never split between them, and the rack's name and how to read the sheet repeat
+at the top of every page it takes.
 
 Tabs, per ``CLAUDE.md`` (new file).
 """
@@ -42,6 +47,7 @@ Tabs, per ``CLAUDE.md`` (new file).
 from __future__ import annotations
 
 import math
+import re
 
 from erpnext_enhancements.inventory_enhancements import warehouse_map_rules as map_rules
 
@@ -99,27 +105,47 @@ def _usable_group(name, tree):
 
 
 def racks_for(selected, tree, boxes, kids=None):
-	"""The racks a sheet for ``selected`` prints, in order: ``selected`` itself, or, when its map box is a
-	Room, every group inside it that holds a location. ``[]`` for a location or an unknown name."""
+	"""The pages a sheet for ``selected`` prints, in order, as ``[{"rack", "loose"}]``.
+
+	``selected`` itself (``loose`` False), or, when its map box is a Room, every group inside it that holds
+	a location, after a first page for the room itself (``loose`` True) when locations stand in the room
+	directly, off any rack: that page lists only those. ``[]`` for a location or an unknown name.
+	"""
 	if not _usable_group(selected, tree):
 		return []
 	kids = map_rules.children_index(tree) if kids is None else kids
 	box = (boxes or {}).get(selected) or {}
 	if box.get("shape_type") != ROOM:
-		return [selected]
-	return [
-		child
-		for child in kids.get(selected, [])
-		if _usable_group(child, tree) and map_rules.leaves_under(child, tree, kids)
-	]
+		return [{"rack": selected, "loose": False}]
+	children = [c for c in kids.get(selected, []) if map_rules.usable(tree.get(c))]
+	pages = []
+	if any(not map_rules.is_group(tree[c]) for c in children):
+		pages.append({"rack": selected, "loose": True})
+	pages.extend(
+		{"rack": child, "loose": False}
+		for child in children
+		if map_rules.is_group(tree[child]) and map_rules.leaves_under(child, tree, kids)
+	)
+	return pages
 
 
-def rack_rows(rack, tree, kids=None, box=None):
+_TRAILING_NUMBER = re.compile(r"(\d+)\s*$")
+
+
+def shelf_number(label):
+	"""The number a shelf's name ends in (``Shelf NLR1-3`` → 3), or ``None``."""
+	match = _TRAILING_NUMBER.search(map_rules.text(label))
+	return int(match.group(1)) if match else None
+
+
+def rack_rows(rack, tree, kids=None, box=None, loose_only=False):
 	"""One rack's shelves, top to bottom as you face it.
 
 	Each row is ``{"shelf", "warehouse", "label", "locations", "position"}``: ``shelf`` the shelf's
-	number (1 is the first in the rack's order), ``locations`` the warehouses to print a code for, left to
-	right, and ``position`` ``"top"``, ``"bottom"`` or ``""`` (one shelf, or one between).
+	number (the number its name ends in, else its place in the rack's order, 1 first), ``locations`` the
+	warehouses to print a code for, left to right, and ``position`` ``"top"``, ``"bottom"`` or ``""`` (one
+	shelf, or one between). ``loose_only``: only the locations standing directly in ``rack`` (a room's
+	shelves that are on no rack), never its groups.
 	"""
 	if not _usable_group(rack, tree):
 		return []
@@ -127,8 +153,13 @@ def rack_rows(rack, tree, kids=None, box=None):
 	box = box or {}
 	order = box.get("order")
 	children = map_rules.ordered([c for c in kids.get(rack, []) if map_rules.usable(tree.get(c))], order)
+	if loose_only:
+		children = [c for c in children if not map_rules.is_group(tree[c])]
 	rows = []
-	for number, child in enumerate(children, start=1):
+	for place, child in enumerate(children, start=1):
+		label = map_rules.text(_get(tree[child], "warehouse_name")) or child
+		named = shelf_number(label)
+		number = named if named is not None else place
 		if map_rules.is_group(tree[child]):
 			locations = map_rules.ordered(map_rules.leaves_under(child, tree, kids), order)
 			if box.get("bins_from") == RIGHT:
@@ -139,7 +170,7 @@ def rack_rows(rack, tree, kids=None, box=None):
 			{
 				"shelf": number,
 				"warehouse": child,
-				"label": map_rules.text(_get(tree[child], "warehouse_name")) or child,
+				"label": label,
 				"locations": locations,
 				"position": "",
 			}

@@ -138,7 +138,9 @@ def rack_sheets(names):
 	Each page is ``{"rack", "title", "trail", "how_to_read", "rows", "layout"}``; each row carries
 	``shelf``, ``label``, ``position_words`` and ``codes`` (``warehouse``, ``title``, ``url``, ``svg``).
 	A name that is not an enabled group is skipped; a group whose map box is a Room gives one page per
-	rack inside it (:func:`rack_sheet_rules.racks_for`).
+	rack inside it, and one named after the room for the shelves standing in it loose
+	(:func:`rack_sheet_rules.racks_for`). ``fits`` False on a page's ``layout`` means it runs onto a
+	second sheet; the template repeats its header there.
 	"""
 	tree = _tree()
 	kids = warehouse_map_rules.children_index(tree)
@@ -146,12 +148,13 @@ def rack_sheets(names):
 	base_url = get_url()
 	pages, seen = [], set()
 	for selected in dict.fromkeys(names or ()):
-		for rack in rack_sheet_rules.racks_for(selected, tree, boxes, kids):
-			if rack in seen:
+		for entry in rack_sheet_rules.racks_for(selected, tree, boxes, kids):
+			rack, loose = entry["rack"], entry["loose"]
+			if (rack, loose) in seen:
 				continue
-			seen.add(rack)
+			seen.add((rack, loose))
 			box = boxes.get(rack) or {}
-			rows = rack_sheet_rules.rack_rows(rack, tree, kids, box)
+			rows = rack_sheet_rules.rack_rows(rack, tree, kids, box, loose_only=loose)
 			out_rows = []
 			for row in rows:
 				codes = []
@@ -179,6 +182,7 @@ def rack_sheets(names):
 			pages.append(
 				{
 					"rack": rack,
+					"loose": loose,
 					"title": tree[rack].warehouse_name or rack,
 					"trail": rules.location_trail(ancestors(rack, tree)),
 					"how_to_read": rack_sheet_rules.how_to_read(

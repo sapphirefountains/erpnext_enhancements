@@ -368,16 +368,23 @@ group. Every judgement is `rack_sheet_rules.py` (no Frappe); the read is
   (`warehouse_map_rules.children_index`), top to bottom, Shelf 1 at the top. A location child is one
   shelf with one code (the Atrium's `Shelf NLR1-1`, the Build Room's `Shelf BR-NR1-1`). A group child
   is one shelf with a code for each location under it, left to right (a bay's `Shelf B1-2`), and an
-  empty one is printed with no code.
+  empty one is printed with no code. **A shelf's number is the one its name ends in**
+  (`shelf_number`: `Shelf NLR1-3` is 3), so a disabled shelf leaves a gap rather than renumbering the
+  ones below it beside codes captioned with their real names; a name with no number takes its place
+  in the order.
 - **The Warehouse Map's box decides** when the rack has one, as its front view does
   (`warehouse_map_rules.rows_as_seen`): *Shelf 1 is at the* Bottom, *Bin 1 is at the* Right, and the
   box's own order. A group whose box is a **Room** prints one page for each group inside it that
-  holds a location. Production's Atrium and Build Room are Room boxes and their racks Rack boxes
+  holds a location, after a page named after the room for any shelves standing in it directly
+  (`racks_for` returns `{"rack", "loose"}`; a loose page lists only those shelves). Production's
+  Atrium and Build Room are Room boxes and their racks Rack boxes
   (2026-11-19). The boxes are read once with `get_all`; without the map's doctype every group is a
   rack.
 - **Sizes** (`layout`): codes up to 1.8 in and never below 0.8 in. As many share a line as fit at the
   smallest size, then the codes grow to fill the page. A rack that does not fit runs onto a second
-  page and no shelf is split. The page is US Letter, 0.4 in margins, set by the page's own `@page`
+  page and no shelf is split. Each page is a table, so its header (the rack's name, its room, how to
+  read it) and footer are its `thead` and `tfoot`, which browsers print on every sheet a table spans;
+  the screen says when a rack will not fit (`layout()["fits"]`). The page is US Letter, 0.4 in margins, set by the page's own `@page`
   rule, which also overrides Bootstrap's print `min-width` as `/warehouse-labels` does.
 - **Who**: `LABEL_ROLES`, and a signed-out visitor is sent to log in and back.
 

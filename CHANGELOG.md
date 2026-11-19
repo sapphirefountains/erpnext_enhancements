@@ -23,17 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     them (`Shelf NLR1-2` before `Shelf NLR1-10`), listed top to bottom. A location child (the Atrium
     and Build Room shelves) is one shelf with one code. A group child (a bay's shelf) is one shelf
     with a code for every location on it, left to right. Each row shows the shelf number, "Top
-    shelf" or "Bottom shelf", and each location's name under its code. Where the Warehouse Map
+    shelf" or "Bottom shelf", and each location's name under its code. **The number is the one the
+    shelf's name ends in** (`Shelf NLR1-3` is shelf 3), so a disabled shelf leaves a gap instead of
+    renumbering the shelves below it beside codes captioned with their real names; a name with no
+    number takes its place in the order. Where the Warehouse Map
     has a box for the rack, the box decides, as the map's front view does: *Shelf 1 is at the*
     Bottom turns the rows over, *Bin 1 is at the* Right turns each row around, and the box's own
     order comes first.
   - **A room prints each rack.** A group whose map box is a Room (production's Atrium and Build
-    Room) prints a page for every group inside it that holds a location. So the Atrium's button
-    prints its six racks. Without a map, every group prints as one rack.
+    Room) prints a page for every group inside it that holds a location, and one page named after
+    the room for any shelves standing in it directly, off a rack. So the Atrium's button prints its
+    six racks. Without a map, every group prints as one rack.
   - **Sized for reading from a step back.** Codes are as large as the page allows, up to 1.8 in
     (the two-shelf north racks) and never below 0.8 in. A busy shelf wraps, and a rack that cannot
-    fit on one page runs onto a second, never splitting a shelf (`rack_sheet_rules.layout`).
-    Disabled and Transit locations are left off, as on the labels.
+    fit on one page runs onto a second, never splitting a shelf (`rack_sheet_rules.layout`). Each
+    page is a table whose header (the rack's name, its room, how to read it) and footer print again
+    on every sheet the rack takes, and the screen says when a rack will not fit on one. Disabled
+    and Transit locations are left off, as on the labels.
   - **Who.** The labels page's roles (`stock_scan_rules.LABEL_ROLES`). A signed-out visitor is sent
     to log in and back to the same address. Server-rendered with `no_cache`, and the only script is
     the Print button.

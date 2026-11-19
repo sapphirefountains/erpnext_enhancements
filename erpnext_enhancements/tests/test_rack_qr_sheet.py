@@ -154,7 +154,34 @@ class TestRows(unittest.TestCase):
 		box = {"order": ["Shelf NLR1-2 - X"]}
 		rows = rules.rack_rows(NLR1, TREE, box=box)
 		self.assertEqual([r["warehouse"] for r in rows], ["Shelf NLR1-2 - X", "Shelf NLR1-1 - X"])
-		self.assertEqual([r["shelf"] for r in rows], [1, 2])
+		# Each keeps the number its name ends in, whatever the order.
+		self.assertEqual([r["shelf"] for r in rows], [2, 1])
+
+	def test_a_shelf_is_numbered_by_its_name_so_a_disabled_one_leaves_a_gap(self):
+		# Shelf TOOL-3 is disabled: the shelf below it is still 10, never renumbered to 3 beside a code
+		# captioned "Shelf TOOL-10".
+		rows = rules.rack_rows(TOOL, TREE)
+		self.assertEqual(
+			[(r["shelf"], r["label"]) for r in rows],
+			[(1, "Shelf TOOL-1"), (2, "Shelf TOOL-2"), (10, "Shelf TOOL-10")],
+		)
+
+	def test_a_name_without_a_number_takes_its_place(self):
+		tree = tree_of(
+			[
+				wh(ROOT, None, 1),
+				wh("Odd Rack - X", ROOT, 1),
+				wh("Upper Shelf - X", "Odd Rack - X"),
+				wh("Shelf OR-2 - X", "Odd Rack - X"),
+			]
+		)
+		rows = rules.rack_rows("Odd Rack - X", tree)
+		# "Upper" is a position word, so it sorts first and, with no number of its own, is shelf 1.
+		self.assertEqual([(r["shelf"], r["label"]) for r in rows], [(1, "Upper Shelf"), (2, "Shelf OR-2")])
+		self.assertEqual(rules.shelf_number("Shelf BR-NR1-4"), 4)
+		self.assertEqual(rules.shelf_number("Shelf NLR1-12 "), 12)
+		self.assertIsNone(rules.shelf_number("Upper Shelf"))
+		self.assertIsNone(rules.shelf_number(None))
 
 	def test_one_shelf_has_no_position_word(self):
 		tree = tree_of([wh(ROOT, None, 1), wh("Solo - X", ROOT, 1), wh("Shelf S-1 - X", "Solo - X")])
@@ -177,16 +204,38 @@ class TestRows(unittest.TestCase):
 
 class TestWhichRacks(unittest.TestCase):
 	def test_a_rack_is_itself(self):
-		self.assertEqual(rules.racks_for(NLR1, TREE, {}), [NLR1])
-		self.assertEqual(rules.racks_for(NLR1, TREE, {NLR1: {"shape_type": "Rack"}}), [NLR1])
+		self.assertEqual(rules.racks_for(NLR1, TREE, {}), [{"rack": NLR1, "loose": False}])
+		self.assertEqual(
+			rules.racks_for(NLR1, TREE, {NLR1: {"shape_type": "Rack"}}), [{"rack": NLR1, "loose": False}]
+		)
 
 	def test_a_room_on_the_map_prints_each_rack_in_it(self):
 		boxes = rules.box_settings([{"warehouse": ATRIUM, "shape_type": "Room"}])
 		# The empty rack holds no location, so it gets no page.
-		self.assertEqual(rules.racks_for(ATRIUM, TREE, boxes), [NLR1, TOOL])
+		self.assertEqual(
+			rules.racks_for(ATRIUM, TREE, boxes),
+			[{"rack": NLR1, "loose": False}, {"rack": TOOL, "loose": False}],
+		)
+
+	def test_loose_shelves_in_a_room_get_a_page_named_after_the_room(self):
+		tree = dict(
+			TREE,
+			**{
+				"Window Shelf - X": wh("Window Shelf - X", ATRIUM),
+				"Shelf W-2 - X": wh("Shelf W-2 - X", ATRIUM),
+			},
+		)
+		boxes = rules.box_settings([{"warehouse": ATRIUM, "shape_type": "Room"}])
+		pages = rules.racks_for(ATRIUM, tree, boxes)
+		self.assertEqual(pages[0], {"rack": ATRIUM, "loose": True})
+		self.assertEqual([p["rack"] for p in pages[1:]], [NLR1, TOOL])
+		# The room's page lists only the loose shelves, never the racks' shelves again.
+		rows = rules.rack_rows(ATRIUM, tree, loose_only=True)
+		self.assertEqual([r["warehouse"] for r in rows], ["Shelf W-2 - X", "Window Shelf - X"])
+		self.assertTrue(all(r["locations"] == [r["warehouse"]] for r in rows))
 
 	def test_without_a_room_box_a_room_is_one_sheet(self):
-		self.assertEqual(rules.racks_for(ATRIUM, TREE, {}), [ATRIUM])
+		self.assertEqual(rules.racks_for(ATRIUM, TREE, {}), [{"rack": ATRIUM, "loose": False}])
 
 	def test_never_a_location_or_an_unknown_name(self):
 		self.assertEqual(rules.racks_for("Loose Bin - X", TREE, {}), [])
@@ -429,6 +478,16 @@ class TestTheRead(unittest.TestCase):
 		)
 		self.assertEqual(p["rows"][1]["codes"], [])
 
+	def test_loose_shelves_in_a_room_get_their_own_page(self):
+		_reset(shapes=[{"warehouse": ATRIUM, "shape_type": "Room"}])
+		STATE["warehouses"].append(dict(wh("Window Shelf - X", ATRIUM), lft=0, rgt=0))
+		pages = labels.rack_sheets([ATRIUM])
+		self.assertEqual(
+			[(p["rack"], p["loose"]) for p in pages], [(ATRIUM, True), (NLR1, False), (TOOL, False)]
+		)
+		self.assertEqual(pages[0]["title"], "Atrium")
+		self.assertEqual([c["title"] for r in pages[0]["rows"] for c in r["codes"]], ["Window Shelf"])
+
 	def test_without_the_map_every_group_is_a_rack(self):
 		_reset(no_map=True)
 		self.assertEqual([p["rack"] for p in labels.rack_sheets([ATRIUM])], [ATRIUM])
@@ -521,6 +580,32 @@ class TestTheTemplate(unittest.TestCase):
 		self.assertIn("--rq-qr: 1.8in", html)
 		self.assertIn("Print 2 pages", html)
 		self.assertIn("@page { size: 8.5in 11.0in; margin: 0.4in; }", html)
+		# The header and footer are a table's thead and tfoot, which print on every page the rack takes.
+		self.assertEqual(html.count("<thead>"), 2)
+		self.assertEqual(html.count("<tfoot>"), 2)
+		self.assertLess(html.index("<thead>"), html.index('class="rq-title"'))
+		self.assertNotIn('class="rq-overflow"', html)
+
+	def test_a_rack_too_long_for_one_sheet_says_so_and_repeats_its_header(self):
+		rows = [wh(ROOT, None, 1), wh("Long Rack - X", ROOT, 1)]
+		for shelf in range(1, 9):
+			rows.append(wh(f"Shelf L-{shelf} - X", "Long Rack - X", 1))
+			rows.extend(wh(f"Bin L-{shelf}-{b} - X", f"Shelf L-{shelf} - X") for b in range(1, 21))
+		_reset(warehouses=[dict(r, lft=0, rgt=0) for r in rows])
+		sys.modules["frappe"].request.args = _Args(w=["Long Rack - X"])
+		ctx = page.get_context(_Dict())
+		self.assertFalse(ctx.pages[0]["layout"]["fits"])
+		html = self.render(ctx)
+		self.assertIn('class="rq-overflow"', html)
+		self.assertEqual(html.count("<thead>"), 1)
+
+	def test_the_loose_page_says_what_it_is(self):
+		_reset(shapes=[{"warehouse": ATRIUM, "shape_type": "Room"}])
+		STATE["warehouses"].append(dict(wh("Window Shelf - X", ATRIUM), lft=0, rgt=0))
+		sys.modules["frappe"].request.args = _Args(w=[ATRIUM])
+		html = self.render(page.get_context(_Dict()))
+		self.assertEqual(html.count('class="rq-page"'), 3)
+		self.assertIn("Shelves in the room, not on a rack", html)
 
 	def test_names_are_escaped(self):
 		_reset(

@@ -58,13 +58,17 @@
 	.rq-page { width: {{ content_width }}in; box-sizing: border-box; background: #fff; color: #000;
 		break-after: page; page-break-after: always; }
 	.rq-page:last-child { break-after: auto; page-break-after: auto; }
-	.rq-head { padding-bottom: 0.12in; border-bottom: 3px solid #000; }
+	.rq-table { width: 100%; border-collapse: collapse; }
+	.rq-table thead { display: table-header-group; }
+	.rq-table tfoot { display: table-footer-group; }
+	.rq-head { padding: 0 0 0.12in; border-bottom: 3px solid #000; text-align: left; font-weight: normal; }
 	.rq-title { font-size: 30pt; font-weight: 800; line-height: 1.05; overflow-wrap: anywhere; }
 	.rq-trail { font-size: 13pt; color: #333; margin-top: 0.03in; }
 	.rq-how { font-size: 11pt; margin: 0.08in 0 0; }
-	.rq-row { display: flex; align-items: center; gap: 0.25in; padding: 0.08in 0; border-bottom: 2px solid #000;
-		break-inside: avoid; page-break-inside: avoid; }
-	.rq-pos { flex: 0 0 {{ position_width }}in; display: flex; flex-direction: column; align-items: center; text-align: center; }
+	.rq-row { border-bottom: 2px solid #000; break-inside: avoid; page-break-inside: avoid; }
+	.rq-row > td { padding: 0.08in 0; vertical-align: middle; }
+	.rq-pos { width: {{ position_width }}in; padding-right: 0.25in !important; text-align: center; }
+	.rq-pos > span { display: block; }
 	.rq-pos .rq-shelf { font-size: 10pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 	.rq-pos .rq-num { font-size: 44pt; font-weight: 800; line-height: 1; }
 	.rq-pos .rq-word { font-size: 10pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; min-height: 1.2em; }
@@ -75,7 +79,8 @@
 		overflow: hidden; overflow-wrap: anywhere; text-align: center; padding-top: 0.03in; }
 	.rq-shelf-name { font-size: 10pt; color: #333; margin-bottom: 0.04in; flex-basis: 100%; }
 	.rq-none { font-size: 11pt; color: #555; margin: 0; }
-	.rq-foot { font-size: 8.5pt; color: #444; padding-top: 0.08in; }
+	.rq-foot { font-size: 8.5pt; color: #444; padding-top: 0.08in; text-align: left; }
+	.rq-overflow { font-size: 11pt; color: #8a4b00; margin: 0 0 0.1in; }
 
 	@media screen {
 		#rq-pages { padding: 16px; overflow-x: auto; }
@@ -88,7 +93,7 @@
 		   override as /warehouse-labels. */
 		html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; min-width: 0 !important; }
 		body .container, body > .main-section, body .page_content, main { min-width: 0 !important; max-width: none !important; width: auto !important; }
-		.rq-bar, .rq-empty { display: none !important; }
+		.rq-bar, .rq-empty, .rq-overflow { display: none !important; }
 		#rq-pages { padding: 0; }
 	}
 </style>
@@ -104,30 +109,41 @@
 		</select>
 	</label>
 	{% if pages %}<button type="button" class="rq-print" id="rq-print">Print {{ pages | length }} page{{ "" if pages | length == 1 else "s" }}</button>{% endif %}
-	<p class="rq-note">One page per rack, every shelf's code with its position. Print on Letter paper at Scale 100% (Actual size), laminate it, and hang it low beside the rack. A room on the Warehouse Map prints a page for each rack in it.</p>
+	<p class="rq-note">One page per rack, every shelf's code with its position. Print on Letter paper at Scale 100% (Actual size), laminate it, and hang it low beside the rack. A room on the Warehouse Map prints a page for each rack in it, and one for any shelves standing in the room off a rack.</p>
 </form>
 
 {% if pages %}
 <div id="rq-pages">
 	{% for p in pages %}
+	{# A table, so a rack that runs onto a second sheet repeats its name, how to read it and the footer:
+	   browsers print a table's thead and tfoot on every page the table spans. #}
 	<section class="rq-page" style="--rq-qr: {{ p.layout.qr }}in;" data-rack="{{ p.rack | e }}">
-		<header class="rq-head">
-			<div class="rq-title">{{ p.title | e }}</div>
-			{% if p.trail %}<div class="rq-trail">{{ p.trail | e }}</div>{% endif %}
-			<p class="rq-how">{{ p.how_to_read | e }}</p>
-		</header>
-		{% for row in p.rows %}
-		<div class="rq-row">
-			<div class="rq-pos"><span class="rq-shelf">Shelf</span><span class="rq-num">{{ row.shelf }}</span><span class="rq-word">{{ row.position_words | e }}</span></div>
-			<div class="rq-codes">
-				{% if not row.is_location %}<div class="rq-shelf-name">{{ row.label | e }}</div>{% endif %}
-				{% for c in row.codes %}<figure class="rq-code" title="{{ c.url | e }}">{{ c.svg | safe }}<figcaption>{{ c.title | e }}</figcaption></figure>{% else %}<p class="rq-none">No location on this shelf yet.</p>{% endfor %}
-			</div>
-		</div>
-		{% else %}
-		<p class="rq-none">This rack has no shelves that can hold stock.</p>
-		{% endfor %}
-		<footer class="rq-foot">Printed {{ printed_on | e }}. Reprint from the rack's Warehouse form: Stock Scan › Rack QR Sheet.</footer>
+		{% if not p.layout.fits %}<p class="rq-overflow">This rack does not fit on one sheet. It prints on more than one, with its name and how to read it at the top of each.</p>{% endif %}
+		<table class="rq-table">
+			<thead>
+				<tr><th colspan="2" class="rq-head">
+					<div class="rq-title">{{ p.title | e }}</div>
+					{% if p.loose %}<div class="rq-trail">Shelves in the room, not on a rack</div>{% elif p.trail %}<div class="rq-trail">{{ p.trail | e }}</div>{% endif %}
+					<p class="rq-how">{{ p.how_to_read | e }}</p>
+				</th></tr>
+			</thead>
+			<tfoot>
+				<tr><td colspan="2" class="rq-foot">Printed {{ printed_on | e }}. Reprint from the rack's Warehouse form: Stock Scan › Rack QR Sheet.</td></tr>
+			</tfoot>
+			<tbody>
+				{% for row in p.rows %}
+				<tr class="rq-row">
+					<td class="rq-pos"><span class="rq-shelf">Shelf</span><span class="rq-num">{{ row.shelf }}</span><span class="rq-word">{{ row.position_words | e }}</span></td>
+					<td><div class="rq-codes">
+						{% if not row.is_location %}<div class="rq-shelf-name">{{ row.label | e }}</div>{% endif %}
+						{% for c in row.codes %}<figure class="rq-code" title="{{ c.url | e }}">{{ c.svg | safe }}<figcaption>{{ c.title | e }}</figcaption></figure>{% else %}<p class="rq-none">No location on this shelf yet.</p>{% endfor %}
+					</div></td>
+				</tr>
+				{% else %}
+				<tr><td colspan="2"><p class="rq-none">This rack has no shelves that can hold stock.</p></td></tr>
+				{% endfor %}
+			</tbody>
+		</table>
 	</section>
 	{% endfor %}
 </div>
