@@ -32,6 +32,15 @@ and restores in ``finally`` — the same shape as ``crm_enhancements/api.py``.
    set, or erpnext's ``Lead.before_insert`` mints a second, stray Contact.
 5. *Opportunity last*, with ``opportunity_from="Customer"`` — see the note on
    :func:`_create_opportunity`.
+
+**A public-form request that matches an existing party is held for staff.** When
+:func:`is_staff_started` is False and the matcher found an existing Customer, Contact or
+Lead, the request is parked in Duplicate Review with the match recorded as a suggestion,
+and nothing is created, attached or written. A staff member confirms the match from the
+request (``api.confirm_match``); :func:`_convert_confirmed` then creates only the
+Opportunity under the confirmed Customer and never writes the submitted details onto an
+existing Customer, Contact or Address. A public request that matches nobody, and every
+staff-started request, converts as before.
 """
 
 import frappe
@@ -93,6 +102,12 @@ def _convert(docname, force):
 	company = settings.get("fmr_company") or frappe.defaults.get_defaults().get("company")
 	owner = _resolve_owner(req, settings)
 
+	# ── 0. A match a staff member already confirmed ───────────────────────
+	confirmed = confirmed_customer(req)
+	if confirmed:
+		_convert_confirmed(req, confirmed, settings, lead_source, company, owner)
+		return
+
 	# ── 1. Which party is this? ───────────────────────────────────────────
 	match = matching.resolve_party(req)
 	if match.needs_review:
@@ -101,6 +116,10 @@ def _convert(docname, force):
 		req.db_set("match_candidates", frappe.as_json(match.as_dict()), update_modified=False)
 		frappe.db.commit()
 		notify.notify_duplicate_review(req, match)
+		return
+
+	if holds_for_confirmation(req, match):
+		_hold_for_confirmation(req, match)
 		return
 
 	req.db_set("match_basis", match.basis, update_modified=False)
@@ -150,7 +169,12 @@ def _convert(docname, force):
 	_link_everything(req, customer, address, contact, lead, opportunity)
 
 	# ── 8. Photos ─────────────────────────────────────────────────────────
-	photos.fan_out(req, [("Lead", lead), ("Customer", customer), ("Opportunity", opportunity)])
+	_finish(req, owner, [("Lead", lead), ("Customer", customer), ("Opportunity", opportunity)])
+
+
+def _finish(req, owner, photo_targets):
+	"""Photos onto ``photo_targets``, the Drive mirror queued, the row marked Converted."""
+	photos.fan_out(req, photo_targets)
 	frappe.enqueue(
 		"erpnext_enhancements.crm_enhancements.fountain_move.photos.mirror_to_drive",
 		queue="long",
@@ -166,6 +190,102 @@ def _convert(docname, force):
 	frappe.db.commit()
 
 	notify.notify_converted(req, owner)
+
+
+# ---------------------------------------------------------------------------
+# public-form matches: held until staff confirm
+# ---------------------------------------------------------------------------
+
+
+def is_staff_started(req):
+	"""Whether staff started this request, rather than a visitor to the public form.
+
+	Decided only from what the server recorded, never from anything the submitter sent
+	(``INTAKE_FIELD_MAP`` reaches none of these fields, and ``source_channel`` is not
+	consulted):
+
+	* **Desk entry.** Frappe sets ``owner`` from the session on insert. A row made in the
+	  Desk is owned by the signed-in desk user (``user_type`` "System User"); a row from
+	  the public form is owned by Guest, or by a website user if one was signed in.
+	* **Emailed link.** ``invite`` is the Fountain Move Invite the server resolved from the
+	  link's token when the form opened. One invite stands for one request: the first one
+	  submitted through it. Later submissions through the same link are treated as public.
+	"""
+	owner = req.get("owner")
+	if owner and owner != "Guest" and frappe.db.get_value("User", owner, "user_type") == "System User":
+		return True
+
+	invite = req.get("invite")
+	if not invite or not frappe.db.exists("Fountain Move Invite", invite):
+		return False
+	first = frappe.get_all(
+		"Fountain Move Request",
+		filters={"invite": invite},
+		order_by="creation asc, name asc",
+		pluck="name",
+		limit=1,
+	)
+	return bool(first) and first[0] == req.name
+
+
+def holds_for_confirmation(req, match):
+	"""True when a public-form request matched an existing Customer, Contact or Lead."""
+	if not (match.customer or match.contact or match.lead):
+		return False
+	return not is_staff_started(req)
+
+
+def _hold_for_confirmation(req, match):
+	"""Park the request with the match recorded as a suggestion. Creates and writes nothing else."""
+	suggestion = match.as_dict()
+	suggestion["held_for_confirmation"] = 1
+	suggestion["candidates"] = [
+		{"type": doctype, "name": name}
+		for doctype, name in (("Customer", match.customer), ("Contact", match.contact), ("Lead", match.lead))
+		if name
+	]
+	suggestion["reason"] = (
+		f"This request came from the public form and possibly matches an existing record "
+		f"(matched on {str(match.basis).lower()}). Nothing was added to that record. "
+		"Confirm the match from the request to link it and create the Opportunity."
+	)
+	match.candidates = suggestion["candidates"]
+	match.reason = suggestion["reason"]
+
+	req.db_set("status", "Duplicate Review", update_modified=False)
+	req.db_set("match_basis", match.basis, update_modified=False)
+	req.db_set("match_candidates", frappe.as_json(suggestion), update_modified=False)
+	frappe.db.commit()
+	notify.notify_duplicate_review(req, match)
+
+
+def confirmed_customer(req):
+	"""The Customer a staff member confirmed for this request, if they did and it still exists."""
+	if not req.get("match_confirmed_by"):
+		return None
+	customer = req.get("created_customer")
+	if customer and frappe.db.exists("Customer", customer):
+		return customer
+	return None
+
+
+def _convert_confirmed(req, customer, settings, lead_source, company, owner):
+	"""Finish a request whose match a staff member confirmed.
+
+	Links the request to the confirmed Customer and creates the Opportunity under it,
+	with the submitted name, email and phone in its scope notes. No Address, Contact or
+	Lead is created or changed, and nothing is written onto the Customer: the submitted
+	details stay on this request and the new Opportunity, for staff to copy across by
+	hand. The photos go onto the new Opportunity only.
+	"""
+	req.db_set("reused_customer", 1, update_modified=False)
+	opportunity = _step(
+		req, "created_opportunity", "Opportunity",
+		lambda: _create_opportunity(
+			req, customer, None, None, settings, lead_source, company, owner, include_contact=True
+		),
+	)
+	_finish(req, owner, [("Opportunity", opportunity)])
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +618,9 @@ def _refresh_lead(name, req, customer, contact, lead_source):
 	lead.save(ignore_permissions=True)
 
 
-def _create_opportunity(req, customer, contact, address, settings, lead_source, company, owner):
+def _create_opportunity(
+	req, customer, contact, address, settings, lead_source, company, owner, include_contact=False
+):
 	"""Create the Opportunity.
 
 	``opportunity_from = "Customer"``, never ``"Lead"``, and that is not cosmetic.
@@ -517,6 +639,9 @@ def _create_opportunity(req, customer, contact, address, settings, lead_source, 
 	The four mandatory fields are ``opportunity_owner`` (Property Setter),
 	``custom_opportunity_name`` and ``custom_value_stream`` (Custom Fields), plus
 	the stock ``party_name``.
+
+	``include_contact`` adds the submitted name, email and phone to the scope notes,
+	for a confirmed match where they are not copied onto any Contact.
 	"""
 	opportunity = frappe.get_doc(
 		{
@@ -535,7 +660,7 @@ def _create_opportunity(req, customer, contact, address, settings, lead_source, 
 			"primary_address": address,
 			"primary_contact": contact,
 			"territory": settings.get("fmr_territory") or None,
-			"custom_general_scope_description": build_lead_details_html(req),
+			"custom_general_scope_description": build_lead_details_html(req, include_contact=include_contact),
 			"custom_notes_for_scheduling": _scheduling_note(req),
 		}
 	)
@@ -643,13 +768,15 @@ def _ensure_link(doctype, name, link_doctype, link_name):
 # ---------------------------------------------------------------------------
 
 
-def build_lead_details_html(req):
+def build_lead_details_html(req, include_contact=False):
 	"""Everything the submitter told us that has no native Lead field.
 
 	Values are escaped with ``frappe.utils.escape_html``, NOT ``strip_html``:
 	strip_html is a tag remover, so it happily passes ``<img src=x onerror=...>``
 	through as text-with-attributes while also destroying legitimate customer
 	prose like "gate is < 3 ft wide". Escaping is both safer and lossless.
+
+	``include_contact`` puts the submitted name, email and phone first.
 	"""
 
 	def cell(value):
@@ -679,6 +806,14 @@ def build_lead_details_html(req):
 		("Submitted", req.submitted_on),
 		("Request", req.name),
 	]
+	if include_contact:
+		name = " ".join(part for part in ((req.first_name or "").strip(), (req.last_name or "").strip()) if part)
+		rows = [
+			("Name (as submitted)", name),
+			("Email (as submitted)", req.email),
+			("Phone (as submitted)", req.phone),
+			*rows,
+		]
 
 	body = "".join(
 		f"<tr><td style='padding:2px 12px 2px 0'><b>{escape_html(label)}</b></td>"

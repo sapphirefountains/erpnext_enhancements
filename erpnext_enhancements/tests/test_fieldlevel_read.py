@@ -61,6 +61,19 @@ FRAPPE_V16 = {
     "frappe.model.workflow.apply_workflow": ("apply_workflow", ["doc", "action"], None),
 }
 
+#: What bare ``frappe.whitelist()`` answers: the list a ``None`` above stands for.
+FRAPPE_DEFAULT_METHODS = ["GET", "POST", "PUT", "DELETE"]
+
+#: Wrappers that are deliberately NARROWER than frappe's own declaration. A wrapper may
+#: restrict the request types it answers, never widen them: ``_expected_methods`` below holds
+#: every other wrapper equal to frappe's, and holds these to exactly the list given here, which
+#: must be a subset of frappe's. ``apply_workflow`` applies a transition, which is a change, and
+#: the Desk sends it with POST (``frappe.xcall`` in form/workflow.js at v16.56.0); the bulk
+#: approval and the emailed approval link run the transition in process.
+NARROWER_THAN_FRAPPE = {
+    "apply_workflow": ["POST"],
+}
+
 #: frappe's defaults, positionally from the right, as the wrapper must restate them.
 FRAPPE_V16_DEFAULTS = {
     "get_docinfo": 3,
@@ -153,6 +166,11 @@ METAS = {
     ),
     "ToDo": _Meta("ToDo", [_df("description")], [_perm("All")]),
 }
+
+
+def _expected_methods(wrapper, frappe_methods):
+    """The methods a wrapper must declare: frappe's own, or its entry in ``NARROWER_THAN_FRAPPE``."""
+    return NARROWER_THAN_FRAPPE.get(wrapper, frappe_methods)
 
 
 def _whitelist(allow_guest=False, xss_safe=False, methods=None):
@@ -360,10 +378,26 @@ class TestWiring(unittest.TestCase):
                 self.assertFalse(args.posonlyargs or args.kwonlyargs or args.vararg or args.kwarg)
 
     def test_http_methods_mirror_frappe_v16(self):
-        """A wider list would, e.g., let a GET savedocs skip the CSRF check."""
+        """A wider list would, e.g., let a GET savedocs skip the CSRF check.
+
+        Equal to frappe's for every wrapper but the ones in ``NARROWER_THAN_FRAPPE``, which
+        declare exactly their listed methods and nothing frappe itself does not answer."""
         for _original, (wrapper, _params, methods) in FRAPPE_V16.items():
             with self.subTest(wrapper=wrapper):
-                self.assertEqual(self._whitelist_methods(self.functions[wrapper]), methods)
+                declared = self._whitelist_methods(self.functions[wrapper])
+                self.assertEqual(declared, _expected_methods(wrapper, methods))
+                if wrapper in NARROWER_THAN_FRAPPE:
+                    self.assertTrue(set(declared) <= set(methods or FRAPPE_DEFAULT_METHODS))
+
+    def test_a_wider_declaration_is_refused(self):
+        """The rule above fails for a wrapper that answers a request type frappe's does not."""
+        wider = ["GET", "POST", "PUT", "DELETE"]
+        self.assertNotEqual(wider, _expected_methods("client_save", ["POST", "PUT"]))
+        self.assertNotEqual(wider, _expected_methods("apply_workflow", None))
+        self.assertNotEqual(["POST", "PUT"], _expected_methods("apply_workflow", None))
+
+    def test_the_narrowed_wrappers_are_all_known(self):
+        self.assertTrue(set(NARROWER_THAN_FRAPPE) <= {w for w, _p, _m in FRAPPE_V16.values()})
 
     def test_each_wrapper_delegates_to_frappes_own_module(self):
         expected = {
@@ -428,7 +462,7 @@ class TestWiring(unittest.TestCase):
         """The ast reading above, cross-checked against the decorator as Python applied it."""
         for _original, (wrapper, _params, methods) in FRAPPE_V16.items():
             with self.subTest(wrapper=wrapper):
-                self.assertEqual(STATE["whitelisted"][wrapper], methods)
+                self.assertEqual(STATE["whitelisted"][wrapper], _expected_methods(wrapper, methods))
 
 
 class TestVersionScrub(unittest.TestCase):

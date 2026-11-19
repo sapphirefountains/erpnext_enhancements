@@ -234,6 +234,42 @@
 	font-size: 1.05rem;
 }
 
+/* The emailed code (esign.portal.send_signing_code). The first step, above the agreement. */
+.cs-verify {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 16px;
+	margin: 16px 0;
+	background: #f9fafb;
+}
+.cs-verify h2 {
+	font-size: 1rem;
+	margin: 0 0 8px;
+}
+.cs-verify p {
+	margin: 0 0 12px;
+}
+.cs-verify .cs-submit {
+	width: 100%;
+}
+.cs-code-input {
+	font-size: 1.5rem;
+	letter-spacing: 0.3em;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.cs-verified {
+	margin: 16px 0 0;
+	padding: 10px 12px;
+	border-left: 4px solid #16a34a;
+	border-radius: 0 8px 8px 0;
+	background: #f0fdf4;
+}
+.cs-locked {
+	margin: 16px 0;
+	text-align: center;
+}
+
 /* Signing in person (esign.api.start_in_person_signing): who is sitting with the client. */
 .cs-in-person {
 	margin: 8px 0 0;

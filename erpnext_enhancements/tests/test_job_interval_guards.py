@@ -137,8 +137,22 @@ class TestJobIntervalGuards(unittest.TestCase):
         timesheet_lock.assert_not_locked(doc)
         
     def test_manual_start_validation(self):
+        from unittest import mock
+
+        import erpnext_enhancements.workforce as workforce_pkg
         from erpnext_enhancements.workforce.doctype.job_interval.job_interval import JobInterval
-        
+
+        # validate() also runs the hand-edit rule (workforce/time_edits.py), which this
+        # module's small frappe stand-in cannot import. It has its own suite,
+        # tests/test_time_edit_approval.py; here it is replaced for this one test.
+        edits = types.SimpleNamespace(guard_direct_save=lambda doc: False)
+        for patcher in (
+            mock.patch.dict(sys.modules, {"erpnext_enhancements.workforce.time_edits": edits}),
+            mock.patch.object(workforce_pkg, "time_edits", edits, create=True),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
         doc = JobInterval()
         doc.name = "JI-NEW"
         doc.status = "Open"

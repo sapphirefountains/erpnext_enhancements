@@ -443,7 +443,7 @@ def client_cancel(doctype, name):
 	return _scrubbed(client.cancel(doctype, name))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def apply_workflow(doc, action):
 	"""``frappe.model.workflow.apply_workflow``, its returned document scrubbed.
 

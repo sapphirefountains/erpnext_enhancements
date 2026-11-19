@@ -154,6 +154,7 @@ def ingest_mobile_photo(file_url, document_type=None):
 		frappe.throw(_("Not permitted to upload accounting documents."), frappe.PermissionError)
 	if not file_url:
 		frappe.throw(_("file_url is required"))
+	intake.require_file_read(file_url)
 	return {"name": intake.ingest_document(file_url=file_url, source_channel="Mobile", document_type=document_type)}
 
 

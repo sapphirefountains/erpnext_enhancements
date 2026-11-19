@@ -15,16 +15,27 @@ identifiers, guards illegal status jumps, and enforces that a current assignee
 exists exactly when the device is Assigned. The lifecycle/compliance *rules*
 live in the frappe-free ``device_management.compliance`` module so they unit-test
 bench-free.
+
+It also holds a change of ``ownership`` to who may make it (``_guard_ownership_change``):
+the remote-action executor reads that field to decide what a device accepts, so changing
+it from BYOD to Company requires a System Manager, and every change is noted on the
+device's timeline.
 """
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import now_datetime
 
 from erpnext_enhancements.device_management.compliance import (
 	ASSIGNED_STATES,
 	is_valid_transition,
 )
+
+#: Set by ``mdm_integration.api.confirm_device`` to the name of the device it is confirming,
+#: for that one save. ``frappe.flags`` is request-local and built fresh by ``frappe.init``
+#: (frappe v16.56.0 ``frappe/__init__.py`` line 169); no request parameter ever fills it.
+CONFIRMING_DISCOVERED_FLAG = "mdm_confirming_discovered_device"
 
 
 class ManagedDevice(Document):
@@ -34,6 +45,10 @@ class ManagedDevice(Document):
 		self._normalise_identifiers()
 		self._guard_status_transition()
 		self._enforce_assignee_consistency()
+		self._guard_ownership_change()
+
+	def on_update(self):
+		self._note_ownership_change()
 
 	# ------------------------------------------------------------------ helpers
 
@@ -93,3 +108,69 @@ class ManagedDevice(Document):
 				),
 				title=_("Device Still Assigned"),
 			)
+
+	def _guard_ownership_change(self):
+		"""Hold a change of ``ownership`` on an existing device to who may make it.
+
+		``mdm_integration.actions.execute_device_action`` reads this field when an action is
+		requested: a BYOD device accepts Locate and Lock only (``actions.BYOD_ACTIONS``). So the
+		field is held to the same care as that rule, here in ``validate`` so it holds for the
+		Desk form, the REST resource and ``frappe.client.set_value`` alike:
+
+		* BYOD to Company widens what the device accepts, so it requires a System Manager on a
+		  save that checks permissions. A save made with ``ignore_permissions`` (server code,
+		  such as the provider sync in ``mdm_integration.mapping``) never makes this change.
+		  The one exception is ``mdm_integration.api.confirm_device`` confirming a device whose
+		  stored link state is still Discovered, which is how a person states its ownership for
+		  the first time: that function names the device in ``frappe.flags``
+		  (:data:`CONFIRMING_DISCOVERED_FLAG`) for that save only.
+		* Company to BYOD narrows what the device accepts and stays open to anyone who may
+		  write the device.
+		* Every change is noted on the device's timeline (``_note_ownership_change``).
+		"""
+		self.flags.ownership_change = None
+		if self.is_new():
+			return
+		previous = self.get_doc_before_save()
+		if not previous:
+			return
+		old = previous.get("ownership") or ""
+		new = self.get("ownership") or ""
+		if old == new:
+			return
+		if old == "BYOD" and new == "Company" and not self._confirming_discovered(previous):
+			if self.flags.ignore_permissions or "System Manager" not in frappe.get_roles():
+				frappe.throw(
+					_(
+						"Only a System Manager can change a device's ownership from BYOD to Company. "
+						"Ask a System Manager to make this change on the device's form."
+					),
+					frappe.PermissionError,
+					title=_("Ownership Change Not Allowed"),
+				)
+		self.flags.ownership_change = (old, new)
+
+	def _confirming_discovered(self, previous):
+		"""True only inside ``confirm_device``'s save of this device while it is stored as Discovered."""
+		return (
+			getattr(frappe.flags, CONFIRMING_DISCOVERED_FLAG, None) == self.name
+			and previous.get("mdm_link_state") == "Discovered"
+		)
+
+	def _note_ownership_change(self):
+		"""Leave a Comment on the timeline saying who changed the ownership, from what to what, and when.
+
+		Written after the save, so a refused change leaves none. The doctype tracks changes as
+		well; the Comment sits on the timeline next to the device-action notes.
+		"""
+		change = self.flags.ownership_change
+		if not change:
+			return
+		self.flags.ownership_change = None
+		old, new = change
+		self.add_comment(
+			"Info",
+			_("Ownership changed from {0} to {1} by {2} on {3}.").format(
+				_(old), _(new), frappe.session.user, now_datetime()
+			),
+		)

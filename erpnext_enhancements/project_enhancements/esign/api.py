@@ -215,9 +215,9 @@ def start_in_person_signing(project_contract, signer_email=None):
 
 	Everything that makes an emailed signature trustworthy still applies, because it is
 	the same request, the same single-use token and the same /contract-sign page: the
-	client re-types their own address, the bot check runs, the snapshot is frozen and
-	hashed, and the executed copy is emailed to them afterwards. Only the delivery
-	differs. Nothing is emailed now; the link comes back once, to the staff member who
+	client enters the code the page emails to their own address, the bot check runs, the
+	snapshot is frozen and hashed, and the executed copy is emailed to them afterwards.
+	Only the delivery differs. No link is emailed now; it comes back once, to the staff member who
 	asked (who could equally have sent it to themselves); and the request records that it
 	was signed in person and who presented it, which the completion certificate prints.
 
@@ -323,7 +323,7 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	The client initials each clause in the builder's live preview as it is completed and
 	signs at the end, on the staff member's own signed-in device. This is the same
 	evidence path as the signing page, minus the two checks that exist because the signer
-	is somewhere else: the re-typed email address (the address here is where the signed
+	is somewhere else: the emailed code (the address here is where the signed
 	copy goes, entered at the table) and the bot check (the session is a staff login).
 	What replaces them is the request recording that it was signed in person and who
 	presented it, which the completion certificate prints, as it does for the in-person tab.

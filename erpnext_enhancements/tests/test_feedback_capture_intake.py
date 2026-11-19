@@ -79,7 +79,13 @@ class State:
 		self.notified = []
 		self.paused = False
 		self.cache = {}
+		self.expiries = {}
+		self.expire_calls = []
+		self.drop_expires = 0
 		self.after_commit = []
+
+	def ttl_of(self, key):
+		return self.expiries.get(key, -1)
 
 
 class FakeRequest:
@@ -141,7 +147,16 @@ def _install():
 			return STATE.counters[key]
 
 		def expire(self, key, ttl):
-			pass
+			if STATE.drop_expires:
+				STATE.drop_expires -= 1
+				return
+			STATE.expiries[key] = ttl
+			STATE.expire_calls.append(key)
+
+		def ttl(self, key):
+			if key not in STATE.counters:
+				return -2
+			return STATE.expiries.get(key, -1)
 
 		# Like RedisWrapper, these add the site prefix themselves.
 		def get_value(self, key, *a, **k):
@@ -330,6 +345,23 @@ class TestFilingLimit(Base):
 		(key,) = STATE.counters
 		self.assertTrue(key.startswith("site1|"), key)
 
+	def test_the_window_is_set_once_on_the_first_filing(self):
+		for _ in range(3):
+			feedback.submit_request(payload=dict(VALID))
+		(key,) = STATE.counters
+		self.assertEqual(STATE.expiries[key], feedback.FILING_RATE_WINDOW_SECONDS)
+		self.assertEqual(STATE.expire_calls, [key])
+
+	def test_a_counter_found_without_a_window_gets_one(self):
+		STATE.drop_expires = 1
+		feedback.submit_request(payload=dict(VALID))
+		(key,) = STATE.counters
+		self.assertEqual(STATE.ttl_of(key), -1)
+		feedback.submit_request(payload=dict(VALID))
+		self.assertEqual(STATE.ttl_of(key), feedback.FILING_RATE_WINDOW_SECONDS)
+		feedback.submit_request(payload=dict(VALID))
+		self.assertEqual(STATE.expire_calls, [key])
+
 
 class TestCaptureGate(Base):
 	def test_a_website_user_cannot_file_a_capture(self):
@@ -510,6 +542,16 @@ class TestDraftDescriptionAccess(Base):
 		STATE.user = "Administrator"
 		self._draft()
 		self.assertEqual(len(self.calls), feedback.DRAFT_RATE_LIMIT + 1)
+
+	def test_a_draft_counter_found_without_a_window_gets_one(self):
+		STATE.drop_expires = 1
+		self._draft()
+		(key,) = STATE.counters
+		self.assertEqual(STATE.ttl_of(key), -1)
+		self._draft()
+		self.assertEqual(STATE.ttl_of(key), feedback.DRAFT_RATE_WINDOW_SECONDS)
+		self._draft()
+		self.assertEqual(STATE.expire_calls, [key])
 
 	def test_the_draft_counter_is_not_the_filing_counter(self):
 		self._draft()

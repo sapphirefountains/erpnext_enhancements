@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 
 import frappe
-from frappe.utils import add_days, cint, flt, get_url, getdate, now_datetime
+from frappe.utils import add_days, cint, flt, fmt_money, get_url, getdate, now_datetime
 
 from erpnext_enhancements.stripe_payments.core.checkout import (
 	_compute_surcharge,
@@ -137,15 +137,24 @@ def charge_saved_method(
 	allocated to nothing, so no invoice guard can cover it: it is refused while the customer
 	has any Stripe payment settling or link open, and a chosen invoice must be the
 	customer's own.
+
+	Every channel but ``"Desk"`` (:data:`MANUAL_CHANNELS`) is an automatic charge, and runs
+	only when :func:`automatic_charge_allowed` allows it for this invoice and amount: an
+	invoice billed from a maintenance agreement, at or under the autopay limit in Stripe
+	Payments Settings. Otherwise it is refused as ``AutomaticChargeHeld`` (a
+	``PaymentBlocked``, so dunning reschedules rather than counting a decline) with nothing
+	written to the ledger, and the invoice carries a note saying so.
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
 		frappe.throw("Stripe Payments is not enabled.")
 
 	from erpnext_enhancements.stripe_payments.core.card_element import (
+		MSG_AUTOMATIC_HELD,
 		NOTE_ACH_VERIFYING,
 		NOTE_CANCEL_UNPROVEN,
 		NOTE_OUTCOME_UNKNOWN,
+		AutomaticChargeHeld,
 		PaymentBlocked,
 		_close_open_checkouts,
 		_recheck_invoice,
@@ -163,6 +172,10 @@ def charge_saved_method(
 		customer, amount, currency, description = _resolve_target(
 			sales_invoice, customer, amount, description, settings
 		)
+		if channel not in MANUAL_CHANNELS and not automatic_charge_allowed(sales_invoice, amount, currency):
+			# The note on the invoice is committed before the refusal rolls the job back.
+			frappe.db.commit()
+			frappe.throw(MSG_AUTOMATIC_HELD, AutomaticChargeHeld)
 		if sales_invoice:
 			if requested_customer and customer != requested_customer:
 				# _resolve_target takes the invoice's customer; a desk charge started from one
@@ -400,13 +413,179 @@ def _alert_failed_autocharge(sp, reason):
 AUTO_CHARGE_MAX_AGE_DAYS = 365
 
 
+#: Channels a person starts from the desk. Every other channel of ``charge_saved_method`` —
+#: ``"Auto"`` (on submit and the autopay sweep), ``"Dunning"``, and any channel added later —
+#: is an automatic charge and runs only when :func:`automatic_charge_allowed` allows it.
+MANUAL_CHANNELS = ("Desk",)
+
+#: How the note left on a held invoice begins; a later run finds it by this and adds no second.
+HELD_NOTE_PREFIX = "Automatic payment did not run"
+
+#: Stripe Payments Settings field: the largest balance an automatic charge may take.
+AUTOPAY_LIMIT_FIELD = "autopay_limit"
+
+
+def automatic_charge_allowed(sales_invoice, amount=None, currency=None) -> bool:
+	"""Whether an automatic charge may run for this invoice — the one decision every automatic
+	path takes (autopay on submit, the autopay sweep, and ``charge_saved_method`` itself for
+	every channel but the desk's, which is how dunning meets it).
+
+	Allowed only for an invoice billed from a maintenance agreement
+	(:func:`is_agreement_invoice`) whose balance is at or under the autopay limit in Stripe
+	Payments Settings. A limit that is blank or zero allows nothing: every invoice waits for
+	someone to charge it from the desk. When it is refused, the invoice gets one note saying
+	automatic payment did not run and why, and Accounts are told
+	(:func:`note_automatic_charge_held`). The desk's Charge Saved Method never asks this.
+	"""
+	reason = automatic_charge_hold(sales_invoice, amount, currency)
+	if reason is None:
+		return True
+	try:
+		note_automatic_charge_held(sales_invoice, reason)
+	except Exception:
+		# The note is for the people reading the invoice; the refusal stands without it, and
+		# a note that cannot be written must never fail the invoice's own submit.
+		frappe.log_error(
+			title="Stripe: autopay held note failed", message=error_snippet(frappe.get_traceback())
+		)
+	return False
+
+
+def automatic_charge_hold(sales_invoice, amount=None, currency=None) -> str | None:
+	"""Why an automatic charge may not run for this invoice, in plain words; None when it may.
+
+	``amount`` is the balance the charge would take (the invoice's outstanding amount when not
+	given). The limit is read with ``get_single_value``: a site that has never saved the field
+	reads None, which is no limit, so nothing charges automatically.
+	"""
+	if not sales_invoice:
+		return "an automatic charge must be for an invoice"
+	limit = flt(frappe.db.get_single_value("Stripe Payments Settings", AUTOPAY_LIMIT_FIELD))
+	if limit <= 0:
+		return "no automatic payment limit is set in Stripe Payments Settings"
+	try:
+		from_agreement = is_agreement_invoice(sales_invoice)
+	except Exception:
+		# Never charge on a question that could not be answered.
+		frappe.log_error(
+			title="Stripe: autopay agreement check failed", message=error_snippet(frappe.get_traceback())
+		)
+		from_agreement = False
+	if not from_agreement:
+		return "no maintenance agreement visit is linked to it"
+	if amount is None:
+		amount = frappe.db.get_value("Sales Invoice", sales_invoice, "outstanding_amount")
+	if flt(amount, 2) > flt(limit, 2):
+		return (
+			f"its balance of {fmt_money(flt(amount), currency=currency)} is over the automatic "
+			f"payment limit of {fmt_money(limit, currency=currency)}"
+		)
+	return None
+
+
+def is_agreement_invoice(sales_invoice) -> bool:
+	"""Whether the invoice, or one it was amended from, was billed from a maintenance agreement.
+
+	Recognized by the visit behind it: a ``Sapphire Maintenance Record`` that names a
+	maintenance contract and is not a service call, linked to the invoice the way maintenance
+	billing links them — the invoice's ``custom_maintenance_record`` (per-visit billing,
+	``api.maintenance_workflow.create_sales_invoice``) or the record's ``sales_invoice``
+	("Generated Sales Invoice", which per-visit and recurring billing,
+	``api.maintenance_billing``, both stamp). The contract must be the invoice's customer's.
+	An amended copy counts with its original (``card_element._invoice_family``): amending
+	copies the invoice, not the record's link to it.
+
+	A recurring invoice for a period with no visits carries no such link, so it is not
+	recognized and waits for someone to charge it.
+	"""
+	from erpnext_enhancements.stripe_payments.core.card_element import _invoice_family
+
+	family = _invoice_family(sales_invoice)
+	customer = frappe.db.get_value("Sales Invoice", sales_invoice, "customer")
+	if not customer:
+		return False
+	records = set(
+		frappe.get_all("Sapphire Maintenance Record", filters={"sales_invoice": ["in", family]}, pluck="name")
+	)
+	records.update(
+		name
+		for name in frappe.get_all(
+			"Sales Invoice",
+			filters={"name": ["in", family], "custom_maintenance_record": ["is", "set"]},
+			pluck="custom_maintenance_record",
+		)
+		if name
+	)
+	if not records:
+		return False
+	contracts = [
+		name
+		for name in frappe.get_all(
+			"Sapphire Maintenance Record",
+			filters={
+				"name": ["in", sorted(records)],
+				"maintenance_contract": ["is", "set"],
+				"service_call": ["is", "not set"],
+			},
+			pluck="maintenance_contract",
+		)
+		if name
+	]
+	if not contracts:
+		return False
+	return bool(
+		frappe.db.exists("Sapphire Maintenance Contract", {"name": ["in", contracts], "customer": customer})
+	)
+
+
+def note_automatic_charge_held(sales_invoice, reason) -> bool:
+	"""Leave one Comment on the invoice saying automatic payment did not run and why, and tell
+	Accounts through the module's usual Notification Log (``card_element._alert_accounts``).
+
+	Once per invoice: a run that finds the note already there (the sweep every hour, a dunning
+	retry) adds nothing. Writes in the caller's transaction and never commits: on submit the
+	note commits with the invoice. Returns whether a note was written.
+	"""
+	if not sales_invoice:
+		return False
+	if frappe.db.exists(
+		"Comment",
+		{
+			"reference_doctype": "Sales Invoice",
+			"reference_name": sales_invoice,
+			"comment_type": "Comment",
+			"content": ["like", f"{HELD_NOTE_PREFIX}%"],
+		},
+	):
+		return False
+	text = (
+		f"{HELD_NOTE_PREFIX}: {reason}. Nothing was charged. To collect this invoice from the "
+		"customer's saved payment method, use Charge Saved Method (Stripe menu) on the Customer."
+	)
+	frappe.get_doc(
+		{
+			"doctype": "Comment",
+			"comment_type": "Comment",
+			"reference_doctype": "Sales Invoice",
+			"reference_name": sales_invoice,
+			"content": text,
+		}
+	).insert(ignore_permissions=True)
+	from erpnext_enhancements.stripe_payments.core.card_element import _alert_accounts
+
+	_alert_accounts(f"Automatic payment held: {sales_invoice}", text, "Sales Invoice", sales_invoice)
+	return True
+
+
 def auto_charge_on_invoice_submit(doc, method=None):
 	"""Sales Invoice ``on_submit``: off-session charge the customer's saved method.
 
 	Covers both the "auto on submit" and "scheduled by maintenance contract" triggers,
 	since maintenance billing generates Sales Invoices. Best-effort and enqueued, so it
 	never blocks or fails the invoice submission. No-ops unless the customer is
-	autopay-enrolled and the invoice is outstanding and not already being charged.
+	autopay-enrolled and the invoice is outstanding and not already being charged, and
+	charges only what :func:`automatic_charge_allowed` allows; any other invoice of an
+	enrolled customer gets a note instead and waits for the desk.
 	"""
 	if not is_enabled():
 		return
@@ -440,6 +619,8 @@ def auto_charge_on_invoice_submit(doc, method=None):
 		"Stripe Payment",
 		{"sales_invoice": ["in", family], "status": ["in", ["Processing", "Paid", "Link Sent"]]},
 	):
+		return
+	if not automatic_charge_allowed(doc.name, doc.outstanding_amount, doc.get("currency")):
 		return
 	frappe.enqueue(
 		"erpnext_enhancements.stripe_payments.core.saved_methods.charge_saved_method",

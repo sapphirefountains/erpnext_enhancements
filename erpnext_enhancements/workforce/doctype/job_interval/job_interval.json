@@ -69,6 +69,16 @@
   "original_start_time",
   "original_end_time",
   "original_project",
+  "edit_approval_section",
+  "edit_approval",
+  "edited_by",
+  "edited_on",
+  "edit_previous_start",
+  "edit_previous_end",
+  "column_break_edit_approval",
+  "edit_reviewed_by",
+  "edit_reviewed_on",
+  "edit_review_note",
   "pay_section",
   "pay_type",
   "pay_rate",
@@ -192,7 +202,7 @@
    "fieldname": "sync_status",
    "fieldtype": "Select",
    "label": "Sync Status",
-   "options": "Pending\nSynced\nFailed",
+   "options": "Pending\nSynced\nFailed\nHeld - Not Approved",
    "read_only": 0
   },
   {
@@ -512,6 +522,72 @@
   },
   {
    "collapsible": 1,
+   "collapsible_depends_on": "edit_approval",
+   "fieldname": "edit_approval_section",
+   "fieldtype": "Section Break",
+   "label": "Edit Approval"
+  },
+  {
+   "description": "Waiting: the employee changed these times or entered them by hand, and the interval is left out of the payroll export and the Timesheet until a reviewer who is not the employee approves it. Sent Back: a reviewer declined it and it stays out. Blank: never edited this way, or edited by a reviewer; it counts.",
+   "fieldname": "edit_approval",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Edit Approval",
+   "options": "\nWaiting\nApproved\nSent Back",
+   "read_only": 1
+  },
+  {
+   "fieldname": "edited_by",
+   "fieldtype": "Link",
+   "label": "Edited By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "edited_on",
+   "fieldtype": "Datetime",
+   "label": "Edited On",
+   "read_only": 1
+  },
+  {
+   "description": "The start before the edit that is waiting. Blank on an entry added by hand.",
+   "fieldname": "edit_previous_start",
+   "fieldtype": "Datetime",
+   "label": "Start Before Edit",
+   "read_only": 1
+  },
+  {
+   "description": "The end before the edit that is waiting. Blank on an entry added by hand, or one that was still open.",
+   "fieldname": "edit_previous_end",
+   "fieldtype": "Datetime",
+   "label": "End Before Edit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_edit_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "edit_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Edit Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "edit_reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Edit Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "edit_review_note",
+   "fieldtype": "Small Text",
+   "label": "Edit Review Note",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
    "fieldname": "pay_section",
    "fieldtype": "Section Break",
    "label": "Pay & Cost",
@@ -602,7 +678,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 18:00:00.000000",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Job Interval",

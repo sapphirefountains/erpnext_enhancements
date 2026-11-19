@@ -58,6 +58,21 @@ def _file_bytes(file_url):
 	return content, file_doc
 
 
+def require_file_read(file_url):
+	"""Refuse a ``file_url`` the signed-in user may not read.
+
+	Used by the whitelisted channel wrappers only: ``ingest_document`` is also called by
+	server code (email, Drive watch) that has no signed-in reader to check. A File passes
+	when the user may read it under the File doctype's own rule (their own upload, a public
+	file, a file shared with them, or one attached to a record they can read). Several File
+	rows can point at one ``file_url``; any one of them being readable is enough."""
+	names = frappe.get_all("File", filters={"file_url": file_url}, pluck="name")
+	if not names:
+		frappe.throw(_("File not found."), frappe.DoesNotExistError)
+	if not any(frappe.has_permission("File", "read", doc=name) for name in names):
+		frappe.throw(_("You do not have permission to read this file."), frappe.PermissionError)
+
+
 def _guess_mime(file_doc):
 	if file_doc.file_type:
 		guessed = mimetypes.types_map.get(f".{file_doc.file_type.lower()}")
@@ -117,6 +132,7 @@ def ingest_upload(file_url, document_type=None):
 		frappe.throw(_("Not permitted to upload accounting documents."), frappe.PermissionError)
 	if not file_url:
 		frappe.throw(_("file_url is required"))
+	require_file_read(file_url)
 	name = ingest_document(file_url=file_url, source_channel="Upload", document_type=document_type)
 	return {"name": name}
 
