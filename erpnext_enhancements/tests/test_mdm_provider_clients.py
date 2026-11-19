@@ -684,6 +684,66 @@ class ExecutorTests(unittest.TestCase):
 			self._run("Managed", "BYOD", "full")
 		self.assertNotIn("wiped", STATE)
 
+	def test_a_personal_device_accepts_locate_and_lock(self):
+		for action in ("locate", "lock"):
+			with self.subTest(action=action):
+				result = self._run("Managed", "BYOD", None, action=action)
+				self.assertTrue(result["ok"])
+				self.assertEqual(STATE["provider_calls"][0][0], action)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 1))
+
+	def test_every_other_action_is_refused_on_a_personal_device_before_any_provider_call(self):
+		for action, mode, extra in (
+			("wipe", "selective", {}),
+			("wipe", "full", {}),
+			("wipe", None, {}),
+			("reboot", None, {}),
+			("run_script", None, {"script": "Get-Date"}),
+			("deploy_patch", None, {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action, mode=mode):
+				with self.assertRaises(client.MDMProviderError) as ctx:
+					self._run("Managed", "BYOD", mode, action=action, **extra)
+				self.assertIn("personally owned", str(ctx.exception))
+				self.assertIn(f"'{action}'", str(ctx.exception))
+				self.assertFalse(self._provider_was_called())
+				self.assertNotIn("comments", STATE)
+				self.assertNotIn("notified", STATE)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 0))
+
+	def test_the_personal_device_list_is_an_allowlist(self):
+		"""An action nobody has listed is refused on a personal device, whatever the provider
+		says it supports, and the wipe settings do not widen it."""
+		self.assertEqual(actions.BYOD_ACTIONS, frozenset({"locate", "lock"}))
+		with self.assertRaises(client.MDMProviderError) as ctx:
+			self._run("Managed", "BYOD", None, action="enable_lost_mode")
+		self.assertIn("personally owned", str(ctx.exception))
+		self.assertFalse(self._provider_was_called())
+
+		_device_state("Managed", "BYOD")
+		STATE["settings"] = FakeSettings(block_full_wipe_byod=0, allow_full_wipe_corporate=1)
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		self.assertFalse(self._provider_was_called())
+
+	def test_a_company_device_is_not_held_to_the_personal_device_list(self):
+		self._run("Managed", "Company", "selective")
+		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+
+	def test_the_form_draws_only_locate_and_lock_for_a_personal_device(self):
+		source = (
+			Path(__file__).resolve().parents[1]
+			/ "device_management" / "doctype" / "managed_device" / "managed_device.js"
+		).read_text(encoding="utf-8")
+		self.assertIn("const personal = frm.doc.ownership === 'BYOD';", source)
+		self.assertIn("if (!personal) remote(__('Remote Wipe'), 'wipe', {", source)
+		self.assertIn("frm.doc.mdm_provider === 'Action1' && !personal", source)
+		# Lock and Locate are drawn whoever owns the device.
+		self.assertIn("\t\t\t\tremote(__('Remote Lock'), 'lock',", source)
+		self.assertIn("\t\t\t\tremote(__('Locate'), 'locate');", source)
+
 	def test_every_action_is_refused_on_an_unconfirmed_device_before_any_provider_call(self):
 		for action, mode, extra in (
 			("wipe", "full", {}),

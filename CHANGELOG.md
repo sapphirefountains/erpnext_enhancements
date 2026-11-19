@@ -24,8 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A locate request adds a Comment to the device's timeline naming who asked and when, written
     before the request is sent, and Device Managers get a notification the same way as for a
     wipe or a lock. If the Comment cannot be written, nothing is sent.
+  - **A personally owned (BYOD) device accepts Locate and Lock only** (Nikolas, 2026-11-19). A
+    wipe in either mode, a reboot, a script, a patch and any action added later are refused before
+    any provider call and recorded in the Device Action Log (`actions.BYOD_ACTIONS` is the list).
+    Before, a BYOD device took a selective wipe. The device form no longer draws Remote Wipe,
+    Reboot or Run Script on a BYOD device, and the wipe tool's description says the same. To remove
+    company data from a personal device, use the provider's own console.
   - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
-    device with a stand-in provider; `tests/test_ai_gate_batch.py` and
+    device with a stand-in provider, and each against a BYOD device; `tests/test_ai_gate_batch.py` and
     `scripts/test_ai_pending_batch.mjs` cover the unticked cards.
 
 ## [1.830.0] - 2026-11-19
