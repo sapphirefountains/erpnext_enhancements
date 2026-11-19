@@ -714,6 +714,53 @@ class TestKpiTargets(unittest.TestCase):
 			doc = types.SimpleNamespace(kpi_key=key)
 			self.assertTrue(self.permissions.target_has_permission(doc, "write", "someone@example.com"), key)
 
+	def _stored(self, value):
+		"""Answer ``frappe.db.get_value("KPI Target", name, "kpi_key")`` with ``value``
+		(an exception class is raised) for the rest of the test."""
+		db = self.permissions.frappe.db
+		original = db.get_value
+		asked = []
+
+		def get_value(doctype, name=None, fieldname=None, *a, **k):
+			asked.append((doctype, name, fieldname))
+			if isinstance(value, type) and issubclass(value, Exception):
+				raise value("no database")
+			return value
+
+		db.get_value = get_value
+		self.addCleanup(setattr, db, "get_value", original)
+		return asked
+
+	def test_a_target_is_judged_on_the_key_it_is_stored_under_too(self):
+		"""A save is checked with the document as the save sent it. A target stored for a
+		revenue or margin figure stays with the revenue roles whatever key the save carries."""
+		STATE["roles"] = ["Sales Manager"]
+		asked = self._stored("revenue_30")
+		doc = types.SimpleNamespace(name="TGT-Finance-revenue_30-Monthly", kpi_key="win_rate_90")
+		for ptype in ("read", "write", "delete"):
+			self.assertFalse(self.permissions.target_has_permission(doc, ptype, "someone@example.com"), ptype)
+		self.assertEqual(asked[0], ("KPI Target", "TGT-Finance-revenue_30-Monthly", "kpi_key"))
+
+	def test_a_target_cannot_be_moved_onto_a_restricted_key_either(self):
+		STATE["roles"] = ["Sales Manager"]
+		self._stored("win_rate_90")
+		doc = types.SimpleNamespace(name="TGT-Sales-win_rate_90-Monthly", kpi_key="gross_margin_pct")
+		self.assertFalse(self.permissions.target_has_permission(doc, "write", "someone@example.com"))
+
+	def test_an_ordinary_stored_target_with_an_ordinary_key_is_still_open(self):
+		STATE["roles"] = ["Sales Manager"]
+		self._stored("win_rate_90")
+		doc = types.SimpleNamespace(name="TGT-Sales-win_rate_90-Monthly", kpi_key="won_value_30")
+		self.assertTrue(self.permissions.target_has_permission(doc, "write", "someone@example.com"))
+
+	def test_a_stored_key_that_cannot_be_read_counts_as_restricted(self):
+		STATE["roles"] = ["Sales Manager"]
+		self._stored(RuntimeError)
+		doc = types.SimpleNamespace(name="TGT-Sales-win_rate_90-Monthly", kpi_key="win_rate_90")
+		self.assertFalse(self.permissions.target_has_permission(doc, "write", "someone@example.com"))
+		STATE["roles"] = ["Accounts Manager"]
+		self.assertTrue(self.permissions.target_has_permission(doc, "write", "someone@example.com"))
+
 	def test_the_revenue_roles_keep_every_target(self):
 		for roles in REVENUE_ROLE_SETS:
 			STATE["roles"] = roles

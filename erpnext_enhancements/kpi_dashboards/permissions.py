@@ -142,9 +142,22 @@ def get_target_permission_query_conditions(user=None):
 def target_has_permission(doc, ptype=None, user=None):
 	"""The same rule for one KPI Target, for every permission type (read, write, create,
 	delete): a target for a revenue or margin figure is Accounts Manager's and System
-	Manager's."""
+	Manager's.
+
+	Both keys count: the one on the document being judged and the one the target is stored
+	under. A save is checked with the document as the save sent it, so the stored key is
+	what says whose target it was before the save; a target stays under this rule whatever
+	key a save gives it. When the stored key cannot be read, the target is treated as
+	restricted."""
 	from erpnext_enhancements.kpi_dashboards import money
 
-	if not money.is_restricted_kpi(getattr(doc, "kpi_key", None)):
+	keys = [getattr(doc, "kpi_key", None)]
+	name = getattr(doc, "name", None)
+	if name:
+		try:
+			keys.append(frappe.db.get_value("KPI Target", name, "kpi_key"))
+		except Exception:
+			return _can_see_revenue(user)
+	if not any(money.is_restricted_kpi(key) for key in keys):
 		return True
 	return _can_see_revenue(user)
