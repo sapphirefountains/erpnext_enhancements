@@ -132,7 +132,17 @@ class TestTheLeadWarning(unittest.TestCase):
         body = source[source.index("def handoff_state") :]
         body = body[: body.index("\ndef ", 10)]
         self.assertIn('"opportunity_from") == "Lead"', body)
-        self.assertIn('return {"available": False, "is_historical": historical, "on_lead": on_lead}', body)
+        # The early return (no gate fields) reports it too. v1.827.0 added the product-sale keys
+        # beside it (**product_keys), so the keys are checked within that return.
+        early = body[body.index("if not _has_gate_fields():") : body.index("row = frappe.db.get_value(")]
+        for key in (
+            '"available": False',
+            '"is_historical": historical',
+            '"on_lead": on_lead',
+            "**product_keys",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, early)
         self.assertIn('"on_lead": on_lead,', body)
 
     def test_the_closed_won_prompt_warns_above_its_question(self):

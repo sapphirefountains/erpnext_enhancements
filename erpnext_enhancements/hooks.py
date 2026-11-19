@@ -628,6 +628,11 @@ doc_events = {
 	},
 	"Quotation": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		# v1.827.0: a quote made ERPNext's way (Create > Quotation sets `opportunity`) also names its
+		# deal in custom_source_opportunity, the field configurator quotes use instead, so the
+		# Opportunity's Connections list every quote through one field. Never raises. See
+		# crm_enhancements/product_sale.py.
+		"validate": "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link",
 	},
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
@@ -1533,6 +1538,11 @@ doc_events = {
 			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
 			# so the SLA data is already meaningful whenever a switch is flipped.
 			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
+			# v1.827.0: right after it. A tick or untick of Product Sale (No Project) on the form
+			# lifts or restores the hand-off gate exactly as handoff.mark_product_sale does, so a
+			# hand-ticked won deal is not left gated (Create Project Anyway refused, the escalation
+			# still calling it overdue). Never raises.
+			"erpnext_enhancements.crm_enhancements.handoff.follow_product_sale_tick",
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
@@ -3004,8 +3014,11 @@ after_migrate = [
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 	# product_configurator: Item provenance field (marks configurator-generated
-	# Items so regenerate can safely reuse them) + the Build Instructions /
-	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
+	# Items so regenerate can safely reuse them), and since v1.827.0 the
+	# configuration link on Quotation Item and Sales Order Item (Make Sales Order
+	# copies it across) + the Build Instructions / QC Checklist / Pricing Summary
+	# Print Formats (idempotent + guarded). The Pricing Summary is also what
+	# Create Quotation attaches to the Quotation.
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
 	# product_fulfillment (v1.828.0): the Product Unit Label (Serial No) and the Pre-Shipment Test
