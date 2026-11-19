@@ -15,14 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases (hardening).** Nikolas, 2026-11-19: "Backup first, named versions." Both rules live in
   one script, `infra/bench_update.sh`, run as the `frappe` user; the runbook is in
   `infra/README.md`, section 13.
-  - **App deploys take a backup first, and take a few minutes longer.** Before `bench --site all
-    migrate`, `infra/cloudbuild-deploy.yaml` now runs `bench_update.sh backup`: a database-only
+  - **App deploys take a backup first, and take a few minutes longer.** After the fetch and
+    before the app's code is reset, `infra/cloudbuild-deploy.yaml` now checks out only the script
+    from the fetched commit and runs `bench_update.sh backup`: a database-only
     backup of every site with bench's own `backup` command, into
     `<bench>/pre-migrate-backups/<UTC time>/`. It checks free disk first (2 GB, or twice the
     newest kept backup), prints each file's name and size, and keeps the newest five runs,
     deleting older ones from that directory only. When the check or the backup fails, the build
-    log says `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no migrate,
-    build, redis flush or restart. The step's timeout goes from 600 to 1200 seconds. The redis
+    log says `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no code reset,
+    migrate, build, redis flush or restart, so the site keeps running the release it had. The
+    step's timeout goes from 600 to 1200 seconds. The redis
     flush, the restart and the rest of the deploy are unchanged.
   - **Upstream updates install two named release tags.** `infra/cloudbuild-upstream.yaml` no
     longer runs `bench update --pull --no-backup`. Each run takes two required substitutions,

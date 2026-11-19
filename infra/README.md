@@ -140,11 +140,13 @@ bench_update.sh: PRE-MIGRATE BACKUP FAILED: <reason>
 bench_update.sh: this run migrated nothing and switched no app; stopping here.
 ```
 
-and the build fails without the `✅ ... updated` line. Nothing after the backup ran: no migrate,
-no build, no redis flush, no restart. The reasons it names are not enough free disk, `bench
-backup` exiting with an error, and a site left without a database file. Fix the cause, then
-re-run the deploy (`gcloud builds triggers run app-deploy-prod --branch=main`). The app code on
-the VM is already the new commit, but the database and the running processes are not.
+and the build fails without the `✅ ... updated` line. Nothing after the backup ran: no code
+reset, no migrate, no build, no redis flush, no restart. The deploy's order is fetch, backup,
+reset, so the site keeps running the release it had: the app's code, the database and the
+running processes are unchanged, and only `infra/bench_update.sh` itself was taken from the new
+commit. The reasons it names are not enough free disk, `bench backup` exiting with an error, and
+a site left without a database file. Fix the cause, then re-run the deploy
+(`gcloud builds triggers run app-deploy-prod --branch=main`).
 
 **Choosing the tags.** Pick a published release of each:
 [frappe releases](https://github.com/frappe/frappe/releases) and

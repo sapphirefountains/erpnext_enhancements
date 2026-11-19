@@ -127,15 +127,19 @@ class DeployYamlTests(unittest.TestCase):
 	def test_the_step_stops_on_the_first_failure(self):
 		self.assertEqual(self.block.splitlines()[0], "set -e")
 
-	def test_the_backup_comes_before_migrate_in_one_and_chain(self):
+	def test_the_backup_comes_before_the_reset_and_migrate_in_one_and_chain(self):
+		"""Fetch, backup, reset: a failed backup leaves the app's code where it was. Only
+		the script is taken from the fetched commit first, so the deploy that first carries
+		it can run it."""
 		self.assertEqual(
 			_remote_commands(self.block),
 			[
 				"sudo -u frappe bash -c 'cd /home/frappe/frappe-bench",
-				"git -C apps/erpnext_enhancements fetch upstream main",
-				"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
 				r"export PATH=\$$PATH:/home/frappe/.local/bin",
+				"git -C apps/erpnext_enhancements fetch upstream main",
+				"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh",
 				"bash apps/erpnext_enhancements/infra/bench_update.sh backup",
+				"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
 				"bench --site all migrate",
 				"bench build",
 				"redis-cli -p 13000 FLUSHDB",
@@ -148,7 +152,10 @@ class DeployYamlTests(unittest.TestCase):
 		remote = _remote_string(self, self.block)
 		self.assertIn(
 			"export PATH=$PATH:/home/frappe/.local/bin && "
-			"bash apps/erpnext_enhancements/infra/bench_update.sh backup && bench --site all migrate && ",
+			"git -C apps/erpnext_enhancements fetch upstream main && "
+			"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && "
+			"bash apps/erpnext_enhancements/infra/bench_update.sh backup && "
+			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && bench --site all migrate && ",
 			remote,
 		)
 
