@@ -3759,6 +3759,15 @@ jobs:
       # bench-free unittest tests, green, and named nowhere in this file.
       - name: Product Configurator engine (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
+      # E-Stop quote to order (v1.827.0). Guards a quote line that reads differently from the last
+      # one, a configured price ERPNext re-prices into a fake discount, a Sales Order that can't save
+      # for want of a warehouse, a quote to the wrong party, a refusal in frappe's words instead of
+      # "ask for the Product Engineer role", a product sale that still gets a project (or a panel job
+      # that loses one), and an Opportunity frozen by ERPNext writing "Quotation" or "Converted" over
+      # its stage. Plain pytest functions, so its own pytest step: unittest would collect nothing.
+      # Installs a fake `frappe` per test through monkeypatch, so it stays out of the stubbed suites.
+      - name: Product quote to order (bench-free)
+        run: python -m pytest erpnext_enhancements/tests/test_product_quote.py -q
       # PO header -> line Project cascade. Third suite the guard below found running
       # nowhere: its own frappe stub had gone stale -- `procurement_project` grew a
       # `from frappe.utils import flt` and the stub is a plain ModuleType, which the

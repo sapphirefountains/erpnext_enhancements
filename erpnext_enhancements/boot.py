@@ -42,6 +42,22 @@ def _warehouse_map_flag():
 		return 0
 
 
+def _configurable_products():
+	"""``frappe.boot.ee_configurable_products`` (v1.827.0): ``[{name, product_name}]`` for the
+	Configurable Products that are switched on, while the Product Configurator is. The Opportunity's
+	"Quote <product>" action reads it for its label and its product choice, and is not offered when it
+	is empty. One small read (one row on prod); cosmetic, since ``quoting.start_configuration``
+	checks the product and the person itself. Never breaks the boot."""
+	try:
+		if not product_configurator_enabled():
+			return []
+		from erpnext_enhancements.product_configurator.quoting import enabled_products
+
+		return [{"name": row.name, "product_name": row.product_name or row.name} for row in enabled_products()]
+	except Exception:
+		return []
+
+
 def boot_session(bootinfo):
 	"""Ship the live-collab doctype allowlist and feature flags to the desk client.
 
@@ -85,8 +101,10 @@ def boot_session(bootinfo):
 
 	``frappe.boot.ee_product_configurator`` gates the Product Configuration /
 	Configurable Product generation buttons (Item + BOM + Selling Price,
-	Create Component Items); the server-side guards in
+	Create Component Items, Create Quotation); the server-side guards in
 	``product_configurator.api`` remain the authority.
+	``frappe.boot.ee_configurable_products`` lists the enabled products for the
+	Opportunity's "Quote <product>" action (:func:`_configurable_products`).
 
 	``frappe.boot.ee_package_dispatch`` gates the Package Dispatch form's auto-fill
 	triggers (catalog-item value + customer address); the form itself works with
@@ -148,6 +166,7 @@ def boot_session(bootinfo):
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_industry_rule = industry_rule_for_client()
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0
+	bootinfo.ee_configurable_products = _configurable_products()
 	bootinfo.ee_package_dispatch = 1 if package_dispatch_enabled() else 0
 	bootinfo.ee_fountain_move = 1 if fountain_move_intake_enabled() else 0
 	bootinfo.ee_fountain_move_public = 1 if fountain_move_public_form_enabled() else 0

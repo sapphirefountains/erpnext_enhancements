@@ -45,8 +45,9 @@
  *                 frappe.desk.notifications.get_open_count), each opening its list filtered to this
  *                 record
  *   Actions menu  the Create menu (form_kit/record_tools.js RECORD_TOOLS, frappe.model.open_mapped_doc),
- *                 Generate Contract, Open Drive Folder, Set Reminder (global_enhancements/
- *                 record_actions.js, which the form's buttons call too), New Email, Print, Customize,
+ *                 Generate Contract, Quote <product> (an Opportunity, v1.827.0), Open Drive Folder,
+ *                 Set Reminder (global_enhancements/record_actions.js, which the form's buttons call
+ *                 too), New Email, Print, Customize,
  *                 and the full form for the rest (rename, duplicate, delete, merge)
  *
  * Everything is decided by meta, permissions and values, never by the DocType's name (the one
@@ -1776,6 +1777,16 @@ export class RecordTools {
 		if (record_actions.can_generate_contract(doctype)) {
 			// What is typed saves first, as for Create, Print and Customize: the draft is made from the record.
 			add(__("Generate Contract"), () => this.leave(() => this.dialog(() => record_actions.open_generate_contract(doctype, name))));
+		}
+		if (record_actions.can_quote_product(doctype, values)) {
+			// v1.827.0, the deal's "Quote <product>": saves first, then starts a Product Configuration for
+			// the deal and opens it. Only a product choice (several products) is a dialog to guard.
+			add(record_actions.quote_product_label(), () =>
+				this.leave(() => {
+					const choice = record_actions.open_quote_product(name);
+					if (choice) this.dialog(() => choice);
+				})
+			);
 		}
 		if (items.length) items.push({ divider: true });
 
