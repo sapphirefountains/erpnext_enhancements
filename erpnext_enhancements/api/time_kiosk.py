@@ -537,8 +537,19 @@ def sync_interval_to_timesheet(interval_doc):
     line with no activity type, computes nothing at all — and
     ``custom_job_interval`` (fixture Custom Field) so a correction can find the
     line again (``resync_interval_timesheet``).
+
+    An interval whose hand edit is waiting for approval, or was sent back
+    (``workforce/time_edits.py``), gets no line: a Timesheet is what the day's
+    submit locks and what the project's labour actuals sum, and neither may count
+    hours nobody has approved. Its approval re-syncs it.
     """
+    from erpnext_enhancements.workforce import time_edits
+
     try:
+        if time_edits.is_held(interval_doc):
+            interval_doc.db_set("sync_status", time_edits.HELD_SYNC_STATUS)
+            return
+
         employee = interval_doc.employee
         project = interval_doc.project
 
@@ -1608,7 +1619,7 @@ def get_my_day(date=None):
         fields=["name", "project", "task", "time_category", "start_time", "end_time", "status",
                 "total_paused_seconds", "last_pause_time", "tracking_health", "tracking_coverage_pct",
                 "offsite_start", "auto_closed", "corrected", "planned_break_minutes", "manual_start",
-                "manual_start_reason", "time_edit_reason"],
+                "manual_start_reason", "time_edit_reason", "edit_approval", "edit_review_note"],
         order_by="start_time asc",
     )
     project_titles = _titles("Project", [r.project for r in rows], "project_name")
@@ -1643,6 +1654,9 @@ def get_my_day(date=None):
             "manual_start": cint(r.manual_start),
             "manual_start_reason": r.manual_start_reason,
             "time_edit_reason": r.time_edit_reason,
+            # A hand edit waiting for approval, or sent back: not counted toward payroll.
+            "edit_approval": r.edit_approval or "",
+            "edit_review_note": r.edit_review_note,
             "locked": bool(timesheet_lock.submitted_timesheet_for(r.name)),
             "editable": not bool(timesheet_lock.submitted_timesheet_for(r.name)) and r.status in ("Open", "Paused", "Completed"),
             "corrected": cint(r.corrected),
@@ -2659,7 +2673,13 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
 
     Overlap and the submitted-day lock are enforced by ``JobInterval.validate`` on
     the insert below, not here — one implementation, on every path that writes.
+
+    The entry waits for approval and stays out of payroll until a reviewer who is
+    not the employee approves it, unless the caller reviews this employee's time
+    corrections and is not that employee (``workforce/time_edits.py``).
     """
+    from erpnext_enhancements.workforce import time_edits
+
     caller_employee = _assert_may_edit_time_for(employee) if employee else _require_session_employee()
     on_behalf = bool(employee) and employee != caller_employee
     employee = employee or caller_employee
@@ -2745,13 +2765,21 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
         # intervals whose tracking actually failed, and the manual_start badge
         # already says there is no evidence here.
 
+    # Time entered by hand for oneself, or by someone who does not review this
+    # employee's time, waits for approval before it counts (workforce/time_edits.py).
+    waiting = time_edits.record_edit(doc, added=True)
+
     doc.insert(ignore_permissions=True)
     resync_interval_timesheet(doc)
 
+    message = _("Time added.") if end_dt is not None else _("Backdated work started.")
+    if waiting:
+        message += " " + _("It counts toward payroll once a manager approves it.")
     return {
         "status": "success",
-        "message": _("Time added.") if end_dt is not None else _("Backdated work started."),
+        "message": message,
         "doc": doc.name,
+        "edit_approval": time_edits.state(doc),
     }
 
 
@@ -2800,7 +2828,14 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
 
     Overlap and the submitted-day lock are enforced by ``JobInterval.validate`` on
     the save below. Neither is re-implemented here.
+
+    A start or end that moves (to the minute, the resolution the kiosk sends) is a
+    hand edit: on one's own interval, or by someone who does not review this
+    employee's time corrections, it waits for approval and stays out of payroll
+    until it is approved (``workforce/time_edits.py``). A change of activity alone
+    moves no hours and does not.
     """
+    from erpnext_enhancements.workforce import time_edits
     from erpnext_enhancements.workforce.corrections import _record_originals
 
     if not interval:
@@ -2825,14 +2860,20 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
     if effective_end and effective_end > now_dt:
         frappe.throw(_("End time cannot be in the future."))
 
-    start_moved = bool(new_start and new_start != doc.start_time)
+    start_moved = bool(new_start) and not time_edits.same_minute(new_start, doc.start_time)
+    end_moved = bool(new_end) and not time_edits.same_minute(new_end, doc.end_time)
+
+    waiting = False
+    if start_moved or end_moved:
+        # Before the new times are written: it keeps the times before the edit.
+        waiting = time_edits.record_edit(doc)
 
     _record_originals(doc)
     doc.corrected = 1
     doc.time_edit_reason = str(reason).strip()
-    if new_start:
+    if start_moved:
         doc.start_time = new_start
-    if end_time:
+    if end_moved:
         doc.end_time = new_end
     if new_category:
         doc.time_category = new_category
@@ -2844,7 +2885,11 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
     doc.save(ignore_permissions=True)
     resync_interval_timesheet(doc)
 
-    return {"status": "success", "message": _("Times updated."), "doc": doc.name}
+    message = _("Times updated.")
+    if waiting:
+        message += " " + _("They count toward payroll once a manager approves them.")
+    return {"status": "success", "message": message, "doc": doc.name,
+            "edit_approval": time_edits.state(doc)}
 
 @frappe.whitelist(methods=["POST"])
 def approve_day(employee=None, date=None):

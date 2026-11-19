@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.836.5] - 2026-11-19
+
+### Changed
+
+- **Time changed or entered by hand now waits for a manager's approval before it counts
+  (hardening).** When an employee moves the start or end of their own Job Interval from the Time
+  Kiosk (`update_interval_times`), adds time by hand (`add_manual_interval`) or starts work
+  backdated (`start_backdated`), the interval is marked **Waiting** on a new *Edit Approval* block
+  with who edited it, when, and the start and end before the edit. The same applies to an edit of
+  another person's time by someone who does not review that person's time corrections. An edit by a
+  correction reviewer (`permissions.can_review`: the manager roles or the employee's `reports_to`
+  user) to someone else's time needs no approval, and settles a waiting one as approved; a
+  reviewer's edit to their own time still waits. A change of activity alone moves no hours and does
+  not wait; a time sent back unchanged to the minute is treated as unchanged and the stored value is
+  kept. The rule lives in `workforce/time_edits.py`.
+- **A waiting entry is left out of payroll at the source.** `payroll_export` leaves Waiting and Sent
+  Back intervals out of every total, the overtime split included, and the workbook gains a third
+  sheet, **Waiting for Approval** (employee, day, hours, status, what changed, reason, who edited),
+  marked as not part of the submission; the provider sheet's columns are unchanged. The Payroll Hours
+  Export report lists the same entries above its table. `sync_interval_to_timesheet` writes no
+  Timesheet line for a held interval (its `sync_status` reads `Held - Not Approved`, a new option),
+  so it is not submitted with the day and does not reach a project's labour actuals; an edit to an
+  interval that already had a Draft line takes that line off until the edit is approved.
+- **Approve Edit / Send Back on the Job Interval form.** `approve_time_edit` and
+  `send_back_time_edit` (both POST; the reviewer comes from the session) accept a reviewer who is
+  neither the interval's employee nor the person who made the edit, record who and when with an
+  optional note, and re-sync the Timesheet line. Sending back restores nothing: the entry stays out
+  and the employee is emailed. The form shows what changed and draws the buttons only for a reader
+  who may decide; the list's *Edit Approval* filter set to Waiting is the queue. The kiosk's My Day
+  rows read *Waiting for approval* or *Sent back*, and the edit toast says when an edit waits.
+- **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
+  existing row reads blank, which counts exactly as before. Bench-free suite
+  `tests/test_time_edit_approval.py`, in its own CI step.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

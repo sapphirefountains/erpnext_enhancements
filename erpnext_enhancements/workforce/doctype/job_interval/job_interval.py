@@ -27,6 +27,14 @@ from frappe.model.document import Document
 
 
 class JobInterval(Document):
+	def onload(self):
+		"""Whether the reader may approve or send back this interval's hand edit, for
+		the form's buttons. The endpoints in ``workforce/time_edits.py`` decide it again."""
+		from erpnext_enhancements.workforce import time_edits
+
+		if time_edits.is_held(self):
+			self.set_onload("ee_may_decide_edit", time_edits.may_decide(self))
+
 	def validate(self):
 		"""Lifecycle hook: enforce one open session per employee and time sanity,
 		then keep the cost consistent with the times.

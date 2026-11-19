@@ -32,6 +32,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `costing.py` | Pay rate → interval cost → Activity Cost |
 | `sites.py` | Where a project's site is; Google geocoding of project addresses. `geocode_text` (v1.578.0) is the app's one server-side geocoder, also used by the Project Planner's routing: it never raises or logs, and reports a failure only as Google's status or an exception class name, because a `requests` error contains the request URL and the key with it |
 | `corrections.py` | Reviewing a Time Correction Request: apply, re-sync, email |
+| `time_edits.py` | Approval of hand edits (v1.836.5): marks an interval `Waiting` when its own employee changes its times or enters it by hand, `approve_time_edit` / `send_back_time_edit` (POST) for a correction reviewer who is neither that employee nor the editor. See *Editing time* |
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
@@ -304,12 +305,32 @@ still the employee's own.
 
 **Direct, from the kiosk, until the day is submitted.** `api.time_kiosk.add_manual_interval`
 adds time that was never clocked and `update_interval_times` moves an existing interval's
-start and/or end. Both write immediately — no reviewer — because the accountant's submit is
-already the gate the business chose: a day is editable until it is accepted, and locked
-afterwards unless it is reopened as a draft. Your own intervals need no role; writing time
-for **another** employee needs `approval.APPROVER_ROLES` (`_assert_may_edit_time_for`), which
-is deliberately not `TIMELINE_MANAGER_ROLES` — reusing that set would mean letting a
-supervisor fix a timesheet also hands them everyone's GPS trail.
+start and/or end. Both write immediately, because the accountant's submit is the lock the
+business chose: a day is editable until it is accepted, and locked afterwards unless it is
+reopened as a draft. Your own intervals need no role; writing time for **another** employee
+needs `approval.APPROVER_ROLES` (`_assert_may_edit_time_for`), which is deliberately not
+`TIMELINE_MANAGER_ROLES` — reusing that set would mean letting a supervisor fix a timesheet
+also hands them everyone's GPS trail.
+
+**Hand edits wait for approval before they count (v1.836.5).** When
+an employee moves the start or end of their own interval (to the minute; a change of activity
+alone moves no hours), adds one by hand, or starts one backdated, `time_edits.record_edit`
+marks it `edit_approval = Waiting` with `edited_by`, `edited_on` and, for a change, the times
+before it (`edit_previous_start` / `edit_previous_end`, kept once per waiting spell). The same
+happens when somebody who may edit another person's time but does not review that person's
+corrections does it. An edit by a correction reviewer (`permissions.can_review`: the manager
+roles or the employee's `reports_to` user) to someone else's interval needs no approval, and
+settles a waiting one as approved; a reviewer's edit to their own time still waits. A waiting
+interval is left out of every total in `payroll_export` and listed on its **Waiting for
+Approval** sheet, and `sync_interval_to_timesheet` writes no Timesheet line for it
+(`sync_status = Held - Not Approved`), so it is not submitted with the day and does not reach
+a project's Labor actuals. A reviewer who is neither the employee nor the editor decides it on
+the **Job Interval form** (*Edit Approval* → **Approve Edit** / **Send Back**, with an optional
+note; the list's *Edit Approval* filter set to Waiting is the queue): `approve_time_edit` records
+who and when, and re-syncs the line; `send_back_time_edit` records who and when, restores
+nothing, keeps the interval out and emails the employee, whose My Day row then reads *Sent
+back*. Editing it again puts it back to Waiting. Intervals that existed before the field read
+blank, which counts, as before: nothing in history is marked.
 
 `add_manual_interval` has two shapes and the difference is load-bearing. **With** an
 `end_time` it is a finished block, and can land on any unlocked day. **Without** one it is an
@@ -455,7 +476,9 @@ three-row stacked column header, trailing Totals row, sheet name — is transcri
 real submitted file, because a payroll clerk matches this against what they already have.
 
 **It computes hours worked, and since v1.480.0 the Regular / Overtime hours split** (see
-*Overtime* above). **It does not compute qualified overtime, and it must not.** `hrms` is
+*Overtime* above). Since v1.836.5 an interval whose hand edit is waiting for approval, or was
+sent back, is in none of those figures; the workbook's third sheet, **Waiting for Approval**,
+and the Desk report's notes list each one (see *Editing time*). **It does not compute qualified overtime, and it must not.** `hrms` is
 **not installed on this site**: there is no Salary Structure, no salary slips, no payroll
 module of any kind. So `Qualified OT`, `PTO`, `Holiday`, `Bonus`, `Commission`,
 `Reimbursement` and `Services` are emitted **blank**, in position, for the provider to fill
@@ -483,4 +506,5 @@ mode this module has.
 | `tests/test_workforce_costing.py` | yes — own CI step |
 | `tests/test_workforce_sweeper.py` | yes — own CI step |
 | `tests/test_workforce_client_time.py` | yes — own CI step |
+| `tests/test_time_edit_approval.py` | yes — own CI step |
 | `tests/test_time_correction_requests.py` | no (filesystem + `ast`) |
