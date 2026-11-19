@@ -2134,14 +2134,20 @@
 
     // Each table of the tab: its columns, for the Columns menu and the drag-to-resize widths.
     // Keys start p_ so no rule for another tab's columns ever reaches these. A width is the
-    // cell's content box (each cell adds 24px of padding): every table fits about 1,050px.
+    // cell's content box (each cell adds 24px of padding): every table fits about 1,050px,
+    // except the orders, which since v1.831.0 also carry a build priority and a percent complete
+    // (the 2026-11-19 Ops Review) and scroll sideways on a narrower screen. Their promise-date
+    // column became Expected end: the Work Orders' planned end, else the promise date, with the
+    // promise under it when they differ. Its key stays p_promise, so a saved width carries over.
     const PRODUCT_TABLES = {
         orders: [
-            { key: "p_order", label: "Order", locked: true, width: 140 },
-            { key: "p_customer", label: "Customer", width: 140 },
-            { key: "p_product", label: "Product", width: 170 },
-            { key: "p_promise", label: "Promise date", width: 120 },
-            { key: "p_progress", label: "Where it is", width: 170 },
+            { key: "p_order", label: "Order", locked: true, width: 130 },
+            { key: "p_build", label: "Build priority", width: 90 },
+            { key: "p_customer", label: "Customer", width: 130 },
+            { key: "p_product", label: "Product", width: 160 },
+            { key: "p_promise", label: "Expected end", width: 140 },
+            { key: "p_complete", label: "Complete", width: 110 },
+            { key: "p_progress", label: "Where it is", width: 160 },
             { key: "p_paid", label: "Paid", width: 80 },
             { key: "p_total", label: "Product value", width: 90, num: true },
         ],
@@ -2277,11 +2283,43 @@
 
     // ---- the order board ----
 
-    function order_row(o) {
+    // The build priority (v1.831.0, the 2026-11-19 Ops Review): which open product order to build
+    // first, 1 first. A product order has no Project, so it carries this instead of a job's company
+    // and value-stream priority. It is kept on the Sales Order (custom_build_priority). For someone
+    // who may change it, the rank is a button: clicking it opens a number box, and Enter or leaving
+    // the box saves it (blank clears it), Escape puts it back. A delivered order's is history.
+    function build_cell(o, editable) {
+        const rank = o.build_priority
+            ? `<span class="pd-rank">${sf.esc(String(o.build_priority))}</span>`
+            : `<span class="pd-named">${sf.esc(__("Not set"))}</span>`;
+        if (o.stage === "delivered") return `<td class="dashcol dashcol-p_build">${o.build_priority ? rank : dash}</td>`;
+        if (!editable) return `<td class="dashcol dashcol-p_build">${rank}</td>`;
+        return `<td class="dashcol dashcol-p_build pd-build" data-order="${sf.esc(o.name)}">` +
+            `<button type="button" class="pd-build-rank" title="${sf.esc(__("Click to set the build priority: 1 is built first"))}">${rank}</button>` +
+            `<input type="number" class="pd-build-input" min="0" max="999" step="1" inputmode="numeric" value="${sf.esc(String(o.build_priority || ""))}" aria-label="${sf.esc(__("Build priority for {0}", [o.name]))}" hidden>` +
+            `</td>`;
+    }
+
+    // When the order should be done (v1.831.0): the latest planned end of a Work Order still being
+    // built, else the promise date, and for a delivered order the day it went. The line under it
+    // says which; "After promise" when the build's own plan runs past the promise. Late still
+    // means past the promise and not delivered.
+    function end_cell(o) {
+        const late = o.late ? `<span class="pd-late">${sf.esc(__("Late"))}</span>` : "";
+        const end = o.expected_end || o.delivery_date;
+        if (!end) return `<td class="dashcol dashcol-p_promise pd-due">${dash}${late}</td>`;
+        let sub = __("Promise date");
+        if (o.expected_end_source === "work_order") {
+            sub = o.delivery_date ? __("Work Order plan · promised {0}", [fmt_date(o.delivery_date)]) : __("Work Order plan");
+        } else if (o.expected_end_source === "delivered") {
+            sub = __("Delivered");
+        }
+        const after = o.after_promise ? ` ${sf.chip(__("After promise"), "warn")}` : "";
+        return `<td class="dashcol dashcol-p_promise pd-due">${sf.esc(fmt_date(end))}${late}${after}<div class="pd-psub">${sf.esc(sub)}</div></td>`;
+    }
+
+    function order_row(o, editable) {
         const items = (o.items || []).map((i) => `${number(i.qty)} &times; ${desk_link("item", i.item_code)}`).join("<br>");
-        const promise = o.delivery_date
-            ? `${sf.esc(fmt_date(o.delivery_date))}${o.late ? `<span class="pd-late">${sf.esc(__("Late"))}</span>` : ""}`
-            : dash;
         const where = [];
         if (o.stage === "delivered" && o.delivered_on) where.push(sf.esc(__("Delivered {0}", [fmt_date(o.delivered_on)])));
         else where.push(sf.esc(o.note || ""));
@@ -2296,18 +2334,27 @@
         return `
             <tr class="pd-row">
                 <td class="dashcol dashcol-p_order">${desk_link("sales-order", o.name, "pd-pname")}</td>
+                ${build_cell(o, editable)}
                 <td class="dashcol dashcol-p_customer">${sf.esc(o.customer_name || "")}</td>
                 <td class="dashcol dashcol-p_product">${items || dash}</td>
-                <td class="dashcol dashcol-p_promise pd-due">${promise}</td>
+                ${end_cell(o)}
+                ${completion_cell(o, "p_complete")}
                 <td class="dashcol dashcol-p_progress">${where.join(" · ")}</td>
                 <td class="dashcol dashcol-p_paid">${paid}</td>
                 <td class="dashcol dashcol-p_total pd-num" title="${sf.esc(__("The product lines, before tax"))}">${money(o.product_amount)}</td>
             </tr>`;
     }
 
-    // The soonest promise first (undated last), then the order number. A late order's promise
-    // is before today and an on-time one's is not, so the late ones lead their stage.
+    // The build priority first (1 first, every unranked order after the ranked ones; v1.831.0),
+    // then the soonest promise (undated last), then the order number. A late order's promise is
+    // before today and an on-time one's is not, so among equals the late ones lead their stage.
+    const build_rank = (o) => {
+        const n = parseInt(o.build_priority, 10);
+        return n > 0 ? n : Infinity;
+    };
     function compare_orders(a, b) {
+        const ra = build_rank(a), rb = build_rank(b);
+        if (ra !== rb) return ra < rb ? -1 : 1;
         const da = a.delivery_date || "9999-12-31", db = b.delivery_date || "9999-12-31";
         if (da !== db) return da < db ? -1 : 1;
         return String(a.name).localeCompare(String(b.name));
@@ -2352,7 +2399,7 @@
                 if (!at.length) return;
                 const count = at.length === 1 ? __("1 order") : __("{0} orders", [at.length]);
                 rows.push(group_row(stage_word(key), count, STAGE_PILLAR[key], colspan));
-                at.forEach((o) => rows.push(order_row(o)));
+                at.forEach((o) => rows.push(order_row(o, !!section.priority_editable)));
             });
         }
         const note = section.paid_visible === false ? __("Paid needs read access to Sales Invoices") : "";
@@ -2366,7 +2413,64 @@
             product_stage = product_stage === key || !PRODUCT_STAGES.includes(key) ? "" : key;
             render_current_tab();
         });
+        if (!state && section.priority_editable) bind_build_priority($section);
         return all.length;
+    }
+
+    // The rank button opens its number box; Enter, a change or leaving the box saves once, and
+    // Escape draws the board again, which puts the button back.
+    function bind_build_priority($section) {
+        $section.find('.pd-build-rank').on('click', function(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const cell = $(this).closest('.pd-build');
+            cell.find('.pd-build-rank').prop('hidden', true);
+            cell.find('.pd-build-input').prop('hidden', false).trigger('focus');
+        });
+        const save = function() {
+            const input = $(this);
+            if (input.data('pd-done')) return;
+            input.data('pd-done', true);
+            save_build_priority(input.closest('.pd-build').attr('data-order'), String(input.val() || "").trim());
+        };
+        $section.find('.pd-build-input')
+            .on('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    save.call(this);
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    $(this).data('pd-done', true);
+                    render_current_tab();
+                }
+            })
+            .on('change blur', save);
+    }
+
+    async function save_build_priority(order_name, raw) {
+        const rows = products && products.orders && Array.isArray(products.orders.rows) ? products.orders.rows : [];
+        const order = rows.find((o) => o.name === order_name);
+        const wanted = raw === "" ? 0 : Number(raw);
+        if (!order || (order.build_priority || 0) === wanted) {
+            if (current_tab === "products") render_current_tab();
+            return;
+        }
+        if (!Number.isInteger(wanted) || wanted < 0 || wanted > 999) {
+            frappe.show_alert({ message: __("A build priority is a whole number from 1 to 999, or blank."), indicator: "red" });
+            if (current_tab === "products") render_current_tab();
+            return;
+        }
+        try {
+            const res = await api_call('set_build_priority', { sales_order: order_name, priority: wanted || "" });
+            const message = res && res.message;
+            if (!message || message.status !== "success") {
+                throw new Error((message && message.message) || __("Could not save the build priority."));
+            }
+            order.build_priority = message.build_priority || null;
+            frappe.show_alert({ message: __("Build priority saved"), indicator: "green" });
+        } catch (err) {
+            frappe.show_alert({ message: (err && err.message) || __("Could not save the build priority."), indicator: "red" });
+        }
+        if (current_tab === "products") render_current_tab();
     }
 
     // ---- the sales pipeline ----

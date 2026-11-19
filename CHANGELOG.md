@@ -7,6 +7,290 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.831.0] - 2026-11-19
+
+One release for five reviewed PRs from the 2026-11-19 Weekly Operations Review: new Service and
+Events jobs numbered SRV-/EVT- (#1488), build priority on the Products tab (#1494), Warehouse
+Transactions upgrades (#1485), suggested reorder levels on the Reorder Board (#1492) and the rack QR
+sheet (#1496).
+
+### Added
+
+- **Rack QR sheet: one printed page per rack, every shelf's code with its position.** From the
+  2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+  too thin, for QR stickers. A new page, `/rack-qr-sheet?w=<rack>`, prints one Letter page per rack
+  to laminate and hang low beside it. The Warehouse form of any group has a new **Rack QR Sheet**
+  button (Stock Scan menu, beside Print QR Labels).
+  - **The same codes as the location labels.** Each encodes `<site>/stock-scan?w=<warehouse>`
+    (`stock_scan_rules.scan_url`), drawn as inline SVG by `qr_svg`, so a phone's camera or the
+    in-page scanner opens Stock Scan on that shelf, exactly as a sticker would.
+  - **Shelf 1 is the top shelf.** The rows are the rack's own children in the order a person sees
+    them (`Shelf NLR1-2` before `Shelf NLR1-10`), listed top to bottom. A location child (the Atrium
+    and Build Room shelves) is one shelf with one code. A group child (a bay's shelf) is one shelf
+    with a code for every location on it, left to right. Each row shows the shelf number, "Top
+    shelf" or "Bottom shelf", and each location's name under its code. **The number is the one the
+    shelf's name ends in** (`Shelf NLR1-3` is shelf 3), so a disabled shelf leaves a gap instead of
+    renumbering the shelves below it beside codes captioned with their real names; a name with no
+    number takes its place in the order. Where the Warehouse Map
+    has a box for the rack, the box decides, as the map's front view does: *Shelf 1 is at the*
+    Bottom turns the rows over, *Bin 1 is at the* Right turns each row around, and the box's own
+    order comes first.
+  - **A room prints each rack.** A group whose map box is a Room (production's Atrium and Build
+    Room) prints a page for every group inside it that holds a location, and one page named after
+    the room for any shelves standing in it directly, off a rack. So the Atrium's button prints its
+    six racks. Without a map, every group prints as one rack.
+  - **Sized for reading from a step back.** Codes are as large as the page allows, up to 1.8 in
+    (the two-shelf north racks) and never below 0.8 in. A busy shelf wraps, and a rack that cannot
+    fit on one page runs onto a second, never splitting a shelf (`rack_sheet_rules.layout`). Each
+    page is a table whose header (the rack's name, its room, how to read it) and footer print again
+    on every sheet the rack takes, and the screen says when a rack will not fit on one. Disabled
+    and Transit locations are left off, as on the labels.
+  - **Who.** The labels page's roles (`stock_scan_rules.LABEL_ROLES`). A signed-out visitor is sent
+    to log in and back to the same address. Server-rendered with `no_cache`, and the only script is
+    the Print button.
+  - **No endpoint, no schema change, no patch.** Pure rules in
+    `inventory_enhancements/rack_sheet_rules.py`; the read is `warehouse_labels.rack_sheets`. Tests:
+    `tests/test_rack_qr_sheet.py`, a new CI step that installs PyQRCode and Jinja2 so the real codes
+    and the template render.
+
+
+
+
+### Added
+
+- **Reorder Board: suggested reorder levels from real usage, applied item by item.** From the
+  2026-11-19 operations review: set reorder points from what is actually used. A fourth tab,
+  **Reorder levels** (`/desk/reorder-board/levels`, its own history entry), lists every Purchase
+  reorder rule the board reads. Each rule shows its current Reorder at and Buy, a suggested pair, and
+  what the suggestion rests on.
+  - **What counts as used.** Stock that left the shop for a job or a customer, inside the rule's
+    scope (its warehouse group, as ERPNext reads its projected qty). That means takes (Material
+    Issue), deliveries, and moves out to a job site or the Project Shelf, less what came back from a
+    job. Stock added with a job picked (Stock Scan's + with a job) comes off in full. A move back
+    from a job site or the Project Shelf comes off only up to what the shop sent out to them in the
+    same period: the shelf also holds parts bought straight for a job, and those were never the
+    shop's to have used. A **count correction is never use**: the derived count change is shown
+    beside the suggestion ("counts found 3 fewer, not counted as use"), so a shelf that keeps
+    coming up short is visible. Moves between shop places, receipts and returns to a supplier are
+    not use either.
+  - **The suggestion.** Average daily use over the basis, times (lead time + 7 days) for Reorder
+    at, and times 30 days for Buy. Both are rounded up, to whole units for a whole-number unit, and
+    Buy is never below one unit. An item with no lead time gets 7 days, and the page says that was
+    assumed. On production no rule item has a lead time set.
+  - **Honest about thin data.** The use is counted, and averaged, over one period: from the latest
+    of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site ever
+    recorded, and the item's first day in the shop, to today. So the weeks before Stock Scan went
+    live neither dilute the average nor add uses to it. A suggestion needs at least 3 uses over at
+    least 14 days. A thinner rule is listed under "too little history", with its basis and the one
+    reason in words: not in the shop, not used, as much came back as went out, too few uses, or too
+    few days. Items used in the window that have no rule are listed too, read-only.
+  - **Apply** opens a dialog with the suggested pair filled in and editable, then writes that one
+    rule: `api.reorder_board.apply_reorder_suggestion`, POST only. It needs Purchase Manager,
+    Stock Manager or System Manager **and** the person's own write permission on the Item. ERPNext
+    gives Item write to Item Manager alone (production's Custom DocPerms keep Stock Manager at write
+    0), so in practice Apply is for people who hold Item Manager and an apply role: 14 on
+    2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+    without Apply and a sentence saying why. No permission is changed. The change is one
+    `Item.save()` as the person, so ERPNext validates it and the Item's version history records it.
+    Only an existing rule is changed, and a page older than the Item writes nothing. A variant whose
+    rule comes from its template (ERPNext's reorder job gives a variant with no rule of its own its
+    template's rules) is marked with the template and has no Apply, because changing that rule
+    changes every variant; the endpoint refuses it in those words. The read is
+    `api.reorder_board.get_reorder_suggestions` (GET, the board's roles). The ledger is read per item
+    code, behind the role gate.
+  - **No schema change, no patch, no fixture.** Pure rules: `inventory_enhancements/reorder_suggest_rules.py`;
+    reads and the write: `inventory_enhancements/reorder_suggestions.py`. Tests:
+    `tests/test_reorder_board.py` (its existing CI step).
+
+- **Product orders on the Products tab's order board get a build priority, a percent complete and
+  an expected end.** These take the place of a job's company and value-stream priority. James and
+  Nik asked for them at the 2026-11-19 Weekly Operations Review. A product order is tracked by its
+  Sales Order number and has no Project, so the three facts are kept on or worked out from the
+  Sales Order and its Work Orders.
+  - **Build priority** says which open product order to build first, 1 first.
+    - **Storage:** a new Custom Field, `Sales Order.custom_build_priority` ("Build Priority", Int,
+      allowed on submit, not copied, hidden on print). It sits after Fulfillment, so it can also be
+      set from the order's own form.
+    - **Setting it:** on the board, someone who may write and submit Sales Orders clicks the rank. A number box
+      opens; Enter or leaving the box saves, blank clears, and Escape cancels.
+    - **The save** goes to a new POST endpoint, `project_dashboard.set_build_priority`. It checks:
+      - the page gate;
+      - write on that Sales Order and, once it's submitted, submit too, which is what saving an
+        allow-on-submit field on the order's own form needs (Sales User has both; so do Logan,
+        Brian, James, Nathan and Nikolas);
+      - that the value is a whole number from 1 to 999, or blank;
+      - that the order isn't cancelled.
+    - **The write** is a `db.set_value` that leaves `modified` alone. A full save of a submitted
+      order would run its whole update-after-submit chain for one number, and anyone with the order
+      open would hit "Document has been modified". The change goes on the order's timeline as a
+      comment that names the old and new rank, written in its own try so a failed comment is logged
+      and never reported as a failed save.
+    - **Known gap, accepted for now:** someone who already had the order's form open and then saves
+      an allow-on-submit edit there writes back the rank their form loaded.
+    - **Sorting:** within each stage, ranked orders come first, 1 first, then the promise date as
+      before.
+  - **Percent complete** (`product_orders.order_percent_complete`). The build is 80 of the 100 and
+    the delivery the last 20.
+    - The build share is the units produced over the units on the order's submitted Work Orders.
+      Drafts and cancelled Work Orders don't count, as in the stage rule.
+    - A built order (Ready or Testing) has the whole build share.
+    - A delivered unit always counts as built.
+    - Examples: nothing released is 0, half built is 40, built and waiting is 80, one of two units
+      delivered with the other built is 90, delivered is 100.
+  - **Expected end** (`product_orders.order_expected_end`):
+    - for an order being built, the latest planned end of its Work Orders that are still running;
+    - otherwise the promise date;
+    - for a delivered order, the day it was delivered.
+
+    A note under the date says which. An "After promise" chip shows when the Work Order plan runs
+    past the promise. "Late" still means past the promise and not delivered. This column took the
+    Promise date column's place, keeps its saved width (`p_promise`), and shows the promise
+    underneath whenever the two dates differ. ERPNext fills `planned_end_date` from the routing, and
+    prod has no workstations yet, so until it has, the date shown is the promise.
+- The endpoint reads the new column only once it exists (`has_column`). Until the fixture lands, the
+  board shows every order unranked and offers no editing.
+
+### Deploy notes
+
+- **Migrate effect:** one new Custom Field on Sales Order. No patch; an Int column's default of 0
+  is "not ranked", which is the right value for every existing order. No data is written.
+- Prod has almost no product orders yet, so all of this is tested on stubs: rules, endpoint and the
+  board script in the node harness.
+
+
+### Added
+
+- **Warehouse Transactions: a job, a room or rack, what each movement was, and totals by person
+  and by item.** From the 2026-11-19 operations review: before setting reorder points, see what is
+  taken and by whom. The report (v1.797.0) is extended, not rebuilt; with no new filter set it
+  shows the same rows as before, with three more columns.
+  - **Project filter.** Stock moved for a job: every ledger row that carries the job (a take with
+    the job picked, a receipt against its order line, a move onto or off the Project Shelf for it,
+    a move to its site), and every row at the job's own job-site warehouse. The two halves are one
+    `or_filters` group, so the dates, item, location, person and kind still narrow both. A count
+    corrects stock without a job: a count on the Project Shelf is no job's movement, a count at a
+    job's site is that job's.
+  - **A room or a rack covers every shelf under it.** It already did (a group warehouse includes
+    its descendants); the filter now says so ("Location (room, rack or bin)") and a new **Room /
+    Rack** column names the groups above each row's warehouse ("Atrium › North Large Rack 1").
+  - **Kind.** Each row says what it was: Take, Receive, Add, Move, Count, Return to supplier,
+    Delivered or Other (`inventory_enhancements/stock_movement_rules.movement_kind`), and a Kind
+    filter keeps one. The ledger stores no Stock Entry purpose, so the report reads the purposes
+    of its Stock Entries in one permission-checked `get_list`; a Stock Entry the reader may not
+    see reads as Other. A **Project** column shows the job on each row.
+  - **View: By person / By item.** By person totals saves, ledger lines, takes, receipts, moves
+    and counts per person (a transfer counts as one move, however many of its two legs the
+    filters show), with items, days active and the last movement. It also lists, as rows of
+    zeros, everyone who keeps stock and made no movement in the period: enabled System Users
+    with Stock User, Stock Manager or Inventory Clerk, without Administrator, Guest and the
+    service account (`reorder_rules.EXCLUDED_RECIPIENTS`). With the User filter set, that person
+    alone, zeros included. By item totals, in each item's stock unit, what was **taken** (for a
+    job, or delivered), received, moved, corrected by counts, returned, and the net change. A count
+    correction is never taken. The column is called Taken, not Used, on purpose: the Reorder Board's
+    suggested reorder levels count use from the shop's side (moves out to a job site or the Project
+    Shelf as well, less returns), and one word must not mean two figures for the same item.
+  - **From the Bin Manager.** A **Movements** button on a bin (that bin's movements), on a job in
+    By project (the job's), and on the picker (the job or item the picker is filtered to). It opens
+    the report as a new history entry, so Back returns to the Bin Manager. Every other filter is
+    sent blank, so a filter left from an earlier visit does not narrow the link. On a job the
+    report opens from the day the job's first stock moved to today, so parts moved weeks ago are
+    not hidden behind the default 30 days: `bin_views.project_view` now returns `movements_since`,
+    read by `project_stock.first_movement` (the earliest live ledger row carrying the job or at its
+    site; the Project's own dates are not used, since a Stock Scan role may not read the Project and
+    parts are often bought before a job starts). A job with nothing moved keeps the report's dates.
+    The button shows
+    only to people the Desk lets open the report (`frappe.boot.allowed_reports`), and only when the
+    page's bundle has the new route: `bin_manager.bundle.js` is version 3, and a tab still holding
+    an older copy draws the page without the button.
+  - **No new endpoint, no schema change, no patch.** Tests: `tests/test_warehouse_transactions.py`
+    (rules, the Project filter's two halves, rooms, kinds, both views),
+    `scripts/test_bin_manager.mjs` (the route, the job's dates and the button) and
+    `tests/test_bin_views.py` (the job's first movement, and a failed read never failing the view).
+
+- **New Service jobs are numbered `SRV-#####` and new Events jobs `EVT-#####`.** Design, Build and
+  every other type keep `PRJ-#####`. At the 2026-11-19 Weekly Operations Review, James said 35 open
+  Service projects make the design/build backlog look bigger than it is, and Nik picked these
+  prefixes. **Only new jobs change.** No Project is renamed, so the 35 open Service and 3 open Events
+  projects keep their PRJ numbers.
+  - **How it works.** Production doesn't name Projects from the naming series. It uses one Document
+    Naming Rule: prefix `PRJ-`, no conditions, priority 0, counter 787. `tabSeries` has no `PRJ-` row
+    at all. Frappe tries a doctype's rules highest priority first, and the first rule whose
+    conditions match names the document. A new patch, `patches/seed_job_prefix_naming_rules`, adds
+    two rules with priority 10: `SRV-` when `project_type = Service`, and `EVT-` when
+    `project_type = Events`. Nothing runs at naming time.
+  - **Numbering.** Each prefix counts on its own. The first new Service job is **SRV-00101**, the
+    first Events job EVT-00001, and PRJ- carries on from 787.
+    - SRV- starts after 100 because QuickBooks already holds ten old customer-jobs of its own named
+      SRV-00000 to SRV-00015 (checked on prod), and a person should never mistake one of those for a
+      new job. QuickBooks has no EVT- names.
+    - A rule keeps and locks its own counter, so this needs no code and can't give two jobs one
+      name. One shared count would need our own naming code in place of Frappe's rules.
+    - The cost: a bare number such as "12" can now mean up to three jobs. Desk search shows all of
+      them: "12", "project 12" or "job 12" look under PRJ-, SRV- and EVT-, and "SRV 12",
+      "service 12" or "EVT 12" narrows the search.
+  - **When the prefix is picked.** Once, when the Project is created. A type set or changed later
+    never renames the job, because a rename would orphan the Drive folder, the QuickBooks job, the
+    visit numbers and people's notes. Reports and the Projects Dashboard group by type, never by
+    prefix, so a PRJ- Service job still counts as Service.
+  - **Every way a Project is created now gets its type before it is named:**
+    - the Closed Won hand-off (unchanged);
+    - service calls (Service);
+    - rentals' "create project" (Events);
+    - Fountain Move jobs (Service);
+    - Quick Entry (the "Project Stage" field);
+    - the AI tools (the values arrive with the insert).
+  - **Templates.** A new `before_insert` hook, `job_prefixes.fill_type_from_template`, gives a
+    Project with no type its template's type. So a job made from *Service Project Template*,
+    *Service Call* or *Fountain Move* is SRV-, and one from *Rent Project Template* is EVT-. ERPNext
+    copies the template's type too, but in `copy_from_template` during `after_insert`, after the
+    job is named, so without this hook such a job would be typed Service and numbered PRJ-. The
+    hook only fills a blank and never raises.
+  - **Not covered:** the Desk's "Create > Project" from an Opportunity goes through
+    `opportunity_enhancements.make_project`, which imports a `make_project` that ERPNext 16.54
+    doesn't define. That path can't create anything today; it's left for a separate change.
+
+### Fixed
+
+- **Code that reads a job number out of a name now knows SRV- and EVT-, except QuickBooks, which
+  must not.** Every parser was audited:
+  - **QuickBooks job matching stays PRJ-only, on purpose** (`quickbooks_online/core/mapping.py`,
+    `_PRJ_NUMBER_RE`, now commented with the reason).
+    - ERPNext never pushes a job to QuickBooks, so a new SRV- or EVT- job can never have a QBO
+      counterpart.
+    - QuickBooks does hold ten old customer-jobs named SRV-00000 to SRV-00015, for example
+      "Wasatch Retail & Hospitality:SRV-00003 - 4-17-13", each linked to its parent Customer.
+    - A prefix-aware matcher would have linked QBO job 1504 to a new SRV-00003 at confidence 95,
+      and the remediation's invoice tagging could then have stamped that customer's invoices and
+      GL rows with an unrelated project.
+    - Two tests pin it: "SRV-00003 - 4-17-13" yields no number, and `_match_project` never runs
+      the number query for it.
+  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Riverton Splash Pad"
+    now matches "Riverton Splash Pad" the way a PRJ- folder does. "Service" and "Events" are never taken
+    for a job number.
+  - **Desk search.** A word for a job ("p", "proj", "project" and now "job") looks under all
+    three prefixes, so "project 12" finds PRJ-00012, SRV-00012 and EVT-00012. The series' own
+    letters stay in their series ("PRJ-12" only finds PRJ-00012), and SRV, SERVICE, EVT, EVENT and
+    EVENTS are new aliases.
+  - **The Time Kiosk's project picker** placeholder now reads "Search project name or number". The
+    search already matched any part of the name.
+  - **Already prefix-agnostic, unchanged:** visit numbers (`<project>-YYYY-V###`), change orders
+    (`<project>-CO-###`), PO PDF names, Drive folder names, the Project ID mirror, and the kiosk's
+    substring search.
+
+### Deploy notes
+
+- **Migrate effect:** one patch creates the SRV- rule (counter 100, so the first job is SRV-00101)
+  and the EVT- rule (counter 0).
+  - It creates nothing if a rule with that prefix already exists.
+  - It never touches the PRJ- rule or its counter, and never renames or retypes a Project.
+  - It cannot raise: a failure writes one Error Log row and the deploy goes on.
+  - **Check after deploy:** ``SELECT name, prefix, counter, priority FROM `tabDocument Naming Rule`
+    WHERE document_type='Project'`` should show three rules.
+  - No fixtures change.
+- **Note for people:** the Item code family `SRV-###` (POL-0602 service items, three digits) shares
+  the letters with the new `SRV-#####` job numbers (five digits). They are different doctypes and
+  don't clash, but people may confuse them.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

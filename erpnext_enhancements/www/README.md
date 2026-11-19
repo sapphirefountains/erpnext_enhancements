@@ -60,6 +60,9 @@ Several standalone web pages live here, separate from the heavy desk app:
   labels, one per stock-holding warehouse, server-rendered (`warehouse_labels.py` +
   `warehouse-labels.html`). See [its section below](#warehouse-labels--printable-qr-labels) —
   it has print settings that are not optional.
+- the **rack QR sheet** at **`/rack-qr-sheet`** (v1.831.0): one printed page per rack, every shelf's
+  Stock Scan code with its position, to hang beside a rack (`rack_qr_sheet.py` + `rack-qr-sheet.html`).
+  See [its section below](#rack-qr-sheet--one-printed-page-per-rack-v18330).
 - the **customer rental portal** at **`/rentals`** (v1.565.0): the signed-in customer's rentals, with `?booking=` opening one (schedule, what is booked, invoices paid on `/pay`, site-prep and change-request forms). Login-gated: a guest is sent to `/login?redirect-to=` this page, query kept. Every lookup is ownership-checked in `asset_management/rental_portal.py` (`rentals.py` + `rentals.html`);
 - the **public rental request form** at **`/rent-a-fountain`** (v1.565.0): guest-accessible, 404s unless `Rental Settings.public_request_form` is ticked, with Turnstile and a honeypot; submits through `asset_management/rental_requests.submit_request` (`rent_a_fountain.py` — note the underscored controller — + `rent-a-fountain.html`);
 - **the customer portal's look** (custom pages S6a, v1.679.0): `/pay`, `/pay-card`, `/rentals` and `/rent-a-fountain` replace the website navbar with one shared nav bar (`templates/includes/sf_portal_nav.html`: Pay Invoices, My Rentals, Rent a Fountain while the form is on, Sign in/out, and never a Desk link), link `sf_tokens.bundle.css` then `sf_portal.bundle.css` through `bundled_asset`, and are pinned light (`templates/includes/sf_portal_light.html`). Presentation only: `tests/test_customer_portal_polish.py` pins each page's inline script by SHA-256, so a change to the payment code cannot ride along with a style change;
@@ -248,6 +251,15 @@ inventory_enhancements/bin_assignments.py   Move to… / Remove from this bin / 
   against the same parse vectors as the Python rules, `nav.js` driven against a fake session
   history that refuses any call with a URL, and the real `app.js` on a small fake DOM for the
   report form's sequences: nothing opens or navigates under it while it loads or is open).
+
+## `/rack-qr-sheet` — one printed page per rack (v1.831.0)
+
+`rack-qr-sheet.html` + `rack_qr_sheet.py` (underscore, so Frappe imports it). Every shelf's Stock Scan
+code with its position, Shelf 1 at the top, one Letter page per rack, to laminate and hang beside a
+rack whose shelves cannot take a sticker. `?w=<group>` (repeatable); a group whose Warehouse Map box is
+a Room prints each rack in it. Server-rendered, `no_cache`, the labels page's roles and login
+redirect; the only script prints. The Warehouse form's **Rack QR Sheet** button opens it. The rules
+are `inventory_enhancements/rack_sheet_rules.py`; see the inventory README's *The rack QR sheet*.
 
 ## `/warehouse-labels` — printable QR labels
 
