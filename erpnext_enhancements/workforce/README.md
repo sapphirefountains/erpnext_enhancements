@@ -331,6 +331,12 @@ Manager. An approver's edit to someone else's interval needs no approval, and se
 waiting one as approved; an approver's edit to their own time still waits. Whoever decides is
 never the employee or the person who made the edit (`may_decide`).
 
+Who approves is read from two fields: `Employee.reports_to` names the supervisor, and
+`Employee.user_id` links each employee to a login. Anyone with write access to Employee can
+change either one, and in ERPNext that includes the HR User role, so the approval is only as
+sound as those two fields. Changes to them are worth watching; Employee tracks changes, so each
+one is in the record's version history.
+
 A waiting interval is left out of every total in `payroll_export` and listed on its **Waiting
 for Approval** sheet, and `sync_interval_to_timesheet` writes no Timesheet line for it
 (`sync_status = Held - Not Approved`), so it is not submitted with the day and does not reach
