@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.1] - 2026-11-19
+
+### Changed
+
+- **Document Intake endpoints check access consistently (hardening).**
+  - `ingest_upload` and `ingest_mobile_photo` now require read permission on the File they are
+    given, using the File doctype's own rule (the caller's own upload, a public file, a file shared
+    with them, or a file attached to a record they can read). The check runs in the whitelisted
+    wrapper before anything is read; `ingest_document` is unchanged, so the email, Drive watch and
+    other server-side channels keep working. The Upload Document button and the mobile channel
+    upload a File first and are unaffected.
+  - `reprocess` (Re-extract) now resets only a document that is still being worked up (Received,
+    Extracting, Needs Item Review, Needs Review or Failed) and never one that names the record it
+    created. It is rate limited to 30 calls per user per hour with `utils/user_rate_limit`.
+  - `reject_document` now refuses a document that is Posting or Posted, or that names the record
+    it created. Approve already refused those.
+  - New bench-free suite `tests/test_intake_access_checks.py`, wired into CI.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
