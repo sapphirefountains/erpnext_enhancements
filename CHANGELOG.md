@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     or a query the doctype registers through the `standard_queries` hook), the filters are that
     query's arguments and are not read as field names. Without one they are checked as frappe's
     query engine reads them. The search field is checked on both paths.
+  - **One named exception: `User.user_type`.** It says only whether an account is a desk account or
+    a website account; the Desk and this app list staff by it (frappe's Users workspace cards, the
+    Create Project dialog's list of users to notify), and frappe's query engine already lets any
+    caller filter, sort and group by it. A filter, sort, grouping or aggregate on it is accepted for
+    every Desk user, on every route. Every other field of User above level 0 is still refused for a
+    user who cannot read it, and a user who holds only `select` on a doctype is not exempt in general.
   - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
     frappe reads a bare value as a document name.
   - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
@@ -61,7 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ERPNext v16.54.0 sets up, list view, Kanban, report view group-by, sidebar counts and tags,
   next/previous, number cards, charts, REST lists, standard columns) runs for a caller who cannot
   read Item, Customer and Supplier's `allowed_companies` table and must pass; the same routes
-  naming a hidden field must still be refused.
+  naming a hidden field must still be refused. The Create Project dialog's list of desk users, over
+  stand-in User metadata shaped like frappe 16.56.0's, passes for a user with `select` only on
+  User, while every other level-1 field of User stays refused for that user.
 
 ## [1.830.0] - 2026-11-19
 

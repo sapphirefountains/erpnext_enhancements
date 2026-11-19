@@ -391,6 +391,41 @@ METAS = {
 		[_df("title"), _df("odd_rows", 1, "Table", "Odd Row")],
 		[_perm("Stock User"), _perm("Item Manager"), _perm("Item Manager", 1)],
 	),
+	# frappe 16.56.0's User (frappe/core/doctype/user/user.json at the tag), trimmed: its level-1 fields
+	# and tables as there, a few level-0 fields and tables, and its permissions: read at levels 0 and 1
+	# for System Manager, `select` only (no read) for Desk User.
+	"User": _Meta(
+		"User",
+		[
+			_df("enabled", 0, "Check"),
+			_df("email"),
+			_df("full_name"),
+			_df("sb1", 1, "Section Break"),
+			_df("role_profile_name", 1, "Link", "Role Profile"),
+			_df("roles", 1, "Table", "Has Role"),
+			_df("reset_password_key", 1),
+			_df("user_emails", 1, "Table", "User Email"),
+			_df("block_modules", 1, "Table", "Block Module"),
+			_df("defaults", 0, "Table", "DefaultValue"),
+			_df("user_type", 1, "Link", "User Type"),
+			_df("login_after", 1, "Int"),
+			_df("login_before", 1, "Int"),
+			_df("restrict_ip", 1, "Small Text"),
+			_df("api_key", 1),
+			_df("api_secret", 1, "Password"),
+			_df("social_logins", 0, "Table", "User Social Login"),
+			_df("role_profiles", 1, "Table MultiSelect", "User Role Profile"),
+		],
+		[_perm("System Manager"), _perm("System Manager", 1), _perm("Desk User", 0, read=0)],
+	),
+	"Has Role": _Meta("Has Role", [_df("role", 0, "Link", "Role")], istable=True),
+	"User Email": _Meta("User Email", [_df("email_account", 0, "Link", "Email Account")], istable=True),
+	"Block Module": _Meta("Block Module", [_df("module")], istable=True),
+	"DefaultValue": _Meta("DefaultValue", [_df("defkey"), _df("defvalue")], istable=True),
+	"User Social Login": _Meta("User Social Login", [_df("provider"), _df("userid")], istable=True),
+	"User Role Profile": _Meta(
+		"User Role Profile", [_df("role_profile", 0, "Link", "Role Profile")], istable=True
+	),
 }
 
 HR_USER = ("hr.user@example.com", ("HR User", "All"))
@@ -398,6 +433,13 @@ HR_MANAGER = ("hr.manager@example.com", ("HR Manager", "All"))
 PROJECTS_USER = ("pu@example.com", ("Projects User", "All"))
 #: Reads level 0 of Item, Supplier and Project, and nothing of Customer (no Sales User role).
 STAFF = ("staff@example.com", ("Stock User", "Purchase User", "Projects User", "All"))
+#: A Desk user below System Manager: `select` on User, no read at any level of it.
+DESK_USER = ("desk@example.com", ("Desk User", "Sales User", "All"))
+SYSTEM_MANAGER = ("sm@example.com", ("System Manager", "Desk User", "All"))
+#: The request the Create Project prompt sends (public/js/crm_enhancements/create_project_prompt.js)
+#: and the filters of frappe's Users workspace cards.
+DESK_USERS_FILTERS = {"enabled": 1, "user_type": "System User"}
+USERS_CARD_FILTERS = [["User", "enabled", "=", 1], ["User", "user_type", "=", "System User"]]
 
 
 def _whitelist(allow_guest=False, methods=None, **_kwargs):
@@ -1366,8 +1408,8 @@ class _RouteCase(unittest.TestCase):
 		self.assertTrue(_refused(fn, *args, **kwargs), f"{fn.__name__} passed {args} {kwargs}")
 		self.assertEqual(len(STATE["calls"]), calls_before, "frappe's function must not run")
 
-	def rest(self, path, form):
-		_reset(STAFF, form=form)
+	def rest(self, path, form, who=STAFF):
+		_reset(who, form=form)
 		response = _Response()
 		ff.refuse_rest_list_references(response=response, request=_Request("GET", path))
 		return response.status_code
@@ -1640,6 +1682,101 @@ class TestOrdinaryRequests(_RouteCase):
 			with self.subTest(filters=filters):
 				_reset(HR_USER)
 				self.refuses(ff.client_get_value, "Pay Settings", "company", filters)
+
+	def test_the_create_project_prompt_lists_desk_users(self):
+		"""``frappe.client.get_list`` on User by ``enabled`` and ``user_type``, from a Desk user with
+		``select`` only on User, over POST (JSON strings) and as a dict."""
+		for filters, fields in (
+			(json.dumps(DESK_USERS_FILTERS), json.dumps(["name"])),
+			(dict(DESK_USERS_FILTERS), ["name"]),
+		):
+			with self.subTest(filters=filters):
+				_reset(DESK_USER)
+				self.passes(ff.client_get_list, "User", fields, filters, limit_page_length=0)
+
+
+class TestUserTypeReference(_RouteCase):
+	"""``User.user_type`` is the one reference ``REFERENCES_NOT_HELD_BACK`` lets through; every other
+	level-1 field of User is still refused for the same caller."""
+
+	OTHER_LEVEL_1 = (
+		"api_key",
+		"reset_password_key",
+		"roles",
+		"role_profile_name",
+		"restrict_ip",
+		"login_after",
+	)
+
+	def setUp(self):
+		_reset(DESK_USER)
+
+	def test_the_request_passes_on_every_route(self):
+		self.passes(ff.client_get_list, "User", ["name"], DESK_USERS_FILTERS, limit_page_length=0)
+		_reset(DESK_USER)
+		self.passes(ff.client_get_count, "User", json.dumps(DESK_USERS_FILTERS))
+		_reset(DESK_USER, form={"doctype": "User", "filters": json.dumps(USERS_CARD_FILTERS)})
+		self.passes(ff.reportview_get_count)
+		_reset(DESK_USER)
+		card = {"name": "Total System Users", "document_type": "User", "function": "Count"}
+		self.passes(ff.number_card_get_result, json.dumps(card), json.dumps(USERS_CARD_FILTERS))
+		self.assertEqual(
+			self.rest(
+				"/api/resource/User",
+				{"filters": json.dumps(DESK_USERS_FILTERS), "fields": json.dumps(["name"])},
+				who=DESK_USER,
+			),
+			200,
+		)
+
+	def test_in_every_position(self):
+		for kwargs in (
+			{"filters": [["user_type", "=", "System User"]]},
+			{"filters": [["User", "user_type", "=", "System User"]]},
+			{"filters": {"`tabUser`.`user_type`": "System User"}},
+			{"or_filters": {"user_type": "Website User"}},
+			{"order_by": "user_type asc"},
+			{"group_by": "user_type"},
+			{"fields": [{"COUNT": "user_type", "as": "n"}]},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				_reset(DESK_USER)
+				self.passes(ff.client_get_list, "User", **kwargs)
+		_reset(DESK_USER)
+		self.passes(ff.listview_get_group_by_count, "User", "[]", "user_type")
+		_reset(DESK_USER)
+		self.passes(ff.form_get_next, "User", "a@example.com", 1, None, "desc", "user_type")
+
+	def test_the_other_level_1_fields_are_still_refused(self):
+		for fieldname in self.OTHER_LEVEL_1:
+			for kwargs in (
+				{"filters": {**DESK_USERS_FILTERS, fieldname: "x"}},
+				{"filters": DESK_USERS_FILTERS, "order_by": f"{fieldname} desc"},
+				{"fields": [{"COUNT": fieldname}], "filters": DESK_USERS_FILTERS},
+			):
+				with self.subTest(fieldname=fieldname, **{k: str(v) for k, v in kwargs.items()}):
+					_reset(DESK_USER)
+					self.refuses(ff.client_get_list, "User", **kwargs)
+			with self.subTest(fieldname=fieldname, route="other routes"):
+				_reset(DESK_USER)
+				self.refuses(ff.client_get_count, "User", json.dumps({fieldname: "x"}))
+				_reset(DESK_USER)
+				self.refuses(ff.form_get_next, "User", "a@example.com", 1, None, "desc", fieldname)
+				self.assertEqual(
+					self.rest("/api/resource/User", {"order_by": f"{fieldname} desc"}, who=DESK_USER), 403
+				)
+
+	def test_a_system_manager_is_untouched(self):
+		for fieldname in ("user_type", *self.OTHER_LEVEL_1):
+			with self.subTest(fieldname=fieldname):
+				_reset(SYSTEM_MANAGER)
+				self.passes(
+					ff.client_get_list,
+					"User",
+					filters={fieldname: "x"},
+					order_by=f"{fieldname} desc",
+					fields=[{"COUNT": fieldname}],
+				)
 
 
 class TestStillRefused(_RouteCase):

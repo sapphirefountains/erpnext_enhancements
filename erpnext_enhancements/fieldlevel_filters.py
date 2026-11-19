@@ -35,6 +35,11 @@ is not refused, and neither is a standard column (``name``, ``owner``, ``_assign
 ``query`` argument or the doctype's ``standard_queries`` hook, the filters are that query's arguments
 and are not read as field names; the search field is checked on both paths.
 
+**One named exception.** ``REFERENCES_NOT_HELD_BACK`` lists the field references a doctype does not
+hold back from a caller below the field's level: only ``User.user_type``, for the reason given
+there. A caller with ``select`` but not ``read`` on a doctype is not exempt in general, and
+``select`` is never counted as ``read``.
+
 **How each route is reached.** The RPC routes are whitelisted methods, wrapped here through
 ``override_whitelisted_methods`` exactly as in ``fieldlevel_read``: each wrapper restates frappe's
 parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0),
@@ -132,6 +137,19 @@ _STANDARD_NAMES = frozenset(
 	)
 )
 
+#: Field references a doctype does not hold back from a caller below the field's level, by doctype.
+#: Only the reference: the value itself still follows the field's level wherever a document is sent.
+#: - ``User.user_type`` (level 1 in frappe 16.56.0's User, which gives Desk User only ``select``): it
+#:   says only whether an account is a desk account or a website account. The Desk and this app list
+#:   staff by it (frappe's Users workspace cards; the Create Project prompt's ``{"enabled": 1,
+#:   "user_type": "System User"}``), and every user picker already shows which accounts are desk
+#:   accounts. frappe's query engine makes the same exception for filtering, sorting and grouping,
+#:   for a caller with ``select`` only and for one with ``read`` (query.py 1104-1107 and 1113-1118);
+#:   for everything else a ``select``-only caller may filter, sort and group by level-0 fields and
+#:   the standard columns only (1074-1108). Here the exception holds in every position, an aggregate
+#:   argument included, on every wrapped route. Every other level-1 field of User is still refused.
+REFERENCES_NOT_HELD_BACK = {"User": frozenset({"user_type"})}
+
 _SEALED = set()
 _seal_failure_logged = False
 
@@ -156,6 +174,7 @@ class _Hidden:
 		self.doctype = doctype
 		self.fields = {df.fieldname: df for df in meta.fields}
 		self.hidden = {df.fieldname for df in meta.fields if not _is_readable(df, levels)}
+		self.hidden -= REFERENCES_NOT_HELD_BACK.get(doctype, frozenset())
 		#: table fieldname -> child doctype; child doctype -> its hidden fieldnames. A table field the
 		#: caller cannot read hides every field of its child doctype.
 		self.tables = {}
