@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read requests are held to field-level read on the field names they carry (hardening).** A
   request that names a field the caller cannot read at its permlevel, in `filters`, `or_filters`,
   `order_by`, `group_by`, an aggregate or another `fields` expression, is now refused with a plain
-  "You do not have permission to filter, sort, group or total by a field you cannot read" message.
+  permission message. The message says how to get out of it: a saved list or report that uses such a
+  field keeps being refused until the filter, sort or column is removed (in a report, Menu > Pick
+  Columns).
   A field of a child table answers to the parent doctype's levels, the rule `fieldlevel_read.py`
   already applies to documents. New `fieldlevel_filters.py`; nothing changes for a caller who can
   read every field of the doctype and its child tables (Administrator included), and server-side

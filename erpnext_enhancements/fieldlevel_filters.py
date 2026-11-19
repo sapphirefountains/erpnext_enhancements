@@ -99,7 +99,13 @@ _TABLE_PREFIX = re.compile(r"^`?(\w+)`?\.")
 #: frappe's default: frappe.whitelist() with no methods answers these four.
 ANY_METHOD = ["GET", "POST", "PUT", "DELETE"]
 
-REFUSAL = "You do not have permission to filter, sort, group or total by a field you cannot read."
+#: What a refused caller reads. It says how to get out of it: a saved list or report that uses such
+#: a field keeps being refused until the filter, sort or column is taken off.
+REFUSAL = (
+	"This request filters, sorts, groups, totals or shows a column by a field or table you do not "
+	"have permission to read. If this is a saved list or report, remove that filter, sort or "
+	"column (in a report: Menu > Pick Columns)."
+)
 
 #: frappe's functions that the wrappers below replace, by canonical dotted path: the
 #: override_whitelisted_methods keys in hooks.py. tests/test_fieldlevel_filters.py holds the two equal.
