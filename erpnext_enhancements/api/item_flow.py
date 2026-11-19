@@ -15,7 +15,8 @@ Things this module is careful about:
   anything is written (Item write for the Item's rows, Item Price create or write for the price,
   Asset create for the Asset), and saves without ``ignore_permissions``, so the framework's own
   checks run a second time. Nothing here grants what the Desk would refuse, and
-  ``api.procurement.save_item_link`` now follows the same rule for a purchase link. The one exception is
+  ``api.procurement.save_item_link`` follows the same rule for a purchase link, except that a
+  purchasing role may save one without Item write. The other exception is
   the bin assignment (a Putaway Rule), which ``inventory_enhancements.bin_assignments`` writes
   behind its own gate, as it does for Stock Scan and the bin page (``_assign_bin``).
 * **Nothing is made twice on a resend.** The Item's rows and the price are keyed on what they are

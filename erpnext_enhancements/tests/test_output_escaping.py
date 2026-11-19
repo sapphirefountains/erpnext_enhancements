@@ -12,7 +12,8 @@ a page in four ways, and each now has one rule:
   is a site file or an http(s) page (the node checks are ``scripts/test_safe_file_link.mjs``).
 
 ``api/procurement.save_item_link`` is also covered here: it stores only an address the guided Item
-flow would accept, and no longer saves the Item past its permission check.
+flow would accept, and it saves past the Item's own permission check for a purchasing role only
+(Nikolas, 2026-11-19: "Item or purchase roles").
 
 Each suite loads the one function it needs from the source file with ``ast`` over a stand-in
 ``frappe``, so nothing here installs a ``frappe`` stub for other suites to inherit.
@@ -51,6 +52,15 @@ def _load_functions(path, names, namespace):
 	assert {n.name for n in wanted} == set(names), (path, names)
 	exec(compile(ast.Module(body=wanted, type_ignores=[]), str(path), "exec"), namespace)
 	return namespace
+
+
+def _frozenset_constant(path, name):
+	"""A module-level ``NAME = frozenset({...})``, read from the source file."""
+	for node in ast.parse(_read(path)).body:
+		targets = [getattr(target, "id", None) for target in getattr(node, "targets", [])]
+		if isinstance(node, ast.Assign) and name in targets:
+			return frozenset(ast.literal_eval(node.value.args[0]))
+	raise AssertionError(f"{name} is not defined in {path}")
 
 
 def _strip_comments(source):
@@ -246,9 +256,20 @@ class TestChildTaskTree(unittest.TestCase):
 
 
 class TestSaveItemLink(unittest.TestCase):
+	"""What may be saved as a purchase link, and who may save one.
+
+	Nikolas, 2026-11-19: "Item or purchase roles". A purchasing role saves a link without write
+	permission on the Item; the page's other roles (Item Manager, System Manager) need Item write;
+	nobody else reaches the save at all. The roles are read from the source file, not copied here.
+	"""
+
 	SOURCE = APP / "api" / "procurement.py"
 
-	def _api(self, roles=("Purchase User",), may_write=True, existing=False):
+	#: Purchasing staff as they are set up: all three purchase roles and no Item Manager.
+	BUYER = ("Employee", "Purchase User", "Purchase Manager", "Purchase Master Manager")
+	URL = "https://supplier.example/p/1"
+
+	def _api(self, roles=BUYER, may_write=True, existing=False):
 		calls = types.SimpleNamespace(permission=[], set_value=[], saved=[], appended=[], throws=[])
 
 		class Refused(Exception):
@@ -286,24 +307,90 @@ class TestSaveItemLink(unittest.TestCase):
 		namespace = {
 			"frappe": fake,
 			"_": lambda text: text,
-			"ALLOWED_ROLES": frozenset({"Purchase User", "System Manager"}),
+			"ALLOWED_ROLES": _frozenset_constant(self.SOURCE, "ALLOWED_ROLES"),
+			"PURCHASE_ROLES": _frozenset_constant(self.SOURCE, "PURCHASE_ROLES"),
 			"purchase_url_problem": item_flow_rules.purchase_url_problem,
 		}
 		_load_functions(self.SOURCE, ["_require_purchasing_access", "save_item_link"], namespace)
 		return namespace["save_item_link"], calls, Refused
 
+	def _nothing_written(self, calls):
+		self.assertEqual((calls.set_value, calls.saved, calls.appended), ([], [], []))
+
+	# -- who may save -----------------------------------------------------------------------------
+
+	def test_the_purchase_roles_are_the_three_and_the_page_adds_two(self):
+		purchase = _frozenset_constant(self.SOURCE, "PURCHASE_ROLES")
+		page = _frozenset_constant(self.SOURCE, "ALLOWED_ROLES")
+		self.assertEqual(purchase, {"Purchase User", "Purchase Manager", "Purchase Master Manager"})
+		self.assertEqual(page - purchase, {"Item Manager", "System Manager"})
+
+	def test_a_buyer_with_the_purchase_roles_and_no_item_write_can_save(self):
+		"""Purchasing staff hold the three purchase roles and cannot write Items."""
+		save, calls, _ = self._api(roles=self.BUYER, may_write=False)
+		self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+		row = {"supplier": "Supplier A", "purchase_url": self.URL}
+		self.assertEqual(calls.appended, [("supplier_items", row)])
+		self.assertEqual(calls.saved, [{"ignore_permissions": True}])
+		self.assertEqual(calls.permission, [], "a buyer is not asked for Item write")
+
+		save, calls, _ = self._api(roles=self.BUYER, may_write=False, existing=True)
+		self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+		self.assertEqual(calls.set_value, [("Item Supplier", "ROW-1", "purchase_url", self.URL)])
+
+	def test_any_one_purchase_role_is_enough(self):
+		for role in ("Purchase User", "Purchase Manager", "Purchase Master Manager"):
+			with self.subTest(role=role):
+				save, calls, _ = self._api(roles=("Employee", role), may_write=False)
+				self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+				self.assertEqual(calls.saved, [{"ignore_permissions": True}])
+
+	def test_an_item_writer_without_a_purchase_role_can_save(self):
+		for role in ("Item Manager", "System Manager"):
+			with self.subTest(role=role):
+				save, calls, _ = self._api(roles=("Employee", role), may_write=True)
+				self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+				self.assertEqual(calls.permission, [("Item", "write", "ITEM-1", True)])
+				self.assertEqual(
+					calls.saved, [{"ignore_permissions": False}], "saved through the framework's own checks"
+				)
+
+		save, calls, _ = self._api(roles=("Item Manager",), may_write=True, existing=True)
+		self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+		self.assertEqual(len(calls.permission), 1)
+		self.assertEqual(calls.set_value, [("Item Supplier", "ROW-1", "purchase_url", self.URL)])
+
+	def test_a_user_with_neither_is_refused_and_nothing_is_written(self):
+		# On the page by role, but with no purchase role and no write on this Item.
+		for role in ("Item Manager", "System Manager"):
+			for existing in (False, True):
+				with self.subTest(role=role, existing=existing):
+					roles = ("Employee", role)
+					save, calls, Refused = self._api(roles=roles, may_write=False, existing=existing)
+					with self.assertRaises(Refused):
+						save("ITEM-1", "Supplier A", self.URL)
+					self._nothing_written(calls)
+		# Not on the page at all, whatever the Item's permissions say.
+		for roles in (("Employee",), ("Employee", "Stock User", "Projects Manager"), ("Guest",)):
+			with self.subTest(roles=roles):
+				save, calls, _ = self._api(roles=roles, may_write=True)
+				with self.assertRaises(ValueError):
+					save("ITEM-1", "Supplier A", self.URL)
+				self.assertIn("not permitted", calls.throws[0])
+				self._nothing_written(calls)
+
+	# -- what may be saved ------------------------------------------------------------------------
+
 	def test_a_web_address_is_stored(self):
 		save, calls, _ = self._api()
-		self.assertTrue(save("ITEM-1", "Supplier A", "https://supplier.example/p/1"))
-		self.assertEqual(calls.appended[0][1]["purchase_url"], "https://supplier.example/p/1")
-		self.assertEqual(calls.permission, [("Item", "write", "ITEM-1", True)])
-		self.assertEqual(calls.saved, [{}], "saved through the framework's own permission checks")
+		self.assertTrue(save("ITEM-1", "Supplier A", self.URL))
+		self.assertEqual(calls.appended[0][1]["purchase_url"], self.URL)
 
-	def test_a_row_that_exists_is_updated_after_the_permission_check(self):
+	def test_a_row_that_exists_is_updated_with_the_trimmed_address(self):
 		save, calls, _ = self._api(existing=True)
 		self.assertTrue(save("ITEM-1", "Supplier A", "  http://supplier.example/p/1 "))
 		self.assertEqual(calls.set_value, [("Item Supplier", "ROW-1", "purchase_url", "http://supplier.example/p/1")])
-		self.assertEqual(len(calls.permission), 1)
+		self.assertEqual((calls.saved, calls.appended), ([], []))
 
 	def test_an_address_that_is_not_a_web_address_is_refused_before_anything_is_written(self):
 		for bad in ("javascript:alert(1)", "supplier.example/p", "data:text/html,x", "ftp://x.example/a", "https://a b.example/"):
@@ -313,26 +400,22 @@ class TestSaveItemLink(unittest.TestCase):
 					save("ITEM-1", "Supplier A", bad)
 				self.assertEqual((calls.set_value, calls.saved, calls.appended), ([], [], []))
 
-	def test_a_buyer_without_write_on_the_item_is_refused(self):
-		save, calls, Refused = self._api(may_write=False)
-		with self.assertRaises(Refused):
-			save("ITEM-1", "Supplier A", "https://supplier.example/p/1")
-		self.assertEqual((calls.set_value, calls.saved, calls.appended), ([], [], []))
+	def test_a_blank_address_is_a_quiet_no_op(self):
+		for roles in (self.BUYER, ("Item Manager",)):
+			with self.subTest(roles=roles):
+				save, calls, _ = self._api(roles=roles)
+				self.assertIsNone(save("ITEM-1", "Supplier A", ""))
+				self.assertEqual(calls.permission, [])
+				self._nothing_written(calls)
 
-	def test_the_role_gate_and_the_blank_case_are_unchanged(self):
-		save, calls, _ = self._api(roles=("Guest",))
-		with self.assertRaises(ValueError):
-			save("ITEM-1", "Supplier A", "https://supplier.example/p/1")
-		self.assertIn("not permitted", calls.throws[0])
-		save, calls, _ = self._api()
-		self.assertIsNone(save("ITEM-1", "Supplier A", ""))
-		self.assertEqual(calls.permission, [])
-
-	def test_the_decorator_and_signature_are_untouched(self):
+	def test_the_signature_is_untouched_and_only_a_buyer_saves_past_the_permission_check(self):
 		source = _read(self.SOURCE)
-		self.assertIn("@frappe.whitelist()\ndef save_item_link(item_code, supplier, url):", source)
+		self.assertRegex(source, r"@frappe\.whitelist\([^)\n]*\)\ndef save_item_link\(item_code, supplier, url\):")
 		body = source[source.index("def save_item_link") : source.index("def cascade_expected_delivery_date")]
-		self.assertNotIn("ignore_permissions", _strip_comments(body))
+		code = _strip_comments(body)
+		self.assertEqual(code.count("ignore_permissions"), 1)
+		self.assertIn("item_doc.save(ignore_permissions=as_buyer)", code)
+		self.assertIn("as_buyer = not PURCHASE_ROLES.isdisjoint(frappe.get_roles())", code)
 
 
 class TestBrowserSources(unittest.TestCase):

@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `data-` attributes through one click handler instead of inline `onclick` strings.
     `api.procurement.save_item_link` now stores only an address that
     `item_flow_rules.purchase_url_problem` accepts (the rule `api.item_flow.save_supplier` already
-    applies), and it requires write permission on the Item rather than saving with
-    `ignore_permissions`. The purchasing-role gate is unchanged.
+    applies). Who may save one (Nikolas, 2026-11-19): Purchase User, Purchase Manager and
+    Purchase Master Manager as before, without write permission on the Item; Item Manager and
+    System Manager now only on an Item they may write. Nobody else, as before.
   - **Child-task tree.** `get_child_tasks_html` escapes the status, the assignee and an error
     message in the HTML it returns.
 
