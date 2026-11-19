@@ -332,6 +332,15 @@ nothing, keeps the interval out and emails the employee, whose My Day row then r
 back*. Editing it again puts it back to Waiting. Intervals that existed before the field read
 blank, which counts, as before: nothing in history is marked.
 
+The **Job Interval form follows the same rule.** Projects Manager, HR Manager and System
+Manager can write an interval on the Desk form and through the REST resource, so
+`JobInterval.validate` calls `time_edits.guard_direct_save` on every save that did not come
+from this app's own code (those save with `ignore_permissions`). A change there to the
+employee, start, end or paused time (what `payroll_export` pays from) is a hand edit and waits
+on the same terms; an interval entered there for oneself waits; and the *Edit Approval* fields
+keep their stored values whatever the save sent. When such a save changes whether the interval
+is held, `on_update` re-syncs its Timesheet line.
+
 `add_manual_interval` has two shapes and the difference is load-bearing. **With** an
 `end_time` it is a finished block, and can land on any unlocked day. **Without** one it is an
 open session that began earlier *today* — and an interval with no end is still running, so

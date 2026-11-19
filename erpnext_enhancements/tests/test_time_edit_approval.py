@@ -410,6 +410,156 @@ class TestDecidingAnEdit(unittest.TestCase):
 		self.assertEqual(self.doc.edit_approval, "Approved")
 
 
+# ----------------------------------------------------------------- a save on the Desk form
+
+
+class DirectSave(FakeInterval):
+	"""An interval as ``JobInterval.validate`` sees it: the values the save sent, over the
+	stored row. ``ignore_permissions`` is how this app's own endpoints save."""
+
+	def __init__(self, stored=None, new=False, ignore_permissions=False, **sent):
+		stored_row = FakeInterval(**(stored or {}))
+		values = dict(stored_row)
+		values.update(sent)
+		super().__init__(**values)
+		self["flags"] = _Dict(ignore_permissions=ignore_permissions)
+		self["_stored"] = None if new else stored_row
+		self["_new"] = new
+
+	def is_new(self):
+		return self["_new"]
+
+	def get_doc_before_save(self):
+		return self["_stored"]
+
+	def set(self, field, value):
+		self[field] = value
+
+
+class TestASaveOnTheFormFollowsTheSameRule(unittest.TestCase):
+	"""Projects Manager, HR Manager and System Manager can write a Job Interval on the Desk
+	form and through the REST resource. ``guard_direct_save`` holds those saves to the rule
+	the kiosk's endpoints hold."""
+
+	LATER = dt.datetime(2026, 11, 18, 14, 0)
+
+	def test_ones_own_time_changed_on_the_form_waits(self):
+		_as("pm@example.test")
+		doc = DirectSave(stored={"employee": "EMP-PM"}, end_time=self.LATER)
+		self.assertTrue(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+		self.assertEqual(doc.edited_by, "pm@example.test")
+		self.assertEqual(doc.edit_previous_start, dt.datetime(2026, 11, 18, 8, 0))
+		self.assertEqual(doc.edit_previous_end, dt.datetime(2026, 11, 18, 12, 0))
+		self.assertTrue(doc.flags.get("edit_state_changed"))
+
+	def test_times_the_form_sends_back_as_text_are_unchanged(self):
+		"""A Desk save sends a Datetime as text. The same minute is no edit."""
+		_as("pm@example.test")
+		doc = DirectSave(
+			stored={"employee": "EMP-PM"}, start_time="2026-11-18 08:00:00", end_time="2026-11-18 12:00:00"
+		)
+		self.assertFalse(time_edits.guard_direct_save(doc))
+		self.assertEqual(time_edits.state(doc), "")
+		self.assertFalse(doc.flags.get("edit_state_changed"))
+
+	def test_paused_time_cut_on_ones_own_interval_waits(self):
+		"""Paid hours are the span less the paused time, so less paused time is more pay."""
+		_as("pm@example.test")
+		doc = DirectSave(stored={"employee": "EMP-PM", "total_paused_seconds": 1800}, total_paused_seconds=0)
+		self.assertTrue(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+
+	def test_a_reviewer_changing_another_persons_time_does_not_wait(self):
+		_as("hr@example.test")
+		doc = DirectSave(end_time=self.LATER)
+		self.assertFalse(time_edits.guard_direct_save(doc))
+		self.assertEqual(time_edits.state(doc), "")
+
+	def test_moving_another_persons_interval_to_oneself_waits(self):
+		_as("pm@example.test")
+		doc = DirectSave(employee="EMP-PM")
+		self.assertTrue(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+
+	def test_moving_ones_own_interval_to_another_person_waits(self):
+		_as("pm@example.test")
+		doc = DirectSave(stored={"employee": "EMP-PM"}, employee="EMP-T")
+		self.assertTrue(time_edits.guard_direct_save(doc))
+
+	def test_approval_fields_the_save_sent_are_dropped(self):
+		"""Nobody approves their own edit by writing the fields."""
+		_as("pm@example.test")
+		stored = {
+			"employee": "EMP-PM", "edit_approval": "Waiting", "edited_by": "pm@example.test",
+			"edit_previous_end": dt.datetime(2026, 11, 18, 11, 0), "sync_status": time_edits.HELD_SYNC_STATUS,
+		}
+		doc = DirectSave(
+			stored=stored, edit_approval="Approved", edit_reviewed_by="hr@example.test",
+			edit_reviewed_on=NOW, edit_previous_end=None,
+		)
+		self.assertFalse(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+		self.assertIsNone(doc.edit_reviewed_by)
+		self.assertIsNone(doc.edit_reviewed_on)
+		self.assertEqual(doc.edit_previous_end, dt.datetime(2026, 11, 18, 11, 0))
+		self.assertFalse(doc.flags.get("edit_state_changed"))
+
+	def test_a_second_change_on_the_form_keeps_waiting_and_keeps_the_first_times(self):
+		_as("pm@example.test")
+		stored = {
+			"employee": "EMP-PM", "edit_approval": "Waiting", "edited_by": "pm@example.test",
+			"edit_previous_start": dt.datetime(2026, 11, 18, 8, 0),
+			"edit_previous_end": dt.datetime(2026, 11, 18, 11, 0),
+		}
+		doc = DirectSave(stored=stored, end_time=self.LATER, edit_approval="Approved")
+		self.assertTrue(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+		self.assertEqual(doc.edit_previous_end, dt.datetime(2026, 11, 18, 11, 0))
+		self.assertFalse(doc.flags.get("edit_state_changed"))
+
+	def test_a_reviewer_changing_a_waiting_entry_on_the_form_settles_it(self):
+		_as("hr@example.test")
+		stored = {
+			"edit_approval": "Waiting", "edited_by": "tech@example.test",
+			"sync_status": time_edits.HELD_SYNC_STATUS,
+		}
+		doc = DirectSave(stored=stored, end_time=self.LATER)
+		self.assertFalse(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Approved")
+		self.assertEqual(doc.edit_reviewed_by, "hr@example.test")
+		self.assertEqual(doc.sync_status, "Pending")
+		self.assertTrue(doc.flags.get("edit_state_changed"))
+
+	def test_the_endpoints_own_saves_are_left_alone(self):
+		"""They save with ignore_permissions and have marked the interval already."""
+		_as("tech@example.test")
+		doc = DirectSave(ignore_permissions=True, end_time=self.LATER, edit_approval="Waiting")
+		self.assertFalse(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+		self.assertIsNone(doc.edited_by)
+
+	def test_an_interval_entered_on_the_form_for_oneself_waits(self):
+		_as("pm@example.test")
+		doc = DirectSave(new=True, stored={"employee": "EMP-PM"}, edit_approval="Approved")
+		self.assertTrue(time_edits.guard_direct_save(doc))
+		self.assertEqual(doc.edit_approval, "Waiting")
+		self.assertEqual(time_edits.describe_change(doc), "Added by hand")
+
+	def test_the_controller_calls_the_guard_and_brings_the_timesheet_in_step(self):
+		source = (JOB_INTERVAL_JSON.parent / "job_interval.py").read_text(encoding="utf-8")
+		tree = ast.parse(source)
+		cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "JobInterval")
+		methods = {n.name: ast.get_source_segment(source, n) for n in cls.body if isinstance(n, ast.FunctionDef)}
+		validate = methods["validate"]
+		self.assertIn("time_edits.guard_direct_save(self)", validate)
+		# After the submitted-day lock refuses, before anything is recomputed.
+		self.assertLess(validate.index("assert_not_locked(self)"), validate.index("guard_direct_save(self)"))
+		self.assertLess(validate.index("guard_direct_save(self)"), validate.index("assert_no_overlap(self)"))
+		self.assertIn('self.flags.get("edit_state_changed")', methods["on_update"])
+		self.assertIn("resync_interval_timesheet(self)", methods["on_update"])
+
+
 # ----------------------------------------------------------------- the endpoints that edit
 
 

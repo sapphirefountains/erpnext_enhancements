@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the employee is emailed. The form shows what changed and draws the buttons only for a reader
   who may decide; the list's *Edit Approval* filter set to Waiting is the queue. The kiosk's My Day
   rows read *Waiting for approval* or *Sent back*, and the edit toast says when an edit waits.
+- **The Job Interval form follows the same rule.** A save made through the DocType's own write
+  permission (the Desk form, the REST resource) is checked in `JobInterval.validate`
+  (`time_edits.guard_direct_save`). A change to the employee, start, end or paused time is a hand
+  edit and waits on the same terms, an interval entered there for oneself waits, and the *Edit
+  Approval* fields keep their stored values whatever the save sent. When the save changes whether
+  the interval is held, `on_update` re-syncs its Timesheet line. Saves by this app's endpoints, the
+  sweeper and an approved correction are not affected: they save with `ignore_permissions`.
 - **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
   existing row reads blank, which counts exactly as before. Bench-free suite
   `tests/test_time_edit_approval.py`, in its own CI step.

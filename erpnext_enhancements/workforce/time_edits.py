@@ -23,13 +23,15 @@ was never edited this way, which includes every row that existed before the fiel
 and blank counts toward payroll as it always has. ``Sent Back`` restores nothing: the
 interval stays out until it is edited again (``Waiting`` once more) or approved.
 
-Only the edit endpoints call ``record_edit``. A clock-out, the sweeper's auto-close and
-an approved Time Correction Request are not hand edits and leave the state alone.
+Only the edit endpoints and ``guard_direct_save`` call ``record_edit``. The guard runs in
+``JobInterval.validate`` and holds a save made on the Desk form, or through the REST
+resource, to the same rule. A clock-out, the sweeper's auto-close and an approved Time
+Correction Request are not hand edits and leave the state alone.
 """
 
 import frappe
 from frappe import _
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import flt, get_datetime, now_datetime
 
 from erpnext_enhancements.workforce import permissions
 
@@ -80,20 +82,25 @@ def same_minute(a, b):
 	return a.replace(second=0, microsecond=0) == b.replace(second=0, microsecond=0)
 
 
-def record_edit(doc, added=False, user=None):
+def record_edit(doc, added=False, user=None, previous=None, waits=None):
 	"""Mark ``doc`` for an edit by ``user`` of its times, or for its entry by hand
 	(``added``). Call it BEFORE the new times are written: the times before the edit
 	are kept from here. Returns True when the interval now waits for approval.
 
 	The times before are kept once per waiting spell, so a second edit before anyone
 	has decided still shows the change from the last approved times.
+
+	``previous`` and ``waits`` are for ``guard_direct_save``, which sees the document
+	only after the new values were written: the ``(start, end)`` before the edit, and
+	whether the edit waits when that is not simply ``needs_approval`` of ``doc.employee``.
 	"""
 	user = user or frappe.session.user
 	now = now_datetime()
-	if needs_approval(doc.employee, user):
+	if needs_approval(doc.employee, user) if waits is None else waits:
 		if not is_held(doc):
-			doc.edit_previous_start = None if added else doc.start_time
-			doc.edit_previous_end = None if added else doc.end_time
+			before_start, before_end = previous if previous is not None else (doc.start_time, doc.end_time)
+			doc.edit_previous_start = None if added else before_start
+			doc.edit_previous_end = None if added else before_end
 		doc.edit_approval = WAITING
 		doc.edited_by = user
 		doc.edited_on = now
@@ -106,6 +113,76 @@ def record_edit(doc, added=False, user=None):
 		doc.edit_reviewed_by = user
 		doc.edit_reviewed_on = now
 	return False
+
+
+#: Written only by the edit endpoints and by approve / send back. A save made through the
+#: DocType's own write permission keeps what is stored (``guard_direct_save``).
+EDIT_FIELDS = (
+	"edit_approval",
+	"edited_by",
+	"edited_on",
+	"edit_previous_start",
+	"edit_previous_end",
+	"edit_reviewed_by",
+	"edit_reviewed_on",
+	"edit_review_note",
+)
+
+
+def _hours_moved(before, doc):
+	"""Did a save change what the interval pays: whose it is, its start, its end, or its
+	paused time (``payroll_export`` counts the span less ``total_paused_seconds``)?"""
+	return (
+		(before.get("employee") or "") != (doc.get("employee") or "")
+		or not same_minute(before.get("start_time"), doc.get("start_time"))
+		or not same_minute(before.get("end_time"), doc.get("end_time"))
+		or abs(flt(before.get("total_paused_seconds")) - flt(doc.get("total_paused_seconds"))) >= 1
+	)
+
+
+def guard_direct_save(doc):
+	"""``JobInterval.validate``, for a save made through the DocType's own write permission
+	(the Desk form, the REST resource). This app's endpoints, the sweeper and an approved
+	correction save with ``ignore_permissions`` and are left alone: the edit endpoints mark
+	the interval themselves, and the others are not hand edits.
+
+	The same two rules the endpoints hold:
+
+	* the approval fields keep their stored values, whatever the save sent; on a new
+	  interval they start blank;
+	* a change to what the interval pays (:func:`_hours_moved`), or an interval entered
+	  this way, is a hand edit. It waits for approval when it is the editor's own time,
+	  before or after the change, or the time of someone the editor does not review.
+
+	Sets ``doc.flags.edit_state_changed`` when the save changed whether the interval is
+	held, so ``JobInterval.on_update`` can bring its Timesheet line in step. Returns True
+	when this save left the interval waiting.
+	"""
+	if doc.flags.ignore_permissions:
+		return False
+	before = None if doc.is_new() else doc.get_doc_before_save()
+	if before is None and not doc.is_new():
+		return False
+
+	for field in EDIT_FIELDS:
+		doc.set(field, before.get(field) if before is not None else None)
+	if before is not None and not _hours_moved(before, doc):
+		return False
+
+	was_held = is_held(doc)
+	employees = {doc.get("employee")} | ({before.get("employee")} if before is not None else set())
+	waits = any(needs_approval(employee) for employee in employees if employee)
+	waiting = record_edit(
+		doc,
+		added=before is None,
+		previous=None if before is None else (before.get("start_time"), before.get("end_time")),
+		waits=waits,
+	)
+	if was_held and not waiting and (doc.get("sync_status") or "") == HELD_SYNC_STATUS:
+		doc.sync_status = "Pending"
+	if was_held != is_held(doc):
+		doc.flags.edit_state_changed = True
+	return waiting
 
 
 def may_decide(doc, user=None):

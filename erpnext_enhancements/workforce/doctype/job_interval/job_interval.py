@@ -54,6 +54,13 @@ class JobInterval(Document):
 		# Refuse first. An edit to a locked interval must not have its overlap or cost recomputed on the way to being rejected.
 		assert_not_locked(self)
 
+		# A save through the DocType's own write permission (this form, the REST resource)
+		# follows the edit endpoints' rule: hand-changed hours wait for approval, and the
+		# approval fields keep what is stored (workforce/time_edits.py).
+		from erpnext_enhancements.workforce import time_edits
+
+		time_edits.guard_direct_save(self)
+
 		# Overlap is a hard block, always.
 		assert_no_overlap(self)
 
@@ -82,3 +89,12 @@ class JobInterval(Document):
 			from erpnext_enhancements.workforce import costing
 
 			costing.stamp_cost(self)
+
+	def on_update(self):
+		"""A direct save that changed whether the interval's hand edit is held
+		(``time_edits.guard_direct_save``): its Timesheet line follows, none while it is
+		held, as it does after the edit endpoints' own saves."""
+		if self.flags.get("edit_state_changed"):
+			from erpnext_enhancements.api.time_kiosk import resync_interval_timesheet
+
+			resync_interval_timesheet(self)
