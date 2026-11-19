@@ -117,16 +117,18 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Blank: the application's rate. 0 is a real rate.",
+   "description": "Blank: the application's rate. 0 is a real rate. Accounting's to set.",
    "fieldname": "work_retainage_override",
    "fieldtype": "Data",
-   "label": "Retainage on Work % (this line)"
+   "label": "Retainage on Work % (this line)",
+   "permlevel": 1
   },
   {
-   "description": "Blank: the application's rate. 0 is a real rate.",
+   "description": "Blank: the application's rate. 0 is a real rate. Accounting's to set.",
    "fieldname": "stored_retainage_override",
    "fieldtype": "Data",
-   "label": "Retainage on Stored % (this line)"
+   "label": "Retainage on Stored % (this line)",
+   "permlevel": 1
   },
   {
    "fieldname": "work_retainage_pct",

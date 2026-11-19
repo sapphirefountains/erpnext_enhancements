@@ -379,6 +379,7 @@ def refusals(context, priced):
 
 	keys = set(context.get("schedule_keys") or [])
 	gone, over, negative, zero_work, stored_off, bad_rate, others = [], [], [], [], [], [], []
+	below_zero, stored_negative = [], []
 	for line, row in zip(context.get("lines") or [], priced.get("lines") or []):
 		name = f"{line.get('item_no') or ''} {line.get('description') or ''}".strip()
 		if line.get("line_key") not in keys:
@@ -388,6 +389,10 @@ def refusals(context, priced):
 			over.append(name)
 		if c > 0 and e < 0 and not (line.get("adjustment_note") or "").strip():
 			negative.append(name)
+		if c >= 0 and g < 0:
+			below_zero.append(name)
+		if cents(row["stored"]) < 0:
+			stored_negative.append(name)
 		if c == 0 and (g or e or float(line.get("this_period_pct") or 0)) and not line.get("by_others"):
 			zero_work.append(name)
 		if line.get("by_others") and float(line.get("this_period_pct") or 0):
@@ -407,12 +412,20 @@ def refusals(context, priced):
 		out.append(("LINE_NOT_ON_SCHEDULE", f"No longer on the schedule of values: {listed(gone)}."))
 	if over:
 		out.append(("OVER_SCHEDULED", f"Billed past the scheduled value: {listed(over)}."))
+	if below_zero:
+		out.append(
+			("COMPLETED_BELOW_ZERO", f"Completed to date would fall below zero: {listed(below_zero)}.")
+		)
+	if stored_negative:
+		out.append(("STORED_NEGATIVE", f"Stored materials cannot be negative: {listed(stored_negative)}."))
 	if negative:
 		out.append(
 			("NEGATIVE_WITHOUT_NOTE", f"A negative this-period amount needs a note: {listed(negative)}.")
 		)
 	if zero_work:
 		out.append(("WORK_ON_ZERO_LINE", f"Work billed on a line scheduled at nothing: {listed(zero_work)}."))
+	# The controller sets these two back to 0 before pricing, so through the Desk they never fire; the
+	# engine keeps them for any other caller that hands it raw lines.
 	if others:
 		out.append(("BY_OTHERS_BILLED", f"Lines by others are never billed: {listed(others)}."))
 	if stored_off:

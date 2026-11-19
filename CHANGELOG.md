@@ -30,11 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a billed line.
   - **Pay Application.** Start Pay Application on a locked schedule makes the next one, chained by a
     stored link to the latest (never inferred from dates), dated from the day after the last period;
-    one open application per schedule. **The project manager types this period's percent per line**
+    one open application per schedule. **The link and the number are derived again on every save**:
+    read_only is not enforced on a save at frappe v16.56 (`client.set_value` and the REST update just
+    save), and a blanked link would have priced every line from nothing, billing the whole job again. **The project manager types this period's percent per line**
     (Nik, 2026-11-06) in a phone-usable editor: phases with work this period open, the rest folded; a
     REST button bills what is left; a line pushed past its scheduled value turns red. Send to
     Accounting marks it To Review; accounting reviews the amount due and **certifies**, which submits
-    it. Milestone billing bills a milestone's percent of every line, each milestone once.
+    it. Milestone billing bills a milestone's percent of every base line, each milestone once, and the
+    milestones must total 100% before the schedule locks. **Change-order rows bill outside the
+    milestones**, by the percent typed on them, alone or alongside a milestone: a milestone's percent
+    on a change order, with each milestone billed once, would leave approved scope unbillable.
   - **The arithmetic** (`estimating/pay_app_math.py`, a browser twin held to the same cases), in whole
     cents with frappe's banker's rounding. **Column D is the earlier applications' work completed, not
     their column G**: stored material is a balance, so carrying G forward would count it twice (the
@@ -53,11 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     because it moved that certificate's contract sum to date; one canceled earlier leaves every
     schedule (`on_cancel`), and a draft drops it, or refuses it by name when a percent was typed on it.
     Moving a draft's period earlier drops a change order approved after it the same way.
-  - **Accounting owns the certification.** The amount certified (and its "certified for less" tick)
-    is at permlevel 1: accounting writes it, project managers read it. Retainage overrides are cleaned
-    as typed (blank inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule
-    also keeps its project, billing mode, stored-materials setting and milestones; its retainage can
-    still change, for the next application only. A percent typed on a "by others" line, or stored
+  - **Accounting owns the certification and the retainage.** The amount certified (and its
+    "certified for less" tick) and the application and line retainage overrides are at permlevel 1:
+    accounting writes them, project managers read them. Overrides are cleaned as typed (blank
+    inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule keeps its project,
+    billing mode, stored-materials setting, milestones **and retainage terms**: retainage is (D + E)
+    times the rate in force, so a changed rate re-rates all work to date, and unticking "held" at 60%
+    would release everything held so far. Its status moves only through Lock and Unlock (a saved
+    status is ignored), a change-order row always equals its Change Order (an approved one of the same
+    project, at its price and approval date), a row that appears on any certified application cannot
+    be deleted, and a project has one schedule. Negative completed-to-date and negative stored
+    materials are refused. A percent typed on a "by others" line, or stored
     materials on a job that does not bill them, is set back to 0 rather than billed.
   - **Certify refuses with every reason at once**: the schedule not locked, the previous application
     not certified, a period that overlaps the last one, a line no longer on the schedule, a line billed

@@ -158,6 +158,12 @@ class TestRefusals(unittest.TestCase):
 	def test_a_noted_deduction_is_allowed(self):
 		self.assertEqual(self.codes([L("a", 1000, -10, adjustment_note="Rebilled in error")], {"a": 500}), [])
 
+	def test_negative_completed_or_stored_is_refused(self):
+		codes = self.codes([L("a", 1000, -60, adjustment_note="credit")], {"a": 500})
+		self.assertIn("COMPLETED_BELOW_ZERO", codes)
+		codes = self.codes([L("a", 1000, 0, stored=-50)], schedule=dict(SCHEDULE, stored_materials=1), stored_materials=True)
+		self.assertIn("STORED_NEGATIVE", codes)
+
 	def test_a_negative_payment_due_is_refused(self):
 		# retainage going up after a big earlier payment: nothing earned this month, more held back
 		lines = [L("a", 10000, 0)]

@@ -172,6 +172,7 @@ def setUpModule():
 		return [r[pluck] for r in rows] if pluck else rows
 
 	frappe.get_doc, frappe.new_doc, frappe.get_all = get_doc, new_doc, get_all
+	frappe.get_list = get_all
 
 	class DB:
 		def get_single_value(self, *a):
@@ -185,9 +186,15 @@ def setUpModule():
 				return None
 			return (doctype, filters) in DOCS
 
-		def get_value(self, doctype, filters, field=None, **k):
-			for n, r in STORE.get(doctype, {}).items():
+		def get_value(self, doctype, filters, field=None, as_dict=False, **k):
+			items = STORE.get(doctype, {}).items()
+			if isinstance(filters, str):
+				items = [(n, r) for n, r in items if n == filters]
+				filters = None
+			for n, r in items:
 				if _match(dict(r, name=n), filters):
+					if isinstance(field, (list, tuple)):
+						return Row({f: r.get(f) for f in field})
 					return n if field == "name" else r.get(field)
 			return None
 
@@ -244,6 +251,16 @@ def tearDownModule():
 def reset():
 	DOCS.clear()
 	STORE["Pay Application"] = {}
+	STORE["Schedule of Values"] = {}
+	STORE["Change Order"] = {
+		"CO-1": {
+			"project": "PRJ-00001",
+			"docstatus": 1,
+			"customer_approved": 1,
+			"cost_impact": 1500,
+			"customer_approved_on": "2026-11-15 10:00:00",
+		}
+	}
 	SQL["billed"] = []
 	COUNTER["n"] = 0
 
@@ -342,6 +359,55 @@ class TestScheduleOfValues(unittest.TestCase):
 		doc.lines[1]["billed_to_date"] = 99  # a stale copy from a form open across a certify
 		doc.validate()
 		self.assertEqual(doc.lines[1].billed_to_date, 1500)
+
+	def test_a_typed_status_never_unlocks(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.status = "Locked"
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		doc.status = "Draft"  # a REST update or set_value; read_only is not enforced on a save
+		doc.validate()
+		self.assertEqual(doc.status, "Locked")
+		new = schedule(status="Locked", project="PRJ-00002")
+		new.validate()
+		self.assertEqual(new.status, "Draft")
+
+	def test_a_change_order_row_is_its_change_order(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.append("lines", {"item_no": "CO-01", "description": "Change order 1", "scheduled_value": 99999, "change_order": "CO-1"})
+		doc.validate()
+		self.assertEqual(doc.lines[-1].scheduled_value, 1500.0)
+		self.assertEqual(str(doc.lines[-1].approved_on), "2026-11-15")
+		STORE["Change Order"]["CO-2"] = dict(STORE["Change Order"]["CO-1"], project="PRJ-00999")
+		doc.append("lines", {"item_no": "CO-02", "description": "Someone else's", "scheduled_value": 1, "change_order": "CO-2"})
+		with self.assertRaises(Thrown):
+			doc.validate()
+
+	def test_a_row_on_a_certified_application_cannot_be_deleted_even_with_no_work(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.append("lines", {"item_no": "CO-01", "description": "Change order 1", "change_order": "CO-1"})
+		doc.validate()
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		SQL["billed"] = [(doc.lines[-1].line_key,)]
+		doc.set("lines", doc.lines[:-1])
+		with self.assertRaises(Thrown):
+			doc.validate()
+
+	def test_retainage_terms_freeze_at_lock(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.status = "Locked"
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		doc.retainage_applies = 0
+		with self.assertRaises(Thrown):
+			doc.validate()
+
+	def test_one_schedule_per_project(self):
+		STORE["Schedule of Values"]["SOV-0"] = {"project": "PRJ-00001"}
+		with self.assertRaises(Thrown):
+			schedule().validate()
+
+	def test_milestones_must_total_100_to_lock(self):
+		doc = saved(schedule(billing_mode="Milestones", milestones=[{"milestone": "Deposit", "percent": 50}]), "SOV-1")
+		self.assertTrue(any("100%" in p for p in doc.lock_problems()))
 
 	def test_lock_problems(self):
 		doc = saved(schedule(contract_sum=9000), "SOV-1")
@@ -460,6 +526,23 @@ class TestPayApplication(unittest.TestCase):
 		self.assertEqual(design.from_previous, 4000.0)
 		self.assertEqual(pa2.less_previous_certificates, 3800.0)
 
+	def test_a_blanked_previous_link_is_derived_again(self):
+		# The reviewer's probe: PAY-1 certified at 60% of a 6,000 line, then PAY-2 with its link blanked.
+		locked_schedule()
+		pa1 = application("PAY-1", period_to="2026-10-31")
+		pct(pa1, "k002", 60)
+		certify(pa1)
+		pa2 = application("PAY-2")
+		pa2.previous_application = None
+		pa2.application_no = 1
+		pct(pa2, "k002", 100)
+		pa2.validate()
+		self.assertEqual((pa2.previous_application, pa2.application_no), ("PAY-1", 2))
+		self.assertEqual(next(r for r in pa2.lines if r.line_key == "k002").from_previous, 3600.0)
+		with self.assertRaises(Thrown) as cm:
+			pa2.before_submit()
+		self.assertIn("past the scheduled value", str(cm.exception))
+
 	def test_a_short_certification_carries_into_the_next(self):
 		locked_schedule()
 		pa1 = application("PAY-1", period_to="2026-10-31")
@@ -506,7 +589,6 @@ class TestPayApplication(unittest.TestCase):
 		with self.assertRaises(Thrown) as cm:
 			pa.before_submit()
 		self.assertIn("No longer on the schedule", str(cm.exception))
-		STORE["Change Order"] = {}
 
 	def test_a_bad_retainage_override_is_refused_by_name(self):
 		locked_schedule()
@@ -530,6 +612,24 @@ class TestPayApplication(unittest.TestCase):
 		pa.milestone = "Nonsense"
 		with self.assertRaises(Thrown):
 			pa.validate()
+
+	def test_change_orders_bill_outside_the_milestones(self):
+		sov = locked_schedule(billing_mode="Milestones", milestones=[{"milestone": "M1", "percent": 50}, {"milestone": "M2", "percent": 50}])
+		pa1 = application("PAY-1", period_to="2026-10-31", milestone="M1")
+		certify(pa1)
+		sov.append("lines", {"item_no": "CO-01", "description": "Change order 1", "scheduled_value": 1000, "change_order": "CO-1", "approved_on": "2026-11-15", "line_key": "kco"})
+		# change orders alone, no milestone: the base lines bill nothing
+		pa2 = application("PAY-2", period_to="2026-11-30")
+		pct(pa2, "kco", 100)
+		pa2.validate()
+		self.assertEqual(pa2.this_period_total, 1000.0)
+		pa2.before_submit()
+		pa2.docstatus = 1
+		STORE["Pay Application"]["PAY-2"]["docstatus"] = 1
+		# the next milestone bills the base lines; the change order is already whole
+		pa3 = application("PAY-3", period_to="2026-12-31", milestone="M2")
+		self.assertEqual(pa3.this_period_total, 5000.0)
+		self.assertEqual(next(r for r in pa3.lines if r.line_key == "kco").balance, 0.0)
 
 	def test_certify_refuses_with_every_reason(self):
 		locked_schedule()

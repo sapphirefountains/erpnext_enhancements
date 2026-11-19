@@ -122,7 +122,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "allow_on_submit": 1,
    "default": "Draft",
    "fieldname": "status",
    "fieldtype": "Select",
@@ -345,16 +344,18 @@
    "label": "Retainage"
   },
   {
-   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate.",
+   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate. Accounting's to set: it re-rates all work to date.",
    "fieldname": "work_retainage_override",
    "fieldtype": "Data",
-   "label": "Retainage on Work % (this application)"
+   "label": "Retainage on Work % (this application)",
+   "permlevel": 1
   },
   {
-   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate.",
+   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate. Accounting's to set.",
    "fieldname": "stored_retainage_override",
    "fieldtype": "Data",
-   "label": "Retainage on Stored % (this application)"
+   "label": "Retainage on Stored % (this application)",
+   "permlevel": 1
   },
   {
    "fieldname": "column_break_retainage",
@@ -434,7 +435,6 @@
    "read_only": 1
   },
   {
-   "allow_on_submit": 1,
    "fieldname": "certified_by",
    "fieldtype": "Link",
    "label": "Certified By",
@@ -443,7 +443,6 @@
    "read_only": 1
   },
   {
-   "allow_on_submit": 1,
    "fieldname": "certified_on",
    "fieldtype": "Datetime",
    "label": "Certified On",

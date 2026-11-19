@@ -79,7 +79,12 @@ function group_title(g) {
 }
 
 function editable(frm) {
-	return frm.doc.docstatus === 0 && frm.perm[0] && frm.perm[0].write && schedule(frm).billing_mode !== "Milestones";
+	return frm.doc.docstatus === 0 && frm.perm[0] && frm.perm[0].write;
+}
+
+/** In milestone billing the base lines bill the milestone's percent; change orders are typed like progress. */
+export function row_editable(frm, line) {
+	return editable(frm) && (schedule(frm).billing_mode !== "Milestones" || !!Number(line.is_change_order));
 }
 
 function over(row) {
@@ -186,17 +191,18 @@ export function draw(frm) {
 		);
 	}
 	const can = editable(frm);
+	const progress = schedule(frm).billing_mode !== "Milestones";
 	const overCount = priced.lines.filter(over).length;
 	const milestone = schedule(frm).billing_mode === "Milestones";
 	const head = `<div class="cardhead"><h2>${esc(__("Work completed this period"))}</h2>
 		<span class="muted">${esc(
 			milestone
-				? __("Billed by milestone: every line bills the milestone's percent.")
+				? __("Billed by milestone: every line bills the milestone's percent. Change orders bill by the percent typed on them.")
 				: can
 				? __("Open a phase and type the percent of each line completed this period. The amount follows.")
 				: __("As the project manager marked them.")
 		)}</span>
-		<span class="tools">${can && frm.doc.previous_application ? `<button class="btn sm" type="button" data-act="copy">${esc(__("COPY LAST MONTH"))}</button>` : ""}</span></div>
+		<span class="tools">${can && progress && frm.doc.previous_application ? `<button class="btn sm" type="button" data-act="copy">${esc(__("COPY LAST MONTH"))}</button>` : ""}</span></div>
 		<div class="banner warn" data-over ${overCount ? "" : "hidden"}>${esc(overText(overCount))}</div>`;
 	const body = grouped
 		.map(([g, ls]) => {
@@ -211,7 +217,7 @@ export function draw(frm) {
 					<div class="row hd"><span class="l">${esc(__("Item / description"))}</span><span>${esc(__("Scheduled"))}</span><span>${esc(
 				__("Previous")
 			)}</span><span>${esc(__("This period %"))}</span><span>${esc(__("This period"))}</span></div>
-					${ls.map((l) => rowHtml(frm, l, byKey[l.line_key], can)).join("")}
+					${ls.map((l) => rowHtml(frm, l, byKey[l.line_key], row_editable(frm, l))).join("")}
 				</div></div>`;
 		})
 		.join("");

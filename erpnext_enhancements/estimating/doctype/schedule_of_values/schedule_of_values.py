@@ -26,7 +26,7 @@ Things this is careful about:
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import escape_html, flt
+from frappe.utils import escape_html, flt, getdate
 
 from erpnext_enhancements.estimating import pay_app_math as pm
 from erpnext_enhancements.quality import stable_keys
@@ -46,13 +46,17 @@ def _differs(prior, row):
 
 
 def billed_keys(schedule):
-	"""Line keys that carry work on a certified pay application of this schedule."""
+	"""Line keys that appear on a certified pay application of this schedule, with or without work.
+
+	A row with nothing billed yet still sits on the certificate: a change order row moved its lines 2
+	and 3 the moment it appeared. So appearing is what counts, not a non-zero amount.
+	"""
 	if not schedule or not frappe.db.table_exists("Pay Application Line"):
 		return set()
 	rows = frappe.db.sql(
 		"""select distinct pal.line_key from `tabPay Application Line` pal
 		join `tabPay Application` pa on pa.name = pal.parent
-		where pa.schedule_of_values = %s and pa.docstatus = 1 and pal.total_completed != 0""",
+		where pa.schedule_of_values = %s and pa.docstatus = 1""",
 		(schedule,),
 	)
 	return {r[0] for r in rows}
@@ -70,14 +74,68 @@ class ScheduleofValues(Document):
 			self.company = frappe.defaults.get_user_default("Company") or frappe.db.get_single_value(
 				"Global Defaults", "default_company"
 			)
+		self.hold_status()
+		self.refuse_second_schedule()
 		stable_keys.mint_missing_keys(self.lines, frappe.generate_hash, "line_key")
 		self.refuse_duplicates()
 		self.check_rates()
+		self.check_change_orders()
 		self.guard_locked_and_billed()
 		for row in self.lines:
 			if row.by_others:
 				row.scheduled_value = 0
 		self.total_up()
+
+	def hold_status(self):
+		"""Status moves only through ``lock_schedule`` / ``unlock_schedule``, which write it with db_set
+		after their own checks. A save never changes it: read_only is not enforced on a save at v16.56
+		(``frappe.client.set_value`` and the REST update just save), so a typed status would skip both."""
+		before = self.get_doc_before_save() if not self.is_new() else None
+		for field in ("status", "locked_on", "locked_by"):
+			self.set(field, before.get(field) if before else None)
+		if not self.status:
+			self.status = "Draft"
+
+	def refuse_second_schedule(self):
+		if not self.project:
+			return
+		other = frappe.db.get_value(
+			"Schedule of Values", {"project": self.project, "name": ["!=", self.name or ""]}, "name"
+		)
+		if other:
+			frappe.throw(
+				_("Project {0} already has schedule of values {1}. A job bills against one schedule.").format(
+					escape_html(self.project), other
+				)
+			)
+
+	def check_change_orders(self):
+		"""A change-order row is its Change Order, exactly: an approved one of this project, at its price
+		and approval date. The row cannot be typed to say anything else."""
+		seen = set()
+		for row in self.lines:
+			if not row.change_order:
+				continue
+			if row.change_order in seen:
+				frappe.throw(
+					_("Change order {0} is on the schedule twice.").format(escape_html(row.change_order))
+				)
+			seen.add(row.change_order)
+			co = frappe.db.get_value(
+				"Change Order",
+				row.change_order,
+				["project", "docstatus", "customer_approved", "cost_impact", "customer_approved_on"],
+				as_dict=True,
+			)
+			if not co or co.project != self.project or co.docstatus != 1 or not co.customer_approved:
+				frappe.throw(
+					_("{0} is not a submitted, customer-approved change order of project {1}.").format(
+						escape_html(row.change_order), escape_html(self.project)
+					)
+				)
+			row.scheduled_value = flt(co.cost_impact)
+			row.approved_on = getdate(co.customer_approved_on) if co.customer_approved_on else None
+			row.by_others = 0
 
 	def refuse_duplicates(self):
 		dupes = stable_keys.duplicate_keys(self.lines, "line_key")
@@ -151,6 +209,20 @@ class ScheduleofValues(Document):
 		milestones = lambda doc: [((m.milestone or "").strip(), flt(m.percent)) for m in doc.milestones or []]  # noqa: E731
 		if milestones(before) != milestones(self):
 			frappe.throw(_("The schedule is locked: its milestones cannot change."))
+		# Retainage is (D + E) x the rate in force, so a changed rate re-rates all work to date, not just
+		# the next period: unticking "held" at 60% would release everything held so far. Frozen at lock;
+		# accounting can still override one application (permlevel 1).
+		terms = lambda doc: (  # noqa: E731
+			bool(doc.retainage_applies),
+			flt(doc.retainage_pct),
+			flt(doc.stored_retainage_pct),
+			[
+				(flt(x.from_percent_complete), flt(x.work_pct), flt(x.stored_pct))
+				for x in doc.retainage_steps or []
+			],
+		)
+		if terms(before) != terms(self):
+			frappe.throw(_("The schedule is locked: its retainage terms cannot change."))
 		changed = []
 		for key, row in new.items():
 			prior = old.get(key)
@@ -194,8 +266,14 @@ class ScheduleofValues(Document):
 					frappe.format_value(self.contract_sum, {"fieldtype": "Currency"}),
 				)
 			)
-		if self.billing_mode == "Milestones" and not self.milestones:
-			out.append(_("Billing by milestones needs the milestones."))
+		if self.billing_mode == "Milestones":
+			total = sum(pm.cents(m.percent) for m in self.milestones or [])
+			if total != 10000:
+				out.append(
+					_(
+						"The milestones add up to {0}%. Billing by milestones needs them to total 100%."
+					).format(pm.dollars(total))
+				)
 		missing = [_name(r) for r in self.lines if not (r.description or "").strip()]
 		if missing:
 			out.append(_("Every line needs a description."))

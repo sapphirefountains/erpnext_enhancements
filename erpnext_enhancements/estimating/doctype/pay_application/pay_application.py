@@ -161,15 +161,35 @@ class PayApplication(Document):
 		previous = latest_application(self.schedule_of_values)
 		if previous and previous.docstatus == 0:
 			frappe.throw(
-				_("Application {0} is still open. Certify or delete it before starting the next.").format(
-					previous.application_no
-				)
+				_(
+					"Application {0} is still open. Certify it first, or ask a System Manager to delete it."
+				).format(previous.application_no)
 			)
+		self.link_previous(previous)
+		self.status = "Draft"
+
+	def link_previous(self, previous):
 		self.previous_application = previous.name if previous else None
 		self.application_no = (previous.application_no or 0) + 1 if previous else 1
 		if previous and previous.period_to and not self.period_from:
 			self.period_from = add_days(previous.period_to, 1)
-		self.status = "Draft"
+
+	def derive_chain(self):
+		"""The chain is the server's, never the form's. read_only is not enforced on a save at v16.56
+		(``frappe.client.set_value`` and the REST update just save), and a blanked previous_application
+		would price every line from nothing: column D and line 7 at 0, the whole job billed again. So the
+		link and the number are derived again on every save from the latest other application of the
+		same schedule, whatever the request carried."""
+		previous = latest_application(self.schedule_of_values, exclude=self.name)
+		if previous and previous.docstatus == 0:
+			frappe.throw(
+				_("Application {0} of this schedule is still open; only one can be open at a time.").format(
+					previous.application_no
+				)
+			)
+		self.link_previous(previous)
+		if self.docstatus == 0 and self.status not in ("Draft", "To Review"):
+			self.status = "Draft"
 
 	def previous_doc(self):
 		if not self.previous_application:
@@ -193,6 +213,7 @@ class PayApplication(Document):
 		self.project = sov.project
 		self.customer = sov.customer
 		self.billing_mode = sov.billing_mode
+		self.derive_chain()
 		prev = self.previous_doc()
 		self.sync_lines(sov)
 		self.apply_milestone(sov)
@@ -270,26 +291,43 @@ class PayApplication(Document):
 			row.idx = i
 
 	def apply_milestone(self, sov):
-		if sov.billing_mode != "Milestones" or not self.milestone:
+		"""Milestone billing: every base line bills the milestone's percent, each milestone once.
+
+		Change-order rows sit outside the milestones and bill by their own percent, typed like a
+		progress job. A change order is scope the milestones were never written for: putting a
+		milestone's 50% on it, with each milestone billed once, would leave the rest of an approved
+		change order unbillable for good. An application may bill change orders alone, with no
+		milestone picked; then its base lines bill nothing.
+		"""
+		if sov.billing_mode != "Milestones":
 			return
-		match = [m for m in sov.milestones if (m.milestone or "").strip() == (self.milestone or "").strip()]
-		if not match:
-			frappe.throw(
-				_("Milestone {0} is not on the schedule of values.").format(escape_html(self.milestone))
+		percent = 0.0
+		if self.milestone:
+			match = [
+				m for m in sov.milestones if (m.milestone or "").strip() == (self.milestone or "").strip()
+			]
+			if not match:
+				frappe.throw(
+					_("Milestone {0} is not on the schedule of values.").format(escape_html(self.milestone))
+				)
+			billed = frappe.db.exists(
+				"Pay Application",
+				{
+					"schedule_of_values": self.schedule_of_values,
+					"milestone": self.milestone,
+					"docstatus": 1,
+					"name": ["!=", self.name or ""],
+				},
 			)
-		billed = frappe.db.exists(
-			"Pay Application",
-			{
-				"schedule_of_values": self.schedule_of_values,
-				"milestone": self.milestone,
-				"docstatus": 1,
-				"name": ["!=", self.name or ""],
-			},
-		)
-		if billed:
-			frappe.throw(_("Milestone {0} was billed on {1}.").format(escape_html(self.milestone), billed))
+			if billed:
+				frappe.throw(
+					_("Milestone {0} was billed on {1}.").format(escape_html(self.milestone), billed)
+				)
+			percent = flt(match[0].percent)
 		for row in self.lines:
-			row.this_period_pct = 0 if row.by_others else flt(match[0].percent)
+			if row.is_change_order:
+				continue
+			row.this_period_pct = 0 if row.by_others else percent
 
 	def clean_overrides(self):
 		"""Retainage overrides as typed: blank inherits, a number 0 to 100 is a rate, anything else is
@@ -334,7 +372,8 @@ class PayApplication(Document):
 			"lines": [r.as_dict() for r in self.lines],
 		}
 		reasons = [msg for _code, msg in pm.refusals(context, priced)]
-		if sov.billing_mode == "Milestones" and not self.milestone:
+		billed_changes = any(r.is_change_order and pm.cents(r.this_period) for r in self.lines)
+		if sov.billing_mode == "Milestones" and not self.milestone and not billed_changes:
 			reasons.append(_("Pick the milestone this application bills."))
 		if reasons:
 			frappe.throw(

@@ -278,7 +278,7 @@ class TestBillingDocuments(unittest.TestCase):
 					continue  # a classification of the work, carries no money
 				for word in ("cost", "markup", "margin", "commission", "contingency", "insurance", "fee", "labor_rate"):
 					self.assertNotIn(word, fn, f"{name}.{fn}")
-				if fn in ("certified_less", "amount_certified"):
+				if fn in ("certified_less", "amount_certified", "work_retainage_override", "stored_retainage_override"):
 					self.assertEqual(field.get("permlevel"), 1, fn)  # accounting's to write
 				else:
 					self.assertEqual(field.get("permlevel", 0), 0, f"{name}.{fn}")

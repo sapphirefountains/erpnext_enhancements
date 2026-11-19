@@ -321,7 +321,8 @@ def add_change_orders(schedule):
 	"""
 	sov = _schedule(schedule)
 	have = {r.change_order for r in sov.lines if r.change_order}
-	orders = frappe.get_all(
+	# get_list, not get_all: a change order's price and scope go only to people who may read it.
+	orders = frappe.get_list(
 		"Change Order",
 		filters={"project": sov.project, "docstatus": 1, "customer_approved": 1},
 		fields=["name", "co_number", "cost_impact", "customer_approved_on", "scope_addendum", "cause"],

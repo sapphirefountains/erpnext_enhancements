@@ -144,7 +144,13 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
 - **Retainage steps by the percent complete at the start of the period**, and the rate used is stored
   per line, so a certified application never re-rates.
 - **The chain is a stored link** (`previous_application`), never inferred from dates, and lines chain
-  by `line_key`, so a reordered schedule never repoints a billed line.
+  by `line_key`, so a reordered schedule never repoints a billed line. **It is derived again on every
+  save**, because read_only is not enforced on a save at v16.56: a blanked link would bill the job twice.
+- **Status, change-order rows and retainage are the server's.** A schedule's status moves only through
+  Lock / Unlock; a change-order row always equals its Change Order; retainage terms freeze at lock
+  (a changed rate re-rates all work to date). Overrides and the amount certified are permlevel 1.
+- **Milestone billing puts the milestone's percent on base lines only**; change-order rows bill by
+  their own typed percent, so approved scope never becomes unbillable.
 - **A change order joins from the application whose period reaches its approval date**, and counts
   as "approved this month" when it is new on this application, not by its date.
 - **A certified application stores every number** and is never re-synced from the schedule.
