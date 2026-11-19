@@ -714,7 +714,7 @@ function loadPage(options) {
 			escape_html: (s) =>
 				String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
 		},
-		datetime: { comment_when: () => "just now" },
+		datetime: { comment_when: () => "just now", get_today: () => "2026-11-19" },
 		show_alert: (opts, seconds) => registry.alerts.push(Object.assign({}, opts, { seconds })),
 	};
 	const esc = (v) =>
@@ -2229,6 +2229,22 @@ test("transactions_route: a bin, a job, the picker's job or item, every other fi
 	check("the bare picker", logic.transactions_route({ screen: "picker" }, {}), ["query-report", TXN, BLANK_TXN]);
 	for (const screen of ["projects", "sites", "problems"]) check(`${screen}: no filter`, logic.transactions_route({ screen }), ["query-report", TXN, BLANK_TXN]);
 	check("nothing at all", logic.transactions_route(null, null), ["query-report", TXN, BLANK_TXN]);
+	// A job opens from the day its first stock moved to today; without that day the dates are left alone.
+	check(
+		"a job from its first movement",
+		logic.transactions_route({ screen: "project", project: "PRJ-90001" }, {}, { since: "2026-10-02", today: "2026-11-19" }),
+		["query-report", TXN, Object.assign({}, BLANK_TXN, { project: "PRJ-90001", from_date: "2026-10-02", to_date: "2026-11-19" })]
+	);
+	check(
+		"a job with nothing moved yet",
+		logic.transactions_route({ screen: "project", project: "PRJ-90001" }, {}, { since: null, today: "2026-11-19" }),
+		["query-report", TXN, Object.assign({}, BLANK_TXN, { project: "PRJ-90001" })]
+	);
+	check(
+		"a bin never takes a job's dates",
+		logic.transactions_route({ screen: "bin", warehouse: BIN_A }, {}, { since: "2026-10-02", today: "2026-11-19" }),
+		["query-report", TXN, Object.assign({}, BLANK_TXN, { warehouse: BIN_A })]
+	);
 	check("the report's name", logic.TRANSACTIONS_REPORT, TXN);
 });
 
@@ -2252,15 +2268,30 @@ test("the real page: Movements opens the report for this bin as a new history en
 	check("Back lands on the bin again", world.route(), ["bin-manager", BIN_A]);
 });
 
-test("the real page: Movements on one job opens the report for the job", async () => {
-	const { world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { desk_boot: TXN_BOOT }));
+test("the real page: Movements on one job opens the report for the job, from its first movement", async () => {
+	const fixture = Object.assign({}, VIEW_FIXTURE, {
+		desk_boot: TXN_BOOT,
+		project_view: Object.assign({}, PROJECT_VIEW, { movements_since: "2026-10-02" }),
+	});
+	const { world, registry, click } = loadPage(fixture);
 	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
 	await settle();
 	check("one link on the job", txnLinkIn(registry.root.__state.html), 1);
 	click({ "data-act": "transactions" });
 	await settle();
 	check("it routes to the report", world.route(), ["query-report", TXN]);
-	check("with the job", queryOf(world), Object.assign({}, BLANK_TXN, { project: "PRJ-90001" }));
+	const q = queryOf(world);
+	check("with the job, from its first movement", [q.project, q.from_date, q.warehouse, q.user], ["PRJ-90001", "2026-10-02", "", ""]);
+	check("to today", /^\d{4}-\d{2}-\d{2}$/.test(q.to_date || ""), true);
+});
+
+test("the real page: a job with nothing moved yet keeps the report's dates", async () => {
+	const { world, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { desk_boot: TXN_BOOT }));
+	world.go_to("/desk/bin-manager/by-project/PRJ-90001");
+	await settle();
+	click({ "data-act": "transactions" });
+	await settle();
+	check("no dates sent", queryOf(world), Object.assign({}, BLANK_TXN, { project: "PRJ-90001" }));
 });
 
 test("the real page: no Movements link without the report, with an old bundle, or with no boot", async () => {

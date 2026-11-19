@@ -373,3 +373,22 @@ def shelf_by_project():
 		if row.get("project"):
 			out.setdefault(row["project"], {})[row["item_code"]] = row["qty"]
 	return out
+
+
+def first_movement(project, site_warehouses=()):
+	"""The day of the job's first live stock movement, or ``None`` when nothing has moved: a ledger row
+	carrying the job, or any row at one of its job-site warehouses.
+
+	The Bin Manager's Movements link on one job (v1.831.0) opens Warehouse Transactions from this day to
+	today, so a job whose parts moved weeks ago is not shown an empty last 30 days. Read from the ledger
+	rather than the Project's dates: a Stock Scan role may not read the Project, and parts are often
+	bought before a job's start date. One ``min()``; the same rows a Stock User can list in that report.
+	"""
+	names = tuple(name for name in site_warehouses or () if name) or ("",)
+	rows = frappe.db.sql(
+		"""select min(posting_date) from `tabStock Ledger Entry`
+		where is_cancelled = 0 and (project = %(project)s or warehouse in %(sites)s)""",
+		{"project": project, "sites": names},
+	)
+	return rows[0][0] if rows and rows[0] else None
+

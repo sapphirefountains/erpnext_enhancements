@@ -458,8 +458,9 @@ def person_summary(people):
 
 
 def item_columns():
-	"""The By item view, every quantity in the item's stock unit. Used is what was taken for a job or
-	delivered; a count correction is never use (``stock_movement_rules``)."""
+	"""The By item view, every quantity in the item's stock unit. Taken is what was taken for a job or
+	delivered; a count correction is never taken (``stock_movement_rules``). Not called Used: the Reorder
+	Board's suggestions count use from the shop's side, which also counts moves out to a job."""
 	return [
 		{
 			"label": _("Item Code"),
@@ -470,8 +471,8 @@ def item_columns():
 		},
 		{"label": _("Item Name"), "fieldname": "item_name", "fieldtype": "Data", "width": 240},
 		{"label": _("Unit"), "fieldname": "stock_uom", "fieldtype": "Data", "width": 70},
-		{"label": _("Used"), "fieldname": "used", "fieldtype": "Float", "width": 90},
-		{"label": _("Uses"), "fieldname": "uses", "fieldtype": "Int", "width": 70},
+		{"label": _("Taken"), "fieldname": "taken", "fieldtype": "Float", "width": 90},
+		{"label": _("Takes"), "fieldname": "takes", "fieldtype": "Int", "width": 70},
 		{"label": _("Received"), "fieldname": "received", "fieldtype": "Float", "width": 90},
 		{"label": _("Moved"), "fieldname": "moved", "fieldtype": "Float", "width": 90},
 		{"label": _("Count Corrections"), "fieldname": "counted", "fieldtype": "Float", "width": 130},
@@ -487,8 +488,8 @@ def item_summary(items):
 	return [
 		{"label": _("Items moved"), "value": len(items), "datatype": "Int", "indicator": "Blue"},
 		{
-			"label": _("Items used"),
-			"value": sum(1 for i in items if (i.get("uses") or 0) > 0),
+			"label": _("Items taken"),
+			"value": sum(1 for i in items if (i.get("takes") or 0) > 0),
 			"datatype": "Int",
 			"indicator": "Green",
 		},

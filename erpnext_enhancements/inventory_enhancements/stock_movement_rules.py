@@ -30,9 +30,12 @@ item moves. Both need to know what each line *was*, which the ledger does not st
                                 return, a subcontracting purpose)
   ============================  ===================================================
 
-* **Use** is a Take or a Delivered line: stock that left for a job or a customer. A count
-  correction is never use (it says the shelf was wrong, not that anything was used), a move only
-  changes where stock is, and a return to a supplier went back, not into a job.
+* **Taken** is a Take or a Delivered line: stock that left for a job or a customer. A count
+  correction is never taken (it says the shelf was wrong, not that anything was used), a move only
+  changes where stock is, and a return to a supplier went back, not into a job. The column is called
+  Taken, not Used, on purpose: the Reorder Board's suggested reorder levels count *use* from the
+  shop's side (takes and deliveries, and also moves out to a job site or the Project Shelf, less
+  returns), and one word must not mean two figures for the same item on the same day.
 
 * **A move is counted once.** A transfer is two ledger lines, one out of the source and one into
   the target, and the report's filters may show only one of them (pick the source bin and the leg
@@ -67,8 +70,8 @@ KINDS = (
 	KIND_OTHER,
 )
 
-#: Stock that left for a job or a customer.
-USE_KINDS = frozenset({KIND_TAKE, KIND_DELIVERED})
+#: Stock that left for a job or a customer: the By item view's Taken.
+TAKEN_KINDS = frozenset({KIND_TAKE, KIND_DELIVERED})
 #: Stock that arrived from outside: bought, or added by hand.
 IN_KINDS = frozenset({KIND_RECEIVE, KIND_ADD})
 
@@ -247,12 +250,12 @@ def by_person(rows, people=None):
 def by_item(rows, uoms=None):
 	"""One total per item, for the report's *By item* view, in the item's stock unit.
 
-	``used``: units taken for a job or delivered (a positive number). ``received``: units bought or
+	``taken``: units taken for a job or delivered (a positive number). ``received``: units bought or
 	added by hand. ``moved``: units moved between places (:func:`_moved_by_pair`). ``counted``: the
 	net of the count corrections (negative when counts found less than the system had).
 	``returned``: units sent back to a supplier. ``net_change``: every line added up, so with a
-	location chosen it is how that location's stock changed. ``uses``: how many take or delivery
-	lines. Also ``people``, ``lines`` and ``last_movement``. Most used first, then most lines.
+	location chosen it is how that location's stock changed. ``takes``: how many take or delivery
+	lines. Also ``people``, ``lines`` and ``last_movement``. Most taken first, then most lines.
 	"""
 	moved = _moved_by_pair(rows or ())
 	totals = {}
@@ -266,8 +269,8 @@ def by_item(rows, uoms=None):
 				"item_code": code,
 				"item_name": row.get("item_name") or "",
 				"stock_uom": (uoms or {}).get(code) or "",
-				"used": 0.0,
-				"uses": 0,
+				"taken": 0.0,
+				"takes": 0,
 				"received": 0.0,
 				"moved": 0.0,
 				"counted": 0.0,
@@ -280,9 +283,9 @@ def by_item(rows, uoms=None):
 		)
 		change = flt(row.get("qty_change"))
 		kind = row.get("kind")
-		if kind in USE_KINDS:
-			total["used"] -= change
-			total["uses"] += 1
+		if kind in TAKEN_KINDS:
+			total["taken"] -= change
+			total["takes"] += 1
 		elif kind in IN_KINDS:
 			total["received"] += change
 		elif kind == KIND_COUNT:
@@ -301,7 +304,7 @@ def by_item(rows, uoms=None):
 	for total in totals.values():
 		total["people"] = len(total["people"])
 		out.append(total)
-	out.sort(key=lambda r: (-r["used"], -r["lines"], r["item_code"]))
+	out.sort(key=lambda r: (-r["taken"], -r["lines"], r["item_code"]))
 	return out
 
 

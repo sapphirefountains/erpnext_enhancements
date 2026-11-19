@@ -29,7 +29,7 @@ What is held:
   stamp, and the force-import patch is registered after model sync, imports each workspace in its
   own savepoint, rolls a failed import back, restores ``frappe.flags.in_import`` and never raises.
 
-* **v1.831.0.** ``stock_movement_rules`` (each kind, what counts as use, the room trail, who keeps
+* **v1.831.0.** ``stock_movement_rules`` (each kind, what counts as taken, the room trail, who keeps
   stock, the totals by person and by item, a move counted once from either side); the Project
   filter's two halves (rows carrying the job OR rows at its site, the other filters still narrowing
   both, a job with no site, no site field yet); a room covering its shelves with the Room / Rack
@@ -932,11 +932,19 @@ class TestMovementKinds(unittest.TestCase):
 				self.assertEqual(rules.movement_kind(*args), kind)
 				self.assertIn(kind, rules.KINDS)
 
-	def test_use_is_takes_and_deliveries_only(self):
+	def test_taken_is_takes_and_deliveries_only(self):
 		# A count correction says the shelf was wrong, not that anything was used.
-		self.assertEqual(rules.USE_KINDS, {"Take", "Delivered"})
-		self.assertNotIn("Count", rules.USE_KINDS)
-		self.assertNotIn("Move", rules.USE_KINDS)
+		self.assertEqual(rules.TAKEN_KINDS, {"Take", "Delivered"})
+		self.assertNotIn("Count", rules.TAKEN_KINDS)
+		self.assertNotIn("Move", rules.TAKEN_KINDS)
+
+	def test_the_column_is_taken_not_used(self):
+		# The Reorder Board's suggestions count "use" differently (moves out to a job too), so this
+		# report never calls its figure Used.
+		labels = [c["label"] for c in report.item_columns()]
+		self.assertIn("Taken", labels)
+		self.assertNotIn("Used", labels)
+		self.assertNotIn("Uses", labels)
 
 	def test_clean_view_and_kind(self):
 		self.assertEqual(rules.clean_view("By person"), "By person")
@@ -1097,8 +1105,8 @@ class TestTotalsByItem(unittest.TestCase):
 				k: a[k]
 				for k in (
 					"stock_uom",
-					"used",
-					"uses",
+					"taken",
+					"takes",
 					"received",
 					"moved",
 					"counted",
@@ -1109,8 +1117,8 @@ class TestTotalsByItem(unittest.TestCase):
 			},
 			{
 				"stock_uom": "Nos",
-				"used": 2.0,
-				"uses": 1,
+				"taken": 2.0,
+				"takes": 1,
 				"received": 10.0,
 				"moved": 3.0,
 				"counted": 0.0,
@@ -1119,8 +1127,8 @@ class TestTotalsByItem(unittest.TestCase):
 				"lines": 4,
 			},
 		)
-		# A count correction is never use: B was used once (1) and counted down by 4.
-		self.assertEqual((b["used"], b["uses"], b["counted"], b["net_change"]), (1.0, 1, -4.0, -5.0))
+		# A count correction is never taken: B was taken once (1) and counted down by 4.
+		self.assertEqual((b["taken"], b["takes"], b["counted"], b["net_change"]), (1.0, 1, -4.0, -5.0))
 
 	def test_a_move_with_only_its_source_leg_shown(self):
 		rows = [r for r in _people_rows() if not (r["kind"] == "Move" and r["qty_change"] > 0)]
@@ -1139,7 +1147,7 @@ class TestTotalsByItem(unittest.TestCase):
 			}
 		]
 		a = rules.by_item(rows)[0]
-		self.assertEqual((a["returned"], a["used"], a["net_change"]), (2.0, 0.0, -2.0))
+		self.assertEqual((a["returned"], a["taken"], a["net_change"]), (2.0, 0.0, -2.0))
 
 
 class TestKindsInTheReport(unittest.TestCase):
@@ -1350,11 +1358,11 @@ class TestByItemView(unittest.TestCase):
 		columns, items, message, chart, summary = report.execute({"view": "By item"})
 		self.assertEqual([i["item_code"] for i in items], ["A", "B"])
 		a, b = items
-		self.assertEqual((a["item_name"], a["stock_uom"], a["used"], a["uses"]), ("Pump", "Nos", 3.0, 2))
-		self.assertEqual((b["received"], b["counted"], b["used"]), (6.0, -1.0, 0.0))
+		self.assertEqual((a["item_name"], a["stock_uom"], a["taken"], a["takes"]), ("Pump", "Nos", 3.0, 2))
+		self.assertEqual((b["received"], b["counted"], b["taken"]), (6.0, -1.0, 0.0))
 		self.assertEqual({c["fieldname"] for c in columns}, set(a))
 		cards = {c["label"]: c["value"] for c in summary}
-		self.assertEqual((cards["Items moved"], cards["Items used"], cards["Ledger lines"]), (2, 1, 4))
+		self.assertEqual((cards["Items moved"], cards["Items taken"], cards["Ledger lines"]), (2, 1, 4))
 		self.assertEqual(next(c for c in columns if c["fieldname"] == "item_code")["options"], "Item")
 
 	def test_the_movements_view_is_the_default(self):

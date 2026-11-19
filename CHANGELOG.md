@@ -35,19 +35,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     zeros, everyone who keeps stock and made no movement in the period: enabled System Users
     with Stock User, Stock Manager or Inventory Clerk, without Administrator, Guest and the
     service account (`reorder_rules.EXCLUDED_RECIPIENTS`). With the User filter set, that person
-    alone, zeros included. By item totals, in each item's stock unit, what was used (taken for a
-    job or delivered), received, moved, corrected by counts, returned, and the net change. A count
-    correction is never use.
+    alone, zeros included. By item totals, in each item's stock unit, what was **taken** (for a
+    job, or delivered), received, moved, corrected by counts, returned, and the net change. A count
+    correction is never taken. The column is called Taken, not Used, on purpose: the Reorder Board's
+    suggested reorder levels count use from the shop's side (moves out to a job site or the Project
+    Shelf as well, less returns), and one word must not mean two figures for the same item.
   - **From the Bin Manager.** A **Movements** button on a bin (that bin's movements), on a job in
     By project (the job's), and on the picker (the job or item the picker is filtered to). It opens
     the report as a new history entry, so Back returns to the Bin Manager. Every other filter is
-    sent blank, so a filter left from an earlier visit does not narrow the link. The button shows
+    sent blank, so a filter left from an earlier visit does not narrow the link. On a job the
+    report opens from the day the job's first stock moved to today, so parts moved weeks ago are
+    not hidden behind the default 30 days: `bin_views.project_view` now returns `movements_since`,
+    read by `project_stock.first_movement` (the earliest live ledger row carrying the job or at its
+    site; the Project's own dates are not used, since a Stock Scan role may not read the Project and
+    parts are often bought before a job starts). A job with nothing moved keeps the report's dates.
+    The button shows
     only to people the Desk lets open the report (`frappe.boot.allowed_reports`), and only when the
     page's bundle has the new route: `bin_manager.bundle.js` is version 3, and a tab still holding
     an older copy draws the page without the button.
   - **No new endpoint, no schema change, no patch.** Tests: `tests/test_warehouse_transactions.py`
-    (rules, the Project filter's two halves, rooms, kinds, both views) and
-    `scripts/test_bin_manager.mjs` (the route and the button).
+    (rules, the Project filter's two halves, rooms, kinds, both views),
+    `scripts/test_bin_manager.mjs` (the route, the job's dates and the button) and
+    `tests/test_bin_views.py` (the job's first movement, and a failed read never failing the view).
 
 ## [1.830.0] - 2026-11-19
 

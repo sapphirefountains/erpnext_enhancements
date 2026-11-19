@@ -1643,11 +1643,14 @@ The 2026-11-19 operations review: before setting reorder points, see what is tak
 | **Project** | Rows carrying the job, OR rows at the job's job-site warehouse (`Warehouse.custom_job_site_project`, and anything under it), as one `or_filters` group that the other filters still narrow. A job with no site is a plain condition. Before the site field exists, no sites |
 | **Kind** | Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other (`movement_kind`), from the voucher type, the Stock Entry's purpose and the sign of the change |
 | **View: By person** | Per person: saves (vouchers), ledger lines, takes, receipts, moves, counts, other, items, days active, last movement. Plus every person who keeps stock with zeros (`stock_people`) |
-| **View: By item** | Per item, in its stock unit: used, uses, received, moved, count corrections, returned, net change, people, lines |
+| **View: By item** | Per item, in its stock unit: taken, takes, received, moved, count corrections, returned, net change, people, lines |
 
-- **What counts as use.** A Take (Material Issue) or a Delivered line (Delivery Note, Sales Invoice
+- **What counts as taken.** A Take (Material Issue) or a Delivered line (Delivery Note, Sales Invoice
   or POS Invoice taking stock out): stock that left for a job or a customer. A count correction is
-  never use, a move only changes where stock is, and a return went back to the supplier.
+  never taken, a move only changes where stock is, and a return went back to the supplier. Not called
+  *Used*: the Reorder Board's suggested reorder levels count use from the shop's side, which also
+  counts moves out to a job site or the Project Shelf and takes returns off. The two figures answer
+  different questions, so they carry different names.
 - **A move is counted once.** A transfer is two ledger lines, and a location filter may show only
   one. Takes, receipts, moves and counts are counted per voucher and item, and how much moved is
   the larger of the two sides shown.
@@ -1662,8 +1665,13 @@ The 2026-11-19 operations review: before setting reorder points, see what is tak
 - **From the Bin Manager.** A **Movements** button on a bin, on one job (By project) and on the
   picker. `public/js/bin_manager/logic.js` `transactions_route` decides the filters: the bin, the
   job, or the picker's job and item, and every other filter sent blank, because the report keeps
-  its filters while the tab is open and sets only the ones a route names. The dates are left as
-  they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
+  its filters while the tab is open and sets only the ones a route names. On one job the report
+  opens from the day the job's first stock moved to today (`bin_views.project_view` returns
+  `movements_since`, from `project_stock.first_movement`: the earliest live ledger row carrying the
+  job or at its site), so parts moved weeks ago are not hidden behind the default 30 days; the
+  Project's own dates are not used, because a Stock Scan role may not read the Project and parts are
+  often bought before a job starts. A bin, the picker, and a job with nothing moved leave the dates
+  as they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
   function (`bin_manager.bundle.js` version 3).
 
 ## Inventory reports (v1.805.0)

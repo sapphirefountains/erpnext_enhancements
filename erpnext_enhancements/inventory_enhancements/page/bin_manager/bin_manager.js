@@ -341,7 +341,17 @@ class BinManagerPage {
 
 	open_transactions() {
 		if (!this.can_open_transactions()) return;
-		frappe.set_route(...this.bm.transactions_route(this.ctl.state.target, this.ctl.state.filters));
+		const st = this.ctl.state;
+		const t = st.target || {};
+		// One job opens from the day its first stock moved (bin_views.project_view's movements_since).
+		const held = t.screen === "project" && st.project && st.project.project === t.project ? st.project.data : null;
+		let today = "";
+		try {
+			today = frappe.datetime && typeof frappe.datetime.get_today === "function" ? frappe.datetime.get_today() : "";
+		} catch (e) {
+			today = "";
+		}
+		frappe.set_route(...this.bm.transactions_route(t, st.filters, { since: held ? held.movements_since : null, today }));
 	}
 
 	// The link to the Reorder Board, or nothing. One frappe.set_route: the board is its own history entry, so
