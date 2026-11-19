@@ -1,4 +1,4 @@
-"""Access checks on the Document Intake endpoints (v1.835.1).
+"""Access checks on the Document Intake endpoints (v1.832.0).
 
 The real ``accounting_intake`` modules run over a small ``frappe`` stub, so each rule is
 exercised rather than grepped for:

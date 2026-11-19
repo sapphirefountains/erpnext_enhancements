@@ -850,7 +850,7 @@ doc_events = {
 			# Project ID (v1.816.4): every save carries the Project's own name in custom_project_id,
 			# which the report "Active Projects w/ TL and PM" shows. Never raises.
 			"erpnext_enhancements.project_enhancements.project_id.ensure_project_id",
-			# v1.835.2: custom_drive_folder_id changes only through the Drive integration (which
+			# v1.832.0: custom_drive_folder_id changes only through the Drive integration (which
 			# writes it with db.set_value / db_set), a System Manager, or server code that sets
 			# doc.flags.drive_folder_update. A save carrying another folder is refused; one
 			# carrying it empty keeps the stored folder; a new record keeps none. Same entry on
@@ -1547,7 +1547,7 @@ doc_events = {
 			# Settings) unless the probability was set by hand; typing one marks it so. Does nothing
 			# without the custom field or the table; never raises.
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
-			# v1.835.2: who may set custom_drive_folder_id (see the Project entry).
+			# v1.832.0: who may set custom_drive_folder_id (see the Project entry).
 			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": [
@@ -1866,7 +1866,7 @@ doc_events = {
 			# customer in manual review. This hook exempts background jobs, bulk
 			# contexts and callers that set flags.ignore_mandatory.
 			"erpnext_enhancements.crm_enhancements.data_quality.enforce_industry",
-			# v1.835.2: who may set custom_drive_folder_id (see the Project entry).
+			# v1.832.0: who may set custom_drive_folder_id (see the Project entry).
 			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",

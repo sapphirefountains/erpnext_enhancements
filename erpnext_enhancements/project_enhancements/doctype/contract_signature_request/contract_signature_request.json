@@ -437,7 +437,7 @@
   },
   {
    "default": "0",
-   "description": "The signer confirmed the address this was sent to: by re-typing it before v1.836.2, and from then on by entering the code emailed to it (see Email Code Verified).",
+   "description": "The signer confirmed the address this was sent to: by re-typing it before v1.832.0, and from then on by entering the code emailed to it (see Email Code Verified).",
    "fieldname": "email_confirmed",
    "fieldtype": "Check",
    "label": "Email Confirmed",
@@ -445,7 +445,7 @@
   },
   {
    "default": "0",
-   "description": "The signer entered the one-time code the signing page emailed to the address this was sent to (from v1.836.2). Not asked for when signing in the Contract Builder.",
+   "description": "The signer entered the one-time code the signing page emailed to the address this was sent to (from v1.832.0). Not asked for when signing in the Contract Builder.",
    "fieldname": "email_code_verified",
    "fieldtype": "Check",
    "label": "Email Code Verified",
@@ -635,7 +635,7 @@
   },
   {
    "default": "0",
-   "description": "How many times someone has entered a confirmation on the signing page for this request: an email address before v1.836.2, the emailed code from then on. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
+   "description": "How many times someone has entered a confirmation on the signing page for this request: an email address before v1.832.0, the emailed code from then on. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
    "fieldname": "email_attempts",
    "fieldtype": "Int",
    "label": "Email Confirmation Attempts",

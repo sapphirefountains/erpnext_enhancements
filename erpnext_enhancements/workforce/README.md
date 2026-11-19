@@ -20,7 +20,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `page/time_kiosk/` | The desk-side Time Kiosk page (a redirect to `/kiosk`) |
 | `../workspace_sidebar/time_kiosk.json` + `../patches/seed_time_kiosk_desktop_icon.py` | The **Time Kiosk** tile on the Desk home grid (v1.482.0): an External-link `Desktop Icon` straight to `/kiosk`, and the one-item sidebar without which `get_desktop_icons` would silently drop it |
 | `page/location_timeline/` | Per-employee location timeline view (trail + live) |
-| `page/time_edit_approvals/` | **Time Edit Approvals** (v1.836.5): the hand edits to time waiting for the session user's decision, as stacked cards with Approve / Send Back. See *Editing time* |
+| `page/time_edit_approvals/` | **Time Edit Approvals** (v1.832.0): the hand edits to time waiting for the session user's decision, as stacked cards with Approve / Send Back. See *Editing time* |
 | `doctype/job_interval/` | One clock-in **session** (+ `job_interval.js`: health indicator, View on Timeline, Refresh Tracking Health) |
 | `doctype/job_interval_photo/` | Child table — one captured job photo |
 | `doctype/employee_pay_rate/` | Child table on Employee (permlevel 1) — one effective-dated pay rate |
@@ -33,7 +33,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `costing.py` | Pay rate → interval cost → Activity Cost |
 | `sites.py` | Where a project's site is; Google geocoding of project addresses. `geocode_text` (v1.578.0) is the app's one server-side geocoder, also used by the Project Planner's routing: it never raises or logs, and reports a failure only as Google's status or an exception class name, because a `requests` error contains the request URL and the key with it |
 | `corrections.py` | Reviewing a Time Correction Request: apply, re-sync, email |
-| `time_edits.py` | Approval of hand edits (v1.836.5): marks an interval `Waiting` when its own employee changes its times or enters it by hand, tells the approver, `get_waiting_edits` (GET, the approvals page) and `approve_time_edit` / `send_back_time_edit` (POST) for the employee's `reports_to` supervisor, an HR Manager or a System Manager who is neither that employee nor the editor. See *Editing time* |
+| `time_edits.py` | Approval of hand edits (v1.832.0): marks an interval `Waiting` when its own employee changes its times or enters it by hand, tells the approver, `get_waiting_edits` (GET, the approvals page) and `approve_time_edit` / `send_back_time_edit` (POST) for the employee's `reports_to` supervisor, an HR Manager or a System Manager who is neither that employee nor the editor. See *Editing time* |
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
@@ -313,7 +313,7 @@ needs `approval.APPROVER_ROLES` (`_assert_may_edit_time_for`), which is delibera
 `TIMELINE_MANAGER_ROLES` — reusing that set would mean letting a supervisor fix a timesheet
 also hands them everyone's GPS trail.
 
-**Hand edits wait for approval before they count (v1.836.5).** When
+**Hand edits wait for approval before they count (v1.832.0).** When
 an employee moves the start or end of their own interval (to the minute; a change of activity
 alone moves no hours), adds one by hand, or starts one backdated, `time_edits.record_edit`
 marks it `edit_approval = Waiting` with `edited_by`, `edited_on` and, for a change, the times
@@ -525,7 +525,7 @@ three-row stacked column header, trailing Totals row, sheet name — is transcri
 real submitted file, because a payroll clerk matches this against what they already have.
 
 **It computes hours worked, and since v1.480.0 the Regular / Overtime hours split** (see
-*Overtime* above). Since v1.836.5 an interval whose hand edit is waiting for approval, or was
+*Overtime* above). Since v1.832.0 an interval whose hand edit is waiting for approval, or was
 sent back, is in none of those figures; the workbook's third sheet, **Waiting for Approval**,
 and the Desk report's notes list each one (see *Editing time*). **It does not compute qualified overtime, and it must not.** `hrms` is
 **not installed on this site**: there is no Salary Structure, no salary slips, no payroll

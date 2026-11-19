@@ -3,7 +3,7 @@
 
 """Hand edits to time wait for approval before they count. Bench-free.
 
-The rule (v1.836.5, ``workforce/time_edits.py``): when an employee changes the times of
+The rule (v1.832.0, ``workforce/time_edits.py``): when an employee changes the times of
 their own Job Interval, adds one by hand, or starts one backdated, the interval is
 marked ``Waiting``. It is left out of the payroll export's totals and listed on its own
 sheet, it gets no Timesheet line, and it counts once an approver who is neither the
