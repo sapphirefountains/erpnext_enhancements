@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.832.0] - 2026-11-19
+
+### Added
+
+- **Estimating, milestone 1: the Estimate (new module Estimating).** Priced lines grouped by phase,
+  built quickly from a job-kind template, issuing a native draft Quotation. The first step of the full
+  concept Nik chose at the 2026-11-19 Weekly Operations Review (estimate → schedule of values → pay
+  applications); it follows TASK-2026-02149 (D15–D18, the Estimator role and the cost wall), the
+  2026-11-04 concept page and the v2 mockups.
+  - **Templates by job kind.** Design-Build (phase 100 holds the four design stages as **110 to 140**,
+    the Design Project template's Predesign, Schematic design, Design development and Construction
+    documents), Build, Event (no phases: each line is its own quotation line) and Custom Panel (no
+    rough-in or vessel). Applying one shows its checklist with the usual lines ticked, as James
+    asked ("a conscious decision to include or not"). Phases are integers because
+    `Task.custom_phase_number` is an Int; the concept page's "100.1 to 100.4" would not fit a Task.
+  - **Pricing (policy A with D15).** Cost (with use tax on material and equipment, a cost, never an
+    invoice line), plus markup by cost type, makes the cost of work; contingency, insurance and fee
+    are each a percent of the cost of work, **added, not stacked** (the 2026-09-21 sheet fix moved
+    the contingency base to the cost of work). **Commission is internal**: a percent of the price,
+    taken out of the margin and never added to the price or shown to the customer (concept card 1).
+    Every rate resolves line → phase → parent phase → estimate; a blank override inherits and `0` is
+    a real rate. Rates are copied from the **Estimate Rate Card** when an estimate is made, so a later
+    card edit never reprices a quote already sent. Every amount is rounded to the cent where it is
+    made (banker's, after float noise: 2.10 × 2.45 is 5.14), so a price is exactly the sum of its parts.
+  - **A line with a sheet price and no cost** is priced at its sheet price and flagged; **back-fill**
+    (one line or all) turns the price into the unit cost that reproduces it under the line's rates
+    (Nik, 2026-11-06), trying the cent either side so it lands on the price where the cents allow.
+  - **Cost and margin behind the wall.** Cost, markup, margin, commission and every rate are at
+    permlevel 1, readable only by **Estimator, Finance Team, Executive Team and System Manager**; in
+    this release those are also the only roles that can open an Estimate, template or rate card.
+  - **Issue Quotation** makes a draft Quotation with one line per phase at the phase's price on the
+    new non-stock Item `EST-SCOPE`, allowances named under their phase, "by others" lines listed as
+    exclusions in the terms. The deal goes on `custom_source_opportunity`, never ERPNext's
+    `opportunity` field (which drives and freezes the Opportunity's status). No sales tax on a build
+    quotation, because use tax is already inside the prices; after `set_missing_values` the builder
+    clears any tax template the customer's details pulled in. A draft Quotation is refreshed in place;
+    a submitted one is never touched. A line priced at nothing stops the issue.
+  - **Revisions.** New Revision copies the estimate as revision n+1, dated today; the old one becomes
+    Superseded and read-only, the record of what was quoted. A quotation still in draft moves to the
+    new revision, so issuing refreshes it instead of leaving a second draft behind.
+  - **The quotation keeps the estimate's prices**: `ignore_pricing_rule` is set, so a selling Pricing
+    Rule added later cannot reprice it in validate, and a "valid until" already in the past is dropped
+    (ERPNext refuses a quotation valid until before its own date).
+  - The **Estimator** role is meant to be paired with a selling role: it grants nothing on Quotation,
+    Customer, Opportunity or Project. `planner_tracking.COST_ROLES` already names it, so the Project Planner's labor
+    forecast answers an Estimator with the money; the Project form's `labor_forecast` field stays
+    hidden from it, because `grant_labor_forecast_visibility` ran once, before the role existed.
+  - **The lines editor** (the v2 Estimate board), in the Estimate form: phases fold (open by default
+    only where work is missing, or all on a short estimate), line rows turn into labelled cards under
+    720px with 44px inputs and Save / Issue Quotation stuck to the bottom, cost codes from the catalog
+    (choosing one sets the cost type; a labor line takes the labor cost per hour), the "ready to accept"
+    checks (cost and cost code on every line). Edits update numbers in place and never redraw under the
+    finger. Its pricing is a browser twin of the server engine held to the same cases; the server's
+    numbers are the ones saved.
+  - **Create > Estimate** on an Opportunity, for the roles that may, opens a new Estimate for the deal;
+    **View > Estimates** lists them.
+  - Cost codes are checked against `quality/cost_codes.py` (a legal shape is not enough); `FEE` and
+    `01 2116` are refused on a line because they are computed from the rates.
+- Patches: `seed_estimator_role` (pre_model_sync), `seed_estimate_rate_card` (one empty default
+  "Standard" card: **every rate is 0** because this repository is public; Finance types the rates in the
+  Desk, and the editor says so while they are zero), `seed_estimate_templates` (insert-only by name,
+  no prices), `seed_estimate_scope_item`. Fixture Custom Field `Quotation.custom_estimate`.
+  - **No seed step can abort the migrate.** Each runs through `estimating/seed.run`: committed when it
+    works, rolled back and logged as one "Estimating seed: <step>" Error Log (with what to do by hand)
+    when it does not, the shape the role seeds use. A raising patch aborts `bench migrate`, which is
+    the deploy here.
+  - **EST-SCOPE** is named `SERVICE, ESTIMATE SCOPE` in the Item Naming Schema's shape and uses the unit
+    **Unit** ("Nos" is disabled on prod). The naming audit still reports one finding for it,
+    `name_category_unapproved`: Appendix A lists only physical parts, so a service category is the
+    Process Owner's to add.
+  - **EST-SCOPE holds a 0 Item Price** on the default selling price list, and Issue Quotation adds one
+    on any other list a quotation uses before inserting it. Prod has "Auto Insert Item Price If
+    Missing" on, so without it the first quotation an Estimate issued would have made the first
+    phase's price EST-SCOPE's list price, and every EST-SCOPE line added by hand would default to it. A
+    0 list price never overrides a line's own rate, and with "Update Existing Price List Rate" off (as
+    on prod) ERPNext leaves an existing price alone. The quotation rows carry no rate until after
+    `set_missing_values`, because ERPNext's `insert_item_price` runs there and skips only a row with no
+    rate.
+- **An Estimate and its Quotation can be deleted, either one first.** They Link each other
+  (`Estimate.quotation`, `Quotation.custom_estimate`), so `delete_doc` refused both. Their `on_trash`
+  hooks (`estimating/links.py`; Quotation's through `doc_events`) clear the pointing field first, since
+  `on_trash` runs before the link check. Deleting the quotation sets an "Issued" estimate back to
+  "Draft". Deleting a middle revision points the next one at the one before, so the chain survives.
+  Deleting the newest makes the one before it editable again: "Issued" when its quotation still holds
+  its own prices, "Draft" when the deleted revision had issued onto the same draft quotation.
+- **Issue Quotation and New Revision stop when the save before them fails.** At frappe v16.56
+  `frm.save()` swallows a server refusal (a cost code the catalog does not know, say) and resolves
+  anyway, so the editor carried on: it issued from the last stored version and then reloaded over
+  the unsaved edits. Both now check the form is clean after the save and stop if it is not.
+- Bench-free tests, all in CI: `test_estimate_math` (engine), `test_estimating_rules` (codes,
+  quotation rows, seeded templates, the permlevel wall), `test_estimate_controller` (frappe stub),
+  `test_estimating_api` (Issue Quotation, the seed patches and the delete links, frappe stub) and
+  `scripts/test_estimate_math.mjs` (the browser twin against the same cases, the bundle level, no
+  unescaped text, and Issue / New Revision stopping after a failed save).
 ## [1.831.0] - 2026-11-19
 
 One release for five reviewed PRs from the 2026-11-19 Weekly Operations Review: new Service and

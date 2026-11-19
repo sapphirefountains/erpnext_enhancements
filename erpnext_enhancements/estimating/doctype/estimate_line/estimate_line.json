@@ -1,0 +1,339 @@
+{
+ "actions": [],
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "One priced line of an Estimate: scope, quantity, cost, and the price it makes.",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "phase_number",
+  "description",
+  "cost_type",
+  "cost_code",
+  "basis",
+  "by_others",
+  "column_break_qty",
+  "qty",
+  "uom",
+  "unit_cost",
+  "sheet_price",
+  "section_overrides",
+  "markup_override",
+  "fee_override",
+  "column_break_overrides",
+  "contingency_override",
+  "insurance_override",
+  "commission_override",
+  "section_result",
+  "amount",
+  "unit_price",
+  "needs_cost",
+  "column_break_cost",
+  "base_cost",
+  "tax_amount",
+  "cost_amount",
+  "markup_pct",
+  "markup_amount",
+  "cost_of_work",
+  "column_break_overheads",
+  "contingency_pct",
+  "contingency_amount",
+  "insurance_pct",
+  "insurance_amount",
+  "fee_pct",
+  "fee_amount",
+  "column_break_margin",
+  "commission_pct",
+  "commission_amount",
+  "margin_amount",
+  "margin_pct"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "description": "100 to 700; the design stages of a design-build job are 110 to 140 inside 100. 0 when the job has no phases.",
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Phase"
+  },
+  {
+   "columns": 3,
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Description",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "Material",
+   "fieldname": "cost_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Cost Type",
+   "options": "Material\nEquipment\nLabor\nSubcontract\nExpense",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "description": "A MasterFormat section (22 5216) or a resource code (LAB-PM). Required before a contract, not before a quote.",
+   "fieldname": "cost_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cost Code"
+  },
+  {
+   "description": "Where the number came from. Allowance lines print as allowances on the quotation.",
+   "fieldname": "basis",
+   "fieldtype": "Select",
+   "label": "Basis",
+   "options": "\nLump sum\nCatalog\nQuote\nHistorical\nAllowance\nParametric\nDesign"
+  },
+  {
+   "description": "Scope the customer provides. Stays on the estimate and the quotation's exclusions, worth nothing.",
+   "fieldname": "by_others",
+   "fieldtype": "Check",
+   "label": "By Others"
+  },
+  {
+   "fieldname": "column_break_qty",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty"
+  },
+  {
+   "default": "LS",
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "Unit"
+  },
+  {
+   "columns": 1,
+   "fieldname": "unit_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Unit Cost",
+   "permlevel": 1
+  },
+  {
+   "description": "A price carried in from a sheet with no cost yet. Priced as is, flagged until it has a cost.",
+   "fieldname": "sheet_price",
+   "fieldtype": "Currency",
+   "label": "Sheet Price"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_overrides",
+   "fieldtype": "Section Break",
+   "label": "Overrides",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: the estimate's markup for this cost type.",
+   "fieldname": "markup_override",
+   "fieldtype": "Data",
+   "label": "Markup %",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "fee_override",
+   "fieldtype": "Data",
+   "label": "Fee %",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "column_break_overrides",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Blank: inherit from the phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "contingency_override",
+   "fieldtype": "Data",
+   "label": "Contingency %",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "insurance_override",
+   "fieldtype": "Data",
+   "label": "Insurance %",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "commission_override",
+   "fieldtype": "Data",
+   "label": "Commission %",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "section_result",
+   "fieldtype": "Section Break",
+   "label": "Priced"
+  },
+  {
+   "columns": 2,
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Price",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unit_price",
+   "fieldtype": "Currency",
+   "label": "Unit Price",
+   "read_only": 1
+  },
+  {
+   "fieldname": "needs_cost",
+   "fieldtype": "Check",
+   "label": "Needs a Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_cost",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "base_cost",
+   "fieldtype": "Currency",
+   "label": "Base Cost",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "tax_amount",
+   "fieldtype": "Currency",
+   "label": "Use Tax",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cost_amount",
+   "fieldtype": "Currency",
+   "label": "Cost",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "markup_pct",
+   "fieldtype": "Percent",
+   "label": "Markup % (Effective)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "markup_amount",
+   "fieldtype": "Currency",
+   "label": "Markup",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cost_of_work",
+   "fieldtype": "Currency",
+   "label": "Cost of Work",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_overheads",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "contingency_pct",
+   "fieldtype": "Percent",
+   "label": "Contingency % (Effective)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "contingency_amount",
+   "fieldtype": "Currency",
+   "label": "Contingency",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "insurance_pct",
+   "fieldtype": "Percent",
+   "label": "Insurance % (Effective)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "insurance_amount",
+   "fieldtype": "Currency",
+   "label": "Insurance",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "fee_pct",
+   "fieldtype": "Percent",
+   "label": "Fee % (Effective)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "fee_amount",
+   "fieldtype": "Currency",
+   "label": "Fee",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_margin",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "commission_pct",
+   "fieldtype": "Percent",
+   "label": "Commission % (Effective)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "commission_amount",
+   "fieldtype": "Currency",
+   "label": "Commission (Internal)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "margin_amount",
+   "fieldtype": "Currency",
+   "label": "Margin",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "margin_pct",
+   "fieldtype": "Percent",
+   "label": "Margin %",
+   "permlevel": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
