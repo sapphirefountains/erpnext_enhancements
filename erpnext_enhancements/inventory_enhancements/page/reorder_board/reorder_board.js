@@ -9,6 +9,8 @@
 //   /desk/reorder-board            Needs reorder: at or below the reorder point, nothing open covering it
 //   /desk/reorder-board/on-order   On order: each open request, Material Request -> PO -> receipt
 //   /desk/reorder-board/snoozed    Snoozed: still below, parked by a buyer, never forgotten
+//   /desk/reorder-board/levels     Reorder levels (v1.831.0): every rule beside a level and quantity
+//                                  suggested from real usage, with its basis, and Apply, item by item
 //
 // A tab is one frappe.set_route(...). v16 fires on_page_show on every route change into this page, the
 // same page included, so a change of tab (or Back, or Forward) arrives there and draws the tab from the
@@ -35,7 +37,7 @@ frappe.pages["reorder-board"].on_page_show = function (wrapper) {
 
 const ROB_PAGE = "reorder-board";
 const ROB_API = "erpnext_enhancements.api.reorder_board.";
-const ROB_VIEWS = ["needs", "on-order", "snoozed"];
+const ROB_VIEWS = ["needs", "on-order", "snoozed", "levels"];
 
 // The page's decisions, without the DOM. Tests load this file under node (tests/test_reorder_board.py).
 const ROB = {
@@ -116,6 +118,51 @@ const ROB = {
 		const n = Number(value) || 0;
 		return Math.abs(n - Math.round(n)) < 1e-9 ? String(Math.round(n)) : n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 	},
+
+	// The Reorder levels tab (v1.831.0). What a suggestion rests on, in words: "Used 12 Nos in 40 days (5 uses)".
+	basis_text(line) {
+		const days = Number(line.basis_days) || 0;
+		// No days at all: the suggestion's own reason says so, once.
+		if (!days) return "";
+		const uom = line.stock_uom ? ` ${line.stock_uom}` : "";
+		const uses = Number(line.uses) || 0;
+		return __("Used {0} in {1} ({2})", [
+			`${ROB.fmt_qty(line.used)}${uom}`,
+			days === 1 ? __("1 day") : __("{0} days", [days]),
+			uses === 1 ? __("1 use") : __("{0} uses", [uses]),
+		]);
+	},
+
+	// The lead time the suggestion used, and whether it was assumed (the item has none set).
+	lead_text(suggestion) {
+		const s = suggestion || {};
+		const days = Number(s.lead_days) || 0;
+		const text = days === 1 ? __("lead time 1 day") : __("lead time {0} days", [days]);
+		return s.lead_assumed ? __("{0} (assumed: none set on the item)", [text]) : text;
+	},
+
+	// Count corrections are not use; they are shown beside the suggestion so a shelf that keeps coming up
+	// short is visible. "" when counts changed nothing.
+	counts_text(line) {
+		const down = Number(line.counted_down) || 0;
+		const up = Number(line.counted_up) || 0;
+		const parts = [];
+		if (down > 1e-9) parts.push(__("counts found {0} fewer", [ROB.fmt_qty(down)]));
+		if (up > 1e-9) parts.push(__("counts found {0} more", [ROB.fmt_qty(up)]));
+		return parts.length ? __("{0} (not counted as use)", [parts.join(", ")]) : "";
+	},
+
+	// The lines the tab lists: the ones with a suggestion first, then the ones whose history is too thin.
+	split_levels(lines) {
+		const ready = [];
+		const thin = [];
+		for (const line of lines || []) ((line.suggestion && line.suggestion.enough) ? ready : thin).push(line);
+		return { ready, thin };
+	},
+
+	direction_label(direction) {
+		return { higher: __("raise"), lower: __("lower"), same: __("same") }[direction] || "";
+	},
 };
 
 frappe.pages["reorder-board"].logic = ROB;
@@ -164,6 +211,13 @@ class ReorderBoardPage {
 		this.selected = new Set();
 		this.typed = new Map();
 		this._timer = null;
+		// The Reorder levels tab's own read (v1.831.0), made the first time the tab is shown and again when its
+		// window changes. Not part of the board's read: the ledger is read only for someone who opens the tab.
+		this.levels = null;
+		this.levels_days = null;
+		this.levels_error = null;
+		this.levels_seq = 0;
+		this.levels_loading = false;
 		this.$root = $('<div class="rob-app"></div>').appendTo(page.main);
 		this.$root.html(`
 			<div class="rob-banner"></div>
@@ -253,6 +307,7 @@ class ReorderBoardPage {
 			["needs", __("Needs reorder"), d.needs.length],
 			["on-order", __("On order"), d.on_order.length],
 			["snoozed", __("Snoozed"), d.snoozed.length],
+			["levels", __("Reorder levels"), d.rules],
 		];
 		this.$tabs.html(
 			tabs
@@ -266,6 +321,7 @@ class ReorderBoardPage {
 		);
 		if (this.view === "on-order") this.render_on_order();
 		else if (this.view === "snoozed") this.render_snoozed();
+		else if (this.view === "levels") this.render_levels();
 		else this.render_needs();
 	}
 
@@ -498,6 +554,198 @@ class ReorderBoardPage {
 		`);
 	}
 
+
+	// ------------------------------------------------------------------ Reorder levels (v1.831.0)
+
+	load_levels(days) {
+		const seq = ++this.levels_seq;
+		this.levels_error = null;
+		this.levels_loading = true;
+		const args = days ? { days } : {};
+		return this.ready.then(() =>
+			this.call("get_reorder_suggestions", args, { method: "GET" }).then(
+				(data) => {
+					if (seq !== this.levels_seq) return;
+					this.levels_loading = false;
+					this.levels = data || null;
+					this.levels_days = data ? data.window : null;
+					if (this.view === "levels" && this.showing()) this.render_levels();
+				},
+				(err) => {
+					if (seq !== this.levels_seq) return;
+					this.levels_loading = false;
+					this.levels = null;
+					this.levels_error = err || {};
+					if (this.view === "levels" && this.showing()) this.render_levels();
+				}
+			)
+		);
+	}
+
+	render_levels() {
+		const lv = this.levels;
+		if (!lv) {
+			if (this.levels_error) {
+				this.sf.state.render(this.$body[0], "error", {
+					title: __("The suggestions did not load."),
+					body: this.levels_error.message || "",
+					on_action: () => this.load_levels(this.levels_days),
+				});
+				return;
+			}
+			this.sf.state.render(this.$body[0], "loading", { title: __("Reading what was used…") });
+			// One read at a time: the board's own reload draws this tab again while the first read is out.
+			if (!this.levels_loading) this.load_levels(this.levels_days);
+			return;
+		}
+		const { ready, thin } = ROB.split_levels(lv.lines);
+		const choices = (lv.window_choices || [])
+			.map((n) => `<option value="${this.esc(n)}"${Number(n) === Number(lv.window) ? " selected" : ""}>${this.esc(__("Last {0} days", [n]))}</option>`)
+			.join("");
+		const since = lv.tracking_since ? frappe.datetime.str_to_user(lv.tracking_since) : "";
+		const intro = [
+			__(
+				"Used means stock that left the shop for a job or a customer: takes, deliveries, and moves out to a job site or the Project Shelf, less what came back from a job. Count corrections are not use; they are shown beside each suggestion."
+			),
+			__("Reorder at is average daily use × (lead time + {0} days). Buy is {1} days of average use.", [lv.safety_days, lv.cover_days]),
+			__("A suggestion needs at least {0} uses over {1} days.", [lv.min_uses, lv.min_days]),
+			since ? __("Takes have been recorded since {0}, so no average starts earlier.", [since]) : __("No take has been recorded yet."),
+		];
+		const head = `
+			<div class="rob-levels-head">
+				<label class="rob-window-label">${this.esc(__("Usage from"))}
+					<select class="form-control input-xs rob-window" aria-label="${this.esc(__("Usage window"))}">${choices}</select>
+				</label>
+			</div>
+			${intro.map((t) => `<p class="rob-intro">${this.esc(t)}</p>`).join("")}`;
+		const table = (lines, with_apply) => `
+			<div class="rob-scroll">
+				<table class="table table-sm rob-table">
+					<thead><tr>
+						<th>${this.esc(__("Item"))}</th>
+						<th>${this.esc(__("Warehouse"))}</th>
+						<th class="rob-num">${this.esc(__("Now: reorder at / buy"))}</th>
+						<th class="rob-num">${this.esc(__("Suggested"))}</th>
+						<th>${this.esc(__("Basis"))}</th>
+						<th></th>
+					</tr></thead>
+					<tbody>${lines.map((l) => this.level_row(l, with_apply)).join("")}</tbody>
+				</table>
+			</div>`;
+		const parts = [head];
+		if (ready.length) parts.push(table(ready, true));
+		else parts.push(`<p class="rob-note">${this.esc(__("No rule has enough history for a suggestion yet."))}</p>`);
+		if (thin.length) {
+			parts.push(`<details class="rob-thin"><summary>${this.esc(
+				__("{0} rules with too little history to suggest anything", [thin.length])
+			)}</summary>${table(thin, false)}</details>`);
+		}
+		const unruled = lv.unruled || [];
+		if (unruled.length) {
+			parts.push(`<details class="rob-unruled"><summary>${this.esc(
+				__("{0} items used in this window with no reorder rule", [unruled.length])
+			)}</summary>
+				<p class="rob-intro">${this.esc(__("To give one a rule, open its bin in the Bin Manager and use its Reorder column."))}</p>
+				${table(unruled, false)}</details>`);
+		}
+		if (!lv.can_apply && ready.length) {
+			parts.push(`<p class="text-muted">${this.esc(
+				__(
+					"Applying a suggestion needs Purchase Manager, Stock Manager or System Manager, and permission to edit Items, which ERPNext gives only to the Item Manager role."
+				)
+			)}</p>`);
+		}
+		this.$body.html(parts.join(""));
+	}
+
+	level_row(l, with_apply) {
+		const s = l.suggestion || {};
+		const has_rule = l.warehouse !== undefined;
+		const now = has_rule ? `${ROB.fmt_qty(l.reorder_level)} / ${ROB.fmt_qty(l.reorder_qty)}` : __("no rule");
+		const suggested = s.enough
+			? `${this.esc(`${ROB.fmt_qty(s.level)} / ${ROB.fmt_qty(s.qty)}`)}${
+					l.direction ? `<div class="rob-sub">${this.esc(l.matches ? __("matches the rule") : ROB.direction_label(l.direction))}</div>` : ""
+				}`
+			: `<span class="text-muted">${this.esc(__("not enough history"))}</span>`;
+		const basis = [ROB.basis_text(l), s.enough ? ROB.lead_text(s) : s.reason || "", ROB.counts_text(l)].filter(Boolean);
+		// A variant's rule set on its template: changing it would change every variant, so no Apply here.
+		const inherited = l.inherited_from
+			? `<div class="rob-sub">${this.esc(__("Rule set on its template, {0}. Change it there.", [l.inherited_from]))}</div>`
+			: "";
+		const apply =
+			with_apply && has_rule && s.enough && this.levels.can_apply && !l.matches && !l.inherited_from
+				? `<button type="button" class="btn btn-default btn-xs rob-apply">${this.esc(__("Apply"))}</button>`
+				: "";
+		return `
+			<tr data-key="${this.esc(l.key || l.item_code)}">
+				<td>${this.item_link(l.item_code)}<div class="rob-sub">${this.esc(l.item_name || "")}</div></td>
+				<td>${has_rule ? this.where(l) : ""}${inherited}</td>
+				<td class="rob-num">${this.esc(now)}${l.stock_uom ? `<div class="rob-sub">${this.esc(l.stock_uom)}</div>` : ""}</td>
+				<td class="rob-num">${suggested}</td>
+				<td>${basis.map((t, i) => (i ? `<div class="rob-sub">${this.esc(t)}</div>` : this.esc(t))).join("")}</td>
+				<td class="rob-actions">${apply}</td>
+			</tr>`;
+	}
+
+	apply_dialog(line) {
+		const s = line.suggestion || {};
+		let busy = false;
+		const d = new frappe.ui.Dialog({
+			title: __("Set the reorder rule for {0}", [line.item_code]),
+			fields: [
+				{ fieldtype: "HTML", fieldname: "rob_msg" },
+				{
+					fieldtype: "HTML",
+					fieldname: "rob_basis",
+					options: `<p>${this.esc(line.item_name || "")}<br><span class="text-muted">${this.esc(
+						__("On {0}. Now: reorder at {1}, buy {2}.", [line.warehouse, ROB.fmt_qty(line.reorder_level), ROB.fmt_qty(line.reorder_qty)])
+					)}</span></p><p class="text-muted">${this.esc([ROB.basis_text(line), ROB.lead_text(s)].join("; "))}</p>`,
+				},
+				{ fieldtype: "Data", fieldname: "level", label: __("Reorder at"), default: ROB.fmt_qty(s.level), reqd: 1 },
+				{ fieldtype: "Data", fieldname: "qty", label: __("Buy"), default: ROB.fmt_qty(s.qty), reqd: 1 },
+			],
+			primary_action_label: __("Save rule"),
+			primary_action: (values) => {
+				if (busy) return;
+				busy = true;
+				const button = d.get_primary_btn();
+				button.prop("disabled", true);
+				d.fields_dict.rob_msg.$wrapper.empty();
+				this.call("apply_reorder_suggestion", {
+					item_code: line.item_code,
+					warehouse: line.warehouse,
+					modified: line.modified,
+					level: values.level,
+					qty: values.qty,
+				}).then(
+					(r) => {
+						busy = false;
+						button.prop("disabled", false);
+						if (!r || !r.ok) {
+							d.fields_dict.rob_msg.$wrapper.html(
+								`<div class="rob-note rob-note-warn">${this.esc((r && r.message) || __("Nothing was saved."))}</div>`
+							);
+							return;
+						}
+						d.hide();
+						this.sf.toast(r.message || __("Reorder rule saved."), { tone: "success" });
+						// The rule changed, so whether the item is below its point may have too.
+						this.load_levels(this.levels_days);
+						this.load();
+					},
+					(err) => {
+						busy = false;
+						button.prop("disabled", false);
+						d.fields_dict.rob_msg.$wrapper.html(
+							`<div class="rob-note rob-note-warn">${this.esc((err && err.message) || __("Nothing was saved."))}</div>`
+						);
+					}
+				);
+			},
+		});
+		d.show();
+	}
+
 	line(key, list) {
 		return ((this.data && this.data[list]) || []).find((l) => l.key === key);
 	}
@@ -528,6 +776,17 @@ class ReorderBoardPage {
 		this.$body.on("click", ".rob-snooze", (e) => {
 			const line = this.line($(e.currentTarget).closest("tr").attr("data-key"), "needs");
 			if (line) this.snooze_dialog(line);
+		});
+		// The usage window is a control on the tab, not a history entry: changing it reads again in place.
+		this.$body.on("change", ".rob-window", (e) => {
+			this.levels = null;
+			this.load_levels(Number(e.currentTarget.value) || null);
+			this.render_levels();
+		});
+		this.$body.on("click", ".rob-apply", (e) => {
+			const key = $(e.currentTarget).closest("tr").attr("data-key");
+			const line = ((this.levels && this.levels.lines) || []).find((l) => l.key === key);
+			if (line) this.apply_dialog(line);
 		});
 		this.$body.on("click", ".rob-unsnooze", (e) => {
 			const line = this.line($(e.currentTarget).closest("tr").attr("data-key"), "snoozed");

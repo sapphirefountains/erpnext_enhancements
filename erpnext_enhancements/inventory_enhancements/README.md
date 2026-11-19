@@ -57,6 +57,10 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `rack_sheet_rules.py` | The printable rack QR sheet (v1.831.0): which racks a choice prints (a Room box prints each rack in it), a rack's shelves top to bottom with their codes left to right, the map box's shelf and bin direction, and how big the codes are. No Frappe. See *The rack QR sheet* below |
+| `reorder_suggest_rules.py` | Suggested reorder levels (v1.831.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
+| `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
+| `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
 | `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
@@ -352,6 +356,40 @@ a shelf in that order puts two labels on the wrong bins.
 
 The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR Label** and
 **Open Stock Scan** on a location, **Print QR Labels** on a group for everything beneath it.
+
+### The rack QR sheet (v1.831.0)
+
+The 2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+too thin, for a sticker. `/rack-qr-sheet?w=<rack>` (`www/rack-qr-sheet.html`, controller
+`www/rack_qr_sheet.py`) prints **one Letter page per rack**: every shelf's code with its position, to
+laminate and hang low beside the rack. The Warehouse form's **Rack QR Sheet** button opens it on any
+group. Every judgement is `rack_sheet_rules.py` (no Frappe); the read is
+`warehouse_labels.rack_sheets`.
+
+- **The codes are the labels'**: `<site>/stock-scan?w=<warehouse>`, drawn by `qr_svg`.
+- **The rows** are the rack's children in the order a person sees them
+  (`warehouse_map_rules.children_index`), top to bottom, Shelf 1 at the top. A location child is one
+  shelf with one code (the Atrium's `Shelf NLR1-1`, the Build Room's `Shelf BR-NR1-1`). A group child
+  is one shelf with a code for each location under it, left to right (a bay's `Shelf B1-2`), and an
+  empty one is printed with no code. **A shelf's number is the one its name ends in**
+  (`shelf_number`: `Shelf NLR1-3` is 3), so a disabled shelf leaves a gap rather than renumbering the
+  ones below it beside codes captioned with their real names; a name with no number takes its place
+  in the order.
+- **The Warehouse Map's box decides** when the rack has one, as its front view does
+  (`warehouse_map_rules.rows_as_seen`): *Shelf 1 is at the* Bottom, *Bin 1 is at the* Right, and the
+  box's own order. A group whose box is a **Room** prints one page for each group inside it that
+  holds a location, after a page named after the room for any shelves standing in it directly
+  (`racks_for` returns `{"rack", "loose"}`; a loose page lists only those shelves). Production's
+  Atrium and Build Room are Room boxes and their racks Rack boxes
+  (2026-11-19). The boxes are read once with `get_all`; without the map's doctype every group is a
+  rack.
+- **Sizes** (`layout`): codes up to 1.8 in and never below 0.8 in. As many share a line as fit at the
+  smallest size, then the codes grow to fill the page. A rack that does not fit runs onto a second
+  page and no shelf is split. Each page is a table, so its header (the rack's name, its room, how to
+  read it) and footer are its `thead` and `tfoot`, which browsers print on every sheet a table spans;
+  the screen says when a rack will not fit (`layout()["fits"]`). The page is US Letter, 0.4 in margins, set by the page's own `@page`
+  rule, which also overrides Bootstrap's print `min-width` as `/warehouse-labels` does.
+- **Who**: `LABEL_ROLES`, and a signed-out visitor is sent to log in and back.
 
 ### Day one: the bins are empty
 
@@ -1161,7 +1199,47 @@ TASK-2026-02922 to -02926.
   email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
   on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
 * **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
-  `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+  `unsnooze_line`, and since v1.831.0 `get_reorder_suggestions` and `apply_reorder_suggestion` (below). Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+
+### Suggested reorder levels (v1.831.0)
+
+The 2026-11-19 operations review: set reorder points from real usage, approved item by item. The
+board's fourth tab, **Reorder levels** (`/desk/reorder-board/levels`, a route like the others), lists
+every Purchase rule the board reads with its current numbers, a suggested pair and the basis. Every
+judgement is `reorder_suggest_rules.py` (no Frappe); `reorder_suggestions.py` reads and writes.
+
+| | |
+|---|---|
+| **Used** | Stock that left the shop for a job or a customer, in the rule's scope (its `warehouse_group` and everything under it, else its warehouse; `reorder_rules.in_scope`): takes (Material Issue), deliveries (Delivery Note, Sales Invoice, POS Invoice taking stock out), and moves out to a job site or the Project Shelf; less stock added with a job picked (Material Receipt carrying a Project: Stock Scan's + with a job), in full, and moves back from a job site or the Project Shelf, **up to what the shop sent out to them in the same period** (the shelf also holds parts bought straight for a job, and a site can be stocked from the shelf; those were never the shop's to have used). The shop is everything but the job sites and the Project Shelf |
+| **Not used** | Count corrections (shown beside the suggestion, derived as ERPNext's Stock Ledger report does, never counted), moves between shop places, receipts, returns to a supplier |
+| **Basis** | One period for the uses and the days (`measure`): from the latest of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site recorded, and the item's first day in the shop, through today |
+| **Enough** | At least `MIN_USES` (3) uses over at least `MIN_DAYS` (14) days, and something used on balance. Otherwise the rule is listed under "too little history" with its basis and its one reason: not in the shop, not used, as much came back as went out, too few uses, too few days |
+| **Reorder at** | daily use × (lead time + `SAFETY_DAYS`, 7), rounded up |
+| **Buy** | daily use × `COVER_DAYS` (30), rounded up, never below one unit |
+| **Lead time** | The Item's `lead_time_days`; 7 days (`DEFAULT_LEAD_DAYS`) assumed when it is 0, and the page says so. On production on 2026-11-19 no rule item had one |
+
+- **Apply** (`api.reorder_board.apply_reorder_suggestion`, POST): Purchase Manager, Stock Manager or
+  System Manager (`APPLY_ROLES`), **and** the Item's own write permission (`item.check_permission("write")`).
+  ERPNext gives Item write to Item Manager alone, and production's Custom DocPerms keep it so (Stock
+  Manager has write 0), so Apply is in practice for people with Item Manager and an apply role: 14
+  on 2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+  without Apply and a sentence naming the role. One `Item.save()` as the person, on the rule the row
+  showed only (never a new rule), with the Item's `modified` from the read: a stale page writes
+  nothing. The dialog starts on the suggestion and the numbers can be changed before saving; Reorder
+  at may be 0, Buy must be more than 0, both at most 100,000, whole for a whole-number unit.
+- **Read** (`api.reorder_board.get_reorder_suggestions`, GET, the board's roles): the board's own
+  `read_rules`, then one SQL read of the ledger per item code (the rule items' whole ledger, because a
+  count's change needs the balance before it), the first recorded take, and the items with a possible
+  use in the window. It is made only when someone opens the tab.
+- **A variant's rule from its template.** ERPNext's reorder job gives a variant with no rule of its
+  own its template's rules (`get_reorder_levels_for_variants`, v16.54.0), and the board lists them
+  under the variant. Changing one changes it for every variant, which is not an item-by-item
+  approval: the line is marked "Rule set on its template" (`inherited_from`, from the item's
+  `variant_of` and the rules it holds itself), has no Apply, and the endpoint refuses it in those words.
+- **Items used with no rule** are listed under the tab, read-only, with the same basis and
+  suggestion; a rule is given from the Bin Manager's Reorder column.
+- **What production showed on 2026-11-19:** 53 rules, and no rule item with more than one recorded
+  take, so every rule was under "too little history". Suggestions appear as takes are scanned.
 
 ### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
 
@@ -1629,6 +1707,49 @@ TASK-2026-03136 and -03137.
   (frappe's `import_doc` deletes the stored row before it inserts) and rolls back a failure. The
   site-made Inventory Enhancements sidebar is not in the repo and is unchanged.
 - **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
+
+### A job, a room or rack, kinds, and totals (v1.831.0)
+
+The 2026-11-19 operations review: before setting reorder points, see what is taken and by whom,
+"all of one person's movements", and who made none. The kinds and totals are pure rules in
+`stock_movement_rules.py` (no Frappe); the report reads, the rules decide.
+
+| Filter or view | What it does |
+|---|---|
+| **Location (room, rack or bin)** | A group warehouse includes every shelf and bin under it (`Atrium`, `North Large Rack 1`), as since v1.797.0. The **Room / Rack** column names the groups above each row's warehouse, the root left out (`group_trail`) |
+| **Project** | Rows carrying the job, OR rows at the job's job-site warehouse (`Warehouse.custom_job_site_project`, and anything under it), as one `or_filters` group that the other filters still narrow. A job with no site is a plain condition. Before the site field exists, no sites |
+| **Kind** | Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other (`movement_kind`), from the voucher type, the Stock Entry's purpose and the sign of the change |
+| **View: By person** | Per person: saves (vouchers), ledger lines, takes, receipts, moves, counts, other, items, days active, last movement. Plus every person who keeps stock with zeros (`stock_people`) |
+| **View: By item** | Per item, in its stock unit: taken, takes, received, moved, count corrections, returned, net change, people, lines |
+
+- **What counts as taken.** A Take (Material Issue) or a Delivered line (Delivery Note, Sales Invoice
+  or POS Invoice taking stock out): stock that left for a job or a customer. A count correction is
+  never taken, a move only changes where stock is, and a return went back to the supplier. Not called
+  *Used*: the Reorder Board's suggested reorder levels count use from the shop's side, which also
+  counts moves out to a job site or the Project Shelf and takes returns off. The two figures answer
+  different questions, so they carry different names.
+- **A move is counted once.** A transfer is two ledger lines, and a location filter may show only
+  one. Takes, receipts, moves and counts are counted per voucher and item, and how much moved is
+  the larger of the two sides shown.
+- **The purposes.** The ledger stores no Stock Entry purpose. One `frappe.get_list("Stock Entry")`
+  reads the purposes of the report's Stock Entries, with the reader's permissions: one the reader
+  may not see reads as Other.
+- **Who is listed with zeros.** Enabled System Users holding Stock User, Stock Manager or Inventory
+  Clerk, without Administrator, Guest and the service account (`reorder_rules.EXCLUDED_RECIPIENTS`),
+  read through `get_all` on Has Role and User (names only). With the User filter set, that person
+  alone. The other filters narrow the counts, not the list: "nobody in the Atrium this week" shows
+  everyone at zero. Someone outside the list who made movements is listed too.
+- **From the Bin Manager.** A **Movements** button on a bin, on one job (By project) and on the
+  picker. `public/js/bin_manager/logic.js` `transactions_route` decides the filters: the bin, the
+  job, or the picker's job and item, and every other filter sent blank, because the report keeps
+  its filters while the tab is open and sets only the ones a route names. On one job the report
+  opens from the day the job's first stock moved to today (`bin_views.project_view` returns
+  `movements_since`, from `project_stock.first_movement`: the earliest live ledger row carrying the
+  job or at its site), so parts moved weeks ago are not hidden behind the default 30 days; the
+  Project's own dates are not used, because a Stock Scan role may not read the Project and parts are
+  often bought before a job starts. A bin, the picker, and a job with nothing moved leave the dates
+  as they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
+  function (`bin_manager.bundle.js` version 3).
 
 ## Inventory reports (v1.805.0)
 
@@ -2229,7 +2350,9 @@ python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_
 python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
+python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v  # the report, its kinds, Project filter, rooms, By person and By item views, hub links
 python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
+python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v         # the rack QR sheet: rows, racks, sizes, the read, the page and its template (needs PyQRCode and Jinja2)
 python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints, the DocType, the File and rename hooks and the role patch on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
 ```

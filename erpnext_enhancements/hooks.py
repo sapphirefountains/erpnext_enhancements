@@ -179,7 +179,9 @@ doctype_js = {
 	# inventory (v1.521.0): the Warehouse form's doors to the QR label print page
 	# (/warehouse-labels) and to the Stock Scan page (/stock-scan) the label opens.
 	# A location gets "QR Label" + "Open Stock Scan"; a group gets "Print QR Labels"
-	# for everything beneath it. Both are www routes, so the buttons window.open them.
+	# for everything beneath it, and (v1.831.0) "Rack QR Sheet" (/rack-qr-sheet): one
+	# page per rack, each shelf's code with its position, to hang beside the rack.
+	# All are www routes, so the buttons window.open them.
 	"Warehouse": ["public/js/warehouse_stock_scan.js"],
 	# security: the Drive service-account key goes in through a dialog, not the
 	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a
@@ -820,6 +822,12 @@ doc_events = {
 			# Opportunity ticks it too), so ERPNext's after_insert copies the move tasks in the same
 			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
 			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
+			# Job number prefixes (v1.831.0, Nik 2026-11-19): a Project with no type takes its
+			# template's, because the type is read ONCE, when the Project is named right after these
+			# hooks, to choose SRV- (Service), EVT- (Events) or PRJ- (the Document Naming Rules
+			# patches/seed_job_prefix_naming_rules seeds). After apply_on_insert, which may fill the
+			# template. Only fills a blank, never raises. See project_enhancements/job_prefixes.py.
+			"erpnext_enhancements.project_enhancements.job_prefixes.fill_type_from_template",
 		],
 		"after_insert": [
 			"erpnext_enhancements.process_steps.announce_seeded_steps",

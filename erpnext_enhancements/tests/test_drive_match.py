@@ -25,6 +25,14 @@ class TestNormalize(unittest.TestCase):
 		self.assertEqual(dm.normalize("PRJ-00694 Smith Residence"), "smith residence")
 		self.assertEqual(dm.normalize("CRM-OPP-2026-00112 — Pool Reno"), "pool reno")
 
+	def test_strips_service_and_events_job_numbers(self):
+		"""v1.831.0: new Service and Events jobs are SRV-##### and EVT-#####; their folders lead with it."""
+		self.assertEqual(dm.normalize("SRV-00012 - Riverton Splash Pad"), "riverton splash pad")
+		self.assertEqual(dm.normalize("EVT-00003 Holiday Party Rain Curtain"), "holiday party rain curtain")
+		# The words themselves are never taken for an id.
+		self.assertEqual(dm.normalize("Service Call 2026"), "service call 2026")
+		self.assertEqual(dm.normalize("Events Center"), "events center")
+
 	def test_collapses_punctuation_and_case(self):
 		self.assertEqual(dm.normalize("  Smith & Sons, LLC.  "), "smith sons llc")
 

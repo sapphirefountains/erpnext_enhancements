@@ -4020,6 +4020,14 @@ jobs:
       # task turning movable on the Project Planner or vanishing from the Maintenance Planner.
       - name: Fountain Move jobs (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move_jobs.py -q
+      # Job number prefixes (Nik, 2026-11-19; v1.831.0): new Service jobs SRV-#####, new Events jobs
+      # EVT-#####, the rest PRJ-#####, by two Document Naming Rules a patch seeds. Its own step because it
+      # installs its own frappe stub. Guards a seed patch that raises (an aborted migrate is a failed
+      # deploy), re-creates a rule somebody disabled, starts a counter at a name in use, touches the PRJ-
+      # rule or renames a Project; rules that do not outrank PRJ- (every job silently stays PRJ-); and a
+      # template-type fill that overwrites a chosen type or runs after the Project is named.
+      - name: Job number prefixes (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_job_prefixes.py -q
       # Design projects (Nik, 2026-10-30): PRO-0206's four stages as the Design Project (PRO-0206) template.
       # Its own step because it installs its own frappe stub. Guards a seed patch that raises (an aborted
       # migrate is a failed deploy) or re-seeds over Nik's edits, the old template disabled before the new
@@ -4246,6 +4254,17 @@ jobs:
         run: |
           python -m pip install "PyQRCode~=1.2.1"
           python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v
+      # The printable rack QR sheet (v1.831.0, www/rack-qr-sheet.html): one page per rack, each
+      # shelf's Stock Scan code with its position, Shelf 1 at the top unless the Warehouse Map's box
+      # says otherwise, a Room box printing a page per rack inside it. The rows, the sizes, the read
+      # (the labels' own URL and QR drawing), the controller's login redirect and roles, the
+      # template rendered through Jinja over a stand-in for templates/web.html (names escaped, only
+      # the SVG marked safe), and the Warehouse form's button. PyQRCode draws the real codes and
+      # Jinja2 renders the template; both are installed here so those halves run instead of skip.
+      - name: Rack QR sheet (bench-free)
+        run: |
+          python -m pip install "PyQRCode~=1.2.1" "Jinja2>=3.1"
+          python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v
       # Stock Scan's surface, asserted on the source because there is no bench in CI to post
       # a voucher against. Guards the class of bug where a phone moves stock nobody could move
       # in the Desk, or moves it twice: every endpoint POST-only, never guest, role-checked
