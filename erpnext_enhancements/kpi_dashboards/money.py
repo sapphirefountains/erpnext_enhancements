@@ -4,9 +4,10 @@
 """Which KPI figures state revenue or margin, and who may be given them.
 
 **The rule** (owner decision, 2026-11-19): a figure that states the company's revenue or
-margin is returned only to a caller who holds Accounts Manager or System Manager. Every
-other role that may open a department's dashboard keeps everything else that department
-shows, money figures included (receivables, payables, cash collected, spend, stock value,
+margin is returned only to a caller who holds Accounts Manager or System Manager. Cash
+collected in the period is counted with revenue (the owner's answer the same day: "hide
+it too"). Every other role that may open a department's dashboard keeps everything else
+that department shows, money figures included (receivables, payables, spend, stock value,
 pipeline, won value, deal size, backlog, change-order value, cost per lead). The revenue
 and margin figures are simply left out of the answer: not zeroed, not hidden in the
 browser. The department gate (``api.kpi.DEPARTMENT_ROLES``) is unchanged; this module is
@@ -39,6 +40,9 @@ RESTRICTED_KPIS = {
 	# Finance (revenue_30 is also the Executive rollup's)
 	"revenue_30": "Revenue (30d)",
 	"revenue_mtd": "Revenue (MTD)",
+	# Receipts for the period. Not revenue by the books, but the owner counts it with
+	# revenue for this rule (2026-11-19).
+	"cash_collected_30": "Cash Collected (30d)",
 	# Product
 	"catalog_revenue_30": "Catalog Revenue (30d)",
 	"catalog_revenue_365": "Catalog Revenue (1y)",
@@ -56,7 +60,6 @@ REVIEWED_UNRESTRICTED = {
 	"ar_outstanding": "Amount owed to us; a balance, not revenue for a period.",
 	"ar_overdue": "The overdue part of receivables; a balance, not revenue.",
 	"ap_outstanding": "Amount we owe; a payable balance.",
-	"cash_collected_30": "Payments received; cash in, not revenue or margin.",
 	"dso": "A duration in days; it states no amount.",
 	"overdue_invoices": "A count of invoices.",
 	# Operations

@@ -43,10 +43,11 @@ OTHER_ROLE_SETS = (
 	[],
 )
 
-#: The owner's list: revenue and margin, nothing else.
+#: The owner's list: revenue and margin, and cash collected, which he counts with revenue.
 EXPECTED_RESTRICTED = {
 	"revenue_30",
 	"revenue_mtd",
+	"cash_collected_30",
 	"catalog_revenue_30",
 	"catalog_revenue_365",
 	"rental_booked_revenue_90",
@@ -332,7 +333,6 @@ class TestTheRegistryCoversEveryAggregator(unittest.TestCase):
 		for key in (
 			"ar_outstanding",
 			"ap_outstanding",
-			"cash_collected_30",
 			"store_run_spend_30",
 			"inventory_stock_value",
 			"open_pipeline_value",
@@ -402,7 +402,7 @@ class TestTheFilter(unittest.TestCase):
 			("Production", ["Projects Manager"], {"backlog_value", "build_backlog_value", "change_order_net_value"}),
 			("Sales", ["Sales Manager"], {"open_pipeline_value", "won_value_30", "avg_deal_size"}),
 			("Marketing", ["Marketing Manager"], {"marketing_pipeline", "marketing_spend_mtd", "cpl_mtd"}),
-			("Finance", ["Accounts User"], {"ar_outstanding", "ap_outstanding", "cash_collected_30"}),
+			("Finance", ["Accounts User"], {"ar_outstanding", "ap_outstanding", "dso"}),
 			("Operations", ["Stock Manager"], {"store_run_spend_30", "inventory_stock_value"}),
 		)
 		for department, roles, expected in cases:
@@ -506,7 +506,8 @@ class TestTheCockpitEndpoint(unittest.TestCase):
 		self.assertEqual(keys, keys_of_department("Finance") - restricted())
 		self.assertNotIn("revenue_30", keys)
 		self.assertNotIn("revenue_mtd", keys)
-		for kept in ("ar_outstanding", "ap_outstanding", "cash_collected_30", "dso"):
+		self.assertNotIn("cash_collected_30", keys)
+		for kept in ("ar_outstanding", "ap_outstanding", "dso"):
 			self.assertIn(kept, keys)
 		self.assertTrue(snap["figures_left_out"])
 
@@ -836,11 +837,11 @@ class TestExecutiveWidgets(unittest.TestCase):
 		out = self.executive.get_cash_runway()
 		self.assertEqual([f["key"] for f in out["figures"]], ["cash_collected_30", "revenue_30", "ar_outstanding", "dso"])
 
-	def test_cash_and_receivables_for_a_sales_manager_leaves_out_only_revenue(self):
+	def test_cash_and_receivables_for_a_sales_manager_leaves_out_revenue_and_cash_collected(self):
 		self._add("Finance", [("cash_collected_30", "Good"), ("revenue_30", "Good"), ("ar_outstanding", "Bad"), ("dso", "Good")])
 		STATE["roles"] = ["Sales Manager"]
 		out = self.executive.get_cash_runway()
-		self.assertEqual([f["key"] for f in out["figures"]], ["cash_collected_30", "ar_outstanding", "dso"])
+		self.assertEqual([f["key"] for f in out["figures"]], ["ar_outstanding", "dso"])
 
 	def test_a_tile_with_nothing_left_says_so(self):
 		self._add("Finance", [("revenue_30", "Good")])
