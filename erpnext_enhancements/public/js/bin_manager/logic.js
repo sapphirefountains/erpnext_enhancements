@@ -132,6 +132,39 @@ export function route_key(target) {
 	return build_route(target).join("/");
 }
 
+// The Warehouse Transactions report (v1.831.0, the 2026-11-19 operations review: "reach it from the Bin
+// Manager"). The route that opens it for what is on screen: a bin's movements, a job's (its Project
+// filter: rows carrying the job and everything at its site), or from the picker the job or item the
+// picker is filtered to. Every filter this page can set is sent, blank unless this screen names it:
+// the report keeps its filters while the tab is open (query_report.js set_route_filters sets only the
+// ones named), so a person filtered to on a last visit would otherwise silently narrow this link.
+//
+// The dates: a job opens from the day its first stock moved (project_view's movements_since) to today,
+// so parts moved six weeks ago are not hidden behind the report's default 30 days. A bin and the picker
+// leave the dates alone: the report shows them, and a range somebody chose is not stale. `extra` is
+// { since, today }; without `since` (no movement yet, or an older server) the dates are left alone too.
+export const TRANSACTIONS_REPORT = "Warehouse Transactions";
+
+export function transactions_route(target, filters, extra) {
+	const t = target || {};
+	const f = filters || {};
+	const x = extra || {};
+	const options = { view: "Movements", item_code: "", warehouse: "", project: "", user: "", kind: "" };
+	if (t.screen === "bin" && t.warehouse) options.warehouse = t.warehouse;
+	else if (t.screen === "project" && t.project) {
+		options.project = t.project;
+		if (x.since) {
+			options.from_date = String(x.since).slice(0, 10);
+			if (x.today) options.to_date = String(x.today).slice(0, 10);
+		}
+	}
+	else if (t.screen === "picker") {
+		if (f.project) options.project = String(f.project);
+		if (f.item) options.item_code = String(f.item);
+	}
+	return ["query-report", TRANSACTIONS_REPORT, options];
+}
+
 // What a deep link carried in frappe.route_options (the address's query, or a set_route object):
 // `warehouse` opens that bin, `q` fills the picker's filter. Anything else is ignored.
 export function read_route_options(options) {

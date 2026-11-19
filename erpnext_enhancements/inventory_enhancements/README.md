@@ -57,6 +57,7 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
 | `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
@@ -1630,6 +1631,49 @@ TASK-2026-03136 and -03137.
   site-made Inventory Enhancements sidebar is not in the repo and is unchanged.
 - **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
 
+### A job, a room or rack, kinds, and totals (v1.831.0)
+
+The 2026-11-19 operations review: before setting reorder points, see what is taken and by whom,
+"all of one person's movements", and who made none. The kinds and totals are pure rules in
+`stock_movement_rules.py` (no Frappe); the report reads, the rules decide.
+
+| Filter or view | What it does |
+|---|---|
+| **Location (room, rack or bin)** | A group warehouse includes every shelf and bin under it (`Atrium`, `North Large Rack 1`), as since v1.797.0. The **Room / Rack** column names the groups above each row's warehouse, the root left out (`group_trail`) |
+| **Project** | Rows carrying the job, OR rows at the job's job-site warehouse (`Warehouse.custom_job_site_project`, and anything under it), as one `or_filters` group that the other filters still narrow. A job with no site is a plain condition. Before the site field exists, no sites |
+| **Kind** | Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other (`movement_kind`), from the voucher type, the Stock Entry's purpose and the sign of the change |
+| **View: By person** | Per person: saves (vouchers), ledger lines, takes, receipts, moves, counts, other, items, days active, last movement. Plus every person who keeps stock with zeros (`stock_people`) |
+| **View: By item** | Per item, in its stock unit: taken, takes, received, moved, count corrections, returned, net change, people, lines |
+
+- **What counts as taken.** A Take (Material Issue) or a Delivered line (Delivery Note, Sales Invoice
+  or POS Invoice taking stock out): stock that left for a job or a customer. A count correction is
+  never taken, a move only changes where stock is, and a return went back to the supplier. Not called
+  *Used*: the Reorder Board's suggested reorder levels count use from the shop's side, which also
+  counts moves out to a job site or the Project Shelf and takes returns off. The two figures answer
+  different questions, so they carry different names.
+- **A move is counted once.** A transfer is two ledger lines, and a location filter may show only
+  one. Takes, receipts, moves and counts are counted per voucher and item, and how much moved is
+  the larger of the two sides shown.
+- **The purposes.** The ledger stores no Stock Entry purpose. One `frappe.get_list("Stock Entry")`
+  reads the purposes of the report's Stock Entries, with the reader's permissions: one the reader
+  may not see reads as Other.
+- **Who is listed with zeros.** Enabled System Users holding Stock User, Stock Manager or Inventory
+  Clerk, without Administrator, Guest and the service account (`reorder_rules.EXCLUDED_RECIPIENTS`),
+  read through `get_all` on Has Role and User (names only). With the User filter set, that person
+  alone. The other filters narrow the counts, not the list: "nobody in the Atrium this week" shows
+  everyone at zero. Someone outside the list who made movements is listed too.
+- **From the Bin Manager.** A **Movements** button on a bin, on one job (By project) and on the
+  picker. `public/js/bin_manager/logic.js` `transactions_route` decides the filters: the bin, the
+  job, or the picker's job and item, and every other filter sent blank, because the report keeps
+  its filters while the tab is open and sets only the ones a route names. On one job the report
+  opens from the day the job's first stock moved to today (`bin_views.project_view` returns
+  `movements_since`, from `project_stock.first_movement`: the earliest live ledger row carrying the
+  job or at its site), so parts moved weeks ago are not hidden behind the default 30 days; the
+  Project's own dates are not used, because a Stock Scan role may not read the Project and parts are
+  often bought before a job starts. A bin, the picker, and a job with nothing moved leave the dates
+  as they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
+  function (`bin_manager.bundle.js` version 3).
+
 ## Inventory reports (v1.805.0)
 
 Nik, 2026-11-12: "We need to create reports for Inventory, where a user can query what's at each
@@ -2229,6 +2273,7 @@ python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_
 python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
+python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v  # the report, its kinds, Project filter, rooms, By person and By item views, hub links
 python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
 python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints, the DocType, the File and rename hooks and the role patch on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
