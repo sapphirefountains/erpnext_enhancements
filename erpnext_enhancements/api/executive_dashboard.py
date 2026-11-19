@@ -19,10 +19,11 @@ Executive roles per ``api/kpi.py``, plus a per-widget toggle defaulting OFF.
 Drill-through links are only rendered for departments the viewer can actually
 open, so an Accounts Manager does not get a link into the HR dashboard.
 
-Money figures (``kpi_dashboards/money.py``) are read only for Accounts Manager and
-System Manager. ``_values`` is the one place a snapshot's rows are read, so every widget
-here leaves them out for anyone else: a tile for one is absent, the scorecard counts only
-the figures the viewer may see, and the risk queue lists no money figure.
+Revenue and margin figures (``kpi_dashboards/money.py``) are read only for Accounts
+Manager and System Manager. ``_values`` is the one place a snapshot's rows are read, so
+every widget here leaves them out for anyone else: a tile for one is absent, the scorecard
+counts only the figures the viewer may see, and the risk queue lists no revenue or margin
+figure.
 """
 
 import frappe
@@ -66,7 +67,7 @@ def _values(snapshot_name):
 		order_by="idx asc",
 		limit=200,
 	)
-	return money.without_money(rows)
+	return money.without_revenue(rows)
 
 
 def _value_map(department):
@@ -163,7 +164,7 @@ def get_cash_runway():
 
 	keys = ("cash_collected_30", "revenue_30", "ar_outstanding", "dso")
 	figures = [f for f in (_figure(values, key) for key in keys) if f]
-	if not figures and not money.can_see_money():
+	if not figures and not money.can_see_revenue():
 		return {"figures": [], "unavailable": NOTHING_FOR_ROLE}
 	return {
 		"figures": figures,
@@ -210,8 +211,6 @@ def get_bookings_backlog():
 			)
 			figures.append(figure)
 
-	if not figures and not money.can_see_money():
-		return {"figures": [], "unavailable": NOTHING_FOR_ROLE}
 	return {"figures": figures}
 
 

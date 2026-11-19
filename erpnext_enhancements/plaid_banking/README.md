@@ -199,8 +199,7 @@ most one refused call per dead bank per hour until someone re-links it.
 Two trust tiers, enforced at the top of every method. Whitelisted methods are callable
 directly over HTTP, so **the RPC gate is the only access boundary**.
 
-- **read** — the widget feed: System Manager, Accounts Manager (balances are money
-  figures; see `kpi_dashboards/money.py`). Returns
+- **read** — the widget feed: System Manager, Accounts Manager, Accounts User. Returns
   balances, masks and freshness per bank; never a token, secret or client id.
 - **connect** — anything that spends a Plaid call or writes a Bank Account's link (refresh,
   test, map, absorb): System Manager, Accounts Manager.

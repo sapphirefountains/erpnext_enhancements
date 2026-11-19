@@ -30,7 +30,6 @@ import frappe
 from frappe.utils import flt, getdate, nowdate
 
 from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
-from erpnext_enhancements.kpi_dashboards import money
 
 ROW_LIMIT = 20
 
@@ -91,8 +90,7 @@ def get_wip_aging():
 				"amount": flt(r.get("custom_project_dollar_amount")),
 			}
 		)
-	# The amount is a money figure: only Accounts Manager and System Manager get it.
-	return {"projects": money.drop_worklist_amounts(projects)}
+	return {"projects": projects}
 
 
 @frappe.whitelist()

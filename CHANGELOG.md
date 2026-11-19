@@ -11,32 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Money figures on the KPI dashboards go to Accounts Manager and System Manager only
-  (Nikolas, 2026-11-19).** Every other role that may open a department's dashboard keeps that
-  department's operational figures (counts, days, hours, percentages that are not margin); the
-  money figures are left out of the answer by the server, so the tile is absent rather than
+- **Revenue and margin figures on the KPI dashboards go to Accounts Manager and System Manager
+  only (Nikolas, 2026-11-19).** Every other role that may open a department's dashboard keeps
+  everything else that department shows, other money figures included: receivables, payables,
+  cash collected, spend, stock value, pipeline, closed-won value, deal size, backlog,
+  change-order value, marketing pipeline, marketing spend and cost per lead. The revenue and
+  margin figures are left out of the answer by the server, so the tile is absent rather than
   zeroed. The department gate (`DEPARTMENT_ROLES`) is unchanged.
-  - **One registry, one helper.** `kpi_dashboards/money.py` lists every `kpi_key` that carries
-    a money figure (`MONEY_KPIS`: receivables, payables, revenue, cash collected, spend, stock
-    value, pipeline, closed-won value, deal size, backlog, change-order value, cost per lead,
-    catalog and rental revenue, gross margin, revenue per employee) and every key that reads like
-    money but is not, with the reason (`REVIEWED_NOT_MONEY`). `can_see_money` is the role rule and
-    `without_money` is the filter; every read path below calls them.
+  - **One registry, one helper.** `kpi_dashboards/money.py` lists the eight keys that state
+    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, catalog revenue 30
+    days and one year, rental revenue booked, rental revenue per fountain, revenue per employee,
+    gross margin) and every other key whose name, label or unit reads like money, with the
+    reason it is not a revenue or margin figure (`REVIEWED_UNRESTRICTED`). `can_see_revenue` is
+    the role rule and `without_revenue` is the filter; every read path below calls them.
   - **Read paths.** The cockpit endpoints (`get_kpi_dashboard`, `refresh_kpi_dashboard`) and the
-    assistant tool `kpi_dashboard_status` (through them); KPI Snapshot document reads
-    (`KPISnapshot.apply_fieldlevel_read_permissions`) and KPI Snapshot Value lists
-    (`permission_query_conditions` for the child doctype); the Executive Dashboard widgets
-    (scorecard counts, cash and receivables, bookings and backlog, risk queue); the Task Dashboard
-    wall band; and the amount shown beside a row on the Sales stalled-deals, hand-off backlog and
-    renewal-radar worklists and the Production work-in-progress list. The Bank Balances feed is now
-    read by Accounts Manager and System Manager.
-  - **What a user notices.** A Projects Manager sees Production's active projects, overdue
-    projects and milestone rates, with no backlog or change-order value. A dashboard whose figures
-    are all money shows "Nothing to show for your role." The snapshots themselves are stored whole;
-    the filter applies on read.
+    assistant tool `kpi_dashboard_status` (through them); KPI Snapshot document reads, which open
+    with those rows left out (`KPISnapshot.apply_fieldlevel_read_permissions`); the Executive
+    Dashboard widgets (scorecard counts, cash and receivables, risk queue); and the Task Dashboard
+    wall band.
+  - **Lists and reports.** A KPI Snapshot list, Report View or count, including one that selects,
+    filters, sorts or totals by KPI Snapshot Value columns, returns for these callers only the
+    snapshots that hold no revenue or margin row (the parent's `permission_query_conditions`). A
+    query on KPI Snapshot Value itself leaves those rows out.
+  - **KPI Target.** A target for a revenue or margin figure is listed, opened, created, edited and
+    deleted by Accounts Manager and System Manager only (`permission_query_conditions` and
+    `has_permission` on KPI Target). Sales Manager keeps every other target.
+  - **What a user notices.** An Accounts User opening Finance sees receivables, payables, cash
+    collected and the counts, without the two revenue tiles. Item Manager, Stock Manager and Sales
+    Manager open Product without catalog revenue, rental revenue and gross margin. Sales Manager
+    opens Executive without revenue and revenue per employee. In the KPI Snapshot list these
+    roles see only the snapshots that hold no revenue or margin row. A dashboard whose figures are all revenue or
+    margin shows "Nothing to show for your role." The snapshots themselves are stored whole; the
+    rule applies on read.
   - **Tests.** `tests/test_kpi_money_roles.py` reads every aggregator and fails the build when a
-    key or label that reads like money is neither marked nor listed as reviewed, and runs the
-    filter through each read path.
+    key or label that reads like money is in neither table, or when one that names revenue or
+    margin is not restricted; it runs the rule through each read path, and runs the KPI Snapshot
+    and KPI Target list conditions in SQLite against sample rows.
 
 ## [1.830.0] - 2026-11-19
 

@@ -36,9 +36,7 @@ from erpnext_enhancements.plaid_banking.core.utils import (
 	update_settings_status,
 )
 
-# Bank balances are money figures: read by the same roles that see money on the KPI
-# dashboards (kpi_dashboards/money.py MONEY_ROLES).
-FINANCE_READ_ROLES = ("System Manager", "Accounts Manager")
+FINANCE_READ_ROLES = ("System Manager", "Accounts Manager", "Accounts User")
 FINANCE_CONNECT_ROLES = ("System Manager", "Accounts Manager")
 
 

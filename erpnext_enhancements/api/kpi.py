@@ -44,12 +44,12 @@ def _can_view(department):
 
 def _serialize(doc):
 	"""The snapshot as the cockpit and the assistant tool read it. A caller without
-	Accounts Manager or System Manager gets the department's figures with the money
-	figures left out (``kpi_dashboards/money.py``); ``money_left_out`` says so."""
+	Accounts Manager or System Manager gets the department's figures with the revenue
+	and margin figures left out (``kpi_dashboards/money.py``); ``figures_left_out`` says so."""
 	all_values = list(doc.values)
-	values = money.without_money(all_values)
+	values = money.without_revenue(all_values)
 	return {
-		"money_left_out": len(values) < len(all_values),
+		"figures_left_out": len(values) < len(all_values),
 		"department": doc.department,
 		"period": doc.period,
 		"snapshot_date": str(doc.snapshot_date),

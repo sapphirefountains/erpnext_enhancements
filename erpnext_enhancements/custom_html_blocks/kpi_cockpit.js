@@ -162,9 +162,9 @@
             })
             .join("");
         if (cards) body.innerHTML = `<div class="kpi-grid">${cards}</div>`;
-        else if (snap.money_left_out) {
-            // Every figure this department has is money, and the server left them out for
-            // this role: say so, not "no values".
+        else if (snap.figures_left_out) {
+            // Every figure this snapshot has is a revenue or margin figure, and the server left
+            // them out for this role: say so, not "no values".
             sf.state.render(body, "empty", { title: __("Nothing to show for your role.") });
         } else sf.state.render(body, "empty", { title: __("This snapshot has no KPI values.") });
         const gen = snap.generated_at ? ` · ${snap.generated_at}` : "";
