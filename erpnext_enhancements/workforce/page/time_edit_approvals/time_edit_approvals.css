@@ -1,0 +1,151 @@
+/* Time Edit Approvals (v1.836.5). Loaded with the page by Frappe's page loader (Page.load_assets),
+   so an edit is never served stale. Every selector starts .tea-: a page's CSS stays in <head> for
+   the rest of the session. Colours are the app's --sf-* tokens only, which follow the Desk theme
+   (docs/app-design-system.md); test_s3_page_css holds this file to that. One column of stacked
+   cards at every width, so a phone needs nothing of its own beyond full-width buttons. */
+
+.tea-page {
+	max-width: 760px;
+	margin: 0 auto;
+	padding: var(--sf-space-15) 0 var(--sf-space-60);
+	font-family: var(--sf-font-sans);
+	color: var(--sf-text);
+}
+
+.tea-intro {
+	margin: 0 0 var(--sf-space-15);
+	font-size: var(--sf-text-md);
+	line-height: var(--sf-leading-body);
+	color: var(--sf-text-muted);
+}
+
+.tea-muted {
+	margin: 0;
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+.tea-count {
+	margin: 0 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.tea-empty {
+	padding: var(--sf-space-20);
+	border: 1px dashed var(--sf-rule);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+}
+
+.tea-empty-title {
+	margin: 0 0 var(--sf-space-5);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-heading);
+}
+
+.tea-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+
+.tea-card {
+	padding: var(--sf-space-15) var(--sf-space-20);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	border-left: 3px solid var(--sf-warn);
+	border-radius: var(--sf-radius-control);
+}
+
+.tea-card-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--sf-space-5) var(--sf-space-10);
+}
+
+.tea-name {
+	margin: 0;
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+	overflow-wrap: anywhere;
+}
+
+.tea-day {
+	font-size: var(--sf-text-md);
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+}
+
+.tea-project {
+	margin: var(--sf-space-5) 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+	overflow-wrap: anywhere;
+}
+
+.tea-facts {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--sf-space-5) var(--sf-space-15);
+	margin: 0;
+	font-size: var(--sf-text-md);
+}
+
+/* Each label and value pair sits in its own wrapper for the markup; the wrapper takes no box of
+   its own, so the label and value line up in the two columns above. */
+.tea-fact {
+	display: contents;
+}
+
+.tea-fact dt {
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-label);
+}
+
+.tea-fact dd {
+	margin: 0;
+	color: var(--sf-text);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tea-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+}
+
+.tea-button {
+	min-height: var(--sf-touch-min);
+	min-width: 120px;
+}
+
+@media (max-width: 767px) {
+	.tea-page {
+		padding-top: var(--sf-space-10);
+	}
+
+	.tea-card {
+		padding: var(--sf-space-15);
+	}
+
+	.tea-facts {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
+	}
+
+	.tea-fact dd {
+		margin-bottom: var(--sf-space-10);
+	}
+
+	.tea-button {
+		flex: 1 1 0;
+	}
+}

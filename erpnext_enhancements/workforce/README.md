@@ -20,6 +20,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `page/time_kiosk/` | The desk-side Time Kiosk page (a redirect to `/kiosk`) |
 | `../workspace_sidebar/time_kiosk.json` + `../patches/seed_time_kiosk_desktop_icon.py` | The **Time Kiosk** tile on the Desk home grid (v1.482.0): an External-link `Desktop Icon` straight to `/kiosk`, and the one-item sidebar without which `get_desktop_icons` would silently drop it |
 | `page/location_timeline/` | Per-employee location timeline view (trail + live) |
+| `page/time_edit_approvals/` | **Time Edit Approvals** (v1.836.5): the hand edits to time waiting for the session user's decision, as stacked cards with Approve / Send Back. See *Editing time* |
 | `doctype/job_interval/` | One clock-in **session** (+ `job_interval.js`: health indicator, View on Timeline, Refresh Tracking Health) |
 | `doctype/job_interval_photo/` | Child table — one captured job photo |
 | `doctype/employee_pay_rate/` | Child table on Employee (permlevel 1) — one effective-dated pay rate |
@@ -32,7 +33,7 @@ The kiosk **PWA shell** lives in [`../www/`](../www/README.md); the backend endp
 | `costing.py` | Pay rate → interval cost → Activity Cost |
 | `sites.py` | Where a project's site is; Google geocoding of project addresses. `geocode_text` (v1.578.0) is the app's one server-side geocoder, also used by the Project Planner's routing: it never raises or logs, and reports a failure only as Google's status or an exception class name, because a `requests` error contains the request URL and the key with it |
 | `corrections.py` | Reviewing a Time Correction Request: apply, re-sync, email |
-| `time_edits.py` | Approval of hand edits (v1.836.5): marks an interval `Waiting` when its own employee changes its times or enters it by hand, `approve_time_edit` / `send_back_time_edit` (POST) for a correction reviewer who is neither that employee nor the editor. See *Editing time* |
+| `time_edits.py` | Approval of hand edits (v1.836.5): marks an interval `Waiting` when its own employee changes its times or enters it by hand, tells the approver, `get_waiting_edits` (GET, the approvals page) and `approve_time_edit` / `send_back_time_edit` (POST) for the employee's `reports_to` supervisor, an HR Manager or a System Manager who is neither that employee nor the editor. See *Editing time* |
 | `sweeper.py` | Hourly auto-close of forgotten clock-outs |
 | `digest.py` | The 06:45 supervisor digest |
 | `photo_gate.py` | The job-photo capture gate (WP-2) |
@@ -317,23 +318,51 @@ an employee moves the start or end of their own interval (to the minute; a chang
 alone moves no hours), adds one by hand, or starts one backdated, `time_edits.record_edit`
 marks it `edit_approval = Waiting` with `edited_by`, `edited_on` and, for a change, the times
 before it (`edit_previous_start` / `edit_previous_end`, kept once per waiting spell). The same
-happens when somebody who may edit another person's time but does not review that person's
-corrections does it. An edit by a correction reviewer (`permissions.can_review`: the manager
-roles or the employee's `reports_to` user) to someone else's interval needs no approval, and
-settles a waiting one as approved; a reviewer's edit to their own time still waits. A waiting
-interval is left out of every total in `payroll_export` and listed on its **Waiting for
-Approval** sheet, and `sync_interval_to_timesheet` writes no Timesheet line for it
+happens when somebody who may edit another person's time but may not approve that person's
+edits does it, a Projects Manager included.
+
+**Who approves (Nikolas, 2026-11-19)** is `time_edits.may_approve`: the user of the employee
+named in the employee's `reports_to`, or anyone holding HR Manager or System Manager. Nothing
+else. It is deliberately its own rule and not the Time Correction Request gate
+(`permissions.can_review`, whose `TCR_MANAGER_ROLES` include Projects Manager and which is
+unchanged): Projects Manager is not an approver of hand edits. An employee with no
+`reports_to`, or whose supervisor has no enabled user, is decided by HR Manager or System
+Manager. An approver's edit to someone else's interval needs no approval, and settles a
+waiting one as approved; an approver's edit to their own time still waits. Whoever decides is
+never the employee or the person who made the edit (`may_decide`).
+
+A waiting interval is left out of every total in `payroll_export` and listed on its **Waiting
+for Approval** sheet, and `sync_interval_to_timesheet` writes no Timesheet line for it
 (`sync_status = Held - Not Approved`), so it is not submitted with the day and does not reach
-a project's Labor actuals. A reviewer who is neither the employee nor the editor decides it on
-the **Job Interval form** (*Edit Approval* → **Approve Edit** / **Send Back**, with an optional
-note; the list's *Edit Approval* filter set to Waiting is the queue): `approve_time_edit` records
-who and when, and re-syncs the line; `send_back_time_edit` records who and when, restores
-nothing, keeps the interval out and emails the employee, whose My Day row then reads *Sent
-back*. Editing it again puts it back to Waiting. Intervals that existed before the field read
-blank, which counts, as before: nothing in history is marked.
+a project's Labor actuals.
+
+**The approver is told** when an interval starts waiting (from blank, Approved or Sent Back),
+once per waiting spell: `record_edit` sets `flags.edit_wait_started`, and
+`JobInterval.on_update` calls `notify_wait_started` after the save, which covers all three
+kiosk endpoints (their `save` / `insert` run `on_update`) and the Desk form. Nothing is sent
+from `validate`, so a refused save tells nobody. The notice goes to the `reports_to` user when
+that is an enabled login, otherwise to every enabled HR Manager, never to the employee or the
+editor: a bell entry of type *Alert* (which Frappe never emails) linking to the approvals page,
+and one email through `email_style` with who, which day, the project, what changed, the reason
+given and who edited it. It never raises; a failure goes to the Error Log and the edit stands.
+
+**Deciding.** The **Time Edit Approvals** page (`/desk/time-edit-approvals`, roles Employee,
+HR Manager and System Manager so any supervisor can open it) lists, as stacked cards that work
+on a phone, the entries the session user may decide: their direct reports' for a supervisor,
+everyone's for an HR Manager or System Manager. Its one read, `get_waiting_edits` (GET), picks
+the rows on the server by the same `may_decide` rule and returns only what the page shows, so a
+supervisor needs no read permission on Job Interval and the page sends no list of employees.
+The **Job Interval form** keeps *Edit Approval* → **Approve Edit** / **Send Back** for a reader
+`onload` says may decide. Both call `approve_time_edit`, which records who and when and
+re-syncs the line, and `send_back_time_edit`, which records who and when (with an optional
+note), restores nothing, keeps the interval out and emails the employee, whose My Day row then
+reads *Sent back*. Editing it again puts it back to Waiting and tells the approver again.
+Intervals that existed before the field read blank, which counts, as before: nothing in history
+is marked.
 
 The **Job Interval form follows the same rule.** Projects Manager, HR Manager and System
-Manager can write an interval on the Desk form and through the REST resource, so
+Manager can write an interval on the Desk form and through the REST resource (so a Projects
+Manager's change to another person's interval there waits too), so
 `JobInterval.validate` calls `time_edits.guard_direct_save` on every save that did not come
 from this app's own code (those save with `ignore_permissions`). A change there to the
 employee, start, end or paused time (what `payroll_export` pays from) is a hand edit and waits

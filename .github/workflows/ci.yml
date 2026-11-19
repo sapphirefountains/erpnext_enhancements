@@ -3645,11 +3645,14 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_workforce_client_time -v
       # Its own step too (frappe stub in setUpModule). Hand edits to time wait for
       # approval (v1.836.5): an employee's change to their own interval, or one added by
-      # hand, is Waiting; a reviewer's edit to someone else's is not; neither the employee
-      # nor the editor may approve it; approve and send back record who and when; the
-      # payroll export's totals and overtime split leave Waiting and Sent Back entries out
-      # and list them on their own sheet; the Timesheet sync writes no line for them; and
-      # rows from before the field read blank and count.
+      # hand, is Waiting; an approver's edit to someone else's is not (the reports_to
+      # supervisor, HR Manager, System Manager; not Projects Manager); neither the employee
+      # nor the editor may approve it; the approver is told once per waiting spell, after
+      # the save, and a failed notice never fails the edit; the approvals page's read
+      # returns only what the caller may decide; approve and send back record who and when;
+      # the payroll export's totals and overtime split leave Waiting and Sent Back entries
+      # out and list them on their own sheet; the Timesheet sync writes no line for them;
+      # and rows from before the field read blank and count.
       - name: Workforce hand-edit approval (payroll + Timesheet exclusion)
         run: python -m unittest erpnext_enhancements.tests.test_time_edit_approval -v
       # Semi-monthly commission periods. Every failure mode here is a *plausible*

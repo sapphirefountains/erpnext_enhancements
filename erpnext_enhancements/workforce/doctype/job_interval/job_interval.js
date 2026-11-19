@@ -25,10 +25,12 @@ const EE_HEALTH_COLOURS = {
 };
 
 // A hand edit waiting for approval (workforce/time_edits.py) is left out of payroll
-// until a reviewer approves it. The form says so, and shows "Approve Edit" / "Send
-// Back" to a reader the server says may decide it (__onload.ee_may_decide_edit: a
-// correction reviewer who is neither the employee nor the person who made the edit).
-// The list's "Edit Approval" filter set to Waiting is the queue.
+// until it is approved. The form says so, and shows "Approve Edit" / "Send Back" to a
+// reader the server says may decide it (__onload.ee_may_decide_edit: the employee's
+// reports_to supervisor, an HR Manager or a System Manager, who is neither the employee
+// nor the person who made the edit). The queue is the Time Edit Approvals page
+// (/desk/time-edit-approvals); the list's "Edit Approval" filter set to Waiting shows the
+// same entries to those who can read the list.
 
 frappe.ui.form.on("Job Interval", {
 	refresh(frm) {

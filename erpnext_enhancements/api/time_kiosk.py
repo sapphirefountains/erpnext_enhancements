@@ -2674,9 +2674,11 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
     Overlap and the submitted-day lock are enforced by ``JobInterval.validate`` on
     the insert below, not here — one implementation, on every path that writes.
 
-    The entry waits for approval and stays out of payroll until a reviewer who is
-    not the employee approves it, unless the caller reviews this employee's time
-    corrections and is not that employee (``workforce/time_edits.py``).
+    The entry waits for approval and stays out of payroll until an approver who is
+    not the employee approves it, unless the caller may approve this employee's
+    edits (their ``reports_to`` supervisor, HR Manager or System Manager) and is not
+    that employee (``workforce/time_edits.py``). The approver is told after the
+    insert (``JobInterval.on_update``).
     """
     from erpnext_enhancements.workforce import time_edits
 
@@ -2765,8 +2767,8 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
         # intervals whose tracking actually failed, and the manual_start badge
         # already says there is no evidence here.
 
-    # Time entered by hand for oneself, or by someone who does not review this
-    # employee's time, waits for approval before it counts (workforce/time_edits.py).
+    # Time entered by hand for oneself, or by someone who may not approve this
+    # employee's edits, waits for approval before it counts (workforce/time_edits.py).
     waiting = time_edits.record_edit(doc, added=True)
 
     doc.insert(ignore_permissions=True)
@@ -2830,9 +2832,10 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
     the save below. Neither is re-implemented here.
 
     A start or end that moves (to the minute, the resolution the kiosk sends) is a
-    hand edit: on one's own interval, or by someone who does not review this
-    employee's time corrections, it waits for approval and stays out of payroll
-    until it is approved (``workforce/time_edits.py``). A change of activity alone
+    hand edit: on one's own interval, or by someone who may not approve this
+    employee's edits (a Projects Manager included), it waits for approval and stays
+    out of payroll until it is approved (``workforce/time_edits.py``); the approver
+    is told after the save (``JobInterval.on_update``). A change of activity alone
     moves no hours and does not.
     """
     from erpnext_enhancements.workforce import time_edits

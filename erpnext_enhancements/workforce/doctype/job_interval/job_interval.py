@@ -93,8 +93,16 @@ class JobInterval(Document):
 	def on_update(self):
 		"""A direct save that changed whether the interval's hand edit is held
 		(``time_edits.guard_direct_save``): its Timesheet line follows, none while it is
-		held, as it does after the edit endpoints' own saves."""
+		held, as it does after the edit endpoints' own saves.
+
+		A save that started a waiting spell (``time_edits.record_edit``, from the kiosk's
+		edit endpoints or the Desk form) tells the approver here, after the save, once per
+		spell. ``notify_wait_started`` never raises."""
 		if self.flags.get("edit_state_changed"):
 			from erpnext_enhancements.api.time_kiosk import resync_interval_timesheet
 
 			resync_interval_timesheet(self)
+		if self.flags.get("edit_wait_started"):
+			from erpnext_enhancements.workforce import time_edits
+
+			time_edits.notify_wait_started(self)
