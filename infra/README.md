@@ -107,8 +107,8 @@ gcloud compute project-info add-metadata \
 **Cloud Build YAML files (set `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` if you move them):**
 | File | Purpose |
 |------|---------|
-| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, runs `bench migrate && bench build`, restarts service |
-| `infra/cloudbuild-upstream.yaml` | Pulls all upstream Frappe apps (`bench update --pull`), restarts service |
+| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, takes a pre-migrate database backup (`infra/bench_update.sh backup`), runs `bench migrate && bench build`, restarts service |
+| `infra/cloudbuild-upstream.yaml` | Moves `frappe` and `erpnext` to two named release tags (`infra/bench_update.sh upstream`), behind the same backup, restarts service |
 
 **Substitutions used by the YAML files:**
 | Substitution | Purpose |
@@ -116,6 +116,95 @@ gcloud compute project-info add-metadata \
 | `_VM_NAME` | Target VM name |
 | `_VM_ZONE` | Target VM zone |
 | `_ALLOW_SKIP` | When `true`, skips gracefully if VM is not RUNNING (e.g. preempted spot VM) |
+| `_FRAPPE_TAG`, `_ERPNEXT_TAG` | Upstream trigger only, both required: the release tags to install, like `v16.56.0`. Blank or anything else, and the run stops before it connects |
+
+#### Runbook: pre-migrate backups and upstream updates
+
+Since v1.836.7, nothing changes the production database without a backup first, and Frappe and
+ERPNext move only to a release chosen on purpose. Both go through one script,
+[`bench_update.sh`](bench_update.sh), run as the `frappe` user from the bench. Each deploy takes
+a few minutes longer for the backup.
+
+**Where the backups are.** `/home/frappe/frappe-bench/pre-migrate-backups/<UTC time>/`, one
+directory per run (for example `20261119T201500Z`), readable only by `frappe`. Each holds one
+`<time>-<site>-database.sql.gz` per site (`-database-enc.sql.gz` when backup encryption is on)
+and bench's copy of the site config. The script keeps the newest five runs and deletes older ones
+from that directory only; the scheduled backups in `sites/<site>/private/backups` and the offsite
+backup's files are not its business. Before it starts, it checks that the disk has at least
+2 GB free, or twice the newest kept backup if that is more.
+
+**What a failed backup looks like.** The deploy's build log ends with:
+
+```
+bench_update.sh: PRE-MIGRATE BACKUP FAILED: <reason>
+bench_update.sh: this run migrated nothing and switched no app; stopping here.
+```
+
+and the build fails without the `✅ ... updated` line. Nothing after the backup ran: no migrate,
+no build, no redis flush, no restart. The reasons it names are not enough free disk, `bench
+backup` exiting with an error, and a site left without a database file. Fix the cause, then
+re-run the deploy (`gcloud builds triggers run app-deploy-prod --branch=main`). The app code on
+the VM is already the new commit, but the database and the running processes are not.
+
+**Choosing the tags.** Pick a published release of each:
+[frappe releases](https://github.com/frappe/frappe/releases) and
+[erpnext releases](https://github.com/frappe/erpnext/releases), or
+`git ls-remote --tags --refs https://github.com/frappe/frappe 'v16.*'`. Read the release notes
+between the installed version and the new one. Production's current versions are in
+`` SELECT app_name, app_version FROM `tabInstalled Application` ``, or on the VM in
+`git -C apps/frappe describe --tags`. ERPNext declares the Frappe versions it supports in its
+`pyproject.toml` (`[tool.bench.frappe-dependencies]`); a pair released the same week is the usual
+choice. Only `v16.MINOR.PATCH` is accepted: no branch names, no betas, no other major version.
+
+**Running the update.** Hold merges, update beta first, then production:
+
+```bash
+gcloud builds triggers run app-upstream-test --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+gcloud builds triggers run app-upstream-prod --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+```
+
+By hand on the VM it is the same script, and this is the only supported way to update by hand
+too (never `bench update`, `bench switch-to-branch` or a `git pull` in `apps/frappe`):
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.56.0 v16.54.0
+exit
+sudo systemctl restart frappe-bench
+```
+
+It checks both tags, that `apps/frappe` and `apps/erpnext` have no changes to tracked files, and
+fetches both tags, all before it changes anything; then it takes the backup, checks out the two
+tags (a detached checkout, so no later command follows a branch), and runs `bench setup
+requirements`, `bench --site all migrate` and `bench build`. It prints each app's previous commit.
+If a step after the checkout fails, it says so, names the backup directory and the previous
+commits, and leaves the bench unrestarted.
+
+**Restoring a pre-migrate backup.** This replaces the whole database with the copy taken just
+before that migrate: everything written since is lost. Hold merges first, and pause deploys.
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+ls pre-migrate-backups/                      # newest last
+ls -l pre-migrate-backups/<run>/
+# Put the code back to what the backup was taken under, when it changed:
+#   upstream update: git -C apps/frappe checkout <previous commit>   (and the same for erpnext;
+#                    the failed run printed both), then: bench setup requirements
+#   app deploy:      git -C apps/erpnext_enhancements reset --hard <previous commit>
+bench --site <site> restore /home/frappe/frappe-bench/pre-migrate-backups/<run>/<time>-<site>-database.sql.gz
+bench build
+bench --site <site> clear-cache
+exit
+sudo systemctl restart frappe-bench
+```
+
+`restore` asks for the database root password. An encrypted backup is decrypted with the site's
+own backup encryption key. The next merge to `main` deploys again, so revert the change on `main`
+before you lift the hold.
 
 **IAM**: Cloud Build SA is granted `iap.tunnelResourceAccessor` role for IAP SSH. Trigger configs reference YAML paths via `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` variables.
 

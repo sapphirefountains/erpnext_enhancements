@@ -240,9 +240,15 @@ Triggers are managed in **shared** state but target VMs in test/prod:
 # Deploy app to test VM
 gcloud builds triggers run app-deploy-test --region=us-east1 --branch=main
 
-# Update upstream apps on prod VM
-gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main
+# Update Frappe and ERPNext on the prod VM: both release tags are required
+gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
 ```
+
+Every app deploy takes a database backup before `bench migrate`, and an upstream update moves
+Frappe and ERPNext only to the two release tags it is given. How to choose the tags, run the
+update by hand, find the backups and restore one: [README.md, section 13](README.md#13-cicd--cloud-build-deploy--upstream-triggers),
+"Runbook: pre-migrate backups and upstream updates".
 
 ### One-time: adding deploy SSH key to project metadata
 

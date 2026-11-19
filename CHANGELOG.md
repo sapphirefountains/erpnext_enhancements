@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.836.7] - 2026-11-19
+
+### Changed
+
+- **A database backup comes before every migrate, and Frappe and ERPNext move only to named
+  releases (hardening).** Nikolas, 2026-11-19: "Backup first, named versions." Both rules live in
+  one script, `infra/bench_update.sh`, run as the `frappe` user; the runbook is in
+  `infra/README.md`, section 13.
+  - **App deploys take a backup first, and take a few minutes longer.** Before `bench --site all
+    migrate`, `infra/cloudbuild-deploy.yaml` now runs `bench_update.sh backup`: a database-only
+    backup of every site with bench's own `backup` command, into
+    `<bench>/pre-migrate-backups/<UTC time>/`. It checks free disk first (2 GB, or twice the
+    newest kept backup), prints each file's name and size, and keeps the newest five runs,
+    deleting older ones from that directory only. When the check or the backup fails, the build
+    log says `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no migrate,
+    build, redis flush or restart. The step's timeout goes from 600 to 1200 seconds. The redis
+    flush, the restart and the rest of the deploy are unchanged.
+  - **Upstream updates install two named release tags.** `infra/cloudbuild-upstream.yaml` no
+    longer runs `bench update --pull --no-backup`. Each run takes two required substitutions,
+    `_FRAPPE_TAG` and `_ERPNEXT_TAG`, each a tag like `v16.56.0` (`^v16\.[0-9]+\.[0-9]+$`); a run
+    with either blank or anything else stops before it connects to the VM. On the VM the script
+    checks the tags again, refuses a checkout with changes to tracked files, fetches both tags,
+    takes the same backup, checks out exactly those tags, and runs `bench setup requirements`,
+    `bench --site all migrate` and `bench build`. Updating by hand in a shell is the same command
+    (`bash apps/erpnext_enhancements/infra/bench_update.sh upstream <frappe-tag> <erpnext-tag>`)
+    and is now the only supported way; the timeout goes from 1200 to 2400 seconds.
+  - **Terraform must be applied for the triggers' new substitutions.** `infra/cloud_build.tf`
+    adds `_FRAPPE_TAG` and `_ERPNEXT_TAG`, blank, to `app-upstream-test` and `app-upstream-prod`,
+    so the console shows them. Apply the shared state after this merges, not before: a trigger
+    carrying substitutions its YAML does not use fails to start. The two YAML files take effect
+    as soon as they are on `main`.
+  - `tests/test_pre_migrate_backup.py`, a new bench-free CI step: the backup comes before migrate
+    in one `&&` chain, the upstream file never follows a branch and refuses anything but two
+    release tags, retention touches only its own directory, plus `bash -n` and shellcheck on the
+    script and runs of it against a scratch bench.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

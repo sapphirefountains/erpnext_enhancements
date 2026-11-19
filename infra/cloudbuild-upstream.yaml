@@ -1,4 +1,17 @@
-# `bench update` restarts nothing on these VMs: there is no supervisorctl, and
+# Moves Frappe and ERPNext to two named release tags, never to a branch head. Run it with
+# both substitutions set, for example:
+#   gcloud builds triggers run app-upstream-prod --branch=main \
+#     --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+# A run without both, or with anything other than a tag like v16.56.0, stops here before it
+# connects to the VM. On the VM, infra/bench_update.sh checks the tags again, takes a database
+# backup, checks out the two tags and runs `bench setup requirements`, `bench --site all
+# migrate` and `bench build`; a person in a shell runs the same script the same way.
+# Runbook: infra/README.md, section 13.
+#
+# The tags reach the shell as environment variables (FRAPPE_TAG, ERPNEXT_TAG), not as text
+# substituted into the script, and are used only after they match the pattern.
+#
+# Nothing here restarts through bench: there is no supervisorctl on these VMs, and
 # restart_systemd_on_update is not set. Leave it unset -- bench's systemd restart stops
 # whatever frappe-bench.target Requires, and these VMs have no such target. The
 # `systemctl restart frappe-bench` below does the restart, on a VM cut over to gunicorn
@@ -8,10 +21,23 @@ steps:
     id: 'Update Upstream Apps'
     entrypoint: 'sh'
     secretEnv: ['DEPLOY_SSH_KEY']
+    env:
+      - 'FRAPPE_TAG=$_FRAPPE_TAG'
+      - 'ERPNEXT_TAG=$_ERPNEXT_TAG'
     args:
       - '-c'
       - |
         set -e
+        # tag check: begin
+        for TAG in "$$FRAPPE_TAG" "$$ERPNEXT_TAG"; do
+          if [ "$$(printf '%s' "$$TAG" | wc -l)" -ne 0 ] || \
+            ! printf '%s' "$$TAG" | grep -Eq '^v16\.[0-9]+\.[0-9]+$$'; then
+            echo "❌  _FRAPPE_TAG and _ERPNEXT_TAG must both be release tags like v16.56.0 (got '$$FRAPPE_TAG' and '$$ERPNEXT_TAG'); nothing was changed"
+            exit 1
+          fi
+        done
+        # tag check: end
+
         mkdir -p /root/.ssh && chmod 700 /root/.ssh
         echo "$$DEPLOY_SSH_KEY" > /root/.ssh/id_rsa
         chmod 600 /root/.ssh/id_rsa
@@ -32,22 +58,25 @@ steps:
           fi
         fi
 
-        echo "🚀 Updating all apps on $$VM"
+        echo "🚀 Updating frappe to $$FRAPPE_TAG and erpnext to $$ERPNEXT_TAG on $$VM"
         gcloud compute ssh deploy@"$$VM" \
           --zone="$$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
-            /home/frappe/.local/bin/bench update --pull --no-backup' && \
+            export PATH=\$$PATH:/home/frappe/.local/bin && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh upstream $$FRAPPE_TAG $$ERPNEXT_TAG' && \
             sudo systemctl restart frappe-bench"
         echo "✅  $$VM updated"
 
-timeout: '1200s'
+timeout: '2400s'
 options:
   logging: CLOUD_LOGGING_ONLY
 
 substitutions:
   _ALLOW_SKIP: 'false'
+  _FRAPPE_TAG: ''
+  _ERPNEXT_TAG: ''
 
 availableSecrets:
   secretManager:
