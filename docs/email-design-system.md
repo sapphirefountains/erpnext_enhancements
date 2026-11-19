@@ -416,6 +416,7 @@ Every email the app can send. **Audience**: `customer` = leaves the company.
 | Fountain intake invite | `crm_enhancements/fountain_intake_invite.html` | Invite sent | the customer | **customer** |
 | Contract signing invite | `project_enhancements/contract_signature_invite.html` | Send/resend for signature; reminders | the signer | **customer** |
 | Contract signed copy | `project_enhancements/contract_signed_customer.html` | Signature completed | the signer | **customer** |
+| Contract signing code | `project_enhancements/contract_signing_code.html` | "Email me a code" on `/contract-sign` (v1.836.2); sent straight after the commit, body replaced in the Email Queue once sent | the signer (the address on the request) | **customer** |
 | Product ready for pickup | `product_fulfillment/ready_for_pickup.html` | **Email Ready for Pickup** on a draft Pickup at shop Delivery Note, once every unit passed its test (v1.829.0) | the customer contact | **customer** |
 | Product shipped | `product_fulfillment/shipped.html` | A Carrier shipping Delivery Note is submitted; **Resend Shipped Email** (v1.829.0) | the customer contact | **customer** |
 | Trip booked | `travel/trip_booked.html` | `Travel Trip` → Booked | travelers + owner | staff |

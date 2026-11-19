@@ -20,8 +20,8 @@ once, ever** — at the moment of execution.
 
 The trust model is the inverse of ``Fountain Move Invite``, whose docstring
 says "the token is attribution, not authorisation". **This token is
-authorisation**: possession of it plus knowledge of one email address executes a
-contract. Hence the token is stored only as a SHA-256 hash (``token_hash``), the
+authorisation**: possession of it plus a one-time code emailed to one address
+executes a contract. Hence the token is stored only as a SHA-256 hash (``token_hash``), the
 recipient address is frozen at send (``signer_email``), and the provider in force
 is frozen on the row (``provider``) so flipping a Settings switch cannot orphan a
 link already in flight.

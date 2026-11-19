@@ -161,7 +161,10 @@
  *   - Back from Stripe's card page lands on "Already signed" with the enrolment offered again,
  *     only while the server says it is unfinished and only with the link this tab was given
  *     (kept in sessionStorage under a fingerprint of the ref, never the ref);
- *   - a back-forward-cache restore re-enables "Save a card".
+ *   - a back-forward-cache restore re-enables "Save a card";
+ *   - signing starts with the emailed code: the form stays hidden until the server accepts
+ *     it, a refusal is said in the code step, a lost session opens a new one, and nothing
+ *     the page sends names an email address.
  *   /visit-sign-off
  *   - no history entry is ever added: signing swaps the form for a thank-you in place, and Back
  *     from it leaves the page as it would have before Sign;
@@ -4041,8 +4044,20 @@ function loadContractSign(state, opts) {
 	const ids =
 		state === "signable"
 			? {
+					"cs-verify": {},
+					"cs-turnstile": {},
+					"cs-code-send": { tag: "button" },
+					"cs-code-form": { tag: "form", hidden: true },
+					"cs-code": { tag: "input" },
+					"cs-code-verify": { tag: "button" },
+					"cs-code-resend": { tag: "button" },
+					"cs-code-note": {},
+					"cs-code-error": { hidden: true },
+					"cs-verified": { hidden: true },
 					"cs-agreement": {},
-					"cs-form": {},
+					"cs-locked": {},
+					"cs-locked-go": { tag: "button" },
+					"cs-form": { hidden: true },
 					"cs-mode-typed": { tag: "button" },
 					"cs-mode-drawn": { tag: "button" },
 					"cs-typed-pane": {},
@@ -4053,9 +4068,7 @@ function loadContractSign(state, opts) {
 					"cs-pad": { tag: "canvas" },
 					"cs-clear": { tag: "button" },
 					"cs-title": { tag: "input" },
-					"cs-email": { tag: "input", value: "jane@example.com" },
 					"cs-agree": { tag: "input", checked: true },
-					"cs-turnstile": {},
 					"cs-error": { hidden: true },
 					"cs-submit": { tag: "button" },
 					"cs-decline": { tag: "button" },
@@ -4122,6 +4135,15 @@ function loadContractSign(state, opts) {
 	};
 }
 
+// The code step, answered as the server would for a right code.
+async function confirmCode(p) {
+	p.$("cs-code-send").click();
+	await p.answer("send_signing_code", { ok: true, sent_to: "j\u2022\u2022\u2022@example.com", minutes: 10 });
+	p.$("cs-code").value = "123 456";
+	p.$("cs-code-form").dispatch("submit");
+	return p.answer("verify_signing_code", { ok: true, agreement_html: "<p>The agreement as sent</p>" });
+}
+
 async function testContractSign() {
 	console.log("/contract-sign");
 	const source = fs.readFileSync(path.join(APP, "public", "js", "contract_sign", "contract_sign.js"), "utf8");
@@ -4132,6 +4154,7 @@ async function testContractSign() {
 	// Sign, then Save a card.
 	let p = loadContractSign("signable");
 	await p.answer("begin_signing", { esign_sid: "sid1" });
+	await confirmCode(p);
 	p.$("cs-form").dispatch("submit");
 	await p.answer("sign_contract", { ok: true, autopay: { offer: true } });
 	check("signing swaps in place", [p.$("cs-form").hidden, p.$("cs-done").hidden, p.$("cs-autopay").hidden], [true, false, false]);
@@ -4172,6 +4195,7 @@ async function testContractSign() {
 
 	p = loadContractSign("signable");
 	await p.answer("begin_signing", { esign_sid: "sid1" });
+	await confirmCode(p);
 	p.$("cs-form").dispatch("submit");
 	await p.answer("sign_contract", { ok: true, autopay: { offer: true } });
 	p.$("cs-autopay-start").click();
@@ -4185,6 +4209,7 @@ async function testContractSign() {
 	// bfcache restore with nothing kept: say we'll follow up rather than show a dead button.
 	p = loadContractSign("signable", { storage: makeStorage(true) });
 	await p.answer("begin_signing", { esign_sid: "sid1" });
+	await confirmCode(p);
 	p.$("cs-form").dispatch("submit");
 	await p.answer("sign_contract", { ok: true, autopay: { offer: true } });
 	p.$("cs-autopay-start").click();
@@ -4195,10 +4220,74 @@ async function testContractSign() {
 	// Decline, in place.
 	p = loadContractSign("signable");
 	await p.answer("begin_signing", { esign_sid: "sid1" });
+	await confirmCode(p);
 	p.$("cs-decline").click();
 	await p.answer("decline_contract", { ok: true });
 	check("declining swaps in place to 'declined'", [p.$("cs-form").hidden, p.$("cs-agreement").hidden, p.$("cs-declined").hidden], [true, true, false]);
 	check("...with no reload and no history entry", [p.browser.reloads, p.browser.calls.length], [0, 0]);
+
+	// The emailed code.
+	p = loadContractSign("signable");
+	const opened = await p.answer("begin_signing", { esign_sid: "sid1" });
+	check("the session is opened with the ref and a token, and nothing else", Object.keys(opened.body).sort(), ["esign_sid", "ref", "turnstile_token"]);
+	check(
+		"before the code: the form is hidden, the code step and the note under the agreement are shown",
+		[p.$("cs-form").hidden, p.$("cs-verify").hidden, p.$("cs-locked").hidden, p.$("cs-code-form").hidden],
+		[true, false, false, true]
+	);
+	p.$("cs-code-send").click();
+	const sent = await p.answer("send_signing_code", { ok: true, sent_to: "j\u2022\u2022\u2022@example.com", minutes: 10 });
+	check("asking for a code sends the session and nothing else", sent.body, { esign_sid: "sid1" });
+	check(
+		"...then the code field appears, with the masked address",
+		[p.$("cs-code-form").hidden, p.$("cs-code-send").hidden, p.$("cs-code-note").textContent.includes("j\u2022\u2022\u2022@example.com")],
+		[false, true, true]
+	);
+	p.$("cs-code").value = "12345";
+	p.$("cs-code-form").dispatch("submit");
+	await flush();
+	check("a code that is not six digits is not sent", [p.posts.length, p.$("cs-code-error").hidden], [0, false]);
+	p.$("cs-code").value = "654321";
+	p.$("cs-code-form").dispatch("submit");
+	const wrong = await p.answer("verify_signing_code", { ok: false, error: "That code didn't work." });
+	check("the code is sent with the session", wrong.body, { esign_sid: "sid1", code: "654321" });
+	check("a refused code is said in the code step, and the form stays hidden", [p.$("cs-code-error").textContent, p.$("cs-form").hidden], ["That code didn't work.", true]);
+	p.$("cs-code-resend").click();
+	await p.answer("send_signing_code", { ok: false, error: "We've sent several codes in the last few minutes." });
+	check("a refused send is said too", p.$("cs-code-error").textContent, "We've sent several codes in the last few minutes.");
+	p.$("cs-code").value = "123-456";
+	p.$("cs-code-form").dispatch("submit");
+	const right = await p.answer("verify_signing_code", { ok: true, agreement_html: "<p>The agreement as sent</p>" });
+	check("separators are dropped before it is sent", right.body.code, "123456");
+	check(
+		"a right code shows the form and hides the code step",
+		[p.$("cs-form").hidden, p.$("cs-verify").hidden, p.$("cs-locked").hidden, p.$("cs-verified").hidden],
+		[false, true, true, false]
+	);
+	p.$("cs-form").dispatch("submit");
+	const refused = await p.answer("sign_contract", { ok: false, error: "Please confirm it's you with the code we email you first.", code_required: true });
+	check("signing sends no email address", Object.keys(refused.body).some((k) => /email/.test(k)), false);
+	check(
+		"a session without a verified code goes back to the code step",
+		[p.$("cs-verify").hidden, p.$("cs-code-send").hidden, p.$("cs-code-form").hidden],
+		[false, false, true]
+	);
+	check("...still with no history entry", p.browser.calls, []);
+
+	// A deploy cleared the session: the page opens a new one and offers a new code.
+	p = loadContractSign("signable");
+	await p.answer("begin_signing", { esign_sid: "sid1" });
+	p.$("cs-code-send").click();
+	await p.answer("send_signing_code", { ok: true, sent_to: "j\u2022\u2022\u2022@example.com", minutes: 10 });
+	p.$("cs-code").value = "123456";
+	p.$("cs-code-form").dispatch("submit");
+	await p.answer("verify_signing_code", { ok: false, restart: true, error: "That code didn't work." });
+	const reopened = await p.answer("begin_signing", { esign_sid: "sid2" });
+	check("a lost session is opened again, as a new one", reopened && reopened.body.esign_sid, null);
+	p.$("cs-code-resend").click();
+	const resent = await p.answer("send_signing_code", { ok: true, sent_to: "j\u2022\u2022\u2022@example.com", minutes: 10 });
+	check("...and the new code is asked for on it", resent.body, { esign_sid: "sid2" });
+	check("no reload and no history entry for any of it", [p.browser.reloads, p.browser.calls.length], [0, 0]);
 }
 
 // ---------------------------------------------------------------------------- /visit-sign-off

@@ -17,9 +17,10 @@ reach that page, so an unverifiable submission is parked for a human — "an out
 costs a delay, not a flood".
 
 On the signing page it is *tertiary*. To get this far a caller must already hold
-a 256-bit single-use token that we emailed to an address we chose, and must know
-that address. Automated abuse is not the residual threat once both hold. So an
-``Unavailable`` verdict — Cloudflare unreachable, not a failed challenge —
+a 256-bit single-use token that we emailed to an address we chose, and must enter
+the code we email to that address. Automated abuse is not the residual threat once
+both hold. So an ``Unavailable`` verdict — Cloudflare unreachable as observed by the
+server, not a failed challenge —
 **accepts the signature**, records the verdict on the evidence record and flags
 it in the staff alert. Refusing would cost a real, certain contract to defend
 against a threat the token has already eliminated, and the blast radius is
@@ -27,6 +28,10 @@ bounded anyway: the operational Maintenance Contract that signing creates is a
 **Draft** a human still has to activate.
 
 ``Failed`` (Cloudflare actively said no) still refuses.
+
+The verdict always comes from :func:`verify`, on the server's own configuration: with no
+secret configured it is "Not Checked", otherwise the token is checked, and a missing
+token is "Failed". The page has no way to state the outcome itself.
 """
 
 import frappe

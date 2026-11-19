@@ -2343,7 +2343,7 @@ class ContractBuilder {
 				{
 					fieldtype: "HTML",
 					options: `<p>${__(
-						"The agreement opens on a new tab, ready to hand to the client. They re-type their email, initial each marked clause, and sign. Their signed copy is emailed to them."
+						"The agreement opens on a new tab, ready to hand to the client. They enter the code we email them, initial each marked clause, and sign. Their signed copy is emailed to them."
 					)}</p><p class="text-muted">${__(
 						"This device stays signed in as you, so stay with them while they sign."
 					)}</p>${replaces}<p class="text-muted">${cb_esc(this.confirm_issue_text())}</p>`,
@@ -2410,7 +2410,7 @@ class ContractBuilder {
 					label: __("Send to"),
 					default: this.values.contact_email,
 					reqd: 1,
-					description: __("They'll be asked to re-type this address to confirm it's them."),
+					description: __("When they start signing, a short code is emailed here to confirm it's them."),
 				},
 				{
 					fieldname: "message",
