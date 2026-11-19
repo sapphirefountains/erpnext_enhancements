@@ -1332,6 +1332,29 @@ class TestTellingTheApprover(_NoticeCase):
 		time_edits.notify_wait_started(doc)
 		self.assertEqual(sorted(self.told()), ["hr2@example.test", "hr@example.test"])
 
+	def test_with_no_hr_manager_to_tell_the_system_managers_are_told(self):
+		"""HR Manager left empty, by disabled logins or by leaving out the employee and the
+		editor: the notice goes to the enabled System Managers, with the same exclusions."""
+		saved = set(DISABLED)
+		try:
+			DISABLED.update({"hr@example.test", "hr2@example.test"})
+			_as("other.tech@example.test")
+			doc = FakeInterval(employee="EMP-O")
+			time_edits.record_edit(doc, added=True)
+			self.assertEqual(time_edits.notify_wait_started(doc), ["sys@example.test"])
+			self.assertEqual(self.told(), ["sys@example.test"])
+
+			DISABLED.discard("hr@example.test")
+			own = FakeInterval(employee="EMP-HR", edited_by="hr@example.test")
+			self.assertEqual(time_edits.approvers_to_notify(own), ["sys@example.test"], "the HR Manager is the employee")
+
+			DISABLED.add("hr@example.test")
+			own = FakeInterval(employee="EMP-SYS", edited_by="sys@example.test")
+			self.assertEqual(time_edits.approvers_to_notify(own), [], "never the employee or the editor")
+		finally:
+			DISABLED.clear()
+			DISABLED.update(saved)
+
 	def test_never_the_employee_or_the_editor(self):
 		"""An HR Manager's own time waits; the other HR Manager is told, never the one who edited."""
 		_as("hr@example.test")

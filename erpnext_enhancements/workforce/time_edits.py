@@ -62,6 +62,9 @@ APPROVER_ROLES = frozenset({"HR Manager", "System Manager"})
 #: The role told about a waiting edit when the employee has no supervisor to tell.
 FALLBACK_NOTIFY_ROLE = "HR Manager"
 
+#: Told when no HR Manager is left to tell either, so the notice always reaches someone.
+LAST_RESORT_NOTIFY_ROLE = "System Manager"
+
 #: The Desk page where an approver decides waiting edits.
 APPROVALS_PAGE = "time-edit-approvals"
 
@@ -388,15 +391,20 @@ def notify_sent_back(doc):
 
 def approvers_to_notify(doc):
 	"""Who is told that ``doc`` started waiting: the employee's supervisor (``reports_to``)
-	when that is an enabled user, otherwise every enabled holder of HR Manager. Never the
-	interval's employee or the person who made the edit."""
+	when that is an enabled user, otherwise every enabled holder of HR Manager, and when
+	that leaves nobody, every enabled holder of System Manager. Never the interval's
+	employee or the person who made the edit."""
 	from frappe.utils.user import get_users_with_role
 
 	exclude = {u for u in (employee_user(doc.employee), getattr(doc, "edited_by", None)) if u}
 	supervisor = supervisor_user(doc.employee)
 	if supervisor and supervisor not in exclude:
 		return [supervisor]
-	return sorted({u for u in get_users_with_role(FALLBACK_NOTIFY_ROLE) or [] if u and u not in exclude})
+	for role in (FALLBACK_NOTIFY_ROLE, LAST_RESORT_NOTIFY_ROLE):
+		users = sorted({u for u in get_users_with_role(role) or [] if u and u not in exclude})
+		if users:
+			return users
+	return []
 
 
 def notify_wait_started(doc):

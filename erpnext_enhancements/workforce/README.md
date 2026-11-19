@@ -341,8 +341,8 @@ once per waiting spell: `record_edit` sets `flags.edit_wait_started`, and
 `JobInterval.on_update` calls `notify_wait_started` after the save, which covers all three
 kiosk endpoints (their `save` / `insert` run `on_update`) and the Desk form. Nothing is sent
 from `validate`, so a refused save tells nobody. The notice goes to the `reports_to` user when
-that is an enabled login, otherwise to every enabled HR Manager, never to the employee or the
-editor: a bell entry of type *Alert* (which Frappe never emails) linking to the approvals page,
+that is an enabled login, otherwise to every enabled HR Manager, and when that leaves nobody
+(v1.832.0), to every enabled System Manager; never to the employee or the editor: a bell entry of type *Alert* (which Frappe never emails) linking to the approvals page,
 and one email through `email_style` with who, which day, the project, what changed, the reason
 given and who edited it. It never raises; a failure goes to the Error Log and the edit stands.
 
