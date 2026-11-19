@@ -59,7 +59,9 @@ steps down from 10% to 5% at 50% complete, the work billed before the step stays
 final release, and only work after it is held at 5%; a step-down, or an override, never releases
 earlier retainage. (Re-rating all work to date, ``(D + E) x rate``, would have let the application
 that crosses the step pay out half of everything held so far.) A line whose work goes down releases
-retainage at today's rate, never below zero. Retainage on stored materials stays ``F x rate``,
+retainage at today's rate, never below zero and never leaving more held than the work that is left.
+Nothing in this module releases retainage otherwise: an override of 0 holds nothing NEW, and final
+release is its own step (B9). Retainage on stored materials stays ``F x rate``,
 because stored is a balance.
 
 **Finishing a line.** A percent of C seldom lands on the exact cents left. When the percent typed is
@@ -297,8 +299,10 @@ def price_application(schedule, application, lines, previous):
 		if held is None:
 			held = share(d, work_pct)  # an opening balance with no history: held at today's rate
 		ret_work = held + share(e, work_pct)
-		if c >= 0 and ret_work < 0:
-			ret_work = 0
+		# Never hold more than the work it is held on, nor less than nothing: when a line's work goes
+		# down, retainage comes down with it at most to the work that is left.
+		low, high = sorted((0, d + e))
+		ret_work = min(max(ret_work, low), high)
 		ret_stored = share(f, stored_pct)
 		out.append(
 			{

@@ -344,7 +344,7 @@
    "label": "Retainage"
   },
   {
-   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate. Accounting's to set: it re-rates all work to date.",
+   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate. Accounting's to set. Applies to this period's work; earlier retainage stays held.",
    "fieldname": "work_retainage_override",
    "fieldtype": "Data",
    "label": "Retainage on Work % (this application)",

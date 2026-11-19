@@ -168,6 +168,24 @@ class PayApplication(Document):
 			)
 		self.link_previous(previous)
 		self.status = "Draft"
+		self.drop_unpermitted_overrides()
+
+	def drop_unpermitted_overrides(self):
+		"""The retainage overrides and the certification are permlevel 1, accounting's. Frappe resets
+		such fields for a user without access, but at v16.56 ``validate_higher_perm_levels`` returns
+		before it resets the CHILD rows of a new document, so a line override sent with an insert would
+		survive. Cleared here, for parent and lines, unless the user may write level 1."""
+		if self.flags.ignore_permissions or frappe.session.user == "Administrator":
+			return
+		if 1 in self.get_permlevel_access("write"):
+			return
+		self.work_retainage_override = ""
+		self.stored_retainage_override = ""
+		self.certified_less = 0
+		self.amount_certified = 0
+		for row in self.lines:
+			row.work_retainage_override = ""
+			row.stored_retainage_override = ""
 
 	def link_previous(self, previous):
 		self.previous_application = previous.name if previous else None

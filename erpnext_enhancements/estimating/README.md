@@ -150,8 +150,12 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
   by `line_key`, so a reordered schedule never repoints a billed line. **It is derived again on every
   save**, because read_only is not enforced on a save at v16.56: a blanked link would bill the job twice.
 - **Status, change-order rows and retainage are the server's.** A schedule's status moves only through
-  Lock / Unlock; a change-order row always equals its Change Order; retainage terms freeze at lock
-  (a changed rate re-rates all work to date). Overrides and the amount certified are permlevel 1.
+  Lock / Unlock; a change-order row always equals its Change Order and never loses or gains one;
+  retainage terms freeze at lock. Overrides and the amount certified are permlevel 1, and are cleared
+  on a new application for a user without level-1 access.
+- **Nothing releases retainage until B9.** With keep-holding, an override of 0 holds nothing new but
+  releases nothing, and held retainage only comes down with a line's work (capped at the work left).
+  Final release (B9) must ship before any job reaches its last application.
 - **Milestone billing puts the milestone's percent on base lines only**; change-order rows bill by
   their own typed percent, so approved scope never becomes unbillable.
 - **A change order joins from the application whose period reaches its approval date**, and counts

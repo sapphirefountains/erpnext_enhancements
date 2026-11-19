@@ -33,6 +33,7 @@ DOCS = {}
 STORE = {"Pay Application": {}, "Change Order": {}}
 SQL = {"billed": []}
 COUNTER = {"n": 0}
+PERMLEVELS = {"write": [0, 1]}
 
 
 class Row(dict):
@@ -49,12 +50,19 @@ class Row(dict):
 		return dict(self)
 
 
+class Flags(types.SimpleNamespace):
+	"""frappe's flags: a missing flag reads None, never raises."""
+
+	def __getattr__(self, key):
+		return None
+
+
 class FakeDocument:
 	TABLES = ("lines", "retainage_steps", "milestones")
 
 	def __init__(self, *args, **fields):
 		self.__dict__["_f"] = {}
-		self.__dict__["flags"] = types.SimpleNamespace()
+		self.__dict__["flags"] = Flags()
 		self.__dict__["_before"] = None
 		self.__dict__["comments"] = []
 		for k, v in fields.items():
@@ -117,6 +125,9 @@ class FakeDocument:
 
 	def check_permission(self, ptype):
 		pass
+
+	def get_permlevel_access(self, permission_type="write"):
+		return PERMLEVELS["write"]
 
 
 def _match(row, filters):
@@ -263,6 +274,7 @@ def reset():
 	}
 	SQL["billed"] = []
 	COUNTER["n"] = 0
+	PERMLEVELS["write"] = [0, 1]
 
 
 def schedule(**fields):
@@ -389,6 +401,22 @@ class TestScheduleOfValues(unittest.TestCase):
 		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
 		SQL["billed"] = [(doc.lines[-1].line_key,)]
 		doc.set("lines", doc.lines[:-1])
+		with self.assertRaises(Thrown):
+			doc.validate()
+
+	def test_a_change_order_row_never_loses_or_gains_its_order_once_locked(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.append("lines", {"item_no": "CO-01", "description": "Change order 1", "change_order": "CO-1"})
+		doc.validate()
+		doc.status = "Locked"
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		# unlinked and retyped as an ordinary line (a REST PUT or client.set_value)
+		doc.lines[-1]["change_order"] = None
+		doc.lines[-1]["scheduled_value"] = 50000
+		with self.assertRaises(Thrown):
+			doc.validate()
+		doc.lines[-1]["change_order"] = "CO-1"
+		doc.lines[0]["change_order"] = "CO-1"  # an order put on a base row
 		with self.assertRaises(Thrown):
 			doc.validate()
 
@@ -651,6 +679,29 @@ class TestPayApplication(unittest.TestCase):
 		application("PAY-2")
 		with self.assertRaises(Thrown):
 			pa1.before_cancel()
+
+	def test_level_1_overrides_sent_on_insert_are_cleared_without_access(self):
+		locked_schedule()
+		PERMLEVELS["write"] = [0]  # a project manager
+		pa = pa_mod.PayApplication()
+		pa.update(
+			{
+				"schedule_of_values": "SOV-1",
+				"period_to": "2026-11-30",
+				"work_retainage_override": "0",
+				"certified_less": 1,
+				"amount_certified": 1,
+				"lines": [{"line_key": "k001", "work_retainage_override": "0"}],
+			}
+		)
+		pa.before_insert()
+		self.assertEqual((pa.work_retainage_override, pa.certified_less), ("", 0))
+		self.assertEqual(pa.lines[0].work_retainage_override, "")
+		PERMLEVELS["write"] = [0, 1]  # accounting keeps them
+		pa2 = pa_mod.PayApplication()
+		pa2.update({"schedule_of_values": "SOV-1", "period_to": "2026-11-30", "work_retainage_override": "0"})
+		pa2.before_insert()
+		self.assertEqual(pa2.work_retainage_override, "0")
 
 	def test_amending_is_refused(self):
 		locked_schedule()

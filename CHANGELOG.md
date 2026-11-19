@@ -67,12 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "certified for less" tick) and the application and line retainage overrides are at permlevel 1:
     accounting writes them, project managers read them. Overrides are cleaned as typed (blank
     inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule keeps its project,
-    billing mode, stored-materials setting, milestones **and retainage terms**: retainage is (D + E)
-    times the rate in force, so a changed rate re-rates all work to date, and unticking "held" at 60%
-    would release everything held so far. Its status moves only through Lock and Unlock (a saved
-    status is ignored), a change-order row always equals its Change Order (an approved one of the same
-    project, at its price and approval date), a row that appears on any certified application cannot
-    be deleted, and a project has one schedule. Negative completed-to-date and negative stored
+    billing mode, stored-materials setting, milestones **and retainage terms**, the terms the job was
+    signed on. Its status moves only through Lock and Unlock (a saved status is ignored), a change-order
+    row always equals its Change Order (an approved one of the same project, at its price and approval
+    date) and can never be unlinked from it or have one put on a base row, a row that appears on any
+    certified application cannot be deleted, and a project has one schedule. A line override sent with
+    a new application by someone without level-1 access is cleared (frappe v16.56 does not reset child
+    rows on insert). Negative completed-to-date and negative stored
     materials are refused. A percent typed on a "by others" line, or stored
     materials on a job that does not bill them, is set back to 0 rather than billed.
   - **Certify refuses with every reason at once**: the schedule not locked, the previous application
@@ -83,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refused.
   - Not in this release: the Sales Invoice with retainage receivable, the G702/G703 print and the
     portal export, retainage release, and percent-complete accounting. They are the next PRs.
+    **Nothing releases retainage until retainage release (B9) lands**: with keep-holding, an override
+    of 0 holds nothing new but releases nothing. B9 comes next and must ship before any job reaches its
+    last application.
 - Bench-free tests, in CI: `test_pay_app_math` (the arithmetic, the shared cases, the projection),
   `test_billing_controllers` (both controllers and the endpoints, frappe stub), the node twin and the
   editor's bundle level in `scripts/test_estimate_math.mjs`, and the no-cost-field and who-certifies

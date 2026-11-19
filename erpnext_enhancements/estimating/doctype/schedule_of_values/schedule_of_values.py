@@ -209,9 +209,10 @@ class ScheduleofValues(Document):
 		milestones = lambda doc: [((m.milestone or "").strip(), flt(m.percent)) for m in doc.milestones or []]  # noqa: E731
 		if milestones(before) != milestones(self):
 			frappe.throw(_("The schedule is locked: its milestones cannot change."))
-		# Retainage is (D + E) x the rate in force, so a changed rate re-rates all work to date, not just
-		# the next period: unticking "held" at 60% would release everything held so far. Frozen at lock;
-		# accounting can still override one application (permlevel 1).
+		# The terms the job was signed on: unticking "held", or changing a rate or a step, mid-job would
+		# change what every later application holds (and unticking would release retainage nobody has
+		# agreed to release). Frozen at lock; accounting can still override one application's rate for
+		# that period's work (permlevel 1). Earlier retainage stays held either way (keep holding).
 		terms = lambda doc: (  # noqa: E731
 			bool(doc.retainage_applies),
 			flt(doc.retainage_pct),
@@ -229,6 +230,12 @@ class ScheduleofValues(Document):
 			if prior is None:
 				if not row.change_order:
 					changed.append(_name(row))
+				continue
+			# A row's change order is part of its identity: blanking it would turn an approved change
+			# order into a base line that can be retyped (and then let the order be canceled), and
+			# naming one on a base row would do the reverse. Neither moves on a locked schedule.
+			if (prior.change_order or "") != (row.change_order or ""):
+				changed.append(_name(row))
 				continue
 			if prior.change_order:
 				continue

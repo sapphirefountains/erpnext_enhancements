@@ -617,6 +617,76 @@
    "expected": {
     "lines": [
      {
+      "balance": 9900.0,
+      "from_previous": 10000.0,
+      "line_key": "a",
+      "percent_complete": 1.0,
+      "retainage": 100.0,
+      "retainage_previous": 1000.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 100.0,
+      "scheduled_value": 10000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": -9900.0,
+      "this_period_pct": -99.0,
+      "total_completed": 100.0,
+      "work_completed_to_date": 100.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 10000.0,
+     "balance_total": 9900.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 0.0,
+     "from_previous_total": 10000.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 1.0,
+     "percent_complete_at_start": 100.0,
+     "retainage_source": "schedule",
+     "retainage_stored": 0.0,
+     "retainage_work": 100.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": -9900.0,
+     "total_completed_stored": 100.0,
+     "total_earned_less_retainage": 0.0,
+     "total_retainage": 100.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "adjustment_note": "credit",
+     "line_key": "a",
+     "scheduled_value": 10000,
+     "this_period_pct": -99
+    }
+   ],
+   "name": "held retainage never exceeds the work left when work goes down",
+   "previous": {
+    "a": {
+     "retainage_work": 1000,
+     "work": 10000
+    }
+   },
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
       "balance": 0.0,
       "from_previous": 333.33,
       "line_key": "a",

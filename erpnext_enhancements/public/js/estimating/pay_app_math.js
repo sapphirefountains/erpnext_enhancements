@@ -97,7 +97,10 @@ export function price_application(schedule, application, lines, previous) {
 		// Keep holding (Nik, 2026-11-19): earlier retainage stays at the rate it was held at.
 		const held = prior === null ? share(d, wp) : prior;
 		let rw = held + share(e, wp);
-		if (c >= 0 && rw < 0) rw = 0;
+		// Never hold more than the work it is held on, nor less than nothing.
+		const low = Math.min(0, d + e);
+		const high = Math.max(0, d + e);
+		rw = Math.min(Math.max(rw, low), high);
 		const rs = share(f, sp);
 		return {
 			line_key: line.line_key,
