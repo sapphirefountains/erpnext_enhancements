@@ -684,12 +684,23 @@ or sent for the client to sign in their own time.
 - **Hand them another device** (was *Sign it here now*) issues (submits) the contract, then `esign.api.start_in_person_signing`
   makes a signing link without emailing it and opens `/contract-sign` in a new tab: a tab and
   not a frame, because the page can go on to Stripe to save a card and Stripe refuses frames.
-  Everything else is the emailed flow: the client re-types their address, the bot check runs,
+  Everything else is the emailed flow: the client enters the code emailed to their address, the bot check runs,
   the snapshot is hashed, the signed copy is emailed to them. The request records
   `signing_channel = In Person` and `presented_by`, the certificate prints both, and the link
   lives `IN_PERSON_LINK_HOURS` (12). The builder polls `get_signing_status` and moves to the
   executed copy when it is signed. *Send it to them* is the existing `send_for_signature`; a
   resend always resets the channel to Email Link.
+- **The emailed code** (`esign/email_code.py`, v1.836.2; Nik, 2026-11-19). On `/contract-sign` the
+  signer asks for a code (`portal.send_signing_code`), which goes to the address frozen on the
+  request and is typed back (`portal.verify_signing_code`) before the session may sign or decline:
+  six digits from `secrets`, ten minutes, five tries, three sends per request per fifteen minutes,
+  a keyed hash in the cache only, bound to the live link, single use. A wrong, expired, used or
+  exhausted code gets one message, and entries also count against the request's persisted limit
+  (`email_attempts`), which pauses the link when spent. The page shows the address masked, and the
+  agreement before the code with that address masked; the right code returns it as stored. The
+  bot-check verdict is the server's own (`turnstile.verify`): a request with no bot-check token goes on to the code under the same limits, recorded as "Unavailable". The request records
+  `email_code_verified` and `email_code_verified_on`. The Contract Builder's own signing
+  (`sign_in_person`) asks for no code and records none.
 - **Executed copies and template changes.** An e-signed contract prints the copy stored on its
   Contract Signature Request; one marked signed on paper now stores its own (`executed_html`, frozen by
   `freeze_executed_copy` in `on_update_after_submit`). A template patch freezes paper-signed contracts and

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.832.0] - 2026-11-19
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -233,6 +233,45 @@ Hardening changes released together. Each was written and reviewed as its own pu
     section, timed from the confirmation when there is one and from the last change otherwise.
     Retry on the request starts it again.
   - New bench-free suite `tests/test_fountain_move_public_match.py`, in its own CI step.
+- **Signing a contract online now starts with a code emailed to the customer (hardening).**
+  Nik, 2026-11-19: "Emailed code. When they start signing, email a short code to the address on
+  file and ask them to type it." The typed-email step on `/contract-sign` is replaced by it.
+  - **What the customer sees.** Above the agreement, "Confirm it's you": *Email me a code* sends a
+    6-digit code to the address the agreement was sent to, shown as `j•••@example.com`. They type
+    it and press *Confirm*; the signing form (initials, signature, consent) then appears, with
+    *Decline* inside it. Until then the agreement is shown with their address masked; the right
+    code swaps in the agreement exactly as sent. *Send a new code* is always there, including when
+    a code has vanished because a deploy cleared the cache. No history entry is added anywhere.
+  - **The code's rules** (`esign/email_code.py`): six digits from `secrets`, valid 10 minutes, at
+    most 5 entries per code, at most 3 sends per signing request per 15 minutes, a new code
+    replaces the old one. Only a keyed hash is stored, in the cache, under the request and bound to
+    its live link; it is compared in constant time and works once. A wrong, expired, used or
+    exhausted code gets one message. Entries also count against the request's existing limits
+    (5 an hour, 15 in all, persisted in `email_attempts`), and spending them pauses the link until
+    staff re-send it, as before.
+  - **Two new guest endpoints**, both POST-only and rate limited, and listed in the guest endpoint
+    register: `esign.portal.send_signing_code` (sends only to the address on the request) and
+    `esign.portal.verify_signing_code`. `sign_contract` and `decline_contract` now require a
+    verified code for the session's current link and no longer take an email address.
+  - **The bot check is decided by the server alone.** `begin_signing` takes the challenge token and
+    nothing else about it: the verdict comes from `turnstile.verify` on the site's own settings.
+    A site with no bot-check secret keeps its behaviour ("Not Checked", accepted). A request that
+    carries no bot-check token goes on to the emailed code, which is the identity check, under the
+    same limits: it is recorded as "Unavailable" with a detail saying no token was sent, which the
+    evidence record and the staff alert show. A token that is sent and fails is "Failed" and is
+    refused. The code can be sent only on an accepted verdict.
+  - **The code email** (`templates/emails/project_enhancements/contract_signing_code.html`) goes
+    through the email shell: the code, the document's name, how long it works, and "Didn't ask for
+    a code? You can ignore this email." It is sent straight after the commit, with the body
+    replaced in the Email Queue once sent, and the code is never in the subject.
+  - **The evidence record** gains two read-only fields on Contract Signature Request,
+    `email_code_verified` and `email_code_verified_on` (new columns; existing rows read 0 and
+    empty, which is correct for them). Signing in the Contract Builder asks for no code and records
+    none. The invitation email, the Send for Signature and hand-over dialogs, and the field
+    descriptions now say a code will be emailed rather than that the address must be re-typed.
+  - Tests: `tests/test_esign_email_code.py` (new, own CI step) runs the code and the endpoints over
+    an in-memory cache and a moving clock; `scripts/test_web_flow_history.js` drives the page's
+    code step; `tests/test_contract_esign.py` follows the moved checks.
 
 ## [1.831.0] - 2026-11-19
 

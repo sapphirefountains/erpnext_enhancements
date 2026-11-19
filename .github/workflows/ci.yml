@@ -2508,6 +2508,13 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_process_documents -v
       - name: Contract e-signature (tokens, sig() fallthrough, template patch)
         run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
+      # Own step: its frappe stub (in-memory cache, moving clock) must not meet
+      # test_contract_esign's. The emailed signing code (v1.836.2): six digits, ten minutes,
+      # five tries, three sends per fifteen minutes, single use; the endpoints that send and
+      # check it; the bot-check verdict decided by the server alone; the address masked in the
+      # agreement before the code; the evidence record stamping the verified code.
+      - name: Contract e-signature emailed code (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_esign_email_code -v
       # Own step: its frappe stub serves the real Project Contract meta from the doctype JSON
       # (the builder's steps are read from it) and must not meet test_contract_esign's.
       # Covers the 2026-10-13 maintenance terms (renders per payment method, eight initials,

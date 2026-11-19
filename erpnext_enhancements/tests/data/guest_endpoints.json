@@ -81,7 +81,7 @@
 	},
 	"erpnext_enhancements.project_enhancements.esign.portal.begin_signing": {
 		"caller": "customer signing page",
-		"check": "link token, bot check, rate limit"
+		"check": "link token, bot check decided by the server's own settings, rate limit"
 	},
 	"erpnext_enhancements.project_enhancements.esign.portal.decline_autopay": {
 		"caller": "customer signing page",
@@ -89,19 +89,27 @@
 	},
 	"erpnext_enhancements.project_enhancements.esign.portal.decline_contract": {
 		"caller": "customer signing page",
-		"check": "signing session bound to the live link token, rate limit"
+		"check": "signing session bound to the live link token, verified emailed code, rate limit"
 	},
 	"erpnext_enhancements.project_enhancements.esign.portal.request_fresh_link": {
 		"caller": "customer signing page",
 		"check": "link token, uniform response, rate limit"
 	},
+	"erpnext_enhancements.project_enhancements.esign.portal.send_signing_code": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, accepted bot check, sends only to the address on the request, 3 sends per 15 minutes per request, rate limit"
+	},
 	"erpnext_enhancements.project_enhancements.esign.portal.sign_contract": {
 		"caller": "customer signing page",
-		"check": "signing session bound to the live link token, rate limit"
+		"check": "signing session bound to the live link token, verified emailed code, rate limit"
 	},
 	"erpnext_enhancements.project_enhancements.esign.portal.start_autopay": {
 		"caller": "customer signing page",
 		"check": "signing session that already signed, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.verify_signing_code": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, accepted bot check, hashed single-use code with 5 tries, per-request entry limits persisted on the request, rate limit"
 	},
 	"erpnext_enhancements.quickbooks_online.core.api.oauth_callback": {
 		"caller": "Intuit OAuth redirect",

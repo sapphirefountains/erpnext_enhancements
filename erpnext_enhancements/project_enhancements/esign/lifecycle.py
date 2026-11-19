@@ -71,6 +71,9 @@ class SignatureEvidence:
 	signed_title: str = ""
 	signature_image: str = ""
 	email_confirmed: int = 0
+	# When the signer entered the one-time code emailed to the address on file (the signing
+	# page, esign.email_code). Empty when no code was asked for (signing in the Contract Builder).
+	email_code_verified_on: str = ""
 	# The signer's address, and the one the certificate prints (see the docstring).
 	ip_claimed: str = ""
 	# Local nginx on this host, never the signer.
@@ -198,6 +201,8 @@ def execute_contract(request, evidence):
 	request.signed_at_utc = _utc_stamp()
 	request.signed_tz = _site_timezone()
 	request.email_confirmed = 1 if evidence.email_confirmed else 0
+	request.email_code_verified = 1 if evidence.email_code_verified_on else 0
+	request.email_code_verified_on = evidence.email_code_verified_on or None
 	request.signer_ip_claimed = evidence.ip_claimed
 	request.signer_ip_peer = evidence.ip_peer
 	request.user_agent = (evidence.user_agent or "")[:512]
