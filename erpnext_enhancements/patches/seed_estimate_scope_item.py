@@ -1,4 +1,4 @@
-"""Seed the Item "EST-SCOPE" that an Estimate's quotation lines use, and its zero price (v1.836.0).
+"""Seed the Item "EST-SCOPE" that an Estimate's quotation lines use, and its zero price (v1.832.0).
 
 An Estimate issues a native Quotation with one line per phase (concept flow step 4). A Quotation line
 needs an Item, and a phase of a fountain is not a product, so every line uses this one non-stock,

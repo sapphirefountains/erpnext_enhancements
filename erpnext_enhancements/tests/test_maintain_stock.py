@@ -3183,7 +3183,7 @@ class ItemCreatorsSayStockOnPurposeTest(unittest.TestCase):
 		self.assertEqual(new_docs, ["api/stock_scan.py", "estimating/seed.py"])
 		source = _function_source_of(APP / "api" / "stock_scan.py", "_quick_item")
 		self.assertIn("item.is_stock_item = 1", source)
-		# v1.836.0: EST-SCOPE, the Estimate's quotation-line Item, is a service and never a stock item.
+		# v1.832.0: EST-SCOPE, the Estimate's quotation-line Item, is a service and never a stock item.
 		source = _function_source_of(APP / "estimating" / "seed.py", "seed_scope_item")
 		self.assertIn("item.is_stock_item = 0", source)
 

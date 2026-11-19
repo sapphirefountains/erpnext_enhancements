@@ -1,4 +1,4 @@
-"""Seed one empty, default "Standard" Estimate Rate Card (v1.836.0, estimating milestone 1).
+"""Seed one empty, default "Standard" Estimate Rate Card (v1.832.0, estimating milestone 1).
 
 Every rate is left at zero on purpose: this repository is public, and the company's markups and
 overheads are Finance's to type in the Desk (WI-077: Finance owns the rates). An estimate made from an

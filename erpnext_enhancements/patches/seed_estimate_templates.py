@@ -1,4 +1,4 @@
-"""Seed the Estimate Templates by job kind (v1.836.0, estimating milestone 1).
+"""Seed the Estimate Templates by job kind (v1.832.0, estimating milestone 1).
 
 Four templates from ``estimating/data/estimate_templates.json``: Design-Build (phase 100 holds the
 design stages 110 to 140), Build, Event (no phases) and Custom Panel (no rough-in). The test Nik set

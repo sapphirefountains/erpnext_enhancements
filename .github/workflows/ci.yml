@@ -917,7 +917,7 @@ jobs:
       # collisions AFTER adoption (02 03 00 and 09 03 00 exist in MF2016, not MF2011).
       - name: Cost codes name real MasterFormat sections (list check, not a regex)
         run: python -m unittest erpnext_enhancements.tests.test_cost_codes -v
-      # Estimating milestone 1 (v1.836.0). The pricing engine: a price is exactly the sum of its
+      # Estimating milestone 1 (v1.832.0). The pricing engine: a price is exactly the sum of its
       # parts, the three add-ons sit on the cost of work instead of stacking, commission comes out of
       # the margin rather than on top of the price, use tax only on material and equipment, and
       # 2.10 x 2.45 rounds to 5.14 (float noise is not a half). The cases file is shared with the

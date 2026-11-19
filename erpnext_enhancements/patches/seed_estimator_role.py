@@ -1,4 +1,4 @@
-"""Seed the "Estimator" role (v1.836.0, estimating milestone 1).
+"""Seed the "Estimator" role (v1.832.0, estimating milestone 1).
 
 Decided 2026-09-21 (TASK-2026-02149): a new Estimator role, which with Finance Team, Executive Team and
 System Manager is the audience that sees cost and margin. The Estimate, Estimate Template and Estimate
