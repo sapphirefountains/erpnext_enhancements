@@ -1078,6 +1078,11 @@ jobs:
       # fake frappe namespace; it imports no frappe and installs no stub.
       - name: Access checks, operations side (checked before read or write)
         run: python -m unittest erpnext_enhancements.tests.test_access_checks_ops -v
+      # The Visit Wizard's bootstrap includes the site briefing only for the roles the briefing
+      # endpoint answers. Runs get_visit_bootstrap from its source against a stand-in frappe; it
+      # imports no frappe and installs no stub.
+      - name: Visit Wizard bootstrap briefing role
+        run: python -m unittest erpnext_enhancements.tests.test_visit_briefing_role -v
       # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
       # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
       # follower first and the planner then moves it again, so a crew turns up a day off with nothing
