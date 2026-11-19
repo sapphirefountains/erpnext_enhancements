@@ -34,7 +34,7 @@ each provider's section to hit the real APIs.
 | `mapping.py` | `upsert_device`: matches on provider ID, then serial, then IMEI, and overwrites compliance (`compliance_source="Provider"`). A provider-only device becomes **Discovered** and **stays Discovered until a person confirms it**. Never deletes. |
 | `sync.py` | Per-provider pull → MDM Sync Log + MDM Raw Payload; `safe_upsert`; flags **Managed** devices the feed dropped as **Unmanaged** (a Discovered one stays Discovered); cursor advances only on a clean run. |
 | `tasks.py` | Hourly `sync_devices` (throttled), `refresh_action1_token`, `retry_failed_syncs`. |
-| `actions.py` | `execute_device_action` — the one guarded executor: route + capability check + BYOD guard + **no full wipe of an unconfirmed Discovered device** + dispatch + immutable **Device Action Log** + notify. |
+| `actions.py` | `execute_device_action` — the one guarded executor: route + capability check + BYOD guard + **no action of any kind on an unconfirmed Discovered device** + dispatch + immutable **Device Action Log** + a timeline Comment on a locate + notify. |
 | `webhooks.py` | One guest endpoint, `?provider=` in the query string; `X-MDM-Webhook-Secret` verified before parsing; archives the body, enqueues one deduplicated resync (skipped for a disabled or auth-paused provider). **Neither provider can call it**; see [Inbound webhook](#inbound-webhook). |
 | `api.py` | Whitelisted `test_connection` and `trigger_sync` (the **Test** / **Sync Now** buttons on MDM Settings), `remote_action` (manager-UI path), `confirm_device` (Discovered → Managed, with ownership). |
 | `doctype/` | `MDM Settings` (single, both providers' creds), `MDM Sync Log`, `MDM Raw Payload`, `Device Action Log` (immutable). |
@@ -50,13 +50,16 @@ Two paths converge on `actions.execute_device_action`:
 2. **AI assistant** — the six gated tools. They're in the write-gate's
    `APP_MUTATING`; **wipe / lock / run-script are HIGH risk**. With AI write
    gating on, nothing runs until a human clicks Confirm & Execute (the gate
-   re-runs the tool as that user). See `../assistant_tools/_gate.py`.
+   re-runs the tool as that user). See `../assistant_tools/_gate.py`. A device-action
+   card always starts unticked in the batch dialog (`_gate.DEVICE_ACTION_TOOLS`).
 
 The executor **always**:
 - rejects an action the provider can't do (`supports()`);
 - forces a **selective** wipe for BYOD (never full);
-- refuses a **full** wipe of a **Discovered** device;
-- writes a Device Action Log row, whether the action succeeds or fails.
+- refuses **every** action (any wipe mode, lock, locate, reboot, run script, deploy patch) on a **Discovered** device;
+- adds a Comment to the device's timeline for a **locate** (who asked and when), before anything is sent;
+- writes a Device Action Log row, whether the action succeeds or fails;
+- notifies Device Managers on a wipe, a lock, a locate or a failure.
 
 ### Wipe, precisely
 
@@ -82,8 +85,8 @@ Miradore KB "Retire a device" and "Wipe for Android devices", and
 ### Discovered devices must be confirmed
 
 The sync creates any device it cannot match as **Discovered**, with ownership
-defaulting to **Company**. The BYOD guard is only as good as that field, so a
-full wipe is refused until a Device Manager clicks **Confirm Discovered Device**
+defaulting to **Company**. The BYOD guard is only as good as that field, so every
+action is refused until a Device Manager clicks **Confirm Discovered Device**
 on the form and says who owns it (`api.confirm_device`, recorded on the timeline).
 Until v1.506.0 the next hourly sync promoted every Discovered device to Managed
 by itself. All four devices on production were promoted that way, and nobody ever

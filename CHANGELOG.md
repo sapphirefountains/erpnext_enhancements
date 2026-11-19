@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.4] - 2026-11-19
+
+### Changed
+
+- **Device actions require a confirmed device, and device cards start unticked (hardening).**
+  - A Managed Device whose link state is Discovered now accepts no action until a Device Manager
+    confirms it and its ownership: every wipe mode, lock, locate, reboot, run script and deploy
+    patch is refused before any provider call, with a message that says to confirm the device
+    first. Before, only a full wipe was held back. The refusal is recorded in the Device Action
+    Log like any other. Actions on a confirmed device run as before.
+  - Every remote device action in the AI confirmation list (lock, wipe, locate, reboot, run
+    script, deploy patch) now starts unticked in the batch dialog, whatever its risk band, with the
+    reason "runs a remote device action". Locate, reboot and deploy patch used to start ticked.
+    Select all and ticking by hand work as before; other tools are unchanged.
+  - A locate request adds a Comment to the device's timeline naming who asked and when, written
+    before the request is sent, and Device Managers get a notification the same way as for a
+    wipe or a lock. If the Comment cannot be written, nothing is sent.
+  - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
+    device with a stand-in provider; `tests/test_ai_gate_batch.py` and
+    `scripts/test_ai_pending_batch.mjs` cover the unticked cards.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

@@ -265,6 +265,21 @@ EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 #: HIGH_RISK as well; the reason says what the card does, the risk says how much it matters.
 DOCSTATUS_TOOLS = frozenset({"submit_document", "cancel_document"})
 
+#: The remote device-action tools (``mdm_integration.actions.execute_device_action``). Every one
+#: starts unticked in the batch dialog whatever its risk band, so a batch approval never includes a
+#: device action unless someone ticks it (``gating_api._review_reasons``). ``test_mdm_device_action_guards``
+#: holds this equal to the set of tools that call the executor.
+DEVICE_ACTION_TOOLS = frozenset(
+    {
+        "remote_lock_device",
+        "remote_wipe_device",
+        "locate_device",
+        "reboot_device",
+        "run_device_script",
+        "deploy_device_patch",
+    }
+)
+
 # tool name -> callable(arguments) -> bool  (True = this CALL needs confirmation)
 #
 # Why the split exists: self-service is authority the person already has; 

@@ -6,15 +6,17 @@ tools (``assistant_tools/remote_*``) call ``execute_device_action``. It:
 1. routes the device to its provider (``client.get_provider_for``) and rejects
    any action the provider's capability map disallows (a wipe can never reach an
    Action1 computer);
-2. enforces the **BYOD wipe guard** (``routing.resolve_wipe_mode``) before the
-   API call — a personally-owned device is never full-wiped — and refuses a full
-   wipe of a **Discovered** device, whose ownership nobody has confirmed yet (it
-   defaults to Company, so the BYOD guard alone would let it through). The
+2. refuses every action on a **Discovered** device (any wipe mode, lock, locate,
+   reboot, run script, deploy patch): nobody has confirmed whose device it is yet,
+   and its ownership defaults to Company. Confirming the device clears this;
+3. enforces the **BYOD wipe guard** (``routing.resolve_wipe_mode``) before the
+   API call — a personally-owned device is never full-wiped. The
    provider applies its own guard on top: Miradore refuses a selective wipe on an
    enrollment where it would factory-reset (``routing.miradore_selective_wipe_refusal``);
-3. dispatches to the provider, and writes an immutable **Device Action Log** row
-   on every attempt (success or failure);
-4. notifies Device Managers on a wipe or a failure.
+4. dispatches to the provider, and writes an immutable **Device Action Log** row
+   on every attempt (success or failure). A locate request also leaves a Comment
+   on the device's timeline (who asked, and when) before anything is sent;
+5. notifies Device Managers on a wipe, a lock, a locate or a failure.
 
 The whitelisted callers enforce the role / human-confirmation; this executor
 additionally requires the acting user to hold a manager role for UI/Assistant
@@ -36,7 +38,7 @@ from erpnext_enhancements.mdm_integration.routing import resolve_wipe_mode
 from erpnext_enhancements.mdm_integration.utils import get_settings
 
 # Actions that warrant notifying Device Managers when they succeed.
-_NOTIFY_ON_SUCCESS = {"wipe", "lock"}
+_NOTIFY_ON_SUCCESS = {"wipe", "lock", "locate"}
 
 
 def execute_device_action(
@@ -62,6 +64,12 @@ def execute_device_action(
 		_fail(doc, action, mode, key, source, requested_by, pending_action,
 			f"{key} does not support the '{action}' action.")
 
+	# A device nobody has confirmed accepts no action at all: its ownership is only a default.
+	if doc.get("mdm_link_state") == "Discovered":
+		_fail(doc, action, mode, key, source, requested_by, pending_action,
+			f"{doc.name} was discovered by the {key} sync and nobody has confirmed who owns it. "
+			f"Confirm the device (and its ownership) on its form before running a '{action}' action.")
+
 	# BYOD wipe guard — resolve the effective mode (or refuse) BEFORE any API call.
 	effective_mode = mode
 	if action == "wipe":
@@ -73,15 +81,23 @@ def execute_device_action(
 		)
 		if err:
 			_fail(doc, action, mode, key, source, requested_by, pending_action, err)
-		if effective_mode == "full" and doc.get("mdm_link_state") == "Discovered":
-			_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
-				f"{doc.name} was discovered by the {key} sync and nobody has confirmed who owns it. "
-				"Confirm the device (and its ownership) on its form before a full wipe.")
 
 	provider_id = doc.mdm_provider_device_id
 	if not provider_id:
 		_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
 			f"{doc.name} is not linked to a {key} device yet (run a sync / confirm the discovered device first).")
+
+	# A locate request leaves a record on the device's timeline before anything is sent.
+	if action == "locate":
+		try:
+			doc.add_comment(
+				"Info",
+				_("Location requested by {0} on {1} via {2}.").format(requested_by, now_datetime(), key),
+			)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Device locate request not recorded")
+			_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
+				f"Could not record the locate request on {doc.name}, so nothing was sent.")
 
 	# Dispatch.
 	success, result, error = True, None, None
