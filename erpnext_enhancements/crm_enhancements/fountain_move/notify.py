@@ -239,26 +239,19 @@ def _stalled_queued():
 	``Queued`` is written just before the job is enqueued (Retry, and Confirm Match on a
 	request held in Duplicate Review). The job queue is emptied by every deploy, so a row
 	can be left ``Queued`` with no job behind it; Retry on the request starts it again.
-	Neither write bumps ``modified``, so a confirmed request is timed from
-	``match_confirmed_on`` and any other from ``modified``.
+	The hour runs from the later of the two actions: Retry stamps ``modified`` and Confirm
+	Match stamps ``match_confirmed_on``, and a row is listed only when both are over an
+	hour old (a request never confirmed has no ``match_confirmed_on`` to wait for).
 	"""
 	cutoff = add_to_date(None, hours=-1)
-	fields = ["name", "first_name", "last_name", "city", "email", "modified"]
-	confirmed = frappe.get_all(
+	return frappe.get_all(
 		"Fountain Move Request",
-		filters={"status": "Queued", "match_confirmed_on": ["<", cutoff]},
-		fields=fields,
+		filters={"status": "Queued", "modified": ["<", cutoff]},
+		or_filters=[["match_confirmed_on", "is", "not set"], ["match_confirmed_on", "<", cutoff]],
+		fields=["name", "first_name", "last_name", "city", "email", "modified"],
 		order_by="modified asc",
 		limit=50,
 	)
-	others = frappe.get_all(
-		"Fountain Move Request",
-		filters={"status": "Queued", "match_confirmed_on": ["is", "not set"], "modified": ["<", cutoff]},
-		fields=fields,
-		order_by="modified asc",
-		limit=50,
-	)
-	return [*confirmed, *others][:50]
 
 
 def _stalled_converting():

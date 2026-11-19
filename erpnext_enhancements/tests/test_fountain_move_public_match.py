@@ -586,29 +586,23 @@ def test_a_confirmed_request_skips_the_matcher_even_with_several_candidates(worl
 
 def test_the_digest_lists_a_request_left_queued(world, monkeypatch):
 	"""Confirm Match and Retry leave the request Queued until the job starts. A deploy empties the
-	job queue, so the daily digest lists a request still Queued after an hour: timed from the
-	confirmation when there is one, from the last change otherwise."""
+	job queue, so the daily digest lists a request still Queued after an hour, counted from the
+	later of the retry (``modified``) and the confirmation (``match_confirmed_on``)."""
 	notify = importlib.import_module("erpnext_enhancements.crm_enhancements.fountain_move.notify")
 	monkeypatch.setattr(notify, "add_to_date", lambda value=None, **k: "2026-11-19 09:00:00")
 	asked = []
 
-	def get_all(doctype, filters=None, **k):
-		asked.append(filters)
-		if filters.get("status") != "Queued":
-			return []
-		if filters.get("match_confirmed_on") == ["<", "2026-11-19 09:00:00"]:
-			return [{"name": "FMR-CONFIRMED"}]
-		return [{"name": "FMR-RETRIED"}]
+	def get_all(doctype, filters=None, or_filters=None, **k):
+		asked.append((filters, or_filters))
+		return [{"name": "FMR-LEFT"}] if (filters or {}).get("status") == "Queued" else []
 
 	monkeypatch.setattr(notify.frappe, "get_all", get_all)
-	assert [row["name"] for row in notify._stalled_queued()] == ["FMR-CONFIRMED", "FMR-RETRIED"]
+	assert [row["name"] for row in notify._stalled_queued()] == ["FMR-LEFT"]
 	assert asked == [
-		{"status": "Queued", "match_confirmed_on": ["<", "2026-11-19 09:00:00"]},
-		{
-			"status": "Queued",
-			"match_confirmed_on": ["is", "not set"],
-			"modified": ["<", "2026-11-19 09:00:00"],
-		},
+		(
+			{"status": "Queued", "modified": ["<", "2026-11-19 09:00:00"]},
+			[["match_confirmed_on", "is", "not set"], ["match_confirmed_on", "<", "2026-11-19 09:00:00"]],
+		)
 	]
 
 	sent = []
@@ -619,7 +613,21 @@ def test_the_digest_lists_a_request_left_queued(world, monkeypatch):
 	notify.digest_stuck_requests()
 	assert len(sent) == 1
 	buckets = sent[0]["message"]["buckets"]
-	assert [row["name"] for row in buckets["Queued (not started over an hour)"]] == [
-		"FMR-CONFIRMED",
-		"FMR-RETRIED",
-	]
+	assert [row["name"] for row in buckets["Queued (not started over an hour)"]] == ["FMR-LEFT"]
+
+
+def test_retry_stamps_the_time_the_digest_counts_from(world, monkeypatch):
+	"""Retry marks the request Queued and stamps ``modified``, so a request retried a few minutes
+	ago is not in the digest's Queued section; Confirm Match stamps ``match_confirmed_on``."""
+	writes = []
+	real = world.api.frappe.db.set_value
+
+	def set_value(doctype, name, field, value=None, update_modified=True):
+		writes.append((field, value, update_modified))
+		return real(doctype, name, field, value, update_modified=update_modified)
+
+	monkeypatch.setattr(world.api.frappe.db, "set_value", set_value)
+	req = world.add_request(status="Failed")
+	world.roles = ["Sales Manager"]
+	world.api.retry_conversion(req.name)
+	assert ("status", "Queued", True) in writes

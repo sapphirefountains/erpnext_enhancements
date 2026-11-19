@@ -35,7 +35,9 @@ def retry_conversion(docname):
 	if status == "Converting":
 		frappe.throw(_("This request is being converted right now. Give it a moment."))
 
-	frappe.db.set_value("Fountain Move Request", docname, "status", "Queued", update_modified=False)
+	# Retry is a person's action, so it stamps `modified`: the daily digest counts a Queued
+	# request's hour from there (notify._stalled_queued).
+	frappe.db.set_value("Fountain Move Request", docname, "status", "Queued")
 	frappe.db.commit()
 
 	frappe.enqueue(
