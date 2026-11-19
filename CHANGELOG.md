@@ -86,6 +86,19 @@ Hardening changes released together. Each was written and reviewed as its own pu
     Before, a BYOD device took a selective wipe. The device form no longer draws Remote Wipe,
     Reboot or Run Script on a BYOD device, and the wipe tool's description says the same. To remove
     company data from a personal device, use the provider's own console.
+  - **The ownership field is held to the same care as the rule that reads it.** Changing a device's
+    ownership from BYOD to Company requires a System Manager (`ManagedDevice.validate`, so the form,
+    the REST resource and `set_value` alike), and server code that saves without a permission check
+    never makes that change; Company to BYOD stays open to Device Managers. Every ownership change
+    leaves a note on the device's timeline saying who, from what to what, and when. Confirm
+    Discovered Device is still how ownership is stated for the first time, and its prompt no longer
+    preselects an answer.
+  - **A refused or failed device action is recorded even though the request ends in an error.** The
+    Device Action Log row, the Device Managers' notice and a locate's timeline note are written again
+    after the request's rollback and committed by themselves (`actions._keep_through_rollback`, on
+    `frappe.db.after_rollback`), so there is exactly one of each per attempt whether the action came
+    from the form or from a confirmed assistant action, and nothing else that was pending is
+    committed with them.
   - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
     device with a stand-in provider, and each against a BYOD device; `tests/test_ai_gate_batch.py` and
     `scripts/test_ai_pending_batch.mjs` cover the unticked cards.

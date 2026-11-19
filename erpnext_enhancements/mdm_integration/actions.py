@@ -21,7 +21,7 @@ tools (``assistant_tools/remote_*``) call ``execute_device_action``. It:
 5. notifies Device Managers on a wipe, a lock, a locate or a failure.
 
 A refused or failed action is recorded even though the request ends in an error
-(since v1.832.0). Every caller rolls the transaction back when this raises (see
+(since v1.833.0). Every caller rolls the transaction back when this raises (see
 :func:`_keep_through_rollback`), which would take the row, the Device Managers'
 notice and a locate's Comment with it, so each of them is written again after
 that rollback and committed by itself. Exactly one of each per attempt, whichever

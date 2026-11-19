@@ -60,7 +60,7 @@ The executor **always**:
 - adds a Comment to the device's timeline for a **locate** (who asked and when), before anything is sent;
 - writes a Device Action Log row, whether the action succeeds or fails;
 - notifies Device Managers on a wipe, a lock, a locate or a failure;
-- keeps those records when the request ends in an error (since v1.832.0). A refused or
+- keeps those records when the request ends in an error (since v1.833.0). A refused or
   failed action raises, and every caller then rolls the transaction back, so the row, the
   notice and a locate's Comment are written again after that rollback and committed by
   themselves (`frappe.db.after_rollback`; `actions._keep_through_rollback`). Exactly one of
@@ -96,7 +96,7 @@ on the form and says who owns it (`api.confirm_device`, recorded on the timeline
 The prompt preselects nothing, so the person confirming has to choose.
 
 After that, the field is held to the same care as the rule that reads it
-(`ManagedDevice._guard_ownership_change`, since v1.832.0): changing ownership from
+(`ManagedDevice._guard_ownership_change`, since v1.833.0): changing ownership from
 BYOD to Company requires a System Manager, and a save made with `ignore_permissions`
 (server code, such as the sync) never makes that change. Company to BYOD stays open
 to Device Managers. Every change of ownership is noted on the device's timeline (who,
