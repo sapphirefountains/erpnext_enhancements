@@ -1,0 +1,164 @@
+{#
+  Printable rack QR sheet (served at /rack-qr-sheet; controller: rack_qr_sheet.py), v1.833.0.
+
+  One page per rack: every shelf's QR code with its position, top shelf first as you face the
+  rack (Shelf 1 is the top shelf unless the Warehouse Map's box for the rack says otherwise).
+  Laminate it and hang it low beside the rack, for shelves too high or too thin for a sticker.
+
+  Every code is the location label's own: <site>/stock-scan?w=<warehouse>, an inline SVG from
+  inventory_enhancements/qr_svg.py, sized in inches by rack_sheet_rules.layout. The only script
+  prints.
+
+  Print on US Letter at Scale 100% (Actual size). The page's own margins are set here.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Rack QR Sheet{% endblock %}
+
+{% block head_include %}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% endblock %}
+
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+	@page { size: {{ page_width }}in {{ page_height }}in; margin: {{ margin }}in; }
+
+	.navbar, nav.navbar, .web-footer, footer.web-footer, .footer, .page-breadcrumbs, .breadcrumb-container,
+	.page-header, .page-content-wrapper > .page-header { display: none !important; }
+	main, .main-section, #body, .page_content, .page-content-wrapper, .container,
+	.page-content { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+
+	:root {
+		--rq-bg: #eef1f4; --rq-panel: #ffffff; --rq-text: #1f2328; --rq-muted: #5b636d;
+		--rq-line: #d4d9df; --rq-accent: #0b6bcb;
+	}
+	body { background: var(--rq-bg); color: var(--rq-text); margin: 0;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+	.rq-bar { position: sticky; top: 0; z-index: 2; background: var(--rq-panel); border-bottom: 1px solid var(--rq-line);
+		padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+	.rq-bar h1 { font-size: 18px; margin: 0 16px 0 0; align-self: center; }
+	.rq-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--rq-muted); }
+	.rq-field select { font-size: 14px; padding: 6px 8px; border: 1px solid var(--rq-line); border-radius: 6px;
+		background: #fff; color: var(--rq-text); max-width: 340px; }
+	.rq-print { font-size: 15px; font-weight: 600; padding: 9px 18px; border: 0; border-radius: 8px;
+		background: var(--rq-accent); color: #fff; cursor: pointer; }
+	.rq-note { flex-basis: 100%; font-size: 12px; color: var(--rq-muted); margin: 0; }
+	.rq-empty { margin: 40px auto; max-width: 560px; padding: 0 16px; text-align: center; color: var(--rq-muted); }
+
+	/* ---- one page per rack, in inches ---- */
+	.rq-page { width: {{ content_width }}in; box-sizing: border-box; background: #fff; color: #000;
+		break-after: page; page-break-after: always; }
+	.rq-page:last-child { break-after: auto; page-break-after: auto; }
+	.rq-table { width: 100%; border-collapse: collapse; }
+	.rq-table thead { display: table-header-group; }
+	.rq-table tfoot { display: table-footer-group; }
+	.rq-head { padding: 0 0 0.12in; border-bottom: 3px solid #000; text-align: left; font-weight: normal; }
+	.rq-title { font-size: 30pt; font-weight: 800; line-height: 1.05; overflow-wrap: anywhere; }
+	.rq-trail { font-size: 13pt; color: #333; margin-top: 0.03in; }
+	.rq-how { font-size: 11pt; margin: 0.08in 0 0; }
+	.rq-row { border-bottom: 2px solid #000; break-inside: avoid; page-break-inside: avoid; }
+	.rq-row > td { padding: 0.08in 0; vertical-align: middle; }
+	.rq-pos { width: {{ position_width }}in; padding-right: 0.25in !important; text-align: center; }
+	.rq-pos > span { display: block; }
+	.rq-pos .rq-shelf { font-size: 10pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+	.rq-pos .rq-num { font-size: 44pt; font-weight: 800; line-height: 1; }
+	.rq-pos .rq-word { font-size: 10pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; min-height: 1.2em; }
+	.rq-codes { flex: 1 1 auto; display: flex; flex-wrap: wrap; gap: {{ gap }}in; align-items: flex-start; }
+	.rq-code { margin: 0; width: var(--rq-qr); }
+	.rq-code svg { display: block; width: var(--rq-qr); height: var(--rq-qr); }
+	.rq-code figcaption { font-size: 9pt; font-weight: 700; line-height: 1.1; height: {{ caption_height }}in;
+		overflow: hidden; overflow-wrap: anywhere; text-align: center; padding-top: 0.03in; }
+	.rq-shelf-name { font-size: 10pt; color: #333; margin-bottom: 0.04in; flex-basis: 100%; }
+	.rq-none { font-size: 11pt; color: #555; margin: 0; }
+	.rq-foot { font-size: 8.5pt; color: #444; padding-top: 0.08in; text-align: left; }
+	.rq-overflow { font-size: 11pt; color: #8a4b00; margin: 0 0 0.1in; }
+
+	@media screen {
+		#rq-pages { padding: 16px; overflow-x: auto; }
+		.rq-page { width: {{ page_width }}in; min-height: {{ page_height }}in; padding: {{ margin }}in;
+			margin: 0 auto 16px; box-shadow: 0 1px 4px rgba(0, 0, 0, .18); }
+	}
+	@media print {
+		/* Frappe's website CSS carries Bootstrap 4's print partial (body min-width 992px and @page a3); left
+		   alone, Chrome shrinks the page to fit and every code prints smaller than laid out here. The same
+		   override as /warehouse-labels. */
+		html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; min-width: 0 !important; }
+		body .container, body > .main-section, body .page_content, main { min-width: 0 !important; max-width: none !important; width: auto !important; }
+		.rq-bar, .rq-empty, .rq-overflow { display: none !important; }
+		#rq-pages { padding: 0; }
+	}
+</style>
+{% endblock %}
+
+{% block page_content %}
+<form class="rq-bar" method="get" action="/rack-qr-sheet">
+	<h1>Rack QR Sheet</h1>
+	<label class="rq-field">Rack
+		<select name="w" onchange="this.form.submit()">
+			{% if not names %}<option value="">Choose a rack…</option>{% endif %}
+			{% for g in groups %}<option value="{{ g.value | e }}"{% if g.value in names %} selected{% endif %}>{{ g.label | e }}</option>{% endfor %}
+		</select>
+	</label>
+	{% if pages %}<button type="button" class="rq-print" id="rq-print">Print {{ pages | length }} page{{ "" if pages | length == 1 else "s" }}</button>{% endif %}
+	<p class="rq-note">One page per rack, every shelf's code with its position. Print on Letter paper at Scale 100% (Actual size), laminate it, and hang it low beside the rack. A room on the Warehouse Map prints a page for each rack in it, and one for any shelves standing in the room off a rack.</p>
+</form>
+
+{% if pages %}
+<div id="rq-pages">
+	{% for p in pages %}
+	{# A table, so a rack that runs onto a second sheet repeats its name, how to read it and the footer:
+	   browsers print a table's thead and tfoot on every page the table spans. #}
+	<section class="rq-page" style="--rq-qr: {{ p.layout.qr }}in;" data-rack="{{ p.rack | e }}">
+		{% if not p.layout.fits %}<p class="rq-overflow">This rack does not fit on one sheet. It prints on more than one, with its name and how to read it at the top of each.</p>{% endif %}
+		<table class="rq-table">
+			<thead>
+				<tr><th colspan="2" class="rq-head">
+					<div class="rq-title">{{ p.title | e }}</div>
+					{% if p.loose %}<div class="rq-trail">Shelves in the room, not on a rack</div>{% elif p.trail %}<div class="rq-trail">{{ p.trail | e }}</div>{% endif %}
+					<p class="rq-how">{{ p.how_to_read | e }}</p>
+				</th></tr>
+			</thead>
+			<tfoot>
+				<tr><td colspan="2" class="rq-foot">Printed {{ printed_on | e }}. Reprint from the rack's Warehouse form: Stock Scan › Rack QR Sheet.</td></tr>
+			</tfoot>
+			<tbody>
+				{% for row in p.rows %}
+				<tr class="rq-row">
+					<td class="rq-pos"><span class="rq-shelf">Shelf</span><span class="rq-num">{{ row.shelf }}</span><span class="rq-word">{{ row.position_words | e }}</span></td>
+					<td><div class="rq-codes">
+						{% if not row.is_location %}<div class="rq-shelf-name">{{ row.label | e }}</div>{% endif %}
+						{% for c in row.codes %}<figure class="rq-code" title="{{ c.url | e }}">{{ c.svg | safe }}<figcaption>{{ c.title | e }}</figcaption></figure>{% else %}<p class="rq-none">No location on this shelf yet.</p>{% endfor %}
+					</div></td>
+				</tr>
+				{% else %}
+				<tr><td colspan="2"><p class="rq-none">This rack has no shelves that can hold stock.</p></td></tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</section>
+	{% endfor %}
+</div>
+{% elif names %}
+<p class="rq-empty">Nothing to print for that choice. A rack sheet is made for a group warehouse (a rack, or a room whose map box is a Room) that is enabled and holds a location.</p>
+{% else %}
+<p class="rq-empty">Choose a rack above. Its page lists every shelf's QR code, Shelf 1 at the top, to hang beside the rack.</p>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+	var button = document.getElementById("rq-print");
+	if (button) button.addEventListener("click", function () { window.print(); });
+})();
+</script>
+{% endblock %}

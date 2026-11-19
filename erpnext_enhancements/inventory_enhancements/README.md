@@ -57,9 +57,9 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `rack_sheet_rules.py` | The printable rack QR sheet (v1.833.0): which racks a choice prints (a Room box prints each rack in it), a rack's shelves top to bottom with their codes left to right, the map box's shelf and bin direction, and how big the codes are. No Frappe. See *The rack QR sheet* below |
 | `reorder_suggest_rules.py` | Suggested reorder levels (v1.832.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
 | `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
-
 | `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
 | `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
@@ -356,6 +356,40 @@ a shelf in that order puts two labels on the wrong bins.
 
 The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR Label** and
 **Open Stock Scan** on a location, **Print QR Labels** on a group for everything beneath it.
+
+### The rack QR sheet (v1.833.0)
+
+The 2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+too thin, for a sticker. `/rack-qr-sheet?w=<rack>` (`www/rack-qr-sheet.html`, controller
+`www/rack_qr_sheet.py`) prints **one Letter page per rack**: every shelf's code with its position, to
+laminate and hang low beside the rack. The Warehouse form's **Rack QR Sheet** button opens it on any
+group. Every judgement is `rack_sheet_rules.py` (no Frappe); the read is
+`warehouse_labels.rack_sheets`.
+
+- **The codes are the labels'**: `<site>/stock-scan?w=<warehouse>`, drawn by `qr_svg`.
+- **The rows** are the rack's children in the order a person sees them
+  (`warehouse_map_rules.children_index`), top to bottom, Shelf 1 at the top. A location child is one
+  shelf with one code (the Atrium's `Shelf NLR1-1`, the Build Room's `Shelf BR-NR1-1`). A group child
+  is one shelf with a code for each location under it, left to right (a bay's `Shelf B1-2`), and an
+  empty one is printed with no code. **A shelf's number is the one its name ends in**
+  (`shelf_number`: `Shelf NLR1-3` is 3), so a disabled shelf leaves a gap rather than renumbering the
+  ones below it beside codes captioned with their real names; a name with no number takes its place
+  in the order.
+- **The Warehouse Map's box decides** when the rack has one, as its front view does
+  (`warehouse_map_rules.rows_as_seen`): *Shelf 1 is at the* Bottom, *Bin 1 is at the* Right, and the
+  box's own order. A group whose box is a **Room** prints one page for each group inside it that
+  holds a location, after a page named after the room for any shelves standing in it directly
+  (`racks_for` returns `{"rack", "loose"}`; a loose page lists only those shelves). Production's
+  Atrium and Build Room are Room boxes and their racks Rack boxes
+  (2026-11-19). The boxes are read once with `get_all`; without the map's doctype every group is a
+  rack.
+- **Sizes** (`layout`): codes up to 1.8 in and never below 0.8 in. As many share a line as fit at the
+  smallest size, then the codes grow to fill the page. A rack that does not fit runs onto a second
+  page and no shelf is split. Each page is a table, so its header (the rack's name, its room, how to
+  read it) and footer are its `thead` and `tfoot`, which browsers print on every sheet a table spans;
+  the screen says when a rack will not fit (`layout()["fits"]`). The page is US Letter, 0.4 in margins, set by the page's own `@page`
+  rule, which also overrides Bootstrap's print `min-width` as `/warehouse-labels` does.
+- **Who**: `LABEL_ROLES`, and a signed-out visitor is sent to log in and back.
 
 ### Day one: the bins are empty
 
@@ -2318,6 +2352,7 @@ python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # crea
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
 python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v  # the report, its kinds, Project filter, rooms, By person and By item views, hub links
 python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
+python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v         # the rack QR sheet: rows, racks, sizes, the read, the page and its template (needs PyQRCode and Jinja2)
 python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints, the DocType, the File and rename hooks and the role patch on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
