@@ -240,8 +240,17 @@ class TestTheDocTypeMatchesTheModule(unittest.TestCase):
         """Server-stamped from the session and the server clock. The old client path on
         `complete_step` let the browser propose a timestamp, and the audit found retroactive
         box-checking."""
-        for name in ("pm_approved", "pm_approved_by", "pm_approved_on", "customer_approved_on"):
+        for name in (
+            "pm_approved",
+            "pm_approved_by",
+            "pm_approved_on",
+            "customer_approved",
+            "customer_approved_on",
+            "customer_approval_note",
+        ):
             self.assertEqual(self.fields[name].get("read_only"), 1, name)
+            # Not copied by Duplicate: a new change order carrying an approval is refused.
+            self.assertEqual(self.fields[name].get("no_copy"), 1, name)
 
     def test_an_amendment_is_refused(self):
         """Frappe's amend appends -1, producing a second commercial instrument with almost the

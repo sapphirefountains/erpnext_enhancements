@@ -4,7 +4,8 @@
 """Approving a change order — WI-075 sub-phase K.
 
 The approval stamps are read-only on the form and are written only here, from the **server
-clock** and the **session user**. That is not ceremony: the old client path on
+clock** and the **session user**. Each endpoint sets ``APPROVAL_FLAG`` on the document it saves,
+and the controller refuses a stamp changed by any save without it. That is not ceremony: the old client path on
 `process_steps.complete_step` let the browser propose its own timestamp, and the audit that
 followed found retroactive box-ticking. On a commercial instrument the date somebody agreed to
 pay more is the fact most worth being able to defend.
@@ -28,6 +29,7 @@ Indentation note: this file is 4-space, matching the rest of ``api/``. See ``api
 import frappe
 from frappe import _
 
+from erpnext_enhancements.project_enhancements.doctype.change_order.change_order import APPROVAL_FLAG
 from erpnext_enhancements.quality import change_orders
 
 
@@ -66,6 +68,7 @@ def approve_change_order(change_order, note=None):
     doc.pm_approved_on = frappe.utils.now_datetime()
     if note:
         doc.notes = f"{doc.notes}\n{note}" if doc.notes else note
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 
@@ -92,6 +95,7 @@ def record_customer_approval(change_order, how):
     doc.customer_approved = 1
     doc.customer_approved_on = frappe.utils.now_datetime()
     doc.customer_approval_note = how
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 
@@ -118,6 +122,7 @@ def revoke_approval(change_order, which):
     else:
         frappe.throw(_("Approval to revoke must be 'pm' or 'customer'."))
 
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 

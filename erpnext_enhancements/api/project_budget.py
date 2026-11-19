@@ -10,6 +10,11 @@ value the browser proposed. That is not caution for its own sake: ``process_step
 once let the client send the timestamp, and the audit found retroactive box-checking. An approval
 whose time the approver chooses is not evidence of anything.
 
+The approve and revoke endpoints here are the only writers of the approval stamps: each sets
+``APPROVAL_FLAG`` on the document it saves, and the controller refuses a stamp changed by any save
+without it. ``approve_reallocation`` refuses the requester and the person who gave the second
+approval.
+
 The second-approval endpoint is the one that carries the control. It refuses a session user who
 is the requester or the project manager who already approved, because a protected-category rule
 satisfiable by one person clicking twice is a control in appearance only. The refusal is a throw
@@ -23,6 +28,9 @@ from frappe import _
 from frappe.utils import now_datetime
 
 from erpnext_enhancements.project_enhancements import budget_rollup
+from erpnext_enhancements.project_enhancements.doctype.budget_reallocation.budget_reallocation import (
+    APPROVAL_FLAG,
+)
 from erpnext_enhancements.quality import budgets
 
 DOCTYPE = "Budget Reallocation"
@@ -72,10 +80,23 @@ def _state(doc):
 
 @frappe.whitelist(methods=["POST"])
 def approve_reallocation(reallocation):
-    """Record the project manager's approval, from the server session and clock."""
+    """Record the project manager's approval, from the server session and clock.
+
+    Refuses the requester and the person who gave the second approval: the request, the project
+    manager approval and the second approval come from different people.
+    """
     doc = _draft(reallocation)
-    doc.pm_approved_by = frappe.session.user
+
+    approver = frappe.session.user
+    errors = budgets.first_approval_errors(
+        doc.requested_by, approver, doc.additional_approved_by
+    )
+    if errors:
+        frappe.throw("<br>".join(errors), title=_("This approval cannot be recorded"))
+
+    doc.pm_approved_by = approver
     doc.pm_approved_on = now_datetime()
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     frappe.db.commit()
     return _state(doc)
@@ -105,6 +126,7 @@ def give_second_approval(reallocation):
 
     doc.additional_approved_by = approver
     doc.additional_approved_on = now_datetime()
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     frappe.db.commit()
     return _state(doc)
@@ -124,6 +146,7 @@ def revoke_approval(reallocation, which):
     else:
         frappe.throw(_("Unknown approval {0}.").format(which))
 
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     frappe.db.commit()
     return _state(doc)

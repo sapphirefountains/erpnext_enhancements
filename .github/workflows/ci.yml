@@ -1790,6 +1790,15 @@ jobs:
       # because a control one person satisfies by clicking twice is a control in appearance only.
       - name: Project budgets (a zero nobody recorded is not a zero that was spent)
         run: python -m unittest erpnext_enhancements.tests.test_project_budgets -v
+      # Approval stamps on Budget Reallocation and Change Order. Runs both controllers and their
+      # approval endpoints over a stand-in frappe (own step: it installs a frappe stub in
+      # setUpModule): the requester does not record the first approval, the two approvals on a
+      # reallocation come from different people, and a stamp changes only through the approve,
+      # record and revoke endpoints -- an ordinary save that changes one, or a new document that
+      # arrives carrying one, is refused, while migrate, patches and a System Manager's Data
+      # Import keep what they write.
+      - name: Approval stamps (written only by the approval endpoints)
+        run: python -m unittest erpnext_enhancements.tests.test_approval_stamps -v
       # Subcontractor scorecards (WI-075 sub-phase N). A vendor scorecard is the one artifact
       # in this programme that gets PRINTED AND CARRIED INTO A NEGOTIATION, so its failure mode
       # is not a crash -- it is a page asserting every subcontractor is flawless. Measured on

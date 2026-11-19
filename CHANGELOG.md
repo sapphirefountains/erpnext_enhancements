@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.3] - 2026-11-19
+
+### Changed
+
+- **Budget reallocations: the requester does not record the project manager approval
+  (hardening).** *Approve as Project Manager* now refuses the person who requested the
+  reallocation, and the person who already gave the second approval; submit refuses a project
+  manager approval recorded by the requester. With the existing second-approval rule, the
+  request, the first approval and the second approval come from three different people on a
+  protected category, and from two on any other. A project manager who raises a reallocation now
+  needs a colleague to approve it. `quality/budgets.first_approval_errors` holds the rule.
+- **Approval stamps on Budget Reallocation and Change Order are written only by their approval
+  endpoints (hardening).** `read_only` hides a field in the form but is not checked on the server,
+  so each controller now enforces it: a save that changes `requested_by` or an approval stamp on a
+  reallocation, or `pm_approved`, `customer_approved`, `customer_approval_note` or their by/on
+  stamps on a change order, is refused unless it comes from the approve, record or revoke
+  endpoint, which sets a document flag (`APPROVAL_FLAG`), and a new document that arrives carrying
+  an approval is refused. `requested_by` is always the session user on insert. Migrate, install,
+  patches and a System Manager's Data Import keep the values they write, as on Tier Review.
+- **The approval stamps are not copied by Duplicate**, so a duplicated reallocation or change
+  order starts unapproved instead of being refused, and *How the customer approved* is read-only
+  on the Change Order form (it is written by *Record Customer Approval*). Both DocType JSONs carry
+  a new `modified` so `bench migrate` picks the field changes up.
+- New bench-free suite `tests/test_approval_stamps.py` (own CI step) runs both controllers and
+  their endpoints over a stand-in `frappe`.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
