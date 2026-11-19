@@ -92,6 +92,11 @@ class FakeDevice(dict):
 	def as_dict(self):
 		return dict(self)
 
+	def add_comment(self, comment_type, text=None, **kwargs):
+		if STATE.get("comment_fails"):
+			raise RuntimeError("comment insert failed")
+		STATE.setdefault("comments", []).append((comment_type, text))
+
 
 class FakeSettings(dict):
 	def get(self, key, default=None):
@@ -594,32 +599,61 @@ class MappingTests(unittest.TestCase):
 
 
 class RecordingProvider:
+	"""A stand-in provider that records every call. No network, no vendor API."""
+
 	key = "Miradore"
 
 	def supports(self, action):
 		return True
 
+	def _record(self, action, *args):
+		STATE.setdefault("provider_calls", []).append((action,) + args)
+		return {"recorded": action}
+
 	def wipe(self, provider_id, mode="selective"):
 		STATE.setdefault("wiped", []).append((provider_id, mode))
 		return {"miradore_action": "Retire" if mode == "selective" else "Wipe"}
 
+	def lock(self, provider_id):
+		return self._record("lock", provider_id)
+
+	def locate(self, provider_id):
+		return self._record("locate", provider_id)
+
+	def reboot(self, provider_id):
+		return self._record("reboot", provider_id)
+
+	def run_script(self, provider_id, script):
+		return self._record("run_script", provider_id, script)
+
+	def deploy_patch(self, provider_id, patch):
+		return self._record("deploy_patch", provider_id, patch)
+
+
+def _device_state(link_state, ownership, **extra):
+	STATE.clear()
+	STATE["device"] = FakeDevice(
+		name="DEV-1",
+		device_name="Crew phone",
+		device_type="Phone",
+		platform="Android",
+		ownership=ownership,
+		mdm_provider="Miradore",
+		mdm_provider_device_id="1001",
+		mdm_link_state=link_state,
+	)
+	STATE["settings"] = FakeSettings(block_full_wipe_byod=1, allow_full_wipe_corporate=1)
+	STATE.update(extra)
+	actions.get_provider_for = lambda device, settings: (RecordingProvider(), "Miradore")
+
 
 class ExecutorTests(unittest.TestCase):
-	def _run(self, link_state, ownership, mode):
-		STATE.clear()
-		STATE["device"] = FakeDevice(
-			name="DEV-1",
-			device_name="Crew phone",
-			device_type="Phone",
-			platform="Android",
-			ownership=ownership,
-			mdm_provider="Miradore",
-			mdm_provider_device_id="1001",
-			mdm_link_state=link_state,
-		)
-		STATE["settings"] = FakeSettings(block_full_wipe_byod=1, allow_full_wipe_corporate=1)
-		actions.get_provider_for = lambda device, settings: (RecordingProvider(), "Miradore")
-		return actions.execute_device_action("DEV-1", "wipe", mode=mode, source="UI")
+	def _run(self, link_state, ownership, mode, action="wipe", **kwargs):
+		_device_state(link_state, ownership)
+		return actions.execute_device_action("DEV-1", action, mode=mode, source="UI", **kwargs)
+
+	def _provider_was_called(self):
+		return bool(STATE.get("wiped") or STATE.get("provider_calls"))
 
 	def test_full_wipe_of_an_unconfirmed_device_is_refused_before_the_provider(self):
 		# A discovered device's ownership defaults to Company, so the BYOD guard alone
@@ -631,18 +665,87 @@ class ExecutorTests(unittest.TestCase):
 		(log,) = STATE["logs"]
 		self.assertEqual((log["action"], log["success"]), ("wipe", 0))
 
-	def test_selective_wipe_of_an_unconfirmed_device_goes_through(self):
-		self._run("Discovered", "Company", "selective")
-		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+	def test_selective_wipe_of_an_unconfirmed_device_is_refused_too(self):
+		with self.assertRaises(client.MDMProviderError) as ctx:
+			self._run("Discovered", "Company", "selective")
+		self.assertIn("Confirm the device", str(ctx.exception))
+		self.assertFalse(self._provider_was_called())
 
 	def test_full_wipe_of_a_confirmed_company_device_goes_through(self):
 		self._run("Managed", "Company", "full")
 		self.assertEqual(STATE["wiped"], [("1001", "full")])
 
+	def test_selective_wipe_of_a_confirmed_device_goes_through(self):
+		self._run("Managed", "Company", "selective")
+		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+
 	def test_byod_is_never_fully_wiped(self):
 		with self.assertRaises(client.MDMProviderError):
 			self._run("Managed", "BYOD", "full")
 		self.assertNotIn("wiped", STATE)
+
+	def test_every_action_is_refused_on_an_unconfirmed_device_before_any_provider_call(self):
+		for action, mode, extra in (
+			("wipe", "full", {}),
+			("wipe", "selective", {}),
+			("lock", None, {}),
+			("locate", None, {}),
+			("reboot", None, {}),
+			("run_script", None, {"script": "Get-Date"}),
+			("deploy_patch", None, {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action, mode=mode):
+				with self.assertRaises(client.MDMProviderError) as ctx:
+					self._run("Discovered", "Company", mode, action=action, **extra)
+				self.assertIn("nobody has confirmed", str(ctx.exception))
+				self.assertIn(f"'{action}'", str(ctx.exception))
+				self.assertFalse(self._provider_was_called())
+				self.assertNotIn("comments", STATE)
+				self.assertNotIn("notified", STATE)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 0))
+
+	def test_every_action_runs_on_a_confirmed_company_device(self):
+		for action, extra in (
+			("lock", {}),
+			("locate", {}),
+			("reboot", {}),
+			("run_script", {"script": "Get-Date"}),
+			("deploy_patch", {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action):
+				result = self._run("Managed", "Company", None, action=action, **extra)
+				self.assertTrue(result["ok"])
+				self.assertEqual(STATE["provider_calls"][0][0], action)
+
+	def test_locate_writes_a_comment_naming_who_asked_and_when_then_notifies(self):
+		self._run("Managed", "Company", None, action="locate")
+		((comment_type, text),) = STATE["comments"]
+		self.assertEqual(comment_type, "Info")
+		self.assertIn("manager@example.com", text)
+		self.assertIn("2026-09-22 12:00:00", text)
+		(note,) = STATE["notified"]
+		self.assertEqual(note["device"], "DEV-1")
+		self.assertIn("locate", note["subject"])
+		self.assertIn("manager@example.com", note["message"])
+
+	def test_lock_and_wipe_still_notify_and_reboot_still_does_not(self):
+		self._run("Managed", "Company", None, action="lock")
+		self.assertEqual(len(STATE["notified"]), 1)
+		self._run("Managed", "Company", "selective", action="wipe")
+		self.assertEqual(len(STATE["notified"]), 1)
+		self._run("Managed", "Company", None, action="reboot")
+		self.assertNotIn("notified", STATE)
+
+	def test_only_locate_writes_a_timeline_comment(self):
+		self._run("Managed", "Company", None, action="lock")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_locate_that_cannot_be_recorded_sends_nothing(self):
+		_device_state("Managed", "Company", comment_fails=True)
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "locate", source="UI")
+		self.assertFalse(self._provider_was_called())
 
 
 class SyncTests(unittest.TestCase):

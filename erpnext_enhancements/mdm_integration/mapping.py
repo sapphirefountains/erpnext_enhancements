@@ -13,8 +13,8 @@ on its own, so "awaiting confirmation" lasted an hour and nobody ever confirmed
 anything: all four devices on production were promoted that way. It matters
 because a discovered device's ownership defaults to Company, and a full wipe is
 refused for BYOD only -- so an unconfirmed personal phone would have been
-eligible for a factory reset. ``actions.execute_device_action`` now refuses a
-full wipe of a Discovered device.
+eligible for a factory reset. ``actions.execute_device_action`` now refuses every
+action on a Discovered device until a person confirms it.
 """
 
 from __future__ import annotations

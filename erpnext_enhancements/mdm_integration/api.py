@@ -96,7 +96,7 @@ def confirm_device(device, ownership):
 	who owns it.
 
 	The sync creates provider devices it cannot match as Discovered, with
-	ownership defaulting to Company. Until confirmed, a full wipe is refused
+	ownership defaulting to Company. Until confirmed, every device action is refused
 	(``actions.execute_device_action``), because the BYOD guard is only as good as
 	that ownership field. Recorded on the device's timeline.
 	"""
