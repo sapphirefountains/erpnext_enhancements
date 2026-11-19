@@ -264,5 +264,47 @@ class TestCostVisibility(unittest.TestCase):
 			self.assertIn(fn, card_fields, fn)
 
 
+class TestBillingDocuments(unittest.TestCase):
+	"""The schedule of values and the pay application leave the building (milestone 2)."""
+
+	BILLING = ("Schedule of Values", "Schedule of Values Line", "Pay Application", "Pay Application Line", "Retainage Step")
+
+	def test_no_cost_and_no_markup_at_all(self):
+		# Absent, not hidden (TASK-2026-02117): a field that exists is one export away from a GC.
+		for name in self.BILLING:
+			for field in doctype_json(name)["fields"]:
+				fn = field["fieldname"]
+				if fn == "cost_type":
+					continue  # a classification of the work, carries no money
+				for word in ("cost", "markup", "margin", "commission", "contingency", "insurance", "fee", "labor_rate"):
+					self.assertNotIn(word, fn, f"{name}.{fn}")
+				self.assertEqual(field.get("permlevel", 0), 0, f"{name}.{fn}")
+
+	def test_only_accounting_certifies(self):
+		perms = doctype_json("Pay Application")["permissions"]
+		submit = {p["role"] for p in perms if p.get("submit")}
+		self.assertEqual(submit, {"System Manager", "Finance Team", "Executive Team", "Accounts Manager"})
+		writers = {p["role"] for p in perms if p.get("write")}
+		self.assertTrue({"Projects Manager", "Project Manager"} <= writers)
+
+	def test_controllers_write_only_real_fields(self):
+		src = open(os.path.join(DOCTYPES, "pay_application", "pay_application.py")).read()
+		parent = {f["fieldname"] for f in doctype_json("Pay Application")["fields"]}
+		child = {f["fieldname"] for f in doctype_json("Pay Application Line")["fields"]}
+		for const, fields in (("LINE_RESULTS", child), ("LINE_SYNC", child), ("TOTALS", parent)):
+			block = src.split(f"{const} = (")[1].split(")")[0]
+			for fn in [x.strip().strip('",') for x in block.replace(",", "\n").split("\n") if x.strip().strip('", ')]:
+				self.assertIn(fn.strip('" '), fields, f"{const}: {fn}")
+
+	def test_the_engine_totals_are_all_stored(self):
+		from erpnext_enhancements.estimating import pay_app_math as pm
+
+		priced = pm.price_application({"contract_sum": 1}, {}, [{"line_key": "a", "scheduled_value": 1}], {})
+		parent = {f["fieldname"] for f in doctype_json("Pay Application")["fields"]}
+		child = {f["fieldname"] for f in doctype_json("Pay Application Line")["fields"]}
+		self.assertTrue(set(priced["totals"]) <= parent, set(priced["totals"]) - parent)
+		self.assertTrue(set(priced["lines"][0]) <= child, set(priced["lines"][0]) - child)
+
+
 if __name__ == "__main__":
 	unittest.main()

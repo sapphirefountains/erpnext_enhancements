@@ -63,3 +63,29 @@ def release_estimate(doc):
 			)
 			issued = row.quotation and not repriced
 			frappe.db.set_value("Estimate", prev, "status", "Issued" if issued else "Draft")
+
+
+def guard_change_order_cancel(doc, method=None):
+	"""Change Order ``before_cancel`` (hooks.py doc_events): refuse when it has been billed.
+
+	A change order's row on a schedule of values that carries work on a certified pay application is
+	part of a certified G702; canceling the change order would leave that certificate billing scope
+	that no longer exists. A compensating change order is the instrument (TASK-2026-02131).
+	"""
+	if not doc.name or not frappe.db.table_exists("Pay Application Line"):
+		return
+	rows = frappe.db.sql(
+		"""select distinct pa.name, pa.application_no from `tabPay Application` pa
+		join `tabPay Application Line` pal on pal.parent = pa.name
+		join `tabSchedule of Values Line` sl on sl.line_key = pal.line_key and sl.parent = pa.schedule_of_values
+		where sl.change_order = %s and pa.docstatus = 1 and pal.total_completed != 0
+		order by pa.application_no""",
+		(doc.name,),
+		as_dict=True,
+	)
+	if rows:
+		frappe.throw(
+			frappe._(
+				"This change order is billed on certified pay application {0}. Raise a compensating change order instead of canceling it."
+			).format(", ".join(r.name for r in rows))
+		)

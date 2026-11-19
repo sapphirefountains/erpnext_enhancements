@@ -646,6 +646,13 @@ doc_events = {
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
+	# estimating (milestone 2): a change order billed on a certified pay application cannot be
+	# quietly canceled; the refusal names the application, and a compensating change order is the
+	# instrument. Change Order is this app's own DocType, but its controller lives in
+	# project_enhancements and the rule belongs with the billing. See estimating/links.py.
+	"Change Order": {
+		"before_cancel": "erpnext_enhancements.estimating.links.guard_change_order_cancel",
+	},
 	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
 	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
 	# Completed returns it to service on the completion date, Cancelled returns it now.

@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.840.0] - 2026-11-20
+
+### Added
+
+- **Estimating, milestone 2: the Schedule of Values and the Pay Application.** The contract broken
+  into the lines the customer signed, and one period's AIA progress billing (G702 and G703) against
+  it, replacing the pay application workbook. Follows the 2026-11-04 concept decisions, the v2 PayApp
+  and SOV mockups, Nik's picks of 2026-11-06 and the B-series plan (TASK-2026-02065 to -02073).
+  - **Schedule of Values.** Typed by hand (the day-one path: most jobs have no estimate) or filled
+    from an Estimate with **Create > Schedule of Values**, one row per phase and cost type by default
+    or one per line, editable afterwards. The fill is an exact partition: the rows are the
+    estimate's own line prices regrouped in whole cents, so they sum to the estimate to the cent, and
+    the same estimate in any order gives the same rows. "By others" lines stay on as flagged rows worth
+    nothing. **No cost or markup field exists on it**, by design: it is handed to a general contractor.
+  - **Lock.** The schedule cannot lock until its lines equal the contract sum. Once locked its lines
+    are the contract breakdown: a changed value, a new base line or a new contract sum is refused, and
+    scope changes arrive as **change-order rows** (Add Approved Change Orders: every submitted,
+    customer-approved Change Order of the project, at its signed price, dated by the customer's
+    approval). It unlocks only before any application is certified, and a billed line can never be
+    deleted. Every line carries a `line_key` minted once, so reordering or renumbering never repoints
+    a billed line.
+  - **Pay Application.** Start Pay Application on a locked schedule makes the next one, chained by a
+    stored link to the latest (never inferred from dates), dated from the day after the last period;
+    one open application per schedule. **The project manager types this period's percent per line**
+    (Nik, 2026-11-06) in a phone-usable editor: phases with work this period open, the rest folded; a
+    REST button bills what is left; a line pushed past its scheduled value turns red. Send to
+    Accounting marks it To Review; accounting reviews the amount due and **certifies**, which submits
+    it. Milestone billing bills a milestone's percent of every line, each milestone once.
+  - **The arithmetic** (`estimating/pay_app_math.py`, a browser twin held to the same cases), in whole
+    cents with frappe's banker's rounding. **Column D is the earlier applications' work completed, not
+    their column G**: stored material is a balance, so carrying G forward would count it twice (the
+    workbook's "E = prior H" makes that mistake). The G702's nine lines with retainage as two rows (on
+    work, on stored materials); **line 7 sums what was certified**, so when a GC certifies less than
+    was due the shortfall is in the next payment due by construction. No six-month limit.
+  - **Retainage** (D16) resolves line → application → the schedule's rate → none, and may **step
+    down** (for example 10% until 50% complete, then 5%), chosen by the percent complete at the
+    **start** of the period so a month's own work never changes the rate it is billed at. The rate used
+    is stored on every line; a certified application never re-rates. Stored materials are off unless
+    the job turns them on.
+  - **Change orders join from the application whose period reaches their approval date**, and
+    "approved this month" means "not on the previous application", so a change order approved in March
+    and added in June moves line 2 in June, the month it actually moved. A change order billed on a
+    certified application cannot be canceled (Change Order `before_cancel`, naming the application).
+  - **Certify refuses with every reason at once**: the schedule not locked, the previous application
+    not certified, a period that overlaps the last one, a line no longer on the schedule, a line billed
+    past its scheduled value, a negative amount without a note, work on a line scheduled at nothing,
+    stored materials while they are off, retainage outside 0 to 100%, a negative payment due, an
+    amount certified above the amount due. Only the latest application can be canceled; amending is
+    refused.
+  - Not in this release: the Sales Invoice with retainage receivable, the G702/G703 print and the
+    portal export, retainage release, and percent-complete accounting. They are the next PRs.
+- Bench-free tests, in CI: `test_pay_app_math` (the arithmetic, the shared cases, the projection),
+  `test_billing_controllers` (both controllers and the endpoints, frappe stub), the node twin and the
+  editor's bundle level in `scripts/test_estimate_math.mjs`, and the no-cost-field and who-certifies
+  rules in `test_estimating_rules`.
+
 ## [1.832.0] - 2026-11-19
 
 ### Added

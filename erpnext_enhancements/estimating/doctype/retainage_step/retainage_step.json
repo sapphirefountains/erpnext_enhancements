@@ -1,0 +1,48 @@
+{
+ "actions": [],
+ "creation": "2026-11-20 09:00:00.000000",
+ "description": "A retainage rate that takes over once the job reaches a percent complete (D16).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "from_percent_complete",
+  "work_pct",
+  "stored_pct"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "description": "The job's percent complete at the start of the period being billed.",
+   "fieldname": "from_percent_complete",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "From % Complete"
+  },
+  {
+   "columns": 3,
+   "fieldname": "work_pct",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Retainage on Work %"
+  },
+  {
+   "columns": 3,
+   "fieldname": "stored_pct",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Retainage on Stored %"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-20 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Retainage Step",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

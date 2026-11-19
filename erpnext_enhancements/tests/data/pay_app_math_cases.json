@@ -1,0 +1,898 @@
+{
+ "cases": [
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 0.0,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 100.0,
+      "retainage": 200.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 200.0,
+      "scheduled_value": 4000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 4000.0,
+      "this_period_pct": 100.0,
+      "total_completed": 4000.0,
+      "work_completed_to_date": 4000.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 2000.0,
+      "from_previous": 0.0,
+      "line_key": "b",
+      "percent_complete": 20.0,
+      "retainage": 25.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 25.0,
+      "scheduled_value": 2500.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 500.0,
+      "this_period_pct": 20.0,
+      "total_completed": 500.0,
+      "work_completed_to_date": 500.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 3500.0,
+      "from_previous": 0.0,
+      "line_key": "c",
+      "percent_complete": 0.0,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 3500.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 0.0,
+      "this_period_pct": 0.0,
+      "total_completed": 0.0,
+      "work_completed_to_date": 0.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 5725.0,
+     "balance_total": 5500.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 4275.0,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 45.0,
+     "percent_complete_at_start": 0,
+     "retainage_source": "schedule",
+     "retainage_stored": 0.0,
+     "retainage_work": 225.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 4500.0,
+     "total_completed_stored": 4500.0,
+     "total_earned_less_retainage": 4275.0,
+     "total_retainage": 225.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 4000,
+     "this_period_pct": 100
+    },
+    {
+     "line_key": "b",
+     "scheduled_value": 2500,
+     "this_period_pct": 20
+    },
+    {
+     "line_key": "c",
+     "scheduled_value": 3500,
+     "this_period_pct": 0
+    }
+   ],
+   "name": "first application, 5% retainage",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {
+    "less_previous_certificates": 4275
+   },
+   "expected": {
+    "lines": [
+     {
+      "balance": 0.0,
+      "from_previous": 4000.0,
+      "line_key": "a",
+      "percent_complete": 100.0,
+      "retainage": 200.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 200.0,
+      "scheduled_value": 4000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 0.0,
+      "this_period_pct": 0.0,
+      "total_completed": 4000.0,
+      "work_completed_to_date": 4000.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 850.0,
+      "from_previous": 500.0,
+      "line_key": "b",
+      "percent_complete": 66.0,
+      "retainage": 82.5,
+      "retainage_stored": 20.0,
+      "retainage_work": 62.5,
+      "scheduled_value": 2500.0,
+      "stored": 400.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 750.0,
+      "this_period_pct": 30.0,
+      "total_completed": 1650.0,
+      "work_completed_to_date": 1250.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 1950.0,
+      "from_previous": 0.0,
+      "line_key": "c",
+      "percent_complete": 44.29,
+      "retainage": 77.5,
+      "retainage_stored": 60.0,
+      "retainage_work": 17.5,
+      "scheduled_value": 3500.0,
+      "stored": 1200.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 350.0,
+      "this_period_pct": 10.0,
+      "total_completed": 1550.0,
+      "work_completed_to_date": 350.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 3160.0,
+     "balance_total": 2800.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 2565.0,
+     "from_previous_total": 4500.0,
+     "less_previous_certificates": 4275.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 72.0,
+     "percent_complete_at_start": 45.0,
+     "retainage_source": "schedule",
+     "retainage_stored": 80.0,
+     "retainage_work": 280.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 1600.0,
+     "this_period_total": 1100.0,
+     "total_completed_stored": 7200.0,
+     "total_earned_less_retainage": 6840.0,
+     "total_retainage": 360.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 4000,
+     "this_period_pct": 0
+    },
+    {
+     "line_key": "b",
+     "scheduled_value": 2500,
+     "stored": 400,
+     "this_period_pct": 30
+    },
+    {
+     "line_key": "c",
+     "scheduled_value": 3500,
+     "stored": 1200,
+     "this_period_pct": 10
+    }
+   ],
+   "name": "column D is work completed, stored is a balance",
+   "previous": {
+    "a": 4000,
+    "b": 500
+   },
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_materials": 1,
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 0.0,
+      "from_previous": 4000.0,
+      "line_key": "a",
+      "percent_complete": 100.0,
+      "retainage": 500.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 500.0,
+      "scheduled_value": 5000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 10.0,
+      "this_period": 1000.0,
+      "this_period_pct": 20.0,
+      "total_completed": 5000.0,
+      "work_completed_to_date": 5000.0,
+      "work_retainage_pct": 10.0
+     },
+     {
+      "balance": 5000.0,
+      "from_previous": 0.0,
+      "line_key": "b",
+      "percent_complete": 0.0,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 5000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 10.0,
+      "this_period": 0.0,
+      "this_period_pct": 0.0,
+      "total_completed": 0.0,
+      "work_completed_to_date": 0.0,
+      "work_retainage_pct": 10.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 5500.0,
+     "balance_total": 5000.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 4500.0,
+     "from_previous_total": 4000.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 50.0,
+     "percent_complete_at_start": 40.0,
+     "retainage_source": "step from 0%",
+     "retainage_stored": 0.0,
+     "retainage_work": 500.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 10.0,
+     "stored_total": 0.0,
+     "this_period_total": 1000.0,
+     "total_completed_stored": 5000.0,
+     "total_earned_less_retainage": 4500.0,
+     "total_retainage": 500.0,
+     "work_retainage_pct": 10.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 5000,
+     "this_period_pct": 20
+    },
+    {
+     "line_key": "b",
+     "scheduled_value": 5000,
+     "this_period_pct": 0
+    }
+   ],
+   "name": "step-down: 40% at start bills at 10%",
+   "previous": {
+    "a": 4000
+   },
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [
+     {
+      "from_percent_complete": 0,
+      "stored_pct": 10,
+      "work_pct": 10
+     },
+     {
+      "from_percent_complete": 50,
+      "stored_pct": 5,
+      "work_pct": 5
+     }
+    ],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 0.0,
+      "from_previous": 5000.0,
+      "line_key": "a",
+      "percent_complete": 100.0,
+      "retainage": 250.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 250.0,
+      "scheduled_value": 5000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 0.0,
+      "this_period_pct": 0.0,
+      "total_completed": 5000.0,
+      "work_completed_to_date": 5000.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 1500.0,
+      "from_previous": 1000.0,
+      "line_key": "b",
+      "percent_complete": 70.0,
+      "retainage": 175.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 175.0,
+      "scheduled_value": 5000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 2500.0,
+      "this_period_pct": 50.0,
+      "total_completed": 3500.0,
+      "work_completed_to_date": 3500.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 1925.0,
+     "balance_total": 1500.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 8075.0,
+     "from_previous_total": 6000.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 85.0,
+     "percent_complete_at_start": 60.0,
+     "retainage_source": "step from 50%",
+     "retainage_stored": 0.0,
+     "retainage_work": 425.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 2500.0,
+     "total_completed_stored": 8500.0,
+     "total_earned_less_retainage": 8075.0,
+     "total_retainage": 425.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 5000,
+     "this_period_pct": 0
+    },
+    {
+     "line_key": "b",
+     "scheduled_value": 5000,
+     "this_period_pct": 50
+    }
+   ],
+   "name": "step-down: 60% at start bills at 5%",
+   "previous": {
+    "a": 5000,
+    "b": 1000
+   },
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [
+     {
+      "from_percent_complete": 0,
+      "stored_pct": 10,
+      "work_pct": 10
+     },
+     {
+      "from_percent_complete": 50,
+      "stored_pct": 5,
+      "work_pct": 5
+     }
+    ],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 0.0,
+      "from_previous": 333.33,
+      "line_key": "a",
+      "percent_complete": 100.0,
+      "retainage": 50.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 50.0,
+      "scheduled_value": 1000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 666.67,
+      "this_period_pct": 66.67,
+      "total_completed": 1000.0,
+      "work_completed_to_date": 1000.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 50.0,
+     "balance_total": 0.0,
+     "contract_sum_to_date": 1000.0,
+     "current_payment_due": 950.0,
+     "from_previous_total": 333.33,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 1000.0,
+     "percent_complete": 100.0,
+     "percent_complete_at_start": 33.33,
+     "retainage_source": "schedule",
+     "retainage_stored": 0.0,
+     "retainage_work": 50.0,
+     "scheduled_total": 1000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 666.67,
+     "total_completed_stored": 1000.0,
+     "total_earned_less_retainage": 950.0,
+     "total_retainage": 50.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 1000,
+     "this_period_pct": 66.67
+    }
+   ],
+   "name": "finishing a line closes it to the cent",
+   "previous": {
+    "a": 333.33
+   },
+   "schedule": {
+    "contract_sum": 1000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 9000.0,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 10.0,
+      "retainage": 50.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 50.0,
+      "scheduled_value": 10000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 1000.0,
+      "this_period_pct": 10.0,
+      "total_completed": 1000.0,
+      "work_completed_to_date": 1000.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 0.0,
+      "from_previous": 0.0,
+      "line_key": "co1",
+      "percent_complete": 100.0,
+      "retainage": 75.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 75.0,
+      "scheduled_value": 1500.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 1500.0,
+      "this_period_pct": 100.0,
+      "total_completed": 1500.0,
+      "work_completed_to_date": 1500.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 0.0,
+      "from_previous": 0.0,
+      "line_key": "co2",
+      "percent_complete": 100.0,
+      "retainage": -25.0,
+      "retainage_stored": 0.0,
+      "retainage_work": -25.0,
+      "scheduled_value": -500.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": -500.0,
+      "this_period_pct": 100.0,
+      "total_completed": -500.0,
+      "work_completed_to_date": -500.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 9100.0,
+     "balance_total": 9000.0,
+     "contract_sum_to_date": 11000.0,
+     "current_payment_due": 1900.0,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 1000.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 18.18,
+     "percent_complete_at_start": 0,
+     "retainage_source": "schedule",
+     "retainage_stored": 0.0,
+     "retainage_work": 100.0,
+     "scheduled_total": 11000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 2000.0,
+     "total_completed_stored": 2000.0,
+     "total_earned_less_retainage": 1900.0,
+     "total_retainage": 100.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 10000,
+     "this_period_pct": 10
+    },
+    {
+     "is_change_order": 1,
+     "line_key": "co1",
+     "scheduled_value": 1500,
+     "this_period_pct": 100
+    },
+    {
+     "is_change_order": 1,
+     "line_key": "co2",
+     "scheduled_value": -500,
+     "this_period_pct": 100
+    }
+   ],
+   "name": "change orders, one a deduction",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {
+    "stored_retainage_override": "",
+    "work_retainage_override": "10"
+   },
+   "expected": {
+    "lines": [
+     {
+      "balance": 3000.0,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 50.0,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 6000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 3000.0,
+      "this_period_pct": 50.0,
+      "total_completed": 3000.0,
+      "work_completed_to_date": 3000.0,
+      "work_retainage_pct": 0.0
+     },
+     {
+      "balance": 2000.0,
+      "from_previous": 0.0,
+      "line_key": "b",
+      "percent_complete": 50.0,
+      "retainage": 200.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 200.0,
+      "scheduled_value": 4000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 2000.0,
+      "this_period_pct": 50.0,
+      "total_completed": 2000.0,
+      "work_completed_to_date": 2000.0,
+      "work_retainage_pct": 10.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 5200.0,
+     "balance_total": 5000.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 4800.0,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 50.0,
+     "percent_complete_at_start": 0,
+     "retainage_source": "application",
+     "retainage_stored": 0.0,
+     "retainage_work": 200.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 5000.0,
+     "total_completed_stored": 5000.0,
+     "total_earned_less_retainage": 4800.0,
+     "total_retainage": 200.0,
+     "work_retainage_pct": 10.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 6000,
+     "this_period_pct": 50,
+     "work_retainage_override": "0"
+    },
+    {
+     "line_key": "b",
+     "scheduled_value": 4000,
+     "this_period_pct": 50
+    }
+   ],
+   "name": "overrides: line and application, and no retainage",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 6667.0,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 33.33,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 10000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 0.0,
+      "this_period": 3333.0,
+      "this_period_pct": 33.33,
+      "total_completed": 3333.0,
+      "work_completed_to_date": 3333.0,
+      "work_retainage_pct": 0.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 6667.0,
+     "balance_total": 6667.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 3333.0,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 33.33,
+     "percent_complete_at_start": 0,
+     "retainage_source": "none",
+     "retainage_stored": 0.0,
+     "retainage_work": 0.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 0.0,
+     "stored_total": 0.0,
+     "this_period_total": 3333.0,
+     "total_completed_stored": 3333.0,
+     "total_earned_less_retainage": 3333.0,
+     "total_retainage": 0.0,
+     "work_retainage_pct": 0.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 10000,
+     "this_period_pct": 33.33
+    }
+   ],
+   "name": "no retainage on the job",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 0,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": -2.69,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 209.8,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 2.45,
+      "stored": 0.0,
+      "stored_retainage_pct": 0.0,
+      "this_period": 5.14,
+      "this_period_pct": 210.0,
+      "total_completed": 5.14,
+      "work_completed_to_date": 5.14,
+      "work_retainage_pct": 0.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": -2.69,
+     "balance_total": -2.69,
+     "contract_sum_to_date": 2.45,
+     "current_payment_due": 5.14,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 2.45,
+     "percent_complete": 209.8,
+     "percent_complete_at_start": 0,
+     "retainage_source": "none",
+     "retainage_stored": 0.0,
+     "retainage_work": 0.0,
+     "scheduled_total": 2.45,
+     "stored_retainage_pct": 0.0,
+     "stored_total": 0.0,
+     "this_period_total": 5.14,
+     "total_completed_stored": 5.14,
+     "total_earned_less_retainage": 5.14,
+     "total_retainage": 0.0,
+     "work_retainage_pct": 0.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 2.45,
+     "this_period_pct": 210
+    }
+   ],
+   "name": "banker's rounding: 2.45 x 210% is 5.14",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 2.45,
+    "retainage_applies": 0,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  },
+  {
+   "application": {},
+   "expected": {
+    "lines": [
+     {
+      "balance": 9000.0,
+      "from_previous": 0.0,
+      "line_key": "a",
+      "percent_complete": 10.0,
+      "retainage": 50.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 50.0,
+      "scheduled_value": 10000.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 1000.0,
+      "this_period_pct": 10.0,
+      "total_completed": 1000.0,
+      "work_completed_to_date": 1000.0,
+      "work_retainage_pct": 5.0
+     },
+     {
+      "balance": 0.0,
+      "from_previous": 0.0,
+      "line_key": "x",
+      "percent_complete": null,
+      "retainage": 0.0,
+      "retainage_stored": 0.0,
+      "retainage_work": 0.0,
+      "scheduled_value": 0.0,
+      "stored": 0.0,
+      "stored_retainage_pct": 5.0,
+      "this_period": 0.0,
+      "this_period_pct": 0.0,
+      "total_completed": 0.0,
+      "work_completed_to_date": 0.0,
+      "work_retainage_pct": 5.0
+     }
+    ],
+    "totals": {
+     "balance_to_finish": 9050.0,
+     "balance_total": 9000.0,
+     "contract_sum_to_date": 10000.0,
+     "current_payment_due": 950.0,
+     "from_previous_total": 0.0,
+     "less_previous_certificates": 0.0,
+     "net_change_orders": 0.0,
+     "original_contract_sum": 10000.0,
+     "percent_complete": 10.0,
+     "percent_complete_at_start": 0,
+     "retainage_source": "schedule",
+     "retainage_stored": 0.0,
+     "retainage_work": 50.0,
+     "scheduled_total": 10000.0,
+     "stored_retainage_pct": 5.0,
+     "stored_total": 0.0,
+     "this_period_total": 1000.0,
+     "total_completed_stored": 1000.0,
+     "total_earned_less_retainage": 950.0,
+     "total_retainage": 50.0,
+     "work_retainage_pct": 5.0
+    }
+   },
+   "lines": [
+    {
+     "line_key": "a",
+     "scheduled_value": 10000,
+     "this_period_pct": 10
+    },
+    {
+     "by_others": 1,
+     "line_key": "x",
+     "scheduled_value": 0,
+     "this_period_pct": 50
+    }
+   ],
+   "name": "by others is never billed",
+   "previous": {},
+   "schedule": {
+    "contract_sum": 10000,
+    "retainage_applies": 1,
+    "retainage_pct": 5,
+    "steps": [],
+    "stored_retainage_pct": 5
+   }
+  }
+ ]
+}

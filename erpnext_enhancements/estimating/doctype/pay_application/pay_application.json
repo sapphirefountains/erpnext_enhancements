@@ -1,0 +1,573 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-11-20 09:00:00.000000",
+ "description": "One period's AIA progress billing (G702 and G703) against a Schedule of Values. Certifying submits it.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "schedule_of_values",
+  "project",
+  "customer",
+  "application_no",
+  "previous_application",
+  "column_break_header",
+  "status",
+  "period_from",
+  "period_to",
+  "billing_mode",
+  "milestone",
+  "section_lines",
+  "lines_editor",
+  "lines",
+  "section_g702",
+  "original_contract_sum",
+  "net_change_orders",
+  "contract_sum_to_date",
+  "total_completed_stored",
+  "retainage_work",
+  "retainage_stored",
+  "column_break_g702",
+  "total_retainage",
+  "total_earned_less_retainage",
+  "less_previous_certificates",
+  "current_payment_due",
+  "balance_to_finish",
+  "percent_complete",
+  "section_totals",
+  "scheduled_total",
+  "from_previous_total",
+  "this_period_total",
+  "column_break_totals",
+  "stored_total",
+  "balance_total",
+  "co_previous_months",
+  "co_this_month",
+  "section_retainage",
+  "work_retainage_override",
+  "stored_retainage_override",
+  "column_break_retainage",
+  "work_retainage_pct",
+  "stored_retainage_pct",
+  "retainage_source",
+  "percent_complete_at_start",
+  "section_certify",
+  "certified_less",
+  "amount_certified",
+  "certification_note",
+  "column_break_certify",
+  "sent_for_review_by",
+  "sent_for_review_on",
+  "certified_by",
+  "certified_on",
+  "billing_context",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "default": "PAY-.YY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "PAY-.YY.-.####",
+   "reqd": 1
+  },
+  {
+   "fieldname": "schedule_of_values",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Schedule of Values",
+   "options": "Schedule of Values",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "schedule_of_values.project",
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "schedule_of_values.customer",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Account",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "application_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Application No.",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_application",
+   "fieldtype": "Link",
+   "label": "Previous Application",
+   "no_copy": 1,
+   "options": "Pay Application",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nTo Review\nCertified\nCanceled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "period_from",
+   "fieldtype": "Date",
+   "label": "Period From"
+  },
+  {
+   "fieldname": "period_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Period To",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "schedule_of_values.billing_mode",
+   "fieldname": "billing_mode",
+   "fieldtype": "Data",
+   "label": "Billing Mode",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.billing_mode=='Milestones'",
+   "description": "The milestone this application bills, by its name on the schedule. Every line bills its percent.",
+   "fieldname": "milestone",
+   "fieldtype": "Data",
+   "label": "Milestone"
+  },
+  {
+   "fieldname": "section_lines",
+   "fieldtype": "Section Break",
+   "label": "Work Completed This Period"
+  },
+  {
+   "fieldname": "lines_editor",
+   "fieldtype": "HTML",
+   "label": "Lines"
+  },
+  {
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Lines",
+   "options": "Pay Application Line"
+  },
+  {
+   "fieldname": "section_g702",
+   "fieldtype": "Section Break",
+   "label": "Amount Due (G702)"
+  },
+  {
+   "bold": 0,
+   "fieldname": "original_contract_sum",
+   "fieldtype": "Currency",
+   "label": "1. Original Contract Sum",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "net_change_orders",
+   "fieldtype": "Currency",
+   "label": "2. Net Change by Change Orders",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "contract_sum_to_date",
+   "fieldtype": "Currency",
+   "label": "3. Contract Sum to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "total_completed_stored",
+   "fieldtype": "Currency",
+   "label": "4. Total Completed and Stored to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "retainage_work",
+   "fieldtype": "Currency",
+   "label": "5a. Retainage on Completed Work",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "retainage_stored",
+   "fieldtype": "Currency",
+   "label": "5b. Retainage on Stored Materials",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_g702",
+   "fieldtype": "Column Break"
+  },
+  {
+   "bold": 0,
+   "fieldname": "total_retainage",
+   "fieldtype": "Currency",
+   "label": "5. Total Retainage",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "total_earned_less_retainage",
+   "fieldtype": "Currency",
+   "label": "6. Total Earned Less Retainage",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "less_previous_certificates",
+   "fieldtype": "Currency",
+   "label": "7. Less Previous Certificates for Payment",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "current_payment_due",
+   "fieldtype": "Currency",
+   "label": "8. Current Payment Due",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "bold": 0,
+   "fieldname": "balance_to_finish",
+   "fieldtype": "Currency",
+   "label": "9. Balance to Finish, Including Retainage",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "percent_complete",
+   "fieldtype": "Percent",
+   "label": "Percent Complete",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_totals",
+   "fieldtype": "Section Break",
+   "label": "Continuation Sheet Totals (G703)"
+  },
+  {
+   "fieldname": "scheduled_total",
+   "fieldtype": "Currency",
+   "label": "Scheduled Value (C)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "from_previous_total",
+   "fieldtype": "Currency",
+   "label": "From Previous (D)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "this_period_total",
+   "fieldtype": "Currency",
+   "label": "This Period (E)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "stored_total",
+   "fieldtype": "Currency",
+   "label": "Stored Materials (F)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "balance_total",
+   "fieldtype": "Currency",
+   "label": "Balance to Finish (I)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "co_previous_months",
+   "fieldtype": "Currency",
+   "label": "Change Orders Approved in Previous Months",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "co_this_month",
+   "fieldtype": "Currency",
+   "label": "Change Orders Approved This Month",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_retainage",
+   "fieldtype": "Section Break",
+   "label": "Retainage"
+  },
+  {
+   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate.",
+   "fieldname": "work_retainage_override",
+   "fieldtype": "Data",
+   "label": "Retainage on Work % (this application)"
+  },
+  {
+   "description": "Blank: the schedule's rate, or its step-down. 0 is a real rate.",
+   "fieldname": "stored_retainage_override",
+   "fieldtype": "Data",
+   "label": "Retainage on Stored % (this application)"
+  },
+  {
+   "fieldname": "column_break_retainage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "work_retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Work % Used",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "stored_retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Stored % Used",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage_source",
+   "fieldtype": "Data",
+   "label": "Rate From",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "percent_complete_at_start",
+   "fieldtype": "Percent",
+   "label": "Percent Complete at Start of Period",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_certify",
+   "fieldtype": "Section Break",
+   "label": "Certification"
+  },
+  {
+   "description": "Tick when the general contractor certified less than the payment due. The shortfall carries into the next application.",
+   "fieldname": "certified_less",
+   "fieldtype": "Check",
+   "label": "Certified for Less Than Due"
+  },
+  {
+   "depends_on": "certified_less",
+   "description": "Defaults to the payment due.",
+   "fieldname": "amount_certified",
+   "fieldtype": "Currency",
+   "label": "Amount Certified",
+   "no_copy": 1
+  },
+  {
+   "fieldname": "certification_note",
+   "fieldtype": "Small Text",
+   "label": "Certification Note"
+  },
+  {
+   "fieldname": "column_break_certify",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_for_review_by",
+   "fieldtype": "Link",
+   "label": "Sent to Accounting By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_for_review_on",
+   "fieldtype": "Datetime",
+   "label": "Sent to Accounting On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "certified_by",
+   "fieldtype": "Link",
+   "label": "Certified By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "certified_on",
+   "fieldtype": "Datetime",
+   "label": "Certified On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The schedule's contract sum and retainage as this application was priced, for the lines editor.",
+   "fieldname": "billing_context",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Billing Context",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Pay Application",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-11-20 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Pay Application",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1
+  }
+ ],
+ "search_fields": "project,customer,application_no,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "project",
+ "track_changes": 1
+}
