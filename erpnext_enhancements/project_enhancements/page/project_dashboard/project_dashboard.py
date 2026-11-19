@@ -1937,9 +1937,14 @@ def _product_orders(today, source_column):
 		as_dict=True,
 	)
 	paid_visible = bool(frappe.has_permission("Sales Invoice", "read"))
-	# The board offers to change the build priority only to someone who could save it; the endpoint
-	# checks the order itself again.
-	priority_editable = has_priority and bool(frappe.has_permission("Sales Order", "write"))
+	# The board offers to change the build priority only to someone who could save it on the order's own
+	# form: every order on the board is submitted, and v16 saves an allow-on-submit field only with write
+	# AND submit (check_docstatus_transition). The endpoint checks the order itself again.
+	priority_editable = (
+		has_priority
+		and bool(frappe.has_permission("Sales Order", "write"))
+		and bool(frappe.has_permission("Sales Order", "submit"))
+	)
 	empty = {
 		"rows": [],
 		"paid_visible": paid_visible,
@@ -2135,14 +2140,21 @@ def set_build_priority(sales_order, priority=None):
 	clears it. Ties are allowed: two orders at 1 are both "build first", and the board orders them
 	by promise date.
 
-	Gates: the page's own (``check_permission``), then **write** on that Sales Order, which is what
-	saving the field from the order's own form needs. Sales User has it on prod, and so do Logan,
-	Brian, James, Nathan and Nikolas. A cancelled order is refused.
+	Gates: the page's own (``check_permission``), then what saving the field on the order's own form
+	needs: **write** on that Sales Order and, once it is submitted, **submit** too. Frappe v16 saves an
+	allow-on-submit field of a submitted document as ``update_after_submit``, which checks submit
+	(``check_docstatus_transition``), and ``db.set_value`` below skips that check, so it is made here.
+	Sales User has both on prod, and so do Logan, Brian, James, Nathan and Nikolas. A cancelled order
+	is refused.
 
 	The value is written with ``db.set_value`` and ``update_modified=False``: the order is submitted,
 	and a full save would run its whole update-after-submit chain for one ranking number, and bumping
 	``modified`` would make anyone with the order open hit "Document has been modified" on their next
 	save. So the change goes on the order's timeline as a comment instead, naming the old and new rank.
+	The comment is written after the value, in its own try: a comment that fails is logged and never
+	reported as a failed save. The cost, accepted for now (manager review, 2026-11-19): someone who
+	already had the order's form open and then saves an allow-on-submit edit there writes back the rank
+	their form loaded.
 
 	Returns ``{"status": "success", "build_priority": n or None}``, or ``{"status": "error",
 	"message": ...}``.
@@ -2163,13 +2175,20 @@ def set_build_priority(sales_order, priority=None):
 		return {"status": "error", "message": _("Sales Order {0} was not found.").format(name)}
 	if cint(current.get("docstatus")) == 2:
 		return {"status": "error", "message": _("Sales Order {0} is cancelled.").format(name)}
-	if not frappe.has_permission("Sales Order", "write", doc=name):
+	submitted = cint(current.get("docstatus")) == 1
+	if not frappe.has_permission("Sales Order", "write", doc=name) or (
+		submitted and not frappe.has_permission("Sales Order", "submit", doc=name)
+	):
 		return {"status": "error", "message": _("You do not have permission to change this order.")}
 	before = cint(current.get(BUILD_PRIORITY_FIELD))
 	if before == value:
 		return {"status": "success", "build_priority": value or None}
 	try:
 		frappe.db.set_value("Sales Order", name, BUILD_PRIORITY_FIELD, value, update_modified=False)
+	except Exception:
+		frappe.log_error(title="Products tab: could not set a build priority", message=frappe.get_traceback())
+		return {"status": "error", "message": _("Could not save the build priority. Please check the logs.")}
+	try:
 		if value:
 			note = _("Build priority set to {0} from the Products tab.").format(value)
 		else:
@@ -2178,8 +2197,7 @@ def set_build_priority(sales_order, priority=None):
 			note += " " + _("It was {0}.").format(before)
 		frappe.get_doc("Sales Order", name).add_comment("Info", note)
 	except Exception:
-		frappe.log_error(title="Products tab: could not set a build priority", message=frappe.get_traceback())
-		return {"status": "error", "message": _("Could not save the build priority. Please check the logs.")}
+		frappe.log_error(title="Products tab: could not note a build priority", message=frappe.get_traceback())
 	return {"status": "success", "build_priority": value or None}
 
 

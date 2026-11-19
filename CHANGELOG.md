@@ -20,17 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **Storage:** a new Custom Field, `Sales Order.custom_build_priority` ("Build Priority", Int,
       allowed on submit, not copied, hidden on print). It sits after Fulfillment, so it can also be
       set from the order's own form.
-    - **Setting it:** on the board, someone who may write Sales Orders clicks the rank. A number box
+    - **Setting it:** on the board, someone who may write and submit Sales Orders clicks the rank. A number box
       opens; Enter or leaving the box saves, blank clears, and Escape cancels.
     - **The save** goes to a new POST endpoint, `project_dashboard.set_build_priority`. It checks:
       - the page gate;
-      - write on that Sales Order (Sales User has it; so do Logan, Brian, James, Nathan and Nikolas);
+      - write on that Sales Order and, once it's submitted, submit too, which is what saving an
+        allow-on-submit field on the order's own form needs (Sales User has both; so do Logan,
+        Brian, James, Nathan and Nikolas);
       - that the value is a whole number from 1 to 999, or blank;
       - that the order isn't cancelled.
     - **The write** is a `db.set_value` that leaves `modified` alone. A full save of a submitted
       order would run its whole update-after-submit chain for one number, and anyone with the order
       open would hit "Document has been modified". The change goes on the order's timeline as a
-      comment that names the old and new rank.
+      comment that names the old and new rank, written in its own try so a failed comment is logged
+      and never reported as a failed save.
+    - **Known gap, accepted for now:** someone who already had the order's form open and then saves
+      an allow-on-submit edit there writes back the rank their form loaded.
     - **Sorting:** within each stage, ranked orders come first, 1 first, then the promise date as
       before.
   - **Percent complete** (`product_orders.order_percent_complete`). The build is 80 of the 100 and

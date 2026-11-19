@@ -83,6 +83,7 @@ class Site:
 		self.writes = []
 		self.comments = []
 		self.denied_orders = set()  # orders the person may read but not write
+		self.unsubmittable_orders = set()  # orders the person may write but not submit
 
 	def rows(self, key):
 		return [_Dict(row) for row in self.tables.get(key, [])]
@@ -1056,14 +1057,17 @@ class TestBuildPriorityProgressAndEnd(TestTheBoard):
 		self.assertFalse(answer["orders"]["priority_editable"], "nothing to save it into")
 		self.assertTrue(all(row["build_priority"] is None for row in answer["orders"]["rows"]))
 
-	def test_editing_needs_sales_order_write(self):
-		dashboard.frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: (
-			doctype in SITE.readable and ptype != "write"
-		)
+	def test_editing_needs_sales_order_write_and_submit(self):
+		"""Every order on the board is submitted, and v16 saves an allow-on-submit field only with both."""
+		readable = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable  # noqa: E731
 		try:
-			self.assertFalse(self.answer()["orders"]["priority_editable"])
+			for missing in ("write", "submit"):
+				dashboard.frappe.has_permission = lambda doctype=None, ptype="read", *a, _m=missing, **k: (
+					doctype in SITE.readable and ptype != _m
+				)
+				self.assertFalse(self.answer()["orders"]["priority_editable"], missing)
 		finally:
-			dashboard.frappe.has_permission = lambda doctype=None, ptype="read", *a, **k: doctype in SITE.readable
+			dashboard.frappe.has_permission = readable
 
 	def test_percent_complete_follows_the_stage_the_work_orders_and_the_delivery(self):
 		SITE.tables["work_orders"][0]["qty"] = 2
@@ -1126,7 +1130,9 @@ class TestSetBuildPriority(Base):
 		db.set_value = set_value
 		dashboard.frappe.get_doc = lambda doctype, name=None, *a, **k: _Order(name)
 		dashboard.frappe.has_permission = lambda doctype=None, ptype="read", doc=None, *a, **k: (
-			doctype in SITE.readable and not (ptype == "write" and doc in SITE.denied_orders)
+			doctype in SITE.readable
+			and not (ptype == "write" and doc in SITE.denied_orders)
+			and not (ptype == "submit" and doc in SITE.unsubmittable_orders)
 		)
 
 	def tearDown(self):
@@ -1171,6 +1177,18 @@ class TestSetBuildPriority(Base):
 		self.assertEqual(result["status"], "error")
 		self.assertEqual(SITE.writes, [])
 
+	def test_a_submitted_order_also_needs_submit(self):
+		"""The order's own form saves an allow-on-submit field as update_after_submit, which checks submit;
+		db.set_value skips that check, so the endpoint makes it."""
+		SITE.unsubmittable_orders = {"SO-1"}
+		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
+		self.assertEqual(SITE.writes, [])
+		SITE.orders["SO-D"] = {"docstatus": 0, "custom_build_priority": 0}
+		SITE.unsubmittable_orders = {"SO-D"}
+		self.assertEqual(
+			dashboard.set_build_priority("SO-D", 1), {"status": "success", "build_priority": 1}, "a draft needs write only"
+		)
+
 	def test_refuses_without_the_page_role(self):
 		dashboard.check_permission = lambda: False
 		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
@@ -1183,6 +1201,17 @@ class TestSetBuildPriority(Base):
 		SITE.has_priority_column = False
 		self.assertEqual(dashboard.set_build_priority("SO-1", 1)["status"], "error")
 		self.assertEqual(SITE.writes, [])
+
+	def test_a_failed_comment_never_reads_as_a_failed_save(self):
+		class _Broken:
+			def add_comment(self, *a, **k):
+				raise RuntimeError("comment table locked")
+
+		dashboard.frappe.get_doc = lambda *a, **k: _Broken()
+		result = dashboard.set_build_priority("SO-1", 4)
+		self.assertEqual(result, {"status": "success", "build_priority": 4})
+		self.assertEqual(SITE.writes, [("Sales Order", "SO-1", "custom_build_priority", 4, False)])
+		self.assertEqual([e["title"] for e in SITE.errors], ["Products tab: could not note a build priority"])
 
 	def test_a_failed_write_is_logged_not_raised(self):
 		def boom(*a, **k):
