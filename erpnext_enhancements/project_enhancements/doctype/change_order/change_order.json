@@ -191,12 +191,14 @@
    "fieldname": "pm_approved",
    "fieldtype": "Check",
    "label": "Project manager approved",
+   "no_copy": 1,
    "read_only": 1
   },
   {
    "fieldname": "pm_approved_by",
    "fieldtype": "Link",
    "label": "Approved by",
+   "no_copy": 1,
    "options": "User",
    "read_only": 1
   },
@@ -204,6 +206,7 @@
    "fieldname": "pm_approved_on",
    "fieldtype": "Datetime",
    "label": "Approved on",
+   "no_copy": 1,
    "read_only": 1,
    "description": "Stamped from the server clock by the approve endpoint, never proposed by the browser."
   },
@@ -215,19 +218,23 @@
    "fieldname": "customer_approved",
    "fieldtype": "Check",
    "label": "Customer approved",
+   "no_copy": 1,
    "read_only": 1
   },
   {
    "fieldname": "customer_approved_on",
    "fieldtype": "Datetime",
    "label": "Customer approved on",
+   "no_copy": 1,
    "read_only": 1
   },
   {
    "fieldname": "customer_approval_note",
    "fieldtype": "Small Text",
    "label": "How the customer approved",
-   "description": "Signature, email, or the meeting it was agreed in."
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "Signature, email, or the meeting it was agreed in. Written by Record Customer Approval."
   },
   {
    "fieldname": "section_execution",
@@ -264,7 +271,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-14 22:00:00.000000",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Change Order",

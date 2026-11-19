@@ -92,11 +92,23 @@ job, into a linked **Customer → Address → Contact → Lead → Opportunity**
 | `__init__.py` | constants: `INTAKE_FIELD_MAP` (the guest allowlist), `CT_LOCATIONS`, `HONEYPOT_FIELD_NAME`, store-location lookup |
 | `intake.py` | the three guest endpoints — `begin_intake`, `upload_intake_photo`, `submit_intake` — plus `gc_orphan_intake_files` |
 | `matching.py` | duplicate resolution: which existing party does this belong to? |
-| `conversion.py` | the staging-row → five-records engine |
+| `conversion.py` | the staging-row → five-records engine; holds a public-form match for staff (`is_staff_started`, `holds_for_confirmation`) and finishes a confirmed one (`_convert_confirmed`) |
 | `photos.py` | File fan-out onto Lead/Customer/Opportunity + Drive mirroring |
 | `notify.py` | new / failed / duplicate-review alerts + the daily stuck digest |
 | `invites.py` | the desk "Send Intake Link" flow and token attribution |
-| `api.py` | desk triage RPC (retry, mark spam, not spam) |
+| `api.py` | desk triage RPC (retry, confirm match, mark spam, not spam) |
+
+**A public-form match waits for staff (v1.833.0, Nik's decision of 2026-11-19).** When a request
+from the public form matches an existing Customer, Contact or Lead, the conversion records the match
+as a suggestion in `match_candidates` (`held_for_confirmation: 1`), parks the request in Duplicate
+Review and creates, attaches and writes nothing. **Confirm Match** on the request
+(`api.confirm_match`, POST, `TRIAGE_ROLES`) stamps `match_confirmed_by` / `match_confirmed_on`, sets
+`created_customer` to the Customer the staff member picked and queues the conversion, which then
+creates only the Opportunity under it (submitted name, email and phone in its scope notes, photos on
+the Opportunity alone) and never writes onto an existing Customer, Contact or Address. A public
+request that matches nobody, a Desk entry (owned by a desk user) and the first request through a
+staff member's emailed link convert as before; that test reads `owner` and the server-resolved
+`invite`, never anything the submitter sent.
 
 **Why a staging doctype rather than writing the five records inline:** spam never
 reaches CRM; a partial failure is resumable rather than duplicating master data

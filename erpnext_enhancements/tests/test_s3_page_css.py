@@ -106,6 +106,8 @@ PAGES = {
 	"rental_planner": APP / "asset_management" / "page" / "rental_planner",
 	# WI-081 (v1.696.0): built on the tokens from the start.
 	"my_work": APP / "task_enhancements" / "page" / "my_work",
+	# v1.833.0: built on the tokens from the start.
+	"time_edit_approvals": APP / "workforce" / "page" / "time_edit_approvals",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -132,6 +134,7 @@ NAMESPACES = {
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 	"rental_planner": re.compile(r"\.rp-[\w-]+"),
 	"my_work": re.compile(r"\.myw-[\w-]+"),
+	"time_edit_approvals": re.compile(r"\.tea-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -151,6 +154,7 @@ KEYFRAME_PREFIXES = {
 	"maintenance_planner": ("mp-",),
 	"rental_planner": ("rp-",),
 	"my_work": ("myw-",),
+	"time_edit_approvals": ("tea-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages

@@ -16,7 +16,10 @@
  *     endpoints update_interval_times / add_manual_interval. These write
  *     immediately: a day is the employee's own until the accountant submits it,
  *     and the overlap rule and the submitted-day lock are enforced server-side on
- *     every save, so the kiosk never has to decide either.
+ *     every save, so the kiosk never has to decide either. A changed or
+ *     hand-added entry is then "Waiting for approval" and is not counted toward
+ *     payroll until a manager approves it (workforce/time_edits.py); the row's
+ *     chip says so, and "Sent back" when a manager declined it.
  *   - "Request a correction" from the detail sheet (Adjust Times / Change
  *     Project / Missed Clock-Out) or "Missed an entry?" for the day (Missed
  *     Entry) → submit_correction_request; the employee's requests from
@@ -193,6 +196,9 @@
     if (iv.photo_count) out.push(h('span', { class: 'tk-chip', text: iv.photo_count + (iv.photo_count === 1 ? ' photo' : ' photos') }));
     if (iv.locked) out.push(h('span', { class: 'tk-chip', text: 'Locked' }));
     if (iv.manual_start) out.push(h('span', { class: 'tk-chip', text: 'Backdated' }));
+    // A hand edit counts toward payroll only once a manager approves it.
+    if (iv.edit_approval === 'Waiting') out.push(h('span', { class: 'tk-chip is-amber', text: 'Waiting for approval' }));
+    if (iv.edit_approval === 'Sent Back') out.push(h('span', { class: 'tk-chip is-red', text: 'Sent back' }));
     return out;
   }
 
@@ -232,6 +238,11 @@
     if (iv.offsite_start) add('Clock-in', 'Off-site', 'is-amber');
     if (iv.auto_closed) add('Closed by', 'the system (no clock-out)', 'is-red');
     if (iv.corrected) add('Corrected', 'Yes', 'is-green');
+    if (iv.edit_approval === 'Waiting') add('Payroll', 'Not counted until a manager approves this edit', 'is-amber');
+    if (iv.edit_approval === 'Sent Back') {
+      add('Payroll', 'Sent back, not counted. Edit it again or request a correction.', 'is-red');
+      add('Manager’s note', iv.edit_review_note);
+    }
     add('Status', iv.status);
     add('Reference', iv.name);
     
@@ -278,8 +289,9 @@
             end_time: end.value ? fromLocalInput(end.value) : null,
             time_category: activity.get(),
             reason: (reason.value || '').trim()
-          }).then(function () {
-            UI.toast('Times updated.', 'green');
+          }).then(function (r) {
+            // The server's message says when the edit waits for a manager's approval.
+            UI.toast((r && r.message) || 'Times updated.', 'green');
             hnd.close('action');
             loadDay();
           }).catch(function (e) {

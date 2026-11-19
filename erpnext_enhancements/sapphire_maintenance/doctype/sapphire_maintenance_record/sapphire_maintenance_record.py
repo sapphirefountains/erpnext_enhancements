@@ -878,8 +878,8 @@ def build_dashboard_context(project, serial_no=None, record=None):
 	No permission check of its own. Reached through the whitelisted
 	:func:`get_dashboard_context`, which checks first, and from the Visit Wizard's bootstrap
 	(``api.maintenance_visit.get_visit_bootstrap``), which has already checked read
-	permission on the visit. Builds the in-form HTML panel shown before the safety gate is
-	acknowledged.
+	permission on the visit and calls this only for a caller in ``VIEW_ALL_ROLES``. Builds
+	the in-form HTML panel shown before the safety gate is acknowledged.
 
 	Args:
 		project (str): Project name (docname).

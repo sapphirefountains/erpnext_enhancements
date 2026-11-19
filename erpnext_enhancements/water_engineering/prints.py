@@ -32,6 +32,7 @@ import zlib
 from typing import Any
 
 from erpnext_enhancements import print_style as ps
+from erpnext_enhancements.water_engineering.svg_safe import clean_svg
 
 DOCTYPE = "Water Feature Design"
 PILLAR = "design"
@@ -200,7 +201,10 @@ def facts(title: str, items: list, *, note: str = "") -> dict:
 
 
 def drawing(title: str, svg: Any, key: str, *, empty: str, note: str = "") -> dict:
-    return {"kind": "drawing", "title": title, "svg": unique_ids(svg, key), "empty": empty, "note": note}
+    """A stored drawing, reduced to this module's own SVG (``svg_safe.clean_svg``); one that does not pass
+    prints its ``empty`` sentence. The templates pass it through ``we_safe_svg`` again as they place it."""
+    return {"kind": "drawing", "title": title, "svg": unique_ids(clean_svg(svg) or None, key), "empty": empty,
+            "note": note}
 
 
 def bullets(title: str, items: list, *, ordered: bool = False, boxes: bool = False, empty: str = "", note: str = "") -> dict:

@@ -39,6 +39,7 @@ reach of the bench-free test tier — the same reason ``quality/scope_criteria.p
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import cint, get_datetime
 
 from erpnext_enhancements.quality import change_orders, stable_keys
 
@@ -46,6 +47,46 @@ from erpnext_enhancements.quality import change_orders, stable_keys
 #: a change order on the same project in the same instant is already unusual, three is a bug
 #: somewhere else and a loop would hide it.
 NAME_RETRIES = 1
+
+#: Set on the document by the approve, record and revoke endpoints in ``api/change_order.py``.
+#: Only a save carrying it may change an approval stamp.
+APPROVAL_FLAG = "change_order_approval_transition"
+
+#: The approval stamps, written only by those endpoints.
+APPROVAL_FIELDS = (
+	"pm_approved",
+	"pm_approved_by",
+	"pm_approved_on",
+	"customer_approved",
+	"customer_approved_on",
+	"customer_approval_note",
+)
+CHECK_FIELDS = ("pm_approved", "customer_approved")
+DATETIME_FIELDS = ("pm_approved_on", "customer_approved_on")
+
+#: Roles whose Data Import keeps the stamps in the file (historical records).
+IMPORT_ROLES = ("System Manager",)
+
+
+def _trusted_write():
+	"""True during migrate, install, a patch, or a Data Import run by a System Manager."""
+	if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+		return True
+	if not getattr(frappe.flags, "in_import", None):
+		return False
+	return bool(set(IMPORT_ROLES) & set(frappe.get_roles()))
+
+
+def _same(fieldname, old, new):
+	"""Whether a stamp is unchanged, comparing a stored datetime with its text form the way
+	Frappe's own set-only-once check does, and a Check as a number."""
+	if fieldname in CHECK_FIELDS:
+		return cint(old) == cint(new)
+	if not old and not new:
+		return True
+	if fieldname in DATETIME_FIELDS and old and new:
+		return get_datetime(old) == get_datetime(new)
+	return old == new
 
 
 class ChangeOrder(Document):
@@ -82,6 +123,7 @@ class ChangeOrder(Document):
 
 	def validate(self):
 		self._refuse_amendment()
+		self._guard_approvals()
 		self._mint_criterion_keys()
 		self._derive()
 		self._warn_unassigned_criteria()
@@ -113,6 +155,40 @@ class ChangeOrder(Document):
 			).format(self.amended_from),
 			title=_("Amendment refused"),
 		)
+
+	def _guard_approvals(self):
+		"""The approval stamps change only through ``api/change_order.py``.
+
+		``read_only`` hides a field in the Desk form; it is not checked on the server. So a new
+		change order that arrives carrying an approval is refused, and a save of an existing one
+		that changes a stamp is refused, unless the save came from one of the approve, record or
+		revoke endpoints (:data:`APPROVAL_FLAG`). Migrate, install, patches and a System
+		Manager's Data Import keep the values they write.
+		"""
+		if self.flags.get(APPROVAL_FLAG) or _trusted_write():
+			return
+		if self.is_new():
+			if any(self.get(field) for field in APPROVAL_FIELDS):
+				frappe.throw(
+					_(
+						"Approvals are recorded with the Approvals buttons on a saved change order, "
+						"not entered on a new one."
+					),
+					frappe.PermissionError,
+				)
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		for field in APPROVAL_FIELDS:
+			if not _same(field, before.get(field), self.get(field)):
+				frappe.throw(
+					_(
+						"Approvals are recorded and revoked with the Approvals buttons on this form, "
+						"not by editing them."
+					),
+					frappe.PermissionError,
+				)
 
 	def _mint_criterion_keys(self):
 		"""Every added criterion gets its stable key, minted once and never regenerated.

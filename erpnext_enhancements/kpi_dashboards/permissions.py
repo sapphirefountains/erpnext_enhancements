@@ -23,6 +23,27 @@ departments; this file is the same rule expressed where Frappe enforces reads.
 ``has_permission`` hook can only **restrict** what role DocPerms already grant. It
 can never widen access, so the role rows in ``kpi_snapshot.json`` remain the outer
 bound and this is strictly a narrowing.
+
+**Revenue and margin figures** (owner decision, 2026-11-19; ``kpi_dashboards/money.py``):
+a caller without Accounts Manager or System Manager reads no revenue or margin figure.
+
+- A snapshot document read (desk form, ``/api/resource/KPI Snapshot/<name>``,
+  ``frappe.client.get``) opens with those rows left out
+  (``KPISnapshot.apply_fieldlevel_read_permissions``).
+- A list, report or count of ``KPI Snapshot``, including one that selects, filters, sorts
+  or totals by ``KPI Snapshot Value`` columns, returns only snapshots that hold none of
+  those keys (``get_permission_query_conditions``). Frappe resolves a query through the
+  parent table, and a child-table query made with ``parent_doctype``, by the parent's
+  condition, so this one condition is what such a query obeys.
+- A query whose own doctype is ``KPI Snapshot Value`` leaves those rows out
+  (``get_value_permission_query_conditions``).
+- ``KPI Target`` rows for those keys are listed, read and edited by Accounts Manager and
+  System Manager only (``get_target_permission_query_conditions``, ``target_has_permission``).
+
+The dashboards read through ``frappe.get_all`` and ``frappe.get_doc`` with their own role
+gate and filter (``api/kpi.py``, ``api/executive_dashboard.py``, ``api/task_dashboard.py``),
+never through a permission-applied list, so the list rule above narrows the desk list and
+the REST list only.
 """
 
 import frappe
@@ -51,16 +72,47 @@ def _visible_departments():
 
 
 def get_permission_query_conditions(user=None):
-	"""SQL for list views, reports and ``/api/resource``."""
+	"""SQL for list views, reports and ``/api/resource``: the caller's departments, and
+	for a caller who may not see revenue and margin, only snapshots that hold none."""
 	visible = _visible_departments()
-	if visible is None:
-		return ""
-	if not visible:
+	if visible is not None and not visible:
 		# Holds a read DocPerm through some other role but owns no department.
 		# An empty IN () is a syntax error in MariaDB, so say it explicitly.
 		return "1 = 0"
-	quoted = ", ".join(frappe.db.escape(department) for department in sorted(visible))
-	return f"`tabKPI Snapshot`.`department` IN ({quoted})"
+	conditions = []
+	if visible is not None:
+		quoted = ", ".join(frappe.db.escape(department) for department in sorted(visible))
+		conditions.append(f"`tabKPI Snapshot`.`department` IN ({quoted})")
+	if not _can_see_revenue(user):
+		conditions.append(_no_restricted_values_condition())
+	return " AND ".join(conditions)
+
+
+def _can_see_revenue(user=None):
+	from erpnext_enhancements.kpi_dashboards import money
+
+	return money.can_see_revenue(frappe.get_roles(user) if user else None)
+
+
+def _restricted_keys_sql():
+	from erpnext_enhancements.kpi_dashboards import money
+
+	return ", ".join(frappe.db.escape(key) for key in sorted(money.RESTRICTED_KPIS))
+
+
+def _no_restricted_values_condition():
+	"""A snapshot qualifies only when none of its rows is a revenue or margin figure.
+
+	Keyed on ``parent`` against the outer ``tabKPI Snapshot`` row. The inner table has its
+	own alias so the condition reads the same when the outer query is on the child table
+	(Frappe joins ``tabKPI Snapshot`` in for a child-table query made with ``parent_doctype``).
+	"""
+	return (
+		"NOT EXISTS (SELECT 1 FROM `tabKPI Snapshot Value` AS `kpi_restricted_value`"
+		" WHERE `kpi_restricted_value`.`parent` = `tabKPI Snapshot`.`name`"
+		" AND `kpi_restricted_value`.`parenttype` = 'KPI Snapshot'"
+		f" AND `kpi_restricted_value`.`kpi_key` IN ({_restricted_keys_sql()}))"
+	)
 
 
 def has_permission(doc, ptype=None, user=None):
@@ -69,3 +121,43 @@ def has_permission(doc, ptype=None, user=None):
 	if visible is None:
 		return True
 	return getattr(doc, "department", None) in visible
+
+
+def get_value_permission_query_conditions(user=None):
+	"""SQL for a query whose own doctype is KPI Snapshot Value: no revenue or margin figure
+	unless the caller may see them."""
+	if _can_see_revenue(user):
+		return ""
+	return f"`tabKPI Snapshot Value`.`kpi_key` NOT IN ({_restricted_keys_sql()})"
+
+
+def get_target_permission_query_conditions(user=None):
+	"""SQL for KPI Target lists, reports and ``/api/resource``: no target for a revenue or
+	margin figure unless the caller may see them."""
+	if _can_see_revenue(user):
+		return ""
+	return f"COALESCE(`tabKPI Target`.`kpi_key`, '') NOT IN ({_restricted_keys_sql()})"
+
+
+def target_has_permission(doc, ptype=None, user=None):
+	"""The same rule for one KPI Target, for every permission type (read, write, create,
+	delete): a target for a revenue or margin figure is Accounts Manager's and System
+	Manager's.
+
+	Both keys count: the one on the document being judged and the one the target is stored
+	under. A save is checked with the document as the save sent it, so the stored key is
+	what says whose target it was before the save; a target stays under this rule whatever
+	key a save gives it. When the stored key cannot be read, the target is treated as
+	restricted."""
+	from erpnext_enhancements.kpi_dashboards import money
+
+	keys = [getattr(doc, "kpi_key", None)]
+	name = getattr(doc, "name", None)
+	if name:
+		try:
+			keys.append(frappe.db.get_value("KPI Target", name, "kpi_key"))
+		except Exception:
+			return _can_see_revenue(user)
+	if not any(money.is_restricted_kpi(key) for key in keys):
+		return True
+	return _can_see_revenue(user)

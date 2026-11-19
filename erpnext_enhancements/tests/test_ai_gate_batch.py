@@ -669,6 +669,52 @@ class TestReviewReasons(BatchHarness):
                 self.assertEqual(rows["AI-PA-1"]["review_reason"], "high risk, submits or cancels a document")
         self.assertEqual(_gate.DOCSTATUS_TOOLS, frozenset({"submit_document", "cancel_document"}))
 
+    def test_every_device_action_card_starts_unticked_whatever_its_risk(self):
+        """Locate, reboot and patch are Medium, which used to start ticked; lock, wipe and script
+        are High. All six start unticked, with the same reason, so a batch never includes one by default."""
+        self.assertEqual(
+            _gate.DEVICE_ACTION_TOOLS,
+            frozenset(
+                {
+                    "remote_lock_device",
+                    "remote_wipe_device",
+                    "locate_device",
+                    "reboot_device",
+                    "run_device_script",
+                    "deploy_device_patch",
+                }
+            ),
+        )
+        for tool in sorted(_gate.DEVICE_ACTION_TOOLS):
+            for risk in ("Low", "Medium", "High"):
+                with self.subTest(tool=tool, risk=risk):
+                    self.store.clear()
+                    rows = self.rows(
+                        FakeAction(
+                            "AI-PA-1",
+                            tool_name=tool,
+                            risk=risk,
+                            arguments=json.dumps({"device": "DEV-1"}),
+                            target_doctype=None,
+                        )
+                    )
+                    self.assertFalse(rows["AI-PA-1"]["batch_default"])
+                    self.assertIn("runs a remote device action", rows["AI-PA-1"]["review_reason"])
+
+    def test_the_device_action_set_is_exactly_the_tools_that_call_the_executor(self):
+        """A new device tool that is missing from DEVICE_ACTION_TOOLS would start ticked."""
+        tools_dir = Path(__file__).resolve().parents[1] / "assistant_tools"
+        callers = set()
+        for path in tools_dir.glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "execute_device_action(" in text:
+                callers.add(path.stem)
+        self.assertEqual(callers, set(_gate.DEVICE_ACTION_TOOLS))
+
+    def test_a_non_device_medium_card_still_starts_ticked(self):
+        rows = self.rows(FakeAction("AI-PA-1", tool_name="create_document", risk="Medium"))
+        self.assertTrue(rows["AI-PA-1"]["batch_default"])
+
     def test_a_create_that_submits_is_a_submit(self):
         arguments = json.dumps({"doctype": "Sales Invoice", "data": {"customer": "C"}, "submit": True})
         rows = self.rows(FakeAction("AI-PA-1", arguments=arguments, target_doctype="Sales Invoice"))

@@ -1,0 +1,18 @@
+{# The office's notice that a sign-off link went to an address not on file for the customer or
+   site. Internal. A FRAGMENT: the letterhead, heading and footer come from email_style.render()
+   in sapphire_maintenance/sign_off.py (_record_off_file_send), on the Service pillar. No
+   container here: the shell owns the measure. It carries no sign-off link and no token. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("A client sign-off link was emailed to an address that is not on file for this customer or site. The link was sent; this is for your information.") }}
+
+{{ ee.kv([
+	("Visit", visit),
+	("Site", site),
+	("Customer", customer),
+	("Sent to", address),
+	("Sent by", sender),
+	("Sent on", sent_on),
+]) }}
+
+{{ ee.button(visit_url, "Open the visit") }}

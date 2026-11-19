@@ -386,15 +386,27 @@ class TestSecondApproval(unittest.TestCase):
 
     def test_a_genuine_third_party_clears_it(self):
         self.assertEqual(
-            budgets.approval_errors("pm@x.com", "pm@x.com", "president@x.com", True), []
+            budgets.approval_errors("someone@x.com", "pm@x.com", "president@x.com", True), []
         )
 
     def test_an_unneeded_second_approval_is_not_an_error(self):
         """Somebody senior signed a reallocation that did not need it. That is stricter than the
         rule requires and never a reason to refuse the document."""
         self.assertEqual(
-            budgets.approval_errors("pm@x.com", "pm@x.com", "president@x.com", False), []
+            budgets.approval_errors("someone@x.com", "pm@x.com", "president@x.com", False), []
         )
+
+    def test_the_first_approval_cannot_come_from_the_requester(self):
+        """The person who requests a reallocation does not also record its first approval."""
+        for needs_second in (False, True):
+            errors = budgets.approval_errors("pm@x.com", "pm@x.com", "president@x.com", needs_second)
+            self.assertTrue(any("requested it" in e for e in errors), errors)
+
+    def test_the_first_approval_endpoint_checks_the_approver(self):
+        source = _code_only(API)
+        entry = source.split("def approve_reallocation(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("first_approval_errors", entry)
+        self.assertIn("frappe.session.user", entry)
 
 
 # --------------------------------------------------------------------------------------------
@@ -557,6 +569,14 @@ class TestSchema(unittest.TestCase):
             "to_balance_after",
         ):
             self.assertEqual(fields[fieldname].get("read_only"), 1, fieldname)
+        # Not copied by Duplicate: a new reallocation carrying an approval is refused.
+        for fieldname in (
+            "pm_approved_by",
+            "pm_approved_on",
+            "additional_approved_by",
+            "additional_approved_on",
+        ):
+            self.assertEqual(fields[fieldname].get("no_copy"), 1, fieldname)
 
     def test_a_reallocation_must_carry_a_reason(self):
         """A reallocation with no reason is a number nobody can audit six months later."""

@@ -67,6 +67,8 @@
   "reused_contact",
   "reused_lead",
   "match_basis",
+  "match_confirmed_by",
+  "match_confirmed_on",
   "conversion_attempts",
   "converted_on",
   "photos_mirrored",
@@ -496,6 +498,20 @@
    "read_only": 1
   },
   {
+   "description": "The staff member who confirmed which existing Customer this request belongs to. Set by Confirm Match.",
+   "fieldname": "match_confirmed_by",
+   "fieldtype": "Link",
+   "label": "Match Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Match Confirmed On",
+   "read_only": 1
+  },
+  {
    "default": "0",
    "fieldname": "conversion_attempts",
    "fieldtype": "Int",
@@ -640,7 +656,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-26 10:30:00.000000",
+ "modified": "2026-11-19 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "Fountain Move Request",

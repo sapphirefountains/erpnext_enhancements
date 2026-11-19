@@ -857,6 +857,12 @@ doc_events = {
 			# Project ID (v1.816.4): every save carries the Project's own name in custom_project_id,
 			# which the report "Active Projects w/ TL and PM" shows. Never raises.
 			"erpnext_enhancements.project_enhancements.project_id.ensure_project_id",
+			# v1.833.0: custom_drive_folder_id changes only through the Drive integration (which
+			# writes it with db.set_value / db_set), a System Manager, or server code that sets
+			# doc.flags.drive_folder_update. A save carrying another folder is refused; one
+			# carrying it empty keeps the stored folder; a new record keeps none. Same entry on
+			# Opportunity and Customer. See google_drive/folder_link_guard.py.
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
@@ -1548,6 +1554,8 @@ doc_events = {
 			# Settings) unless the probability was set by hand; typing one marks it so. Does nothing
 			# without the custom field or the table; never raises.
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
+			# v1.833.0: who may set custom_drive_folder_id (see the Project entry).
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": [
 			# Form kit P3.2 (v1.669.0): ERPNext's hidden contact_person kept equal to the visible
@@ -1865,6 +1873,8 @@ doc_events = {
 			# customer in manual review. This hook exempts background jobs, bulk
 			# contexts and callers that set flags.ignore_mandatory.
 			"erpnext_enhancements.crm_enhancements.data_quality.enforce_industry",
+			# v1.833.0: who may set custom_drive_folder_id (see the Project entry).
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
@@ -1875,7 +1885,9 @@ doc_events = {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# stripe_payments: auto-charge a saved method when an invoice for an
-	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
+	# autopay-enrolled customer is submitted -- only an invoice billed from a maintenance
+	# agreement, at or under the autopay limit in Stripe Payments Settings (none set: none).
+	# Any other gets a comment saying automatic payment did not run, and waits for the desk.
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
 		# stripe_payments: refuse to cancel an invoice while a Stripe payment for it is still
@@ -2546,7 +2558,8 @@ scheduler_events = {
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
 		# Re-charge autopay invoices whose enqueued charge job never ran (deploy FLUSHDB
 		# between commit and execution). poll_pending/dunning only touch existing Stripe
-		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded.
+		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded,
+		# and the sweep charges only what autopay on submit would (saved_methods.automatic_charge_allowed).
 		"erpnext_enhancements.stripe_payments.core.tasks.sweep_missed_autopay",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
@@ -2677,6 +2690,10 @@ jinja = {
 		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
 		"erpnext_enhancements.water_engineering.packet.we_standard_notes",
 		"erpnext_enhancements.water_engineering.packet.we_standard_details",
+		# A stored drawing (SVG text) reduced to the elements and attributes the module's own
+		# drawing code emits, or "" when it is not one well-formed SVG: every Water Feature Design
+		# format and the packet place a drawing only through it (water_engineering/svg_safe.py).
+		"erpnext_enhancements.water_engineering.svg_safe.we_safe_svg",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO
@@ -3519,8 +3536,8 @@ override_whitelisted_methods = {
 	# level-1 values back. Each override calls frappe's own function unchanged and scrubs what
 	# it produced; stored Versions are never touched. The REST twins (/api/resource,
 	# /api/v2/document) are routes no override can reach: see `after_request` below. The
-	# signatures and HTTP methods mirror frappe's and tests/test_fieldlevel_read.py pins
-	# them. See fieldlevel_read.py.
+	# signatures and HTTP methods mirror frappe's (apply_workflow is narrower: POST only) and
+	# tests/test_fieldlevel_read.py pins them. See fieldlevel_read.py.
 	"frappe.desk.form.load.getdoc": "erpnext_enhancements.fieldlevel_read.getdoc",
 	"frappe.desk.form.load.get_docinfo": "erpnext_enhancements.fieldlevel_read.get_docinfo",
 	"frappe.desk.form.save.savedocs": "erpnext_enhancements.fieldlevel_read.savedocs",
@@ -3661,7 +3678,18 @@ permission_query_conditions = {
 	# -- without this, `read` on the doctype would have meant read on every
 	# department. api/kpi.py::_can_view decides which; this enforces it where Frappe
 	# actually checks reads.
+	# The same condition also holds revenue and margin figures (kpi_dashboards/money.py) to
+	# Accounts Manager and System Manager: for anyone else a KPI Snapshot list, report or
+	# count, including one by KPI Snapshot Value columns, returns only snapshots that hold
+	# none. The snapshot document read leaves those rows out
+	# (KPISnapshot.apply_fieldlevel_read_permissions).
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.get_permission_query_conditions",
+	# KPI Snapshot Value: a query whose own doctype is the child table leaves the revenue
+	# and margin rows out for the same callers.
+	"KPI Snapshot Value": "erpnext_enhancements.kpi_dashboards.permissions.get_value_permission_query_conditions",
+	# KPI Target: a target for a revenue or margin figure is listed for Accounts Manager and
+	# System Manager only. has_permission below is the single-document counterpart.
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.get_target_permission_query_conditions",
 	# Training Assignment: a learner sees only their own; a supervisor also sees
 	# their direct reports (Employee.reports_to), which is what makes the sign-off
 	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
@@ -3769,6 +3797,9 @@ has_permission = {
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.has_permission",
+	# A KPI Target for a revenue or margin figure: read, write, create and delete by
+	# Accounts Manager and System Manager only (Sales Manager keeps every other target).
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.target_has_permission",
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",

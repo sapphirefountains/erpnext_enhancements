@@ -20,7 +20,10 @@ Two deliberate departures from the sibling page (``www/fountain_move.py``):
   page never confirms whether a token exists.
 * **The agreement is rendered from the stored snapshot**, never a live re-render,
   so the customer signs exactly the text that was sent to them and the stored
-  hash provably matches what was on screen.
+  hash provably matches what was on screen. Until the signer enters the code
+  emailed to them, the page shows it with the signer's address masked (first
+  character and domain); entering the code swaps in the snapshot as stored
+  (``esign.portal.verify_signing_code``), and signing happens on that.
 """
 
 import frappe
@@ -30,7 +33,7 @@ from erpnext_enhancements.project_enhancements import contract_style
 from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
 	_contract_css,
 )
-from erpnext_enhancements.project_enhancements.esign import lifecycle, turnstile
+from erpnext_enhancements.project_enhancements.esign import email_code, lifecycle, turnstile
 from erpnext_enhancements.utils.deploy import get_deploy_version
 
 # A cached signing page would be catastrophic in a way most caching bugs are not:
@@ -54,10 +57,15 @@ def get_context(context):
 	# The agreement carries the same letterhead and the same stylesheet the desk
 	# print and the emailed PDF use, so the customer signs the document they will
 	# later receive — not a plainer web rendering of it. The chrome wraps the
-	# snapshot without touching it; the snapshot itself is still byte-for-byte
-	# what was sent, which is what the stored hash attests to.
+	# snapshot without touching it. What renders here is a preview with the
+	# signer's address masked; the snapshot byte-for-byte as sent, which is what
+	# the stored hash attests to, replaces it once the emailed code is entered.
 	context.agreement_html = (
-		contract_style.wrap(agreement_html, _contract_ref(request)) if agreement_html else ""
+		email_code.mask_address_in(
+			contract_style.wrap(agreement_html, _contract_ref(request)), request.signer_email
+		)
+		if agreement_html
+		else ""
 	)
 	context.contract_css = _safe_css(_contract_css())
 	context.boot = _boot(request, state, ref)
@@ -125,10 +133,9 @@ def _boot(request, state, ref):
 	"""Explicit allowlist of what the page's JavaScript may see.
 
 	There is deliberately no config endpoint, and deliberately no full recipient
-	address: the whole identity check is "re-type the address we sent this to", so
-	shipping it to the page would defeat the control for anyone holding a
-	forwarded link. The mask tells a customer with several addresses which one to
-	use without disclosing it.
+	address: the page names the inbox the signing code goes to only masked (first
+	character and domain), which tells a customer with several addresses where to
+	look without disclosing it.
 	"""
 	settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
 	return {
@@ -143,7 +150,8 @@ def _boot(request, state, ref):
 		"turnstile_sitekey": turnstile.site_key() or "",
 		"turnstile_action": turnstile.TURNSTILE_ACTION,
 		"contact_phone": _contact_phone(),
-		"signer_email_hint": _mask(request.signer_email) if request else "",
+		"signer_email_hint": email_code.mask_email(request.signer_email) if request else "",
+		"code_minutes": email_code.CODE_TTL // 60,
 		"contract_label": _label(request) if request else "",
 		"expires_on": frappe.utils.format_datetime(request.expires_on) if request else "",
 		"signed_on": frappe.utils.format_datetime(request.signed_on) if request and request.signed_on else "",
@@ -206,14 +214,6 @@ def _autopay_resumable(request):
 		)
 	except Exception:
 		return False
-
-
-def _mask(email):
-	email = (email or "").strip()
-	if "@" not in email:
-		return ""
-	local, _, domain = email.partition("@")
-	return f"{local[:1]}{'•' * max(len(local) - 1, 1)}@{domain}"
 
 
 def _label(request):

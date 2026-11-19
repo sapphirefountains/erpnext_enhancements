@@ -59,6 +59,8 @@
   "countersigned_on",
   "evidence_section",
   "email_confirmed",
+  "email_code_verified",
+  "email_code_verified_on",
   "signer_ip_claimed",
   "signer_ip_peer",
   "user_agent",
@@ -114,7 +116,7 @@
    "read_only": 1
   },
   {
-   "description": "The address this request was sent to, frozen at send. The signer must re-type this to sign — a later edit to the contract's Contact Email must not change who can execute a link already in flight.",
+   "description": "The address this request was sent to, frozen at send. The signing code is emailed here, and only here — a later edit to the contract's Contact Email must not change who can execute a link already in flight.",
    "fieldname": "signer_email",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -435,10 +437,25 @@
   },
   {
    "default": "0",
-   "description": "The signer re-typed the address this was sent to.",
+   "description": "The signer confirmed the address this was sent to: by re-typing it before v1.833.0, and from then on by entering the code emailed to it (see Email Code Verified).",
    "fieldname": "email_confirmed",
    "fieldtype": "Check",
    "label": "Email Confirmed",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The signer entered the one-time code the signing page emailed to the address this was sent to (from v1.833.0). Not asked for when signing in the Contract Builder.",
+   "fieldname": "email_code_verified",
+   "fieldtype": "Check",
+   "label": "Email Code Verified",
+   "read_only": 1
+  },
+  {
+   "description": "When the emailed code was entered, in the site's time zone, like Signed On.",
+   "fieldname": "email_code_verified_on",
+   "fieldtype": "Datetime",
+   "label": "Email Code Verified On",
    "read_only": 1
   },
   {
@@ -618,7 +635,7 @@
   },
   {
    "default": "0",
-   "description": "How many times someone has entered an email address on the signing page for this request. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
+   "description": "How many times someone has entered a confirmation on the signing page for this request: an email address before v1.833.0, the emailed code from then on. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
    "fieldname": "email_attempts",
    "fieldtype": "Int",
    "label": "Email Confirmation Attempts",
@@ -648,7 +665,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-26 10:30:00.000000",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Contract Signature Request",

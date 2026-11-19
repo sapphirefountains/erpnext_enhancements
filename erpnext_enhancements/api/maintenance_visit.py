@@ -368,7 +368,8 @@ def get_visit_bootstrap(record):
 
     Returns:
         dict: {"record": full doc dict, "dashboard": on-site briefing
-        (safety, access codes, contract context, trends), "state": the
+        (safety, access codes, contract context, trends; ``{}`` for a caller without one
+        of the roles ``get_dashboard_context`` requires), "state": the
         :func:`_wizard_state` slice}.
     """
     doc = _get_record(record)
@@ -425,8 +426,11 @@ def get_visit_bootstrap(record):
 
     return {
         "record": doc.as_dict(),
-        # With the record: the "Last visit here" card on the Safety step (v1.596.0).
-        "dashboard": build_dashboard_context(doc.project, doc.serial_no, record=doc.name) if doc.project else {},
+        # With the record: the "Last visit here" card on the Safety step (v1.596.0). Only for the
+        # roles the briefing endpoint (get_dashboard_context) answers; reading the visit is wider.
+        "dashboard": build_dashboard_context(doc.project, doc.serial_no, record=doc.name)
+        if doc.project and _may_see_briefing()
+        else {},
         "sections": _section_meta(doc),
         "template_meta": _template_meta(doc.get("template")),
         "features": _feature_names(doc),
@@ -438,6 +442,14 @@ def get_visit_bootstrap(record):
         # Never raises.
         "sizes": size_choices(),
     }
+
+
+def _may_see_briefing():
+    """The briefing endpoint's role rule (``get_dashboard_context``), as a yes or no."""
+    # Imports only frappe, like visit_names.
+    from erpnext_enhancements.sapphire_maintenance.permissions import _sees_all
+
+    return _sees_all(frappe.session.user)
 
 
 def _sign_off_context(doc):

@@ -7,6 +7,398 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.833.0] - 2026-11-19
+
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
+
+### Added
+
+- **New Desk page: Time Edit Approvals** (`/desk/time-edit-approvals`, Workforce). Stacked cards, one
+  per waiting entry the session user may decide (a supervisor's direct reports, or everyone for HR
+  Manager and System Manager): employee, day, project, the times before and now (or *Added by hand*),
+  the reason given, who edited it and when, with **Approve** and **Send Back** (optional note). It
+  reads through one new endpoint, `time_edits.get_waiting_edits` (GET), which picks the rows on the
+  server by the same rule and returns only what the page shows, so a supervisor needs no read
+  permission on Job Interval. The page opens to Employee, HR Manager and System Manager.
+- **Endpoints.** `workforce.time_edits.get_waiting_edits` (GET, the page's read),
+  `approve_time_edit` and `send_back_time_edit` (POST);
+  `project_enhancements.esign.portal.send_signing_code` and `verify_signing_code` (guest, POST, rate
+  limited, in the guest endpoint register); `crm_enhancements.fountain_move.api.confirm_match`
+  (POST, System Manager and Sales Manager). Each is described with its change below.
+- **Fields, with no default and no backfill.** Job Interval: the eight *Edit Approval* fields and
+  the `sync_status` option `Held - Not Approved`. Contract Signature Request: `email_code_verified`
+  and `email_code_verified_on`. Fountain Move Request: `match_confirmed_by` and
+  `match_confirmed_on`. Stripe Payments Settings: `autopay_limit` (blank or 0 means nothing is
+  charged automatically).
+
+### Changed
+
+- **Document Intake endpoints check access consistently (hardening).**
+  - `ingest_upload` and `ingest_mobile_photo` now require read permission on the File they are
+    given, using the File doctype's own rule (the caller's own upload, a public file, a file shared
+    with them, or a file attached to a record they can read). The check runs in the whitelisted
+    wrapper before anything is read; `ingest_document` is unchanged, so the email, Drive watch and
+    other server-side channels keep working. The Upload Document button and the mobile channel
+    upload a File first and are unaffected.
+  - `reprocess` (Re-extract) now resets only a document that is still being worked up (Received,
+    Extracting, Needs Item Review, Needs Review or Failed) and never one that names the record it
+    created. It is rate limited to 30 calls per user per hour with `utils/user_rate_limit`.
+  - `reject_document` now refuses a document that is Posting or Posted, or that names the record
+    it created. Approve already refused those.
+  - A person who sets or changes a document's **Source File** on the form or through the REST
+    resource must be able to read that file, by the same rule (`DocumentIntake.validate`). The
+    channels are not asked, and neither is a save that leaves the file as it was, so a reviewer
+    can still re-extract and approve a document that came in by email, Drive, mobile or chat.
+  - New bench-free suite `tests/test_intake_access_checks.py`, wired into CI.
+- **The Drive folder link on Customer, Project and Opportunity is set only by the Google Drive
+  integration and System Managers (hardening).** `custom_drive_folder_id` was read-only in the
+  form only; a new `validate` hook, `google_drive/folder_link_guard.guard_drive_folder_link`,
+  now holds the same rule on the server for every save and insert:
+  - A save from anyone other than a System Manager that carries a different folder is refused
+    with "The Drive folder link on this record is set by the Google Drive integration."
+  - A save that carries the field empty while the record has a folder keeps the stored folder.
+    A form opened before the integration linked the folder used to clear the link when saved;
+    the save now goes through and the link stays.
+  - A new record from anyone other than a System Manager keeps no folder value, so a Duplicate
+    of a Project starts unlinked instead of sharing the original's folder.
+  - Unchanged for the integration: the provisioners, the backfill, the Drive Link Manager and the
+    Opportunity hand-off job all write the field with `frappe.db.set_value` / `db_set`, which run
+    no controller. Server code that saves one of these documents with a new folder sets
+    `doc.flags.drive_folder_update`. Migrate, install and patches pass, and a site without the
+    column is a no-op.
+  - Bench-free tests run the hook (`tests/test_drive_folder_link_guard.py`, own CI step).
+- **Device actions require a confirmed device, and device cards start unticked (hardening).**
+  - A Managed Device whose link state is Discovered now accepts no action until a Device Manager
+    confirms it and its ownership: every wipe mode, lock, locate, reboot, run script and deploy
+    patch is refused before any provider call, with a message that says to confirm the device
+    first. Before, only a full wipe was held back. The refusal is recorded in the Device Action
+    Log like any other. Actions on a confirmed device run as before.
+  - Every remote device action in the AI confirmation list (lock, wipe, locate, reboot, run
+    script, deploy patch) now starts unticked in the batch dialog, whatever its risk band, with the
+    reason "runs a remote device action". Locate, reboot and deploy patch used to start ticked.
+    Select all and ticking by hand work as before; other tools are unchanged.
+  - A locate request adds a Comment to the device's timeline naming who asked and when, written
+    before the request is sent, and Device Managers get a notification the same way as for a
+    wipe or a lock. If the Comment cannot be written, nothing is sent.
+  - **A personally owned (BYOD) device accepts Locate and Lock only** (Nikolas, 2026-11-19). A
+    wipe in either mode, a reboot, a script, a patch and any action added later are refused before
+    any provider call and recorded in the Device Action Log (`actions.BYOD_ACTIONS` is the list).
+    Before, a BYOD device took a selective wipe. The device form no longer draws Remote Wipe,
+    Reboot or Run Script on a BYOD device, and the wipe tool's description says the same. To remove
+    company data from a personal device, use the provider's own console.
+  - **The ownership field is held to the same care as the rule that reads it.** Changing a device's
+    ownership from BYOD to Company requires a System Manager (`ManagedDevice.validate`, so the form,
+    the REST resource and `set_value` alike), and server code that saves without a permission check
+    never makes that change; Company to BYOD stays open to Device Managers. Every ownership change
+    leaves a note on the device's timeline saying who, from what to what, and when. Confirm
+    Discovered Device is still how ownership is stated for the first time, and its prompt no longer
+    preselects an answer.
+  - **A refused or failed device action is recorded even though the request ends in an error.** The
+    Device Action Log row, the Device Managers' notice and a locate's timeline note are written again
+    after the request's rollback and committed by themselves (`actions._keep_through_rollback`, on
+    `frappe.db.after_rollback`), so there is exactly one of each per attempt whether the action came
+    from the form or from a confirmed assistant action, and nothing else that was pending is
+    committed with them.
+  - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
+    device with a stand-in provider, and each against a BYOD device; `tests/test_ai_gate_batch.py` and
+    `scripts/test_ai_pending_batch.mjs` cover the unticked cards.
+- **The Visit Wizard's bootstrap applies the briefing's role rule (hardening).**
+  `api.maintenance_visit.get_visit_bootstrap` now includes the site briefing (the `dashboard` key)
+  only for a caller who passes the rule `get_dashboard_context` and the `maintenance_site_briefing`
+  assistant tool already apply: a user holding one of the roles in
+  `sapphire_maintenance.permissions.VIEW_ALL_ROLES`, or Administrator. The bootstrap reuses that
+  module's `_sees_all` rather than listing the roles again.
+  - A caller who can read the visit but holds none of those roles still gets the visit, its
+    sections, template guidance and state; the `dashboard` key is `{}` and the briefing builder is
+    not called for them.
+  - Nothing changes for a technician, supervisor, Projects Manager or System Manager.
+  - The wizard page already reads every briefing key through a fallback (`data.dashboard || {}`),
+    so it needed no change; `tests/test_visit_briefing_role.py` pins that too.
+  - Tests: `tests/test_visit_briefing_role.py` runs the bootstrap's decision against a stand-in
+    `frappe` and checks it gives the same answer as the endpoint's role step for every role in the
+    list and for roles outside it. Wired into CI.
+- **Applying a workflow action over HTTP now requires POST (hardening).** The field-level-read
+  wrapper for `frappe.model.workflow.apply_workflow` declares `methods=["POST"]`, the request the
+  Desk's form toolbar already sends (`frappe.xcall`). The emailed approval link and the bulk
+  approval run the transition in process and are unaffected. `tests/test_fieldlevel_read.py`
+  still holds every other wrapper's methods equal to Frappe's, records this one as deliberately
+  narrower, and fails if any wrapper answers a request type Frappe's own does not. The endpoint
+  leaves the whitelist-methods baseline (`BASELINE_CEILING` 356 to 355).
+- **The feedback rate counters set their window again when they find none.** The per-person
+  filing and draft counters in `api/feedback.py` now set the expiry on the first call and again
+  whenever the counter exists without one, the same rule `utils/user_rate_limit.py` and
+  `carrier_tracking/tracking.py` apply, so a counter whose first expiry was lost cannot outlive
+  its window. New cases in `tests/test_feedback_capture_intake.py` run both counters against a
+  cache whose first expiry is dropped.
+- **The Projects Dashboard's bulk edit accepts only the fields the dashboard edits (hardening).**
+  `update_multiple_docs` now checks every field name in the request before it writes anything:
+  - A Project may be changed only in `EDITABLE_PROJECT_FIELDS`, the list `update_project_details`
+    already uses (status and the two priorities).
+  - A Task may be changed only in the new `EDITABLE_TASK_FIELDS`: `exp_start_date`, `exp_end_date`
+    and `expected_time`, the three cells the Tasks tree's inline editor saves.
+  - A request that names any other field, or whose changes are not a name-to-fields mapping, is
+    refused as a whole with a message and nothing is saved. The per-record write check, the
+    parent-dates rule and the POST-only declaration are as before.
+  - The Tasks tree's Save changes button is unaffected: it sends only those three fields.
+  - `tests/test_dashboard_bulk_edit_fields.py` (bench-free, wired into CI) runs the endpoint on a
+    stand-in `frappe` and reads the page's JavaScript, so the lists and the grid cannot drift apart.
+- **Water Feature Design drawings print only as the SVG the Fountain Designer draws (hardening).** A
+  design keeps its drawings as SVG text (the charts in `results_json`, and each Standard Detail's
+  `svg`), and the print formats and the submittal packet place that text in their HTML. Each drawing
+  now passes `water_engineering/svg_safe.clean_svg` first:
+  - **An allowlist built from the module's own drawing code.** It keeps only the elements and
+    attributes `engine/drawings.py` (which the electrical and controls packages draw through) and the
+    seeded Standard Details emit, `style` on the root with only `max-width` and `font-family`, and a
+    reference only as a same-drawing `url(#id)`; everything else is dropped, an element together with
+    its content. Text and attribute values are written back escaped.
+  - **It fails closed.** Text that is not one well-formed SVG root (malformed, a DOCTYPE, anything
+    after the root, too long) prints the drawing's "nothing to show" sentence, never the original.
+  - **Standard library only** (`xml.etree`), as the host installs no packages.
+  - **Every print path uses it.** The formats and the packet call the new Jinja method `we_safe_svg`
+    (`hooks.py`), and `prints.drawing`, `we_circulation_schematic`, `we_electrical_oneline` and
+    `we_standard_details` call `clean_svg` too, so a drawing stored by an earlier release is held to
+    the same list when it is printed.
+  - The drawings the derive makes print exactly as before: the new suite runs the real derive over
+    four designs and every print drawing and checks that nothing they contain is lost. A Standard
+    Detail someone drew by hand with an element off the list (a `g` group, for one) prints without
+    that part.
+  - **Preview Packet opens in a dialog.** The Water Feature Design form's **Submittal > Preview Packet**
+    now shows the packet in a sandboxed frame inside a dialog, where the packet's HTML runs no script and
+    has an origin of its own, instead of writing it into a new window of the site. The dialog's
+    **Print** opens the packet format in frappe's print view, as other formats print. **Generate Packet
+    PDF** is unchanged. A private letterhead image may not show in the preview; it prints.
+  - Tests: `tests/test_water_svg_safe.py` (pytest, in the print formats' CI step) runs the allowlist over
+    samples off the list assembled at run time, over the real generator's drawings, and holds every
+    format, the packet helpers and the preview to it. `test_water_prints` registers `we_safe_svg` as
+    frappe does.
+- **Approvals on budget reallocations and change orders are recorded only by the approval steps (hardening).**
+  - **Budget reallocations: the requester does not record the project manager approval
+    (hardening).** *Approve as Project Manager* now refuses the person who requested the
+    reallocation, and the person who already gave the second approval; submit refuses a project
+    manager approval recorded by the requester. With the existing second-approval rule, the
+    request, the first approval and the second approval come from three different people on a
+    protected category, and from two on any other. A project manager who raises a reallocation now
+    needs a colleague to approve it. `quality/budgets.first_approval_errors` holds the rule.
+  - **Approval stamps on Budget Reallocation and Change Order are written only by their approval
+    endpoints (hardening).** `read_only` hides a field in the form but is not checked on the server,
+    so each controller now enforces it: a save that changes `requested_by` or an approval stamp on a
+    reallocation, or `pm_approved`, `customer_approved`, `customer_approval_note` or their by/on
+    stamps on a change order, is refused unless it comes from the approve, record or revoke
+    endpoint, which sets a document flag (`APPROVAL_FLAG`), and a new document that arrives carrying
+    an approval is refused. `requested_by` is always the session user on insert. Migrate, install,
+    patches and a System Manager's Data Import keep the values they write, as on Tier Review.
+  - **The approval stamps are not copied by Duplicate**, so a duplicated reallocation or change
+    order starts unapproved instead of being refused, and *How the customer approved* is read-only
+    on the Change Order form (it is written by *Record Customer Approval*). Both DocType JSONs carry
+    a new `modified` so `bench migrate` picks the field changes up.
+  - New bench-free suite `tests/test_approval_stamps.py` (own CI step) runs both controllers and
+    their endpoints over a stand-in `frappe`.
+- **A visit's sign-off link may still go to any single address; one that is not on file is now
+  recorded and the office is told (hardening).** Decided by Nik, 2026-11-19: "Any address, but the
+  office gets a notice naming the address whenever it is not one on file."
+  - **What counts as on file.** `sign_off.is_on_file` compares case-insensitively after trimming
+    against the Customer's `email_id` and its two custom email fields, the visit Project's customer
+    and billing email, the `contact_email` of the Project Contract behind the visit's maintenance
+    contract, and the email addresses of Contacts that are the Customer's primary contact, are
+    linked to the Customer or Project, or are stakeholder rows on either.
+  - **What happens otherwise.** The link is sent exactly as before. The visit's timeline gets a
+    Comment naming the address, who sent it and when, and the Visit Review Emails list (the people
+    who already read finished visits) gets a short notice with the visit, customer, address, sender
+    and a link to the visit, in the shared email shell (`visit_sign_off_notice.html`).
+  - **Both entry points.** Finish and the visit form's button both call `send_request`, so both do
+    it. An address that is on file behaves as before: no Comment, no notice.
+  - **A notice never blocks anything.** A failure to write the Comment or send the notice is logged
+    (no token, no link) and the send and the Finish go on. Who may send, the token, its lifetime and
+    the signing page are unchanged.
+- **Revenue and margin figures on the KPI dashboards go to Accounts Manager and System Manager
+  only (Nikolas, 2026-11-19).** Cash collected (30 days) is counted with revenue, by his
+  answer the same day. Every other role that may open a department's dashboard keeps
+  everything else that department shows, other money figures included: receivables, payables,
+  spend, stock value, pipeline, closed-won value, deal size, backlog,
+  change-order value, marketing pipeline, marketing spend and cost per lead. The revenue and
+  margin figures are left out of the answer by the server, so the tile is absent rather than
+  zeroed. The department gate (`DEPARTMENT_ROLES`) is unchanged.
+  - **One registry, one helper.** `kpi_dashboards/money.py` lists the nine keys that state
+    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, cash collected 30 days, catalog revenue 30
+    days and one year, rental revenue booked, rental revenue per fountain, revenue per employee,
+    gross margin) and every other key whose name, label or unit reads like money, with the
+    reason it is not a revenue or margin figure (`REVIEWED_UNRESTRICTED`). `can_see_revenue` is
+    the role rule and `without_revenue` is the filter; every read path below calls them.
+  - **Read paths.** The cockpit endpoints (`get_kpi_dashboard`, `refresh_kpi_dashboard`) and the
+    assistant tool `kpi_dashboard_status` (through them); KPI Snapshot document reads, which open
+    with those rows left out (`KPISnapshot.apply_fieldlevel_read_permissions`); the Executive
+    Dashboard widgets (scorecard counts, cash and receivables, risk queue); and the Task Dashboard
+    wall band.
+  - **Lists and reports.** A KPI Snapshot list, Report View or count, including one that selects,
+    filters, sorts or totals by KPI Snapshot Value columns, returns for these callers only the
+    snapshots that hold no revenue or margin row (the parent's `permission_query_conditions`). A
+    query on KPI Snapshot Value itself leaves those rows out.
+  - **KPI Target.** A target for a revenue or margin figure is listed, opened, created, edited and
+    deleted by Accounts Manager and System Manager only (`permission_query_conditions` and
+    `has_permission` on KPI Target). A target is judged on the key it is stored under as well as
+    the key a save carries, so it stays under this rule whatever key it is given. Sales Manager
+    keeps every other target.
+  - **What a user notices.** An Accounts User opening Finance sees receivables, payables and the
+    counts, without the two revenue tiles and cash collected. Item Manager, Stock Manager and Sales
+    Manager open Product without catalog revenue, rental revenue and gross margin. Sales Manager
+    opens Executive without revenue, cash collected and revenue per employee. In the KPI Snapshot list these
+    roles see only the snapshots that hold no revenue or margin row. A dashboard whose figures are all revenue or
+    margin shows "Nothing to show for your role." The snapshots themselves are stored whole; the
+    rule applies on read.
+  - **Tests.** `tests/test_kpi_money_roles.py` reads every aggregator and fails the build when a
+    key or label that reads like money is in neither table, or when one that names revenue or
+    margin is not restricted; it runs the rule through each read path, and runs the KPI Snapshot
+    and KPI Target list conditions in SQLite against sample rows.
+- **Fountain Move: a public-form request that matches an existing customer waits for staff
+  (hardening; Nik's decision of 2026-11-19).** When a request from the public `/fountain-move` form
+  matches an existing Customer, Contact or Lead (by email or phone), the conversion now records the
+  match as a suggestion and parks the request in **Duplicate Review**. Nothing is created, attached
+  or written: the existing Customer, its Contacts, its Addresses and its Drive folder stay as they
+  were, and the usual duplicate-decision alert goes out.
+  - **Confirm Match** (new button on a Duplicate Review request; `fountain_move.api.confirm_match`,
+    POST, System Manager or Sales Manager) records who confirmed and when, links the request to the
+    Customer the staff member picks (prefilled with the suggestion) and queues the conversion. The
+    conversion then creates **only the Opportunity** under that Customer, with the submitted name,
+    email and phone in its scope notes, and attaches the photos to that Opportunity alone. No
+    Address, Contact or Lead is created, and nothing is written onto an existing Customer, Contact
+    or Address: staff copy anything they want across by hand.
+  - Unchanged: a public request that matches nobody converts into the five new records as before,
+    and so does a request staff started — a row made in the Desk (owned by a desk user) or the first
+    request submitted through a staff member's emailed link. Which kind a request is comes from the
+    server's own record (`owner`, and the invite resolved from the link's token), never from the
+    submission; later requests through the same emailed link count as public.
+  - Two new read-only fields on Fountain Move Request, **Match Confirmed By** and **Match Confirmed
+    On**, with no default: existing rows read blank. Requests already waiting in Duplicate Review
+    can now be finished with Confirm Match instead of being edited and retried.
+  - **The daily digest lists a request left Queued.** Confirm Match and Retry mark the request
+    Queued just before the conversion job is enqueued, and a deploy empties the job queue, so the
+    job can be lost. `notify.digest_stuck_requests` now has a "Queued (not started over an hour)"
+    section. The hour runs from the later of the two actions: Retry now stamps the request's last
+    change, Confirm Match stamps its confirmation time, and a request is listed only when both are
+    over an hour old. Retry on the request starts it again.
+  - New bench-free suite `tests/test_fountain_move_public_match.py`, in its own CI step.
+- **Signing a contract online now starts with a code emailed to the customer (hardening).**
+  Nik, 2026-11-19: "Emailed code. When they start signing, email a short code to the address on
+  file and ask them to type it." The typed-email step on `/contract-sign` is replaced by it.
+  - **What the customer sees.** Above the agreement, "Confirm it's you": *Email me a code* sends a
+    6-digit code to the address the agreement was sent to, shown as `j•••@example.com`. They type
+    it and press *Confirm*; the signing form (initials, signature, consent) then appears, with
+    *Decline* inside it. Until then the agreement is shown with their address masked; the right
+    code swaps in the agreement exactly as sent. *Send a new code* is always there, including when
+    a code has vanished because a deploy cleared the cache. No history entry is added anywhere.
+  - **The code's rules** (`esign/email_code.py`): six digits from `secrets`, valid 10 minutes, at
+    most 5 entries per code, at most 3 sends per signing request per 15 minutes, a new code
+    replaces the old one. Only a keyed hash is stored, in the cache, under the request and bound to
+    its live link; it is compared in constant time and works once. A wrong, expired, used or
+    exhausted code gets one message. Entries also count against the request's existing limits
+    (5 an hour, 15 in all, persisted in `email_attempts`), and spending them pauses the link until
+    staff re-send it, as before.
+  - **Two new guest endpoints**, both POST-only and rate limited, and listed in the guest endpoint
+    register: `esign.portal.send_signing_code` (sends only to the address on the request) and
+    `esign.portal.verify_signing_code`. `sign_contract` and `decline_contract` now require a
+    verified code for the session's current link and no longer take an email address.
+  - **The bot check is decided by the server alone.** `begin_signing` takes the challenge token and
+    nothing else about it: the verdict comes from `turnstile.verify` on the site's own settings.
+    A site with no bot-check secret keeps its behaviour ("Not Checked", accepted). A request that
+    carries no bot-check token goes on to the emailed code, which is the identity check, under the
+    same limits: it is recorded as "Unavailable" with a detail saying no token was sent, which the
+    evidence record and the staff alert show. A token that is sent and fails is "Failed" and is
+    refused. The code can be sent only on an accepted verdict. The bot check is a signal kept on
+    the evidence, not a gate: the page relies on the single-use link, the emailed code and the
+    limits on sending and entering codes.
+  - **The code email** (`templates/emails/project_enhancements/contract_signing_code.html`) goes
+    through the email shell: the code, the document's name, how long it works, and "Didn't ask for
+    a code? You can ignore this email." It is sent straight after the commit, with the body
+    replaced in the Email Queue once sent, and the code is never in the subject.
+  - **The evidence record** gains two read-only fields on Contract Signature Request,
+    `email_code_verified` and `email_code_verified_on` (new columns; existing rows read 0 and
+    empty, which is correct for them). Signing in the Contract Builder asks for no code and records
+    none. The invitation email, the Send for Signature and hand-over dialogs, and the field
+    descriptions now say a code will be emailed rather than that the address must be re-typed.
+  - Tests: `tests/test_esign_email_code.py` (new, own CI step) runs the code and the endpoints over
+    an in-memory cache and a moving clock; `scripts/test_web_flow_history.js` drives the page's
+    code step; `tests/test_contract_esign.py` follows the moved checks.
+- **Autopay charges only maintenance agreement invoices under a limit (hardening).** The owner's
+  rule: an automatic charge of a saved card or bank account (autopay on submit, the hourly autopay
+  sweep, dunning retries) runs only for an invoice billed from a maintenance agreement whose balance
+  is at or under the new **Automatic Payment Limit** in Stripe Payments Settings → Saved Cards /
+  Autopay. Blank or 0 allows no automatic charge, and that is how it ships: no default amount and no
+  backfill, so until Accounts set a limit every invoice waits for the desk.
+  - **One decision for every automatic path.** `saved_methods.automatic_charge_allowed` is asked by
+    the submit hook and the sweep before they enqueue, and by `charge_saved_method` for every channel
+    but `Desk`, before any guard, ledger row or Stripe call. A refusal there is
+    `card_element.AutomaticChargeHeld`, a `PaymentBlocked`, so dunning reschedules instead of
+    counting a decline. The invoice lock, the shared guard and the open-link rule run unchanged after
+    it.
+  - **How an agreement invoice is recognized.** A Sapphire Maintenance Record that names a maintenance
+    contract and is not a service call, linked to the invoice (or the invoice it was amended from)
+    through the invoice's Maintenance Record field (per-visit billing) or the record's Generated Sales
+    Invoice (per-visit and recurring billing), on a contract whose customer is the invoice's. A
+    recurring invoice for a period with no visits has no such link and waits for the desk.
+  - **A held invoice says so.** It gets one comment, "Automatic payment did not run: …" with the
+    reason, and Accounts Managers get one notification, once per invoice. The sweep no longer picks up
+    an invoice carrying that note.
+  - **Charge Saved Method on the Customer is unchanged**, with the same operator check, and charges a
+    held invoice as before.
+- **Time changed or entered by hand now waits for approval before it counts (hardening).** When an
+  employee moves the start or end of their own Job Interval from the Time Kiosk
+  (`update_interval_times`), adds time by hand (`add_manual_interval`) or starts work backdated
+  (`start_backdated`), the interval is marked **Waiting** on a new *Edit Approval* block with who
+  edited it, when, and the start and end before the edit. The same applies to an edit of another
+  person's time by someone who may not approve that person's edits, a Projects Manager included. A
+  change of activity alone moves no hours and does not wait; a time sent back unchanged to the minute
+  is treated as unchanged and the stored value is kept. The rule lives in `workforce/time_edits.py`.
+  - **Who approves.** The employee's `reports_to` supervisor (an enabled user), or anyone holding HR
+    Manager or System Manager (`time_edits.may_approve`), and never the employee or the person who made
+    the edit. Projects Manager is not an approver of hand edits. This is its own rule: the Time
+    Correction Request gate (`permissions.can_review`) is unchanged. An employee with no supervisor, or
+    whose supervisor's login is disabled, is decided by HR Manager or System Manager. An approver's edit
+    to someone else's time needs no approval and settles a waiting one as approved; an approver's edit
+    to their own time still waits.
+  - **The approver is told when an entry starts waiting**, once per waiting spell (a Sent Back entry
+    edited again starts a new one): a bell notification that opens the approvals page and one email in
+    the app's email design, saying who, which day, the project, what changed, the reason given and who
+    edited it. It goes to the supervisor, or to the HR Managers when there is no supervisor to tell, or
+    to the System Managers when that leaves nobody, and never to the employee or the editor. It is sent
+    from `JobInterval.on_update`, after the save, on
+    every path that can start a wait (the three kiosk endpoints and the Desk form); a refused save tells
+    nobody, and a notice that fails is logged and never fails the edit.
+  - **A waiting entry is left out of payroll at the source.** `payroll_export` leaves Waiting and Sent
+    Back intervals out of every total, the overtime split included, and the workbook gains a third
+    sheet, **Waiting for Approval** (employee, day, hours, status, what changed, reason, who edited),
+    marked as not part of the submission; the provider sheet's columns are unchanged. The Payroll Hours
+    Export report lists the same entries above its table. `sync_interval_to_timesheet` writes no
+    Timesheet line for a held interval (its `sync_status` reads `Held - Not Approved`, a new option),
+    so it is not submitted with the day and does not reach a project's labour actuals; an edit to an
+    interval that already had a Draft line takes that line off until the edit is approved.
+  - **Approve Edit / Send Back on the Job Interval form too.** `approve_time_edit` and
+    `send_back_time_edit` (both POST; the decider comes from the session) accept an approver who is
+    neither the interval's employee nor the person who made the edit, record who and when with an
+    optional note, and re-sync the Timesheet line. Sending back restores nothing: the entry stays out
+    and the employee is emailed. The form shows what changed and draws the buttons only for a reader
+    who may decide. The kiosk's My Day rows read *Waiting for approval* or *Sent back*, and the edit
+    toast says when an edit waits.
+  - **The Job Interval form follows the same rule.** A save made through the DocType's own write
+    permission (the Desk form, the REST resource) is checked in `JobInterval.validate`
+    (`time_edits.guard_direct_save`). A change to the employee, start, end or paused time is a hand
+    edit and waits on the same terms, an interval entered there for oneself waits, and the *Edit
+    Approval* fields keep their stored values whatever the save sent. When the save changes whether
+    the interval is held, `on_update` re-syncs its Timesheet line. Saves by this app's endpoints, the
+    sweeper and an approved correction are not affected: they save with `ignore_permissions`.
+  - **A Time Correction Request follows the same principle.** It is decided only by a reviewer who
+    is neither the employee it is for nor the person who filed it (`permissions.may_decide_request`):
+    on the Approve and Decline endpoints, on any status change saved on the form or through the REST
+    resource (`TimeCorrectionRequest.validate`), and the form draws the two buttons only for someone
+    who may decide. Who may review, and who may file, are unchanged; a manager can still file a
+    request for their own time and someone else decides it.
+  - **What the approver rule rests on.** Who approves is read from `Employee.reports_to` and
+    `Employee.user_id`, which anyone with write access to Employee can edit; the workforce README
+    says so. Employee tracks changes to both.
+  - **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
+    existing row reads blank, which counts exactly as before. Bench-free suite
+    `tests/test_time_edit_approval.py`, in its own CI step; `tests/test_s3_page_css.py` holds the new
+    page's stylesheet to the design tokens.
+
 ## [1.832.0] - 2026-11-19
 
 ### Added

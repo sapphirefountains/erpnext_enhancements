@@ -47,7 +47,7 @@ APP = Path(__file__).resolve().parents[1]
 BASELINE = APP / "tests" / "data" / "whitelist_methods_baseline.txt"
 
 #: The number of endpoints on the baseline. Lower it when the baseline shrinks; never raise it.
-BASELINE_CEILING = 356
+BASELINE_CEILING = 355
 
 #: The tests tree defines stubs and fixtures, not endpoints.
 SKIP_PARTS = frozenset({"tests", "node_modules", "__pycache__", ".git"})
@@ -127,11 +127,6 @@ _REVIEWED = (
 			"api.integrations_health.run_drive_test",
 			"water_engineering.api.designer.run_calc",
 		),
-	),
-	(
-		"Stands in for frappe.model.workflow.apply_workflow and mirrors its declaration exactly; "
-		"tests/test_fieldlevel_read.py holds the two equal.",
-		("fieldlevel_read.apply_workflow",),
 	),
 	(
 		"Intuit's Disconnect URL: the browser arrives by redirect, which is a GET. QuickBooks operators only.",

@@ -248,7 +248,7 @@ function send_for_signature(frm) {
 				label: __("Send to"),
 				default: frm.doc.contact_email,
 				reqd: 1,
-				description: __("They'll be asked to re-type this address to confirm it's them."),
+				description: __("When they start signing, a short code is emailed here to confirm it's them."),
 			},
 			{
 				fieldname: "message",

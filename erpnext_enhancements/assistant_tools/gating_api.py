@@ -56,6 +56,7 @@ from frappe import _
 from frappe.utils import get_datetime, now_datetime
 
 from erpnext_enhancements.assistant_tools._gate import (
+    DEVICE_ACTION_TOOLS,
     DOCSTATUS_TOOLS,
     GATE_OWN_DOCTYPES,
     KNOWLEDGE_BASE_CHILD_DOCTYPES,
@@ -437,6 +438,8 @@ def _review_reasons(row, has_hidden):
         reasons.append(_("its arguments could not be read"))
     elif row.get("tool_name") in DOCSTATUS_TOOLS or _changes_docstatus(arguments):
         reasons.append(_("submits or cancels a document"))
+    if row.get("tool_name") in DEVICE_ACTION_TOOLS:
+        reasons.append(_("runs a remote device action"))
     target = row.get("target_doctype")
     if target in NEVER_EXEMPT:
         reasons.append(_never_exempt_reason(target))
@@ -453,8 +456,8 @@ def my_pending_actions():
     the ciphertext nor the asterisks the column holds ever enter this function. Nothing is
     decrypted. ``batch_default`` is whether the dialog ticks the row to begin with, and
     ``review_reason`` says why not when it doesn't (``_review_reasons``): High risk, hidden
-    values, a submit or cancel, or a write to a Task, the gate's own records or the knowledge
-    base.
+    values, a submit or cancel, a remote device action (``DEVICE_ACTION_TOOLS``, whatever its
+    risk), or a write to a Task, the gate's own records or the knowledge base.
 
     ``age_seconds`` and ``expires_in_seconds`` are computed here in site-local time on both
     sides, so the browser never has to compare a site-local stamp with its own clock.
