@@ -20,7 +20,9 @@ test suite, because a silently changed total is worse than a refused save.
 **The second approval cannot come from the same hand.** Protected categories require an approver
 above the project manager, and that approver may not be the requester or the project manager who
 already approved it. Without that rule the control is satisfiable by one person clicking twice,
-which is a control in appearance only.
+which is a control in appearance only. The project manager approval itself cannot come from the
+requester either, and every approval stamp is written only by ``api/project_budget.py``
+(:meth:`BudgetReallocation._guard_approvals`).
 
 **Balances are stamped, then never re-read.** ``from_balance_before``/``_after`` record what the
 two lines held when this was applied. The lines go on changing afterwards; this document is the
@@ -56,6 +58,7 @@ stop them applying a reallocation they were entitled to approve.
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import get_datetime
 
 from erpnext_enhancements.quality import budgets
 
@@ -65,10 +68,42 @@ STATUS_APPLIED = "Applied"
 #: edit -- an off-options value makes every existing row unsaveable.
 STATUS_CANCELED = "Canceled"
 
+#: Set on the document by the approve and revoke endpoints in ``api/project_budget.py``. Only a
+#: save carrying it may change an approval stamp.
+APPROVAL_FLAG = "budget_approval_transition"
+
+#: The approval stamps, written only by those endpoints. ``requested_by`` is guarded too, and is
+#: always the session user on insert (:meth:`BudgetReallocation._stamp_requester`).
+APPROVAL_FIELDS = ("pm_approved_by", "pm_approved_on", "additional_approved_by", "additional_approved_on")
+DATETIME_FIELDS = ("pm_approved_on", "additional_approved_on")
+
+#: Roles whose Data Import keeps the stamps in the file (historical records).
+IMPORT_ROLES = ("System Manager",)
+
+
+def _trusted_write():
+	"""True during migrate, install, a patch, or a Data Import run by a System Manager."""
+	if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+		return True
+	if not getattr(frappe.flags, "in_import", None):
+		return False
+	return bool(set(IMPORT_ROLES) & set(frappe.get_roles()))
+
+
+def _same(fieldname, old, new):
+	"""Whether a stamp is unchanged, comparing a stored datetime with its text form the way
+	Frappe's own set-only-once check does."""
+	if not old and not new:
+		return True
+	if fieldname in DATETIME_FIELDS and old and new:
+		return get_datetime(old) == get_datetime(new)
+	return old == new
+
 
 class BudgetReallocation(Document):
 	def validate(self):
 		self._refuse_amendment()
+		self._guard_approvals()
 		self._stamp_requester()
 		self.requires_additional_approval = (
 			1 if budgets.requires_second_approval(self.from_category, self.to_category) else 0
@@ -119,13 +154,52 @@ class BudgetReallocation(Document):
 			title=_("Amendment refused"),
 		)
 
+	def _guard_approvals(self):
+		"""The approval stamps and ``requested_by`` change only through ``api/project_budget.py``.
+
+		``read_only`` hides a field in the Desk form; it is not checked on the server. So a new
+		reallocation that arrives carrying an approval is refused, and a save of an existing one
+		that changes a stamp or the requester is refused, unless the save came from one of the
+		approve or revoke endpoints (:data:`APPROVAL_FLAG`). Migrate, install, patches and a
+		System Manager's Data Import keep the values they write.
+		"""
+		if self.flags.get(APPROVAL_FLAG) or _trusted_write():
+			return
+		if self.is_new():
+			if any(self.get(field) for field in APPROVAL_FIELDS):
+				frappe.throw(
+					_(
+						"Approvals are recorded with the Approve buttons on a saved reallocation, "
+						"not entered on a new one."
+					),
+					frappe.PermissionError,
+				)
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		for field in (*APPROVAL_FIELDS, "requested_by"):
+			if not _same(field, before.get(field), self.get(field)):
+				frappe.throw(
+					_(
+						"Approvals are recorded and revoked with the buttons on this form, not by "
+						"editing them."
+					),
+					frappe.PermissionError,
+				)
+
 	def _stamp_requester(self):
 		"""Server clock and server session, never a client-proposed value.
 
 		Same lesson as ``process_steps.complete_step``: the old client path let the browser
 		propose the timestamp, and the audit found retroactive box-checking.
+
+		On insert the requester is always the session user, whatever the insert carried; only
+		migrate, a patch or a System Manager's Data Import keep a value they supply.
 		"""
-		if not self.requested_by:
+		if self.is_new() and not _trusted_write():
+			self.requested_by = frappe.session.user
+		elif not self.requested_by:
 			self.requested_by = frappe.session.user
 
 	# --- the rules ----------------------------------------------------------------------------

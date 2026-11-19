@@ -21,7 +21,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/change_order/change_order.js` | The approval buttons. **Not optional** — every approval stamp is read-only and `before_submit` refuses a change order neither party has approved, so until v1.465.0 the four endpoints in `api/change_order.py` had no caller and no change order could be locked at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
 | `doctype/project_budget_category/project_budget_category.py` | The budget-category catalog (WI-075 sub-phase M). Its one real job: **the protection flag cannot be quietly unticked** — `budgets.PROTECTED` is the rule and the Check is its display, so `validate` restores a flag that has been removed and never clears one that has been added | `ProjectBudgetCategory` | Doctype controller; seeded by `seed_budget_categories` |
 | `doctype/project_budget_line/project_budget_line.py` | Child table on Project: one category, what it is budgeted at, and the computed committed/actual with a **coverage verdict** beside them. No controller logic — everything that decides anything lives on the parent, and a child controller with opinions would be a third place the same rules could disagree | `ProjectBudgetLine` | child-table controller |
-| `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; a protected category on either side needs a second approval that cannot come from the requester or the approving PM; amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
+| `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; the PM approval cannot come from the requester, and a protected category on either side needs a second approval that cannot come from the requester or the approving PM; approval stamps change only through the approval endpoints (`APPROVAL_FLAG`); amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
 | `doctype/budget_reallocation/budget_reallocation.js` | The approval buttons. **Not optional** — every approval field is read-only and `before_submit` refuses a reallocation with no PM approval, so without these no reallocation could be submitted at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
 | `budget_rollup.py` | The frappe glue that fills in each budget line's committed, actual and coverage, then derives `Project.estimated_costing` from the lines. Returns on its first line when a project has no budget lines — and deliberately does **not** zero a total it cannot derive. Judgement in [`quality/budgets.py`](../quality/budgets.py), which imports no `frappe` | `refresh`, `spend_for_project`, `unclassified_for_project`, `on_project_validate` | `doc_events["Project"]["validate"]` |
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
@@ -359,7 +359,12 @@ Four decisions worth not undoing:
 
 The approval stamps are read-only and written only by `api/change_order.py`, from the server clock
 and the session user. The old client path on `complete_step` let the browser propose a timestamp
-and the audit found retroactive box-ticking.
+and the audit found retroactive box-ticking. `read_only` is not checked on the server, so the
+controller holds the rule: a save that changes `pm_approved`, `customer_approved`,
+`customer_approval_note` or their by/on stamps is refused unless one of the endpoints set
+`APPROVAL_FLAG`, and so is a new change order that arrives carrying one. Migrate, patches and a
+System Manager's Data Import keep what they write. The stamps are `no_copy`, so Duplicate starts
+unapproved.
 
 Those endpoints are reached from `change_order.js` — *Approve as Project Manager*, *Record
 Customer Approval* and a revoke beside each, offered only while the change order is unsubmitted.
@@ -435,7 +440,11 @@ predates it.
   converts contracted work into margin.
 - **The second approval cannot come from the same hand** — not the requester, not the project
   manager who already approved. A control one person satisfies by clicking twice is a control in
-  appearance only.
+  appearance only. The project manager approval cannot come from the requester either.
+- **The stamps are written only by `api/project_budget.py`.** `requested_by` is the session user
+  on insert; a save that changes it or an approval stamp is refused unless an approve or revoke
+  endpoint set `APPROVAL_FLAG`, and so is a new reallocation carrying an approval. Migrate,
+  patches and a System Manager's Data Import keep what they write.
 - **Balances are stamped, then never re-read.** The lines go on changing; this document records
   one move against the numbers as they stood that day.
 - **Amendment is refused**, and so is a cancellation that would drive a line negative — if a later
