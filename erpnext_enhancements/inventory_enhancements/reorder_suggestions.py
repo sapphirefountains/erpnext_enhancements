@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The Reorder Board's suggested reorder levels: the reads and the one write (v1.832.0).
+"""The Reorder Board's suggested reorder levels: the reads and the one write (v1.831.0).
 
 The 2026-11-19 operations review: set reorder points from real usage, approved item by item. What
 counts as used, the basis and the suggestion are ``reorder_suggest_rules`` (pure, bench-free tested);

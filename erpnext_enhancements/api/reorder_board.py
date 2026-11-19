@@ -9,9 +9,9 @@ reads and the writes, and the judgements are ``inventory_enhancements.reorder_ru
 * :func:`create_material_requests` (POST): Draft Material Requests for the picked lines, one per
   company, inserted as the caller. Idempotent on ``client_ref``.
 * :func:`snooze_line` / :func:`unsnooze_line` (POST).
-* :func:`get_reorder_suggestions` (GET, v1.832.0): the Reorder levels tab: each rule with a level and
+* :func:`get_reorder_suggestions` (GET, v1.831.0): the Reorder levels tab: each rule with a level and
   quantity suggested from real usage and the basis (``inventory_enhancements.reorder_suggestions``).
-* :func:`apply_reorder_suggestion` (POST, v1.832.0): write one rule's Reorder at and Buy, as the
+* :func:`apply_reorder_suggestion` (POST, v1.831.0): write one rule's Reorder at and Buy, as the
   caller, for Purchase Manager, Stock Manager and System Manager with Item write.
 
 A refusal the person can act on comes back as ``{ok: False, message}`` rather than a raised

@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.833.0] - 2026-11-19
+## [1.831.0] - 2026-11-19
+
+One release for five reviewed PRs from the 2026-11-19 Weekly Operations Review: new Service and
+Events jobs numbered SRV-/EVT- (#1488), build priority on the Products tab (#1494), Warehouse
+Transactions upgrades (#1485), suggested reorder levels on the Reorder Board (#1492) and the rack QR
+sheet (#1496).
 
 ### Added
 
@@ -50,7 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-## [1.832.0] - 2026-11-19
 
 ### Added
 
@@ -153,7 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prod has almost no product orders yet, so all of this is tested on stubs: rules, endpoint and the
   board script in the node harness.
 
-## [1.831.0] - 2026-11-19
 
 ### Added
 

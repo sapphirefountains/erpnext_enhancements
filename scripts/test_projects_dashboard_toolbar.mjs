@@ -1064,7 +1064,7 @@ await test("the orders are grouped by stage in board order, late first, with Lat
 	assert.match(html, /pd-card-l">Win rate, product quotes<\/div>\s*<div class="pd-card-n">75%<\/div>\s*<div class="pd-card-s">3 won · 1 lost · last 12 months</);
 });
 
-// v1.832.0 (the 2026-11-19 Ops Review): a build priority, a percent complete and an expected end
+// v1.831.0 (the 2026-11-19 Ops Review): a build priority, a percent complete and an expected end
 // for each product order, in place of a job's company and value-stream priority.
 const ranked = (name, build_priority, extra = {}) => ({
 	name,

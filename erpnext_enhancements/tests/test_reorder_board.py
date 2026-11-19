@@ -22,7 +22,7 @@ What is held, in the order the brief asked for it:
   writes nothing; neither patch raises.
 * **The page.** Its logic under node (routes, quantities, the picked lines), its roles, and that every
   tab is a ``frappe.set_route`` (a history entry) while dialogs push nothing.
-* **Suggested reorder levels (v1.832.0).** ``reorder_suggest_rules``: what counts as used (takes,
+* **Suggested reorder levels (v1.831.0).** ``reorder_suggest_rules``: what counts as used (takes,
   deliveries, moves out to a job site or the Project Shelf, less returns from a job; never a count
   correction, a move between shop places or a release from the shelf), the scope, the basis (the
   window, the first recorded take, the first day in the shop), the thin-data gate, the arithmetic and
@@ -1285,7 +1285,7 @@ class TestPatches(unittest.TestCase):
 # --- wiring, the page and its logic ----------------------------------------------------
 
 
-# --- suggested reorder levels (v1.832.0) --------------------------------------------------
+# --- suggested reorder levels (v1.831.0) --------------------------------------------------
 
 from erpnext_enhancements.inventory_enhancements import reorder_suggest_rules as srules
 

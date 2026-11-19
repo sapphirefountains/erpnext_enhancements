@@ -1742,7 +1742,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 
 #: Custom-engineered control panels are Projects of this type.
 PRODUCTS_PROJECT_TYPE = "Products"
-#: Which open product order to build first (v1.832.0, the 2026-11-19 Ops Review). A Custom Field on
+#: Which open product order to build first (v1.831.0, the 2026-11-19 Ops Review). A Custom Field on
 #: Sales Order, allowed on submit, set from the order board through set_build_priority below.
 BUILD_PRIORITY_FIELD = "custom_build_priority"
 #: The SQL prefilter for product item codes; product_orders.product_line has the final word.
@@ -2086,7 +2086,7 @@ def _product_orders(today, source_column):
 				"stage": stage["stage"],
 				"note": stage["note"],
 				# What a product order shows in place of a job's company and value-stream priority
-				# (v1.832.0): build_priority (above), how far along it is, and when it should be done.
+				# (v1.831.0): build_priority (above), how far along it is, and when it should be done.
 				"percent_complete": po.order_percent_complete(stage["stage"], order["per_delivered"], wos),
 				"expected_end": end["date"] or None,
 				"expected_end_source": end["source"],
@@ -2134,7 +2134,7 @@ def _sales_order_has_build_priority():
 
 @frappe.whitelist(methods=["POST"])
 def set_build_priority(sales_order, priority=None):
-	"""Set which open product order to build first, from the Products tab's order board (v1.832.0).
+	"""Set which open product order to build first, from the Products tab's order board (v1.831.0).
 
 	``priority``: a whole number from 1 (built first) to ``po.BUILD_PRIORITY_MAX``; blank or 0
 	clears it. Ties are allowed: two orders at 1 are both "build first", and the board orders them

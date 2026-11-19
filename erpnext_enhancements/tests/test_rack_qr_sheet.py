@@ -1,4 +1,4 @@
-"""Bench-free tests for the printable rack QR sheet (v1.833.0).
+"""Bench-free tests for the printable rack QR sheet (v1.831.0).
 
 From the 2026-11-19 operations review: the north-facing Atrium shelves are too high and their side
 blocks too thin for QR stickers, so each rack gets one printed page listing every shelf's code with

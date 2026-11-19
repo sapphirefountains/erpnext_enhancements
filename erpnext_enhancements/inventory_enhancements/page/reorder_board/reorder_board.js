@@ -9,7 +9,7 @@
 //   /desk/reorder-board            Needs reorder: at or below the reorder point, nothing open covering it
 //   /desk/reorder-board/on-order   On order: each open request, Material Request -> PO -> receipt
 //   /desk/reorder-board/snoozed    Snoozed: still below, parked by a buyer, never forgotten
-//   /desk/reorder-board/levels     Reorder levels (v1.832.0): every rule beside a level and quantity
+//   /desk/reorder-board/levels     Reorder levels (v1.831.0): every rule beside a level and quantity
 //                                  suggested from real usage, with its basis, and Apply, item by item
 //
 // A tab is one frappe.set_route(...). v16 fires on_page_show on every route change into this page, the
@@ -119,7 +119,7 @@ const ROB = {
 		return Math.abs(n - Math.round(n)) < 1e-9 ? String(Math.round(n)) : n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 	},
 
-	// The Reorder levels tab (v1.832.0). What a suggestion rests on, in words: "Used 12 Nos in 40 days (5 uses)".
+	// The Reorder levels tab (v1.831.0). What a suggestion rests on, in words: "Used 12 Nos in 40 days (5 uses)".
 	basis_text(line) {
 		const days = Number(line.basis_days) || 0;
 		// No days at all: the suggestion's own reason says so, once.
@@ -211,7 +211,7 @@ class ReorderBoardPage {
 		this.selected = new Set();
 		this.typed = new Map();
 		this._timer = null;
-		// The Reorder levels tab's own read (v1.832.0), made the first time the tab is shown and again when its
+		// The Reorder levels tab's own read (v1.831.0), made the first time the tab is shown and again when its
 		// window changes. Not part of the board's read: the ledger is read only for someone who opens the tab.
 		this.levels = null;
 		this.levels_days = null;
@@ -555,7 +555,7 @@ class ReorderBoardPage {
 	}
 
 
-	// ------------------------------------------------------------------ Reorder levels (v1.832.0)
+	// ------------------------------------------------------------------ Reorder levels (v1.831.0)
 
 	load_levels(days) {
 		const seq = ++this.levels_seq;

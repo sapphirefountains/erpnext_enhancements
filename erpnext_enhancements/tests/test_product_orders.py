@@ -647,7 +647,7 @@ def _wo(status="In Process", docstatus=1, qty=1, produced=0, planned_end=None):
 
 
 class TestBuildPriority(unittest.TestCase):
-	"""v1.832.0 (2026-11-19 Ops Review): which open product order to build first, kept on the order."""
+	"""v1.831.0 (2026-11-19 Ops Review): which open product order to build first, kept on the order."""
 
 	def test_blank_none_and_zero_are_not_ranked(self):
 		for value in (None, "", "  ", "0", 0, 0.0):

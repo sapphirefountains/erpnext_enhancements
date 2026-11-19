@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for the printable rack QR sheet at ``/rack-qr-sheet`` (v1.833.0).
+"""Controller for the printable rack QR sheet at ``/rack-qr-sheet`` (v1.831.0).
 
 One printed page per rack: each shelf's QR code with its position (Shelf 1 is the top shelf), meant
 to be laminated and hung low beside a rack whose shelves are too high, or their edges too thin, for a

@@ -408,7 +408,7 @@
 }
 .pd-select:focus, .edit-view:focus { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 1px; }
 
-/* The Products tab's build priority (v1.832.0): the rank is a bare button over its pill, so it
+/* The Products tab's build priority (v1.831.0): the rank is a bare button over its pill, so it
    reads as the Priority Overview's ranks do; clicking it swaps in a narrow number box. */
 .pd-build-rank {
     display: inline-block;

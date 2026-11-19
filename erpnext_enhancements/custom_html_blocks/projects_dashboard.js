@@ -2135,7 +2135,7 @@
     // Each table of the tab: its columns, for the Columns menu and the drag-to-resize widths.
     // Keys start p_ so no rule for another tab's columns ever reaches these. A width is the
     // cell's content box (each cell adds 24px of padding): every table fits about 1,050px,
-    // except the orders, which since v1.832.0 also carry a build priority and a percent complete
+    // except the orders, which since v1.831.0 also carry a build priority and a percent complete
     // (the 2026-11-19 Ops Review) and scroll sideways on a narrower screen. Their promise-date
     // column became Expected end: the Work Orders' planned end, else the promise date, with the
     // promise under it when they differ. Its key stays p_promise, so a saved width carries over.
@@ -2283,7 +2283,7 @@
 
     // ---- the order board ----
 
-    // The build priority (v1.832.0, the 2026-11-19 Ops Review): which open product order to build
+    // The build priority (v1.831.0, the 2026-11-19 Ops Review): which open product order to build
     // first, 1 first. A product order has no Project, so it carries this instead of a job's company
     // and value-stream priority. It is kept on the Sales Order (custom_build_priority). For someone
     // who may change it, the rank is a button: clicking it opens a number box, and Enter or leaving
@@ -2300,7 +2300,7 @@
             `</td>`;
     }
 
-    // When the order should be done (v1.832.0): the latest planned end of a Work Order still being
+    // When the order should be done (v1.831.0): the latest planned end of a Work Order still being
     // built, else the promise date, and for a delivered order the day it went. The line under it
     // says which; "After promise" when the build's own plan runs past the promise. Late still
     // means past the promise and not delivered.
@@ -2345,7 +2345,7 @@
             </tr>`;
     }
 
-    // The build priority first (1 first, every unranked order after the ranked ones; v1.832.0),
+    // The build priority first (1 first, every unranked order after the ranked ones; v1.831.0),
     // then the soonest promise (undated last), then the order number. A late order's promise is
     // before today and an on-time one's is not, so among equals the late ones lead their stage.
     const build_rank = (o) => {

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Suggested reorder levels from real usage (v1.832.0). No Frappe, no I/O.
+"""Suggested reorder levels from real usage (v1.831.0). No Frappe, no I/O.
 
 From the 2026-11-19 operations review: Nik's next inventory job is setting reorder points, from
 what is actually used rather than a guess. The Reorder Board's **Reorder levels** tab shows, next to

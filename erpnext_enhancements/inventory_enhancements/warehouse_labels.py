@@ -12,7 +12,7 @@ rooms. A label printed under a name its warehouse no longer has must be printed 
 Inventory Room label is one: it opens the group that took the name, and Stock Scan says a label
 that opens a group is out of date.
 
-Since v1.833.0 it also reads the **rack QR sheet** (``www/rack-qr-sheet.html``, :func:`rack_sheets`):
+Since v1.831.0 it also reads the **rack QR sheet** (``www/rack-qr-sheet.html``, :func:`rack_sheets`):
 one printed page per rack listing each shelf's code with its position, to hang low beside a rack
 whose shelves are too high or too thin for a sticker. The same codes; the layout is
 :mod:`rack_sheet_rules`.

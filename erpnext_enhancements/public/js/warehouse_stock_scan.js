@@ -7,7 +7,7 @@
  * A location that can hold stock (not a group) gets "QR Label", which opens the print page
  * with just this warehouse, and "Open Stock Scan", which opens the page a technician lands
  * on when they scan that label — the quickest way to check a label before printing a sheet.
- * A group gets "Print QR Labels", every location beneath it, and (v1.833.0) "Rack QR Sheet": one
+ * A group gets "Print QR Labels", every location beneath it, and (v1.831.0) "Rack QR Sheet": one
  * printed page per rack listing each shelf's code with its position, to laminate and hang low beside a
  * rack whose shelves are too high or too thin for stickers (www/rack-qr-sheet.html). A group whose
  * Warehouse Map box is a Room prints a page for each rack in it.

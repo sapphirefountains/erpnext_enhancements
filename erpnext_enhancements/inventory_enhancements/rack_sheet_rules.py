@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The printable rack QR sheet: which racks, which shelves in what order, how big (v1.833.0). No Frappe.
+"""The printable rack QR sheet: which racks, which shelves in what order, how big (v1.831.0). No Frappe.
 
 From the 2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side
 blocks too thin, for a QR sticker. So each rack gets one printed page listing every shelf's QR code

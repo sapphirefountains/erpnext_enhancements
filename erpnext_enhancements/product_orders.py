@@ -24,7 +24,7 @@ without a bench:
   ones for 30 days, by their last non-return Delivery Note);
 * ``pending_stock_qty``, ``paid_state``, ``is_late``, ``is_open_quotation``,
   ``is_open_opportunity``, ``win_rate``, ``component_state``: the smaller facts the tab shows;
-* ``clean_build_priority``, ``order_percent_complete``, ``order_expected_end`` (v1.832.0, the
+* ``clean_build_priority``, ``order_percent_complete``, ``order_expected_end`` (v1.831.0, the
   2026-11-19 Ops Review): what a product order shows **instead of** a job's company and
   value-stream priority. A build priority, which of the open orders to build first, kept on the
   Sales Order (``custom_build_priority``); how far along it is, from its Work Orders and its
@@ -541,7 +541,7 @@ def is_late(delivery_date, today, stage):
 
 
 # ---------------------------------------------------------------------------------------------
-# Build priority, percent complete and expected end (v1.832.0)
+# Build priority, percent complete and expected end (v1.831.0)
 # ---------------------------------------------------------------------------------------------
 #
 # Weekly Operations Review, 2026-11-19: product orders, tracked by Sales Order number on the

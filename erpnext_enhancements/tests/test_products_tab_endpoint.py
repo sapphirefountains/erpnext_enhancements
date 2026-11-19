@@ -78,7 +78,7 @@ class Site:
 		self.raise_on = None
 		self.default_wip = None
 		self.settings = None  # Product Build Settings; None: the DocType is not installed
-		self.has_priority_column = True  # Sales Order.custom_build_priority (v1.832.0)
+		self.has_priority_column = True  # Sales Order.custom_build_priority (v1.831.0)
 		self.orders = {}  # set_build_priority's view of Sales Orders: name -> {docstatus, priority}
 		self.writes = []
 		self.comments = []
@@ -1035,7 +1035,7 @@ class TestTheTestingColumn(Base):
 
 
 class TestBuildPriorityProgressAndEnd(TestTheBoard):
-	"""What a product order shows instead of a job's company and value-stream priority (v1.832.0,
+	"""What a product order shows instead of a job's company and value-stream priority (v1.831.0,
 	the 2026-11-19 Ops Review): a build priority, a percent complete and an expected end."""
 
 	def test_the_build_priority_comes_from_the_sales_order_and_unranked_is_none(self):
@@ -1102,7 +1102,7 @@ class TestBuildPriorityProgressAndEnd(TestTheBoard):
 
 
 class TestSetBuildPriority(Base):
-	"""set_build_priority: the order board's one write (v1.832.0)."""
+	"""set_build_priority: the order board's one write (v1.831.0)."""
 
 	def setUp(self):
 		super().setUp()

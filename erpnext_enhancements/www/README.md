@@ -60,7 +60,7 @@ Several standalone web pages live here, separate from the heavy desk app:
   labels, one per stock-holding warehouse, server-rendered (`warehouse_labels.py` +
   `warehouse-labels.html`). See [its section below](#warehouse-labels--printable-qr-labels) —
   it has print settings that are not optional.
-- the **rack QR sheet** at **`/rack-qr-sheet`** (v1.833.0): one printed page per rack, every shelf's
+- the **rack QR sheet** at **`/rack-qr-sheet`** (v1.831.0): one printed page per rack, every shelf's
   Stock Scan code with its position, to hang beside a rack (`rack_qr_sheet.py` + `rack-qr-sheet.html`).
   See [its section below](#rack-qr-sheet--one-printed-page-per-rack-v18330).
 - the **customer rental portal** at **`/rentals`** (v1.565.0): the signed-in customer's rentals, with `?booking=` opening one (schedule, what is booked, invoices paid on `/pay`, site-prep and change-request forms). Login-gated: a guest is sent to `/login?redirect-to=` this page, query kept. Every lookup is ownership-checked in `asset_management/rental_portal.py` (`rentals.py` + `rentals.html`);
@@ -252,7 +252,7 @@ inventory_enhancements/bin_assignments.py   Move to… / Remove from this bin / 
   history that refuses any call with a URL, and the real `app.js` on a small fake DOM for the
   report form's sequences: nothing opens or navigates under it while it loads or is open).
 
-## `/rack-qr-sheet` — one printed page per rack (v1.833.0)
+## `/rack-qr-sheet` — one printed page per rack (v1.831.0)
 
 `rack-qr-sheet.html` + `rack_qr_sheet.py` (underscore, so Frappe imports it). Every shelf's Stock Scan
 code with its position, Shelf 1 at the top, one Letter page per rack, to laminate and hang beside a
