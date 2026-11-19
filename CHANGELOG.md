@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.833.0] - 2026-11-19
+
+### Added
+
+- **Rack QR sheet: one printed page per rack, every shelf's code with its position.** From the
+  2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+  too thin, for QR stickers. A new page, `/rack-qr-sheet?w=<rack>`, prints one Letter page per rack
+  to laminate and hang low beside it. The Warehouse form of any group has a new **Rack QR Sheet**
+  button (Stock Scan menu, beside Print QR Labels).
+  - **The same codes as the location labels.** Each encodes `<site>/stock-scan?w=<warehouse>`
+    (`stock_scan_rules.scan_url`), drawn as inline SVG by `qr_svg`, so a phone's camera or the
+    in-page scanner opens Stock Scan on that shelf, exactly as a sticker would.
+  - **Shelf 1 is the top shelf.** The rows are the rack's own children in the order a person sees
+    them (`Shelf NLR1-2` before `Shelf NLR1-10`), listed top to bottom. A location child (the Atrium
+    and Build Room shelves) is one shelf with one code. A group child (a bay's shelf) is one shelf
+    with a code for every location on it, left to right. Each row shows the shelf number, "Top
+    shelf" or "Bottom shelf", and each location's name under its code. Where the Warehouse Map
+    has a box for the rack, the box decides, as the map's front view does: *Shelf 1 is at the*
+    Bottom turns the rows over, *Bin 1 is at the* Right turns each row around, and the box's own
+    order comes first.
+  - **A room prints each rack.** A group whose map box is a Room (production's Atrium and Build
+    Room) prints a page for every group inside it that holds a location. So the Atrium's button
+    prints its six racks. Without a map, every group prints as one rack.
+  - **Sized for reading from a step back.** Codes are as large as the page allows, up to 1.8 in
+    (the two-shelf north racks) and never below 0.8 in. A busy shelf wraps, and a rack that cannot
+    fit on one page runs onto a second, never splitting a shelf (`rack_sheet_rules.layout`).
+    Disabled and Transit locations are left off, as on the labels.
+  - **Who.** The labels page's roles (`stock_scan_rules.LABEL_ROLES`). A signed-out visitor is sent
+    to log in and back to the same address. Server-rendered with `no_cache`, and the only script is
+    the Print button.
+  - **No endpoint, no schema change, no patch.** Pure rules in
+    `inventory_enhancements/rack_sheet_rules.py`; the read is `warehouse_labels.rack_sheets`. Tests:
+    `tests/test_rack_qr_sheet.py`, a new CI step that installs PyQRCode and Jinja2 so the real codes
+    and the template render.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

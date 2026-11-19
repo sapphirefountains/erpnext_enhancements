@@ -7,7 +7,10 @@
  * A location that can hold stock (not a group) gets "QR Label", which opens the print page
  * with just this warehouse, and "Open Stock Scan", which opens the page a technician lands
  * on when they scan that label — the quickest way to check a label before printing a sheet.
- * A group gets "Print QR Labels", every location beneath it.
+ * A group gets "Print QR Labels", every location beneath it, and (v1.833.0) "Rack QR Sheet": one
+ * printed page per rack listing each shelf's code with its position, to laminate and hang low beside a
+ * rack whose shelves are too high or too thin for stickers (www/rack-qr-sheet.html). A group whose
+ * Warehouse Map box is a Room prints a page for each rack in it.
  *
  * window.open rather than frappe.set_route: both are website routes (www/), not Desk
  * pages, and they print or run full-screen on their own.
@@ -32,6 +35,11 @@ frappe.ui.form.on("Warehouse", {
 			frm.add_custom_button(
 				__("Print QR Labels"),
 				() => window.open(`/warehouse-labels?under=${name}`, "_blank", "noopener"),
+				group
+			);
+			frm.add_custom_button(
+				__("Rack QR Sheet"),
+				() => window.open(`/rack-qr-sheet?w=${name}`, "_blank", "noopener"),
 				group
 			);
 			return;

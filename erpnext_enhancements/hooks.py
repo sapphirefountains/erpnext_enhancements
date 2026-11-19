@@ -179,7 +179,9 @@ doctype_js = {
 	# inventory (v1.521.0): the Warehouse form's doors to the QR label print page
 	# (/warehouse-labels) and to the Stock Scan page (/stock-scan) the label opens.
 	# A location gets "QR Label" + "Open Stock Scan"; a group gets "Print QR Labels"
-	# for everything beneath it. Both are www routes, so the buttons window.open them.
+	# for everything beneath it, and (v1.833.0) "Rack QR Sheet" (/rack-qr-sheet): one
+	# page per rack, each shelf's code with its position, to hang beside the rack.
+	# All are www routes, so the buttons window.open them.
 	"Warehouse": ["public/js/warehouse_stock_scan.js"],
 	# security: the Drive service-account key goes in through a dialog, not the
 	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a

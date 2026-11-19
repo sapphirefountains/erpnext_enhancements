@@ -4211,6 +4211,17 @@ jobs:
         run: |
           python -m pip install "PyQRCode~=1.2.1"
           python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v
+      # The printable rack QR sheet (v1.833.0, www/rack-qr-sheet.html): one page per rack, each
+      # shelf's Stock Scan code with its position, Shelf 1 at the top unless the Warehouse Map's box
+      # says otherwise, a Room box printing a page per rack inside it. The rows, the sizes, the read
+      # (the labels' own URL and QR drawing), the controller's login redirect and roles, the
+      # template rendered through Jinja over a stand-in for templates/web.html (names escaped, only
+      # the SVG marked safe), and the Warehouse form's button. PyQRCode draws the real codes and
+      # Jinja2 renders the template; both are installed here so those halves run instead of skip.
+      - name: Rack QR sheet (bench-free)
+        run: |
+          python -m pip install "PyQRCode~=1.2.1" "Jinja2>=3.1"
+          python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v
       # Stock Scan's surface, asserted on the source because there is no bench in CI to post
       # a voucher against. Guards the class of bug where a phone moves stock nobody could move
       # in the Desk, or moves it twice: every endpoint POST-only, never guest, role-checked
