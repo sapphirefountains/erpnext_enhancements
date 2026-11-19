@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.832.0] - 2026-11-19
+
+### Added
+
+- **Product orders on the Products tab's order board get a build priority, a percent complete and
+  an expected end.** These take the place of a job's company and value-stream priority. James and
+  Nik asked for them at the 2026-11-19 Weekly Operations Review. A product order is tracked by its
+  Sales Order number and has no Project, so the three facts are kept on or worked out from the
+  Sales Order and its Work Orders.
+  - **Build priority** says which open product order to build first, 1 first.
+    - **Storage:** a new Custom Field, `Sales Order.custom_build_priority` ("Build Priority", Int,
+      allowed on submit, not copied, hidden on print). It sits after Fulfillment, so it can also be
+      set from the order's own form.
+    - **Setting it:** on the board, someone who may write Sales Orders clicks the rank. A number box
+      opens; Enter or leaving the box saves, blank clears, and Escape cancels.
+    - **The save** goes to a new POST endpoint, `project_dashboard.set_build_priority`. It checks:
+      - the page gate;
+      - write on that Sales Order (Sales User has it; so do Logan, Brian, James, Nathan and Nikolas);
+      - that the value is a whole number from 1 to 999, or blank;
+      - that the order isn't cancelled.
+    - **The write** is a `db.set_value` that leaves `modified` alone. A full save of a submitted
+      order would run its whole update-after-submit chain for one number, and anyone with the order
+      open would hit "Document has been modified". The change goes on the order's timeline as a
+      comment that names the old and new rank.
+    - **Sorting:** within each stage, ranked orders come first, 1 first, then the promise date as
+      before.
+  - **Percent complete** (`product_orders.order_percent_complete`). The build is 80 of the 100 and
+    the delivery the last 20.
+    - The build share is the units produced over the units on the order's submitted Work Orders.
+      Drafts and cancelled Work Orders don't count, as in the stage rule.
+    - A built order (Ready or Testing) has the whole build share.
+    - A delivered unit always counts as built.
+    - Examples: nothing released is 0, half built is 40, built and waiting is 80, one of two units
+      delivered with the other built is 90, delivered is 100.
+  - **Expected end** (`product_orders.order_expected_end`):
+    - for an order being built, the latest planned end of its Work Orders that are still running;
+    - otherwise the promise date;
+    - for a delivered order, the day it was delivered.
+
+    A note under the date says which. An "After promise" chip shows when the Work Order plan runs
+    past the promise. "Late" still means past the promise and not delivered. This column took the
+    Promise date column's place, keeps its saved width (`p_promise`), and shows the promise
+    underneath whenever the two dates differ. ERPNext fills `planned_end_date` from the routing, and
+    prod has no workstations yet, so until it has, the date shown is the promise.
+- The endpoint reads the new column only once it exists (`has_column`). Until the fixture lands, the
+  board shows every order unranked and offers no editing.
+
+### Deploy notes
+
+- **Migrate effect:** one new Custom Field on Sales Order. No patch; an Int column's default of 0
+  is "not ranked", which is the right value for every existing order. No data is written.
+- Prod has almost no product orders yet, so all of this is tested on stubs: rules, endpoint and the
+  board script in the node harness.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
