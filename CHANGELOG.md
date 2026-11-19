@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.8] - 2026-11-19
+
+### Changed
+
+- **Applying a workflow action over HTTP now requires POST (hardening).** The field-level-read
+  wrapper for `frappe.model.workflow.apply_workflow` declares `methods=["POST"]`, the request the
+  Desk's form toolbar already sends (`frappe.xcall`). The emailed approval link and the bulk
+  approval run the transition in process and are unaffected. `tests/test_fieldlevel_read.py`
+  still holds every other wrapper's methods equal to Frappe's, records this one as deliberately
+  narrower, and fails if any wrapper answers a request type Frappe's own does not. The endpoint
+  leaves the whitelist-methods baseline (`BASELINE_CEILING` 356 to 355).
+- **The feedback rate counters set their window again when they find none.** The per-person
+  filing and draft counters in `api/feedback.py` now set the expiry on the first call and again
+  whenever the counter exists without one, the same rule `utils/user_rate_limit.py` and
+  `carrier_tracking/tracking.py` apply, so a counter whose first expiry was lost cannot outlive
+  its window. New cases in `tests/test_feedback_capture_intake.py` run both counters against a
+  cache whose first expiry is dropped.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

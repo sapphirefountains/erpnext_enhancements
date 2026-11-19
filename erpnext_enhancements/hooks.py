@@ -3504,8 +3504,8 @@ override_whitelisted_methods = {
 	# level-1 values back. Each override calls frappe's own function unchanged and scrubs what
 	# it produced; stored Versions are never touched. The REST twins (/api/resource,
 	# /api/v2/document) are routes no override can reach: see `after_request` below. The
-	# signatures and HTTP methods mirror frappe's and tests/test_fieldlevel_read.py pins
-	# them. See fieldlevel_read.py.
+	# signatures and HTTP methods mirror frappe's (apply_workflow is narrower: POST only) and
+	# tests/test_fieldlevel_read.py pins them. See fieldlevel_read.py.
 	"frappe.desk.form.load.getdoc": "erpnext_enhancements.fieldlevel_read.getdoc",
 	"frappe.desk.form.load.get_docinfo": "erpnext_enhancements.fieldlevel_read.get_docinfo",
 	"frappe.desk.form.save.savedocs": "erpnext_enhancements.fieldlevel_read.savedocs",
