@@ -27,7 +27,10 @@ expired link as simply absent.
    Whether it applies is decided by the server from its own configuration: the
    verdict comes from ``turnstile.verify`` alone, never from a value the page sends.
    A request that carries no bot-check token goes on to the emailed code, which is the
-   identity check, under the same limits; a token that is sent and fails is refused,
+   identity check, under the same limits; a token that is sent and fails is refused.
+   The verdict belongs to the latest ``begin_signing`` call of a session, so the bot
+   check is a signal recorded on the evidence, not a gate: what the page relies on is
+   the single-use link, the emailed code and the limits on sending and entering codes,
 4. the contract still being submitted, unsigned and not void — re-read under a row
    lock inside the transaction, which is what makes two simultaneous signers safe.
 
