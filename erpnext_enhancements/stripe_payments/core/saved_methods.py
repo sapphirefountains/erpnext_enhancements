@@ -440,7 +440,14 @@ def automatic_charge_allowed(sales_invoice, amount=None, currency=None) -> bool:
 	reason = automatic_charge_hold(sales_invoice, amount, currency)
 	if reason is None:
 		return True
-	note_automatic_charge_held(sales_invoice, reason)
+	try:
+		note_automatic_charge_held(sales_invoice, reason)
+	except Exception:
+		# The note is for the people reading the invoice; the refusal stands without it, and
+		# a note that cannot be written must never fail the invoice's own submit.
+		frappe.log_error(
+			title="Stripe: autopay held note failed", message=error_snippet(frappe.get_traceback())
+		)
 	return False
 
 
@@ -465,7 +472,7 @@ def automatic_charge_hold(sales_invoice, amount=None, currency=None) -> str | No
 		)
 		from_agreement = False
 	if not from_agreement:
-		return "it was not billed from a maintenance agreement"
+		return "no maintenance agreement visit is linked to it"
 	if amount is None:
 		amount = frappe.db.get_value("Sales Invoice", sales_invoice, "outstanding_amount")
 	if flt(amount, 2) > flt(limit, 2):

@@ -5703,7 +5703,7 @@ def test_pay_card_offers_the_invoice_pdf_in_every_state_that_names_an_invoice():
 # --- autopay scope: which invoices are charged automatically ----------------------------------
 
 HELD_NO_LIMIT = "no automatic payment limit is set in Stripe Payments Settings"
-HELD_NOT_AGREEMENT = "it was not billed from a maintenance agreement"
+HELD_NOT_AGREEMENT = "no maintenance agreement visit is linked to it"
 #: A visit on maintenance agreement AGR-1 whose billing generated SINV-1.
 AGREEMENT_VISIT = {"name": "VISIT-1", "sales_invoice": "SINV-1", "maintenance_contract": "AGR-1"}
 
