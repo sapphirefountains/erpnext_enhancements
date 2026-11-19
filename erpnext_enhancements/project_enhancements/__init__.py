@@ -1104,10 +1104,11 @@ def _job_sites_ready():
 @frappe.whitelist()
 def get_project_comments(project_name):
 	"""
-	Retrieves standard comments for a given project.
+	Retrieves standard comments for a given project. Requires read permission on the Project.
 	"""
 	if not project_name:
 		return []
+	frappe.has_permission("Project", "read", doc=project_name, throw=True)
 
 	# Fetch standard comments linked to the project
 	comments = frappe.get_all(
@@ -1150,13 +1151,16 @@ def get_project_comments(project_name):
 	return comments
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_comment(project_name, comment_text):
 	"""
-	Adds a standard comment to a project.
+	Adds a standard comment to a project. Requires read permission on the Project, the same
+	right the Desk's own comment box asks for; the Comment row itself is then inserted with
+	``ignore_permissions``.
 	"""
 	if not project_name or not comment_text:
 		frappe.throw(_("Project name and comment text are required."))
+	frappe.has_permission("Project", "read", doc=project_name, throw=True)
 
 	doc = frappe.new_doc("Comment")
 	doc.comment_type = "Comment"
@@ -1178,7 +1182,7 @@ def add_project_comment(project_name, comment_text):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_project_comment(project_name, comment_name):
 	"""
 	Deletes a comment if the user is the owner.
@@ -1201,7 +1205,7 @@ def delete_project_comment(project_name, comment_name):
 		return {"success": False, "error": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_comment(project_name, comment_name, comment_text):
 	if not comment_name or not comment_text:
 		frappe.throw(_("Comment name and comment text are required."))

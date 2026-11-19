@@ -57,6 +57,7 @@ function check(label, actual, expected) {
 	check('two in one line', scrubText('x@y.io and z@w.org'), '[email] and [email]');
 
 	console.log('\ntokens');
+	// The token below is the public jwt.io sample, FAKE-DO-NOT-USE.
 	const jwt =
 		'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
 	check('JWT', scrubText('Bearer ' + jwt + ' rejected'), 'Bearer [token] rejected');
@@ -67,6 +68,7 @@ function check(label, actual, expected) {
 		'[token]'
 	);
 	check('uuid', scrubText('id 550e8400-e29b-41d4-a716-446655440000.'), 'id [token].');
+	// The key and secret below are made-up hex, FAKE-DO-NOT-USE.
 	check('api_key:api_secret pair', scrubText('Authorization: token 1a2b3c4d5e6f7a8:9f8e7d6c5b4a392'), 'Authorization: token [token]');
 	check('base64 basic auth', scrubText('Basic YWJjZGVmMDEyMzQ1Njc4OjlmOGU3ZDZjNWI0YTM5Mg=='), 'Basic [token]');
 	check('base64 with a slash', scrubText('key q8Zr/Kd93LmPx2Vb7Tn4Wq+J1sHf0Ye=='), 'key [token]');

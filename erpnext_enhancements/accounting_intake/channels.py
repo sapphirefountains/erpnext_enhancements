@@ -147,7 +147,7 @@ def _move_file(service, file_id, from_folder, to_folder):
 # --- Mobile channel ------------------------------------------------------
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def ingest_mobile_photo(file_url, document_type=None):
 	"""Mobile capture: ingest a photo/scan uploaded from a phone."""
 	if not (set(frappe.get_roles()) & _MOBILE_ROLES):

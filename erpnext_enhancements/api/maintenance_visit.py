@@ -16,9 +16,10 @@ governs who may edit/advance which state, same as the desk form.
 import frappe
 from frappe import _
 
+# The unchecked builders: every endpoint here checks the visit itself first (_get_record).
 from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
-    get_dashboard_context,
-    get_visit_payload,
+    build_dashboard_context,
+    build_visit_payload,
 )
 
 # A visit by its v1.610.0 name or the random one it had before (patches/rename_hash_named_visits.py).
@@ -363,7 +364,7 @@ def get_visit_bootstrap(record):
     write and the section tables are empty, the resolved template is
     instantiated **and saved** here so every row has a real ``name`` for
     :func:`save_visit` to patch (the desk form instantiates client-side
-    instead — both go through ``get_visit_payload``).
+    instead — both go through ``build_visit_payload``).
 
     Returns:
         dict: {"record": full doc dict, "dashboard": on-site briefing
@@ -381,7 +382,7 @@ def get_visit_bootstrap(record):
 
     # First open of a bare scheduler draft: instantiate the template's rows.
     if can_write and not any(doc.get(table) for table in PAYLOAD_TABLE_MAP):
-        payload = get_visit_payload(
+        payload = build_visit_payload(
             project=doc.project,
             serial_no=doc.serial_no,
             maintenance_contract=doc.maintenance_contract,
@@ -425,7 +426,7 @@ def get_visit_bootstrap(record):
     return {
         "record": doc.as_dict(),
         # With the record: the "Last visit here" card on the Safety step (v1.596.0).
-        "dashboard": get_dashboard_context(doc.project, doc.serial_no, record=doc.name) if doc.project else {},
+        "dashboard": build_dashboard_context(doc.project, doc.serial_no, record=doc.name) if doc.project else {},
         "sections": _section_meta(doc),
         "template_meta": _template_meta(doc.get("template")),
         "features": _feature_names(doc),
@@ -597,7 +598,7 @@ def _template_meta(template):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_visit(record, patch, modified=None):
     """Apply a wizard step's changes and return the re-validated state.
 
@@ -665,7 +666,7 @@ def save_visit(record, patch, modified=None):
     return state
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def finish_visit(record, signature=None, modified=None, technician_signature=None, email_sign_off=None):
     """Finish the visit: sign off and advance it through the house workflow.
 
@@ -875,7 +876,7 @@ def get_upcoming_visits(days=UPCOMING_WINDOW_DAYS):
     return entries
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_visit_today(contract, serial_no=None):
     """Create a draft visit record now for a feature scheduled later.
 
@@ -1020,7 +1021,7 @@ def _date_existing_draft(name, visit_date):
             pass
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_visit(contract, serial_no=None, visit_date=None):
     """Start a visit record for a site on a chosen date — today, or backfilled.
 

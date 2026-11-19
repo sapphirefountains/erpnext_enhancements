@@ -1,4 +1,4 @@
-// Work Order: the Build Checklist door (v1.826.0, product_fulfillment, TASK-2026-03229).
+// Work Order: the Build Checklist door (v1.828.0, product_fulfillment, TASK-2026-03229).
 //
 // A Work Order for a configured product carries its configuration's build steps
 // (custom_build_steps, copied when it was made) and who is building it (custom_built_by). This

@@ -160,7 +160,7 @@ def _grant_role(user_name):
 # ---------------------------------------------------------------------- grant
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def grant_portal_access(contact, send_welcome_email=0):
 	"""Refuse, with the reason. The surface this minted a login for no longer exists.
 
@@ -234,7 +234,7 @@ def grant_portal_access(contact, send_welcome_email=0):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_portal_access(contact=None, user=None):
 	"""Take the Training Learner role away again.
 

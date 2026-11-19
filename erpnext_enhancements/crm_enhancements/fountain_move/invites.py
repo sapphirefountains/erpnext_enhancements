@@ -45,7 +45,7 @@ MAX_INVITES_PER_HOUR = 40
 TEMPLATE = "erpnext_enhancements/templates/emails/crm_enhancements/fountain_intake_invite.html"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=MAX_INVITES_PER_HOUR, seconds=3600, methods=["POST"])
 def send_intake_link(
 	recipient_email,
@@ -95,7 +95,7 @@ def send_intake_link(
 	return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def resend_intake_link(invite_name):
 	"""Send the same link again, extending its life. Keeps the original token
 	so a customer who kept the first email is not left with a dead link."""
@@ -117,7 +117,7 @@ def resend_intake_link(invite_name):
 	return {"sent": True, "via": "email", "to": invite.recipient_email}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_intake_link(invite_name):
 	"""Stop attributing submissions to this invite."""
 	frappe.only_for(INTAKE_ROLES)

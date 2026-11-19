@@ -1,4 +1,4 @@
-// Sales Order: Make Work Orders for configured products (v1.826.0, product_fulfillment).
+// Sales Order: Make Work Orders for configured products (v1.828.0, product_fulfillment).
 //
 // Submitting a product order already plans its configured lines (build.on_sales_order_submit): one
 // Work Order per unit to build, or finished units from the shelf. This button runs the same plan

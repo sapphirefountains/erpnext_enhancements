@@ -1,4 +1,4 @@
-"""Build, test and ship a product unit: the wiring (v1.826.0, TASK-2026-03229 / -03230).
+"""Build, test and ship a product unit: the wiring (v1.828.0, TASK-2026-03229 / -03230).
 
 ``test_product_fulfillment_rules.py`` holds the decisions. This suite holds the pieces around them
 that fail without a word:

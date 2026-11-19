@@ -41,7 +41,17 @@ the bare marker string appears in two legitimate places here (a test fixture, an
 PEM block and `private_key_id` alongside it.
 
 A PEM private-key header is the one rule with no qualification. There is no benign reason
-for one to be in this repository.
+for one to be in this repository, and it is the one rule the fixture marker below cannot
+excuse: a test that needs PEM-shaped data assembles it at run time from fragments, the way
+this file does.
+
+Beside those, :data:`TOKEN_RULES` match credentials that carry their own shape wherever they
+appear (Stripe live and webhook keys, Google API keys, AWS access keys, GitHub and Slack
+tokens, JWTs, ``token key:secret`` pairs, ``user:pass@`` URLs, a Twilio auth token beside the
+word), and :data:`PASSWORD_RULES` match a ``password``-family assignment or command-line
+option with a literal value in documentation and configuration files (source code is left
+to review, where ``password = form.password`` is the normal shape). ``encryption_key`` is
+one more keyword rule in :data:`VALUE_RULES`.
 
 The known failure mode of a script like this is **passing because the pattern is wrong**, so:
 
@@ -66,6 +76,29 @@ nobody opens. The *whole-file* form of that marker only counts under ``tests/`` 
 header saying "fake" above a real key is the cheapest way to blind this script.
 ``ALLOWLISTED_PATHS`` exists for the case that mechanism cannot cover and ships empty;
 see the note there before adding to it.
+
+Reviewed historical blobs
+-------------------------
+
+A marker cannot be added to a blob that is already in history: nobody can edit it. So when a
+rule is added and old versions of a file match it, the full walk would be red for good, and a
+gate that cannot go green gets ignored. ``scripts/secret_scan_reviewed_blobs.txt`` lists such
+blobs by their full git hash, each with a note, after a person has read every finding in them.
+
+It is narrow on purpose:
+
+  * it is keyed on **content**, never on a path: a blob that differs by one byte is not on it,
+    so the current file and every future version are still read by every rule;
+  * it is read by the **full walk only**. The working tree, the staged files and the PR range
+    never consult it, so nothing a pull request adds can be excused by it;
+  * a listed blob that is also in ``HEAD``'s tree is **not** excused: the list covers history;
+  * an entry that excuses nothing (the blob is gone, or is clean under today's rules) **fails
+    the run**, so the list only ever holds what it needs;
+  * a listed blob is never recorded in the clean-blob cache. Take its line out and the next run
+    reports it again.
+
+Listing a blob says its findings were read. It does not say the values in it are harmless:
+where one was a real credential, rotating it is still the fix.
 
 Three modes, one set of rules
 -----------------------------
@@ -162,6 +195,13 @@ FILE_LEVEL_MARKER_DIRS = frozenset({"tests", "test", "fixtures"})
 #: value attached — if so, the rule is what needs fixing.
 ALLOWLISTED_PATHS: dict[str, str] = {}
 
+#: Where the reviewed historical blobs are listed, relative to the repository being scanned.
+#: One per line: the blob's full 40-character hash, then a note. See the module docstring.
+REVIEWED_BLOBS_REL = "scripts/secret_scan_reviewed_blobs.txt"
+
+#: A line of that file: the hash, whitespace, and a note long enough to mean something.
+_REVIEWED_LINE_RE = re.compile(r"^([0-9a-f]{40})\s+(\S.{9,})$")
+
 #: Blobs larger than this are reported as skipped rather than scanned. A credential is a
 #: few kilobytes; the cap exists so one pathological text file cannot turn a CI gate into a
 #: timeout. Skips are counted and printed.
@@ -239,7 +279,132 @@ VALUE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 		re.compile(r"""["']?[a-z0-9_]*client_secret["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
 		"an OAuth client secret. Field NAMES are fine; a value is not",
 	),
+	(
+		"encryption_key",
+		re.compile(r"""["']?[a-z0-9_]*encryption_key["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
+		"the key that decrypts every stored Password field. Field NAMES are fine; a value is not",
+	),
 )
+
+#: Credentials recognisable by their own shape, with no keyword needed beside them. Each is
+#: `(name, regex, why it matters)`; the whole match is the candidate value, and
+#: :func:`_is_placeholder` waves through the obvious stand-ins (a run of ``x``).
+#: The prefixes are the providers' published formats.
+TOKEN_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"stripe-live-key",
+		re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{16,}"),
+		"a live Stripe secret or restricted key",
+	),
+	(
+		"stripe-webhook-secret",
+		re.compile(r"\bwhsec_[A-Za-z0-9]{16,}"),
+		"a Stripe webhook signing secret",
+	),
+	(
+		"google-api-key",
+		re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+		"a Google API key",
+	),
+	(
+		"aws-access-key",
+		re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+		"an AWS access key id",
+	),
+	(
+		"github-token",
+		re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})"),
+		"a GitHub token",
+	),
+	(
+		"slack-token",
+		re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+		"a Slack token",
+	),
+	(
+		"jwt",
+		re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+		"a signed JWT",
+	),
+	(
+		"token-key-secret-pair",
+		re.compile(r"\btoken\s+[A-Za-z0-9]{12,}:[A-Za-z0-9]{12,}\b", re.IGNORECASE),
+		"an API key and secret in the `Authorization: token key:secret` form",
+	),
+	(
+		"url-with-password",
+		re.compile(r"""\b[a-z][a-z0-9+.\-]*://[^\s/:@"'<>\[\]{}$]+:([^\s/@"'<>\[\]{}$%]{3,})@[^\s/"'<>]+""", re.IGNORECASE),
+		"a URL with a literal password in its user:pass@ part",
+	),
+	(
+		"twilio-auth-token",
+		re.compile(r"twilio[^\n]{0,60}?(?<![0-9A-Za-z])[0-9a-f]{32}(?![0-9A-Za-z])", re.IGNORECASE),
+		"a 32-character hex string beside the word twilio, the shape of an auth token",
+	),
+)
+
+#: Words a documentation table or comment writes where a password would go. Compared whole and
+#: lower-cased, after :func:`_is_placeholder` has had its say.
+PASSWORD_STOPWORDS = frozenset(
+	{
+		"password", "passwd", "required", "optional", "secret", "hidden", "masked", "string",
+		"none", "null", "false", "true", "unset", "empty", "blank", "anything", "whatever",
+		"stored", "provided", "enabled", "disabled", "random", "generated", "automatic",
+	}
+)  # fmt: skip
+
+#: Characters that make a value an expression (a call, an interpolation, a template hole, a
+#: list) rather than a literal.
+_PASSWORD_NOT_LITERAL = r"""\s"'`$<>{}()\[\],;\\|&"""
+
+#: A password-sized literal: quoted or bare, six or more characters, in the named group ``pv1``
+#: (quoted) or ``pv2`` (bare); :func:`_password_value` reads whichever fired.
+_PASSWORD_VALUE = (
+	r"""(?:["'`](?P<pv1>[^""" + _PASSWORD_NOT_LITERAL + r"""]{6,})["'`]|"""
+	r"""(?P<pv2>[^""" + _PASSWORD_NOT_LITERAL + r"""*\-][^""" + _PASSWORD_NOT_LITERAL + r"""*]{5,}))"""
+)
+
+#: The name half of a password assignment: any identifier ending in ``password`` / ``passwd``
+#: (``db_password``, ``MYSQL_ROOT_PASSWORD``), as its own token. Group ``key``. Unquoted, it may not
+#: follow a quote, a colon or a slash (that is a sentence quoting a label, or ``user:password``);
+#: quoted, both quotes must be there (a JSON key).
+_PASSWORD_KEY = (
+	r"""(?:(?<![\w.\-:/"'])(?P<key>[A-Za-z0-9_.\-]*(?:password|passwd))\**"""
+	r"""|(?P<q>["'])(?P<qkey>[A-Za-z0-9_.\-]*(?:password|passwd))(?P=q))"""
+)
+
+#: ``password`` / ``passwd`` (with any prefix: ``db_password``, ``MYSQL_ROOT_PASSWORD``) assigned a
+#: literal with ``:`` or ``=``, the same in a Markdown table cell, the command-line option form
+#: (``--admin-password VALUE``), and a database client's ``-pVALUE``. Only applied outside
+#: source-code files: see :data:`CODE_SUFFIXES`. A bare ``password`` in running prose is judged
+#: by :func:`_is_prose_password`.
+PASSWORD_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"password-assignment",
+		re.compile(_PASSWORD_KEY + r"""\s*[:=]\**\s*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal. Say where it is stored instead",
+	),
+	(
+		"password-table-cell",
+		re.compile(r"""\|[^|\n]*?[A-Za-z][ \t]+(?P<key>(?:password|passwd))\**[ \t]*\|[ \t]*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal in a table row (a label cell, then the value). Say where it is stored instead",
+	),
+	(
+		"password-option",
+		re.compile(r"--[a-z0-9-]*(?:password|passwd)(?:=|\s+)" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password passed as a literal on a command line. Say where it is stored instead",
+	),
+	(
+		"database-client-password",
+		re.compile(r"""\b(?:mysql|mysqldump|mariadb|mariadb-dump)\b[^\n]*?\s-p["']?(?P<pv1>[^\s"'$<>]{4,})""", re.IGNORECASE),
+		"a database client password written into the command line",
+	),
+)
+
+#: Source-code files are left out of :data:`PASSWORD_RULES`: in code, ``password = form.password`` and
+#: ``password: str`` are the normal shapes, and a hard-coded one is a review comment. Documentation,
+#: configuration and scripts are where a pasted password actually lands.
+CODE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".cjs", ".ts", ".vue", ".html", ".jinja", ".css", ".scss"})
 
 #: A long unbroken base64 run — the shape of a key, a token or a signed blob.
 BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{64,}={0,2}")
@@ -264,6 +429,17 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 	"sample",
 )
 
+#: The digits and the alphabet in the orders people type them, for :func:`_is_typed_run`.
+TYPED_RUNS: tuple[str, ...] = (
+	"1234567890abcdefghijklmnopqrstuvwxyz",
+	"0123456789abcdefghijklmnopqrstuvwxyz",
+	"abcdefghijklmnopqrstuvwxyz1234567890",
+	"abcdefghijklmnopqrstuvwxyz0123456789",
+)
+
+#: How long a typed-out run must be before the value counts as a stand-in.
+TYPED_RUN_LENGTH = 20
+
 #: An expression that *refers* to a secret rather than being one: a dotted attribute
 #: chain, which is how HCL, Python and JS all reach for a value held somewhere else
 #: (``google_iap_client.iap_client.secret``, ``process.env.CLIENT_SECRET``). Only the
@@ -272,7 +448,7 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 #:
 #: Segments are length-capped because a JWT is dot-separated too, and a JWT is a
 #: credential. Its segments run to hundreds of characters; an identifier does not.
-_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_]{0,39})+$")
+_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_-]{0,39})+$")
 
 #: Extensions whose contents are compiled or minified and produce base64-shaped noise.
 #:
@@ -314,10 +490,25 @@ class Finding:
 # --------------------------------------------------------------------------- scanning
 
 
+def _is_typed_run(lowered: str) -> bool:
+	"""Does this value hold the digits and the alphabet typed out in order?
+
+	``1234567890abcdefghijklmnopqrstuvwxyz`` behind a provider's prefix is what somebody types
+	where a token would go. :data:`TYPED_RUN_LENGTH` characters of it in a row is not something a
+	generated credential contains, so the value is a stand-in whatever surrounds the run.
+	"""
+	for start in range(len(lowered) - TYPED_RUN_LENGTH + 1):
+		piece = lowered[start : start + TYPED_RUN_LENGTH]
+		if any(piece in run for run in TYPED_RUNS):
+			return True
+	return False
+
+
 def _is_placeholder(value: str, key_name: str = "") -> bool:
 	"""Is this value a stand-in rather than a credential?
 
-	Five ways to be one, and the last two were learned from this repository's own contents:
+	Six ways to be one. The typed-out run is checked with the named tokens (see
+	:func:`_is_typed_run`), and the last two were learned from this repository's own contents:
 
 	1. it names itself a placeholder (:data:`PLACEHOLDER_TOKENS`);
 	2. it is an interpolation or a template hole (``${…}``, ``{{…}}``, ``<…>``);
@@ -341,6 +532,8 @@ def _is_placeholder(value: str, key_name: str = "") -> bool:
 		return True
 	if any(token in lowered for token in PLACEHOLDER_TOKENS):
 		return True
+	if _is_typed_run(lowered):
+		return True
 	if value.startswith(("${", "{{", "<", "$(")) or value.endswith(("}", ">")):
 		return True
 	if _REFERENCE_RE.match(value):
@@ -357,6 +550,112 @@ def _value_of(match: re.Match[str]) -> str:
 	to close.
 	"""
 	return match.group(1) or match.group(2) or ""
+
+
+#: A substring every match of a rule must contain (lower case). A line without one skips the
+#: rule's regex outright. The full walk reads gigabytes of text (every version of the
+#: changelog), and the provider and password rules doubled its time without this, which is
+#: longer than the CI job allowed. Each entry is a necessary part of its rule's pattern, so the
+#: findings are the same with or without it; ``test_secret_scan`` holds that for every rule.
+#: The three rules the walk had before are not listed and always run.
+_QUICK_TRIGGERS: dict[str, tuple[str, ...]] = {
+	"encryption_key": ("encryption_key",),
+	"stripe-live-key": ("_live_",),
+	"stripe-webhook-secret": ("whsec_",),
+	"google-api-key": ("aiza",),
+	"aws-access-key": ("akia", "asia"),
+	"github-token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+	"slack-token": ("xox",),
+	"jwt": ("eyj",),
+	"token-key-secret-pair": ("token",),
+	"url-with-password": ("://",),
+	"twilio-auth-token": ("twilio",),
+	"password-assignment": ("passw",),
+	"password-table-cell": ("passw",),
+	"password-option": ("passw",),
+	"database-client-password": ("mysql", "mariadb"),
+}
+
+
+def _active_rules(lowered_text: str) -> frozenset[str]:
+	"""The :data:`_QUICK_TRIGGERS` rules whose substring occurs anywhere in this file or blob."""
+	return frozenset(
+		rule
+		for rule, triggers in _QUICK_TRIGGERS.items()
+		if any(trigger in lowered_text for trigger in triggers)
+	)
+
+
+def _may_match(rule: str, lowered_line: str, active: frozenset[str]) -> bool:
+	"""False when the file or the line lacks the substring the rule needs, so its regex cannot match."""
+	triggers = _QUICK_TRIGGERS.get(rule)
+	if triggers is None:
+		return True
+	return rule in active and any(trigger in lowered_line for trigger in triggers)
+
+
+def _token_of(rule: str, match: re.Match[str]) -> str:
+	"""The candidate a :data:`TOKEN_RULES` match is judged on: the password part of a URL, else the match."""
+	if rule == "url-with-password":
+		password = match.group(1)
+		# A name where a password goes (``user:pass@``, ``user:password@``) is documentation.
+		return "placeholder" if password.lower() in PASSWORD_STOPWORDS | {"pass", "pwd"} else password
+	if rule == "jwt":
+		# Dotted like an attribute chain, which _is_placeholder reads as a reference; a JWT is not one.
+		return match.group(0).replace(".", "~")
+	if rule in ("stripe-live-key", "stripe-webhook-secret"):
+		# Judge the part after the prefix, so ``sk_live_`` plus a run of zeros reads as the stand-in it is.
+		return match.group(0).split("_", 2)[-1]
+	return match.group(0)
+
+
+def _is_password_placeholder(value: str) -> bool:
+	"""Is this password-rule value a stand-in? The usual placeholders, plus the words a table writes."""
+	lowered = value.lower().strip(".,:")
+	if lowered in PASSWORD_STOPWORDS or lowered.startswith("-"):
+		return True
+	return _is_placeholder(value)
+
+
+def _password_value(match: re.Match[str]) -> str:
+	"""The literal a :data:`PASSWORD_RULES` match found, quoted form or bare."""
+	return match.group("pv1") or match.group("pv2") or ""
+
+
+def _is_prose_password(line: str, match: re.Match[str]) -> bool:
+	"""Is this the English word "password" in a sentence, rather than a name in a config line?
+
+	A compound identifier (``db_password``, ``--admin-password``, a quoted JSON key) is a
+	configuration key wherever it stands. The bare word is ambiguous, so it counts as an
+	assignment only when it sits near the front of its line (a list item, a label, a table row:
+	at most three words before it), which is where ``Root password: value`` lives and
+	``the field stored behind the password: present`` does not.
+	"""
+	key = match.groupdict().get("key")
+	if not key or key.lower() not in ("password", "passwd"):
+		return False
+	before = line[: match.start("key")]
+	return len(re.findall(r"[A-Za-z]\w*", before)) > 3
+
+
+def _is_sudoers_tag(match: re.Match[str]) -> bool:
+	"""Is this the sudoers tag ``NOPASSWD:``, which is followed by a command and not a password?
+
+	``deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart …`` reads to the assignment rule as a
+	name ending in ``passwd`` with a value after the colon. The tag means the opposite of a
+	credential: no password is asked for. Upper case only, as sudoers writes it.
+	"""
+	return match.groupdict().get("key") == "NOPASSWD"
+
+
+def _is_code_path(where: str) -> bool:
+	"""Is this a source-code file, which :data:`PASSWORD_RULES` leave to review?
+
+	``where`` may carry a ``" (blob <sha>)"`` suffix; an unreachable blob has no path and is
+	read as configuration, which is the stricter reading.
+	"""
+	path = where.split(" (blob ", 1)[0].lower()
+	return any(path.endswith(suffix) for suffix in CODE_SUFFIXES)
 
 
 def _clip(text: str, width: int = 120) -> str:
@@ -421,26 +720,32 @@ def scan_text(where: str, text: str) -> list[Finding]:
 
 	findings: list[Finding] = []
 	lines = text.splitlines()
-	if _has_file_level_marker(where, lines):
-		return []
-	has_key_material = bool(KEY_MATERIAL_RE.search(text))
 
+	# The PEM rule runs first and answers to neither form of FAKE_MARKER: a header or a
+	# neighbouring comment saying "fake" cannot make a private-key block acceptable.
 	for index, line in enumerate(lines):
-		window = _window(lines, index)
-		if FAKE_MARKER in window:
-			continue
-		line_no = index + 1
-
 		if PEM_RE.search(line):
 			findings.append(
 				Finding(
 					"pem-private-key",
 					"a PEM private-key block. There is no benign reason for one to be here",
 					where,
-					line_no,
+					index + 1,
 					_clip(line),
 				)
 			)
+
+	if _has_file_level_marker(where, lines):
+		return findings
+	has_key_material = bool(KEY_MATERIAL_RE.search(text))
+	active = _active_rules(text.lower())
+	check_passwords = not _is_code_path(where)
+
+	for index, line in enumerate(lines):
+		window = _window(lines, index)
+		if FAKE_MARKER in window:
+			continue
+		line_no = index + 1
 
 		if SERVICE_ACCOUNT_RE.search(line) and has_key_material:
 			findings.append(
@@ -453,10 +758,34 @@ def scan_text(where: str, text: str) -> list[Finding]:
 				)
 			)
 
+		lowered = line.lower() if active else ""
+
 		for name, pattern, why in VALUE_RULES:
+			if not _may_match(name, lowered, active):
+				continue
 			match = pattern.search(line)
 			if match and not _is_placeholder(_value_of(match), name):
 				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		for name, pattern, why in TOKEN_RULES:
+			if not _may_match(name, lowered, active):
+				continue
+			match = pattern.search(line)
+			if match and not _is_placeholder(_token_of(name, match)):
+				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		if check_passwords:
+			for name, pattern, why in PASSWORD_RULES:
+				if not _may_match(name, lowered, active):
+					continue
+				match = pattern.search(line)
+				if (
+					match
+					and not _is_password_placeholder(_password_value(match))
+					and not _is_prose_password(line, match)
+					and not _is_sudoers_tag(match)
+				):
+					findings.append(Finding(name, why, where, line_no, _clip(line)))
 
 		# A long base64 run next to a Google endpoint: a signed JWT, an access token or a
 		# raw key, pasted into a request example that was then committed.
@@ -727,6 +1056,47 @@ def range_objects(since: str) -> tuple[Iterable[tuple[str, str, int]], dict[str,
 	return list(_batch_check(paths)), paths
 
 
+class ReviewedListError(Exception):
+	"""The reviewed-blob list cannot be used as written."""
+
+
+def load_reviewed_blobs() -> dict[str, str]:
+	"""``{blob hash: note}`` from :data:`REVIEWED_BLOBS_REL` in the scanned repository.
+
+	No file means no entries. A line that is not a full hash and a note raises
+	:class:`ReviewedListError`: a list that half-parses would excuse less, or more, than its
+	reader thinks it does.
+	"""
+	path = REPO / REVIEWED_BLOBS_REL
+	try:
+		text = path.read_text(encoding="utf-8")
+	except FileNotFoundError:
+		return {}
+	reviewed: dict[str, str] = {}
+	for number, raw in enumerate(text.splitlines(), 1):
+		line = raw.strip()
+		if not line or line.startswith("#"):
+			continue
+		match = _REVIEWED_LINE_RE.match(line)
+		if not match:
+			raise ReviewedListError(
+				f"{REVIEWED_BLOBS_REL}:{number}: expected a full 40-character blob hash and a note"
+			)
+		if match.group(1) in reviewed:
+			raise ReviewedListError(f"{REVIEWED_BLOBS_REL}:{number}: {match.group(1)[:12]} is listed twice")
+		reviewed[match.group(1)] = match.group(2)
+	return reviewed
+
+
+def head_blobs() -> set[str]:
+	"""The hash of every blob in ``HEAD``'s tree: what the repository holds today."""
+	return {
+		fields[2]
+		for line in _git("ls-tree", "-r", "HEAD").splitlines()
+		if len(fields := line.split(None, 3)) >= 3 and fields[1] == "blob"
+	}
+
+
 def iter_staged() -> Iterator[tuple[str, str]]:
 	"""The index version of every file added or changed in the index, as it will be committed.
 
@@ -910,6 +1280,20 @@ def main(argv: list[str] | None = None) -> int:
 	cache = CleanBlobCache(_cache_path(args.cache), fingerprint)
 	cache.load()
 
+	# The reviewed list belongs to the full walk. The PR range never reads it, so nothing a
+	# pull request adds can be excused by it, and a listed blob still in the tree is not excused.
+	reviewed: dict[str, str] = {}
+	current: set[str] = set()
+	if not args.since:
+		try:
+			reviewed = load_reviewed_blobs()
+		except ReviewedListError as exc:
+			print(f"\ncannot scan for committed secrets: {exc}\n", file=sys.stderr)
+			return 1
+		if reviewed:
+			current = head_blobs()
+	excused: set[str] = set()
+
 	if args.since:
 		commits = _git("rev-list", "--count", f"{args.since}..HEAD").strip()
 		print(
@@ -930,20 +1314,35 @@ def main(argv: list[str] | None = None) -> int:
 	counts = BlobCounts()
 	for where, text, sha, rel in iter_blobs(objects, paths, cache, counts):
 		blob_findings = scan_text(where, text)
-		if blob_findings:
-			findings.extend(blob_findings)
-		else:
+		if not blob_findings:
 			cache.mark_clean(sha, rel)
+		elif sha in reviewed and sha not in current:
+			excused.add(sha)  # read and accepted; never recorded as clean
+		else:
+			findings.extend(blob_findings)
 
 	new_entries = cache.save()
 	if cache.path is not None:
 		print(f"cache: {new_entries} newly clean blobs recorded in {cache.path}")
 	if counts.oversize:
 		print(f"note: {counts.oversize} blob(s) over {MAX_BLOB_BYTES} bytes were not scanned")
+	if reviewed:
+		print(f"reviewed: {len(excused)} historical blob(s) with findings are listed in {REVIEWED_BLOBS_REL}")
 
 	elapsed = time.monotonic() - started
+	unused = sorted(set(reviewed) - excused)
 	if findings:
 		_report(findings)
+	if unused:
+		print(f"\n{REVIEWED_BLOBS_REL} LISTS BLOBS IT DOES NOT NEED TO:\n", file=sys.stderr)
+		for sha in unused:
+			if sha in current:
+				why = "is in the current tree, and the list covers history only"
+			else:
+				why = "has no finding under the current rules, or is not in this repository"
+			print(f"  {sha}  {why}", file=sys.stderr)
+		print("\nRemove these lines. The list holds only what the full walk still needs.\n", file=sys.stderr)
+	if findings or unused:
 		return 1
 
 	print(

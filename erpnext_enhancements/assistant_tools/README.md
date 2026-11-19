@@ -328,8 +328,8 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 
 | Tool | Area | Wraps |
 |---|---|---|
-| `training_compliance_status` | Training | perm-enforced Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone |
-| `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names |
+| `training_compliance_status` | Training | Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone. Scoped like the Desk (`training/permissions.py`): the caller and their direct reports unless they hold an unscoped training role |
+| `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names. Your own record or a direct report's unless you hold an unscoped training role (`training/permissions.py`) |
 | `training_course_catalog` | Training | the course-shaped third: catalogue + gates + version history + aggregate assignment/attempt counts. `item_analysis` is aggregate only and **withholds questions below 5 recorded answers** — a success rate over three people identifies them |
 | `draft_course_spec` | Training | **read** — draft a whole course (lessons, blocks, quizzes) as a validated Course Spec from a plain-language brief, via ERPNext's own Vertex client. Writes nothing; returns a preview + a one-hour token. Bounds imported from the Training Question controller; only AI-authorable block types (no uploaded media) |
 | `author_training_course` | Training | **write (gated)** — build a Training Course + unpublished draft from a Course Spec (or a `draft_course_spec` token) via the deterministic materializer (`api/training_course_authoring`), reusing the manual builder's own `create_draft_version` + `save_draft_version`. Every quiz question is stamped `ai_generated` with **no** reviewer, so publication stays gated on a human; the course lands as a Draft. Second app write tool after `create_followup_task` |
@@ -404,6 +404,24 @@ now writes each row's category from the tool's own annotations — `read_only`, 
 or `privileged` for `HIGH_RISK` — on insert and on every migrate. The contract test
 `test_fac_category_reproduces_each_tools_own_hints` asserts the merge is a no-op for
 every registered tool.
+
+## Which OAuth clients may register (v1.826.9)
+
+Claude and Google's connector reach this site's MCP server over OAuth, and both register
+themselves first (RFC 7591). Frappe and FAC each expose a guest `register_client` endpoint for
+that. `erpnext_enhancements/oauth_registration.py` (`before_request`) lets a registration through
+only when every redirect URI is on its allow-list, within hourly limits per client address
+(10 refused requests, 60 accepted registrations):
+
+- `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`
+- any path on `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com`
+  and `oauth-redirect-test.googleusercontent.com`
+
+To connect another client, add its redirect address to site config
+`oauth_registration_redirect_allowlist` (a list of `host` or `host/path-prefix` strings; a local
+client needs `http://localhost` or `http://127.0.0.1` listed explicitly). `oauth_registration_guard: 0`
+turns the check off. A refused registration answers 400 `invalid_redirect_uri` naming the URI, or
+429 when over the rate. The module docstring has the full rule.
 
 ## Deployment notes
 

@@ -94,7 +94,7 @@ _ROUTES = (
 	("FROM `tabQuotation` q", "quote_headers"),
 	("SELECT DISTINCT wip_warehouse", "wip_orders"),
 	("FROM `tabWork Order`", "work_orders"),
-	# The Testing column (v1.826.0): the units a finished Work Order made, the tested units on the
+	# The Testing column (v1.828.0): the units a finished Work Order made, the tested units on the
 	# shelf, and their submitted pre-shipment tests.
 	("WHERE work_order IN %(wos)s", "serials_wo"),
 	("WHERE item_code IN %(items)s AND status = 'Active'", "serials_active"),
@@ -527,7 +527,7 @@ class TestTheBoard(Base):
 		self.assertEqual(sorted(self.rows()), ["SO-1", "SO-3", "SO-4", "SO-5"])
 
 	def test_the_board_logs_nothing(self):
-		# The Testing column (v1.826.0) runs its own queries; one the stub does not know would be
+		# The Testing column (v1.828.0) runs its own queries; one the stub does not know would be
 		# swallowed into the Error Log and the column would silently never fill.
 		self.rows()
 		self.assertEqual(SITE.errors, [])
@@ -897,7 +897,7 @@ NATHAN = "nathan@example.com"
 
 
 class TestTheTestingColumn(Base):
-	"""v1.826.0: a built configured unit waits in Testing until its pre-shipment test passes, signed by
+	"""v1.828.0: a built configured unit waits in Testing until its pre-shipment test passes, signed by
 	someone other than its builder. A unit from the shelf passes when tested units on hand cover it."""
 
 	def setUp(self):

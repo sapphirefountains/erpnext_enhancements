@@ -54,6 +54,70 @@ CANCELED = "Canceled"
 PROMOTE = "Promote"
 NOT_YET = "Not yet"
 
+#: Roles whose Data Import keeps the statuses in the file (historical reviews).
+IMPORT_ROLES = ("HR Manager", "System Manager")
+
+
+def _trusted_import():
+	"""True during a Data Import run by HR Manager or System Manager."""
+	if not getattr(frappe.flags, "in_import", None):
+		return False
+	return bool(set(IMPORT_ROLES) & set(frappe.get_roles()))
+
+
+def _may_start(user):
+	"""Who may start a review of *user*: the person, HR, or somebody senior to them on
+	that ladder. The rule `hr_enhancements/tier_review.open_review` applies, kept in one
+	place for a review that is created without that button."""
+	from erpnext_enhancements.hr_enhancements import progression
+
+	me = frappe.session.user
+	if not user:
+		return False
+	return bool(
+		me == user
+		or (set(IMPORT_ROLES) & set(frappe.get_roles(me)))
+		or me in set(progression.eligible_reviewers(user))
+	)
+
+
+def _ladder_snapshot(user, to_position=None):
+	"""``(from_position, to_position, lines)`` for a review of *user*, read from the ladder.
+
+	The same checks `open_review` makes before it inserts: the person has a login and a
+	rung, there is a rung to review for, and that rung lists its requirements. The lines
+	are the readiness snapshot, taken once.
+	"""
+	from erpnext_enhancements.hr_enhancements import progression
+
+	if not user:
+		frappe.throw(_("That employee has no login, so there is nothing to review against."))
+	here = progression.position_of(user)
+	if not here:
+		frappe.throw(_("Put them on the Position ladder first — there is no rung to review from."))
+	target = to_position or progression.next_rung(here)
+	if not target:
+		frappe.throw(
+			_("There is no rung above {0} on that ladder, so there is nothing to review for.").format(here)
+		)
+	readiness = progression.readiness(user, target)
+	if not readiness.get("configured"):
+		frappe.throw(
+			_("Nobody has written down what {0} asks for. Fill in <b>What this rung asks for</b> "
+			  "on that Position first — a review with no requirements is a form, not evidence.").format(
+				target
+			)
+		)
+	lines = [
+		{
+			"requirement_kind": line["kind"],
+			"requirement_label": line["label"],
+			"held_at_open": line["state"],
+		}
+		for line in readiness["lines"]
+	]
+	return here, target, lines
+
 
 class TierReview(Document):
 	def validate(self):
@@ -84,10 +148,24 @@ class TierReview(Document):
 
 		Exactly the hole the WI-072 branch review found in `Time Off Request`,
 		avoided here by writing the guard at the same time as the field.
+
+		A NEW review that did not come through `open_review` starts as a Draft with
+		no reviewer and every decision, review and applied field cleared, whatever the insert
+		carried -- so `decide` and `apply_promotion` only ever see a decision that
+		was recorded through them. Its rungs and requirement lines are read from the
+		ladder, with the checks `open_review` makes (`_start_as_draft`).
+
+		A Data Import run by HR Manager or System Manager keeps the file's values, so
+		historical reviews can be loaded.
 		"""
-		if self.flags.get("tier_transition") or self.is_new():
+		if self.flags.get("tier_transition"):
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		if _trusted_import():
+			return
+		if self.is_new():
+			self._start_as_draft()
 			return
 		before = self.get_doc_before_save()
 		if before and before.status != self.status:
@@ -95,6 +173,37 @@ class TierReview(Document):
 				_("A review moves through the buttons on this form, not by editing the status."),
 				frappe.PermissionError,
 			)
+
+	def _start_as_draft(self):
+		self.status = DRAFT
+		for field in (
+			"reviewer",
+			"reviewer_user",
+			"reviewer_summary",
+			"decision",
+			"decision_note",
+			"decided_by",
+			"decided_on",
+			"reviewed_on",
+			"applied_on",
+			"self_submitted_on",
+		):
+			self.set(field, None)
+
+		# The rungs and the requirement lines come from the ladder, never from the insert,
+		# and the same people may start it as through the Start button.
+		user = self.get("user")
+		if not _may_start(user):
+			frappe.throw(
+				_("Start a review with the Start a review button on the Employee form."),
+				frappe.PermissionError,
+			)
+		here, target, lines = _ladder_snapshot(user, self.get("to_position"))
+		self.from_position = here
+		self.to_position = target
+		self.set("lines", [])
+		for line in lines:
+			self.append("lines", line)
 
 	def _guard_decision(self):
 		"""Same rule for the decision itself, and the reason is sharper.
@@ -106,6 +215,8 @@ class TierReview(Document):
 		if self.flags.get("tier_transition") or self.is_new():
 			return
 		if frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_patch:
+			return
+		if _trusted_import():
 			return
 		before = self.get_doc_before_save()
 		if before and before.decision != self.decision:

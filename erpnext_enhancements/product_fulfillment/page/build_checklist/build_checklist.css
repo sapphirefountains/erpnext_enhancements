@@ -1,4 +1,4 @@
-/* Build Checklist (v1.826.0). Every selector under .pfb-: a Desk Page's stylesheet is global once
+/* Build Checklist (v1.828.0). Every selector under .pfb-: a Desk Page's stylesheet is global once
    loaded. Sized for a phone or a tablet on the bench: rows are at least 56px tall and the whole row
    is the tap target. Colors come from the --sf-* tokens (sf_tokens.bundle.css), with Frappe's own
    variables as the fallback. */

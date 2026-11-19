@@ -124,7 +124,7 @@ def _check_target(doctype, docname, fieldname, child_doctype):
 		frappe.throw(_("Invalid field"))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def broadcast_field_update(
 	doctype,
 	docname,
@@ -169,7 +169,7 @@ def broadcast_field_update(
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def broadcast_focus(
 	doctype,
 	docname,

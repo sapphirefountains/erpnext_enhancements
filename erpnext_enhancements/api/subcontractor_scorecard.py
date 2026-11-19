@@ -20,11 +20,14 @@ provided, and it leaves a name beside it.
 
 import frappe
 from frappe import _
-from frappe.utils import getdate
+from frappe.utils import cint, getdate
 
 from erpnext_enhancements.quality import scorecard, scorecard_build
 
 DOCTYPE = "Subcontractor Scorecard"
+
+#: The most rows ``get_supplier_scorecards`` returns: ten years of monthly cards.
+MAX_HISTORY_ROWS = 120
 
 
 def _shape(doc):
@@ -96,6 +99,9 @@ def get_supplier_scorecards(supplier, limit=12):
     some are real would show a trend that never happened.
     """
     frappe.get_doc("Supplier", supplier).check_permission("read")
+    # The rows are scorecards, so reading them needs Subcontractor Scorecard read as well.
+    frappe.has_permission(DOCTYPE, "read", throw=True)
+    limit = min(max(cint(limit) or 12, 1), MAX_HISTORY_ROWS)
     return frappe.get_all(
         DOCTYPE,
         filters={"supplier": supplier},
@@ -112,11 +118,11 @@ def get_supplier_scorecards(supplier, limit=12):
             "measures_total",
         ],
         order_by="period_start desc",
-        limit_page_length=int(limit or 12),
+        limit_page_length=limit,
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def build_scorecard(supplier, period_start):
     """Build the scorecard for one subcontractor and month, on demand.
 
@@ -144,7 +150,7 @@ def build_scorecard(supplier, period_start):
     return _shape(frappe.get_doc(DOCTYPE, name))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_adjustment(scorecard_name, adjustment, reason):
     """Apply a signed manual adjustment to a scorecard's score.
 

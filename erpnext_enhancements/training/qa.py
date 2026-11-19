@@ -173,7 +173,7 @@ def _notify(recipients, subject, body_html):
 # ------------------------------------------------------------------------ ask
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def ask_question(course, lesson_key, question, at_seconds=None):
 	"""File a learner's question against a lesson and route it to the author."""
 	user = _learner()
@@ -224,7 +224,7 @@ def ask_question(course, lesson_key, question, at_seconds=None):
 # --------------------------------------------------------------------- answer
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def answer_question_thread(thread, answer, is_public=0):
 	"""Answer a learner's question. Course author or Training Manager only.
 

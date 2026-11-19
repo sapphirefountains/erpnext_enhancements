@@ -158,7 +158,7 @@ class TestWizardAllowlist(unittest.TestCase):
 
     def test_every_endpoint_checks_permission_explicitly(self):
         """A whitelisted function is reachable over HTTP by any logged-in user."""
-        endpoints = re.findall(r"@frappe\.whitelist\(\)\s*\ndef (\w+)", self.source)
+        endpoints = re.findall(r"@frappe\.whitelist\([^)]*\)\s*\ndef (\w+)", self.source)
         self.assertEqual(
             sorted(endpoints),
             [

@@ -41,7 +41,7 @@ def _editable(name):
     return doc
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_change_order(change_order, note=None):
     """Record the project manager's approval. Returns the change order's derived state.
 
@@ -70,7 +70,7 @@ def approve_change_order(change_order, note=None):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_customer_approval(change_order, how):
     """Record that the customer has agreed, and **how**.
 
@@ -96,7 +96,7 @@ def record_customer_approval(change_order, how):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_approval(change_order, which):
     """Undo an approval that was recorded in error. ``which`` is ``pm`` or ``customer``.
 
@@ -133,6 +133,8 @@ def get_project_change_orders(project):
     frappe.has_permission("Project", "read", doc=project, throw=True)
     if not frappe.db.exists("DocType", "Change Order"):
         return {"change_orders": [], "totals": change_orders.totals([])}
+    # The rows are Change Orders, so reading them needs Change Order read as well.
+    frappe.has_permission("Change Order", "read", throw=True)
 
     rows = frappe.get_all(
         "Change Order",

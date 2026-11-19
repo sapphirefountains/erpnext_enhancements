@@ -1,4 +1,4 @@
-// Delivery Note: the QC gate's verdict, before Submit is pressed (v1.826.0, product_fulfillment).
+// Delivery Note: the QC gate's verdict, before Submit is pressed (v1.828.0, product_fulfillment).
 //
 // A draft that ships configured product units asks the server what the gate would say
 // (qc_gate.delivery_gate_status, the same check before_submit makes) and shows it as the headline:

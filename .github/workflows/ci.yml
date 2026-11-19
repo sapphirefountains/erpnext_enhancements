@@ -59,6 +59,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only for the token every job gets. No job here writes to the repository, comments, tags or
+# calls the GitHub API: checkout reads, and the clean-blob cache action uses the Actions runtime
+# token rather than this one. `release.yml` declares what it needs for itself.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # Lint — advisory, but much closer to a gate than it was.
@@ -875,6 +881,22 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # Who may write each settings Single: the roles with write at permlevel 0 are pinned to a
+      # reviewed table, and the ERPNext Enhancements Settings controller keeps writes to System Manager.
+      # Pure filesystem plus a stubbed frappe, so it runs as plain unittest.
+      - name: Settings pages write roles
+        run: python -m unittest erpnext_enhancements.tests.test_settings_write_roles -v
+      # AST only, no frappe import. Every whitelisted endpoint either declares `methods=` or is
+      # on a baseline that can only shrink (tests/data/whitelist_methods_baseline.txt), so a new
+      # state-changing endpoint is written POST-only on purpose rather than by default.
+      - name: Whitelisted endpoints declare their HTTP methods
+        run: python -m unittest erpnext_enhancements.tests.test_whitelist_methods_ratchet -v
+      # Every `@frappe.whitelist(allow_guest=True)` function is listed in
+      # tests/data/guest_endpoints.json with who calls it and what checks the caller. A new
+      # guest endpoint, or a removed one, fails the build until the register agrees. AST only,
+      # no frappe stub.
+      - name: Guest endpoint register (every guest endpoint has a caller and a check)
+        run: python -m unittest erpnext_enhancements.tests.test_guest_endpoint_register -v
       # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
       # given (a, b) it swaps them only when `a` contains a newline. So the legacy
       # log_error(message, title) stores a one-line message as the row's TITLE and
@@ -1048,6 +1070,14 @@ jobs:
       # Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner per-project publish and baseline (P3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_publish_baseline -v
+      # Operations-side endpoints check access before they read or write: the maintenance briefing
+      # and visit payload, the maintenance contract mappers, the Task tree (and its node cap), the
+      # Change Order / Budget Reallocation / Scorecard lists, project comments, the Projects
+      # Dashboard readers, Opportunity tag sync, Asset Booking availability, sign-off requests,
+      # and the delete and merge previews. AST over the source plus two helpers executed against a
+      # fake frappe namespace; it imports no frappe and installs no stub.
+      - name: Access checks, operations side (checked before read or write)
+        run: python -m unittest erpnext_enhancements.tests.test_access_checks_ops -v
       # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
       # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
       # follower first and the planner then moves it again, so a crew turns up a day off with nothing
@@ -2262,8 +2292,18 @@ jobs:
       # sign-in check: it reports a staff account with no 2FA role, 2FA off or bypassed, and
       # password or LDAP sign-in switched on, stays quiet on a healthy site, escapes account
       # names, and never raises.
+      # Since v1.826.6 also the Error Log before_insert masking hook (never raises, never logs,
+      # registered on Error Log), the hand-run backfill of stored rows (System Manager, POST,
+      # dry run by default, counts only) and the daily site-configuration check (one email per
+      # setting per day).
       - name: Administrator login alerts + two-factor coverage (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
+      # Error Log value masking (v1.826.6): utils/log_masking.mask_secrets on each value shape it
+      # masks, ordinary text left alone, idempotence, a 1 MB input and pathological ones inside a
+      # time budget, text past the scan cap kept rather than cut, and the repository's secrets
+      # scanner clean on the masker and its tests. Pure module, no frappe stub; own step anyway.
+      - name: Error Log value masking (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_log_masking -v
       # Client-IP derivation guard (TASK-2026-01478). GCLB -> nginx -> bench only yields a
       # real request_ip because of a hand-placed nginx realip file on the VM; this pins that
       # file (infra/configs/nginx-realip.conf), the startup script that installs it on every
@@ -2273,6 +2313,12 @@ jobs:
       # duration of each test and take it out again.
       - name: Client-IP derivation guard (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_client_ip -v
+      # OAuth client registration (v1.826.9): the redirect-URI allow-list, the site-config
+      # entries, the request matcher, the per-address rate, and the before_request hook (other
+      # requests pass untouched and it never raises there; a matching request is refused with a
+      # JSON body and fails closed). Own step: puts a frappe stub in sys.modules in setUpModule.
+      - name: OAuth client registration guard (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_oauth_registration -v
       # The bench's production process units (v1.753.3): gunicorn instead of `bench serve`,
       # the Werkzeug development server prod had been serving the internet with. Nothing in
       # infra/configs runs in CI, and a VM only exercises it at a cutover, so this pins the
@@ -2561,7 +2607,7 @@ jobs:
         run: |
           python -m unittest erpnext_enhancements.tests.test_product_orders -v
           python -m unittest erpnext_enhancements.tests.test_products_tab_endpoint -v
-      # Build, test and ship a product unit (v1.826.0, TASK-2026-03229 / -03230). The rules suite is
+      # Build, test and ship a product unit (v1.828.0, TASK-2026-03229 / -03230). The rules suite is
       # stub-free: the person who built a unit signs its test (or a case difference in the user id lets
       # them), a unit that failed a re-test ships on its old pass, ERPNext's FIFO auto-pick ships an
       # untested unit because the gate never asked for a serial per unit, or planning a Sales Order twice
@@ -3279,6 +3325,14 @@ jobs:
       # WARNS THE NEXT PERSON, which is the half that makes it worth thirty seconds.
       - name: HR hazards (SDS, PPE, and warning the next technician)
         run: python -m unittest erpnext_enhancements.tests.test_hr_hazards -v
+      # Access checks on the people-facing endpoints (v1.826.2): tier reviews, permit
+      # transitions, incident and hazard reports, the telephony endpoints, the SMS reply
+      # drafter, the kiosk's project and visit lookups, time correction requests and the
+      # two training assistant tools, pinned at source level; plus the per-user rate limit
+      # (utils/user_rate_limit) run for real. Its own step: it installs a frappe stub in
+      # setUpModule.
+      - name: People-side access checks + per-user rate limit (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_people_access_checks -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines
@@ -3828,6 +3882,13 @@ jobs:
       # is gone. Own step: it stubs frappe, twilio and requests in setUpModule.
       - name: Webhook auth, MDM + telephony (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_webhook_auth -v
+      # Configuration checks on three inbound paths (v1.826.5): the Twilio voicemail
+      # download accepts only this account's recording URLs on api.twilio.com; the Stripe
+      # and QuickBooks Online secret readers return None for a missing, undecryptable or
+      # placeholder value; the QuickBooks Time webhook refuses every request while its
+      # site_config secret is unset. Own step: it stubs frappe and requests in setUpModule.
+      - name: Inbound secret and URL checks (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inbound_secret_checks -v
       # The requests the MDM provider clients actually send, checked against the vendors'
       # specs (v1.506.0). Both Live adapters had been written against guessed endpoints:
       # Miradore sync called a list endpoint API v2 does not have (12,803 failed syncs), and
@@ -5063,7 +5124,12 @@ jobs:
   # before: 14m37s and 14m43s on main that day. Measured for v1.774.2 (see CHANGELOG): the
   # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
   # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
-  # after one is the slow run, and 30 minutes is the headroom for it.
+  # after one is the slow run: 17m20s in CI on 2026-11-02. The provider and password rules
+  # added on 2026-11-18 read the same text with more patterns. Each skips a line that lacks
+  # the substring it needs (the script's `_QUICK_TRIGGERS`): measured on a fresh clone, the
+  # walk took twice as long without that and about a tenth longer with it. 60 minutes is
+  # the headroom for that one run; a job killed at its limit saves no cache, so a limit that
+  # is too short fails the same way on every run after it.
   #
   # THE CACHE is a list of blob shas keyed on `--rules-hash`, a hash of the whole script,
   # so any change to a pattern, the marker, the window or the code that applies them
@@ -5080,7 +5146,7 @@ jobs:
   secret-scan:
     name: ${{ github.event_name == 'pull_request' && 'No committed secrets (PR range)' || 'No committed secrets (full history)' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

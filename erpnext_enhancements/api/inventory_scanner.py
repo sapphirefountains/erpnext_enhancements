@@ -268,7 +268,7 @@ def get_active_session():
 	return _session_payload(_active_session_name())
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_session(default_warehouse=None):
 	"""Create an Open session for the caller, or resume their existing one.
 
@@ -295,7 +295,7 @@ def start_session(default_warehouse=None):
 	return _session_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_count(session, item_code, counted_qty, storage_location=None, warehouse=None, scanned_barcode=None, reason=None):
 	"""Record one counted line (upserting per location+item+warehouse).
 
@@ -377,7 +377,7 @@ def add_count(session, item_code, counted_qty, storage_location=None, warehouse=
 	return _session_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_line(session, idx):
 	"""Drop a counted line (by its 1-based grid idx) from an open session."""
 	_check_access()
@@ -388,7 +388,7 @@ def remove_line(session, idx):
 	return _session_payload(doc.name)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_session(session):
 	"""Abandon an open session without producing a reconciliation."""
 	_check_access()
@@ -399,7 +399,7 @@ def cancel_session(session):
 	return {"name": doc.name, "status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def finalize_session(session):
 	"""Aggregate the session's lines into a DRAFT Stock Reconciliation.
 

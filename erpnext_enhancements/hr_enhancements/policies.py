@@ -36,7 +36,7 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def request_acknowledgement(policy, employees, version_label=None, document_url=None):
 	"""Ask a list of people to acknowledge something. HR's action.
 
@@ -83,7 +83,7 @@ def request_acknowledgement(policy, employees, version_label=None, document_url=
 	return {"created": made}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sign(acknowledgement, typed_name, signature=None):
 	""""I have read it and I agree."
 
@@ -124,7 +124,7 @@ def sign(acknowledgement, typed_name, signature=None):
 	return {"status": doc.status, "signed_on": str(doc.signed_on)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decline(acknowledgement, reason):
 	"""Declining is a real answer and it is recorded.
 
