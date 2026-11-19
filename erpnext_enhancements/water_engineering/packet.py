@@ -26,6 +26,7 @@ from frappe import _
 
 from erpnext_enhancements.utils.normalize import phone_display
 from erpnext_enhancements.water_engineering import prints
+from erpnext_enhancements.water_engineering.svg_safe import clean_svg
 
 PACKET_PF = prints.PF_PACKET
 DESIGN_DOCTYPE = "Water Feature Design"
@@ -161,15 +162,18 @@ def we_print(design, sheets=None):
 
 
 def we_circulation_schematic(design):
-    """The stored circulation schematic (SVG) of the last derive, or ``""``."""
+    """The stored circulation schematic (SVG) of the last derive, after ``clean_svg``, or ``""``."""
     doc = _doc(design)
-    return prints.unique_ids((_json(doc.get("results_json")).get("charts") or {}).get("schematic_svg"), "sch") or ""
+    svg = clean_svg((_json(doc.get("results_json")).get("charts") or {}).get("schematic_svg"))
+    return prints.unique_ids(svg or None, "sch") or ""
 
 
 def we_electrical_oneline(design):
-    """The stored electrical one-line (SVG) of the last derive, from phase L's report, or ``""``."""
+    """The stored electrical one-line (SVG) of the last derive, from phase L's report, after ``clean_svg``,
+    or ``""``."""
     doc = _doc(design)
-    return prints.unique_ids((_json(doc.get("results_json")).get("charts") or {}).get("oneline_svg"), "one") or ""
+    svg = clean_svg((_json(doc.get("results_json")).get("charts") or {}).get("oneline_svg"))
+    return prints.unique_ids(svg or None, "one") or ""
 
 
 def we_standard_notes(governing_code=None, category=None):
@@ -194,7 +198,8 @@ def we_standard_notes(governing_code=None, category=None):
 
 def we_standard_details(governing_code=None, category=None):
     """Active Standard Details (inline SVG), filtered to the governing code
-    (blank = any) and optionally a category, for the SP-4 details sheet."""
+    (blank = any) and optionally a category, for the SP-4 details sheet. Each
+    ``svg`` comes back through ``clean_svg``."""
     filters = {"active": 1}
     if category:
         filters["category"] = category
@@ -209,6 +214,8 @@ def we_standard_details(governing_code=None, category=None):
         return []
     if governing_code:
         details = [d for d in details if not d.get("governing_code") or d["governing_code"] == governing_code]
+    for d in details:
+        d["svg"] = clean_svg(d.get("svg"))
     return details
 
 

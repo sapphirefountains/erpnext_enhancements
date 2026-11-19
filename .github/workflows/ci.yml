@@ -2840,9 +2840,15 @@ jobs:
       # through derive_model. Checks no Jinja left over, no doubled escape, no table with no rows, no raw
       # float, no drawing id twice on a page; the Utah R392-302-41 and NEC 680 lines, the O&M water
       # split, the winterization checklist and the budget arithmetic. Plain pytest functions with their
-      # own frappe stub per test: its own step (unittest would collect nothing).
+      # own frappe stub per test: its own step (unittest would collect nothing). test_water_svg_safe
+      # runs water_engineering/svg_safe.py, the allowlist every stored drawing passes before a format or
+      # the packet prints it, over samples off the list and over the real generator's drawings (none of
+      # which may lose anything), and holds every print path and the packet preview to it.
       - name: Fountain Designer print formats and packet (bench-free pytest suite)
-        run: python -m pytest -q erpnext_enhancements/tests/test_water_prints.py
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_water_prints.py
+          erpnext_enhancements/tests/test_water_svg_safe.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops
