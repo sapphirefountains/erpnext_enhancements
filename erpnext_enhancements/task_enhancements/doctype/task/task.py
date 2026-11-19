@@ -248,7 +248,7 @@ def get_child_tasks_html(task_name):
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Task Enhancements Error")
-        return f"<div>An error occurred: {e}</div>"
+        return f"<div>An error occurred: {frappe.utils.escape_html(str(e))}</div>"
 
 
 def _get_all_descendants(doctype, parent, _budget=None, _depth=0):
@@ -302,8 +302,8 @@ def _build_task_tree_html(tasks, level=0):
         html += "<li>"
 
         # Use helper to avoid None display
-        status = task.status or ""
-        assigned_to = task.allocated_to or ""
+        status = frappe.utils.escape_html(task.status or "")
+        assigned_to = frappe.utils.escape_html(task.allocated_to or "")
         start_date = task.exp_start_date or ""
         end_date = task.exp_end_date or ""
         expected_time = task.expected_time or ""

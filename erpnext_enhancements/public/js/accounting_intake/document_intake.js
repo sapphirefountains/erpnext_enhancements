@@ -20,6 +20,11 @@ function render_preview(frm) {
 		field.$wrapper.empty();
 		return;
 	}
+	// Only a site file or an https address is drawn as a frame, image or link.
+	if (!/^(\/files\/|\/private\/files\/|https:\/\/)/.test(String(url).trim())) {
+		field.$wrapper.html(`<div class="mt-2 mb-2 text-muted">${frappe.utils.escape_html(url)}</div>`);
+		return;
+	}
 	const safe = frappe.utils.escape_html(url);
 	const lower = url.toLowerCase().split("?")[0];
 	let inner;

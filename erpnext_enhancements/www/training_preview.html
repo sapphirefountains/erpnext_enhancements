@@ -108,7 +108,7 @@
      player runs for Website Users with desk_access = 0 and there is no frappe.* in
      this page; a JSON script tag keeps it that way and cannot execute whatever a
      lesson's content happens to contain. -->
-<script type="application/json" id="tp-draft">{{ draft_json }}</script>
+<script type="application/json" id="tp-draft">{{ draft_json | safe }}</script>
 <!-- The CSRF token for the ONE call this page makes. A data island for the same
      reason the draft payload is one: there is no frappe.* in this page, and an
      inline assignment cannot be kept clear of whatever a lesson's content

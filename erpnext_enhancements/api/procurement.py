@@ -4,17 +4,18 @@ Whitelisted API consumed by ``public/js/procurement_links.js`` to show and edit
 the "purchase URL" stored on Item Supplier child rows (e.g. quick links to a
 vendor's product page from a Purchase Order).
 
-Security: ``save_item_link`` writes the Item with ``ignore_permissions=True`` so a
-buyer can record a supplier URL without needing full Item write access — but that
-elevation is gated to purchasing roles (``_require_purchasing_access``). Without a
-gate, any authenticated user could write an arbitrary ``purchase_url`` onto any Item,
-and buyers later click that link straight from the Purchase Order screen. No external
-services.
+``save_item_link`` is limited to the page's roles (``_require_purchasing_access``) and stores
+only a web address that ``item_flow_rules.purchase_url_problem`` accepts (the same rule the
+guided Item flow applies), because buyers click the stored link straight from the Purchase
+Order screen. A purchasing role (``PURCHASE_ROLES``) may save a link without write permission on
+the Item; anybody else on the page needs Item write. No external services.
 """
 
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowtime
+
+from erpnext_enhancements.inventory_enhancements.item_flow_rules import purchase_url_problem
 
 #: Roles that may read/write supplier purchase links. Purchasing staff plus the
 #: administrative roles that manage Items. A user outside this set has no business
@@ -22,6 +23,12 @@ from frappe.utils import cint, flt, getdate, nowtime
 ALLOWED_ROLES = frozenset(
     {"Purchase User", "Purchase Manager", "Purchase Master Manager", "Item Manager", "System Manager"}
 )
+
+#: Roles that may save a supplier purchase link without write permission on the Item
+#: (Nikolas, 2026-11-19: "Item or purchase roles"). A buyer records where a part is bought, and
+#: a buyer who holds a purchase role but may not edit Items must still be able to do that.
+#: Everybody else in ``ALLOWED_ROLES`` saves a link only on an Item they may write.
+PURCHASE_ROLES = frozenset({"Purchase User", "Purchase Manager", "Purchase Master Manager"})
 
 
 def _require_purchasing_access():
@@ -83,6 +90,15 @@ def save_item_link(item_code, supplier, url):
     if not url:
         return
 
+    url = str(url).strip()
+    problem = purchase_url_problem(url)
+    if problem:
+        frappe.throw(_(problem))
+    # Item write, or a purchasing role: see PURCHASE_ROLES.
+    as_buyer = not PURCHASE_ROLES.isdisjoint(frappe.get_roles())
+    if not as_buyer:
+        frappe.has_permission("Item", "write", item_code, throw=True)
+
     # Check if this supplier already exists for the item
     exists = frappe.db.exists("Item Supplier", {"parent": item_code, "supplier": supplier})
 
@@ -95,7 +111,8 @@ def save_item_link(item_code, supplier, url):
             "supplier": supplier,
             "purchase_url": url
         })
-        item_doc.save(ignore_permissions=True) # Allow User to save even if they don't have Item write access
+        # A buyer's save goes past the Item's own permission check, and only a buyer's.
+        item_doc.save(ignore_permissions=as_buyer)
 
     return True
 

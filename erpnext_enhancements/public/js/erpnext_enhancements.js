@@ -1,3 +1,5 @@
+import { sidebarAttachmentRowHtml } from "./global_enhancements/safe_file_link.js";
+
 /**
  * erpnext_enhancements.js — primary global desk enhancements bundle.
  *
@@ -664,15 +666,9 @@ frappe.provide('erpnext_enhancements.sidebar');
                         const size = at.file_size ? frappe.form.formatters.FileSize(at.file_size) : '';
                         const icon = frappe.utils.icon('attachment', 'sm') || '📎';
 
-                        $items.append(`
-                            <div class="sidebar-item" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: var(--text-xs);">
-                                <a href="${file_url}" target="_blank" class="text-muted ellipsis" style="display: flex; align-items: center; max-width: 75%; text-decoration: none;" title="${file_name}">
-                                    <span class="m-r-1">${icon}</span>
-                                    <span class="ellipsis">${file_name}</span>
-                                </a>
-                                <span class="text-muted" style="font-size: 10px; flex-shrink: 0;">${size}</span>
-                            </div>
-                        `);
+                        // Name, size and address are record values: escaped, and the address
+                        // is a link only when it is a site file or an http(s) page.
+                        $items.append(sidebarAttachmentRowHtml(file_name, file_url, size, icon, frappe.utils.escape_html));
                     });
                 } else {
                     $items.append(`<div class="text-muted p-2 text-center" style="font-size: var(--text-xs);">${__('No attachments')}</div>`);
