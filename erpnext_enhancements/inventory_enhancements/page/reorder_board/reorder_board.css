@@ -139,3 +139,37 @@
 .rob-old-draft {
 	color: var(--sf-warning-text, var(--text-color));
 }
+
+/* Reorder levels (v1.832.0). */
+.rob-levels-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.rob-window-label {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5, 4px);
+	margin: 0;
+	font-weight: 600;
+}
+
+.rob-window-label select {
+	width: auto;
+}
+
+.rob-thin,
+.rob-unruled {
+	margin-top: var(--sf-space-15, 12px);
+}
+
+.rob-thin summary,
+.rob-unruled summary {
+	cursor: pointer;
+	font-weight: 600;
+	min-height: var(--sf-touch-min, 36px);
+	line-height: var(--sf-touch-min, 36px);
+}

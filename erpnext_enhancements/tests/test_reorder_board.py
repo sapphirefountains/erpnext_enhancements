@@ -22,6 +22,13 @@ What is held, in the order the brief asked for it:
   writes nothing; neither patch raises.
 * **The page.** Its logic under node (routes, quantities, the picked lines), its roles, and that every
   tab is a ``frappe.set_route`` (a history entry) while dialogs push nothing.
+* **Suggested reorder levels (v1.832.0).** ``reorder_suggest_rules``: what counts as used (takes,
+  deliveries, moves out to a job site or the Project Shelf, less returns from a job; never a count
+  correction, a move between shop places or a release from the shelf), the scope, the basis (the
+  window, the first recorded take, the first day in the shop), the thin-data gate, the arithmetic and
+  its rounding, and the numbers a person may approve. ``reorder_suggestions``: the tab's read over the
+  board's rules and the ledger, and Apply: the role gate, the Item's own write permission, a stale page,
+  a rule that is gone, an ordinary ``Item.save()`` as the person, nothing saved when nothing changed.
 
 Each part installs its own ``frappe`` stub. Run:
 python -m unittest erpnext_enhancements.tests.test_reorder_board -v
@@ -566,6 +573,14 @@ class _Doc(dict):
 		STATE["saves"].append((self.get("doctype"), dict(self), ignore_permissions))
 		return self
 
+	def set(self, key, value):
+		self[key] = value
+
+	def check_permission(self, ptype="read"):
+		# The Item's own permission: STATE["perm"][("Item", ptype)] False refuses it.
+		if STATE["perm"].get((self.get("doctype"), ptype), True) is False:
+			raise sys.modules["frappe"].PermissionError(f"No {ptype} permission")
+
 	def submit(self):
 		STATE["submits"].append(self.get("name"))
 
@@ -651,6 +666,8 @@ def _install_stubs():
 	def exists(doctype, name=None):
 		if doctype == "Material Request":
 			return name in STATE["mr_names"]
+		if doctype == "Item":
+			return ("Item", name) in STATE["docs"]
 		if doctype == "DocType":
 			return True
 		return name in STATE["watch_names"]
@@ -679,6 +696,7 @@ def _install_stubs():
 			return 0
 
 	utils.cint = cint
+	utils.cstr = lambda v: "" if v is None else str(v)
 	utils.now_datetime = lambda: NOW
 	utils.nowdate = lambda: TODAY.isoformat()
 	utils.getdate = lambda v=None: dt.date.fromisoformat(v) if isinstance(v, str) else (v or TODAY)
@@ -733,10 +751,12 @@ _SAVED = {}
 board = None
 patch_auto = None
 patch_role = None
+suggestions = None
+api = None
 
 
 def setUpModule():
-	global board, patch_auto, patch_role
+	global board, patch_auto, patch_role, suggestions, api
 	for name in (
 		"frappe",
 		"frappe.utils",
@@ -753,11 +773,15 @@ def setUpModule():
 		"erpnext_enhancements.inventory_enhancements.reorder_board",
 		"erpnext_enhancements.patches.disable_auto_material_requests",
 		"erpnext_enhancements.patches.backfill_reorder_alert_role",
+		"erpnext_enhancements.inventory_enhancements.reorder_suggestions",
+		"erpnext_enhancements.api.reorder_board",
 	):
 		sys.modules.pop(name, None)
 	board = importlib.import_module("erpnext_enhancements.inventory_enhancements.reorder_board")
 	patch_auto = importlib.import_module("erpnext_enhancements.patches.disable_auto_material_requests")
 	patch_role = importlib.import_module("erpnext_enhancements.patches.backfill_reorder_alert_role")
+	suggestions = importlib.import_module("erpnext_enhancements.inventory_enhancements.reorder_suggestions")
+	api = importlib.import_module("erpnext_enhancements.api.reorder_board")
 
 
 def tearDownModule():
@@ -1261,6 +1285,493 @@ class TestPatches(unittest.TestCase):
 # --- wiring, the page and its logic ----------------------------------------------------
 
 
+# --- suggested reorder levels (v1.832.0) --------------------------------------------------
+
+from erpnext_enhancements.inventory_enhancements import reorder_suggest_rules as srules
+
+SHOP_BIN = "Bin A1 - X"
+SHOP_BIN_2 = "Bin A2 - X"
+ROOM = "Room - X"
+SITE = "Job Site PRJ-90001 - X"
+SHELF = "Project Shelf - X"
+SITES = {SITE}
+NOT_SHOP = {SITE, SHELF}
+START = TODAY - dt.timedelta(days=89)
+
+
+def shop(w):
+	return w not in NOT_SHOP
+
+
+def led(warehouse, qty, after, day, voucher_type="Stock Entry", purpose=None, voucher=None, project=None):
+	return {
+		"warehouse": warehouse,
+		"actual_qty": qty,
+		"qty_after_transaction": after,
+		"posting_date": day,
+		"voucher_type": voucher_type,
+		"voucher_no": voucher or f"V-{warehouse}-{day}-{qty}",
+		"project": project,
+		"purpose": purpose,
+	}
+
+
+D = lambda n: TODAY - dt.timedelta(days=n)  # noqa: E731
+
+
+class TestWhatCountsAsUsed(unittest.TestCase):
+	def usage(self, rows, scope=shop, start=START):
+		return srules.item_usage(rows, scope, SITES, NOT_SHOP, start, TODAY)
+
+	def test_takes_and_deliveries_are_use(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 20, 20, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -3, 17, D(50), purpose="Material Issue", voucher="SE-1"),
+				led(SHOP_BIN, -2, 15, D(40), purpose="Material Issue", voucher="SE-2"),
+				led(SHOP_BIN, -1, 14, D(30), "Delivery Note", voucher="DN-1"),
+			]
+		)
+		self.assertEqual((u["used"], u["uses"], u["first_seen"]), (6.0, 3, D(60)))
+
+	def test_a_count_correction_is_never_use(self):
+		# ERPNext stores a count with actual_qty 0; the change is derived, and kept beside the use.
+		u = self.usage(
+			[
+				led(SHOP_BIN, 20, 20, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, 0, 12, D(20), "Stock Reconciliation", voucher="SR-1"),
+				led(SHOP_BIN, 0, 14, D(10), "Stock Reconciliation", voucher="SR-2"),
+			]
+		)
+		self.assertEqual((u["used"], u["uses"]), (0.0, 0))
+		self.assertEqual((u["counted_down"], u["counted_up"]), (8.0, 2.0))
+
+	def test_a_move_out_to_a_job_site_or_the_shelf_is_use(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 6, D(30), purpose="Material Transfer", voucher="SE-T1"),
+				led(SITE, 4, 4, D(30), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHOP_BIN, -1, 5, D(20), purpose="Material Transfer", voucher="SE-T2"),
+				led(SHELF, 1, 1, D(20), purpose="Material Transfer", voucher="SE-T2"),
+			]
+		)
+		self.assertEqual((u["used"], u["uses"]), (5.0, 2))
+
+	def test_a_take_at_the_site_is_not_the_shops_use_again(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 6, D(30), purpose="Material Transfer", voucher="SE-T1"),
+				led(SITE, 4, 4, D(30), purpose="Material Transfer", voucher="SE-T1"),
+				led(SITE, -4, 0, D(25), purpose="Material Issue", voucher="SE-I1"),
+			]
+		)
+		self.assertEqual((u["used"], u["uses"]), (4.0, 1))
+
+	def test_moves_between_shop_places_are_not_use(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 6, D(30), purpose="Material Transfer", voucher="SE-T1"),
+				led(SHOP_BIN_2, 4, 4, D(30), purpose="Material Transfer", voucher="SE-T1"),
+			]
+		)
+		self.assertEqual((u["used"], u["uses"]), (0.0, 0))
+
+	def test_returns_from_a_job_come_off(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -6, 4, D(40), purpose="Material Issue", voucher="SE-1"),
+				# Stock Scan's + with a job: a return from that job.
+				led(SHOP_BIN, 2, 6, D(35), purpose="Material Receipt", voucher="SE-2", project="PRJ-90001"),
+				# Added without a PO and without a job: not a return.
+				led(SHOP_BIN, 5, 11, D(34), purpose="Material Receipt", voucher="SE-3"),
+				# Leftovers moved back from the job's site.
+				led(SITE, -1, 0, D(30), purpose="Material Transfer", voucher="SE-4"),
+				led(SHOP_BIN, 1, 12, D(30), purpose="Material Transfer", voucher="SE-4"),
+			]
+		)
+		self.assertEqual((u["gross_used"], u["returned"], u["used"], u["uses"]), (6.0, 3.0, 3.0, 1))
+
+	def test_a_release_from_the_shelf_is_not_a_return(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 10, 10, D(60), "Purchase Receipt"),
+				led(SHOP_BIN, -6, 4, D(40), purpose="Material Issue", voucher="SE-1"),
+				led(SHELF, -2, 0, D(30), purpose="Material Transfer", voucher="SE-4"),
+				led(SHOP_BIN, 2, 6, D(30), purpose="Material Transfer", voucher="SE-4"),
+			]
+		)
+		self.assertEqual((u["used"], u["returned"]), (6.0, 0.0))
+
+	def test_use_never_goes_below_zero(self):
+		u = self.usage(
+			[
+				led(SHOP_BIN, 3, 3, D(40), purpose="Material Receipt", voucher="SE-2", project="PRJ-90001"),
+			]
+		)
+		self.assertEqual(u["used"], 0.0)
+
+	def test_outside_the_window_or_the_scope_does_not_count(self):
+		rows = [
+			led(SHOP_BIN, 20, 20, D(200), "Purchase Receipt"),
+			led(SHOP_BIN, -5, 15, D(120), purpose="Material Issue", voucher="SE-old"),
+			led(SHOP_BIN, -1, 14, D(10), purpose="Material Issue", voucher="SE-new"),
+			led("Elsewhere - X", 9, 9, D(10), "Purchase Receipt"),
+			led("Elsewhere - X", -9, 0, D(5), purpose="Material Issue", voucher="SE-other"),
+		]
+		u = self.usage(rows, scope=lambda w: w == SHOP_BIN)
+		self.assertEqual((u["used"], u["uses"], u["first_seen"]), (1.0, 1, D(200)))
+
+	def test_cancelled_rows_never_arrive(self):
+		# The read leaves them out; nothing here re-adds them. A sanity check on an empty ledger.
+		u = self.usage([])
+		self.assertEqual((u["used"], u["uses"], u["first_seen"]), (0.0, 0, None))
+
+
+class TestSuggestion(unittest.TestCase):
+	def test_the_basis_starts_at_the_latest_of_window_first_take_and_first_day(self):
+		window = srules.window_start(TODAY, 90)
+		self.assertEqual(window, TODAY - dt.timedelta(days=89))
+		since = TODAY - dt.timedelta(days=40)
+		self.assertEqual(srules.basis(window, since, D(200), TODAY), (since, 41))
+		self.assertEqual(srules.basis(window, since, D(20), TODAY), (D(20), 21))
+		self.assertEqual(srules.basis(window, None, D(200), TODAY), (window, 90))
+		self.assertEqual(srules.basis(window, since, None, TODAY), (None, 0))
+
+	def test_the_arithmetic(self):
+		# 30 used in 60 days: 0.5 a day. Lead time 10: reorder at 0.5 x (10 + 7) = 8.5 -> 9; buy 15.
+		s = srules.suggest(30, 6, 60, 10, whole=True)
+		self.assertTrue(s["enough"])
+		self.assertEqual(
+			(s["level"], s["qty"], s["daily"], s["lead_days"], s["lead_assumed"]), (9.0, 15.0, 0.5, 10, False)
+		)
+		# A fractional unit rounds up to the hundredth.
+		f = srules.suggest(10, 4, 30, 10, whole=False)
+		self.assertEqual((f["level"], f["qty"]), (5.67, 10.0))
+
+	def test_no_lead_time_is_assumed_and_said(self):
+		s = srules.suggest(14, 5, 14, 0, whole=True)
+		self.assertEqual((s["lead_days"], s["lead_assumed"]), (srules.DEFAULT_LEAD_DAYS, True))
+		self.assertEqual(s["level"], float((srules.DEFAULT_LEAD_DAYS + srules.SAFETY_DAYS) * 1))
+		self.assertEqual(s["qty"], 30.0)
+
+	def test_buy_is_never_below_one_unit(self):
+		s = srules.suggest(3, 3, 180, 0, whole=True)
+		self.assertTrue(s["enough"])
+		self.assertEqual(s["qty"], 1.0)
+		self.assertGreaterEqual(s["level"], 1.0)
+
+	def test_thin_history_has_no_suggestion_and_says_why(self):
+		for used, uses, days in ((5, 2, 60), (5, 3, 10), (0, 3, 60)):
+			with self.subTest(used=used, uses=uses, days=days):
+				s = srules.suggest(used, uses, days, 7, whole=True)
+				self.assertFalse(s["enough"])
+				self.assertIsNone(s["level"])
+				self.assertIsNone(s["qty"])
+				self.assertIn(f"{srules.MIN_USES} uses over {srules.MIN_DAYS} days", s["reason"])
+		never = srules.suggest(0, 0, 0, 7, whole=True)
+		self.assertFalse(never["enough"])
+		self.assertIn("Not in stock", never["reason"])
+		self.assertEqual(
+			srules.suggest(1, 1, 1, 7, whole=True)["reason"].split(":")[0], "Used 1 time in 1 day"
+		)
+
+	def test_direction(self):
+		self.assertEqual(srules.direction(5, 9), "higher")
+		self.assertEqual(srules.direction(5, 2), "lower")
+		self.assertEqual(srules.direction(5, 5.0), "same")
+		self.assertIsNone(srules.direction(5, None))
+
+	def test_the_window(self):
+		self.assertEqual(srules.clean_window("60"), 60)
+		for odd in (None, "", "45", "abc", 0, -30, 365):
+			self.assertEqual(srules.clean_window(odd), srules.DEFAULT_WINDOW)
+
+	def test_the_numbers_a_person_may_approve(self):
+		self.assertEqual(srules.clean_rule("0", "5", True), (0.0, 5.0, None))
+		self.assertEqual(srules.clean_rule("1,200", "2.5", False), (1200.0, 2.5, None))
+		for level, qty in (
+			("", "5"),
+			("3", ""),
+			("-1", "5"),
+			("3", "0"),
+			("3", "x"),
+			("100001", "5"),
+			("nan", "5"),
+		):
+			with self.subTest(level=level, qty=qty):
+				self.assertIsNotNone(srules.clean_rule(level, qty, False)[2])
+		self.assertIn("whole numbers", srules.clean_rule("2.5", "5", True)[2])
+
+	def test_same_stamp(self):
+		stamp = dt.datetime(2026, 11, 19, 10, 0, 0, 123456)
+		self.assertTrue(srules.same_stamp(stamp, "2026-11-19 10:00:00.123456"))
+		self.assertFalse(srules.same_stamp(stamp, "2026-11-19 10:00:00"))
+		self.assertFalse(srules.same_stamp(stamp, None))
+		self.assertFalse(srules.same_stamp(None, None))
+
+	def test_apply_roles(self):
+		self.assertEqual(set(srules.APPLY_ROLES), {"Purchase Manager", "Stock Manager", "System Manager"})
+		self.assertNotIn("Purchase User", srules.APPLY_ROLES)
+		self.assertEqual(srules.MAX_QTY, rules.MAX_QTY)
+
+
+class _SuggestCase(unittest.TestCase):
+	"""``reorder_suggestions`` over the board stub: the board's reads replaced, the ledger by SQL."""
+
+	RULES = [
+		dict(rule("ITEM-A", warehouse=ROOM, group="All - X", level=2, qty=5), lead_time_days=0),
+		dict(rule("ITEM-B", warehouse=SHOP_BIN, group=ROOM, level=4, qty=4), lead_time_days=0),
+	]
+
+	def setUp(self):
+		_reset(roles=["Stock Manager"])
+		self._saved = {
+			"read_rules": board.read_rules,
+			"read_ancestors": board.read_ancestors,
+			"_item_details": board._item_details,
+			"_not_shop": suggestions._not_shop,
+		}
+		board.read_rules = lambda: ([dict(r) for r in self.RULES], {})
+		board.read_ancestors = lambda: rules.ancestor_map(
+			{
+				SHOP_BIN: ROOM,
+				SHOP_BIN_2: ROOM,
+				ROOM: "All - X",
+				SITE: "Sites - X",
+				"Sites - X": "All - X",
+				SHELF: "All - X",
+			}
+		)
+		board._item_details = lambda codes, include_rates: (
+			{c: {"item_name": f"Name of {c}", "stock_uom": "Nos", "stock_uom_whole": True} for c in codes},
+			{},
+		)
+		suggestions._not_shop = lambda: (set(SITES), set(NOT_SHOP))
+		self.ledger = {
+			"ITEM-A": [
+				led(SHOP_BIN, 40, 40, D(80), "Purchase Receipt"),
+				led(SHOP_BIN, -4, 36, D(30), purpose="Material Issue", voucher="SE-1"),
+				led(SHOP_BIN_2, -2, 34, D(20), purpose="Material Issue", voucher="SE-2"),
+				led(SHOP_BIN, -6, 28, D(10), purpose="Material Issue", voucher="SE-3"),
+				led(SHOP_BIN, 0, 25, D(5), "Stock Reconciliation", voucher="SR-1"),
+			],
+			"ITEM-B": [
+				led(SHOP_BIN, 10, 10, D(80), "Purchase Receipt"),
+				led(SHOP_BIN, -1, 9, D(30), purpose="Material Issue", voucher="SE-4"),
+			],
+			"ITEM-C": [
+				led(SHOP_BIN, 5, 5, D(80), "Purchase Receipt"),
+				led(SHOP_BIN, -2, 3, D(15), purpose="Material Issue", voucher="SE-5"),
+			],
+		}
+		self.since = D(55)
+		STATE["sql_handler"] = self.sql
+		STATE["docs"][("Item", "ITEM-A")] = {
+			"doctype": "Item",
+			"name": "ITEM-A",
+			"stock_uom": "Nos",
+			"modified": dt.datetime(2026, 10, 1, 9, 0, 0),
+			"reorder_levels": [
+				_Doc(
+					warehouse="Elsewhere - X",
+					material_request_type="Purchase",
+					warehouse_reorder_level=1,
+					warehouse_reorder_qty=1,
+				),
+				_Doc(
+					warehouse=ROOM,
+					material_request_type="Purchase",
+					warehouse_reorder_level=2,
+					warehouse_reorder_qty=5,
+				),
+			],
+		}
+
+	def tearDown(self):
+		board.read_rules = self._saved["read_rules"]
+		board.read_ancestors = self._saved["read_ancestors"]
+		board._item_details = self._saved["_item_details"]
+		suggestions._not_shop = self._saved["_not_shop"]
+
+	def sql(self, query, values):
+		q = " ".join(query.split())
+		if "min(sle.posting_date)" in q:
+			return [[self.since]]
+		if "select distinct sle.item_code" in q:
+			return [["ITEM-A"], ["ITEM-B"], ["ITEM-C"]]
+		if "from `tabStock Ledger Entry` sle left join" in q and "order by sle.posting_datetime" in q:
+			out = []
+			for code in values["codes"]:
+				for row in self.ledger.get(code, []):
+					out.append(dict(row, item_code=code))
+			return out
+		if "select name, modified, lead_time_days from `tabItem`" in q:
+			return [
+				{"name": c, "modified": dt.datetime(2026, 10, 1, 9, 0, 0), "lead_time_days": 0}
+				for c in values["codes"]
+			]
+		if "from `tabUOM`" in q:
+			return [{"must_be_whole_number": 1}]
+		return []
+
+
+class TestSuggestionsRead(_SuggestCase):
+	def test_each_rule_with_its_suggestion_and_basis(self):
+		data = suggestions.build(days=90, today=TODAY)
+		self.assertEqual((data["window"], data["tracking_since"]), (90, self.since))
+		by_code = {l["item_code"]: l for l in data["lines"]}
+		a = by_code["ITEM-A"]
+		# Three takes, 12 used, from the first recorded take (55 days ago): 56 days.
+		self.assertEqual((a["used"], a["uses"], a["basis_days"], a["basis_start"]), (12.0, 3, 56, self.since))
+		# The count found 3 fewer: shown, not counted.
+		self.assertEqual(a["counted_down"], 3.0)
+		s = a["suggestion"]
+		self.assertTrue(s["enough"])
+		# 12 / 56 a day x (7 assumed + 7) = 3 -> 3; x 30 = 6.43 -> 7.
+		self.assertEqual((s["level"], s["qty"], s["lead_assumed"]), (3.0, 7.0, True))
+		self.assertEqual(
+			(a["reorder_level"], a["reorder_qty"], a["direction"], a["matches"]), (2, 5, "higher", False)
+		)
+		self.assertEqual(a["key"], "ITEM-A::" + ROOM)
+		self.assertEqual(a["modified"], "2026-10-01 09:00:00")
+		# One take: no suggestion, listed after the ready ones.
+		b = by_code["ITEM-B"]
+		self.assertFalse(b["suggestion"]["enough"])
+		self.assertIsNone(b["direction"])
+		self.assertEqual([l["item_code"] for l in data["lines"]], ["ITEM-A", "ITEM-B"])
+
+	def test_the_rule_scope_decides_what_counts(self):
+		# ITEM-B's rule watches its bin and its room. A take in another room is not its use.
+		self.ledger["ITEM-B"].append(
+			led("Other Room Bin - X", -5, 0, D(8), purpose="Material Issue", voucher="SE-9")
+		)
+		b = next(l for l in suggestions.build(days=90, today=TODAY)["lines"] if l["item_code"] == "ITEM-B")
+		self.assertEqual((b["used"], b["uses"]), (1.0, 1))
+
+	def test_used_items_without_a_rule(self):
+		data = suggestions.build(days=90, today=TODAY)
+		self.assertEqual([u["item_code"] for u in data["unruled"]], ["ITEM-C"])
+		c = data["unruled"][0]
+		self.assertNotIn("warehouse", c)
+		self.assertEqual((c["used"], c["uses"]), (2.0, 1))
+
+	def test_the_window_choice(self):
+		data = suggestions.build(days="30", today=TODAY)
+		a = next(l for l in data["lines"] if l["item_code"] == "ITEM-A")
+		self.assertEqual((data["window"], a["basis_days"], a["uses"]), (30, 30, 2))
+
+	def test_the_ledger_read_is_bound_and_per_item(self):
+		suggestions.build(days=90, today=TODAY)
+		reads = [(q, v) for q, v in STATE["sql"] if "order by sle.posting_datetime" in q]
+		self.assertEqual(len(reads), 1)
+		query, values = reads[0]
+		self.assertIn("sle.is_cancelled = 0", query)
+		self.assertIn("sle.item_code in %(codes)s", query)
+		self.assertEqual(values["codes"], ("ITEM-A", "ITEM-B", "ITEM-C"))
+
+	def test_the_page_read_says_who_may_apply(self):
+		data = api.get_reorder_suggestions(days=60)
+		self.assertTrue(data["can_apply"])
+		self.assertEqual(data["window"], 60)
+		self.assertEqual(data["window_choices"], list(srules.WINDOW_CHOICES))
+		STATE["perm"][("Item", "write")] = False
+		self.assertFalse(api.get_reorder_suggestions()["can_apply"])
+		STATE["perm"].pop(("Item", "write"))
+		STATE["roles"] = ["Purchase User"]
+		self.assertFalse(api.get_reorder_suggestions()["can_apply"])
+
+	def test_the_read_needs_a_board_role(self):
+		STATE["roles"] = ["Stock User"]
+		with self.assertRaises(sys.modules["frappe"].PermissionError):
+			api.get_reorder_suggestions()
+
+
+class TestApplySuggestion(_SuggestCase):
+	STAMP = "2026-10-01 09:00:00"
+
+	def apply(self, **kw):
+		args = dict(item_code="ITEM-A", warehouse=ROOM, modified=self.STAMP, level="3", qty="7")
+		args.update(kw)
+		return api.apply_reorder_suggestion(**args)
+
+	def test_saves_the_rule_as_the_person(self):
+		r = self.apply()
+		self.assertTrue(r["ok"])
+		self.assertTrue(r["saved"])
+		self.assertEqual((r["reorder_level"], r["reorder_qty"]), (3.0, 7.0))
+		self.assertEqual(len(STATE["saves"]), 1)
+		doctype, doc, ignore_permissions = STATE["saves"][0]
+		self.assertEqual(doctype, "Item")
+		self.assertFalse(ignore_permissions)
+		rows = {row["warehouse"]: row for row in doc["reorder_levels"]}
+		self.assertEqual(
+			(rows[ROOM]["warehouse_reorder_level"], rows[ROOM]["warehouse_reorder_qty"]), (3.0, 7.0)
+		)
+		# Only the rule asked for.
+		self.assertEqual(rows["Elsewhere - X"]["warehouse_reorder_level"], 1)
+
+	def test_the_same_numbers_save_nothing(self):
+		r = self.apply(level="2", qty="5")
+		self.assertTrue(r["ok"])
+		self.assertFalse(r["saved"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_a_stale_page_writes_nothing(self):
+		r = self.apply(modified="2026-09-30 09:00:00")
+		self.assertFalse(r["ok"])
+		self.assertIn("changed by someone else", r["message"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_a_rule_that_is_gone(self):
+		r = self.apply(warehouse=SHOP_BIN)
+		self.assertFalse(r["ok"])
+		self.assertIn("no reorder rule", r["message"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_bad_numbers(self):
+		for level, qty in (("-1", "7"), ("3", "0"), ("3", ""), ("2.5", "7")):
+			with self.subTest(level=level, qty=qty):
+				r = self.apply(level=level, qty=qty)
+				self.assertFalse(r["ok"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_an_unknown_item(self):
+		r = self.apply(item_code="NOPE")
+		self.assertFalse(r["ok"])
+		self.assertEqual(STATE["saves"], [])
+
+	def test_only_the_apply_roles(self):
+		for roles in (["Purchase User"], ["Stock User"], []):
+			with self.subTest(roles=roles):
+				STATE["roles"] = roles
+				with self.assertRaises(sys.modules["frappe"].PermissionError):
+					self.apply()
+		for role in srules.APPLY_ROLES:
+			with self.subTest(role=role):
+				_reset(roles=[role], docs=dict(STATE["docs"]), sql_handler=self.sql)
+				self.assertTrue(self.apply()["ok"])
+
+	def test_the_items_own_write_permission(self):
+		STATE["perm"][("Item", "write")] = False
+		with self.assertRaises(sys.modules["frappe"].PermissionError):
+			self.apply()
+		self.assertEqual(STATE["saves"], [])
+
+	def test_post_only(self):
+		src = (APP / "api/reorder_board.py").read_text(encoding="utf-8")
+		self.assertIn('@frappe.whitelist(methods=["POST"])\ndef apply_reorder_suggestion(', src)
+		self.assertIn('@frappe.whitelist(methods=["GET", "POST"])\ndef get_reorder_suggestions(', src)
+
+	def test_no_sql_writes(self):
+		src = (APP / "inventory_enhancements/reorder_suggestions.py").read_text(encoding="utf-8").lower()
+		for verb in ("insert into", "update `", "delete from", "ignore_permissions"):
+			self.assertNotIn(verb, src)
+
+
 def _strip_js_comments(src):
 	return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", src, flags=re.S))
 
@@ -1359,8 +1870,16 @@ vm.createContext(ctx);
 vm.runInContext(src, ctx);
 const R = frappe.pages["reorder-board"].logic;
 const out = {
-	views: [R.view_from_route(["reorder-board"]), R.view_from_route(["reorder-board", "on-order"]), R.view_from_route(["reorder-board", "snoozed"]), R.view_from_route(["reorder-board", "junk"])],
-	routes: [R.route_for("needs"), R.route_for("on-order"), R.route_for("snoozed")],
+	views: [R.view_from_route(["reorder-board"]), R.view_from_route(["reorder-board", "on-order"]), R.view_from_route(["reorder-board", "snoozed"]), R.view_from_route(["reorder-board", "junk"]), R.view_from_route(["reorder-board", "levels"])],
+	routes: [R.route_for("needs"), R.route_for("on-order"), R.route_for("snoozed"), R.route_for("levels")],
+	basis: [R.basis_text({ used: 12, uses: 3, basis_days: 40, stock_uom: "Nos" }), R.basis_text({ used: 1, uses: 1, basis_days: 1 }), R.basis_text({ basis_days: 0 })],
+	lead: [R.lead_text({ lead_days: 7, lead_assumed: true }), R.lead_text({ lead_days: 1, lead_assumed: false })],
+	counts: [R.counts_text({ counted_down: 3 }), R.counts_text({ counted_down: 2, counted_up: 1 }), R.counts_text({})],
+	split: (() => {
+		const r = R.split_levels([{ key: "a", suggestion: { enough: true } }, { key: "b", suggestion: { enough: false } }, { key: "c" }]);
+		return [r.ready.map((l) => l.key), r.thin.map((l) => l.key)];
+	})(),
+	direction: [R.direction_label("higher"), R.direction_label("lower"), R.direction_label("same"), R.direction_label(null)],
 	qty: [R.clean_qty("12", 100000, true), R.clean_qty("2.5", 100000, true), R.clean_qty("0", 100000, false), R.clean_qty("1,200", 100000, false), R.clean_qty("100001", 100000, false), R.clean_qty("", 100000, false)].map((r) => [r.qty, !!r.error]),
 	order: [R.order_qty(10, 4, true), R.order_qty(10, 4, false)],
 	picked: (() => {
@@ -1387,10 +1906,31 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		)
 		self.assertEqual(result.returncode, 0, result.stderr)
 		out = json.loads(result.stdout)
-		self.assertEqual(out["views"], ["needs", "on-order", "snoozed", "needs"])
+		self.assertEqual(out["views"], ["needs", "on-order", "snoozed", "needs", "levels"])
 		self.assertEqual(
-			out["routes"], [["reorder-board"], ["reorder-board", "on-order"], ["reorder-board", "snoozed"]]
+			out["routes"],
+			[
+				["reorder-board"],
+				["reorder-board", "on-order"],
+				["reorder-board", "snoozed"],
+				["reorder-board", "levels"],
+			],
 		)
+		self.assertEqual(
+			out["basis"],
+			["Used 12 Nos in 40 days (3 uses)", "Used 1 in 1 day (1 use)", "Not in the shop in this window"],
+		)
+		self.assertEqual(out["lead"], ["lead time 7 days (assumed: none set on the item)", "lead time 1 day"])
+		self.assertEqual(
+			out["counts"],
+			[
+				"counts found 3 fewer (not counted as use)",
+				"counts found 2 fewer, counts found 1 more (not counted as use)",
+				"",
+			],
+		)
+		self.assertEqual(out["split"], [["a"], ["b", "c"]])
+		self.assertEqual(out["direction"], ["raise", "lower", "same", ""])
 		self.assertEqual(
 			out["qty"], [[12, False], [None, True], [None, True], [1200, False], [None, True], [None, True]]
 		)

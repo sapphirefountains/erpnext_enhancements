@@ -57,6 +57,8 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `reorder_suggest_rules.py` | Suggested reorder levels (v1.832.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
+| `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
 | `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
@@ -1161,7 +1163,39 @@ TASK-2026-02922 to -02926.
   email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
   on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
 * **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
-  `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+  `unsnooze_line`, and since v1.832.0 `get_reorder_suggestions` and `apply_reorder_suggestion` (below). Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+
+### Suggested reorder levels (v1.832.0)
+
+The 2026-11-19 operations review: set reorder points from real usage, approved item by item. The
+board's fourth tab, **Reorder levels** (`/desk/reorder-board/levels`, a route like the others), lists
+every Purchase rule the board reads with its current numbers, a suggested pair and the basis. Every
+judgement is `reorder_suggest_rules.py` (no Frappe); `reorder_suggestions.py` reads and writes.
+
+| | |
+|---|---|
+| **Used** | Stock that left the shop for a job or a customer, in the rule's scope (its `warehouse_group` and everything under it, else its warehouse; `reorder_rules.in_scope`): takes (Material Issue), deliveries (Delivery Note, Sales Invoice, POS Invoice taking stock out), and moves out to a job site or the Project Shelf; less moves back from a job site and stock added with a job picked (Material Receipt carrying a Project: Stock Scan's + with a job). The shop is everything but the job sites and the Project Shelf |
+| **Not used** | Count corrections (shown beside the suggestion, derived as ERPNext's Stock Ledger report does, never counted), moves between shop places, receipts, returns to a supplier, releases from the Project Shelf to a shop bin |
+| **Basis** | From the latest of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site recorded, and the item's first day in the shop, through today |
+| **Enough** | At least `MIN_USES` (3) uses over at least `MIN_DAYS` (14) days, and something used. Otherwise the rule is listed under "too little history" with its basis and the reason, and has no Apply |
+| **Reorder at** | daily use × (lead time + `SAFETY_DAYS`, 7), rounded up |
+| **Buy** | daily use × `COVER_DAYS` (30), rounded up, never below one unit |
+| **Lead time** | The Item's `lead_time_days`; 7 days (`DEFAULT_LEAD_DAYS`) assumed when it is 0, and the page says so. On production on 2026-11-19 no rule item had one |
+
+- **Apply** (`api.reorder_board.apply_reorder_suggestion`, POST): Purchase Manager, Stock Manager or
+  System Manager (`APPLY_ROLES`), and the Item's own write permission (`item.check_permission("write")`;
+  on production Item write is Item Manager's). One `Item.save()` as the person, on the rule the row
+  showed only (never a new rule), with the Item's `modified` from the read: a stale page writes
+  nothing. The dialog starts on the suggestion and the numbers can be changed before saving; Reorder
+  at may be 0, Buy must be more than 0, both at most 100,000, whole for a whole-number unit.
+- **Read** (`api.reorder_board.get_reorder_suggestions`, GET, the board's roles): the board's own
+  `read_rules`, then one SQL read of the ledger per item code (the rule items' whole ledger, because a
+  count's change needs the balance before it), the first recorded take, and the items with a possible
+  use in the window. It is made only when someone opens the tab.
+- **Items used with no rule** are listed under the tab, read-only, with the same basis and
+  suggestion; a rule is given from the Bin Manager's Reorder column.
+- **What production showed on 2026-11-19:** 53 rules, and no rule item with more than one recorded
+  take, so every rule was under "too little history". Suggestions appear as takes are scanned.
 
 ### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
 
