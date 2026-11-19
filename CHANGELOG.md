@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.832.0] - 2026-11-19
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -63,6 +63,21 @@ Hardening changes released together. Each was written and reviewed as its own pu
   - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
     device with a stand-in provider; `tests/test_ai_gate_batch.py` and
     `scripts/test_ai_pending_batch.mjs` cover the unticked cards.
+- **The Visit Wizard's bootstrap applies the briefing's role rule (hardening).**
+  `api.maintenance_visit.get_visit_bootstrap` now includes the site briefing (the `dashboard` key)
+  only for a caller who passes the rule `get_dashboard_context` and the `maintenance_site_briefing`
+  assistant tool already apply: a user holding one of the roles in
+  `sapphire_maintenance.permissions.VIEW_ALL_ROLES`, or Administrator. The bootstrap reuses that
+  module's `_sees_all` rather than listing the roles again.
+  - A caller who can read the visit but holds none of those roles still gets the visit, its
+    sections, template guidance and state; the `dashboard` key is `{}` and the briefing builder is
+    not called for them.
+  - Nothing changes for a technician, supervisor, Projects Manager or System Manager.
+  - The wizard page already reads every briefing key through a fallback (`data.dashboard || {}`),
+    so it needed no change; `tests/test_visit_briefing_role.py` pins that too.
+  - Tests: `tests/test_visit_briefing_role.py` runs the bootstrap's decision against a stand-in
+    `frappe` and checks it gives the same answer as the endpoint's role step for every role in the
+    list and for roles outside it. Wired into CI.
 
 ## [1.831.0] - 2026-11-19
 
