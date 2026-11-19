@@ -1,0 +1,20 @@
+/*
+ * The pay application lines editor (public/js/estimating/pay_app_editor.js), after the v2 "PayApp2"
+ * mockup. Loaded on top of estimate_editor.bundle.css: the cards, phase headers, rows, banner and sticky
+ * action bar are the estimate editor's, so the two screens read as one family. This file only sets the
+ * pay application's own row grid and the "past its scheduled value" highlight. Below 820px of the lines
+ * column the rows turn into labelled cards (the shared container query), usable on a phone.
+ */
+.sf-est.sf-pay .row { grid-template-columns: minmax(170px, 2.6fr) 100px 76px 150px 100px; }
+.sf-est.sf-pay .row .q input { max-width: 72px; }
+.sf-est.sf-pay .row .q .btn-fill { margin-left: 4px; }
+.sf-est.sf-pay .row.over { background: color-mix(in srgb, var(--est-bad) 8%, transparent); }
+.sf-est.sf-pay .row.over .amt { color: var(--est-bad); font-weight: 700; }
+.sf-est.sf-pay .row .amt { font-weight: 600; }
+
+@container (max-width: 820px) {
+	.sf-est.sf-pay .row { grid-template-columns: 1fr 1fr; }
+	.sf-est.sf-pay .row .q { grid-column: 1 / -1; }
+	.sf-est.sf-pay .row .q input { max-width: none; flex: 1 1 120px; }
+	.sf-est.sf-pay .row .q .btn-fill { min-height: 44px; padding: 0 12px; }
+}

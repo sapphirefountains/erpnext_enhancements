@@ -954,6 +954,20 @@ jobs:
       # its Quotation be deleted in either order.
       - name: Estimate quotation, seeds and delete links (frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_estimating_api -v
+      # Estimating milestone 2, the schedule of values and the pay application, as arithmetic in whole
+      # cents: column D is the earlier applications' WORK completed (stored material is a balance, so it
+      # is never counted twice), line 7 sums what was certified so a short certification carries forward,
+      # retainage steps down by the percent complete at the START of the period, a finished line closes
+      # to the cent, and an estimate projects onto schedule rows as an exact partition. The node step
+      # holds the browser twin to the same cases. No frappe stub.
+      - name: Pay application arithmetic (G702 / G703)
+        run: python -m unittest erpnext_enhancements.tests.test_pay_app_math -v
+      # The Schedule of Values and Pay Application controllers against a frappe stub (their own step):
+      # line keys minted once, a locked schedule taking change orders only, a billed line never deleted,
+      # the chain by stored link and by line key, change orders joining by approval date, milestones,
+      # and certify refusing with every reason at once.
+      - name: Schedule of values and pay application controllers (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_billing_controllers -v
       # The browser twin of the pricing engine under node, against the same cases as the Python step,
       # plus the editor's phase labels equal to the server's, the form script's required editor level
       # equal to the bundle's VERSION (a tab open across a deploy draws "reload" instead of throwing),

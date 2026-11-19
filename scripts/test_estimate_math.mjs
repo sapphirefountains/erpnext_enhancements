@@ -112,6 +112,42 @@ test("nothing typed reaches the page unescaped", () => {
 	}
 });
 
+// The pay application's G703/G702 twin against the cases the Python engine wrote
+// (tests/data/pay_app_math_cases.json): a total the editor shows must be the one the server stores.
+const pm = await import(pathToFileURL(path.join(APP, "public/js/estimating/pay_app_math.js")).href);
+const pe = await import(pathToFileURL(path.join(APP, "public/js/estimating/pay_app_editor.js")).href);
+const PAY_CASES = JSON.parse(fs.readFileSync(path.join(APP, "tests/data/pay_app_math_cases.json"), "utf8")).cases;
+test("the pay application twin matches every shared case", () => {
+	for (const c of PAY_CASES) {
+		const got = pm.price_application(c.schedule, c.application, c.lines, c.previous);
+		assert.deepEqual(got, c.expected, c.name);
+	}
+});
+
+test("the pay application form asks for the level its bundle exports, and calls only real exports", async () => {
+	const bundle = fs.readFileSync(path.join(APP, "public/js/pay_app_editor.bundle.js"), "utf8");
+	const form = fs.readFileSync(path.join(APP, "estimating/doctype/pay_application/pay_application.js"), "utf8");
+	const version = Number(/const VERSION = (\d+);/.exec(bundle)[1]);
+	const required = Number(/const REQUIRED_PAY_EDITOR_LEVEL = (\d+);/.exec(form)[1]);
+	assert.equal(required, version);
+	for (const m of form.matchAll(/ed\.(\w+)\(/g)) assert.equal(typeof pe[m[1]], "function", m[1]);
+	// phases in number order, change orders last, a design stage under its hundred
+	const g = pe.groups([{ phase_number: 500 }, { is_change_order: 1 }, { phase_number: 120 }, { phase_number: 0 }]);
+	assert.deepEqual(
+		g.map(([k]) => k),
+		[0, 100, 500, "co"]
+	);
+});
+
+test("nothing typed reaches the pay application page unescaped", () => {
+	const src = fs.readFileSync(path.join(APP, "public/js/estimating/pay_app_editor.js"), "utf8");
+	for (const field of ["description", "item_no", "line_key", "name", "milestone"]) {
+		const raw = new RegExp(`\\$\\{\\s*(line|l|row|frm\\.doc)\\.${field}\\s*\\}`);
+		assert.ok(!raw.test(src), `${field} interpolated without esc()`);
+	}
+	assert.ok(!/href="\/app\//.test(src), "Desk links are /desk/");
+});
+
 // frm.save() at v16 swallows a server refusal and resolves anyway; the form stays dirty. Issue and New
 // Revision must stop there, not issue from the stored version and reload over the unsaved edits.
 const atest = async (name, fn) => {

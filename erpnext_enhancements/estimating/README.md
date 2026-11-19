@@ -8,8 +8,9 @@ the decisions it follows are TASK-2026-02149 (D15–D18, the Estimator role and 
 2026-11-04 concept page and the v2 mockups (keep it simple, no toggle wall, every screen usable on a
 phone).
 
-The schedule of values, pay applications (G702/G703, retainage stepping down per D16),
-percent-complete accounting and the print and export come in later releases, built on these lines.
+Milestone 2 adds the **Schedule of Values** and the **Pay Application** (G702/G703, retainage stepping
+down per D16, change orders), below. The Sales Invoice with retainage receivable, the G702/G703 print
+and portal export, retainage release and percent-complete accounting come in later releases.
 
 ## How a price is made
 
@@ -111,8 +112,72 @@ as one "Estimating seed: <step>" Error Log that says what to do by hand.
 - **The form script checks the bundle's API level** (`REQUIRED_EDITOR_LEVEL` = bundle `VERSION`), so a
   tab open across a deploy says "reload" instead of throwing. Bump both together.
 
+## Schedule of Values and Pay Application (milestone 2)
+
+**Schedule of Values** (`SOV-.YY.-.####`): the contract broken into the lines the customer signed.
+Typed by hand, or filled once from an Estimate (Create > Schedule of Values: one row per phase and cost
+type, or one per line). **It carries no cost and no markup field at all**: it goes to a general
+contractor, and a field that exists is one export away from leaving the building. It locks when its
+lines equal the contract sum; once locked only change-order rows can join, and it unlocks only before
+anything is certified. Each row has a `line_key` minted once (`quality.stable_keys`).
+
+**Pay Application** (`PAY-.YY.-.####`, submittable): one period's billing. Start Pay Application on a
+locked schedule; the project manager types **this period's percent** per line on site and sends it to
+accounting; accounting checks the amount due and **certifies** (submits). Milestone billing bills a
+milestone's percent of every line.
+
+The arithmetic is [`pay_app_math.py`](pay_app_math.py) (no frappe; its docstring has the model), with
+a browser twin [`public/js/estimating/pay_app_math.js`](../public/js/estimating/pay_app_math.js) held
+to [`tests/data/pay_app_math_cases.json`](../tests/data/pay_app_math_cases.json):
+
+```
+D from previous      = earlier applications' WORK completed   (not their G: stored is a balance)
+E this period        = C x this period's %                     (the percent left closes the line)
+G completed + stored = D + E + F            retainage = held before + E x work % now + F x stored %
+G702 line 7          = what earlier applications were CERTIFIED for (a short one carries forward)
+```
+
+### Careful about
+
+- **Column D is work completed, never column G.** Carrying G forward counts stored materials twice;
+  the old workbook does.
+- **Retainage steps by the percent complete at the start of the period, and keeps holding** (Nik,
+  2026-11-19, "Keep holding it"). When 10% steps down to 5% at 50% complete, work billed before the
+  step stays held at 10% until final release and only later work is held at 5%. Each line carries what
+  the earlier applications held (`retainage_previous`) and adds this period's work at the rate in force;
+  a step-down or an override never releases earlier retainage. Release is a later PR (B9).
+- **The chain is a stored link** (`previous_application`), never inferred from dates, and lines chain
+  by `line_key`, so a reordered schedule never repoints a billed line. **It is derived again on every
+  save**, because read_only is not enforced on a save at v16.56: a blanked link would bill the job twice.
+- **Status, change-order rows and retainage are the server's.** A schedule's status moves only through
+  Lock / Unlock; a change-order row always equals its Change Order and never loses or gains one;
+  retainage terms freeze at lock. Overrides and the amount certified are permlevel 1, and are cleared
+  on a new application for a user without level-1 access.
+- **Nothing releases retainage until B9.** With keep-holding, an override of 0 holds nothing new but
+  releases nothing, and held retainage only comes down with a line's work (capped at the work left).
+  Final release (B9) must ship before any job reaches its last application.
+- **Milestone billing puts the milestone's percent on base lines only**; change-order rows bill by
+  their own typed percent, so approved scope never becomes unbillable.
+- **A change order joins from the application whose period reaches its approval date**, and counts
+  as "approved this month" when it is new on this application, not by its date.
+- **A certified application stores every number** and is never re-synced from the schedule.
+- **Certify refuses with every reason at once** (`pay_app_math.refusals`); only the latest application
+  can be canceled; amending is refused.
+- **The Pay Application editor shares the estimate editor's stylesheet** (`estimate_editor.bundle.css`)
+  and adds `pay_app_editor.bundle.css`; its bundle level (`REQUIRED_PAY_EDITOR_LEVEL`) equals the bundle's
+  `VERSION`, checked in CI.
+
+| File | Purpose | Wiring |
+|---|---|---|
+| `pay_app_math.py` | `sov_rows` (the projection, an exact partition), `price_application` (G703 + G702), `resolve_rates`, `refusals`. Pure | both controllers, `api/estimating.py`; twin in `public/js/estimating/pay_app_math.js` |
+| `doctype/schedule_of_values/` (+ `_line`, `retainage_step`) | The schedule; lock and change-order rules; reuses `Contract Milestone` for milestones | form; `api/estimating.py` |
+| `doctype/pay_application/` (+ `_line`) | The chain, the line sync from the schedule, pricing, certify refusals, the latest-only cancel | form; `api/estimating.py` |
+| `links.py` `guard_change_order_cancel`, `drop_canceled_change_order` | A change order on a certified application cannot be canceled; one canceled earlier leaves every schedule | Change Order `doc_events` (`before_cancel`, `on_cancel`) |
+| `../public/js/estimating/pay_app_editor.js` | The PM's editor: phases fold, percent per line, REST, past-scheduled highlight, Amount Due panel, Send to Accounting / Certify | `pay_app_editor.bundle.js` + `.css`, loaded by `pay_application.js` |
+
 ## Tests (bench-free, in CI)
 
 `tests/test_estimate_math.py`, `tests/test_estimating_rules.py`, `tests/test_estimate_controller.py`
 (frappe stub), `tests/test_estimating_api.py` (Issue Quotation, seeds, delete links; frappe stub) and
-`scripts/test_estimate_math.mjs` (node).
+`tests/test_pay_app_math.py`, `tests/test_billing_controllers.py` (frappe stub) and
+`scripts/test_estimate_math.mjs` (node: both twins, both bundle levels, escaping).

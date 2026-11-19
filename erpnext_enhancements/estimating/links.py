@@ -63,3 +63,55 @@ def release_estimate(doc):
 			)
 			issued = row.quotation and not repriced
 			frappe.db.set_value("Estimate", prev, "status", "Issued" if issued else "Draft")
+
+
+def guard_change_order_cancel(doc, method=None):
+	"""Change Order ``before_cancel`` (hooks.py doc_events): refuse when a certified application has it.
+
+	A change order's row on a certified pay application moved that certificate's lines 2 and 3 (the
+	contract sum to date) whether or not work was billed on it yet; canceling the change order would
+	leave the certificate counting scope that no longer exists. A compensating change order is the
+	instrument (TASK-2026-02131).
+	"""
+	if not doc.name or not frappe.db.table_exists("Pay Application Line"):
+		return
+	rows = frappe.db.sql(
+		"""select distinct pa.name, pa.application_no from `tabPay Application` pa
+		join `tabPay Application Line` pal on pal.parent = pa.name
+		join `tabSchedule of Values Line` sl on sl.line_key = pal.line_key and sl.parent = pa.schedule_of_values
+		where sl.change_order = %s and pa.docstatus = 1
+		order by pa.application_no""",
+		(doc.name,),
+		as_dict=True,
+	)
+	if rows:
+		frappe.throw(
+			frappe._(
+				"This change order is billed on certified pay application {0}. Raise a compensating change order instead of canceling it."
+			).format(", ".join(r.name for r in rows))
+		)
+
+
+def drop_canceled_change_order(doc, method=None):
+	"""Change Order ``on_cancel``: take its row off every schedule of values.
+
+	The guard above has already refused when a certified application carries the row, so the row is
+	on drafts at most. A draft application drops it on its next save (``sync_lines``), or keeps it to be
+	refused by name when a percent was typed on it.
+	"""
+	if not doc.name or not frappe.db.table_exists("Schedule of Values Line"):
+		return
+	parents = {
+		r.parent
+		for r in frappe.get_all(
+			"Schedule of Values Line", filters={"change_order": doc.name}, fields=["parent"]
+		)
+	}
+	for name in parents:
+		sov = frappe.get_doc("Schedule of Values", name)
+		sov.set("lines", [r for r in sov.lines if r.change_order != doc.name])
+		sov.flags.ignore_permissions = True
+		sov.add_comment(
+			"Info", frappe._("Change order {0} was canceled; its row was removed.").format(doc.name)
+		)
+		sov.save()

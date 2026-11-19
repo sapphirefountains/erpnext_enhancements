@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.834.0] - 2026-11-20
+
+### Added
+
+- **Estimating, milestone 2: the Schedule of Values and the Pay Application.** The contract broken
+  into the lines the customer signed, and one period's AIA progress billing (G702 and G703) against
+  it, replacing the pay application workbook. Follows the 2026-11-04 concept decisions, the v2 PayApp
+  and SOV mockups, Nik's picks of 2026-11-06 and the B-series plan (TASK-2026-02065 to -02073).
+  - **Schedule of Values.** Typed by hand (the day-one path: most jobs have no estimate) or filled
+    from an Estimate with **Create > Schedule of Values**, one row per phase and cost type by default
+    or one per line, editable afterwards. The fill is an exact partition: the rows are the
+    estimate's own line prices regrouped in whole cents, so they sum to the estimate to the cent, and
+    the same estimate in any order gives the same rows. "By others" lines stay on as flagged rows worth
+    nothing. **No cost or markup field exists on it**, by design: it is handed to a general contractor.
+  - **Lock.** The schedule cannot lock until its lines equal the contract sum. Once locked its lines
+    are the contract breakdown: a changed value, a new base line or a new contract sum is refused, and
+    scope changes arrive as **change-order rows** (Add Approved Change Orders: every submitted,
+    customer-approved Change Order of the project, at its signed price, dated by the customer's
+    approval). It unlocks only before any application is certified, and a billed line can never be
+    deleted. Every line carries a `line_key` minted once, so reordering or renumbering never repoints
+    a billed line.
+  - **Pay Application.** Start Pay Application on a locked schedule makes the next one, chained by a
+    stored link to the latest (never inferred from dates), dated from the day after the last period;
+    one open application per schedule. **The link and the number are derived again on every save**:
+    read_only is not enforced on a save at frappe v16.56 (`client.set_value` and the REST update just
+    save), and a blanked link would have priced every line from nothing, billing the whole job again. **The project manager types this period's percent per line**
+    (Nik, 2026-11-06) in a phone-usable editor: phases with work this period open, the rest folded; a
+    REST button bills what is left; a line pushed past its scheduled value turns red. Send to
+    Accounting marks it To Review; accounting reviews the amount due and **certifies**, which submits
+    it. Milestone billing bills a milestone's percent of every base line, each milestone once, and the
+    milestones must total 100% before the schedule locks. **Change-order rows bill outside the
+    milestones**, by the percent typed on them, alone or alongside a milestone: a milestone's percent
+    on a change order, with each milestone billed once, would leave approved scope unbillable.
+  - **The arithmetic** (`estimating/pay_app_math.py`, a browser twin held to the same cases), in whole
+    cents with frappe's banker's rounding. **Column D is the earlier applications' work completed, not
+    their column G**: stored material is a balance, so carrying G forward would count it twice (the
+    workbook's "E = prior H" makes that mistake). The G702's nine lines with retainage as two rows (on
+    work, on stored materials); **line 7 sums what was certified**, so when a GC certifies less than
+    was due the shortfall is in the next payment due by construction. No six-month limit.
+  - **Retainage** (D16) resolves line → application → the schedule's rate → none, and may **step
+    down** (for example 10% until 50% complete, then 5%), chosen by the percent complete at the
+    **start** of the period so a month's own work never changes the rate it is billed at. **A step-down
+    keeps holding** (Nik, 2026-11-19: "Keep holding it"): work billed before the step stays held at the
+    old rate until final release, and only work after it is held at the new rate. So retainage on work
+    is cumulative per line, what the earlier applications held plus this period's work at the rate in
+    force, never `(D + E) x` today's rate, which would have paid out half of everything held in the
+    month the job crossed the step. The rate used and the retainage held before are stored on every
+    line; a certified application never re-rates. Stored materials are off unless
+    the job turns them on.
+  - **Change orders join from the application whose period reaches their approval date**, and
+    "approved this month" means "not on the previous application", so a change order approved in March
+    and added in June moves line 2 in June, the month it actually moved. A change order on a
+    certified application cannot be canceled (Change Order `before_cancel`, naming the application),
+    because it moved that certificate's contract sum to date; one canceled earlier leaves every
+    schedule (`on_cancel`), and a draft drops it, or refuses it by name when a percent was typed on it.
+    Moving a draft's period earlier drops a change order approved after it the same way.
+  - **Accounting owns the certification and the retainage.** The amount certified (and its
+    "certified for less" tick) and the application and line retainage overrides are at permlevel 1:
+    accounting writes them, project managers read them. Overrides are cleaned as typed (blank
+    inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule keeps its project,
+    billing mode, stored-materials setting, milestones **and retainage terms**, the terms the job was
+    signed on. Its status moves only through Lock and Unlock (a saved status is ignored), a change-order
+    row always equals its Change Order (an approved one of the same project, at its price and approval
+    date) and can never be unlinked from it or have one put on a base row, a row that appears on any
+    certified application cannot be deleted, and a project has one schedule. A line override sent with
+    a new application by someone without level-1 access is cleared (frappe v16.56 does not reset child
+    rows on insert). Negative completed-to-date and negative stored
+    materials are refused. A percent typed on a "by others" line, or stored
+    materials on a job that does not bill them, is set back to 0 rather than billed.
+  - **Certify refuses with every reason at once**: the schedule not locked, the previous application
+    not certified, a period that overlaps the last one, a line no longer on the schedule, a line billed
+    past its scheduled value, a negative amount without a note, work on a line scheduled at nothing,
+    stored materials while they are off, retainage outside 0 to 100%, a negative payment due, an
+    amount certified above the amount due. Only the latest application can be canceled; amending is
+    refused.
+  - Not in this release: the Sales Invoice with retainage receivable, the G702/G703 print and the
+    portal export, retainage release, and percent-complete accounting. They are the next PRs.
+    **Nothing releases retainage until retainage release (B9) lands**: with keep-holding, an override
+    of 0 holds nothing new but releases nothing. B9 comes next and must ship before any job reaches its
+    last application.
+- Bench-free tests, in CI: `test_pay_app_math` (the arithmetic, the shared cases, the projection),
+  `test_billing_controllers` (both controllers and the endpoints, frappe stub), the node twin and the
+  editor's bundle level in `scripts/test_estimate_math.mjs`, and the no-cost-field and who-certifies
+  rules in `test_estimating_rules`.
 ## [1.833.0] - 2026-11-19
 
 Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
