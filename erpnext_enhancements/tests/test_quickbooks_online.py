@@ -14,7 +14,6 @@ import hashlib
 import hmac
 import json
 import math
-import re
 import sys
 import types
 from datetime import datetime
@@ -3073,29 +3072,15 @@ def test_is_qbo_customer_job_detects_subcustomers():
 	assert not _is_qbo_customer_job({"DisplayName": "Acme Supply"})
 
 
-def test_job_number_normalizes_padding():
-	"""_job_number reduces a 'PRJ-###' label to its prefix and digits, stripping zero-padding."""
+def test_prj_number_normalizes_padding():
+	"""_prj_number reduces a 'PRJ-###' label to its digits, stripping zero-padding."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_online.core.mapping import _job_number
+	from erpnext_enhancements.quickbooks_online.core.mapping import _prj_number
 
-	assert _job_number("PRJ-401 4th West Fountain Control & Pump Repair") == ("PRJ", "401")
-	assert _job_number("PRJ-00401") == ("PRJ", "401")  # QBO leaf "401" matches ERPNext id "PRJ-00401"
-	assert _job_number("PRJ419 Jan Trost - Fountain repair") == ("PRJ", "419")
-	assert _job_number("4th West Apartments") is None
-
-
-def test_job_number_reads_the_service_and_events_prefixes():
-	"""v1.831.0: new Service jobs are SRV-#####, new Events jobs EVT-#####, and each prefix counts on
-	its own, so the prefix comes back with the digits: SRV-12 and PRJ-12 are different jobs."""
-	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_online.core.mapping import _job_number
-
-	assert _job_number("SRV-00012 Riverton Splash Pad - Winterize") == ("SRV", "12")
-	assert _job_number("srv12 Riverton") == ("SRV", "12")
-	assert _job_number("EVT-3 - Holiday Party") == ("EVT", "3")
-	# The words themselves are not numbers.
-	assert _job_number("Service call - Riverton") is None
-	assert _job_number("Events 2026") is None
+	assert _prj_number("PRJ-401 4th West Fountain Control & Pump Repair") == "401"
+	assert _prj_number("PRJ-00401") == "401"  # QBO leaf "401" matches ERPNext id "PRJ-00401"
+	assert _prj_number("PRJ419 Jan Trost - Fountain repair") == "419"
+	assert _prj_number("4th West Apartments") is None
 
 
 def test_strip_prj_prefix_handles_every_format():
@@ -3119,24 +3104,6 @@ def test_strip_prj_prefix_handles_every_format():
 	assert strip_prj_prefix("PRJ-00614") == "PRJ-00614"
 	assert strip_prj_prefix("") == ""
 	assert strip_prj_prefix(None) is None
-	# v1.831.0: a Service or Events job number leads a job's name the same way.
-	assert strip_prj_prefix("SRV-12 - Riverton Splash Pad") == "Riverton Splash Pad"
-	assert strip_prj_prefix("EVT-00003 Holiday Party") == "Holiday Party"
-	assert strip_prj_prefix("Service Call - Riverton") == "Service Call - Riverton"
-	assert strip_prj_prefix("Events Center Fountain") == "Events Center Fountain"
-
-
-def test_title_remediation_prefilter_covers_every_prefix_the_stripper_strips():
-	"""The remediation selects titles by SQL REGEXP and cleans them with strip_prj_prefix. A prefilter
-	narrower than the stripper would leave SRV-/EVT- titles uncleaned in silence."""
-	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_online.core import mapping, project_name_remediation
-
-	pattern = project_name_remediation._LEADING_PRJ_REGEXP.replace("[[:space:]]", r"\s").replace("[0-9]", r"\d")
-	for prefix in mapping.JOB_PREFIXES:
-		assert re.match(pattern, f"{prefix}-12 Riverton", re.IGNORECASE), prefix
-		assert mapping.strip_prj_prefix(f"{prefix}-12 Riverton") == "Riverton"
-	assert not re.match(pattern, "Service Call", re.IGNORECASE)
 
 
 def test_protect_existing_project_title_drops_only_when_title_set():
@@ -3329,32 +3296,6 @@ def test_match_project_links_existing_job_by_prj_number(monkeypatch):
 	assert match["status"] == "matched"
 	assert match["name"] == "PRJ-00401"
 	assert match["rule"] == "prj_number"
-
-
-def test_match_project_links_a_service_job_by_its_srv_number(monkeypatch):
-	"""v1.831.0: a QBO job named "SRV-12 ..." links SRV-00012, and the pattern carries the SRV prefix
-	so it can never link PRJ-00012, which is a different job (each prefix counts on its own)."""
-	frappe = install_frappe_stub()
-	seen = {}
-
-	def fake_sql(query, params=None, as_dict=False, **kwargs):
-		seen["pat"] = params["pat"]
-		return [types.SimpleNamespace(name="SRV-00012")]
-
-	monkeypatch.setattr(frappe.db, "sql", fake_sql, raising=False)
-	from erpnext_enhancements.quickbooks_online.core.mapping import find_existing_match
-
-	match = find_existing_match(
-		"Customer",
-		{"Id": "3001", "DisplayName": "SRV-12 Riverton Splash Pad - Winterize", "Job": True, "ParentRef": {"value": "1225"}},
-		types.SimpleNamespace(company="Sapphire Fountains"),
-	)
-
-	assert seen["pat"] == "SRV-?0*12([^0-9]|$)"
-	assert not re.search(seen["pat"], "PRJ-00012")
-	assert re.search(seen["pat"], "SRV-00012")
-	assert match["status"] == "matched"
-	assert match["name"] == "SRV-00012"
 
 
 def _upsert_job_no_match(monkeypatch, parent_customer):

@@ -55,16 +55,14 @@ from __future__ import annotations
 
 import frappe
 
-from erpnext_enhancements.quickbooks_online.core.mapping import JOB_PREFIXES, strip_prj_prefix
+from erpnext_enhancements.quickbooks_online.core.mapping import strip_prj_prefix
 
 QBO_COMMIT_EVERY = 100
 
 # Project titles that begin with a PRJ-### token (the prefixed ones to clean). The
 # trailing boundary keeps it anchored to a leading token; MariaDB REGEXP is
-# case-insensitive under the default collation. SRV- and EVT- (v1.831.0) too, from the
-# same list strip_prj_prefix strips, so this prefilter never picks a narrower set of
-# titles than the stripper cleans.
-_LEADING_PRJ_REGEXP = r"^[[:space:]]*(" + "|".join(JOB_PREFIXES) + r")-?[0-9]"
+# case-insensitive under the default collation.
+_LEADING_PRJ_REGEXP = r"^[[:space:]]*PRJ-?[0-9]"
 
 
 def strip_project_name_prefixes(apply=False, limit=None, verbose=True):
