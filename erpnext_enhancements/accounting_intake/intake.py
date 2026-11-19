@@ -109,7 +109,7 @@ def ingest_document(*, file_url, source_channel="Upload", source_reference=None,
 	return doc.name
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def ingest_upload(file_url, document_type=None):
 	"""Manual-upload channel: called from the Document Intake list view after a
 	file is uploaded. Creates the queue row and returns its name."""

@@ -12,7 +12,8 @@ not carry a name on the posted log. Every name on this report comes from
 `SafetyIncident.log_name()` — one function, so there is one place to get it right
 instead of one per report — and a case marked private prints "Privacy Case". The
 name stays on the incident record and on `OSHA Privacy Case List`, which is a
-separate report with a shorter role list.
+separate report. Both reports are for `System Manager` and `HR Manager` only
+(v1.826.8).
 
 **Only recordable cases appear**, which is the form's own rule and not a filter
 for convenience. Near misses are excluded and that is correct even though they are

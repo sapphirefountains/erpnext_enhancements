@@ -67,7 +67,7 @@ def get_bank_balances():
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refresh_now():
 	"""Manual balance refresh (widget + Settings button). Spends one Plaid call per
 	linked bank. Deliberately NOT refused while paused: a human pressing the button
@@ -144,7 +144,7 @@ def list_plaid_accounts(bank):
 	return link_accounts.list_plaid_accounts(bank)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def map_plaid_account(bank_account, account_id, mask=None, start_date=None, bank=None):
 	"""Stamp a Plaid account id onto an existing company Bank Account. ``bank`` is the
 	Bank that holds the token when native Link named it differently from the master's."""
@@ -154,14 +154,14 @@ def map_plaid_account(bank_account, account_id, mask=None, start_date=None, bank
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def absorb_native_duplicate(duplicate, into):
 	"""Move a native-created duplicate's Plaid link onto our master and delete the duplicate."""
 	_require_finance_operator(connect=True)
 	return link_accounts.absorb_native_duplicate(duplicate, into)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def prune_link_created_gl_accounts(bank):
 	"""Delete the unused GL Accounts a native "Refresh Plaid Link" left behind for one Bank."""
 	_require_finance_operator(connect=True)

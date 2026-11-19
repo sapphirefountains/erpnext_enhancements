@@ -1,4 +1,4 @@
-"""Getting a product unit to the customer (v1.827.0, TASK-2026-03231).
+"""Getting a product unit to the customer (v1.829.0, TASK-2026-03231).
 
 Nikolas, 2026-11-18 (vault decisions/2026-11-18-estop-product-line.md, pick 7): a product order is
 picked up at the shop, shipped by a carrier, or delivered by Sapphire. The Delivery Note records

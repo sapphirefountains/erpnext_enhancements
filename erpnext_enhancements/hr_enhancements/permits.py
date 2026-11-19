@@ -35,6 +35,9 @@ OPEN = "Open"
 CLOSED = "Closed"
 CANCELED = "Canceled"
 
+#: Roles that may open, close or cancel any permit (the DocType's own manager roles).
+CHANGE_ROLES = ("Maintenance Manager", "HR Manager", "System Manager")
+
 
 def _me():
 	user = frappe.session.user
@@ -43,16 +46,50 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
-def open_permit(permit, acknowledge_controls=0):
+def _permit_for_change(permit, me):
+	"""Load the permit a transition acts on, after checking who is asking.
+
+	The caller holds one of :data:`CHANGE_ROLES`, or is an active Employee named on the
+	permit as its entrant, attendant or supervisor. The entrant is included because the
+	person in the space is the one who calls an entry off, and the roles because somebody
+	has to be able to close a permit when the named people are away.
+
+	The check does not go through document permission: the permit links three Employees,
+	and a login limited to its own Employee record by a User Permission cannot write a
+	document that names two others. The transitions save with `ignore_permissions` for the
+	same reason and because they set fields the form keeps read-only, so this is where the
+	caller is checked. The role or employment is checked before the permit is loaded, and
+	there is one refusal message for every case, which names nobody.
+	"""
+	if not isinstance(permit, str) or not permit.strip():
+		frappe.throw(_("Choose a permit."), frappe.ValidationError)
+	refusal = _(
+		"Only the entrant, attendant or supervisor on this permit, or a maintenance or HR "
+		"manager, can change it."
+	)
+	by_role = bool(set(CHANGE_ROLES) & set(frappe.get_roles(me)))
+	employee = None
+	if not by_role:
+		employee = frappe.db.get_value("Employee", {"user_id": me, "status": "Active"}, "name")
+		if not employee:
+			frappe.throw(refusal, frappe.PermissionError)
+	doc = frappe.get_doc(DOCTYPE, permit.strip())
+	if by_role:
+		return doc
+	if employee in {doc.get("entrant"), doc.get("attendant"), doc.get("supervisor")}:
+		return doc
+	frappe.throw(refusal, frappe.PermissionError)
+
+
+@frappe.whitelist(methods=["POST"])
+def open_permit(permit: str, acknowledge_controls=0):
 	"""Open it, or say exactly why not.
 
 	`acknowledge_controls` is the supervisor confirming the unticked human controls
 	deliberately. It cannot waive the atmosphere — there is no argument to have
 	with a gas reading.
 	"""
-	_me()
-	doc = frappe.get_doc(DOCTYPE, permit)
+	doc = _permit_for_change(permit, _me())
 	if doc.status == OPEN:
 		frappe.throw(_("That permit is already open."))
 	if doc.status in (CLOSED, CANCELED):
@@ -92,8 +129,8 @@ def open_permit(permit, acknowledge_controls=0):
 	}
 
 
-@frappe.whitelist()
-def close_permit(permit, everyone_out=1, notes=None):
+@frappe.whitelist(methods=["POST"])
+def close_permit(permit: str, everyone_out=1, notes=None):
 	"""Close it out. Deliberately one click and a confirmation.
 
 	`everyone_out` is the only thing asked, and it is asked because it is the only
@@ -102,7 +139,7 @@ def close_permit(permit, everyone_out=1, notes=None):
 	in the truck on the way home.
 	"""
 	me = _me()
-	doc = frappe.get_doc(DOCTYPE, permit)
+	doc = _permit_for_change(permit, me)
 	if doc.status != OPEN:
 		frappe.throw(_("That permit is {0}, so there is nothing to close.").format(doc.status))
 	if not cint(everyone_out):
@@ -119,11 +156,10 @@ def close_permit(permit, everyone_out=1, notes=None):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
-def cancel_permit(permit, notes=None):
+@frappe.whitelist(methods=["POST"])
+def cancel_permit(permit: str, notes=None):
 	"""Abandon it without entering — the common case when the gas is bad."""
-	_me()
-	doc = frappe.get_doc(DOCTYPE, permit)
+	doc = _permit_for_change(permit, _me())
 	if doc.status == CLOSED:
 		frappe.throw(_("That permit is already closed."))
 	doc.status = CANCELED

@@ -40,6 +40,9 @@ def _install_frappe_stub():
     frappe.get_request_header = lambda name: None
     frappe.get_all = lambda *args, **kwargs: []
 
+    frappe.whitelist = lambda *args, **kwargs: (lambda fn: fn)
+    frappe.only_for = lambda *roles, **kwargs: None
+
     class _Cache:
         def get_value(self, key):
             return STATE["cache"].get(key)
@@ -355,6 +358,336 @@ class TestTwoFactorCoverage(unittest.TestCase):
             and getattr(node.targets[0], "id", None) == "scheduler_events"
         )
         self.assertIn("erpnext_enhancements.security_alerts.check_two_factor_coverage", events["daily"])
+
+
+def _hooks_assignment(name):
+    import ast
+
+    tree = ast.parse((REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8"))
+    return next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == name
+    )
+
+
+def _function_node(name):
+    import ast
+
+    source = (REPO_ROOT / "erpnext_enhancements" / "security_alerts.py").read_text(encoding="utf-8")
+    return next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+SECRET = "not-a-real-" + "value-123"
+
+
+class TestErrorLogMasking(unittest.TestCase):
+    """Error Log before_insert masks error, method and metadata (v1.826.6), and can never lose the row."""
+
+    def setUp(self):
+        import frappe
+
+        self.frappe = frappe
+        self.saved_log_error = frappe.log_error
+        self.logged = []
+        frappe.log_error = lambda *args, **kwargs: self.logged.append(kwargs.get("title"))
+
+    def tearDown(self):
+        self.frappe.log_error = self.saved_log_error
+
+    def test_error_and_method_are_masked(self):
+        doc = types.SimpleNamespace(
+            error="      conn = <Connection kwargs={'user': 'app', 'password': '" + SECRET + "'}>",
+            method="Request failed: Authorization: Bearer " + SECRET,
+            reference_doctype="Project",
+        )
+        security_alerts.mask_error_log(doc)
+        self.assertNotIn(SECRET, doc.error)
+        self.assertNotIn(SECRET, doc.method)
+        self.assertIn("'user': 'app'", doc.error)
+        self.assertEqual(doc.reference_doctype, "Project")
+
+    def test_a_row_with_nothing_to_mask_is_left_alone(self):
+        doc = types.SimpleNamespace(error="ValidationError: Customer is required", method=None)
+        security_alerts.mask_error_log(doc)
+        self.assertEqual(doc.error, "ValidationError: Customer is required")
+        self.assertIsNone(doc.method)
+
+    def test_metadata_is_masked_by_structure_and_stays_valid_json(self):
+        import json
+
+        posted_doc = json.dumps({"doctype": "User", "first_name": "Pat", "new_password": SECRET})
+        metadata = json.dumps(
+            {
+                "type": "http_request",
+                "path": "/api/method/frappe.desk.form.save.savedocs",
+                "form_dict": {"doc": posted_doc, "action": "Save", "api_secret": SECRET},
+                "user": "pat@example.com",
+            },
+            indent=1,
+        )
+        doc = types.SimpleNamespace(error="ValidationError: Email is required", method="t", metadata=metadata)
+        security_alerts.mask_error_log(doc)
+        self.assertNotIn(SECRET, doc.metadata)
+        stored = json.loads(doc.metadata)
+        self.assertEqual(stored["path"], "/api/method/frappe.desk.form.save.savedocs")
+        self.assertEqual(stored["user"], "pat@example.com")
+        self.assertEqual(stored["form_dict"]["action"], "Save")
+        inner = json.loads(stored["form_dict"]["doc"])
+        self.assertEqual(inner["first_name"], "Pat")
+        self.assertNotEqual(inner["new_password"], SECRET)
+        self.assertEqual(doc.error, "ValidationError: Email is required")
+
+    def test_clean_metadata_is_left_exactly_as_it_was(self):
+        metadata = '{\n "form_dict": {"cmd": "ping"},\n "type": "http_request"\n}'
+        doc = types.SimpleNamespace(error="x", method="y", metadata=metadata)
+        security_alerts.mask_error_log(doc)
+        self.assertEqual(doc.metadata, metadata)
+
+    def test_a_failure_never_raises_and_never_logs(self):
+        class Exploding:
+            @property
+            def error(self):
+                raise RuntimeError("boom")
+
+        security_alerts.mask_error_log(Exploding())
+        self.assertEqual(self.logged, [])
+
+    def test_the_hook_never_calls_log_error(self):
+        # An Error Log hook that logged an error would insert another Error Log, which runs
+        # the hook again.
+        import ast
+
+        for name in ("mask_error_log", "_masked_fields"):
+            with self.subTest(function=name):
+                calls = [
+                    node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                    for node in ast.walk(_function_node(name))
+                    if isinstance(node, ast.Call)
+                ]
+                self.assertNotIn("log_error", calls)
+
+    def test_it_is_registered_before_insert_on_error_log(self):
+        doc_events = _hooks_assignment("doc_events")
+        self.assertEqual(
+            doc_events["Error Log"]["before_insert"],
+            "erpnext_enhancements.security_alerts.mask_error_log",
+        )
+
+
+class TestMaskStoredErrorLogs(unittest.TestCase):
+    """The hand-run backfill: System Manager only, POST only, dry run by default, counts only."""
+
+    def setUp(self):
+        import frappe
+
+        self.frappe = frappe
+        self.rows = [
+            {"name": "e01", "error": "password='" + SECRET + "'", "method": "plain title"},
+            {"name": "e02", "error": "nothing to mask", "method": "plain title"},
+            {"name": "e03", "error": "plain", "method": "Bearer " + SECRET},
+            {"name": "e04", "error": None, "method": None},
+        ]
+        self.writes, self.commits, self.roles = [], [], []
+        self.queries = []
+        self.table_fields = {"error", "method", "metadata"}
+
+        def sql(query, values=None, as_dict=False):
+            self.queries.append(query)
+            after, limit = values
+            matching = [dict(row) for row in self.rows if row["name"] > after]
+            return matching[:limit]
+
+        self.saved_get_meta = getattr(frappe, "get_meta", None)
+        frappe.get_meta = lambda doctype: types.SimpleNamespace(
+            has_field=lambda field: field in self.table_fields
+        )
+
+        def set_value(doctype, name, updates, update_modified=True):
+            self.writes.append((doctype, name, updates, update_modified))
+
+        self.saved_db = frappe.db
+        frappe.db = types.SimpleNamespace(
+            sql=sql, set_value=set_value, commit=lambda: self.commits.append(1)
+        )
+        self.saved_only_for = frappe.only_for
+        frappe.only_for = lambda *roles, **kwargs: self.roles.append(roles)
+
+    def tearDown(self):
+        self.frappe.db = self.saved_db
+        self.frappe.only_for = self.saved_only_for
+        if self.saved_get_meta is None:
+            del self.frappe.get_meta
+        else:
+            self.frappe.get_meta = self.saved_get_meta
+
+    def test_metadata_is_read_and_masked_with_the_other_fields(self):
+        import json
+
+        self.rows = [
+            {
+                "name": "e01",
+                "error": "plain",
+                "method": "plain title",
+                "metadata": json.dumps({"form_dict": {"client_secret": SECRET, "cmd": "x"}}),
+            }
+        ]
+        result = security_alerts.mask_stored_error_logs(dry_run=0)
+        self.assertEqual(result["changed"], 1)
+        self.assertIn("`metadata`", self.queries[0])
+        (_doctype, _name, updates, _update_modified) = self.writes[0]
+        self.assertEqual(set(updates), {"metadata"})
+        self.assertNotIn(SECRET, updates["metadata"])
+        self.assertEqual(json.loads(updates["metadata"])["form_dict"]["cmd"], "x")
+
+    def test_a_table_without_a_metadata_column_is_still_processed(self):
+        self.table_fields = {"error", "method"}
+        result = security_alerts.mask_stored_error_logs()
+        self.assertEqual(result["changed"], 2)
+        self.assertNotIn("metadata", self.queries[0])
+
+    def test_a_dry_run_counts_and_writes_nothing(self):
+        result = security_alerts.mask_stored_error_logs()
+        self.assertEqual(
+            result, {"dry_run": True, "scanned": 4, "changed": 2, "next_after": None, "done": True}
+        )
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.commits, [])
+
+    def test_a_real_run_rewrites_only_changed_fields_without_touching_modified(self):
+        result = security_alerts.mask_stored_error_logs(dry_run=0)
+        self.assertEqual(result["changed"], 2)
+        self.assertEqual([write[1] for write in self.writes], ["e01", "e03"])
+        self.assertEqual(set(self.writes[0][2]), {"error"})
+        self.assertEqual(set(self.writes[1][2]), {"method"})
+        for _doctype, _name, updates, update_modified in self.writes:
+            self.assertFalse(update_modified)
+            for value in updates.values():
+                self.assertNotIn(SECRET, value)
+        self.assertTrue(self.commits)
+
+    def test_it_returns_counts_and_a_cursor_never_content(self):
+        result = security_alerts.mask_stored_error_logs(limit=2)
+        self.assertEqual(result["scanned"], 2)
+        self.assertEqual(result["next_after"], "e02")
+        self.assertFalse(result["done"])
+        self.assertNotIn(SECRET, repr(result))
+        rest = security_alerts.mask_stored_error_logs(limit=2, after=result["next_after"])
+        self.assertEqual((rest["scanned"], rest["changed"]), (2, 1))
+
+    def test_the_limit_is_clamped(self):
+        self.rows = [{"name": f"e{i:05d}", "error": "x", "method": "y"} for i in range(6000)]
+        result = security_alerts.mask_stored_error_logs(limit=100000)
+        self.assertEqual(result["scanned"], security_alerts.MASK_MAX_LIMIT)
+
+    def test_it_is_for_system_managers_only(self):
+        security_alerts.mask_stored_error_logs()
+        self.assertEqual(self.roles, [("System Manager",)])
+
+    def test_it_is_post_only(self):
+        import ast
+
+        decorators = _function_node("mask_stored_error_logs").decorator_list
+        self.assertEqual(len(decorators), 1)
+        call = decorators[0]
+        self.assertEqual(ast.unparse(call.func), "frappe.whitelist")
+        self.assertEqual(
+            {kw.arg: ast.literal_eval(kw.value) for kw in call.keywords}, {"methods": ["POST"]}
+        )
+
+    def test_it_is_not_scheduled(self):
+        events = _hooks_assignment("scheduler_events")
+        flat = repr(events)
+        self.assertNotIn("mask_stored_error_logs", flat)
+
+
+class TestSiteConfigurationCheck(unittest.TestCase):
+    """The daily configuration check (v1.826.6): one email per setting per day, never raises."""
+
+    def setUp(self):
+        import frappe
+
+        self.frappe = frappe
+        self.saved = {name: getattr(frappe, name) for name in ("sendmail", "log_error")}
+        self.sent, self.logged = [], []
+        STATE["cache"].clear()
+        STATE["conf"].clear()
+        STATE["conf"]["admin_alert_recipients"] = "security@example.net"
+        STATE["settings"].clear()
+        frappe.sendmail = lambda **kwargs: self.sent.append(kwargs)
+        frappe.log_error = lambda *args, **kwargs: self.logged.append(kwargs.get("title"))
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(self.frappe, name, value)
+        STATE["cache"].clear()
+        STATE["conf"].clear()
+        STATE["settings"].clear()
+
+    def test_a_site_with_nothing_on_sends_nothing(self):
+        STATE["conf"].update({"developer_mode": 0, "server_script_enabled": False, "allow_tests": None})
+        security_alerts.check_site_configuration()
+        self.assertEqual((self.sent, self.logged), ([], []))
+
+    def test_each_setting_is_reported(self):
+        for key in ("developer_mode", "server_script_enabled", "allow_tests"):
+            with self.subTest(key=key):
+                STATE["cache"].clear()
+                self.sent.clear()
+                STATE["conf"][key] = 1
+                security_alerts.check_site_configuration()
+                STATE["conf"].pop(key)
+                self.assertEqual(len(self.sent), 1)
+                self.assertEqual(self.sent[0]["recipients"], ["security@example.net"])
+                self.assertIn("1 site configuration setting needs attention", self.sent[0]["subject"])
+                self.assertIn(key, self.sent[0]["message"])
+
+    def test_true_from_json_counts_as_on(self):
+        STATE["conf"]["developer_mode"] = True
+        self.assertEqual(
+            [key for key, _ in security_alerts.site_configuration_findings(STATE["conf"])],
+            ["developer_mode"],
+        )
+
+    def test_at_most_one_email_per_setting_per_day(self):
+        STATE["conf"]["developer_mode"] = 1
+        security_alerts.check_site_configuration()
+        security_alerts.check_site_configuration()
+        self.assertEqual(len(self.sent), 1)
+        # A second setting turned on later the same day is still reported, on its own.
+        STATE["conf"]["allow_tests"] = 1
+        security_alerts.check_site_configuration()
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("allow_tests", self.sent[1]["message"])
+        self.assertNotIn("developer_mode", self.sent[1]["message"])
+
+    def test_password_sign_in_is_left_to_the_two_factor_check(self):
+        STATE["settings"]["disable_user_pass_login"] = "0"
+        security_alerts.check_site_configuration()
+        self.assertEqual(self.sent, [])
+
+    def test_no_recipients_is_logged_not_dropped(self):
+        STATE["conf"].clear()
+        STATE["conf"]["developer_mode"] = 1
+        security_alerts.check_site_configuration()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.logged, ["Site configuration alert has no recipients"])
+
+    def test_a_failure_is_logged_and_never_raised(self):
+        STATE["conf"]["developer_mode"] = 1
+
+        def explode(**_kwargs):
+            raise RuntimeError("mail queue gone")
+
+        self.frappe.sendmail = explode
+        security_alerts.check_site_configuration()
+        self.assertEqual(self.logged, ["Site configuration check failed"])
+
+    def test_it_is_scheduled_daily(self):
+        events = _hooks_assignment("scheduler_events")
+        self.assertIn("erpnext_enhancements.security_alerts.check_site_configuration", events["daily"])
 
 
 if __name__ == "__main__":

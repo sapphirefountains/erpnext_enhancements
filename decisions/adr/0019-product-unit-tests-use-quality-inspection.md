@@ -1,7 +1,7 @@
 # 0019. A product unit's pre-shipment test is ERPNext's Quality Inspection; the gate is ours
 
 - **Status:** Accepted
-- **Date:** 2026-11-18 (v1.826.0)
+- **Date:** 2026-11-18 (v1.828.0)
 - **Narrows:** [0012](0012-project-inspections-do-not-use-quality-inspection.md), its invariant that
   `frappe.get_doc("Quality Inspection", …)` in this app is always a mistake. That invariant holds for
   **project** inspections. It does not hold for a product unit, for the reasons below.

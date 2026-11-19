@@ -919,7 +919,7 @@ def run_drive_link_reconcile():
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def check_drive_links():
 	"""Settings-form button: run the linked-folder reconciliation now instead of
 	waiting for the daily pass — the point of finding a dead link is usually that
@@ -1017,7 +1017,7 @@ def test_connection():
 	return {"service_account": client_email, "checks": checks}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def backfill_drive_links():
 	"""Settings-form button: queue the backfill that links existing Customers
 	and Projects to their already-existing Drive folders by name (never

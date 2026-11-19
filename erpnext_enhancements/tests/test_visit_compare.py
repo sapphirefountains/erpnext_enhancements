@@ -454,7 +454,7 @@ class TestTheDashboardCarriesIt(unittest.TestCase):
 
 	def test_bootstrap_asks_the_dashboard_for_this_visit(self):
 		src = (REPO_ROOT / "erpnext_enhancements/api/maintenance_visit.py").read_text(encoding="utf-8")
-		self.assertIn("get_dashboard_context(doc.project, doc.serial_no, record=doc.name)", src)
+		self.assertIn("build_dashboard_context(doc.project, doc.serial_no, record=doc.name)", src)
 		record = (
 			REPO_ROOT
 			/ "erpnext_enhancements/sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.py"

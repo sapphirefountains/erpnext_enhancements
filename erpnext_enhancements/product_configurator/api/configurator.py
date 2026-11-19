@@ -106,7 +106,7 @@ def preview_configuration(payload):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_erpnext_records(configuration):
 	"""Create/refresh the Item, default BOM and selling Item Price."""
 	throw_if_product_configurator_disabled()
@@ -116,7 +116,7 @@ def generate_erpnext_records(configuration):
 	return erp_integration.generate(configuration)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def ensure_component_items(product):
 	"""Create missing Suppliers and component Items for a product definition."""
 	throw_if_product_configurator_disabled()

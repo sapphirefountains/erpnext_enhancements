@@ -416,8 +416,8 @@ Every email the app can send. **Audience**: `customer` = leaves the company.
 | Fountain intake invite | `crm_enhancements/fountain_intake_invite.html` | Invite sent | the customer | **customer** |
 | Contract signing invite | `project_enhancements/contract_signature_invite.html` | Send/resend for signature; reminders | the signer | **customer** |
 | Contract signed copy | `project_enhancements/contract_signed_customer.html` | Signature completed | the signer | **customer** |
-| Product ready for pickup | `product_fulfillment/ready_for_pickup.html` | **Email Ready for Pickup** on a draft Pickup at shop Delivery Note, once every unit passed its test (v1.827.0) | the customer contact | **customer** |
-| Product shipped | `product_fulfillment/shipped.html` | A Carrier shipping Delivery Note is submitted; **Resend Shipped Email** (v1.827.0) | the customer contact | **customer** |
+| Product ready for pickup | `product_fulfillment/ready_for_pickup.html` | **Email Ready for Pickup** on a draft Pickup at shop Delivery Note, once every unit passed its test (v1.829.0) | the customer contact | **customer** |
+| Product shipped | `product_fulfillment/shipped.html` | A Carrier shipping Delivery Note is submitted; **Resend Shipped Email** (v1.829.0) | the customer contact | **customer** |
 | Trip booked | `travel/trip_booked.html` | `Travel Trip` → Booked | travelers + owner | staff |
 | Traveler added | `travel/traveler_added.html` | Traveler added mid-trip | the traveler | staff |
 | Trip closed unsettled | `travel/trip_closed.html` | Trip closed, claim not settled | the traveler | staff |

@@ -1,4 +1,4 @@
-// Serial No: a product unit's label and test (v1.826.0, product_fulfillment, TASK-2026-03230).
+// Serial No: a product unit's label and test (v1.828.0, product_fulfillment, TASK-2026-03230).
 //
 // For a unit with a recorded builder (custom_built_by, stamped when its Work Order was finished):
 // Print Label opens the Product Unit Label (serial number and part number) in a new tab, and Start

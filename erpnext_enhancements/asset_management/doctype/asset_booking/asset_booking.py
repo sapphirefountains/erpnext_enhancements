@@ -252,7 +252,10 @@ def check_availability(asset, from_datetime, to_datetime, ignore_booking=None):
     Returns:
         dict: {"available": bool, "message": str} — ``message`` names the
         conflicting booking when unavailable.
+
+    Requires read permission on Asset Booking: the answer names other bookings.
     """
+    frappe.has_permission("Asset Booking", "read", throw=True)
     if not asset or not from_datetime or not to_datetime:
         return {"available": False, "message": "Missing arguments"}
 

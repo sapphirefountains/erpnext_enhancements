@@ -1,11 +1,11 @@
 // Delivery Note: the QC gate's verdict and getting the order to the customer (product_fulfillment).
 //
-// v1.826.0 -- a draft that ships configured product units asks the server what the gate would say
+// v1.828.0 -- a draft that ships configured product units asks the server what the gate would say
 // (qc_gate.delivery_gate_status, the same check before_submit makes) and shows it as the headline:
 // green when every unit has a passed test signed by someone other than its builder, otherwise the
 // list of what is missing.
 //
-// v1.827.0 (TASK-2026-03231) -- the fulfillment method's buttons:
+// v1.829.0 (TASK-2026-03231) -- the fulfillment method's buttons:
 //   * Pickup at shop, draft: Email Ready for Pickup (refused by the server until every unit passed).
 //   * Carrier shipping: Track Package (the tracking link, a new tab), and once submitted, Carrier
 //     Status (FedEx and UPS, through Carrier Tracking) and Resend Shipped Email.

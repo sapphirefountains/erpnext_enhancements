@@ -1322,7 +1322,7 @@ def _prefill_from_supplier(doc, supplier):
 		doc.billing_address = address
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_contract(template, source_doctype=None, source_name=None, party=None):
 	"""Create a prefilled draft Project Contract; returns its name for routing.
 

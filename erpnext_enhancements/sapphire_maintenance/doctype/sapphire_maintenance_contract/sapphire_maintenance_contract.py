@@ -505,6 +505,13 @@ def _append_features_from_sales_order(doc, so_name):
 		existing.add(item.custom_serial_no)
 
 
+def _check_can_map(source_doctype, source_name):
+	"""The mapping buttons below need read permission on the source document and create
+	permission on Sapphire Maintenance Contract, the document they start."""
+	frappe.has_permission(source_doctype, "read", doc=source_name, throw=True)
+	frappe.has_permission("Sapphire Maintenance Contract", "create", throw=True)
+
+
 @frappe.whitelist()
 def make_contract_from_sales_order(source_name):
 	"""Map a submitted Sales Order into a draft Maintenance Contract.
@@ -514,6 +521,7 @@ def make_contract_from_sales_order(source_name):
 	rows become ``covered_features``; a Signed maintenance-type Project
 	Contract for the same project is linked when one exists.
 	"""
+	_check_can_map("Sales Order", source_name)
 	so = frappe.get_doc("Sales Order", source_name)
 	doc = frappe.new_doc("Sapphire Maintenance Contract")
 	doc.customer = so.customer
@@ -536,10 +544,19 @@ def make_contract_from_sales_order(source_name):
 
 @frappe.whitelist()
 def make_contract_from_project_contract(source_name):
+	"""The Project Contract form's "Create > Maintenance Contract" button (via
+	``frappe.model.open_mapped_doc``): :func:`map_contract_from_project_contract` after
+	:func:`_check_can_map`."""
+	_check_can_map("Project Contract", source_name)
+	return map_contract_from_project_contract(source_name)
+
+
+def map_contract_from_project_contract(source_name):
 	"""Map a Signed Maintenance Services Agreement into a draft Maintenance Contract.
 
-	Whitelisted; called by the Project Contract form's "Create > Maintenance
-	Contract" button via ``frappe.model.open_mapped_doc``. Pulls the legal
+	No permission check of its own: reached through the whitelisted
+	:func:`make_contract_from_project_contract`, and from the signing hook
+	:func:`autocreate_maintenance_contract_on_signed`. Pulls the legal
 	terms (frequency, invoicing cadence, start date, seasonal options) and, if
 	the project has a submitted Maintenance Sales Order, links it and maps its
 	water-feature items into ``covered_features``.
@@ -594,6 +611,7 @@ def make_contract_from_project(source_name):
 	maintenance-type Project Contract are linked when they happen to exist,
 	but neither is required.
 	"""
+	_check_can_map("Project", source_name)
 	project = frappe.get_doc("Project", source_name)
 	if not project.customer:
 		frappe.throw(_("Set a Customer on Project {0} first — the Maintenance Contract needs one.").format(source_name))
@@ -740,7 +758,7 @@ def autocreate_maintenance_contract_on_signed(doc, method=None):
 		# request.
 		if not is_desk_user:
 			frappe.flags.mute_messages = True
-		operational = make_contract_from_project_contract(doc.name)
+		operational = map_contract_from_project_contract(doc.name)
 		operational.insert(ignore_permissions=True)
 	except Exception:
 		frappe.db.rollback(save_point="esign_autocreate")

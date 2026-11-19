@@ -44,7 +44,7 @@ def _notify_recipients(users):
 
 
 # The enqueue function now accepts 'project_template' and passes it on.
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def enqueue_project_creation(opportunity_name, users=None, project_template=None):
 	"""Queue background creation of a Project from an Opportunity.
 
@@ -182,7 +182,7 @@ def sync_opportunity_tags(doc, method=None):
 		doc._user_tags = None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_opportunity_tags_for_existing(opportunity_name):
 	"""Sync tags for an existing Opportunity without triggering a full save.
 
@@ -198,11 +198,15 @@ def sync_opportunity_tags_for_existing(opportunity_name):
 		str | None: The recomputed ``_user_tags`` value.
 
 	Side effects:
-		DB write to ``Opportunity._user_tags``.
+		DB write to ``Opportunity._user_tags``, without touching ``modified``.
+
+	Requires write permission on the Opportunity (the form only calls it for someone who can
+	save the record).
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity_name)
+	doc.check_permission("write")
 	sync_opportunity_tags(doc)
-	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags)
+	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags, update_modified=False)
 	return doc._user_tags
 
 

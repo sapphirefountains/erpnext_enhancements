@@ -35,7 +35,7 @@ PRJ-00580. Decision record:
    serial passed, signed by someone other
    than its builder. Delivering the serial starts its warranty: ERPNext sets `warranty_expiry_date`
    from the Item's 365-day `warranty_period`.
-6. **To the customer** (v1.827.0). The Delivery Note's **Fulfillment** says how
+6. **To the customer** (v1.829.0). The Delivery Note's **Fulfillment** says how
    (`custom_fulfillment_method`, carried over from the Sales Order's field of the same name), and a
    note shipping a configured product cannot be submitted without it:
    - **Pickup at shop**: from the draft, **Email Ready for Pickup** tells the customer contact, once

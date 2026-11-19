@@ -37,7 +37,7 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 
 ## Data flow
 
-- **In-form child table:** `get_child_tasks_html` walks all descendants of a group task, batch-resolves assignees from ToDo rows, rebuilds the hierarchy in memory, and returns styled collapsible HTML into the form's `custom_child_tasks_table` HTML field. `task.js` renders it on refresh.
+- **In-form child table:** `get_child_tasks_html` (Task read required; at most 2,000 descendants and 50 levels) walks all descendants of a group task, batch-resolves assignees from ToDo rows, rebuilds the hierarchy in memory, and returns styled collapsible HTML into the form's `custom_child_tasks_table` HTML field. `task.js` renders it on refresh.
 
 ## `hooks.py` touchpoints
 

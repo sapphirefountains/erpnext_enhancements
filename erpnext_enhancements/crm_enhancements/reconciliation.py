@@ -257,7 +257,7 @@ def get_candidates(opportunity, limit=5):
 	return score_candidates(row, limit=limit)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_opportunity_to_project(opportunity, project):
 	"""Write one link, chosen by a person.
 

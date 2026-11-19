@@ -634,7 +634,7 @@ def suggest_checkpoints(lesson, block_key, count=3):
 # ------------------------------------------------------------------ acceptance
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def accept_ai_suggestions(lesson, kind, suggestions):
     """Persist reviewed suggestions. **This call is the human review.**
 

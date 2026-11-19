@@ -1,4 +1,4 @@
-"""Build, test and ship a product unit: the rules (v1.826.0, TASK-2026-03229 / -03230).
+"""Build, test and ship a product unit: the rules (v1.828.0, TASK-2026-03229 / -03230).
 
 Nikolas, 2026-11-18 (vault decisions/2026-11-18-estop-product-line.md): each E-Stop is built from
 a Work Order, gets a serial number, and must pass the Pre-Shipment Functional Test before it ships.

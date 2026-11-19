@@ -359,11 +359,11 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/sales_order_enhancements.js",
-		# v1.826.0 -- product_fulfillment: Make Work Orders on a submitted order with configured
+		# v1.828.0 -- product_fulfillment: Make Work Orders on a submitted order with configured
 		# product lines (the same plan its on_submit hook runs; never builds twice).
 		"public/js/product_fulfillment/sales_order.js",
 	],
-	# v1.826.0 -- product_fulfillment: the Build Checklist button and progress headline on a
+	# v1.828.0 -- product_fulfillment: the Build Checklist button and progress headline on a
 	# configured product's Work Order; Print Label and Start Test on a product unit's serial
 	# number; the builder beside Inspected By on its test; the QC gate's verdict on a Delivery Note.
 	"Work Order": ["public/js/product_fulfillment/work_order.js"],
@@ -1110,7 +1110,7 @@ doc_events = {
 	# Proposed Item Code, and accounting_intake.review checks every line first. `validate`
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
-		# v1.826.0 -- product_fulfillment: a configured product kept in stock gets serial numbers
+		# v1.828.0 -- product_fulfillment: a configured product kept in stock gets serial numbers
 		# (series from Product Build Settings, default SF-.YY.-.#####), a 365-day warranty period and
 		# the Pre-Shipment Functional Test template, each only where blank. before_validate, so
 		# ERPNext's own Item.validate sees the values (it refuses to change Has Serial No once stock
@@ -1322,13 +1322,13 @@ doc_events = {
 	"Stock Entry": {
 		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
 		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
-		# v1.826.0 -- product_fulfillment: a unit's Manufacture entry stamps each serial number it
+		# v1.828.0 -- product_fulfillment: a unit's Manufacture entry stamps each serial number it
 		# made with who built it (the Work Order's Built By, else the person submitting) and the
 		# Work Order that made it. The QC gate reads that builder: the tester must be someone else.
 		# Only Manufacture entries against a Work Order; never raises.
 		"on_submit": [
 			"erpnext_enhancements.product_fulfillment.serials.stamp_builders",
-			# v1.826.0 -- a Material Issue that takes out configured units without a passed test says
+			# v1.828.0 -- a Material Issue that takes out configured units without a passed test says
 			# so (a warning: issuing is also how a failed unit is scrapped). Never raises.
 			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
 		],
@@ -1371,12 +1371,12 @@ doc_events = {
 	"Delivery Note": {
 		"validate": [
 			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
-			# v1.827.0 -- product_fulfillment (TASK-2026-03231): a Carrier shipping note's tracking
+			# v1.829.0 -- product_fulfillment (TASK-2026-03231): a Carrier shipping note's tracking
 			# number is cleaned and its tracking link (custom_tracking_url) set from the carrier's
 			# public page. Any other method clears the link.
 			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_validate",
 		],
-		# v1.826.0 -- product_fulfillment, the QC gate (Nik 2026-11-18): a Delivery Note that ships a
+		# v1.828.0 -- product_fulfillment, the QC gate (Nik 2026-11-18): a Delivery Note that ships a
 		# configured product is refused until every unit on it has its serial number picked and the
 		# newest submitted Pre-Shipment Functional Test of each serial is Accepted and signed by
 		# someone other than its builder. Ours, not ERPNext's inspection_required_before_delivery,
@@ -1384,19 +1384,19 @@ doc_events = {
 		# Product Build Settings' Require a Passed Test Before Delivery switches it off.
 		"before_submit": [
 			"erpnext_enhancements.product_fulfillment.qc_gate.delivery_note_before_submit",
-			# v1.827.0 -- then how it travels: a note shipping a configured product names its
+			# v1.829.0 -- then how it travels: a note shipping a configured product names its
 			# fulfillment method, and Carrier shipping needs the carrier and tracking number, Sapphire
 			# delivery a date and a person. After the QC gate, so an untested unit is refused first.
 			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_before_submit",
 		],
-		# v1.827.0 -- Carrier shipping emails the customer contact "Shipped" with the tracking link
+		# v1.829.0 -- Carrier shipping emails the customer contact "Shipped" with the tracking link
 		# (queued in Email Queue, so a deploy's FLUSHDB cannot lose it); Sapphire delivery assigns the
 		# note to the person delivering it on the delivery date. Never undoes the submit.
 		"on_submit": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_submit",
-		# v1.827.0 -- a draft Sapphire delivery is assigned as soon as it names a person. Idempotent.
+		# v1.829.0 -- a draft Sapphire delivery is assigned as soon as it names a person. Idempotent.
 		"on_update": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_update",
 	},
-	# v1.826.0 -- product_fulfillment (TASK-2026-03229): a configured product line on a submitted
+	# v1.828.0 -- product_fulfillment (TASK-2026-03229): a configured product line on a submitted
 	# Sales Order gets one Work Order per unit from its Item's default BOM, unless finished units on
 	# the shelf cover it. Made as the system and released at once when a WIP and a finished
 	# warehouse resolve; drafts otherwise. Never stops the order: a failure rolls back to a
@@ -1407,13 +1407,13 @@ doc_events = {
 		"validate": "erpnext_enhancements.product_fulfillment.build.on_sales_order_validate",
 		"on_submit": "erpnext_enhancements.product_fulfillment.build.on_sales_order_submit",
 	},
-	# v1.826.0 -- product_fulfillment: a new Work Order for a configured product copies its
+	# v1.828.0 -- product_fulfillment: a new Work Order for a configured product copies its
 	# configuration's build steps into custom_build_steps (the Build Checklist page ticks them),
 	# whoever made it -- our Sales Order hook or ERPNext's own Sales Order > Work Order. A copy,
 	# never a link. Never raises. Work Order had no doc_events before.
 	"Work Order": {
 		"before_insert": "erpnext_enhancements.product_fulfillment.build.fill_checklist",
-		# v1.826.0 -- Built By (custom_built_by) is written only by the Build Checklist's endpoints and
+		# v1.828.0 -- Built By (custom_built_by) is written only by the Build Checklist's endpoints and
 		# the Manufacture stamp (db.set_value, no save). Any change through a document save -- form,
 		# frappe.client.set_value, REST, import, bulk edit -- is refused unless by a System Manager:
 		# both builders hold Manufacturing Manager, and the field is what stops a builder signing the
@@ -1421,11 +1421,11 @@ doc_events = {
 		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
 		"before_update_after_submit": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
 	},
-	# v1.826.0 -- the same guard on the unit itself: Serial No.custom_built_by.
+	# v1.828.0 -- the same guard on the unit itself: Serial No.custom_built_by.
 	"Serial No": {
 		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
 	},
-	# v1.826.0 -- product_fulfillment: the Pre-Shipment Functional Test is ERPNext's own Quality
+	# v1.828.0 -- product_fulfillment: the Pre-Shipment Functional Test is ERPNext's own Quality
 	# Inspection, one per unit (ADR 0019). Only inspections of configured products are touched.
 	# before_validate names the Stock Entry row that holds the serial, so a re-test after a failure
 	# is not refused as "every row already has a Quality Inspection", and tidies Pass/N/A readings.
@@ -1678,6 +1678,17 @@ doc_events = {
 		# too, and the failures are the early warning.
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
 	},
+	"Error Log": {
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
+		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
+		# masks a traceback variable by its name only; this goes by the value's shape, including
+		# one printed inside another object's repr. A doc_event is resolved by name at insert
+		# time, so it also applies in workers and to rows frappe defers and inserts later. Never
+		# raises and never logs (a row is never lost to it, and it cannot feed itself);
+		# linear-time, and work on a very large row is capped without shortening the text. Rows
+		# already stored: security_alerts.mask_stored_error_logs, run by hand.
+		"before_insert": "erpnext_enhancements.security_alerts.mask_error_log",
+	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
 		# core Contact.autoname reads links[0], so an insert carrying only the
@@ -1850,7 +1861,7 @@ doc_events = {
 		# charged it again on submit. Runs inside the cancel's transaction and never commits
 		# (ERPNext's own before_cancel has written by then); a no-op while Stripe is off.
 		"before_cancel": "erpnext_enhancements.stripe_payments.core.card_element.before_invoice_cancel",
-		# v1.826.0 -- product_fulfillment: the QC gate on an invoice that ships stock itself (Update
+		# v1.828.0 -- product_fulfillment: the QC gate on an invoice that ships stock itself (Update
 		# Stock ticked). Without it a configured unit could leave on an invoice untested. Does nothing
 		# when Update Stock is off, or on a return.
 		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.sales_invoice_before_submit",
@@ -2411,6 +2422,11 @@ scheduler_events = {
 		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
 		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
+		# security (v1.826.6): email the same recipients while developer_mode, server_script_enabled
+		# or allow_tests is on in the site configuration, at most once per setting per day. Password
+		# sign-in is the two-factor check's (above) and is not repeated. Quiet when nothing is on;
+		# never raises. See security_alerts.check_site_configuration.
+		"erpnext_enhancements.security_alerts.check_site_configuration",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -3010,11 +3026,11 @@ after_migrate = [
 	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
-	# product_fulfillment (v1.826.0): the Product Unit Label (Serial No) and the Pre-Shipment Test
+	# product_fulfillment (v1.828.0): the Product Unit Label (Serial No) and the Pre-Shipment Test
 	# Certificate (Quality Inspection). Upserted so template edits deploy; guarded. ABOVE
 	# ensure_chrome_pdf_generator, like the rest.
 	"erpnext_enhancements.product_fulfillment.setup_print_formats.ensure_print_formats",
-	# product_fulfillment (v1.827.0): every Product Build Settings default with no tabSingles row gets
+	# product_fulfillment (v1.829.0): every Product Build Settings default with no tabSingles row gets
 	# one, never over a stored value, so a field added later (Email the Customer When It Ships) is not
 	# saved as 0 by the next person to save the page. Also a patch. Never raises.
 	"erpnext_enhancements.patches.backfill_product_build_settings_defaults.backfill_product_build_settings_defaults",
@@ -3529,6 +3545,15 @@ before_request = [
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).
 	"erpnext_enhancements.monkeypatches.ensure_applied",
+	# OAuth client registration (v1.826.9, Nikolas 2026-11-18): dynamic registration stays on, but a
+	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
+	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
+	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
+	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
+	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
+	# and a string test and never raises. See oauth_registration.py.
+	"erpnext_enhancements.oauth_registration.guard_registration",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled

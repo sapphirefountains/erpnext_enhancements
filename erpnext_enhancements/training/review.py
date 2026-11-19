@@ -448,7 +448,7 @@ def _questions(names):
 # ---------------------------------------------------------------------------- verdicts
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def accept_question(question, question_text=None, explanation=None, options=None):
 	"""Accept a drafted question, optionally fixing it on the way through.
 
@@ -518,7 +518,7 @@ def _apply_options(doc, options):
 		)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reject_question(question, reason, drop_quiz=0):
 	"""Take a drafted question out of the course, and say why.
 

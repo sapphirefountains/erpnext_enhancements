@@ -1,4 +1,4 @@
-// Build Checklist (v1.826.0, TASK-2026-03229 / -03230). One unit's build, sized for a phone or a
+// Build Checklist (v1.828.0, TASK-2026-03229 / -03230). One unit's build, sized for a phone or a
 // tablet on the Build Room bench: the configurator's build steps as big tap rows, who is building it,
 // and once it is built, its serial number, its label and its Pre-Shipment Functional Test.
 //

@@ -251,6 +251,18 @@ class TestSigningIsSomethingTheyDid(unittest.TestCase):
         self.assertIn("get_doc_before_save", body)
         self.assertIn("policy_transition", body)
 
+    def test_a_new_row_starts_as_requested_and_unsigned(self):
+        """v1.826.8: an insert that did not come through `request_acknowledgement`
+        cannot arrive already signed or declined."""
+        body = _fn("_guard_status", ACK_PY)
+        self.assertNotIn("or self.is_new()", body)
+        at = body.index("if self.is_new():")
+        reset = body[at : body.index("return", at)]
+        self.assertIn("self.status = REQUESTED", reset)
+        for field in ("signed_name", "signature", "signed_on", "declined_reason"):
+            with self.subTest(field=field):
+                self.assertIn(f'"{field}"', reset)
+
     def test_the_version_is_part_of_the_identity(self):
         """Without it, "he signed the handbook" says nothing about which handbook,
         and the version people argue about is the one that changed."""

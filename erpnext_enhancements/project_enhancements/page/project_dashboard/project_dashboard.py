@@ -66,6 +66,13 @@ def check_permission():
 		return False
 
 
+def _require_project_read(project):
+	"""Raise unless the caller may read ``project``: the per-project readers below show that
+	project's tasks, so they ask what its form asks."""
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read {0}").format(project), frappe.PermissionError)
+
+
 def _get_assignee_names(doctype, docname):
 	"""Retrieves the full names of users assigned to a document via ToDo."""
 	try:
@@ -212,7 +219,7 @@ def get_project_data(is_active=None):
 		return {"error": "Could not fetch project data. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_inline_task(project, subject, parent_task=None):
 	"""Instantly creates a task from the inline 'Quick Add' row."""
 	if not project or not subject:
@@ -236,7 +243,7 @@ def create_inline_task(project, subject, parent_task=None):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_assignee(project_name, user_id):
 	"""Assigns a user to a project with permission checks.
 
@@ -271,7 +278,7 @@ def add_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_project_assignee(project_name, user_id):
 	"""Removes a user's assignment from a project with permission checks.
 
@@ -306,7 +313,7 @@ def remove_project_assignee(project_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_details(project_name, field, value):
 	"""Updates a single field for a specified project document.
 
@@ -342,7 +349,7 @@ def update_project_details(project_name, field, value):
 		return {"status": "error", "message": "Could not update project. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_status(task_name, status):
 	"""Updates the status of a single task."""
 	if not check_permission():
@@ -358,7 +365,7 @@ def update_task_status(task_name, status):
 		return {"status": "error", "message": "Could not update task status."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_priority(task_name, priority):
 	"""Updates the priority of a single task."""
 	if not check_permission():
@@ -526,9 +533,17 @@ def _fetch_all_project_tasks(project_name):
 
 @frappe.whitelist()
 def get_task_children(parent_task):
-	"""Fetches direct children of a task for lazy loading."""
+	"""Fetches direct children of a task for lazy loading.
+
+	Requires read permission on the parent task's Project, or on the task itself when it has
+	no Project."""
 	if not parent_task:
 		return []
+	project = frappe.db.get_value("Task", parent_task, "project")
+	if project:
+		_require_project_read(project)
+	else:
+		frappe.has_permission("Task", "read", doc=parent_task, throw=True)
 
 	task_fields = [
 		"name", "subject", "status", "priority", "exp_start_date",
@@ -561,9 +576,10 @@ def get_task_children(parent_task):
 
 @frappe.whitelist()
 def get_resource_allocation_data(project_name):
-	"""Aggregates expected time and task list by assignee per day."""
+	"""Aggregates expected time and task list by assignee per day. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -610,9 +626,10 @@ def get_resource_allocation_data(project_name):
 
 @frappe.whitelist()
 def get_project_health_metrics(project_name):
-	"""Calculates key health indicators for a project."""
+	"""Calculates key health indicators for a project. Requires Project read."""
 	if not project_name:
 		return {}
+	_require_project_read(project_name)
 
 	tasks = frappe.get_all(
 		"Task",
@@ -661,9 +678,11 @@ def get_project_tasks(project, parent=None):
 	"""
 	Fetches tasks for a project. If 'parent' is provided, fetches only 
 	its direct children (Lazy Loading). Otherwise, fetches root tasks.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project:
 		return {"error": "Project name is required."}
+	_require_project_read(project)
 
 	try:
 		task_fields = [
@@ -904,9 +923,13 @@ def get_master_project_projects(master_project):
 		return {"error": "Could not fetch projects for master project."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_master_project_structure(master_project, projects):
-	"""Updates ordering for projects under a Master Project."""
+	"""Updates ordering for projects under a Master Project.
+
+	Writes only projects that belong to ``master_project`` (``custom_master_project``) and that
+	the caller may write; any other name in ``projects`` is left alone and listed in
+	``skipped``."""
 	if not master_project or not projects:
 		return {"status": "error", "message": "Master Project name and project data are required."}
 
@@ -917,11 +940,18 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": "No permission to modify this Master Project."}
 
 	try:
+		skipped = []
 		for p_data in projects:
 			p_name = p_data.get("name")
-			if p_name:
-				frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
-		return {"status": "success"}
+			if not p_name:
+				continue
+			if frappe.db.get_value("Project", p_name, "custom_master_project") != master_project or not (
+				frappe.has_permission("Project", ptype="write", doc=p_name)
+			):
+				skipped.append(p_name)
+				continue
+			frappe.db.set_value("Project", p_name, "custom_subproject_order", p_data.get("custom_subproject_order"))
+		return {"status": "success", "skipped": skipped}
 	except Exception as e:
 		frappe.log_error(
 			title=f"Error updating master project structure for {master_project}",
@@ -930,7 +960,7 @@ def update_master_project_structure(master_project, projects):
 		return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_date(task_name, field, value):
 	"""Updates a task's start or end date with permission checks.
 
@@ -994,7 +1024,7 @@ def update_task_date(task_name, field, value):
 		return {"status": "error", "message": "Could not update task date. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_expected_time(task_name, expected_time):
 	"""Updates a task's expected time with permission and validation checks.
 
@@ -1042,7 +1072,7 @@ def update_task_expected_time(task_name, expected_time):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_assignee(task_name, user_id):
 	"""Assigns a user to a task with permission checks.
 
@@ -1078,7 +1108,7 @@ def add_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not assign user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remove_task_assignee(task_name, user_id):
 	"""Removes a user's assignment from a task with permission checks.
 
@@ -1114,7 +1144,7 @@ def remove_task_assignee(task_name, user_id):
 		return {"status": "error", "message": "Could not remove user. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_structure(project_name, tasks):
 	"""Updates the parent and ordering for a list of tasks.
 
@@ -1157,7 +1187,7 @@ def update_task_structure(project_name, tasks):
 	return {"status": "success", "moved": out.get("moved", []), "converted": out.get("converted", [])}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_dates_from_gantt(task_name, start_date, end_date):
 	"""
 	Updates a task's start and end dates from the Gantt chart and 
@@ -1239,7 +1269,7 @@ def _shift_successors(predecessor_name, day_diff, processed=None):
 		_shift_successors(task_name, day_diff, processed)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_dates_from_gantt(project_name, start_date, end_date):
 	"""Updates a project's expected start/end dates from a Gantt drag.
 
@@ -1298,7 +1328,7 @@ def _task_has_dependency_path(start_task, target_task, visited=None):
 	return False
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_task_dependency(task_name, depends_on_task):
 	"""Creates a dependency so that `task_name` depends on `depends_on_task`.
 
@@ -1357,9 +1387,11 @@ def get_gantt_tasks_for_project(project_name):
 	"""
 	Fetches all tasks for a specific project, formatted for the frappe-gantt library.
 	Optimized with bulk-fetching for dependencies and assignees.
+	Requires Project read, checked before the ``try`` so a refusal is raised.
 	"""
 	if not project_name:
 		return {"error": "Project name is required."}
+	_require_project_read(project_name)
 
 	try:
 		# Check if baseline fields exist in Task doctype to avoid DB errors
@@ -1467,7 +1499,7 @@ def get_gantt_tasks_for_project(project_name):
 		return {"error": "Could not fetch tasks for Gantt board."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_task_progress_from_gantt(task_name, progress):
 	"""
 	Updates a task's progress from the Gantt chart.
@@ -1510,7 +1542,7 @@ def update_task_progress_from_gantt(task_name, progress):
 		return {"status": "error", "message": "Could not update task progress. Please check the logs."}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_multiple_docs(project_updates, task_updates):
 	"""Updates multiple project and task documents in a single transaction.
 
@@ -1561,7 +1593,7 @@ def update_multiple_docs(project_updates, task_updates):
 		frappe.log_error(title="Error in batch update", message=frappe.get_traceback())
 		return {"status": "error", "message": str(e)}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_task(task_name):
 	"""Deletes a single task.
 
@@ -1607,11 +1639,15 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 	Fetches all active projects (and optionally child tasks) for the Gantt view.
 	Supports status filtering and detailed view expansion.
 	"""
-	# Note: legacy check_permission() gate removed here in favour of native Page
-	# Role permissions, mirroring get_project_data(). The previous gate returned
-	# an error whenever the "Project Dashboard" Custom Role was not configured,
-	# which left the Portfolio Gantt empty even though every other tab (fed by
-	# get_project_data) loaded fine.
+	# The page gate, as get_project_data() has it. An earlier version dropped this gate
+	# because it returned an error whenever the "Project Dashboard" Custom Role was not
+	# configured, which left the Portfolio Gantt empty while get_project_data loaded fine;
+	# check_permission() now falls back to Project Dashboard Settings' roles, so the two
+	# agree. The reads go through get_list, so they follow the caller's Project and Task
+	# read permissions, as the widget's own Gantt query (get_gantt_data) already does. No
+	# browser code calls this endpoint since the Portfolio Gantt moved to that widget.
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
 	try:
 		include_tasks = int(include_tasks)
 
@@ -1628,7 +1664,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 			if status_list:
 				filters["status"] = ["in", status_list]
 
-		projects = frappe.get_all(
+		projects = frappe.get_list(
 			"Project",
 			fields=[
 				"name",
@@ -1641,12 +1677,13 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 				"project_type",
 			],
 			filters=filters,
+			limit_page_length=0,
 		)
 
 		tasks = []
 		if include_tasks and projects:
 			project_names = [p.name for p in projects]
-			tasks = frappe.get_all(
+			tasks = frappe.get_list(
 				"Task",
 				fields=[
 					"name",
@@ -1659,6 +1696,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 					"parent_task",
 				],
 				filters={"project": ["in", project_names], "status": ["not in", ["Completed", "Canceled"]]},
+				limit_page_length=0,
 			)
 
 		return {
@@ -2030,7 +2068,7 @@ def _product_orders(today, source_column):
 
 
 def _product_qc(orders, work_orders, covered):
-	"""The pre-shipment test result of each built order, for the board's Testing column (v1.826.0).
+	"""The pre-shipment test result of each built order, for the board's Testing column (v1.828.0).
 
 	``{order: "passed" | "pending" | "failed"}``, and nothing for an order not built yet (the stage
 	rule only asks once the build is done). Product Build Settings' Require a Passed Test Before

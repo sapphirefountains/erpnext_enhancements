@@ -1,7 +1,7 @@
-"""Give Product Build Settings a stored row for every field that declares a default (v1.827.0).
+"""Give Product Build Settings a stored row for every field that declares a default (v1.829.0).
 
-v1.827.0 adds **Email the Customer When It Ships** (``send_shipped_email``, default 1) to a Single
-that v1.826.0 created. A default on a field added later never reaches a Single someone has already
+v1.829.0 adds **Email the Customer When It Ships** (``send_shipped_email``, default 1) to a Single
+that v1.828.0 created. A default on a field added later never reaches a Single someone has already
 saved (CLAUDE.md): ``tabSingles`` has no row for it, the settings page then shows the box unticked,
 and the next save writes 0, switching the Shipped email off without anyone choosing to. The code
 reads a missing row as on (``settings.get_settings``), but the page is what a person saves.

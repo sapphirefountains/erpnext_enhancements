@@ -100,7 +100,7 @@ def get_kpi_dashboard(department, period="Daily"):
 	return {"available": True, "snapshot": _serialize(frappe.get_doc("KPI Snapshot", name[0]))}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refresh_kpi_dashboard(department, period="Daily"):
 	"""Rebuild ``department``'s snapshot now (role-gated). Synchronous — the
 	aggregations are cheap SQL; the button shows a spinner."""

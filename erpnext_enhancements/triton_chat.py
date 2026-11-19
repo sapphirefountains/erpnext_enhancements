@@ -38,6 +38,7 @@ check that failed open on the exact input the original fix existed to close.
 from __future__ import annotations
 
 import json
+import re
 
 import frappe
 import requests
@@ -46,6 +47,7 @@ from frappe.utils import cint
 from werkzeug.wrappers import Response
 
 from erpnext_enhancements.utils.sse_filter import filter_sse_stream, scrub_sse_frame
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
 from erpnext_enhancements.utils.url_safety import scrub_urls
 
 # Re-mint a little before the token actually expires so an in-flight request
@@ -225,16 +227,21 @@ def get_settings() -> dict:
 def user_has_widget_access(settings: dict | None = None) -> bool:
     """Whether the current user may see/use the Triton widget.
 
-    Independent of the master ``enabled`` switch. When the whitelist is off,
-    everyone is allowed. When it is on, only the Administrator and the users
-    listed in "Allowed Users" are allowed — this is the gate used to roll the
-    assistant out to trusted testers before releasing it to everyone.
+    Independent of the master ``enabled`` switch. Only a System User qualifies
+    (a Website User never does). When the whitelist is off, every System User is
+    allowed. When it is on, only the Administrator and the users listed in
+    "Allowed Users" are allowed — this is the gate used to roll the assistant
+    out to trusted testers before releasing it to everyone.
     """
     if settings is None:
         settings = get_settings()
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return False
+    if frappe.get_cached_value("User", user, "user_type") != "System User":
+        return False
     if not settings.get("restrict_to_whitelist"):
         return True
-    user = frappe.session.user
     if user == "Administrator":
         return True
     return user in settings.get("allowed_users", set())
@@ -485,7 +492,7 @@ def get_config() -> dict:
     return cfg
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_session(
     title: str | None = None,
     model: str | None = None,
@@ -660,7 +667,7 @@ def list_personas() -> list:
     return personas
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_persona(
     name: str,
     system_prompt: str,
@@ -680,7 +687,7 @@ def create_persona(
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_persona(
     persona_id: str,
     name: str | None = None,
@@ -707,7 +714,7 @@ def update_persona(
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_persona(persona_id: str) -> dict:
     """Delete one of the current user's own personas."""
     result = _request("DELETE", _custom_persona_path(persona_id))
@@ -715,7 +722,7 @@ def delete_persona(persona_id: str) -> dict:
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def duplicate_persona(persona_key: str) -> dict:
     """Fork any visible persona into an editable copy owned by this user.
 
@@ -727,7 +734,7 @@ def duplicate_persona(persona_key: str) -> dict:
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_default_persona(persona_key: str | None = None) -> dict:
     """Set the persona the current user's new chats start on (both surfaces)."""
     result = _request("PUT", "/api/v1/personas/selection", {
@@ -738,6 +745,7 @@ def set_default_persona(persona_key: str | None = None) -> dict:
 
 
 @frappe.whitelist()
+@user_rate_limit(limit=30, seconds=3600)
 def morning_briefing(force: int | str = 0, cached_only: int | str = 0) -> dict:
     """Proxy to Triton's Morning Briefing for the current user.
 
@@ -761,24 +769,40 @@ def get_messages(session_id: str, limit: int | None = 50) -> list:
     return _request("GET", path)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_session(session_id: str) -> dict:
     """Delete a Triton chat session and its history."""
     return _request("DELETE", f"/api/v1/assistant/sessions/{cint(session_id)}")
 
 
-@frappe.whitelist()
+#: A Triton pending-action id (a UUID today): letters, digits, `-` and `_`, at most 64.
+_ACTION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _action_path(action_id, verb: str) -> str:
+    """Validate ``action_id`` and build its confirm/cancel path.
+
+    Anything outside ``_ACTION_ID_RE`` is refused rather than placed in the URL
+    path, like ``_custom_persona_path`` does for persona ids.
+    """
+    aid = str(action_id or "").strip()
+    if not _ACTION_ID_RE.match(aid):
+        frappe.throw(_("Invalid action id."))
+    return f"/api/v1/integrations/actions/{aid}/{verb}"
+
+
+@frappe.whitelist(methods=["POST"])
 def confirm_action(action_id: str, session_id: str | None = None) -> dict:
     """Approve a Triton-proposed write action (human-in-the-loop confirm)."""
-    return _request("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {
+    return _request("POST", _action_path(action_id, "confirm"), {
         "session_id": cint(session_id) or None,
     })
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_action(action_id: str, session_id: str | None = None) -> dict:
     """Reject a Triton-proposed write action."""
-    return _request("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {
+    return _request("POST", _action_path(action_id, "cancel"), {
         "session_id": cint(session_id) or None,
     })
 
@@ -793,7 +817,8 @@ def _sse_error(message: str) -> bytes:
 # imports frappe at the top and would drag that into every test of it.
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=300, seconds=3600)
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
                  hidden: int | str = 0, model: str | None = None,
                  persona_key: str | None = None, use_search: int | str = 0):

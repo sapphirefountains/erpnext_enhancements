@@ -1701,13 +1701,13 @@ erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults
 # answers "not needed here" and NO Error Log row is written. Cannot raise, safe twice. When any step did not finish,
 # ONE Error Log row "Inventory Room patch (swap_inventory_room_names): finish these steps by hand" lists them.
 erpnext_enhancements.patches.swap_inventory_room_names
-# v1.826.0 -- Product build, test and ship (TASK-2026-03230): seed the Quality Inspection Template "Pre-Shipment
+# v1.828.0 -- Product build, test and ship (TASK-2026-03230): seed the Quality Inspection Template "Pre-Shipment
 # Functional Test - E-Stop" (the default Product Build Settings names) and its 12 Quality Inspection Parameters, a
 # starter draft for Logan to refine: Pass checks (Value "Pass"), configuration-dependent checks that accept Pass or N/A
 # through an acceptance formula, and the control voltage as a numeric reading 21.6 to 26.4 VDC. Insert-only: an existing
 # parameter or template is left exactly as it is, so edits on the site survive. Cannot raise (logs), safe twice.
 erpnext_enhancements.patches.seed_estop_pre_shipment_test
-# v1.827.0 -- Product Build Settings gains Email the Customer When It Ships (default 1) and the shipping fields. Write each
+# v1.829.0 -- Product Build Settings gains Email the Customer When It Ships (default 1) and the shipping fields. Write each
 # declared default ONLY where tabSingles has no row for it, never over a stored value, so a settings page saved before this
 # release does not show the new box unticked and save it as 0. Also on after_migrate. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_product_build_settings_defaults

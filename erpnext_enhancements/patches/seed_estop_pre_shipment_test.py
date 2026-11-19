@@ -1,4 +1,4 @@
-"""Seed the E-Stop's Pre-Shipment Functional Test as a Quality Inspection Template (v1.826.0).
+"""Seed the E-Stop's Pre-Shipment Functional Test as a Quality Inspection Template (v1.828.0).
 
 Nikolas, 2026-11-18: every unit passes the Pre-Shipment Functional Test before it ships, tested by
 someone other than its builder. The test is ERPNext's own Quality Inspection (ADR 0019), so its

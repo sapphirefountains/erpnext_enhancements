@@ -1,4 +1,4 @@
-// Quality Inspection: a product unit's Pre-Shipment Functional Test (v1.826.0, product_fulfillment).
+// Quality Inspection: a product unit's Pre-Shipment Functional Test (v1.828.0, product_fulfillment).
 //
 // A unit's test shows who built the unit (custom_built_by, fetched from its serial number) and says
 // plainly when the person set as Inspected By is that builder, which the server refuses to save
