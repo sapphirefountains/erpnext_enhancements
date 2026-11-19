@@ -5,19 +5,31 @@ overheads are Finance's to type in the Desk (WI-077: Finance owns the rates). An
 all-zero card prices at cost and says so in a banner, so nobody mistakes it for a real price.
 
 Insert-only: does nothing when any rate card exists, so a card somebody has filled in is never touched
-and a second migrate is a no-op.
+and a second migrate is a no-op. It cannot raise (``estimating.seed.run``); a failure is one Error Log row.
 """
 
 import frappe
 
+from erpnext_enhancements.estimating import seed
 
-def execute():
+
+def _card():
 	if not frappe.db.table_exists("Estimate Rate Card"):
-		return
+		return "skipped: no Estimate Rate Card table"
 	if frappe.db.count("Estimate Rate Card"):
-		return
+		return "skipped: a rate card exists"
 	card = frappe.new_doc("Estimate Rate Card")
 	card.rate_card_name = "Standard"
 	card.is_default = 1
 	card.notes = "Seeded empty. Type the company's markups, overheads, use tax and labor cost per hour here."
 	card.insert(ignore_permissions=True)
+	return "created"
+
+
+def execute():
+	seed.run(
+		"seed_estimate_rate_card",
+		"Standard rate card",
+		_card,
+		'create an Estimate Rate Card named "Standard" with Default ticked.',
+	)

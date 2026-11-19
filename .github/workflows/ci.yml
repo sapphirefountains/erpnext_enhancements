@@ -938,6 +938,14 @@ jobs:
       # and its parent, bad overrides naming their row, and the stored numbers being the engine's.
       - name: Estimate controller (frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_estimate_controller -v
+      # Issue Quotation, the seed patches and the delete links against an in-memory frappe stub (its own
+      # step): one line per phase at its price, no tax on a build job even after set_missing_values copies
+      # a customer template in, the deal on custom_source_opportunity, a 0 Item Price held for EST-SCOPE
+      # so prod's auto-insert never makes a phase price its list price, every seed step logging instead
+      # of raising (a raising patch aborts the deploy), and the on_trash hooks that let an Estimate and
+      # its Quotation be deleted in either order.
+      - name: Estimate quotation, seeds and delete links (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_estimating_api -v
       # The browser twin of the pricing engine under node, against the same cases as the Python step,
       # plus the editor's phase labels equal to the server's, the form script's required editor level
       # equal to the bundle's VERSION (a tab open across a deploy draws "reload" instead of throwing),

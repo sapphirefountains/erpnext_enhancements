@@ -636,6 +636,10 @@ doc_events = {
 		# Opportunity's Connections list every quote through one field. Never raises. See
 		# crm_enhancements/product_sale.py.
 		"validate": "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link",
+		# v1.836.0: an Estimate and the Quotation it issued Link each other, so neither could be
+		# deleted. Deleting the quotation clears Estimate.quotation first (on_trash runs before the
+		# link check). The Estimate's own on_trash does the other direction. See estimating/links.py.
+		"on_trash": "erpnext_enhancements.estimating.links.release_quotation",
 	},
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",

@@ -690,8 +690,23 @@ export async function copy_rates(frm, card) {
 	draw(frm);
 }
 
+// Save first, and say whether the form is now clean. frm.save() at v16 swallows a server refusal (a
+// cost code the catalog does not know, say) and resolves anyway, so "it resolved" proves nothing: the
+// form is still dirty or new after a failed save, and carrying on would issue the quotation from the
+// last stored version and then reload over the unsaved edits.
+export async function saved(frm) {
+	if (frm.is_dirty() || frm.is_new()) {
+		try {
+			await frm.save();
+		} catch (e) {
+			return false;
+		}
+	}
+	return !(frm.is_dirty() || frm.is_new());
+}
+
 async function issue(frm) {
-	if (frm.is_dirty() || frm.is_new()) await frm.save();
+	if (!(await saved(frm))) return;
 	const r = await frappe.call({
 		method: "erpnext_enhancements.api.estimating.issue_quotation",
 		args: { estimate: frm.doc.name },
@@ -709,7 +724,7 @@ async function issue(frm) {
 }
 
 export async function new_revision(frm) {
-	if (frm.is_dirty()) await frm.save();
+	if (!(await saved(frm))) return;
 	frappe.confirm(
 		__("Start revision {0}? This one becomes Superseded and read-only, as the record of what was quoted.", [
 			(frm.doc.revision || 1) + 1,

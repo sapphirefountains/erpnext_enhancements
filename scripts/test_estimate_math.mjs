@@ -112,5 +112,57 @@ test("nothing typed reaches the page unescaped", () => {
 	}
 });
 
+// frm.save() at v16 swallows a server refusal and resolves anyway; the form stays dirty. Issue and New
+// Revision must stop there, not issue from the stored version and reload over the unsaved edits.
+const atest = async (name, fn) => {
+	try {
+		await fn();
+		checks += 1;
+		console.log(`ok   ${name}`);
+	} catch (err) {
+		failures += 1;
+		console.log(`FAIL ${name}\n     ${err.message.split("\n").slice(0, 12).join("\n     ")}`);
+	}
+};
+const fakeForm = (saveWorks) => {
+	const calls = [];
+	globalThis.__ = (s) => s;
+	globalThis.frappe = {
+		call: async (o) => (calls.push(o.method), { message: "SAL-QTN-0001" }),
+		confirm: (m, yes) => (calls.push("confirm"), yes()),
+		set_route: () => calls.push("set_route"),
+		show_alert: () => {},
+		utils: { escape_html: (s) => String(s) },
+	};
+	const frm = {
+		__dirty: true,
+		doc: { name: "EST-26-0001", revision: 1 },
+		is_dirty() { return this.__dirty; },
+		is_new() { return false; },
+		save: async () => { calls.push("save"); if (saveWorks) frm.__dirty = false; },
+		reload_doc: async () => calls.push("reload"),
+	};
+	return { frm, calls };
+};
+
+await atest("Issue stops when the save fails, and goes on when it works", async () => {
+	let { frm, calls } = fakeForm(false);
+	await ed.issue(frm);
+	assert.deepEqual(calls, ["save"]);
+	({ frm, calls } = fakeForm(true));
+	await ed.issue(frm);
+	assert.deepEqual(calls, ["save", "erpnext_enhancements.api.estimating.issue_quotation", "reload"]);
+});
+
+await atest("New Revision stops when the save fails, and goes on when it works", async () => {
+	let { frm, calls } = fakeForm(false);
+	await ed.new_revision(frm);
+	assert.deepEqual(calls, ["save"]);
+	({ frm, calls } = fakeForm(true));
+	await ed.new_revision(frm);
+	await new Promise((r) => setTimeout(r, 0));
+	assert.deepEqual(calls, ["save", "confirm", "erpnext_enhancements.api.estimating.new_revision", "set_route"]);
+});
+
 console.log(`\n${checks} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

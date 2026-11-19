@@ -58,6 +58,8 @@ Account, Opportunity and Project pickers need read on those doctypes.
 | `doctype/estimate_rate_card/` | Markup by cost type, contingency, insurance, fee, commission, use tax, labor cost per hour. One default | copied onto new Estimates |
 | `doctype/estimate_template/` (+ `_phase`, `_line`) | A job kind's phases and a checklist of candidate lines; applying it shows the checklist with the ticked lines pre-selected (concept card 10) | the form's Apply Template |
 | `data/estimate_templates.json` | The four seeded templates (Design-Build, Build, Event, Custom Panel). No prices | `patches/seed_estimate_templates.py` |
+| `seed.py` | What the seed patches create (EST-SCOPE, its name, its zero price) and `run`, the never-raise wrapper they share | `patches/seed_estimate_*`, `api/estimating.py` |
+| `links.py` | `on_trash` for both sides of the Estimate ↔ Quotation link, so either can be deleted first | Quotation `doc_events`; `Estimate.on_trash` |
 | `../api/estimating.py` | `issue_quotation` (POST), `new_revision` (POST), `cost_codes` (GET) | the form and the editor |
 | `../public/js/estimating/editor.js` | The lines editor (the v2 "Estimate2" board): phases that fold, line rows that become cards under 720px, back-fill from price, totals and the "ready to accept" checks, sticky Save / Issue Quotation | `estimate_editor.bundle.js` + `.css`, loaded by `estimate.js` |
 | `../public/js/estimating/opportunity_estimate.js` | Create > Estimate and View > Estimates on an Opportunity, for the roles that may | `doctype_js` Opportunity |
@@ -69,9 +71,12 @@ Account, Opportunity and Project pickers need read on those doctypes.
 | `seed_estimator_role` (pre) | The **Estimator** role. Granted to nobody |
 | `seed_estimate_rate_card` | One empty default **Standard** rate card, every rate 0 (the repo is public; Finance types the rates). Skipped when any card exists |
 | `seed_estimate_templates` | The four templates, insert-only by name |
-| `seed_estimate_scope_item` | Item **EST-SCOPE** (non-stock, sales only) that every Quotation line uses |
+| `seed_estimate_scope_item` | Item **EST-SCOPE** (`SERVICE, ESTIMATE SCOPE`, non-stock, sales only, unit Unit) that every Quotation line uses, and a **0 Item Price** for it on the default selling price list |
 
 Plus the fixture Custom Field `Quotation.custom_estimate` (read-only Link back to the Estimate).
+
+**No seed step can abort the migrate** ([`seed.py`](seed.py) `run`): a failure is rolled back and logged
+as one "Estimating seed: <step>" Error Log that says what to do by hand.
 
 ## Careful about
 
@@ -90,10 +95,23 @@ Plus the fixture Custom Field `Quotation.custom_estimate` (read-only Link back t
 - **Taxes can come back on a later Desk save of the quotation** if a Tax Rule or "Add Taxes from Taxes
   and Charges Template" is ever turned on (both off on prod, 2026-11-19): `taxes_and_charges` is
   refilled from the customer in validate and the flag that stops it is not saved.
+- **EST-SCOPE keeps a 0 list price.** Prod auto-inserts a missing Item Price from the first
+  transaction's rate, which would make the first phase price ever issued the item's list price. The
+  seed puts a 0 price on the default list and Issue Quotation adds one on any other list before the
+  insert; a 0 list price never overrides a line's own rate.
+- **An Estimate and its Quotation Link each other**, so `delete_doc` would refuse both. The `on_trash`
+  hooks in `links.py` clear the pointing field first (`on_trash` runs before the link check), so either
+  can go first.
+- **Issue and New Revision check the form is clean after saving.** `frm.save()` at v16 resolves even
+  when the server refused the save, so "it resolved" proves nothing.
+- **Line `amount`, `unit_price` and `sheet_price`, and Phase `amount`, are permlevel 0.** Fine while
+  only the four cost roles can open an Estimate. The 2026-09-25 rule (labor hours shown without price)
+  needs permlevel work on them before sales or project roles are given read access.
 - **The form script checks the bundle's API level** (`REQUIRED_EDITOR_LEVEL` = bundle `VERSION`), so a
   tab open across a deploy says "reload" instead of throwing. Bump both together.
 
 ## Tests (bench-free, in CI)
 
 `tests/test_estimate_math.py`, `tests/test_estimating_rules.py`, `tests/test_estimate_controller.py`
-(frappe stub) and `scripts/test_estimate_math.mjs` (node).
+(frappe stub), `tests/test_estimating_api.py` (Issue Quotation, seeds, delete links; frappe stub) and
+`scripts/test_estimate_math.mjs` (node).

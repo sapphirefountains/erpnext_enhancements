@@ -51,7 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Rule added later cannot reprice it in validate, and a "valid until" already in the past is dropped
     (ERPNext refuses a quotation valid until before its own date).
   - The **Estimator** role is meant to be paired with a selling role: it grants nothing on Quotation,
-    Customer, Opportunity or Project.
+    Customer, Opportunity or Project. `planner_tracking.COST_ROLES` already names it, so the Project Planner's labor
+    forecast answers an Estimator with the money; the Project form's `labor_forecast` field stays
+    hidden from it, because `grant_labor_forecast_visibility` ran once, before the role existed.
   - **The lines editor** (the v2 Estimate board), in the Estimate form: phases fold (open by default
     only where work is missing, or all on a short estimate), line rows turn into labelled cards under
     720px with 44px inputs and Save / Issue Quotation stuck to the bottom, cost codes from the catalog
@@ -67,10 +69,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Standard" card: **every rate is 0** because this repository is public; Finance types the rates in the
   Desk, and the editor says so while they are zero), `seed_estimate_templates` (insert-only by name,
   no prices), `seed_estimate_scope_item`. Fixture Custom Field `Quotation.custom_estimate`.
+  - **No seed step can abort the migrate.** Each runs through `estimating/seed.run`: committed when it
+    works, rolled back and logged as one "Estimating seed: <step>" Error Log (with what to do by hand)
+    when it does not, the shape the role seeds use. A raising patch aborts `bench migrate`, which is
+    the deploy here.
+  - **EST-SCOPE** is named `SERVICE, ESTIMATE SCOPE` in the Item Naming Schema's shape and uses the unit
+    **Unit** ("Nos" is disabled on prod). The naming audit still reports one finding for it,
+    `name_category_unapproved`: Appendix A lists only physical parts, so a service category is the
+    Process Owner's to add.
+  - **EST-SCOPE holds a 0 Item Price** on the default selling price list, and Issue Quotation adds one
+    on any other list a quotation uses before inserting it. Prod has "Auto Insert Item Price If
+    Missing" on, so without it the first quotation an Estimate issued would have made the first
+    phase's price EST-SCOPE's list price, and every EST-SCOPE line added by hand would default to it. A
+    0 list price never overrides a line's own rate, and with "Update Existing Price List Rate" off (as
+    on prod) ERPNext leaves an existing price alone.
+- **An Estimate and its Quotation can be deleted, either one first.** They Link each other
+  (`Estimate.quotation`, `Quotation.custom_estimate`), so `delete_doc` refused both. Their `on_trash`
+  hooks (`estimating/links.py`; Quotation's through `doc_events`) clear the pointing field first, since
+  `on_trash` runs before the link check. Deleting the quotation sets an "Issued" estimate back to
+  "Draft"; deleting the newest revision makes the one before it editable again.
+- **Issue Quotation and New Revision stop when the save before them fails.** At frappe v16.56
+  `frm.save()` swallows a server refusal (a cost code the catalog does not know, say) and resolves
+  anyway, so the editor carried on: it issued from the last stored version and then reloaded over
+  the unsaved edits. Both now check the form is clean after the save and stop if it is not.
 - Bench-free tests, all in CI: `test_estimate_math` (engine), `test_estimating_rules` (codes,
-  quotation rows, seeded templates, the permlevel wall), `test_estimate_controller` (frappe stub) and
-  `scripts/test_estimate_math.mjs` (the browser twin against the same cases, the bundle level, and no
-  unescaped text).
+  quotation rows, seeded templates, the permlevel wall), `test_estimate_controller` (frappe stub),
+  `test_estimating_api` (Issue Quotation, the seed patches and the delete links, frappe stub) and
+  `scripts/test_estimate_math.mjs` (the browser twin against the same cases, the bundle level, no
+  unescaped text, and Issue / New Revision stopping after a failed save).
 
 ## [1.830.0] - 2026-11-19
 

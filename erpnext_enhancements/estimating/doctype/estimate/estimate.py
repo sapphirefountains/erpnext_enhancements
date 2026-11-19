@@ -32,7 +32,7 @@ from frappe.model.document import Document
 from frappe.utils import escape_html
 
 from erpnext_enhancements.estimating import estimate_math as em
-from erpnext_enhancements.estimating import rules
+from erpnext_enhancements.estimating import links, rules
 
 RATE_FIELDS = (
 	"labor_rate",
@@ -109,6 +109,10 @@ class Estimate(Document):
 		card = frappe.get_cached_doc("Estimate Rate Card", rate_card)
 		for field in RATE_FIELDS:
 			self.set(field, card.get(field) or 0)
+
+	def on_trash(self):
+		# The Estimate and its Quotation Link each other; this clears the links so either can go first.
+		links.release_estimate(self)
 
 	def validate(self):
 		self.refuse_superseded_edit()

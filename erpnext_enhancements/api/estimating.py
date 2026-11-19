@@ -24,16 +24,20 @@ Things this is careful about, including the ones that look like bugs:
   they are worth nothing on purpose and print as exclusions.
 * **Rates are set after ``set_missing_values`` too.** ERPNext fills item details from the price list
   there; the estimate's price is the price.
+* **EST-SCOPE keeps a 0 list price on the quotation's price list.** Prod auto-inserts a missing Item
+  Price from the first transaction's rate, so without one the first phase price ever issued would
+  become EST-SCOPE's list price (``estimating.seed.hold_zero_price``). The seed patch puts one on the
+  default list; a customer with their own price list gets one here, on first issue.
 """
 
 import frappe
 from frappe import _
 from frappe.utils import escape_html, getdate, nowdate
 
-from erpnext_enhancements.estimating import rules
+from erpnext_enhancements.estimating import rules, seed
 
 #: The one non-stock Item every estimate line on a Quotation uses (``patches/seed_estimate_scope_item``).
-SCOPE_ITEM = "EST-SCOPE"
+SCOPE_ITEM = seed.SCOPE_ITEM
 
 
 def _party(estimate):
@@ -69,6 +73,15 @@ def _default_taxes(quotation):
 		return
 	if taxes and taxes.get("taxes"):
 		quotation.update(taxes)
+
+
+def _hold_zero_price(price_list):
+	# Before the insert, whose validate is where ERPNext would auto-insert a price. Never blocks the
+	# issue: the worst case without it is the stray list price the seed is there to prevent.
+	try:
+		seed.hold_zero_price(price_list)
+	except Exception:
+		frappe.log_error(title="Estimating: EST-SCOPE zero price", message=frappe.get_traceback())
 
 
 @frappe.whitelist(methods=["POST"])
@@ -161,6 +174,7 @@ def issue_quotation(estimate):
 	# otherwise reprice these lines in validate, after the rates below are set.
 	quotation.ignore_pricing_rule = 1
 	quotation.run_method("set_missing_values")
+	_hold_zero_price(quotation.get("selling_price_list"))
 	if doc.job_kind != "Product":
 		# set_missing_values copies the customer's tax template in (update_if_missing) and, outside
 		# validate, appends its rows. A build price already carries its use tax as a cost.
