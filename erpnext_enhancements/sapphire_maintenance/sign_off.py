@@ -35,6 +35,12 @@ there is no Turnstile and no re-typed address. What carries over unchanged:
   name (``tests/test_visit_sign_off.py`` walks this module's AST for it).
 * Guest endpoints are ``POST``-only, rate limited, and take the token and nothing that names a
   record: the request and its visit are resolved from the token, server side.
+
+A link may be sent to any single address. When the address is not one already on file for the
+visit's customer or site (:func:`is_on_file`), the visit's timeline records it and the office
+that reads visit reviews is told (:func:`_record_off_file_send`). Both entry points, Finish and
+the visit form, go through :func:`send_request`, so both do it. Telling the office never blocks
+the send.
 """
 
 import base64
@@ -55,6 +61,7 @@ REQUEST = "Visit Sign-Off Request"
 #: ``www/visit_sign_off.py``: underscores, or frappe never imports it.
 ROUTE = "/visit-sign-off"
 TEMPLATE = "erpnext_enhancements/templates/emails/sapphire_maintenance/visit_sign_off_request.html"
+NOTICE_TEMPLATE = "erpnext_enhancements/templates/emails/sapphire_maintenance/visit_sign_off_notice.html"
 
 #: How long a link signs for. Long enough for a client who reads email weekly; short enough that
 #: a forgotten link in an old inbox stops working.
@@ -282,6 +289,86 @@ def clean_email(value):
 	return email.lower()
 
 
+def is_on_file(visit, email):
+	"""Whether ``email`` is already recorded for the visit's customer or site (case and
+	surrounding spaces ignored). Never raises: a failed read answers False, which only costs an
+	extra notice to the office.
+
+	Reads, and nothing else: the Customer's ``email_id``, ``custom_primary_email_address`` and
+	``custom_accounts_email_address``; the visit Project's ``custom_customer_email`` and
+	``custom_billing_email``; the ``contact_email`` of the Project Contract behind the visit's
+	maintenance contract; and the ``email_id`` of every Contact that is the Customer's primary
+	contact, is linked to the Customer or the Project (Dynamic Link), or is a stakeholder row on
+	either (Contact's own ``email_id`` and its Contact Email rows). The custom fields are read
+	behind ``has_column`` like every other custom-field read in this app.
+	"""
+	wanted = str(email or "").strip().lower()
+	if not wanted:
+		return False
+	found = set()
+
+	def take(value):
+		for part in re.split(r"[,;\s]+", str(value or "").strip()):
+			if part:
+				found.add(part.lower())
+
+	try:
+		customer, project = visit.get("customer"), visit.get("project")
+		contacts = set()
+		if customer:
+			fields = ["email_id", "customer_primary_contact"]
+			fields += [
+				f
+				for f in ("custom_primary_email_address", "custom_accounts_email_address")
+				if frappe.db.has_column("Customer", f)
+			]
+			row = frappe.db.get_value("Customer", customer, fields, as_dict=True) or {}
+			contacts.add(row.get("customer_primary_contact"))
+			for field in fields:
+				if field != "customer_primary_contact":
+					take(row.get(field))
+		if project:
+			for field in ("custom_customer_email", "custom_billing_email"):
+				if frappe.db.has_column("Project", field):
+					take(frappe.db.get_value("Project", project, field))
+		agreement = visit.get("maintenance_contract")
+		if agreement:
+			contract = frappe.db.get_value("Sapphire Maintenance Contract", agreement, "project_contract")
+			if contract:
+				take(frappe.db.get_value("Project Contract", contract, "contact_email"))
+		for doctype, name in (("Customer", customer), ("Project", project)):
+			if not name:
+				continue
+			contacts |= set(
+				frappe.get_all(
+					"Dynamic Link",
+					filters={"parenttype": "Contact", "link_doctype": doctype, "link_name": name},
+					pluck="parent",
+				)
+			)
+			contacts |= set(
+				frappe.get_all(
+					"Project Stakeholder",
+					filters={"parenttype": doctype, "parent": name},
+					pluck="contact_person",
+				)
+			)
+		contacts.discard(None)
+		contacts.discard("")
+		if contacts:
+			names = sorted(contacts)
+			for value in frappe.get_all("Contact", filters={"name": ["in", names]}, pluck="email_id"):
+				take(value)
+			for value in frappe.get_all(
+				"Contact Email", filters={"parenttype": "Contact", "parent": ["in", names]}, pluck="email_id"
+			):
+				take(value)
+	except Exception:
+		frappe.log_error(title="Visit sign-off: address check failed", message=frappe.get_traceback())
+		return False
+	return wanted in found
+
+
 # ---------------------------------------------------------------------------
 # Sending
 
@@ -290,11 +377,14 @@ def send_request(visit, email):
 	"""Mint a link, retire any live one, and email it. The caller has checked :func:`can_send`.
 
 	Raises on a bad address or a failed send: a desk user who pressed the button must not be
-	told it went. :func:`send_after_finish` is the never-raising form for Finish.
+	told it went. :func:`send_after_finish` is the never-raising form for Finish. An address that
+	is not on file (:func:`is_on_file`) is still sent to, then recorded and told to the office
+	(:func:`_record_off_file_send`), which never raises.
 	"""
 	recipient = clean_email(email)
 	if not recipient:
 		frappe.throw(_("Enter one valid email address for the client."), title=_("Email needed"))
+	on_file = is_on_file(visit, recipient)
 	now = now_datetime()
 	retire_live(visit.name)
 	token, token_hash = mint_token()
@@ -315,6 +405,8 @@ def send_request(visit, email):
 			escape_html(recipient), _format_datetime(request.expires_on)
 		),
 	)
+	if not on_file:
+		_record_off_file_send(visit, request)
 	return public_status(request)
 
 
@@ -351,6 +443,67 @@ def send_after_finish(visit, email):
 		frappe.db.rollback(save_point="visit_sign_off")
 		frappe.log_error(title="Visit sign-off: email after Finish failed", message=frappe.get_traceback())
 		return {"sign_off_error": _("The visit was finished, but the sign-off email could not be sent. Send it from the visit form.")}
+
+
+def _record_off_file_send(visit, request):
+	"""A link went to an address that is not on file: say so on the visit's timeline and tell the
+	office. Never raises, and neither step stops the other: the link has already been sent.
+
+	The office is the review list (``review_digest.review_recipients``, ERPNext Enhancements
+	Settings, Visit Review Emails): the people who already read every finished visit. The notice
+	carries no sign-off link and no token, only the visit, the address and who sent it.
+	"""
+	sender = _full_name(request.get("sent_by"))
+	try:
+		visit.add_comment(
+			"Comment",
+			_(
+				"Sign-off link sent to {0}, which is not an email address on file for this customer "
+				"or site. Sent by {1} on {2}."
+			).format(escape_html(request.email), escape_html(sender), _format_datetime(request.sent_on)),
+		)
+	except Exception:
+		frappe.log_error(title="Visit sign-off: off-file comment failed", message=frappe.get_traceback())
+	frappe.db.savepoint("visit_sign_off_notice")
+	try:
+		from frappe.utils import get_url_to_form
+
+		from erpnext_enhancements import email_style
+		from erpnext_enhancements.sapphire_maintenance.review_digest import review_recipients
+
+		recipients = review_recipients()
+		if not recipients:
+			frappe.log_error(
+				title="Visit sign-off: no office address for the off-file notice",
+				message="Visit Review Emails is empty.",
+			)
+			return
+		site = site_label(visit)
+		frappe.sendmail(
+			recipients=recipients,
+			subject=_("Sign-off link sent to an address not on file: {0}").format(site),
+			message=email_style.render(
+				NOTICE_TEMPLATE,
+				{
+					"site": site,
+					"customer": visit.get("customer") or "",
+					"visit": visit.name,
+					"address": request.email,
+					"sender": sender,
+					"sent_on": _format_datetime(request.sent_on),
+					"visit_url": get_url_to_form(VISIT, visit.name),
+				},
+				title=_("Sign-off link sent to an address not on file"),
+				eyebrow=site,
+				preheader=_("A client sign-off link went to an address we do not have for this customer."),
+				pillar="service",
+			),
+			reference_doctype=VISIT,
+			reference_name=visit.name,
+		)
+	except Exception:
+		frappe.db.rollback(save_point="visit_sign_off_notice")
+		frappe.log_error(title="Visit sign-off: off-file notice failed", message=frappe.get_traceback())
 
 
 def retire_live(visit_name, keep=None):

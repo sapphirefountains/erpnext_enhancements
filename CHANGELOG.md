@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.836.4] - 2026-11-19
+
+### Changed
+
+- **A visit's sign-off link may still go to any single address; one that is not on file is now
+  recorded and the office is told (hardening).** Decided by Nik, 2026-11-19: "Any address, but the
+  office gets a notice naming the address whenever it is not one on file."
+  - **What counts as on file.** `sign_off.is_on_file` compares case-insensitively after trimming
+    against the Customer's `email_id` and its two custom email fields, the visit Project's customer
+    and billing email, the `contact_email` of the Project Contract behind the visit's maintenance
+    contract, and the email addresses of Contacts that are the Customer's primary contact, are
+    linked to the Customer or Project, or are stakeholder rows on either.
+  - **What happens otherwise.** The link is sent exactly as before. The visit's timeline gets a
+    Comment naming the address, who sent it and when, and the Visit Review Emails list (the people
+    who already read finished visits) gets a short notice with the visit, customer, address, sender
+    and a link to the visit, in the shared email shell (`visit_sign_off_notice.html`).
+  - **Both entry points.** Finish and the visit form's button both call `send_request`, so both do
+    it. An address that is on file behaves as before: no Comment, no notice.
+  - **A notice never blocks anything.** A failure to write the Comment or send the notice is logged
+    (no token, no link) and the send and the Finish go on. Who may send, the token, its lifetime and
+    the signing page are unchanged.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed

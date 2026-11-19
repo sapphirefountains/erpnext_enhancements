@@ -59,7 +59,17 @@ RECORD_JSON = (
 	APP / "sapphire_maintenance" / "doctype" / "sapphire_maintenance_record" / "sapphire_maintenance_record.json"
 )
 RECORD_PY = APP / "sapphire_maintenance" / "doctype" / "sapphire_maintenance_record" / "sapphire_maintenance_record.py"
-STUBBED = ("frappe", "frappe.utils", "frappe.rate_limiter", "erpnext_enhancements.email_style", MODULE)
+REVIEW_DIGEST = "erpnext_enhancements.sapphire_maintenance.review_digest"
+VISIT_NAMES = "erpnext_enhancements.sapphire_maintenance.visit_names"
+STUBBED = (
+	"frappe",
+	"frappe.utils",
+	"frappe.rate_limiter",
+	"erpnext_enhancements.email_style",
+	REVIEW_DIGEST,
+	VISIT_NAMES,
+	MODULE,
+)
 
 DT = datetime.datetime
 NOW = DT(2026, 10, 13, 15, 0)
@@ -161,12 +171,16 @@ def _match(row, filters):
 
 
 def _table(doctype):
+	if doctype in STATE["extra"]:
+		return STATE["extra"][doctype]
 	return STATE["requests"] if doctype == "Visit Sign-Off Request" else STATE["visits"]
 
 
 def _get_value(doctype, filters, fieldname=None, as_dict=False, for_update=False, **kwargs):
 	if doctype == "Company":
 		return STATE["company_email"]
+	if doctype == "Customer" and isinstance(fieldname, list):
+		return _Dict(STATE["customer_row"])
 	if doctype in ("Project", "Customer", "User", "Sapphire Maintenance Contract", "Project Contract", "Contact"):
 		return STATE["lookups"].get((doctype, filters, fieldname))
 	table = _table(doctype)
@@ -245,6 +259,10 @@ def _reset():
 				("User", "austin@example.com", "full_name"): "Austin Tech",
 			},
 			"company_email": "office@sapphire.example.com",
+			# What the on-file check may read besides the visit and its agreement (v1.836.4).
+			"customer_row": {},
+			"extra": {"Dynamic Link": {}, "Project Stakeholder": {}, "Contact": {}, "Contact Email": {}},
+			"review_emails": ["service_repair@sapphire.example.com"],
 			"mail": [],
 			"sendmail_raises": False,
 			"comments": [],
@@ -318,6 +336,7 @@ def _install_stub():
 	utils.now_datetime = lambda: STATE["now"]
 	utils.nowdate = lambda: str(STATE["now"].date())
 	utils.format_datetime = lambda v, *a: f"<{v}>"
+	utils.get_url_to_form = lambda doctype, name: f"https://erp.example.com/app/{doctype}/{name}"
 	utils.formatdate = lambda v, *a: f"[{v}]"
 	utils.validate_email_address = lambda e, throw=False: e if re.fullmatch(r"[^@\s]+@[^@\s]+\.[A-Za-z]+", e) else ""
 	frappe.utils = utils
@@ -339,8 +358,15 @@ def _install_stub():
 		{"template": template, "context": context, "chrome": kw}, default=str
 	)
 
+	review_digest = types.ModuleType(REVIEW_DIGEST)
+	review_digest.review_recipients = lambda: list(STATE["review_emails"])
+	visit_names = types.ModuleType(VISIT_NAMES)
+	visit_names.current_visit_name = lambda record: record
+
 	sys.modules.update(
 		{
+			REVIEW_DIGEST: review_digest,
+			VISIT_NAMES: visit_names,
 			"frappe": frappe,
 			"frappe.utils": utils,
 			"frappe.rate_limiter": rate_limiter,
@@ -404,7 +430,9 @@ def _visit():
 def _send(email="owner@myers.example.com"):
 	"""Send a link as the technician; returns (status, the token in the email)."""
 	status = so.send_request(_visit(), email)
-	context = json.loads(STATE["mail"][-1]["message"])["context"]
+	# The link's email, not the office notice an address that is not on file also sends.
+	sent = [json.loads(m["message"])["context"] for m in STATE["mail"] if m["recipients"] == [email.strip().lower()]]
+	context = sent[-1]
 	return status, context["sign_off_url"].split("ref=", 1)[1]
 
 
@@ -617,6 +645,237 @@ class TestSendingAtFinish(unittest.TestCase):
 		STATE["visits"]["PRJ-1-2026-V001"]["client_sign_off"] = _png()
 		self.assertEqual(so.send_after_finish(_visit(), "owner@myers.example.com"), {})
 		self.assertEqual(STATE["mail"], [])
+
+
+class TestAddressNotOnFile(unittest.TestCase):
+	"""A link may go to any single address. One that is not on file for the customer or site is
+	recorded on the visit and told to the office; one that is on file behaves as it always did.
+	Both entry points (Finish and the visit form) are the same :func:`send_request`."""
+
+	OFF = "someone.else@elsewhere.example.com"
+
+	def setUp(self):
+		_reset()
+
+	def _off_file_comments(self):
+		return [text for _name, text in STATE["comments"] if "not an email address on file" in text]
+
+	def test_an_address_on_file_sends_with_no_comment_and_no_notice(self):
+		for address in ("owner@myers.example.com", "  OWNER@Myers.Example.com ", "Owner@Myers.example.com"):
+			with self.subTest(address=address):
+				_reset()
+				status = so.send_request(_visit(), address)
+				self.assertEqual(status["status"], "Sent")
+				self.assertEqual(len(STATE["mail"]), 1)
+				self.assertEqual(STATE["mail"][0]["recipients"], ["owner@myers.example.com"])
+				self.assertEqual(self._off_file_comments(), [])
+				self.assertEqual(STATE["savepoints"], [])
+
+	def test_another_address_still_sends_and_leaves_one_comment_and_one_notice(self):
+		status = so.send_request(_visit(), self.OFF)
+		self.assertEqual(status["status"], "Sent")
+		self.assertEqual(STATE["mail"][0]["recipients"], [self.OFF])
+		self.assertEqual(len(STATE["mail"]), 2)
+		comments = self._off_file_comments()
+		self.assertEqual(len(comments), 1)
+		self.assertIn(self.OFF, comments[0])
+		self.assertIn("Austin Tech", comments[0])
+		self.assertIn("<2026-10-13 15:00:00>", comments[0])
+		notice = STATE["mail"][1]
+		self.assertEqual(notice["recipients"], ["service_repair@sapphire.example.com"])
+		self.assertEqual(notice["subject"], "Sign-off link sent to an address not on file: Myers Mortuary")
+		self.assertEqual(
+			(notice["reference_doctype"], notice["reference_name"]),
+			("Sapphire Maintenance Record", "PRJ-1-2026-V001"),
+		)
+		body = json.loads(notice["message"])
+		self.assertEqual(body["template"], so.NOTICE_TEMPLATE)
+		self.assertEqual(body["chrome"]["pillar"], "service")
+		self.assertEqual(
+			body["context"],
+			{
+				"site": "Myers Mortuary",
+				"customer": "CUST-1",
+				"visit": "PRJ-1-2026-V001",
+				"address": self.OFF,
+				"sender": "Austin Tech",
+				"sent_on": "<2026-10-13 15:00:00>",
+				"visit_url": "https://erp.example.com/app/Sapphire Maintenance Record/PRJ-1-2026-V001",
+			},
+		)
+
+	def test_the_notice_carries_no_token_and_no_link_to_sign(self):
+		_status, token = _send(self.OFF)
+		notice = STATE["mail"][-1]
+		self.assertNotIn(token, notice["message"])
+		self.assertNotIn(so.ROUTE, notice["message"])
+
+	def test_the_notice_goes_to_the_review_list(self):
+		STATE["review_emails"] = ["service_repair@sapphire.example.com", "lisa@sapphire.example.com"]
+		so.send_request(_visit(), self.OFF)
+		self.assertEqual(STATE["mail"][1]["recipients"], STATE["review_emails"])
+
+	def test_an_empty_review_list_still_sends_and_comments_and_logs(self):
+		STATE["review_emails"] = []
+		so.send_request(_visit(), self.OFF)
+		self.assertEqual(len(STATE["mail"]), 1)
+		self.assertEqual(len(self._off_file_comments()), 1)
+		self.assertIn("Visit sign-off: no office address for the off-file notice", STATE["errors"])
+
+	def test_case_and_spaces_do_not_matter_for_an_address_that_is_not_on_file_either(self):
+		so.send_request(_visit(), "  Someone.Else@Elsewhere.Example.com ")
+		self.assertEqual(STATE["mail"][0]["recipients"], [self.OFF])
+		self.assertEqual(len(self._off_file_comments()), 1)
+
+	def test_the_form_endpoint_goes_through_the_same_rule(self):
+		so.send_sign_off_request("PRJ-1-2026-V001", self.OFF)
+		self.assertEqual(len(STATE["mail"]), 2)
+		self.assertEqual(len(self._off_file_comments()), 1)
+		_reset()
+		so.send_sign_off_request("PRJ-1-2026-V001", "owner@myers.example.com")
+		self.assertEqual(len(STATE["mail"]), 1)
+		self.assertEqual(self._off_file_comments(), [])
+
+	def test_finish_goes_through_the_same_rule(self):
+		out = so.send_after_finish(_visit(), self.OFF)
+		self.assertEqual(out["sign_off"]["status"], "Sent")
+		self.assertEqual(len(STATE["mail"]), 2)
+		self.assertEqual(len(self._off_file_comments()), 1)
+		self.assertEqual(STATE["rollbacks"], [])
+		_reset()
+		on_file = so.send_after_finish(_visit(), "owner@myers.example.com")
+		self.assertEqual(on_file["sign_off"]["status"], "Sent")
+		self.assertEqual(len(STATE["mail"]), 1)
+		self.assertEqual(self._off_file_comments(), [])
+
+	def test_a_failing_notice_does_not_stop_the_send_or_the_finish(self):
+		def flaky(**kwargs):
+			if kwargs["recipients"] == ["service_repair@sapphire.example.com"]:
+				raise RuntimeError("smtp down")
+			_sendmail(**kwargs)
+
+		sys.modules["frappe"].sendmail = flaky
+		try:
+			out = so.send_after_finish(_visit(), self.OFF)
+		finally:
+			sys.modules["frappe"].sendmail = _sendmail
+		self.assertEqual(out["sign_off"]["status"], "Sent")
+		self.assertEqual([m["recipients"] for m in STATE["mail"]], [[self.OFF]])
+		self.assertEqual(STATE["rollbacks"], ["visit_sign_off_notice"])
+		self.assertIn("Visit sign-off: off-file notice failed", STATE["errors"])
+		self.assertNotIn("Visit sign-off: email after Finish failed", STATE["errors"])
+		self.assertEqual(len(self._off_file_comments()), 1)
+
+	def test_a_failing_comment_does_not_stop_the_notice(self):
+		real = _Doc.add_comment
+
+		def broken(self, kind, text):
+			if "not an email address on file" in text:
+				raise RuntimeError("no comment")
+			real(self, kind, text)
+
+		_Doc.add_comment = broken
+		try:
+			so.send_request(_visit(), self.OFF)
+		finally:
+			_Doc.add_comment = real
+		self.assertEqual(len(STATE["mail"]), 2)
+		self.assertIn("Visit sign-off: off-file comment failed", STATE["errors"])
+
+	def test_a_failed_address_check_counts_as_not_on_file(self):
+		def boom(doctype, column):
+			raise RuntimeError("db down")
+
+		db = sys.modules["frappe"].db
+		real = db.has_column
+		db.has_column = boom
+		try:
+			self.assertFalse(so.is_on_file(_visit(), "owner@myers.example.com"))
+		finally:
+			db.has_column = real
+		self.assertIn("Visit sign-off: address check failed", STATE["errors"])
+
+	def test_the_notice_helper_logs_no_token_and_no_link(self):
+		source = SIGN_OFF_PY.read_text(encoding="utf-8")
+		helper = source.split("def _record_off_file_send", 1)[1].split("\ndef ", 1)[0]
+		code = re.sub(r'""".*?"""', "", helper, flags=re.S)
+		self.assertNotIn("token", code)
+		self.assertNotIn("sign_off_url", code)
+
+
+class TestWhatIsOnFile(unittest.TestCase):
+	"""Every place :func:`is_on_file` looks, one at a time."""
+
+	def setUp(self):
+		_reset()
+		STATE["lookups"].clear()
+
+	def _on_file(self, address):
+		return so.is_on_file(_visit(), address)
+
+	def test_nothing_recorded_means_nothing_is_on_file(self):
+		self.assertFalse(self._on_file("owner@myers.example.com"))
+		self.assertFalse(self._on_file(""))
+
+	def test_the_customers_own_email_fields(self):
+		STATE["customer_row"] = {
+			"email_id": "Main@Myers.example.com",
+			"custom_primary_email_address": "primary@myers.example.com",
+			"custom_accounts_email_address": "ap@myers.example.com, books@myers.example.com",
+		}
+		for address in ("main@myers.example.com", "primary@myers.example.com", "AP@myers.example.com", "books@myers.example.com"):
+			with self.subTest(address=address):
+				self.assertTrue(self._on_file(address))
+		self.assertFalse(self._on_file("other@myers.example.com"))
+
+	def test_the_sites_own_email_fields(self):
+		STATE["lookups"][("Project", "PRJ-1", "custom_customer_email")] = "front@myers.example.com"
+		STATE["lookups"][("Project", "PRJ-1", "custom_billing_email")] = "bills@myers.example.com"
+		self.assertTrue(self._on_file("front@myers.example.com"))
+		self.assertTrue(self._on_file("Bills@Myers.example.com"))
+
+	def test_the_maintenance_agreements_contact(self):
+		STATE["lookups"][("Sapphire Maintenance Contract", "SMC-1", "project_contract")] = "PC-1"
+		STATE["lookups"][("Project Contract", "PC-1", "contact_email")] = "Owner@Myers.example.com"
+		self.assertTrue(self._on_file(" owner@myers.example.com "))
+
+	def test_contacts_linked_to_the_customer_or_the_project(self):
+		STATE["extra"]["Dynamic Link"].update(
+			{
+				"1": {"parenttype": "Contact", "link_doctype": "Customer", "link_name": "CUST-1", "parent": "CONT-1"},
+				"2": {"parenttype": "Contact", "link_doctype": "Project", "link_name": "PRJ-1", "parent": "CONT-2"},
+				"3": {"parenttype": "Contact", "link_doctype": "Customer", "link_name": "CUST-9", "parent": "CONT-9"},
+			}
+		)
+		STATE["extra"]["Contact"].update(
+			{
+				"CONT-1": {"name": "CONT-1", "email_id": "manager@myers.example.com"},
+				"CONT-2": {"name": "CONT-2", "email_id": None},
+				"CONT-9": {"name": "CONT-9", "email_id": "stranger@elsewhere.example.com"},
+			}
+		)
+		STATE["extra"]["Contact Email"].update(
+			{
+				"a": {"parenttype": "Contact", "parent": "CONT-2", "email_id": "Crew@Myers.example.com"},
+				"b": {"parenttype": "Contact", "parent": "CONT-9", "email_id": "stranger2@elsewhere.example.com"},
+			}
+		)
+		self.assertTrue(self._on_file("manager@myers.example.com"))
+		self.assertTrue(self._on_file("crew@myers.example.com"))
+		self.assertFalse(self._on_file("stranger@elsewhere.example.com"))
+		self.assertFalse(self._on_file("stranger2@elsewhere.example.com"))
+
+	def test_the_customers_primary_contact_and_stakeholder_rows(self):
+		STATE["customer_row"] = {"customer_primary_contact": "CONT-3"}
+		STATE["extra"]["Project Stakeholder"]["x"] = {"parenttype": "Project", "parent": "PRJ-1", "contact_person": "CONT-4"}
+		STATE["extra"]["Contact"].update(
+			{
+				"CONT-3": {"name": "CONT-3", "email_id": "primary.contact@myers.example.com"},
+				"CONT-4": {"name": "CONT-4", "email_id": "stake@myers.example.com"},
+			}
+		)
+		self.assertTrue(self._on_file("primary.contact@myers.example.com"))
+		self.assertTrue(self._on_file("stake@myers.example.com"))
 
 
 class TestSigning(unittest.TestCase):
@@ -943,6 +1202,30 @@ class TestTheShape(unittest.TestCase):
 		template = EMAIL.read_text(encoding="utf-8")
 		self.assertNotIn("max-width", re.sub(r"\{#.*?#\}", "", template, flags=re.S))
 		self.assertIn('{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}', template)
+
+	def test_the_office_notice_renders_its_facts_escaped_and_is_in_the_shell(self):
+		try:
+			from jinja2 import Environment, FileSystemLoader
+		except ImportError:  # pragma: no cover
+			self.skipTest("jinja2 not installed")
+		env = Environment(loader=FileSystemLoader(str(REPO_ROOT)), autoescape=False)
+		template = env.get_template(so.NOTICE_TEMPLATE)
+		out = template.render(
+			site="Myers <b>Mortuary</b>",
+			customer="CUST-1",
+			visit="PRJ-1-2026-V001",
+			address="a&b@x.example.com",
+			sender="Austin Tech",
+			sent_on="Oct 13",
+			visit_url="https://erp.example.com/app/sapphire-maintenance-record/PRJ-1-2026-V001",
+		)
+		self.assertIn("Myers &lt;b&gt;Mortuary&lt;/b&gt;", out)
+		self.assertIn("a&amp;b@x.example.com", out)
+		self.assertIn("https://erp.example.com/app/sapphire-maintenance-record/PRJ-1-2026-V001", out)
+		self.assertIn("Open the visit", out)
+		source = SIGN_OFF_PY.read_text(encoding="utf-8")
+		self.assertIn("NOTICE_TEMPLATE,", source)
+		self.assertNotIn("max-width", re.sub(r"\{#.*?#\}", "", Path(template.filename).read_text(encoding="utf-8"), flags=re.S))
 
 	def test_the_print_format_says_how_the_client_signed(self):
 		records = json.loads((APP / "fixtures" / "print_format.json").read_text(encoding="utf-8"))
