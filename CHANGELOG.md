@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.836.1] - 2026-11-19
+
+### Changed
+
+- **Fountain Move: a public-form request that matches an existing customer waits for staff
+  (hardening; Nik's decision of 2026-11-19).** When a request from the public `/fountain-move` form
+  matches an existing Customer, Contact or Lead (by email or phone), the conversion now records the
+  match as a suggestion and parks the request in **Duplicate Review**. Nothing is created, attached
+  or written: the existing Customer, its Contacts, its Addresses and its Drive folder stay as they
+  were, and the usual duplicate-decision alert goes out.
+  - **Confirm Match** (new button on a Duplicate Review request; `fountain_move.api.confirm_match`,
+    POST, System Manager or Sales Manager) records who confirmed and when, links the request to the
+    Customer the staff member picks (prefilled with the suggestion) and queues the conversion. The
+    conversion then creates **only the Opportunity** under that Customer, with the submitted name,
+    email and phone in its scope notes, and attaches the photos to that Opportunity alone. No
+    Address, Contact or Lead is created, and nothing is written onto an existing Customer, Contact
+    or Address: staff copy anything they want across by hand.
+  - Unchanged: a public request that matches nobody converts into the five new records as before,
+    and so does a request staff started — a row made in the Desk (owned by a desk user) or the first
+    request submitted through a staff member's emailed link. Which kind a request is comes from the
+    server's own record (`owner`, and the invite resolved from the link's token), never from the
+    submission; later requests through the same emailed link count as public.
+  - Two new read-only fields on Fountain Move Request, **Match Confirmed By** and **Match Confirmed
+    On**, with no default: existing rows read blank. Requests already waiting in Duplicate Review
+    can now be finished with Confirm Match instead of being edited and retried.
+  - New bench-free suite `tests/test_fountain_move_public_match.py`, in its own CI step.
+
 ## [1.830.0] - 2026-11-19
 
 ### Changed
