@@ -68,7 +68,7 @@ Approval is deliberately split by competence, not merged into one button:
 2. **Accounts Manager** — `approve_document`, which moves the record to `Approved` and
    triggers posting.
 
-Access rules on the endpoints (v1.832.0): `ingest_upload` and `ingest_mobile_photo` accept a
+Access rules on the endpoints (v1.833.0): `ingest_upload` and `ingest_mobile_photo` accept a
 File only when the caller has read permission on it (`intake.require_file_read`, in the
 whitelisted wrappers; `ingest_document` itself does no check, because the email and Drive
 channels call it in-process). `reprocess` resets only a document still being worked up

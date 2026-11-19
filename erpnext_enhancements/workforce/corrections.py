@@ -59,7 +59,7 @@ def _require_reviewer(doc):
 			frappe.PermissionError,
 		)
 	# Who may review is unchanged; a reviewer still never decides a request that changes
-	# their own hours or that they filed (v1.832.0). The controller holds a status change
+	# their own hours or that they filed (v1.833.0). The controller holds a status change
 	# saved any other way to the same rule (TimeCorrectionRequest._check_decider).
 	if permissions.is_party_to_request(doc.employee, doc.owner, frappe.session.user):
 		frappe.throw(

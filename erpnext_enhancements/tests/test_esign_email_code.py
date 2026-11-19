@@ -1,4 +1,4 @@
-"""Bench-free tests for the emailed signing code on ``/contract-sign`` (v1.832.0).
+"""Bench-free tests for the emailed signing code on ``/contract-sign`` (v1.833.0).
 
 Nik, 2026-11-19: before a customer signs online, the server emails a short code to the
 address on file and the customer types it back. These cases RUN the code, over a stand-in

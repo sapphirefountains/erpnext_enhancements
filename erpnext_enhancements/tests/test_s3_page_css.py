@@ -106,7 +106,7 @@ PAGES = {
 	"rental_planner": APP / "asset_management" / "page" / "rental_planner",
 	# WI-081 (v1.696.0): built on the tokens from the start.
 	"my_work": APP / "task_enhancements" / "page" / "my_work",
-	# v1.832.0: built on the tokens from the start.
+	# v1.833.0: built on the tokens from the start.
 	"time_edit_approvals": APP / "workforce" / "page" / "time_edit_approvals",
 }
 

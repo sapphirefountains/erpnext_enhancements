@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.832.0] - 2026-11-19
+## [1.833.0] - 2026-11-19
 
 Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
 
@@ -198,14 +198,15 @@ Hardening changes released together. Each was written and reviewed as its own pu
     (no token, no link) and the send and the Finish go on. Who may send, the token, its lifetime and
     the signing page are unchanged.
 - **Revenue and margin figures on the KPI dashboards go to Accounts Manager and System Manager
-  only (Nikolas, 2026-11-19).** Every other role that may open a department's dashboard keeps
+  only (Nikolas, 2026-11-19).** Cash collected (30 days) is counted with revenue, by his
+  answer the same day. Every other role that may open a department's dashboard keeps
   everything else that department shows, other money figures included: receivables, payables,
-  cash collected, spend, stock value, pipeline, closed-won value, deal size, backlog,
+  spend, stock value, pipeline, closed-won value, deal size, backlog,
   change-order value, marketing pipeline, marketing spend and cost per lead. The revenue and
   margin figures are left out of the answer by the server, so the tile is absent rather than
   zeroed. The department gate (`DEPARTMENT_ROLES`) is unchanged.
-  - **One registry, one helper.** `kpi_dashboards/money.py` lists the eight keys that state
-    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, catalog revenue 30
+  - **One registry, one helper.** `kpi_dashboards/money.py` lists the nine keys that state
+    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, cash collected 30 days, catalog revenue 30
     days and one year, rental revenue booked, rental revenue per fountain, revenue per employee,
     gross margin) and every other key whose name, label or unit reads like money, with the
     reason it is not a revenue or margin figure (`REVIEWED_UNRESTRICTED`). `can_see_revenue` is
@@ -224,10 +225,10 @@ Hardening changes released together. Each was written and reviewed as its own pu
     `has_permission` on KPI Target). A target is judged on the key it is stored under as well as
     the key a save carries, so it stays under this rule whatever key it is given. Sales Manager
     keeps every other target.
-  - **What a user notices.** An Accounts User opening Finance sees receivables, payables, cash
-    collected and the counts, without the two revenue tiles. Item Manager, Stock Manager and Sales
+  - **What a user notices.** An Accounts User opening Finance sees receivables, payables and the
+    counts, without the two revenue tiles and cash collected. Item Manager, Stock Manager and Sales
     Manager open Product without catalog revenue, rental revenue and gross margin. Sales Manager
-    opens Executive without revenue and revenue per employee. In the KPI Snapshot list these
+    opens Executive without revenue, cash collected and revenue per employee. In the KPI Snapshot list these
     roles see only the snapshots that hold no revenue or margin row. A dashboard whose figures are all revenue or
     margin shows "Nothing to show for your role." The snapshots themselves are stored whole; the
     rule applies on read.
@@ -344,8 +345,9 @@ Hardening changes released together. Each was written and reviewed as its own pu
   - **The approver is told when an entry starts waiting**, once per waiting spell (a Sent Back entry
     edited again starts a new one): a bell notification that opens the approvals page and one email in
     the app's email design, saying who, which day, the project, what changed, the reason given and who
-    edited it. It goes to the supervisor, or to the HR Managers when there is no supervisor to tell, and
-    never to the employee or the editor. It is sent from `JobInterval.on_update`, after the save, on
+    edited it. It goes to the supervisor, or to the HR Managers when there is no supervisor to tell, or
+    to the System Managers when that leaves nobody, and never to the employee or the editor. It is sent
+    from `JobInterval.on_update`, after the save, on
     every path that can start a wait (the three kiosk endpoints and the Desk form); a refused save tells
     nobody, and a notice that fails is logged and never fails the edit.
   - **A waiting entry is left out of payroll at the source.** `payroll_export` leaves Waiting and Sent
@@ -370,6 +372,15 @@ Hardening changes released together. Each was written and reviewed as its own pu
     Approval* fields keep their stored values whatever the save sent. When the save changes whether
     the interval is held, `on_update` re-syncs its Timesheet line. Saves by this app's endpoints, the
     sweeper and an approved correction are not affected: they save with `ignore_permissions`.
+  - **A Time Correction Request follows the same principle.** It is decided only by a reviewer who
+    is neither the employee it is for nor the person who filed it (`permissions.may_decide_request`):
+    on the Approve and Decline endpoints, on any status change saved on the form or through the REST
+    resource (`TimeCorrectionRequest.validate`), and the form draws the two buttons only for someone
+    who may decide. Who may review, and who may file, are unchanged; a manager can still file a
+    request for their own time and someone else decides it.
+  - **What the approver rule rests on.** Who approves is read from `Employee.reports_to` and
+    `Employee.user_id`, which anyone with write access to Employee can edit; the workforce README
+    says so. Employee tracks changes to both.
   - **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
     existing row reads blank, which counts exactly as before. Bench-free suite
     `tests/test_time_edit_approval.py`, in its own CI step; `tests/test_s3_page_css.py` holds the new

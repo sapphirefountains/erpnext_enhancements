@@ -607,7 +607,7 @@ class TestPortalGuards(unittest.TestCase):
                 self.fail(f"mass assignment via {node.func.value.id}.update() at line {node.lineno}")
 
     def test_code_comparison_is_constant_time_over_bytes(self):
-        """The emailed code (v1.832.0) is compared with compare_digest, over bytes.
+        """The emailed code (v1.833.0) is compared with compare_digest, over bytes.
         test_esign_email_code runs the comparison itself."""
         code_src = (APP_DIR / "project_enhancements" / "esign" / "email_code.py").read_text(encoding="utf-8")
         self.assertIn("hmac.compare_digest", code_src)

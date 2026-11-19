@@ -98,7 +98,7 @@ job, into a linked **Customer → Address → Contact → Lead → Opportunity**
 | `invites.py` | the desk "Send Intake Link" flow and token attribution |
 | `api.py` | desk triage RPC (retry, confirm match, mark spam, not spam) |
 
-**A public-form match waits for staff (v1.832.0, Nik's decision of 2026-11-19).** When a request
+**A public-form match waits for staff (v1.833.0, Nik's decision of 2026-11-19).** When a request
 from the public form matches an existing Customer, Contact or Lead, the conversion records the match
 as a suggestion in `match_candidates` (`held_for_confirmation: 1`), parks the request in Duplicate
 Review and creates, attaches and writes nothing. **Confirm Match** on the request

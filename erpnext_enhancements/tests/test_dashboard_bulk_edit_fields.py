@@ -1,4 +1,4 @@
-"""The Projects Dashboard's bulk edit, ``project_dashboard.update_multiple_docs`` (v1.832.0), run on a stub.
+"""The Projects Dashboard's bulk edit, ``project_dashboard.update_multiple_docs`` (v1.833.0), run on a stub.
 
 The rule: the bulk edit accepts only the fields the dashboard's own grid edits, for Project
 (``EDITABLE_PROJECT_FIELDS``, shared with ``update_project_details``) and for Task
