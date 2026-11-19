@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.832.0] - 2026-11-19
 
-Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499), and the notes below are theirs, grouped by kind.
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495), and the notes below are theirs, grouped by kind.
 
 ### Changed
 
@@ -272,6 +272,28 @@ Hardening changes released together. Each was written and reviewed as its own pu
   - Tests: `tests/test_esign_email_code.py` (new, own CI step) runs the code and the endpoints over
     an in-memory cache and a moving clock; `scripts/test_web_flow_history.js` drives the page's
     code step; `tests/test_contract_esign.py` follows the moved checks.
+- **Autopay charges only maintenance agreement invoices under a limit (hardening).** The owner's
+  rule: an automatic charge of a saved card or bank account (autopay on submit, the hourly autopay
+  sweep, dunning retries) runs only for an invoice billed from a maintenance agreement whose balance
+  is at or under the new **Automatic Payment Limit** in Stripe Payments Settings → Saved Cards /
+  Autopay. Blank or 0 allows no automatic charge, and that is how it ships: no default amount and no
+  backfill, so until Accounts set a limit every invoice waits for the desk.
+- **One decision for every automatic path.** `saved_methods.automatic_charge_allowed` is asked by
+  the submit hook and the sweep before they enqueue, and by `charge_saved_method` for every channel
+  but `Desk`, before any guard, ledger row or Stripe call. A refusal there is
+  `card_element.AutomaticChargeHeld`, a `PaymentBlocked`, so dunning reschedules instead of
+  counting a decline. The invoice lock, the shared guard and the open-link rule run unchanged after
+  it.
+- **How an agreement invoice is recognized.** A Sapphire Maintenance Record that names a maintenance
+  contract and is not a service call, linked to the invoice (or the invoice it was amended from)
+  through the invoice's Maintenance Record field (per-visit billing) or the record's Generated Sales
+  Invoice (per-visit and recurring billing), on a contract whose customer is the invoice's. A
+  recurring invoice for a period with no visits has no such link and waits for the desk.
+- **A held invoice says so.** It gets one comment, "Automatic payment did not run: …" with the
+  reason, and Accounts Managers get one notification, once per invoice. The sweep no longer picks up
+  an invoice carrying that note.
+- **Charge Saved Method on the Customer is unchanged**, with the same operator check, and charges a
+  held invoice as before.
 
 ## [1.831.0] - 2026-11-19
 

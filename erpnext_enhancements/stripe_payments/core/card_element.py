@@ -262,6 +262,13 @@ MSG_LINK_OPEN_OFF_SESSION = (
 	"A payment link emailed for this invoice is still open, so the saved method is not charged "
 	"while the customer may pay it. Autopay and dunning try again once it is paid or has expired."
 )
+#: An automatic charge (autopay, dunning) refused by ``saved_methods.automatic_charge_allowed``:
+#: the invoice is not from a maintenance agreement, is over the autopay limit, or no limit is set.
+MSG_AUTOMATIC_HELD = (
+	"This invoice is not charged automatically: only an invoice billed from a maintenance "
+	"agreement, at or under the autopay limit in Stripe Payments Settings, is. Charge it from the "
+	"desk with Charge Saved Method."
+)
 #: The desk's "Charge Saved Method" with no invoice, and its ad hoc Checkout link
 #: (``api.create_adhoc_payment``), are applied to no invoice, so nothing can guard them by invoice.
 MSG_AD_HOC_BESIDE_OPEN = (
@@ -373,6 +380,12 @@ class AttemptUnreleased(PaymentBlocked):
 	its form, as for :class:`LinkStillOpen`, rather than reloading: a render never releases, so
 	for a card-page attempt it reads the dead attempt as not blocking and would bring back the
 	card form with no word of why — each tap looping until Stripe answered the cancel."""
+
+
+class AutomaticChargeHeld(PaymentBlocked):
+	"""An automatic charge refused before anything was written or charged, because the invoice
+	is not one autopay may charge (``saved_methods.automatic_charge_allowed``). A
+	``PaymentBlocked``, so dunning reschedules instead of counting a declined card."""
 
 
 class Verdict(str):

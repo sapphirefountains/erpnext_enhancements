@@ -196,15 +196,25 @@ def sweep_missed_autopay():
 	(``card_element.resolve_unknown_outcome``) — so autopay is re-driven after one. The
 	invoice an amended one was made from counts as the same bill, one level up; the guard in
 	``charge_saved_method`` walks the whole chain.
+
+	It charges only what ``saved_methods.automatic_charge_allowed`` allows — the decision
+	autopay on submit takes — and that leaves the note on any other invoice. An invoice that
+	already carries that note was held, on submit or by an earlier sweep, and waits for the
+	desk: it is not picked up again.
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
 		return
 
+	from erpnext_enhancements.stripe_payments.core.saved_methods import (
+		HELD_NOTE_PREFIX,
+		automatic_charge_allowed,
+	)
+
 	cutoff = add_to_date(now_datetime(), minutes=-30)
 	invoices = frappe.db.sql(
 		"""
-		select si.name as invoice, si.customer
+		select si.name as invoice, si.customer, si.outstanding_amount, si.currency
 		from `tabSales Invoice` si
 		join `tabCustomer` c on c.name = si.customer
 		where si.docstatus = 1 and si.outstanding_amount > 0 and si.modified < %(cutoff)s
@@ -220,13 +230,20 @@ def sweep_missed_autopay():
 		      where ifnull(si.amended_from, '') != '' and sp.sales_invoice = si.amended_from
 		        and sp.status in ('Processing', 'Paid', 'Link Sent')
 		  )
+		  and not exists (
+		      select 1 from `tabComment` cm
+		      where cm.reference_doctype = 'Sales Invoice' and cm.reference_name = si.name
+		        and cm.comment_type = 'Comment' and cm.content like %(held)s
+		  )
 		limit %(batch)s
 		""",
-		{"cutoff": cutoff, "batch": RETRY_BATCH},
+		{"cutoff": cutoff, "batch": RETRY_BATCH, "held": f"{HELD_NOTE_PREFIX}%"},
 		as_dict=True,
 	)
 	for row in invoices:
 		try:
+			if not automatic_charge_allowed(row.invoice, row.outstanding_amount, row.currency):
+				continue
 			frappe.enqueue(
 				"erpnext_enhancements.stripe_payments.core.saved_methods.charge_saved_method",
 				queue="short",
