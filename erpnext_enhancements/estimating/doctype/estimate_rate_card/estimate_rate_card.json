@@ -1,0 +1,202 @@
+{
+ "actions": [],
+ "autoname": "field:rate_card_name",
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "The company's estimating rates: markup by cost type, the four overheads, use tax and the labor cost per hour.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "rate_card_name",
+  "is_default",
+  "disabled",
+  "column_break_head",
+  "labor_rate",
+  "tax_pct",
+  "section_markup",
+  "markup_material",
+  "markup_equipment",
+  "column_break_markup",
+  "markup_labor",
+  "markup_subcontract",
+  "markup_expense",
+  "section_overheads",
+  "contingency_pct",
+  "insurance_pct",
+  "column_break_overheads",
+  "fee_pct",
+  "commission_pct",
+  "section_notes",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "rate_card_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Rate Card Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "New estimates copy this card's rates. Only one card is the default.",
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Default"
+  },
+  {
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What an hour of labor costs Sapphire, burdened. New labor lines start at this unit cost.",
+   "fieldname": "labor_rate",
+   "fieldtype": "Currency",
+   "label": "Labor Cost per Hour"
+  },
+  {
+   "description": "Sales and use tax paid on material and equipment. A cost, never an invoice line.",
+   "fieldname": "tax_pct",
+   "fieldtype": "Percent",
+   "label": "Use Tax %"
+  },
+  {
+   "description": "Added to cost to make the cost of work.",
+   "fieldname": "section_markup",
+   "fieldtype": "Section Break",
+   "label": "Markup by Cost Type"
+  },
+  {
+   "fieldname": "markup_material",
+   "fieldtype": "Percent",
+   "label": "Material"
+  },
+  {
+   "fieldname": "markup_equipment",
+   "fieldtype": "Percent",
+   "label": "Equipment"
+  },
+  {
+   "fieldname": "column_break_markup",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "markup_labor",
+   "fieldtype": "Percent",
+   "label": "Labor"
+  },
+  {
+   "fieldname": "markup_subcontract",
+   "fieldtype": "Percent",
+   "label": "Subcontract"
+  },
+  {
+   "fieldname": "markup_expense",
+   "fieldtype": "Percent",
+   "label": "Expense"
+  },
+  {
+   "description": "Contingency, insurance and fee are each a percent of the cost of work, added to the price. Commission is internal: a percent of the price, taken out of the margin, never on a customer document.",
+   "fieldname": "section_overheads",
+   "fieldtype": "Section Break",
+   "label": "Overheads"
+  },
+  {
+   "fieldname": "contingency_pct",
+   "fieldtype": "Percent",
+   "label": "Contingency"
+  },
+  {
+   "fieldname": "insurance_pct",
+   "fieldtype": "Percent",
+   "label": "Insurance"
+  },
+  {
+   "fieldname": "column_break_overheads",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fee_pct",
+   "fieldtype": "Percent",
+   "label": "Fee (Overhead and Profit)"
+  },
+  {
+   "fieldname": "commission_pct",
+   "fieldtype": "Percent",
+   "label": "Commission (Internal)"
+  },
+  {
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate Rate Card",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Estimator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

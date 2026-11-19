@@ -1,0 +1,102 @@
+{
+ "actions": [],
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "A candidate line of an Estimate Template, offered as a checklist when the template is applied.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "phase_number",
+  "include",
+  "description",
+  "cost_type",
+  "cost_code",
+  "qty",
+  "uom",
+  "unit_cost",
+  "basis"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Phase"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "Ticked by default when the template is applied. Untick for lines that are offered, not assumed.",
+   "fieldname": "include",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Ticked"
+  },
+  {
+   "columns": 4,
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Description",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "Material",
+   "fieldname": "cost_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Cost Type",
+   "options": "Material\nEquipment\nLabor\nSubcontract\nExpense",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "cost_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cost Code"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty"
+  },
+  {
+   "default": "LS",
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "Unit"
+  },
+  {
+   "columns": 1,
+   "description": "Optional. Blank: labor lines take the estimate's labor cost per hour; others need a cost.",
+   "fieldname": "unit_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Unit Cost"
+  },
+  {
+   "fieldname": "basis",
+   "fieldtype": "Select",
+   "label": "Basis",
+   "options": "\nLump sum\nCatalog\nQuote\nHistorical\nAllowance\nParametric\nDesign"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate Template Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

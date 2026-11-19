@@ -214,6 +214,9 @@ doctype_js = {
 		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
+		# v1.836.0 -- estimating: Create > Estimate opens a new Estimate for this deal, for the
+		# roles that may create one; View > Estimates lists the deal's estimates.
+		"public/js/estimating/opportunity_estimate.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
