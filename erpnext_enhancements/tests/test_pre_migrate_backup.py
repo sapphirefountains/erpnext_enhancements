@@ -10,9 +10,12 @@ Two rules, both enforced by files that run nowhere but on a VM:
 Both run infra/bench_update.sh. These tests read the two Cloud Build files (a small reader
 for their one block scalar, cross-checked with PyYAML where it is installed), run the
 upstream file's tag check with `sh`, and run the script itself against a scratch bench with
-a stub `bench` on PATH and real git repositories standing in for frappe and erpnext. The
-script tests need bash, git and gzip, so they run on Linux; CI sets REQUIRE_DEPLOY_SCRIPT_TOOLS
-so that a missing tool fails instead of skipping.
+a stub `bench` (and a stub `df` that can report a chosen free figure) on PATH and real git
+repositories standing in for frappe and erpnext. They also cover the rule that only one backup
+runs at a time (an flock on the backup directory's lock file) and the free-space rule (twice
+the newest kept backup plus a margin). The script tests need bash, git, gzip and flock, so they
+run on Linux; CI sets REQUIRE_DEPLOY_SCRIPT_TOOLS so that a missing tool fails instead of
+skipping.
 
 Run: python -m unittest erpnext_enhancements.tests.test_pre_migrate_backup -v
 """
@@ -25,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -120,6 +124,15 @@ def _script_tag_re():
 	return match.group(1)
 
 
+def _script_lock_wait_default():
+	match = re.search(r"wait_s=\$\{PRE_MIGRATE_LOCK_WAIT_S:-(\d+)\}", SCRIPT.read_text(encoding="utf-8"))
+	return int(match.group(1))
+
+
+def _timeout_s(path):
+	return int(re.search(r"^timeout: '(\d+)s'$", path.read_text(encoding="utf-8"), re.M).group(1))
+
+
 class DeployYamlTests(unittest.TestCase):
 	def setUp(self):
 		self.block = _script_block(DEPLOY_YAML)
@@ -168,9 +181,11 @@ class DeployYamlTests(unittest.TestCase):
 		self.assertNotIn("||", command)
 
 	def test_no_new_substitutions_and_more_time(self):
+		"""1200s for the deploy and its backup, plus the longest the backup may wait for
+		another run's backup: a timeout ends the SSH session mid-migrate."""
 		self.assertEqual(_top_level_block(DEPLOY_YAML, "substitutions"), {"_ALLOW_SKIP": "'false'"})
-		timeout = re.search(r"^timeout: '(\d+)s'$", DEPLOY_YAML.read_text(encoding="utf-8"), re.M)
-		self.assertGreaterEqual(int(timeout.group(1)), 1200)
+		self.assertEqual(_script_lock_wait_default(), 900)
+		self.assertGreaterEqual(_timeout_s(DEPLOY_YAML), 1200 + _script_lock_wait_default())
 
 
 class UpstreamYamlTests(unittest.TestCase):
@@ -202,6 +217,9 @@ class UpstreamYamlTests(unittest.TestCase):
 			),
 			remote,
 		)
+
+	def test_the_timeout_covers_the_lock_wait(self):
+		self.assertGreaterEqual(_timeout_s(UPSTREAM_YAML), 2400 + _script_lock_wait_default())
 
 	def test_the_tags_arrive_as_environment_not_script_text(self):
 		self.assertIn("      - 'FRAPPE_TAG=$_FRAPPE_TAG'\n", self.text)
@@ -288,8 +306,19 @@ STUB_BENCH = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_CALLS"
 if [ "${1:-}" = "--site" ] && [ "${3:-}" = "backup" ]; then
 	printf 'frappe-head-at-backup %s\n' "$(git -C apps/frappe rev-parse HEAD 2>/dev/null || echo none)" >> "$STUB_CALLS"
+	if [ -n "${STUB_BACKUP_SLEEP:-}" ]; then
+		printf 'backup-begin\n' >> "$STUB_CALLS"
+		sleep "$STUB_BACKUP_SLEEP"
+	fi
 	case "${STUB_BACKUP:-ok}" in
 	fail) echo "Backup failed for Site x" >&2; exit 1 ;;
+	fail-leave-child)
+		# A process that outlives the failed backup, holding every descriptor bench was given.
+		sleep 60 </dev/null >/dev/null 2>&1 &
+		printf '%s\n' "$!" > "$STUB_CHILD_PID"
+		echo "Backup failed for Site x" >&2
+		exit 1
+		;;
 	empty) exit 0 ;;
 	esac
 	dir=""
@@ -302,11 +331,28 @@ if [ "${1:-}" = "--site" ] && [ "${3:-}" = "backup" ]; then
 		printf 'dump' | gzip > "$dir/20261119_000000-$slug-database.sql.gz"
 		printf '{}' > "$dir/20261119_000000-$slug-site_config_backup.json"
 	done
+	if [ -n "${STUB_BACKUP_SLEEP:-}" ]; then printf 'backup-end\n' >> "$STUB_CALLS"; fi
 	exit 0
+fi
+if [ -n "${STUB_LOCK:-}" ]; then
+	if flock -n "$STUB_LOCK" true; then echo lock-free; else echo lock-held; fi >> "$STUB_CALLS"
 fi
 if [ -n "${STUB_FAIL:-}" ] && [ "$*" = "$STUB_FAIL" ]; then exit 1; fi
 exit 0
 """
+
+#: A stand-in `df`: reports STUB_DF_AVAIL_KB as the free space when it is set, else runs the
+#: real one (whose path replaces @REAL_DF@).
+STUB_DF = r"""#!/usr/bin/env bash
+if [ -n "${STUB_DF_AVAIL_KB:-}" ]; then
+	printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+	printf 'stub 99999999 1 %s 1%% /\n' "$STUB_DF_AVAIL_KB"
+	exit 0
+fi
+exec @REAL_DF@ "$@"
+"""
+
+LOCK_NAME = ".bench_update.lock"
 
 
 class _ScratchBench(unittest.TestCase):
@@ -315,8 +361,8 @@ class _ScratchBench(unittest.TestCase):
 	def setUp(self):
 		_tool_or_skip(
 			self,
-			sys.platform.startswith("linux") and all(shutil.which(t) for t in ("bash", "git", "gzip")),
-			"Linux with bash, git and gzip",
+			sys.platform.startswith("linux") and all(shutil.which(t) for t in ("bash", "git", "gzip", "flock", "df")),
+			"Linux with bash, git, gzip, flock and df",
 		)
 		if os.geteuid() == 0:
 			self.skipTest("the script refuses to run as root")
@@ -333,10 +379,15 @@ class _ScratchBench(unittest.TestCase):
 		stub = self.stubs / "bench"
 		stub.write_text(STUB_BENCH)
 		stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+		df = self.stubs / "df"
+		df.write_text(STUB_DF.replace("@REAL_DF@", shutil.which("df")))
+		df.chmod(df.stat().st_mode | stat.S_IXUSR)
 		self.calls = self.tmp / "calls.log"
 		self.root = self.bench / "pre-migrate-backups"
+		self.lock = self.root / LOCK_NAME
 
-	def run_script(self, *args, **env):
+	def script_env(self, **env):
+		"""The script's environment; a value of None removes that variable."""
 		full = {
 			"PATH": f"{self.stubs}{os.pathsep}{os.environ.get('PATH', '')}",
 			"HOME": str(self.tmp),
@@ -346,10 +397,29 @@ class _ScratchBench(unittest.TestCase):
 			"STUB_SITES": " ".join(self.SITES),
 			"GIT_CONFIG_NOSYSTEM": "1",
 		}
-		full.update(env)
+		for name, value in env.items():
+			if value is None:
+				full.pop(name, None)
+			else:
+				full[name] = value
+		return full
+
+	def run_script(self, *args, **env):
 		return subprocess.run(
-			["bash", str(SCRIPT), *args], env=full, capture_output=True, text=True, timeout=120
+			["bash", str(SCRIPT), *args], env=self.script_env(**env), capture_output=True, text=True, timeout=120
 		)
+
+	def start_script(self, *args, **env):
+		"""The script started in the background; the caller waits for it."""
+		proc = subprocess.Popen(
+			["bash", str(SCRIPT), *args],
+			env=self.script_env(**env),
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True,
+		)
+		self.addCleanup(proc.kill)
+		return proc
 
 	def call_log(self):
 		return self.calls.read_text().splitlines() if self.calls.exists() else []
@@ -452,6 +522,9 @@ class BackupTests(_ScratchBench):
 		self.assertTrue((self.root / "20250101T000000Z").is_symlink())
 		self.assertTrue((outside / "keep").is_file())
 		self.assertEqual(sorted(p.name for p in scheduled.iterdir()), ["20250101_000000-site1_test-database.sql.gz"])
+		# The lock file sits beside the runs and outlives the pruning.
+		self.assertTrue(self.lock.is_file())
+		self.assertEqual(stat.S_IMODE(self.lock.stat().st_mode), 0o600)
 
 	def test_retention_runs_only_after_a_good_backup(self):
 		self.root.mkdir()
@@ -466,6 +539,17 @@ class BackupTests(_ScratchBench):
 		self.assertIn("MB free on the disk that holds", result.stderr)
 		self.assertIn("PRE-MIGRATE BACKUP FAILED", result.stderr)
 		self.assertEqual(self.call_log(), [])
+
+	def test_it_stops_clearly_without_flock(self):
+		tools = self.tmp / "tools"
+		tools.mkdir()
+		for tool in ("bash", "basename", "dirname", "id", "env"):
+			(tools / tool).symlink_to(shutil.which(tool))
+		result = self.run_script("backup", PATH=f"{self.stubs}{os.pathsep}{tools}")
+		self.assertEqual(result.returncode, 1, result.stderr)
+		self.assertIn("PRE-MIGRATE BACKUP FAILED: flock is not installed; it ships in util-linux", result.stderr)
+		self.assertEqual(self.call_log(), [])
+		self.assertFalse(self.root.exists())
 
 	def test_the_backup_directory_may_not_be_inside_sites(self):
 		for bad in (str(self.bench / "sites" / "x"), str(self.bench / "sites"), "relative/dir", "/"):
@@ -487,6 +571,167 @@ class BackupTests(_ScratchBench):
 			self.assertEqual(result.returncode, 2, args)
 			self.assertIn("usage:", result.stderr)
 		self.assertEqual(self.call_log(), [])
+
+
+class FreeSpaceTests(_ScratchBench):
+	"""Twice the newest kept backup plus the margin, or the margin alone. The stand-in `df`
+	reports an exact free figure, so each rule is checked one KB either side of the line."""
+
+	def kept_backup(self, kb=1024):
+		run = self.root / "20260101T000000Z"
+		run.mkdir(parents=True)
+		(run / "x-database.sql.gz").write_bytes(os.urandom(kb * 1024))
+		du = subprocess.run(["du", "-sk", "--", str(run)], capture_output=True, text=True, check=True)
+		return int(du.stdout.split()[0])
+
+	def test_with_no_kept_backup_the_margin_alone_applies(self):
+		short = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB="3", STUB_DF_AVAIL_KB=str(3 * 1024 - 1))
+		self.assertEqual(short.returncode, 1)
+		self.assertIn(
+			"only 2 MB free on the disk that holds "
+			f"{self.root}, and 3 MB is required: a margin of 3 MB, with no kept backup yet",
+			short.stderr,
+		)
+		self.assertEqual(self.call_log(), [])
+		self.assertEqual(self.runs(), [])
+		enough = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB="3", STUB_DF_AVAIL_KB=str(3 * 1024))
+		self.assertEqual(enough.returncode, 0, enough.stderr)
+		self.assertEqual(len(self.runs()), 1)
+
+	def test_with_a_kept_backup_twice_its_size_is_added_to_the_margin(self):
+		kept_kb = self.kept_backup()
+		need_kb = 2 * kept_kb + 3 * 1024
+		short = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB="3", STUB_DF_AVAIL_KB=str(need_kb - 1))
+		self.assertEqual(short.returncode, 1)
+		self.assertIn(
+			f"MB is required: twice the newest kept backup (20260101T000000Z, {kept_kb // 1024} MB) "
+			"plus a margin of 3 MB",
+			short.stderr,
+		)
+		self.assertEqual(self.call_log(), [])
+		self.assertEqual(self.runs(), ["20260101T000000Z"])
+		enough = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB="3", STUB_DF_AVAIL_KB=str(need_kb))
+		self.assertEqual(enough.returncode, 0, enough.stderr)
+		self.assertEqual(len(self.runs()), 2)
+
+	def test_the_default_margin_is_5_gb(self):
+		short = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB=None, STUB_DF_AVAIL_KB=str(5120 * 1024 - 1))
+		self.assertEqual(short.returncode, 1)
+		self.assertIn("and 5120 MB is required: a margin of 5120 MB", short.stderr)
+		enough = self.run_script("backup", PRE_MIGRATE_MIN_FREE_MB=None, STUB_DF_AVAIL_KB=str(5120 * 1024))
+		self.assertEqual(enough.returncode, 0, enough.stderr)
+
+
+class LockTests(_ScratchBench):
+	"""One backup at a time, through an flock on <backup dir>/.bench_update.lock."""
+
+	def hold_lock(self):
+		import fcntl
+
+		self.root.mkdir(exist_ok=True)
+		handle = open(self.lock, "a")
+		self.addCleanup(handle.close)
+		fcntl.flock(handle, fcntl.LOCK_EX)
+		return handle
+
+	def lock_is_free(self):
+		import fcntl
+
+		with open(self.lock, "a") as handle:
+			try:
+				fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			except BlockingIOError:
+				return False
+			fcntl.flock(handle, fcntl.LOCK_UN)
+			return True
+
+	def wait_for(self, condition, what, seconds=30):
+		deadline = time.monotonic() + seconds
+		while not condition():
+			if time.monotonic() > deadline:
+				self.fail(f"timed out waiting for {what}")
+			time.sleep(0.05)
+
+	def assertComplete(self, run):
+		self.assertEqual(
+			sorted(p.name for p in (self.root / run).iterdir()),
+			sorted(
+				f"20261119_000000-{s.replace('.', '_')}-{kind}"
+				for s in self.SITES
+				for kind in ("database.sql.gz", "site_config_backup.json")
+			),
+		)
+
+	def test_two_overlapping_runs_take_two_complete_backups_one_after_the_other(self):
+		first = self.start_script("backup", STUB_BACKUP_SLEEP="2")
+		self.wait_for(lambda: "backup-begin" in self.call_log(), "the first backup to start")
+		second = self.start_script("backup", STUB_BACKUP_SLEEP="2")
+		out1, err1 = first.communicate(timeout=60)
+		out2, err2 = second.communicate(timeout=60)
+		self.assertEqual(first.returncode, 0, err1)
+		self.assertEqual(second.returncode, 0, err2)
+		self.assertIn("another pre-migrate backup is running; waiting up to 900s", out2)
+		self.assertNotIn("waiting", out1)
+		markers = [line for line in self.call_log() if line in ("backup-begin", "backup-end")]
+		self.assertEqual(markers, ["backup-begin", "backup-end", "backup-begin", "backup-end"])
+		runs = self.runs()
+		self.assertEqual(len(runs), 2)
+		for run in runs:
+			self.assertComplete(run)
+		self.assertTrue(self.lock_is_free())
+
+	def test_a_backup_waits_for_a_held_lock_and_runs_once_it_is_released(self):
+		handle = self.hold_lock()
+		proc = self.start_script("backup", PRE_MIGRATE_LOCK_WAIT_S="30")
+		time.sleep(1)
+		self.assertIsNone(proc.poll())
+		self.assertEqual(self.call_log(), [])
+		self.assertEqual(self.runs(), [])
+		handle.close()
+		out, err = proc.communicate(timeout=60)
+		self.assertEqual(proc.returncode, 0, err)
+		self.assertIn("waiting up to 30s", out)
+		(run,) = self.runs()
+		self.assertComplete(run)
+
+	def test_a_run_that_cannot_get_the_lock_in_time_fails_and_deletes_nothing(self):
+		self.root.mkdir()
+		old = [f"20260101T00000{i}Z" for i in range(7)]
+		for name in old:
+			(self.root / name).mkdir()
+		self.hold_lock()
+		for wait in ("1", "0"):
+			result = self.run_script("backup", PRE_MIGRATE_LOCK_WAIT_S=wait)
+			self.assertEqual(result.returncode, 1, wait)
+			self.assertIn(
+				f"PRE-MIGRATE BACKUP FAILED: another pre-migrate backup still held {self.lock} after {wait}s "
+				"(PRE_MIGRATE_LOCK_WAIT_S); nothing was deleted",
+				result.stderr,
+			)
+			self.assertIn("migrated nothing", result.stderr)
+		self.assertEqual(self.runs(), old)
+		self.assertEqual(self.call_log(), [])
+		self.assertTrue(self.lock.is_file())
+
+	def test_the_lock_wait_must_be_a_number(self):
+		result = self.run_script("backup", PRE_MIGRATE_LOCK_WAIT_S="soon")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn("PRE_MIGRATE_LOCK_WAIT_S must be a whole number of seconds", result.stderr)
+		self.assertEqual(self.call_log(), [])
+
+	def test_the_lock_is_released_after_a_failed_backup(self):
+		"""Even when a process bench started outlives it: bench is not handed the lock."""
+		pid_file = self.tmp / "child.pid"
+		result = self.run_script("backup", STUB_BACKUP="fail-leave-child", STUB_CHILD_PID=str(pid_file))
+		pid = int(pid_file.read_text())
+		self.addCleanup(lambda: subprocess.run(["kill", str(pid)], capture_output=True))
+		self.assertEqual(result.returncode, 1)
+		self.assertIn("PRE-MIGRATE BACKUP FAILED: bench backup exited with an error", result.stderr)
+		os.kill(pid, 0)  # the leftover process is still running
+		self.assertTrue(self.lock_is_free())
+		again = self.run_script("backup", PRE_MIGRATE_LOCK_WAIT_S="0")
+		self.assertEqual(again.returncode, 0, again.stderr)
+		self.assertEqual(len(self.runs()), 1)
 
 
 class UpstreamTests(_ScratchBench):
@@ -601,6 +846,14 @@ class UpstreamTests(_ScratchBench):
 			],
 		)
 		self.assertIn("restart the bench now: sudo systemctl restart frappe-bench", result.stdout)
+
+	def test_the_lock_covers_the_backup_only(self):
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_LOCK=str(self.lock))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(
+			self.call_log()[2:],
+			["setup requirements", "lock-free", "--site all migrate", "lock-free", "build", "lock-free"],
+		)
 
 	def test_a_failed_backup_switches_nothing(self):
 		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_BACKUP="fail")

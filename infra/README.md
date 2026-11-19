@@ -129,9 +129,41 @@ a few minutes longer for the backup.
 directory per run (for example `20261119T201500Z`), readable only by `frappe`. Each holds one
 `<time>-<site>-database.sql.gz` per site (`-database-enc.sql.gz` when backup encryption is on)
 and bench's copy of the site config. The script keeps the newest five runs and deletes older ones
-from that directory only; the scheduled backups in `sites/<site>/private/backups` and the offsite
-backup's files are not its business. Before it starts, it checks that the disk has at least
-2 GB free, or twice the newest kept backup if that is more.
+from that directory only; it never deletes the scheduled backups in `sites/<site>/private/backups`
+or the offsite backup's files itself, but bench's own `backup` command does delete some of the
+former on every run (see below). Before it starts, it checks that the disk has free at least twice
+the newest kept backup plus a 5 GB margin (`PRE_MIGRATE_MIN_FREE_MB`, default 5120), or the margin
+alone when no backup is kept yet. Production's database is about 5.8 GB before compression.
+
+**One backup at a time.** Each run holds an exclusive `flock` on
+`pre-migrate-backups/.bench_update.lock` for the whole backup, so two deploys a few minutes apart
+take their backups one after the other. A second run waits up to 900 seconds
+(`PRE_MIGRATE_LOCK_WAIT_S`), then fails without deleting anything. The lock is released however
+the backup ends, and the lock file is never deleted. `flock` ships in util-linux; the script stops
+with a clear message when it is missing. The build timeouts include that wait (deploy 2100 s,
+upstream 3300 s). The lock covers the backup only: it does not stop two deploys from running their
+migrates at the same time.
+
+**What bench's own `backup` command deletes.** Verified in frappe v16.56.0. For each site,
+`bench backup` (`frappe/commands/site.py:881`) calls `scheduled_backup()` and so `new_backup()`
+(`frappe/utils/backups.py:569`, `:608`), whose first step (`:625`) is `delete_temp_backups()`
+(`:651`-`:662`). That deletes every file in `sites/<site>/private/backups` whose ctime is at least
+N hours old, where N is the site's `keep_backups_for_hours` config value, or **23** when it is
+unset or 0 (`:655`). The folder is `get_backup_path()` (`:686`): `private/backups`, or the site's
+`backup_path` config key. `--backup-path` does not change it, so the cleanup runs even though this
+script writes elsewhere, and the CLI has no option to skip it. What that means:
+
+- Every deploy now deletes the scheduled backups that are 23 hours old or older. Right after a
+  deploy, only the last 23 hours of scheduled backups are left in `private/backups` (N hours when
+  `keep_backups_for_hours` is set). Every scheduled `bench backup` already ran the same cleanup, so
+  a deploy only brings it forward.
+- Separately, Frappe's `hourly_maintenance` job `delete_downloadable_backups`
+  (`frappe/hooks.py:278`, `frappe/desk/page/backups/backups.py:64`) keeps only the newest
+  `backup_limit` sets there (System Settings, "Number of Backups", default 3).
+- To keep scheduled backups longer, set `keep_backups_for_hours` in the site config, and copy any
+  you want to keep out of `private/backups`. Do not make a folder inside `private/backups`: the
+  cleanup tries to delete it like a file and fails, and that site's backup fails with it.
+- The pre-migrate backups are outside `private/backups`, so neither cleanup touches them.
 
 **What a failed backup looks like.** The deploy's build log ends with:
 
@@ -144,8 +176,9 @@ and the build fails without the `✅ ... updated` line. Nothing after the backup
 reset, no migrate, no build, no redis flush, no restart. The deploy's order is fetch, backup,
 reset, so the site keeps running the release it had: the app's code, the database and the
 running processes are unchanged, and only `infra/bench_update.sh` itself was taken from the new
-commit. The reasons it names are not enough free disk, `bench backup` exiting with an error, and
-a site left without a database file. Fix the cause, then re-run the deploy
+commit. The reasons it names are not enough free disk, another backup still holding the lock
+after the wait, `flock` not installed, `bench backup` exiting with an error, and a site left
+without a database file. Fix the cause, then re-run the deploy
 (`gcloud builds triggers run app-deploy-prod --branch=main`).
 
 **Choosing the tags.** Pick a published release of each:
@@ -184,6 +217,33 @@ tags (a detached checkout, so no later command follows a branch), and runs `benc
 requirements`, `bench --site all migrate` and `bench build`. It prints each app's previous commit.
 If a step after the checkout fails, it says so, names the backup directory and the previous
 commits, and leaves the bench unrestarted.
+
+**The other apps on the bench (not moved by this path).** `upstream` moves only `frappe` and
+`erpnext`. The bench's other apps that `bench update` used to move (`payments`, `telephony`,
+`newsletter`, `frappe_assistant_core`) are not moved by either trigger. A person updates each one,
+to a named tag or commit, with the pre-migrate backup first:
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+# Take the pre-migrate backup; if it prints PRE-MIGRATE BACKUP FAILED, stop here.
+bash apps/erpnext_enhancements/infra/bench_update.sh backup
+# Note the commit the app is on now, to go back to.
+git -C apps/<app> rev-parse HEAD
+# Fetch from the app's remote (bench names it upstream; `git -C apps/<app> remote` lists them).
+git -C apps/<app> fetch --tags upstream
+# Check out exactly the named tag or commit, detached, so nothing follows a branch.
+git -C apps/<app> checkout --detach <tag-or-commit>
+# Install the app's Python and JavaScript requirements for that version.
+bench setup requirements
+# Apply the app's schema changes and patches to every site.
+bench --site all migrate
+# Rebuild the asset bundles.
+bench build
+exit
+# Restart every bench process.
+sudo systemctl restart frappe-bench
+```
 
 **Restoring a pre-migrate backup.** This replaces the whole database with the copy taken just
 before that migrate: everything written since is lost. Hold merges first, and pause deploys.

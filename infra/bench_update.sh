@@ -21,15 +21,28 @@
 # Settings, from the environment:
 #   PRE_MIGRATE_BACKUP_DIR   where the backups go; default <bench>/pre-migrate-backups. It may
 #                            not be inside <bench>/sites, where the scheduled backups live.
-#   PRE_MIGRATE_MIN_FREE_MB  free space the backup's disk must have before it starts; default
-#                            2048. The larger of this and twice the newest kept backup applies.
+#   PRE_MIGRATE_MIN_FREE_MB  the free-space margin in MB; default 5120. Before it starts, the
+#                            backup's disk must have twice the newest kept backup plus this
+#                            margin free, or the margin alone when no backup is kept yet.
+#   PRE_MIGRATE_LOCK_WAIT_S  how long a backup waits, in seconds, for another one to finish;
+#                            default 900. Only one backup runs at a time: each holds an
+#                            exclusive flock(1) on <backup dir>/.bench_update.lock (flock ships
+#                            in util-linux). A run that cannot get it in time fails and deletes
+#                            nothing. The lock file itself is never deleted.
 #
-# What bench's backup command does (frappe/commands/site.py `backup` and
-# frappe/utils/backups.py at v16.56.0): one `<time>-<site>-database[-enc].sql.gz` and one copy
-# of site_config.json per site into --backup-path, and a non-zero exit when any site fails.
-# --ignore-backup-conf makes the dump whole even where site config narrows the scheduled one.
-# Like every scheduled backup, the command also applies the site's own keep_backups_for_hours
-# rule to <site>/private/backups; this script itself deletes nothing outside its own directory.
+# What bench's backup command does (frappe at v16.56.0): one `<time>-<site>-database[-enc].sql.gz`
+# and one copy of site_config.json per site into --backup-path, and a non-zero exit when any site
+# fails. --ignore-backup-conf makes the dump whole even where site config narrows the scheduled
+# one. It also deletes files, and not in --backup-path:
+#   frappe/commands/site.py:881 calls scheduled_backup() for each site, which calls new_backup()
+#   (frappe/utils/backups.py:569, 608), whose first line (:625) is delete_temp_backups(). That
+#   (:651-662) removes every file in get_backup_path() whose ctime is at least N hours old, where
+#   N is the site's keep_backups_for_hours config value, or 23 when it is unset or 0 (:655).
+#   get_backup_path() (:686) is <site>/private/backups, or the site's `backup_path` config key;
+#   the --backup-path option does not change it. So every run of this script, and so every
+#   deploy, deletes the scheduled backups in <site>/private/backups that are 23 hours old or older
+#   (N hours, when set). The CLI has no option to skip that. This script itself deletes nothing
+#   outside its own directory.
 
 set -euo pipefail
 umask 077
@@ -37,6 +50,7 @@ umask 077
 readonly TAG_RE='^v16\.[0-9]+\.[0-9]+$'
 readonly RUN_RE='^[0-9]{8}T[0-9]{6}Z$'
 readonly KEEP=5
+readonly LOCK_NAME=.bench_update.lock
 readonly UPSTREAM_APPS=(frappe erpnext)
 
 PROG=$(basename -- "${BASH_SOURCE[0]}")
@@ -70,6 +84,8 @@ check_bench() {
 	{ [ -d "$BENCH_DIR/sites" ] && [ -d "$BENCH_DIR/apps/frappe" ]; } ||
 		die "$BENCH_DIR is not a bench (it has no sites/ or apps/frappe)"
 	command -v bench >/dev/null || die "bench is not on PATH (as frappe: export PATH=\$PATH:\$HOME/.local/bin)"
+	command -v flock >/dev/null ||
+		backup_failed "flock is not installed; it ships in util-linux (sudo apt-get install util-linux)"
 	cd -- "$BENCH_DIR"
 }
 
@@ -122,33 +138,62 @@ prune() {
 	done
 }
 
+# One backup at a time: an exclusive flock on <root>/$LOCK_NAME, held on file descriptor 9
+# for the whole of take_backup. The lock file sits beside the run directories, never inside
+# one, and prune never looks at it.
+# shellcheck disable=SC2317,SC2329  # also called from the EXIT trap in take_backup
+release_lock() {
+	flock -u 9 2>/dev/null || true
+	exec 9>&-
+}
+
+acquire_lock() {
+	local root=$1 wait_s lock
+	wait_s=${PRE_MIGRATE_LOCK_WAIT_S:-900}
+	[[ $wait_s =~ ^[0-9]+$ ]] || backup_failed "PRE_MIGRATE_LOCK_WAIT_S must be a whole number of seconds"
+	lock=$root/$LOCK_NAME
+	exec 9>>"$lock" || backup_failed "could not open the lock file $lock"
+	trap release_lock EXIT
+	flock -n 9 && return 0
+	if [ "$wait_s" -gt 0 ]; then
+		say "another pre-migrate backup is running; waiting up to ${wait_s}s for $lock"
+		flock -w "$wait_s" 9 && return 0
+	fi
+	backup_failed "another pre-migrate backup still held $lock after ${wait_s}s (PRE_MIGRATE_LOCK_WAIT_S); nothing was deleted"
+}
+
 take_backup() {
-	local root min_mb need_kb newest newest_kb avail_kb run_dir site slug f found
+	local root margin_mb need_kb newest newest_kb avail_kb run_dir site slug f found rule
 	local -a sites
 	root=$(backup_root)
 	mapfile -t sites < <(list_sites)
 	[ "${#sites[@]}" -gt 0 ] || backup_failed "no sites found under $BENCH_DIR/sites"
 	mkdir -p -- "$root" || backup_failed "could not create $root"
 	chmod 700 -- "$root"
+	acquire_lock "$root"
 
-	min_mb=${PRE_MIGRATE_MIN_FREE_MB:-2048}
-	[[ $min_mb =~ ^[0-9]+$ ]] || backup_failed "PRE_MIGRATE_MIN_FREE_MB must be a whole number of MB"
-	need_kb=$((min_mb * 1024))
+	# Free space: twice the newest kept backup plus the margin, or the margin alone.
+	margin_mb=${PRE_MIGRATE_MIN_FREE_MB:-5120}
+	[[ $margin_mb =~ ^[0-9]+$ ]] || backup_failed "PRE_MIGRATE_MIN_FREE_MB must be a whole number of MB"
+	need_kb=$((margin_mb * 1024))
+	rule="a margin of $margin_mb MB, with no kept backup yet"
 	newest=$(list_runs "$root" | tail -n 1)
 	if [ -n "$newest" ]; then
 		newest_kb=$(du -sk -- "$root/$newest" | cut -f1)
-		if [ $((newest_kb * 2)) -gt "$need_kb" ]; then need_kb=$((newest_kb * 2)); fi
+		need_kb=$((newest_kb * 2 + need_kb))
+		rule="twice the newest kept backup ($newest, $((newest_kb / 1024)) MB) plus a margin of $margin_mb MB"
 	fi
 	avail_kb=$(df -Pk -- "$root" | awk 'NR == 2 {print $4}')
 	[[ $avail_kb =~ ^[0-9]+$ ]] || backup_failed "could not read the free space on the disk that holds $root"
 	if [ "$avail_kb" -lt "$need_kb" ]; then
-		backup_failed "only $((avail_kb / 1024)) MB free on the disk that holds $root, and $((need_kb / 1024)) MB is required. Free space there first"
+		backup_failed "only $((avail_kb / 1024)) MB free on the disk that holds $root, and $((need_kb / 1024)) MB is required: $rule. Free space there first"
 	fi
 
 	run_dir=$root/$(date -u +%Y%m%dT%H%M%SZ)
 	mkdir -- "$run_dir" || backup_failed "could not create $run_dir"
 	say "pre-migrate backup of ${sites[*]} into $run_dir ($((avail_kb / 1024)) MB free)"
-	if ! bench --site all backup --backup-path "$run_dir" --ignore-backup-conf; then
+	# 9>&-: bench and anything it starts do not inherit the lock.
+	if ! bench --site all backup --backup-path "$run_dir" --ignore-backup-conf 9>&-; then
 		rm -rf -- "${run_dir:?}"
 		backup_failed "bench backup exited with an error"
 	fi
@@ -170,6 +215,8 @@ take_backup() {
 	done
 	prune "$root"
 	LAST_BACKUP=$run_dir
+	trap - EXIT
+	release_lock
 }
 
 check_tag() {

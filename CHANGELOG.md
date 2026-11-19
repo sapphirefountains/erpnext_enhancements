@@ -19,13 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     before the app's code is reset, `infra/cloudbuild-deploy.yaml` now checks out only the script
     from the fetched commit and runs `bench_update.sh backup`: a database-only
     backup of every site with bench's own `backup` command, into
-    `<bench>/pre-migrate-backups/<UTC time>/`. It checks free disk first (2 GB, or twice the
-    newest kept backup), prints each file's name and size, and keeps the newest five runs,
-    deleting older ones from that directory only. When the check or the backup fails, the build
-    log says `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no code reset,
-    migrate, build, redis flush or restart, so the site keeps running the release it had. The
-    step's timeout goes from 600 to 1200 seconds. The redis
+    `<bench>/pre-migrate-backups/<UTC time>/`. It checks free disk first (twice the newest kept
+    backup plus a 5 GB margin, `PRE_MIGRATE_MIN_FREE_MB`, or the margin alone when none is kept
+    yet), prints each file's name and size, and keeps the newest five runs, deleting older ones
+    from that directory only. When the check or the backup fails, the build log says
+    `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no code reset, migrate,
+    build, redis flush or restart, so the site keeps running the release it had. The redis
     flush, the restart and the rest of the deploy are unchanged.
+  - **One backup at a time.** Each backup holds an exclusive `flock` on
+    `pre-migrate-backups/.bench_update.lock` (`flock` ships in util-linux; the script stops with
+    a clear message without it). A second deploy's backup waits for the first, up to 900 seconds
+    (`PRE_MIGRATE_LOCK_WAIT_S`), then fails without deleting anything. The lock is released
+    however the backup ends, is not handed to the processes bench starts, and covers the backup
+    only. The deploy step's timeout goes from 600 to 2100 seconds and the upstream step's from
+    1200 to 3300, to fit the backup and that wait.
+  - **Bench's own `backup` command deletes older scheduled backups, now on every deploy.** At
+    frappe v16.56.0 it runs `delete_temp_backups()` (`frappe/utils/backups.py`) for each site,
+    which removes every file in `sites/<site>/private/backups` at least 23 hours old (or the
+    site's `keep_backups_for_hours`), whatever `--backup-path` says. The script's header and the
+    runbook state this with file and line references; after a deploy, only the last 23 hours of
+    scheduled backups remain there.
   - **Upstream updates install two named release tags.** `infra/cloudbuild-upstream.yaml` no
     longer runs `bench update --pull --no-backup`. Each run takes two required substitutions,
     `_FRAPPE_TAG` and `_ERPNEXT_TAG`, each a tag like `v16.56.0` (`^v16\.[0-9]+\.[0-9]+$`); a run
@@ -34,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     takes the same backup, checks out exactly those tags, and runs `bench setup requirements`,
     `bench --site all migrate` and `bench build`. Updating by hand in a shell is the same command
     (`bash apps/erpnext_enhancements/infra/bench_update.sh upstream <frappe-tag> <erpnext-tag>`)
-    and is now the only supported way; the timeout goes from 1200 to 2400 seconds.
+    and is now the only supported way. The bench's other apps (`payments`, `telephony`,
+    `newsletter`, `frappe_assistant_core`) are not moved by this path; the runbook gives the
+    commands for updating one by hand to a named tag or commit, behind the same backup.
   - **Terraform must be applied for the triggers' new substitutions.** `infra/cloud_build.tf`
     adds `_FRAPPE_TAG` and `_ERPNEXT_TAG`, blank, to `app-upstream-test` and `app-upstream-prod`,
     so the console shows them. Apply the shared state after this merges, not before: a trigger
@@ -42,8 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as soon as they are on `main`.
   - `tests/test_pre_migrate_backup.py`, a new bench-free CI step: the backup comes before migrate
     in one `&&` chain, the upstream file never follows a branch and refuses anything but two
-    release tags, retention touches only its own directory, plus `bash -n` and shellcheck on the
-    script and runs of it against a scratch bench.
+    release tags, retention touches only its own directory (and never the lock file), plus
+    `bash -n` and shellcheck on the script and runs of it against a scratch bench: two
+    overlapping backups run one after the other, a run that cannot get the lock in time fails
+    and deletes nothing, the lock is free after a failed backup, and the free-space rule with
+    and without a kept backup.
 
 ## [1.830.0] - 2026-11-19
 

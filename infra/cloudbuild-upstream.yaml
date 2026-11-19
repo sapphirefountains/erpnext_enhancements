@@ -69,7 +69,9 @@ steps:
             sudo systemctl restart frappe-bench"
         echo "✅  $$VM updated"
 
-timeout: '2400s'
+# 3300s: 2400s for the update and its backup, plus up to 900s waiting for another run's
+# backup to finish (PRE_MIGRATE_LOCK_WAIT_S).
+timeout: '3300s'
 options:
   logging: CLOUD_LOGGING_ONLY
 

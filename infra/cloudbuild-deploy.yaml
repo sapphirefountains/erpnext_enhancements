@@ -60,8 +60,9 @@ steps:
             sudo systemctl restart frappe-bench"
         echo "✅  $$VM updated"
 
-# 1200s, up from 600s, for the backup: a timeout ends the SSH session mid-migrate.
-timeout: '1200s'
+# 2100s, up from 600s: 600s more for the backup, and up to 900s waiting for another run's
+# backup to finish (PRE_MIGRATE_LOCK_WAIT_S). A timeout ends the SSH session mid-migrate.
+timeout: '2100s'
 options:
   logging: CLOUD_LOGGING_ONLY
 
