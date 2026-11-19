@@ -267,7 +267,7 @@ DOCSTATUS_TOOLS = frozenset({"submit_document", "cancel_document"})
 
 #: The remote device-action tools (``mdm_integration.actions.execute_device_action``). Every one
 #: starts unticked in the batch dialog whatever its risk band, so a batch approval never includes a
-#: device action unless someone ticks it (``gating_api._review_reasons``). ``test_mdm_device_action_guards``
+#: device action unless someone ticks it (``gating_api._review_reasons``). ``tests/test_ai_gate_batch.py``
 #: holds this equal to the set of tools that call the executor.
 DEVICE_ACTION_TOOLS = frozenset(
     {
