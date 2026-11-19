@@ -1860,7 +1860,9 @@ doc_events = {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# stripe_payments: auto-charge a saved method when an invoice for an
-	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
+	# autopay-enrolled customer is submitted -- only an invoice billed from a maintenance
+	# agreement, at or under the autopay limit in Stripe Payments Settings (none set: none).
+	# Any other gets a comment saying automatic payment did not run, and waits for the desk.
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
 		# stripe_payments: refuse to cancel an invoice while a Stripe payment for it is still
@@ -2531,7 +2533,8 @@ scheduler_events = {
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
 		# Re-charge autopay invoices whose enqueued charge job never ran (deploy FLUSHDB
 		# between commit and execution). poll_pending/dunning only touch existing Stripe
-		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded.
+		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded,
+		# and the sweep charges only what autopay on submit would (saved_methods.automatic_charge_allowed).
 		"erpnext_enhancements.stripe_payments.core.tasks.sweep_missed_autopay",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)

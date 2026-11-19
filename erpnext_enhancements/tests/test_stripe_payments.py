@@ -699,8 +699,10 @@ def test_auto_charge_skips_historical_invoices(monkeypatch):
 	frappe = install_frappe_stub()
 	from erpnext_enhancements.stripe_payments.core import saved_methods
 
-	# Get past the global switch so the age guard is what we are actually testing.
+	# Get past the global switch so the age guard is what we are actually testing. The
+	# agreement-and-limit rule is test_autopay_charges_only_agreement_invoices_under_the_limit's.
 	monkeypatch.setattr(saved_methods, "is_enabled", lambda *args, **kwargs: True)
+	monkeypatch.setattr(saved_methods, "automatic_charge_allowed", lambda *a, **k: True)
 	enqueued = []
 	monkeypatch.setattr(frappe, "enqueue", lambda *a, **k: enqueued.append((a, k)), raising=False)
 	# An enrolled customer, positive balance, no existing charge -- everything a *current*
@@ -2210,6 +2212,9 @@ def _off_session(monkeypatch, writes, *answers):
 		lambda: types.SimpleNamespace(enabled=1, surcharge_enabled=0, company="Sapphire Fountains"),
 	)
 	monkeypatch.setattr(saved_methods, "is_enabled", lambda s=None: True)
+	# An invoice autopay may charge (agreement, under the limit): these tests are about the
+	# guard. The agreement-and-limit rule itself is tested with the "autopay scope" tests.
+	monkeypatch.setattr(saved_methods, "automatic_charge_allowed", lambda *a, **k: True)
 	monkeypatch.setattr(
 		saved_methods,
 		"_resolve_target",
@@ -5693,3 +5698,465 @@ def test_pay_card_offers_the_invoice_pdf_in_every_state_that_names_an_invoice():
 
 	assert _pdf_links(render(enabled=True, settled=None, invoice=None)) == []
 	assert _pdf_links(render(enabled=False, settled=None, invoice=None)) == []
+
+
+# --- autopay scope: which invoices are charged automatically ----------------------------------
+
+HELD_NO_LIMIT = "no automatic payment limit is set in Stripe Payments Settings"
+HELD_NOT_AGREEMENT = "it was not billed from a maintenance agreement"
+#: A visit on maintenance agreement AGR-1 whose billing generated SINV-1.
+AGREEMENT_VISIT = {"name": "VISIT-1", "sales_invoice": "SINV-1", "maintenance_contract": "AGR-1"}
+
+
+def _autopay_scope(monkeypatch, *, limit, records=(), contracts=None, invoice_records=None, invoices=None):
+	"""The maintenance side of the autopay decision, over whatever frappe stub is installed.
+
+	``limit`` is the autopay limit Stripe Payments Settings holds (None: never saved).
+	``records`` are Sapphire Maintenance Record rows (``name``, ``sales_invoice``,
+	``maintenance_contract``, ``service_call``); ``contracts`` maps a contract to its customer;
+	``invoice_records`` maps an invoice to its ``custom_maintenance_record``; ``invoices`` maps
+	an invoice to its fields, for Sales Invoice reads nothing else answers. Returns what was
+	recorded: the notes left (Comment rows) and the Accounts alerts.
+	"""
+	import frappe as frappe_stub
+
+	from erpnext_enhancements.stripe_payments.core import card_element
+
+	seen = {"comments": [], "alerts": []}
+	db = frappe_stub.db
+	base_get_value = db.get_value
+	base_exists = getattr(db, "exists", lambda *a, **k: None)
+	base_get_all = getattr(frappe_stub, "get_all", lambda *a, **k: [])
+	base_get_doc = getattr(frappe_stub, "get_doc", None)
+	records = [dict({"service_call": None}, **row) for row in records]
+
+	def get_single_value(doctype, fieldname, *args, **kwargs):
+		if (doctype, fieldname) == ("Stripe Payments Settings", "autopay_limit"):
+			return limit
+		return None
+
+	def get_value(doctype, name=None, fieldname=None, *args, **kwargs):
+		if doctype == "Sales Invoice" and invoices and name in invoices and isinstance(fieldname, str):
+			return invoices[name].get(fieldname)
+		return base_get_value(doctype, name, fieldname, *args, **kwargs)
+
+	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
+		if doctype == "Sapphire Maintenance Record":
+			found = [row for row in records if _matches(row, filters)]
+			return [row.get(pluck) for row in found] if pluck else found
+		if doctype == "Sales Invoice" and pluck == "custom_maintenance_record":
+			rows = [{"name": inv, pluck: record} for inv, record in (invoice_records or {}).items()]
+			return [row[pluck] for row in rows if _matches(row, filters)]
+		return base_get_all(doctype, filters=filters, fields=fields, pluck=pluck, **kwargs)
+
+	def exists(doctype, filters=None, *args, **kwargs):
+		if doctype == "Comment":
+			assert filters["content"] == ["like", "Automatic payment did not run%"]
+			return (
+				any(
+					all(note[key] == filters[key] for key in ("reference_doctype", "reference_name", "comment_type"))
+					and note["content"].startswith("Automatic payment did not run")
+					for note in seen["comments"]
+				)
+				or None
+			)
+		if doctype == "Sapphire Maintenance Contract":
+			_, names = filters["name"]
+			return (
+				any(name in names and customer == filters["customer"] for name, customer in (contracts or {}).items())
+				or None
+			)
+		return base_exists(doctype, filters, *args, **kwargs)
+
+	def get_doc(values, *args, **kwargs):
+		if isinstance(values, dict) and values.get("doctype") == "Comment":
+			return types.SimpleNamespace(insert=lambda **kw: seen["comments"].append(dict(values)))
+		return base_get_doc(values, *args, **kwargs)
+
+	monkeypatch.setattr(db, "get_single_value", get_single_value, raising=False)
+	monkeypatch.setattr(db, "get_value", get_value, raising=False)
+	monkeypatch.setattr(db, "exists", exists, raising=False)
+	monkeypatch.setattr(frappe_stub, "get_all", get_all, raising=False)
+	monkeypatch.setattr(frappe_stub, "get_doc", get_doc, raising=False)
+	monkeypatch.setattr(
+		card_element,
+		"_alert_accounts",
+		lambda subject, content, doctype=None, docname=None: seen["alerts"].append((subject, docname)),
+	)
+	return seen
+
+
+def _scope_stub(monkeypatch, enrolled=True):
+	"""A bare frappe stub for the decision, the submit hook and the sweep: a customer enrolled
+	in autopay (or not), and nothing else on record."""
+	frappe_stub = install_frappe_stub()
+	enrollment = types.SimpleNamespace(
+		custom_stripe_autopay_enabled=1 if enrolled else 0, custom_stripe_default_payment_method="pm_1"
+	)
+	monkeypatch.setattr(
+		frappe_stub,
+		"db",
+		types.SimpleNamespace(
+			get_value=lambda doctype, *a, **k: enrollment if doctype == "Customer" else None,
+			exists=lambda *a, **k: None,
+			commit=lambda: None,
+		),
+	)
+	from erpnext_enhancements.stripe_payments.core import saved_methods
+
+	return frappe_stub, saved_methods
+
+
+def test_autopay_charges_only_agreement_invoices_under_the_limit(monkeypatch):
+	"""The owner's rule (2026-11-19): an automatic charge runs only for an invoice billed from a
+	maintenance agreement, at or under the autopay limit in Stripe Payments Settings. Anything
+	else is held with one note on the invoice and one alert to Accounts, however often it is
+	asked; no limit set (never saved, zero or below) holds everything."""
+	invoices = {
+		"SINV-1": {"customer": "CUST-1", "outstanding_amount": 200.0},
+		"SINV-2": {"customer": "CUST-1", "outstanding_amount": 50.0},
+		"SINV-1-1": {"customer": "CUST-1", "outstanding_amount": 200.0, "amended_from": "SINV-1"},
+	}
+	agreement = {"records": [AGREEMENT_VISIT], "contracts": {"AGR-1": "CUST-1"}}
+	_, saved_methods = _scope_stub(monkeypatch)
+	seen = _autopay_scope(monkeypatch, limit=500, invoices=invoices, **agreement)
+
+	assert saved_methods.automatic_charge_allowed("SINV-1", 200.0) is True
+	assert saved_methods.automatic_charge_allowed("SINV-1", 500.0) is True  # at the limit
+	assert saved_methods.automatic_charge_allowed("SINV-1") is True  # the balance on the invoice
+	assert seen["comments"] == [] and seen["alerts"] == []
+
+	assert saved_methods.automatic_charge_allowed("SINV-1", 500.01, "USD") is False
+	assert saved_methods.automatic_charge_allowed("SINV-1", 900.0, "USD") is False
+	(note,) = seen["comments"]
+	assert (note["reference_doctype"], note["reference_name"], note["comment_type"]) == (
+		"Sales Invoice",
+		"SINV-1",
+		"Comment",
+	)
+	assert note["content"].startswith("Automatic payment did not run: its balance of USD 500.01")
+	assert "over the automatic payment limit of USD 500.00" in note["content"]
+	assert "Nothing was charged" in note["content"] and "Charge Saved Method" in note["content"]
+	assert seen["alerts"] == [("Automatic payment held: SINV-1", "SINV-1")]
+
+	assert saved_methods.automatic_charge_allowed("SINV-2", 50.0) is False
+	assert seen["comments"][-1]["reference_name"] == "SINV-2"
+	assert HELD_NOT_AGREEMENT in seen["comments"][-1]["content"]
+
+	def reason(invoice="SINV-1", limit=500, **world):
+		_scope_stub(monkeypatch)
+		_autopay_scope(monkeypatch, limit=limit, invoices=invoices, **world)
+		return saved_methods.automatic_charge_hold(invoice, 50.0)
+
+	assert reason(**agreement) is None
+	# How an agreement invoice is recognized: a visit on the customer's own agreement, not a
+	# service call, linked either way billing links them.
+	contracts = agreement["contracts"]
+	assert reason(records=[dict(AGREEMENT_VISIT, service_call="CALL-1")], contracts=contracts) == HELD_NOT_AGREEMENT
+	assert reason(records=[dict(AGREEMENT_VISIT, maintenance_contract=None)], contracts=contracts) == HELD_NOT_AGREEMENT
+	assert reason(records=[AGREEMENT_VISIT], contracts={"AGR-1": "CUST-OTHER"}) == HELD_NOT_AGREEMENT
+	assert reason(records=[], contracts=contracts) == HELD_NOT_AGREEMENT
+	per_visit = {"records": [dict(AGREEMENT_VISIT, sales_invoice=None)], "contracts": contracts}
+	assert reason(invoice_records={"SINV-1": "VISIT-1"}, **per_visit) is None
+	assert reason(**per_visit) == HELD_NOT_AGREEMENT
+	# A canceled-and-amended invoice counts with its original.
+	assert reason("SINV-1-1", **agreement) is None
+	# No limit: never saved, zero, or below zero.
+	for limit in (None, 0, "", -5):
+		assert reason(limit=limit, **agreement) == HELD_NO_LIMIT, limit
+	assert saved_methods.automatic_charge_hold(None, 50.0) == "an automatic charge must be for an invoice"
+
+	# A question that cannot be answered never charges.
+	_scope_stub(monkeypatch)
+	_autopay_scope(monkeypatch, limit=500, invoices=invoices, **agreement)
+
+	def broken(invoice):
+		raise Exception("Unknown column")
+
+	monkeypatch.setattr(saved_methods, "is_agreement_invoice", broken)
+	assert saved_methods.automatic_charge_hold("SINV-1", 50.0) == HELD_NOT_AGREEMENT
+
+
+def test_autopay_on_submit_charges_an_agreement_invoice_and_holds_any_other_with_one_note(monkeypatch):
+	"""Submitting an invoice for an enrolled customer enqueues the charge only when autopay may
+	charge it; any other invoice gets one note (a second submit-time run adds none) and no job.
+	A customer not enrolled in autopay gets nothing at all."""
+	frappe_stub, saved_methods = _scope_stub(monkeypatch)
+	monkeypatch.setattr(saved_methods, "is_enabled", lambda *a, **k: True)
+	enqueued = []
+	monkeypatch.setattr(frappe_stub, "enqueue", lambda *a, **k: enqueued.append(k), raising=False)
+
+	def submit(name, amount):
+		doc = types.SimpleNamespace(
+			name=name, customer="CUST-1", outstanding_amount=amount, posting_date="2026-06-18", currency="USD"
+		)
+		doc.get = lambda field, default=None: getattr(doc, field, default)
+		saved_methods.auto_charge_on_invoice_submit(doc)
+
+	invoices = {"SINV-1": {"customer": "CUST-1"}, "SINV-2": {"customer": "CUST-1"}}
+	seen = _autopay_scope(
+		monkeypatch, limit=500, invoices=invoices, records=[AGREEMENT_VISIT], contracts={"AGR-1": "CUST-1"}
+	)
+	submit("SINV-1", 200.0)
+	assert [(k["sales_invoice"], k["channel"]) for k in enqueued] == [("SINV-1", "Auto")]
+	assert seen["comments"] == []
+
+	enqueued.clear()
+	submit("SINV-2", 200.0)
+	submit("SINV-2", 200.0)
+	submit("SINV-1", 900.0)
+	assert enqueued == []
+	assert [note["reference_name"] for note in seen["comments"]] == ["SINV-2", "SINV-1"]
+	assert HELD_NOT_AGREEMENT in seen["comments"][0]["content"]
+	assert "over the automatic payment limit" in seen["comments"][1]["content"]
+
+	_scope_stub(monkeypatch)
+	monkeypatch.setattr(frappe_stub, "enqueue", lambda *a, **k: enqueued.append(k), raising=False)
+	seen = _autopay_scope(
+		monkeypatch, limit=None, invoices=invoices, records=[AGREEMENT_VISIT], contracts={"AGR-1": "CUST-1"}
+	)
+	submit("SINV-1", 200.0)
+	assert enqueued == [] and HELD_NO_LIMIT in seen["comments"][0]["content"]
+
+	frappe_stub, _ = _scope_stub(monkeypatch, enrolled=False)
+	monkeypatch.setattr(frappe_stub, "enqueue", lambda *a, **k: enqueued.append(k), raising=False)
+	seen = _autopay_scope(monkeypatch, limit=None, invoices=invoices)
+	submit("SINV-2", 200.0)
+	assert enqueued == [] and seen["comments"] == []
+
+
+def test_the_autopay_sweep_charges_only_what_autopay_on_submit_would(monkeypatch):
+	"""The hourly sweep re-drives a charge whose job never ran, under the same decision: an
+	agreement invoice under the limit is enqueued; one not from an agreement, or over the limit,
+	gets its one note and no job. An invoice already carrying the note is left out of the query,
+	so held invoices never fill the sweep's batch, and a repeat run adds no second note."""
+	frappe_stub, _ = _scope_stub(monkeypatch)
+	from erpnext_enhancements.stripe_payments.core import tasks
+
+	monkeypatch.setattr(tasks, "get_settings", lambda: types.SimpleNamespace(enabled=1))
+	monkeypatch.setattr(tasks, "is_enabled", lambda s=None: True)
+	rows = [
+		types.SimpleNamespace(invoice="SINV-1", customer="CUST-1", outstanding_amount=200.0, currency="USD"),
+		types.SimpleNamespace(invoice="SINV-2", customer="CUST-1", outstanding_amount=200.0, currency="USD"),
+		types.SimpleNamespace(invoice="SINV-3", customer="CUST-1", outstanding_amount=900.0, currency="USD"),
+	]
+	queries, enqueued = [], []
+	monkeypatch.setattr(
+		frappe_stub.db, "sql", lambda query, values=None, **k: queries.append((query, values)) or rows, raising=False
+	)
+	monkeypatch.setattr(frappe_stub, "enqueue", lambda *a, **k: enqueued.append(k), raising=False)
+	invoices = {name: {"customer": "CUST-1"} for name in ("SINV-1", "SINV-2", "SINV-3")}
+	seen = _autopay_scope(
+		monkeypatch,
+		limit=500,
+		invoices=invoices,
+		records=[AGREEMENT_VISIT, dict(AGREEMENT_VISIT, name="VISIT-3", sales_invoice="SINV-3")],
+		contracts={"AGR-1": "CUST-1"},
+	)
+
+	tasks.sweep_missed_autopay()
+	assert [(k["sales_invoice"], k["channel"]) for k in enqueued] == [("SINV-1", "Auto")]
+	assert [note["reference_name"] for note in seen["comments"]] == ["SINV-2", "SINV-3"]
+	query, values = queries[0]
+	assert "`tabComment`" in query and "cm.content like %(held)s" in query
+	assert values["held"] == "Automatic payment did not run%"
+
+	tasks.sweep_missed_autopay()
+	assert len(seen["comments"]) == 2
+
+
+def _scoped_charge(monkeypatch, limit, rows=(), answers=(), records=(AGREEMENT_VISIT,)):
+	"""``charge_saved_method`` against the fake ledger with the real autopay decision."""
+	from erpnext_enhancements.stripe_payments.core import saved_methods as module
+
+	decide = module.automatic_charge_allowed
+	card_element, writes = _ledger(monkeypatch, list(rows))
+	saved_methods = _off_session(monkeypatch, writes, *answers)
+	monkeypatch.setattr(saved_methods, "automatic_charge_allowed", decide)
+	seen = _autopay_scope(monkeypatch, limit=limit, records=list(records), contracts={"AGR-1": "CUST-1"})
+	monkeypatch.setattr(card_element, "post_charged_payment", lambda sp, pi: None)
+	return card_element, saved_methods, writes, seen
+
+
+def test_an_automatic_charge_runs_only_when_autopay_may_charge_the_invoice(monkeypatch):
+	"""``charge_saved_method`` asks the decision for every channel but the desk's, before the
+	ledger or Stripe: a held invoice is refused as AutomaticChargeHeld (a PaymentBlocked, which
+	dunning reschedules on) with nothing written or charged and the note committed. The desk's
+	Charge Saved Method charges the same invoice without asking. An agreement invoice under the
+	limit charges automatically."""
+	from erpnext_enhancements.stripe_payments.core import dunning
+
+	# "Scheduled" stands for a channel added later: every channel but the desk's is held.
+	for channel in ("Auto", "Dunning", "Scheduled"):
+		card_element, saved_methods, writes, seen = _scoped_charge(monkeypatch, None)
+		exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1", channel=channel)
+		assert isinstance(exc, card_element.AutomaticChargeHeld), channel
+		assert isinstance(exc, card_element.PaymentBlocked) and str(exc) == card_element.MSG_AUTOMATIC_HELD
+		assert writes["charges"] == [] and writes["store"] == {} and writes["stamps"] == [], channel
+		# The note is committed last, so the refusal that rolls the job back cannot take it.
+		assert len(seen["comments"]) == 1 and writes["events"][-1] == ("commit",), channel
+		assert HELD_NO_LIMIT in seen["comments"][0]["content"]
+
+	# Over the limit (the invoice's balance is 200): held the same way.
+	card_element, saved_methods, writes, seen = _scoped_charge(monkeypatch, 150)
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1", channel="Auto")
+	assert isinstance(exc, card_element.AutomaticChargeHeld) and writes["charges"] == []
+	assert "over the automatic payment limit" in seen["comments"][0]["content"]
+
+	# Not from an agreement: held.
+	card_element, saved_methods, writes, seen = _scoped_charge(monkeypatch, 500, records=())
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1", channel="Auto")
+	assert isinstance(exc, card_element.AutomaticChargeHeld) and writes["charges"] == []
+
+	# An automatic charge for no invoice: held, with no invoice to note.
+	card_element, saved_methods, writes, seen = _scoped_charge(monkeypatch, 500)
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", amount=50, channel="Auto")
+	assert isinstance(exc, card_element.AutomaticChargeHeld) and writes["charges"] == []
+	assert seen["comments"] == []
+
+	# A dunning retry of a held invoice is "Blocked" (rescheduled, never a decline), and a second
+	# retry adds no second note.
+	card_element, saved_methods, writes, seen = _scoped_charge(monkeypatch, None)
+	assert dunning._attempt_charge("CUST-1", "SINV-1") == ("Blocked", None)
+	assert dunning._attempt_charge("CUST-1", "SINV-1") == ("Blocked", None)
+	assert writes["charges"] == [] and len(seen["comments"]) == 1
+
+	# The desk's Charge Saved Method still charges a held invoice (no limit set), and notes nothing.
+	card_element, saved_methods, writes, seen = _scoped_charge(
+		monkeypatch, None, answers=[{"id": "pi_desk", "status": "succeeded"}]
+	)
+	result = saved_methods.charge_saved_method(customer="CUST-1", sales_invoice="SINV-1", channel="Desk")
+	assert result["payment_intent"] == "pi_desk" and len(writes["charges"]) == 1
+	assert seen["comments"] == [] and seen["alerts"] == []
+
+	# An agreement invoice at or under the limit charges automatically.
+	for channel in ("Auto", "Dunning"):
+		card_element, saved_methods, writes, seen = _scoped_charge(
+			monkeypatch, 200, answers=[{"id": "pi_auto", "status": "succeeded"}]
+		)
+		result = saved_methods.charge_saved_method(customer="CUST-1", sales_invoice="SINV-1", channel=channel)
+		assert result["payment_intent"] == "pi_auto" and len(writes["charges"]) == 1, channel
+		assert seen["comments"] == [], channel
+
+
+def test_an_allowed_automatic_charge_still_runs_every_double_payment_guard(monkeypatch):
+	"""The decision comes first and the shared guard still follows it: an agreement invoice under
+	the limit is refused while a payment for it (or the invoice it was amended from) is settling,
+	and an emailed link is left open and refuses the charge."""
+	card_element, saved_methods, writes, seen = _scoped_charge(
+		monkeypatch, 500, rows=[_card_attempt()], answers=[{"id": "pi_x", "status": "succeeded"}]
+	)
+	writes["pi_status"]["pi_old"] = "succeeded"
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1", channel="Auto")
+	assert not isinstance(exc, card_element.AutomaticChargeHeld)
+	assert isinstance(exc, card_element.PaymentBlocked) and str(exc) == card_element.MSG_IN_FLIGHT
+	assert writes["charges"] == [] and seen["comments"] == []
+
+	card_element, saved_methods, writes, seen = _scoped_charge(
+		monkeypatch, 500, rows=[_link_sent()], answers=[{"id": "pi_x", "status": "succeeded"}]
+	)
+	_checkout_sessions(monkeypatch, card_element, writes, {"cs_link": "open"}, expire={"cs_link": "expired"})
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1", channel="Dunning")
+	assert str(exc) == card_element.MSG_LINK_OPEN_OFF_SESSION
+	assert writes["expires"] == [] and writes["charges"] == []
+	assert writes["store"]["SP-LINK"]["status"] == "Link Sent"
+
+	# The amended copy is an agreement invoice through its original, and a payment settling on
+	# the original blocks it.
+	from erpnext_enhancements.stripe_payments.core import saved_methods as module
+
+	decide = module.automatic_charge_allowed
+	card_element, writes = _ledger(monkeypatch, [_hosted_payment(invoice="SINV-1")], invoices=_amended_pair())
+	saved_methods = _off_session(monkeypatch, writes, {"id": "pi_twice", "status": "succeeded"})
+	monkeypatch.setattr(saved_methods, "automatic_charge_allowed", decide)
+	seen = _autopay_scope(monkeypatch, limit=500, records=[AGREEMENT_VISIT], contracts={"AGR-1": "CUST-1"})
+	assert saved_methods.automatic_charge_hold("SINV-1-1", 200.0) is None
+	exc = _raised(saved_methods.charge_saved_method, customer="CUST-1", sales_invoice="SINV-1-1", channel="Auto")
+	assert str(exc) == card_element.MSG_IN_FLIGHT and writes["charges"] == [] and seen["comments"] == []
+
+
+def test_every_automatic_caller_of_the_off_session_charge_goes_through_the_autopay_decision():
+	"""Source-level: ``charge_saved_method`` asks ``automatic_charge_allowed`` for every channel
+	outside ``MANUAL_CHANNELS`` before any guard, ledger write or Stripe call; the only caller that
+	passes a manual channel is the desk's whitelisted endpoint, which keeps its operator check; and
+	every other caller (a doc event, a scheduled job, a job they enqueue) names an automatic
+	channel. The submit hook and the sweep also ask the decision before they enqueue."""
+	import ast
+	import inspect
+	import pathlib
+	import textwrap
+
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core import saved_methods, tasks
+
+	assert saved_methods.MANUAL_CHANNELS == ("Desk",)
+	root = pathlib.Path(saved_methods.__file__).resolve().parents[2]
+	dotted = "erpnext_enhancements.stripe_payments.core.saved_methods.charge_saved_method"
+	callers = []
+	for path in sorted(root.rglob("*.py")):
+		relative = path.relative_to(root).as_posix()
+		if relative.startswith("tests/"):
+			continue
+		source = path.read_text(encoding="utf-8")
+		if "charge_saved_method" not in source:
+			continue
+		tree = ast.parse(source)
+		names = {"charge_saved_method"} | {
+			alias.asname
+			for node in ast.walk(tree)
+			if isinstance(node, ast.ImportFrom)
+			for alias in node.names
+			if alias.name == "charge_saved_method" and alias.asname
+		}
+		enqueues = 0
+		for func in ast.walk(tree):
+			if not isinstance(func, ast.FunctionDef):
+				continue
+			for node in ast.walk(func):
+				if not isinstance(node, ast.Call):
+					continue
+				callee = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
+				enqueued = (
+					callee == "enqueue"
+					and node.args
+					and isinstance(node.args[0], ast.Constant)
+					and node.args[0].value == dotted
+				)
+				enqueues += bool(enqueued)
+				if callee in names or enqueued:
+					channel = next((kw.value for kw in node.keywords if kw.arg == "channel"), None)
+					assert isinstance(channel, ast.Constant), f"{relative}:{func.name} must name its channel"
+					callers.append((relative, func.name, channel.value))
+		# The dotted path used any other way (frappe.get_attr, a hooks entry) would be a caller
+		# this test cannot see.
+		uses = sum(isinstance(node, ast.Constant) and node.value == dotted for node in ast.walk(tree))
+		assert uses == enqueues, f"{relative} names {dotted} outside an enqueue call"
+
+	manual = [c for c in callers if c[2] in saved_methods.MANUAL_CHANNELS]
+	assert manual == [("stripe_payments/core/api.py", "charge_saved_method", "Desk")], manual
+	automatic = sorted(c for c in callers if c[2] not in saved_methods.MANUAL_CHANNELS)
+	assert automatic == [
+		("stripe_payments/core/dunning.py", "_attempt_charge", "Dunning"),
+		("stripe_payments/core/saved_methods.py", "auto_charge_on_invoice_submit", "Auto"),
+		("stripe_payments/core/tasks.py", "sweep_missed_autopay", "Auto"),
+	], automatic
+
+	# The desk endpoint: POST only, and the operator check before anything else.
+	api_source = (root / "stripe_payments/core/api.py").read_text(encoding="utf-8")
+	endpoint = api_source[api_source.index("def charge_saved_method(") :]
+	head = api_source[: api_source.index("def charge_saved_method(")].rstrip().splitlines()[-1]
+	assert head == '@frappe.whitelist(methods=["POST"])'
+	body = endpoint[endpoint.index('"""', endpoint.index('"""') + 3) + 3 :].lstrip()
+	assert body.startswith("_require_stripe_operator()")
+
+	# Inside charge_saved_method: the decision for every non-manual channel, before any guard.
+	charge = textwrap.dedent(inspect.getsource(saved_methods.charge_saved_method))
+	decision = charge.index("if channel not in MANUAL_CHANNELS and not automatic_charge_allowed(")
+	for later in ("_refuse_if_in_flight(", "_close_open_checkouts(", '"doctype": "Stripe Payment"', "create_intent_settled("):
+		assert decision < charge.index(later), later
+	assert "frappe.throw(MSG_AUTOMATIC_HELD, AutomaticChargeHeld)" in charge[decision:]
+
+	# The hook and the sweep ask before they enqueue.
+	for func in (saved_methods.auto_charge_on_invoice_submit, tasks.sweep_missed_autopay):
+		source = inspect.getsource(func)
+		assert source.index("automatic_charge_allowed(") < source.index("frappe.enqueue("), func.__name__

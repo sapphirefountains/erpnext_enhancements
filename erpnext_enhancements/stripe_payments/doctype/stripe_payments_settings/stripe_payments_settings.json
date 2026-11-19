@@ -44,6 +44,7 @@
   "surcharge_label",
   "surcharge_disclosure",
   "autopay_section",
+  "autopay_limit",
   "autopay_consent"
  ],
  "fields": [
@@ -281,6 +282,12 @@
    "label": "Saved Cards / Autopay"
   },
   {
+   "description": "Autopay charges a saved card or bank account automatically only for an invoice billed from a maintenance agreement whose balance is at or under this amount. Blank or 0: nothing is charged automatically. Any other invoice gets a comment saying automatic payment did not run, and waits for someone to use Charge Saved Method on the Customer.",
+   "fieldname": "autopay_limit",
+   "fieldtype": "Currency",
+   "label": "Automatic Payment Limit"
+  },
+  {
    "default": "By saving your card or bank account, you authorize Sapphire Fountains LLC to charge it for amounts you owe (including maintenance and service invoices) in the amount shown on each invoice, on or after that invoice's due date, on a recurring basis. Charge frequency varies with your service schedule. This authorization stays in effect until you revoke it — cancel anytime in the customer portal or by contacting us at (801) 837-2199 or info@sapphirefountains.com. For bank (ACH) debits you also authorize electronic debits from the account provided, per these terms.",
    "description": "Recurring/stored-payment authorization shown before a customer saves a method for off-session charges. Should state the amount (or how determined), timing/frequency, and how to revoke (Nacha/card-network requirement).",
    "fieldname": "autopay_consent",
@@ -291,7 +298,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-18 00:00:00.000000",
+ "modified": "2026-11-19 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Stripe Payments",
  "name": "Stripe Payments Settings",

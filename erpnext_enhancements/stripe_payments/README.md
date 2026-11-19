@@ -465,6 +465,34 @@ abandoned, so the case was pushed back two days at a time; it now reads
 Autopay on submit skips an invoice with a `Processing`, `Paid` or `Link Sent` row on it or on
 the invoice it was amended from, and `charge_saved_method` runs the full guard either way.
 
+## Which invoices autopay charges
+
+The owner's rule (2026-11-19): an automatic charge runs only for an invoice billed from a
+**maintenance agreement** whose balance is **at or under the Automatic Payment Limit** in Stripe
+Payments Settings (Saved Cards / Autopay). A limit that is blank or 0 allows no automatic charge
+at all, which is the shipped state: no default, no backfill. Every other invoice waits for
+Accounts to charge it from the desk (Customer → Stripe → Charge Saved Method, which keeps its
+operator check and never asks this rule).
+
+- **One decision.** `saved_methods.automatic_charge_allowed` is asked by autopay on submit and the
+  autopay sweep before they enqueue, and by `charge_saved_method` itself, under the invoice lock and
+  before any guard, ledger row or Stripe call, for every channel but `Desk`
+  (`MANUAL_CHANNELS`) — which is how dunning meets it, and how any channel added later does. A
+  refusal there is `card_element.AutomaticChargeHeld`, a `PaymentBlocked`: nothing written,
+  nothing charged, and dunning reschedules rather than counting a decline.
+  `test_every_automatic_caller_of_the_off_session_charge_goes_through_the_autopay_decision` holds
+  every caller to it.
+- **An agreement invoice** is recognized by the visit behind it (`is_agreement_invoice`): a
+  `Sapphire Maintenance Record` that names a maintenance contract and is not a service call, linked
+  to the invoice (or one it was amended from) through the invoice's `custom_maintenance_record`
+  (per-visit billing) or the record's Generated Sales Invoice (per-visit and recurring billing both
+  stamp it), on a contract whose customer is the invoice's. A recurring invoice for a period with no
+  visits carries no such link and is held. A lookup that fails holds the invoice.
+- **A held invoice is never silent.** It gets one Comment, "Automatic payment did not run: …" with
+  the reason, and Accounts Managers a Notification Log (`card_element._alert_accounts`) — once per
+  invoice. The sweep leaves out an invoice that already carries the note, so a held invoice is not
+  picked up again by it.
+
 ## Canceling an invoice
 
 Frappe refuses a cancel only for **submitted** linked documents, and a `Stripe Payment` is
@@ -569,7 +597,7 @@ endpoint.
 
 | DocType | Role |
 |---|---|
-| `Stripe Payments Settings` | Single — keys, master switch, account links, feature gates |
+| `Stripe Payments Settings` | Single — keys, master switch, account links, feature gates, the autopay limit |
 | `Stripe Payment` | The ledger row behind each payment attempt, with its lifecycle status |
 | `Stripe Event` | Ingested webhook events; **named by the Stripe event id**, which is what makes redelivery safe |
 | `Stripe Autopay Consent` | Recorded consent for saved-method off-session charging |
