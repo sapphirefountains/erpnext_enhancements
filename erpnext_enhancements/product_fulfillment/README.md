@@ -5,8 +5,9 @@ product the Product Configurator makes. A product sale is a Sales Order (Nikolas
 `decisions/2026-11-18-estop-product-line.md`); this module carries it from the order to a tested,
 serial-numbered unit ready to ship.
 
-Tracking: TASK-2026-03229 (build from a Work Order) and TASK-2026-03230 (serial number, QC gate,
-warranty), under P1 group TASK-2026-03227 on PRJ-00580. Decision record:
+Tracking: TASK-2026-03229 (build from a Work Order), TASK-2026-03230 (serial number, QC gate,
+warranty) and TASK-2026-03231 (getting it to the customer), under P1 group TASK-2026-03227 on
+PRJ-00580. Decision record:
 [ADR 0019](../../decisions/adr/0019-product-unit-tests-use-quality-inspection.md).
 
 ## The flow
@@ -34,6 +35,21 @@ warranty), under P1 group TASK-2026-03227 on PRJ-00580. Decision record:
    serial passed, signed by someone other
    than its builder. Delivering the serial starts its warranty: ERPNext sets `warranty_expiry_date`
    from the Item's 365-day `warranty_period`.
+6. **To the customer** (v1.829.0). The Delivery Note's **Fulfillment** says how
+   (`custom_fulfillment_method`, carried over from the Sales Order's field of the same name), and a
+   note shipping a configured product cannot be submitted without it:
+   - **Pickup at shop**: from the draft, **Email Ready for Pickup** tells the customer contact, once
+     every unit has passed (the gate's own check). The note is submitted when they collect.
+   - **Carrier shipping**: ERPNext's own **Carrier** (`transporter`, a Supplier ticked Is
+     Transporter) and **Tracking Number** (`lr_no`, relabeled). Saving cleans the number and sets
+     the **Tracking Link** to the carrier's public page (UPS and FedEx from `carrier_tracking`, plus
+     USPS and DHL; any other carrier through the settings' carrier table). Submitting emails the
+     customer contact "Shipped" with the link. **Carrier Status** asks FedEx or UPS through Carrier
+     Tracking, when that is switched on; nothing is stored.
+   - **Sapphire delivery**: a **Delivery Date** and **Delivered By**; the note is assigned to that
+     person, on that date, as soon as it is saved.
+   Both emails go through the shared shell (`templates/emails/product_fulfillment/`), queued in
+   Email Queue, with a comment on the note saying who was emailed.
 
 The Products tab's Testing column (`project_dashboard._product_qc`) shows built orders whose units
 have not passed yet.
@@ -48,6 +64,10 @@ have not passed yet.
 | `checklist.py` | The Build Checklist page's endpoints: `get_build`, `tick`, `claim_build`. Writes single rows with `db.set_value`, because the Work Order is submitted while it is built |
 | `serials.py` | Item `before_validate` (serial numbers, series, warranty, test template on configured stock Items, blanks only); Stock Entry `on_submit` (builder stamp); `set_unit_builder` for a unit from no Work Order |
 | `qc_gate.py` | Quality Inspection `before_validate` / `validate` / `before_submit`; Delivery Note `before_submit` (the gate); `start_test`; `delivery_gate_status` for the form |
+| `shipping_rules.py` | Getting it to the customer, with no Frappe: what each method needs, which carrier a transporter is, the tracking link, which email a method sends. `tests/test_product_fulfillment_shipping.py` |
+| `shipping.py` | Delivery Note `validate` (tracking link), `before_submit` (method requirements, after the gate), `on_submit` (Shipped email, delivery assignment), `on_update`; Email Ready for Pickup, Resend Shipped Email, Carrier Status |
+| `../templates/emails/product_fulfillment/` | The Ready for pickup and Shipped email bodies |
+| `doctype/product_carrier/` | The settings' carrier table row: a Supplier, which carrier it is, its tracking page |
 | `setup_print_formats.py` | `after_migrate`: Product Unit Label (Serial No) and Pre-Shipment Test Certificate (Quality Inspection) |
 | `doctype/product_build_settings/` | The Single: build, work-in-progress and finished units warehouses (empty until chosen), the switch for making Work Orders, the serial series, the warranty days, the test switch and template |
 | `doctype/work_order_build_step/` | The checklist row on `Work Order.custom_build_steps` |
@@ -75,9 +95,13 @@ Also, outside this module:
   Item Reorder (Material Request type Manufacture) on the common configuration can prompt the next
   build when the shelf runs low.
 
+For shipping, in the same settings: **Pickup Instructions** (printed in the Ready for Pickup email;
+empty, it asks the customer to reply), **Email the Customer When It Ships** (on), and a carrier row
+for any carrier whose name does not say which it is. And on each carrier's Supplier (UPS, FedEx,
+Usps, DHL on prod): tick **Is Transporter**, or ERPNext's own Carrier field will not offer it.
+
 ## Not here
 
-- **Shipping** (carrier, tracking, ready-for-pickup and shipped emails): TASK-2026-03231.
 - **Pay at order** (the order invoiced at once, Stripe pays it): a later task.
 - **Configured Items made before this release** that already moved stock keep Has Serial No off:
   ERPNext refuses to change it once stock has moved. On 2026-11-18 production had no configured Item.

@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.829.0] - 2026-11-19
+
+### Added
+
+- **Getting a product order to the customer (TASK-2026-03231).** Nikolas, 2026-11-18 (pick 7): at
+  launch a product order is picked up at the shop, shipped by a carrier, or delivered by Sapphire, with
+  no commissioning add-on.
+  - **The Delivery Note records the method.** A new **Fulfillment** field (`custom_fulfillment_method`:
+    Pickup at shop, Carrier shipping, Sapphire delivery) sits at the top of the note's transport
+    section, now labeled Fulfillment. The Sales Order has the same field, and ERPNext's Make Delivery
+    Note copies a same-named field across, so the customer's choice at order time arrives on the note.
+    A note that ships a configured product cannot be submitted without a method, and any method chosen
+    is held to what it needs. The check runs after the QC gate, so an untested unit is refused for that
+    first.
+  - **Carrier and tracking number in ERPNext's own fields.** `transporter` is relabeled **Carrier** and
+    `lr_no` **Tracking Number** (`lr_date` reads Ship Date). Carrier shipping needs both. Saving removes
+    spaces and dashes from the number and sets a read-only **Tracking Link** (`custom_tracking_url`) to
+    the carrier's public page. UPS and FedEx use `carrier_tracking`'s own pages (one copy of those URLs
+    in the app), and USPS and DHL are added. Prod's carrier Suppliers ("UPS", "UPS store", "FedEx",
+    "FedEx Office", "Usps", "DHL") are recognized by name. A new **Carriers** table in Product Build
+    Settings names any other carrier and its tracking page, a link with `{number}`. Only a number of
+    letters and digits makes a link, because the URL lands unescaped in the email's `href`.
+  - **"Ready for pickup" email.** **Email Ready for Pickup** on a draft Pickup at shop note emails the
+    customer contact once every unit on it has passed its test (the gate's own check; the server
+    refuses otherwise). The note is submitted when they collect. The email lists each product and
+    serial number, the order and the customer's PO, and Product Build Settings' new **Pickup
+    Instructions**. Left empty, it asks the customer to reply to arrange a time.
+  - **"Shipped" email.** Submitting a Carrier shipping note emails the customer contact the carrier,
+    tracking number, ship date, a **TRACK YOUR PACKAGE** button (with the copy-this-link fallback),
+    and each product and serial. **Resend Shipped Email** sends it again, and **Email the Customer When
+    It Ships** (on) switches it off. A missing address or a failure says so in an orange message and
+    never undoes the submit.
+  - **Only for products.** Both emails tell the customer the order passed its pre-shipment test and
+    carries the one-year warranty, so they go only for a note that ships a configured product (the QC
+    gate's own rows). A Carrier shipping note of anything else gets its tracking link and sends nothing.
+  - Both emails go through the shared shell (`templates/emails/product_fulfillment/`, tagline on, no
+    pillar) and are queued in Email Queue, which is in the database, so a deploy's FLUSHDB cannot lose
+    one. A comment on the note records who was emailed. The address is the note's contact email, else
+    its contact's, else the customer's. Both are in the email inventory.
+  - **Carrier Status** on a submitted FedEx or UPS shipment asks the carrier through Carrier
+    Tracking's client, when that feature is switched on. Nothing is stored. The endpoint takes GET
+    only.
+  - **Sapphire delivery** needs a **Delivery Date** and **Delivered By** (a user). The note is assigned
+    to that person, on that date, as soon as it is saved (once; a ToDo they see in My Work).
+- Tests: `test_product_fulfillment_shipping` (42) in CI, its own process. It covers the rules, the two
+  email bodies rendered from the repo under plain Jinja (the tracking button, no button without a
+  link, customer values escaped), the fixtures, and the hooks on a frappe stub.
+
+### Fixed
+
+- **Product Build Settings defaults are backfilled.** A patch, also on `after_migrate`, writes each
+  declared default only where `tabSingles` has no row. Without it, a settings page saved before this
+  release would show **Email the Customer When It Ships** unticked, and the next save would switch the
+  Shipped email off. The patch never writes over a stored value, and the settings JSON's `modified`
+  is moved forward so the importer takes the new fields.
+
+### Notes
+
+- **To set on prod:** tick **Is Transporter** on the carrier Suppliers (none is ticked on prod today),
+  or ERPNext's own Carrier field will not offer them. Optionally, fill in Pickup Instructions.
+
 ## [1.828.0] - 2026-11-19
 
 ### Added

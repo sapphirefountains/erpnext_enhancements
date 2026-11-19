@@ -1,0 +1,54 @@
+{
+ "actions": [],
+ "creation": "2026-11-18 18:00:00.000000",
+ "description": "Which carrier a transporter Supplier is, and its tracking page, for the Shipped email's link.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "transporter",
+  "carrier",
+  "tracking_url"
+ ],
+ "fields": [
+  {
+   "columns": 4,
+   "fieldname": "transporter",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Carrier (Supplier)",
+   "options": "Supplier",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "default": "Other",
+   "fieldname": "carrier",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Which Carrier",
+   "options": "UPS\nFedEx\nUSPS\nDHL\nOther",
+   "reqd": 1
+  },
+  {
+   "columns": 4,
+   "description": "Optional. The carrier's public tracking page as a link with {number} where the tracking number goes. Empty: the built-in page for UPS, FedEx, USPS and DHL; none for Other.",
+   "fieldname": "tracking_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Tracking Page"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-18 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Fulfillment",
+ "name": "Product Carrier",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
