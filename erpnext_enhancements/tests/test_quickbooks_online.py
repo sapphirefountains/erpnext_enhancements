@@ -3090,9 +3090,9 @@ def test_job_number_reads_the_service_and_events_prefixes():
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core.mapping import _job_number
 
-	assert _job_number("SRV-00012 Viviano - Winterize") == ("SRV", "12")
-	assert _job_number("srv12 Viviano") == ("SRV", "12")
-	assert _job_number("EVT-3 - CHG Christmas Party") == ("EVT", "3")
+	assert _job_number("SRV-00012 Riverton Splash Pad - Winterize") == ("SRV", "12")
+	assert _job_number("srv12 Riverton") == ("SRV", "12")
+	assert _job_number("EVT-3 - Holiday Party") == ("EVT", "3")
 	# The words themselves are not numbers.
 	assert _job_number("Service call - Riverton") is None
 	assert _job_number("Events 2026") is None
@@ -3120,8 +3120,8 @@ def test_strip_prj_prefix_handles_every_format():
 	assert strip_prj_prefix("") == ""
 	assert strip_prj_prefix(None) is None
 	# v1.831.0: a Service or Events job number leads a job's name the same way.
-	assert strip_prj_prefix("SRV-12 - Viviano at Riverton") == "Viviano at Riverton"
-	assert strip_prj_prefix("EVT-00003 CHG Christmas Party") == "CHG Christmas Party"
+	assert strip_prj_prefix("SRV-12 - Riverton Splash Pad") == "Riverton Splash Pad"
+	assert strip_prj_prefix("EVT-00003 Holiday Party") == "Holiday Party"
 	assert strip_prj_prefix("Service Call - Riverton") == "Service Call - Riverton"
 	assert strip_prj_prefix("Events Center Fountain") == "Events Center Fountain"
 
@@ -3346,7 +3346,7 @@ def test_match_project_links_a_service_job_by_its_srv_number(monkeypatch):
 
 	match = find_existing_match(
 		"Customer",
-		{"Id": "3001", "DisplayName": "SRV-12 Viviano - Winterize", "Job": True, "ParentRef": {"value": "1225"}},
+		{"Id": "3001", "DisplayName": "SRV-12 Riverton Splash Pad - Winterize", "Job": True, "ParentRef": {"value": "1225"}},
 		types.SimpleNamespace(company="Sapphire Fountains"),
 	)
 

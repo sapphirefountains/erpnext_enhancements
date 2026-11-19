@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with the digits. The match pattern carries the prefix, so "SRV-12" can't link PRJ-00012.
   - **QuickBooks titles.** `strip_prj_prefix` and the title remediation's prefilter now strip SRV-
     and EVT- numbers too, from one shared `JOB_PREFIXES` list.
-  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Viviano"
-    now matches "Viviano" the way "PRJ-00012 Viviano" does. "Service" and "Events" are never taken
+  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Riverton Splash Pad"
+    now matches "Riverton Splash Pad" the way a PRJ- folder does. "Service" and "Events" are never taken
     for a job number.
   - **Desk search** gains the aliases SRV, SERVICE, EVT, EVENT and EVENTS.
   - **The Time Kiosk's project picker** placeholder now reads "Search project name or number". The

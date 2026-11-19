@@ -27,8 +27,8 @@ class TestNormalize(unittest.TestCase):
 
 	def test_strips_service_and_events_job_numbers(self):
 		"""v1.831.0: new Service and Events jobs are SRV-##### and EVT-#####; their folders lead with it."""
-		self.assertEqual(dm.normalize("SRV-00012 - Viviano at Riverton"), "viviano at riverton")
-		self.assertEqual(dm.normalize("EVT-00003 CHG Christmas Party"), "chg christmas party")
+		self.assertEqual(dm.normalize("SRV-00012 - Riverton Splash Pad"), "riverton splash pad")
+		self.assertEqual(dm.normalize("EVT-00003 Holiday Party Rain Curtain"), "holiday party rain curtain")
 		# The words themselves are never taken for an id.
 		self.assertEqual(dm.normalize("Service Call 2026"), "service call 2026")
 		self.assertEqual(dm.normalize("Events Center"), "events center")
