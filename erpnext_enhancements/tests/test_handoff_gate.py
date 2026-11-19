@@ -673,6 +673,138 @@ class TestServiceCallDeals(unittest.TestCase):
 		self.assertEqual(doc.custom_handoff_gate_applies, 1)
 
 
+class TestProductSaleTick(unittest.TestCase):
+	"""Product Sale (No Project), v1.827.0: the button and a tick on the form move the hand-off gate
+	the same way. Behavioural, because a grep of the source passed while every call raised: the
+	endpoint's parameter was named ``product_sale`` and shadowed the module it reads ``MARKER`` from.
+	"""
+
+	MARKER = "custom_product_sale"
+
+	def setUp(self):
+		_reset()
+		STATE["columns"].add(self.MARKER)
+		self.writes = []
+		self.tagged = []
+		self.agree = True
+		frappe = sys.modules["frappe"]
+		self.saved = (frappe.db.set_value, handoff._tag_products_stream, handoff.product_sale)
+		frappe.db.set_value = lambda doctype, name, values, *a, **k: self.writes.append(
+			(doctype, name, values)
+		)
+		handoff._tag_products_stream = lambda opportunity: self.tagged.append(opportunity)
+		rules = types.SimpleNamespace(
+			MARKER=self.MARKER,
+			documents_agree=lambda opportunity: self.agree,
+			is_product_sale_doc=lambda doc: self.agree and bool(doc.get(self.MARKER)),
+			deal_state=lambda opportunity: {"opportunity": opportunity, "state": "read back"},
+		)
+		handoff.product_sale = rules
+
+	def tearDown(self):
+		frappe = sys.modules["frappe"]
+		frappe.db.set_value, handoff._tag_products_stream, handoff.product_sale = self.saved
+
+	def test_ticking_a_won_deal_lifts_the_gate_tags_products_and_reports_back(self):
+		for ticked in (1, "1"):
+			with self.subTest(ticked=ticked):
+				self.writes.clear()
+				name = _opportunity(custom_handoff_due_by=NOW)
+				result = handoff.mark_product_sale(name, ticked=ticked)
+				self.assertEqual(
+					self.writes,
+					[
+						# The deadline stamped at the win stays: the record that the gate applied.
+						("Opportunity", name, {self.MARKER: 1, "custom_handoff_gate_applies": 0})
+					],
+				)
+				self.assertEqual(result, {"opportunity": name, "state": "read back"})
+		self.assertEqual(self.tagged, [name, name])
+
+	def test_a_tick_the_linked_quotes_contradict_leaves_the_gate_alone(self):
+		self.agree = False
+		name = _opportunity()
+		handoff.mark_product_sale(name, ticked=1)
+		self.assertEqual(self.writes, [("Opportunity", name, {self.MARKER: 1})])
+
+	def test_unticking_brings_back_the_gate_the_tick_lifted(self):
+		name = _opportunity(custom_handoff_gate_applies=0, custom_handoff_due_by=NOW, custom_product_sale=1)
+		handoff.mark_product_sale(name, ticked=0)
+		self.assertEqual(
+			self.writes, [("Opportunity", name, {self.MARKER: 0, "custom_handoff_gate_applies": 1})]
+		)
+		self.assertEqual(self.tagged, [])
+
+	def test_unticking_never_gates_a_deal_the_win_did_not_gate(self):
+		"""A Service Call's deal, or one won before the gate shipped: stamp_handoff_gate gave it no
+		deadline, so a tick and an untick leave it as exempt as it was."""
+		name = _opportunity(custom_handoff_gate_applies=0, custom_handoff_due_by=None, custom_product_sale=1)
+		handoff.mark_product_sale(name, ticked=0)
+		self.assertEqual(self.writes, [("Opportunity", name, {self.MARKER: 0})])
+
+	def test_a_deal_not_yet_won_or_already_handed_off_keeps_its_gate(self):
+		for fields in (
+			{"status": "Negotiation/Review"},
+			{"custom_created_project": "PRJ-1"},
+			{"custom_handoff_meeting_held": 1},
+		):
+			with self.subTest(fields=fields):
+				self.writes.clear()
+				name = _opportunity(**fields)
+				handoff.mark_product_sale(name, ticked=1)
+				self.assertEqual(self.writes, [("Opportunity", name, {self.MARKER: 1})])
+
+	def test_someone_who_may_not_change_the_deal_is_refused_in_words(self):
+		frappe = sys.modules["frappe"]
+		saved = frappe.has_permission
+		frappe.has_permission = lambda doctype, ptype="read", doc=None: ptype != "write"
+		try:
+			name = _opportunity()
+			with self.assertRaises(StubPermissionError):
+				handoff.mark_product_sale(name, ticked=1)
+		finally:
+			frappe.has_permission = saved
+		self.assertEqual(self.writes, [])
+
+	def _form(self, ticked, was, **fields):
+		status = fields.pop("status", "Closed Won")
+		doc = _StubDoc("CRM-OPP-0001", status=status, **{self.MARKER: ticked}, **fields)
+		doc.status = doc.get("status")
+		doc.meta = types.SimpleNamespace(get_field=lambda f: object())
+		doc.get_doc_before_save = lambda: _StubDoc("CRM-OPP-0001", **{self.MARKER: was})
+		return doc
+
+	def test_a_tick_on_the_form_lifts_the_gate_as_the_button_does(self):
+		doc = self._form(1, 0, custom_handoff_gate_applies=1, custom_handoff_due_by=NOW)
+		handoff.follow_product_sale_tick(doc)
+		self.assertEqual(doc.custom_handoff_gate_applies, 0)
+		self.assertNotIn("custom_handoff_due_by", doc.__dict__)  # the win's deadline is kept
+
+	def test_an_untick_on_the_form_brings_back_the_gate_the_tick_lifted(self):
+		doc = self._form(0, 1, custom_handoff_gate_applies=0, custom_handoff_due_by=NOW)
+		handoff.follow_product_sale_tick(doc)
+		self.assertEqual(doc.custom_handoff_gate_applies, 1)
+
+	def test_an_untick_on_the_form_leaves_an_exempt_deal_ungated(self):
+		doc = self._form(0, 1, custom_handoff_gate_applies=0, custom_handoff_due_by=None)
+		handoff.follow_product_sale_tick(doc)
+		self.assertNotIn("custom_handoff_gate_applies", doc.__dict__)
+
+	def test_a_save_that_does_not_change_the_tick_changes_nothing(self):
+		doc = self._form(1, 1, custom_handoff_gate_applies=1)
+		handoff.follow_product_sale_tick(doc)
+		self.assertNotIn("custom_handoff_gate_applies", doc.__dict__)  # nothing set on the doc
+		doc = self._form(1, 0, custom_handoff_gate_applies=1)
+		self.agree = False  # ticked, but a linked quote disagrees: a job keeps its gate
+		handoff.follow_product_sale_tick(doc)
+		self.assertNotIn("custom_handoff_gate_applies", doc.__dict__)
+
+	def test_the_form_hook_never_raises(self):
+		doc = self._form(1, 0)
+		doc.meta = None
+		handoff.follow_product_sale_tick(doc)  # logged nowhere, raised nowhere
+
+
 # ---------------------------------------------------------------------------
 # Attendee resolution
 # ---------------------------------------------------------------------------

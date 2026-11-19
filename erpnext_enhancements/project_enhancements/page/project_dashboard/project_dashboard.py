@@ -1814,6 +1814,24 @@ def _item_has_source_configuration():
 		return False
 
 
+def _quote_deal_select():
+	"""The SELECT expression for the deal a quotation belongs to (v1.827.0, quote to order).
+
+	Configurator quotes name their deal in ``custom_source_opportunity`` and leave ERPNext's own
+	``opportunity`` empty on purpose (a quote linked ERPNext's way drives the deal's status and, once
+	ordered, freezes it), so the deal is that field, else ``opportunity`` (ERPNext's own Create >
+	Quotation). product_configurator/setup.py adds the field in after_migrate, so a site can lack it
+	for a while, and has_column raises on an unknown table rather than answering False.
+	"""
+	try:
+		has_source = bool(frappe.db.has_column("Quotation", "custom_source_opportunity"))
+	except Exception:
+		has_source = False
+	if not has_source:
+		return "q.opportunity"
+	return "COALESCE(NULLIF(q.custom_source_opportunity, ''), q.opportunity)"
+
+
 def _product_match(item_alias, line_alias, source_column):
 	"""The SELECT expression for an Item's provenance and the WHERE prefilter for product lines."""
 	code_match = f"{line_alias}.item_code LIKE %(pdt)s"
@@ -2071,7 +2089,7 @@ def _product_quotations(today, source_column):
 	headers = frappe.db.sql(
 		f"""
 		SELECT q.name, q.quotation_to, q.party_name, q.customer_name, q.transaction_date,
-			q.valid_till, q.status, q.docstatus, q.currency, q.opportunity
+			q.valid_till, q.status, q.docstatus, q.currency, {_quote_deal_select()} AS opportunity
 		FROM `tabQuotation` q
 		WHERE q.docstatus < 2
 			AND (
@@ -2143,13 +2161,15 @@ def _product_quotations(today, source_column):
 
 
 def _product_opportunities(open_quotes):
-	"""Open Opportunities that an open product quotation names (``Quotation.opportunity``).
+	"""Open Opportunities that an open product quotation names: its ``custom_source_opportunity``
+	(how quote to order links a configurator quote), else ERPNext's ``Quotation.opportunity``
+	(``_quote_deal_select``).
 
 	Not the Products value stream: on prod the E-Stop deals carry Design + Build + Products and the
 	control-panel jobs carry Products too, and quote to order tags mixed deals with it, so the
 	stream says nothing about what was sold. A deal is a product deal through its quotes, judged by
 	the shared rule. None of prod's 705 Quotations names an Opportunity yet (the QuickBooks mapper
-	never set it), so this is empty until quote to order (#1465) makes linked quotes.
+	never set either field), so this is empty until quote to order (#1465) makes linked quotes.
 	"""
 	by_opportunity = {}
 	for quote in open_quotes or ():

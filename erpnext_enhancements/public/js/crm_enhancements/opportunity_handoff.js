@@ -48,6 +48,13 @@
  *    from hand-off warnings. Its buttons stay, all plain (none primary), so a
  *    deal behind a closed gate can still book or skip the meeting and then
  *    create its project.
+ *  - A product sale (v1.827.0, `is_product_sale` from handoff_state; see
+ *    crm_enhancements/product_sale.py: a person ticked Product Sale (No Project) and
+ *    nothing else is on the deal's linked quotes) with no Project reads the same quiet
+ *    way, "Not needed (product sale)". Its one button is the escape, Create Project
+ *    Anyway, which unticks it and creates the project. A deal the configurator only
+ *    suggests is a product sale keeps every button and adds "Product Sale, No
+ *    Project"; a ticked deal whose quotes say otherwise is a job and says so.
  *
  * Step 2's box also carries the booked meeting (1.733.0): its Google Meet link and
  * a "Guests & RSVPs" toggle that reads each guest's answer from Google on a click
@@ -177,6 +184,11 @@
 			// Pre-ERPNext and untouched for 90 days (crm_enhancements/historical.py).
 			// Reported on both branches of handoff_state; the doc is the fallback.
 			historical: !!(state && "is_historical" in s ? s.is_historical : frm.doc.custom_is_historical),
+			// v1.827.0: a product sale gets no hand-off and no project (crm_enhancements/product_sale.py).
+			// Known only from the server; without it the tab reads as it always did.
+			product_sale: !!s.is_product_sale,
+			product_suggested: !!s.product_sale_suggested,
+			product_conflict: !!s.product_sale_conflict,
 			// Creating the project needs write on the Opportunity (v1.749.0): doc-aware, as the server checks.
 			can_write: !!frappe.perm.has_perm(frm.doctype, 0, "write", frm.doc),
 		};
@@ -216,8 +228,9 @@
 
 		// A historical deal is not waiting on a hand-off, so neither step 2 nor
 		// step 3 is "next" and nothing reads Ready or OVERDUE.
-		const quiet = f.historical && f.won && !project_created;
-		if (quiet && !f.held) handoff_meta = __("Not tracked (historical)");
+		const quiet = (f.historical || f.product_sale) && f.won && !project_created;
+		const quiet_text = f.product_sale ? __("Not needed (product sale)") : __("Not tracked (historical)");
+		if (quiet && !f.held) handoff_meta = quiet_text;
 
 		// The gate, shown rather than merely enforced, so the order is visible
 		// before somebody hits a server error.
@@ -226,7 +239,7 @@
 		if (project_created) {
 			create_meta = __("Done");
 		} else if (quiet) {
-			create_meta = __("Not tracked (historical)");
+			create_meta = quiet_text;
 		} else if (f.won && !unblocked) {
 			create_meta = __("Blocked until the hand-off meeting is booked");
 		} else if (f.won) {
@@ -273,7 +286,16 @@
 		if (!f.won) return "";
 		let cls = "orange";
 		let text;
-		if (f.historical && !f.project) {
+		if (f.product_sale && !f.project) {
+			cls = "muted";
+			text = __(
+				"Product sale: no hand-off meeting and no project. Its Sales Order is the record. If it needs a project after all, use Create Project Anyway."
+			);
+		} else if (f.product_conflict && !f.project) {
+			text = __(
+				"Ticked as a product sale, but a quote on this deal has other lines on it, so it is treated as a job and needs its project."
+			);
+		} else if (f.historical && !f.project) {
 			cls = "muted";
 			text = __("Historical (pre-ERPNext) — excluded from hand-off warnings.");
 		} else if (f.held && f.skip_reason) {
@@ -319,51 +341,63 @@
 
 	function step_buttons(f) {
 		const by_step = {};
+		// Not won yet: nothing to do. A historical deal never exits here.
 		if (!f.won) return by_step;
 		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
 
-		// Historical (pre-ERPNext, untouched for 90 days): the same buttons, but
-		// none of them primary — nothing is "next" on a deal excluded from hand-off
-		// warnings. Every path stays offered, because "excluded from warnings" must
-		// not mean "stranded": a deal whose gate is closed can still book (or, for a
-		// System Manager, skip) the meeting that opens it, then create its project.
-		const lead = f.historical && !f.project ? "default" : "primary";
+		// v1.827.0, a product sale with no Project: nothing to book, and the one button is the
+		// escape, which unticks Product Sale and creates the project (enqueue_project_creation's
+		// create_anyway). Someone who may only read the deal gets none (the server refuses them).
+		if (f.product_sale && !f.project) {
+			if (f.can_write) at(STEP_PROJECT, button("anyway", __("Create Project Anyway"), "default"));
+		} else {
+			// The configurator suggests a product sale: offered, never assumed, beside the usual steps.
+			if (f.product_suggested && !f.project && f.can_write) {
+				at(STEP_PROJECT, button("mark_product", __("Product Sale, No Project"), "default"));
+			}
 
-		// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
-		// can be offered together, and then this one still leads — one primary
-		// button, pointing at the step the process actually wants next.
-		const booking_first = !f.held && !f.scheduled;
-		// The booked meeting itself, above its buttons: Meet link and RSVPs.
-		if (!f.held && f.scheduled && f.meeting) {
-			const meeting = erpnext_enhancements.handoff_meeting_dialog.meeting_html(f.meeting);
-			if (meeting) at(STEP_MEETING, meeting);
-		}
-		if (booking_first) {
-			at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), lead));
-		}
-		// Offered strictly on the server's own predicate, so the tab can never
-		// show a button whose insert is guaranteed to be refused.
-		// Nor to someone who may only read the deal: the server refuses them (enqueue_project_creation).
-		if (!f.project && f.can_write && (f.gate_open || !f.gate_applies)) {
-			at(
-				STEP_PROJECT,
-				button("create", __("Create Project in PM System"), booking_first ? "default" : lead)
-			);
-		}
-		// Secondary on purpose: closing step 2 is bookkeeping the process needs,
-		// not the thing standing between the user and their project.
-		if (!f.held && (f.scheduled || !f.gate_applies)) {
-			at(STEP_MEETING, button("finish", __("Hand-Off Meeting Finished"), "default"));
-		}
-		// A meeting that moved is a normal thing to happen, just no longer the
-		// primary action once one is on the calendar.
-		if (!f.held && f.scheduled) {
-			at(STEP_MEETING, button("reschedule", __("Re-schedule Meeting"), "default"));
-		}
-		if (!f.held && f.gate_applies && f.can_skip) {
-			at(STEP_MEETING, button("skip", __("Skip Hand-Off"), "default"));
-		}
+			// Historical (pre-ERPNext, untouched for 90 days): the same buttons, but
+			// none of them primary — nothing is "next" on a deal excluded from hand-off
+			// warnings. Every path stays offered, because "excluded from warnings" must
+			// not mean "stranded": a deal whose gate is closed can still book (or, for a
+			// System Manager, skip) the meeting that opens it, then create its project.
+			const lead = f.historical && !f.project ? "default" : "primary";
 
+			// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
+			// can be offered together, and then this one still leads — one primary
+			// button, pointing at the step the process actually wants next.
+			const booking_first = !f.held && !f.scheduled;
+			// The booked meeting itself, above its buttons: Meet link and RSVPs.
+			if (!f.held && f.scheduled && f.meeting) {
+				const meeting = erpnext_enhancements.handoff_meeting_dialog.meeting_html(f.meeting);
+				if (meeting) at(STEP_MEETING, meeting);
+			}
+			if (booking_first) {
+				at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), lead));
+			}
+			// Offered strictly on the server's own predicate, so the tab can never
+			// show a button whose insert is guaranteed to be refused.
+			// Nor to someone who may only read the deal: the server refuses them (enqueue_project_creation).
+			if (!f.project && f.can_write && (f.gate_open || !f.gate_applies)) {
+				at(
+					STEP_PROJECT,
+					button("create", __("Create Project in PM System"), booking_first ? "default" : lead)
+				);
+			}
+			// Secondary on purpose: closing step 2 is bookkeeping the process needs,
+			// not the thing standing between the user and their project.
+			if (!f.held && (f.scheduled || !f.gate_applies)) {
+				at(STEP_MEETING, button("finish", __("Hand-Off Meeting Finished"), "default"));
+			}
+			// A meeting that moved is a normal thing to happen, just no longer the
+			// primary action once one is on the calendar.
+			if (!f.held && f.scheduled) {
+				at(STEP_MEETING, button("reschedule", __("Re-schedule Meeting"), "default"));
+			}
+			if (!f.held && f.gate_applies && f.can_skip) {
+				at(STEP_MEETING, button("skip", __("Skip Hand-Off"), "default"));
+			}
+		}
 		return by_step;
 	}
 
@@ -376,6 +410,39 @@
 
 	// The dialog shows the creation's progress and reloads this form when the project exists
 	// (create_project_prompt.js, v1.749.0), so there is no on_success reload here.
+	// v1.827.0, the escape: a deal ticked Product Sale (No Project) gets its project after all. The
+	// server unticks it in the same request that queues the creation (enqueue_project_creation).
+	function create_project_anyway(frm) {
+		// Saved first, as create_project below does: the job saves this opportunity too.
+		if (frm.is_dirty()) {
+			frappe.msgprint(__("Save your changes to this opportunity first."));
+			return;
+		}
+		frappe.confirm(
+			__(
+				"This deal is marked a product sale. Create its project anyway? Product Sale (No Project) is unticked and the usual project creation starts."
+			),
+			() => erpnext_enhancements.crm.open_create_project_dialog(frm.doc.name, { frm: frm, create_anyway: true })
+		);
+	}
+
+	// v1.827.0: the person's answer to the configurator's suggestion (handoff.mark_product_sale).
+	function mark_product_sale(frm) {
+		if (frm.is_dirty()) {
+			frappe.msgprint(__("Save your changes to this opportunity first."));
+			return;
+		}
+		frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.mark_product_sale", {
+				opportunity: frm.doc.name,
+				ticked: 1,
+			})
+			.then(() => {
+				frappe.show_alert({ message: __("Marked a product sale: no project."), indicator: "blue" });
+				frm.reload_doc();
+			});
+	}
+
 	function create_project(frm) {
 		// The job saves this opportunity when it links the project, so edits not saved yet
 		// would then be refused by a save, and lost by the reload. Saved first, on purpose.
@@ -454,6 +521,8 @@
 		create: create_project,
 		finish: mark_complete,
 		skip: skip_handoff,
+		anyway: create_project_anyway,
+		mark_product: mark_product_sale,
 	};
 
 	function bind(frm, field) {
@@ -536,7 +605,7 @@
 				// audit found 17 of 17 meetings silently past SLA, and a warning
 				// only visible to somebody who already went looking is the failure
 				// mode, not the fix.
-				if (f.overdue && !f.held && !f.historical) {
+				if (f.overdue && !f.held && !f.historical && !(f.product_sale && !f.project)) {
 					frm.dashboard.add_comment(
 						__("Hand-off meeting is OVERDUE (due {0}). {1}", [
 							when(f.due_by),

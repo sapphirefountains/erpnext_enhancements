@@ -71,6 +71,7 @@ class Site:
 		self.tables = {}
 		self.readable = set(READABLE)
 		self.has_source_column = True
+		self.has_quote_source_column = True  # Quotation.custom_source_opportunity (quote to order)
 		self.queries = []
 		self.get_all_calls = []
 		self.errors = []
@@ -113,6 +114,12 @@ def _sql(query, values=None, as_dict=False, **_kwargs):
 		if phrase in query:
 			if SITE.raise_on == key:
 				raise RuntimeError("boom: " + key)
+			if key == "quote_headers" and "COALESCE(NULLIF(q.custom_source_opportunity" in query:
+				# What the SELECT asks for: the configurator's link, else ERPNext's own.
+				return [
+					_Dict(row, opportunity=row.get("custom_source_opportunity") or row.get("opportunity"))
+					for row in SITE.rows(key)
+				]
 			if key == "on_hand":
 				return [
 					_Dict(item_code=code, qty=qty) for code, qty in SITE.tables.get("on_hand", {}).items()
@@ -126,6 +133,8 @@ def _has_column(doctype, column):
 		raise Exception("TableMissingError: tab" + doctype)  # has_column takes a doctype
 	if (doctype, column) == ("Item", "custom_source_configuration"):
 		return SITE.has_source_column
+	if (doctype, column) == ("Quotation", "custom_source_opportunity"):
+		return SITE.has_quote_source_column
 	return True
 
 
@@ -288,6 +297,7 @@ def quote(
 	transaction_date=date(2026, 11, 17),
 	valid_till=None,
 	opportunity=None,
+	source_opportunity=None,
 ):
 	return {
 		"name": name,
@@ -300,6 +310,7 @@ def quote(
 		"docstatus": docstatus,
 		"currency": "USD",
 		"opportunity": opportunity,
+		"custom_source_opportunity": source_opportunity,
 	}
 
 
@@ -754,6 +765,24 @@ class TestThePipeline(Base):
 		self.assertEqual(rows[0]["quotations"], ["QTN-1"])
 		self.assertEqual(rows[0]["product_amount"], 2200)
 		self.assertEqual(rows[0]["lines"], ["E-Stops"])
+
+	def test_a_configurator_quote_brings_its_deal_through_its_own_link(self):
+		"""Quote to order (#1465) names the deal in custom_source_opportunity and leaves ERPNext's
+		opportunity empty, so a deal quoted through the configurator must still show."""
+		SITE.tables["quote_headers"][0] = quote("QTN-1", source_opportunity="CRM-OPP-1")
+		rows = self.answer()["pipeline"]["opportunities"]["rows"]
+		self.assertEqual([o["name"] for o in rows], ["CRM-OPP-1"])
+		self.assertEqual(rows[0]["quotations"], ["QTN-1"])
+		query = next(q for q in SITE.queries if "FROM `tabQuotation` q" in q)
+		self.assertIn(
+			"COALESCE(NULLIF(q.custom_source_opportunity, ''), q.opportunity) AS opportunity", query
+		)
+
+	def test_a_site_without_the_link_column_never_names_it(self):
+		SITE.has_quote_source_column = False
+		rows = self.answer()["pipeline"]["opportunities"]["rows"]
+		self.assertEqual([o["name"] for o in rows], ["CRM-OPP-1"])  # ERPNext's own link still works
+		self.assertFalse(any("custom_source_opportunity" in q for q in SITE.queries))
 
 	def test_no_query_reads_the_products_value_stream(self):
 		self.answer()

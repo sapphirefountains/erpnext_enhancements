@@ -12,6 +12,9 @@
  *   contract_types(doctype)                 contracts.js's "Generate Contract": the agreements a
  *   can_generate_contract(doctype)          record of this DocType generates, and whether the suite
  *   open_generate_contract(doctype, name)   is on; then its dialog
+ *   can_quote_product(doctype, values)      v1.827.0, the Opportunity's "Quote <product>": whether
+ *   quote_product_label()                   it is offered, what it is called, and the start of a
+ *   open_quote_product(opportunity)         Product Configuration for the deal (opened when made)
  *
  * erpnext_enhancements.bundle.js installs them as erpnext_enhancements.record_actions for the form
  * scripts (which cannot import); the guided page's bundle imports them. Each function returns the
@@ -20,6 +23,7 @@
  */
 
 const CONTRACT_METHODS = "erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract";
+const CONFIGURATOR_API = "erpnext_enhancements.product_configurator.api.configurator.";
 
 // ------------------------------------------------------------------ Drive folder
 
@@ -280,6 +284,79 @@ function generate_contract_dialog(source_doctype, source_name, types) {
 		d.set_df_property("supplier", "hidden", 1);
 		d.set_df_property("supplier", "mandatory_depends_on", "");
 	}
+	d.show();
+	return d;
+}
+
+// ------------------------------------------------------------------ Quote a product (v1.827.0)
+
+// The Opportunity's "Quote <product>" (decision 2026-11-18: a sale starts from the deal). It makes a
+// Product Configuration for the deal, with its Account or Lead and the deal filled in, and opens it;
+// the configuration's own "Create Quotation" is the next step. Offered on a deal that is not Lost,
+// while the configurator is on and has a product (frappe.boot.ee_configurable_products, a boot list
+// so the label is right on first paint). Not narrowed to people holding the Product Engineer role:
+// the server refuses everyone else in plain words, which tells them what to ask for, where a missing
+// button would tell them nothing.
+
+export function quotable_products() {
+	const products = frappe.boot && frappe.boot.ee_configurable_products;
+	return Array.isArray(products) ? products : [];
+}
+
+export function can_quote_product(doctype, values) {
+	if (doctype !== "Opportunity") return false;
+	if (!(frappe.boot && frappe.boot.ee_product_configurator)) return false;
+	if ((values || {}).status === "Lost") return false;
+	return quotable_products().length > 0;
+}
+
+// "Quote STILLWATER E-Stop" while one product is enabled; "Quote a Product" once there are several.
+export function quote_product_label() {
+	const products = quotable_products();
+	if (products.length === 1) return __("Quote {0}", [products[0].product_name || products[0].name]);
+	return __("Quote a Product");
+}
+
+function start_product_configuration(opportunity, product) {
+	return frappe
+		.call({
+			method: CONFIGURATOR_API + "start_configuration",
+			args: { opportunity: opportunity, product: product },
+			freeze: true,
+			freeze_message: __("Starting the configuration…"),
+		})
+		.then((r) => {
+			const made = r && r.message;
+			if (made && made.configuration) frappe.set_route("Form", "Product Configuration", made.configuration);
+		});
+}
+
+// Returns the product choice dialog when there is more than one product, else null (the
+// configuration is started at once and opens on its own).
+export function open_quote_product(opportunity) {
+	const products = quotable_products();
+	if (!opportunity || !products.length) return null;
+	if (products.length === 1) {
+		start_product_configuration(opportunity, products[0].name);
+		return null;
+	}
+	const d = new frappe.ui.Dialog({
+		title: __("Quote a Product"),
+		fields: [
+			{
+				fieldname: "product",
+				fieldtype: "Select",
+				label: __("Product"),
+				reqd: 1,
+				options: products.map((p) => ({ value: p.name, label: p.product_name || p.name })),
+			},
+		],
+		primary_action_label: __("Start"),
+		primary_action(values) {
+			d.hide();
+			start_product_configuration(opportunity, values.product);
+		},
+	});
 	d.show();
 	return d;
 }
