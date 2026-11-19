@@ -35,6 +35,8 @@ import frappe
 from frappe.query_builder.functions import Count
 from frappe.utils import cint, date_diff, nowdate
 
+from erpnext_enhancements.kpi_dashboards import money
+
 CLOSED_TASK_STATUSES = ("Completed", "Canceled", "Cancelled", "Template", "Invoiced")
 
 TOP_PROJECT_LIMIT = 10
@@ -390,13 +392,15 @@ def _wall_kpi_block():
 			if not name:
 				continue
 			doc = frappe.get_doc("KPI Snapshot", name[0])
+			# Money figures (kpi_dashboards/money.py) go only to Accounts Manager and
+			# System Manager, as on every other KPI read.
 			blocks.append(
 				{
 					"department": dept,
 					"snapshot_date": str(doc.snapshot_date),
 					"values": [
 						{"label": v.label, "value_text": v.value_text, "status": v.status, "trend_pct": v.trend_pct}
-						for v in doc.values
+						for v in money.without_money(doc.values)
 					],
 				}
 			)

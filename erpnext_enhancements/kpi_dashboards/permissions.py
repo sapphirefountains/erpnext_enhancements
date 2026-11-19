@@ -23,6 +23,12 @@ departments; this file is the same rule expressed where Frappe enforces reads.
 ``has_permission`` hook can only **restrict** what role DocPerms already grant. It
 can never widen access, so the role rows in ``kpi_snapshot.json`` remain the outer
 bound and this is strictly a narrowing.
+
+**Money figures** (owner decision, 2026-11-19; ``kpi_dashboards/money.py``): the rows a
+caller reads are further narrowed to the figures that caller may be given. A caller
+without Accounts Manager or System Manager reads no money figure, from the child table
+list (``get_value_permission_query_conditions``) or from a snapshot document
+(``KPISnapshot.apply_fieldlevel_read_permissions``).
 """
 
 import frappe
@@ -69,3 +75,13 @@ def has_permission(doc, ptype=None, user=None):
 	if visible is None:
 		return True
 	return getattr(doc, "department", None) in visible
+
+
+def get_value_permission_query_conditions(user=None):
+	"""SQL for a list of KPI Snapshot Value rows: no money figure unless the caller may see one."""
+	from erpnext_enhancements.kpi_dashboards import money
+
+	if money.can_see_money():
+		return ""
+	quoted = ", ".join(frappe.db.escape(key) for key in sorted(money.MONEY_KPIS))
+	return f"`tabKPI Snapshot Value`.`kpi_key` NOT IN ({quoted})"

@@ -23,6 +23,7 @@ from frappe.utils import add_days, flt, getdate, now_datetime, nowdate, time_dif
 from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
 from erpnext_enhancements.crm_enhancements.historical import exclude_filter_dict
 from erpnext_enhancements.crm_enhancements.lead_triage import LEAD_CLOSED_STATUSES, RESPONSE_EXISTS_SQL
+from erpnext_enhancements.kpi_dashboards import money
 
 ROW_LIMIT = 20
 
@@ -149,7 +150,8 @@ def get_stalled_deals():
 		}
 		for r in rows
 	]
-	return {"deals": deals, "threshold_days": STALLED_DAYS}
+	# The amount column is a money figure: only Accounts Manager and System Manager get it.
+	return {"deals": money.drop_worklist_amounts(deals), "threshold_days": STALLED_DAYS}
 
 
 @frappe.whitelist()
@@ -204,7 +206,7 @@ def get_handoff_backlog():
 				"waiting_days": _days_since(won_on),
 			}
 		)
-	return {"deals": deals}
+	return {"deals": money.drop_worklist_amounts(deals)}
 
 
 @frappe.whitelist()
@@ -247,4 +249,4 @@ def get_renewal_radar():
 		}
 		for r in rows
 	]
-	return {"contracts": contracts, "horizon_days": RENEWAL_HORIZON_DAYS}
+	return {"contracts": money.drop_worklist_amounts(contracts), "horizon_days": RENEWAL_HORIZON_DAYS}

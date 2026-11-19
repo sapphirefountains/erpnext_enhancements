@@ -16,4 +16,12 @@ from frappe.model.document import Document
 
 
 class KPISnapshot(Document):
-	pass
+	def apply_fieldlevel_read_permissions(self):
+		"""Every document read (desk form, ``/api/resource``, ``frappe.client.get``) ends here.
+		A caller without Accounts Manager or System Manager reads the snapshot without its
+		money figures (``kpi_dashboards/money.py``)."""
+		super().apply_fieldlevel_read_permissions()
+		from erpnext_enhancements.kpi_dashboards import money
+
+		if not money.can_see_money():
+			self.values = money.without_money(self.values)

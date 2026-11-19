@@ -3647,6 +3647,10 @@ permission_query_conditions = {
 	# department. api/kpi.py::_can_view decides which; this enforces it where Frappe
 	# actually checks reads.
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.get_permission_query_conditions",
+	# KPI Snapshot Value: the same rule one level down. Money figures (kpi_dashboards/money.py)
+	# are listed only for Accounts Manager and System Manager; the snapshot document read
+	# applies the same filter in KPISnapshot.apply_fieldlevel_read_permissions.
+	"KPI Snapshot Value": "erpnext_enhancements.kpi_dashboards.permissions.get_value_permission_query_conditions",
 	# Training Assignment: a learner sees only their own; a supervisor also sees
 	# their direct reports (Employee.reports_to), which is what makes the sign-off
 	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
