@@ -20,6 +20,13 @@ tools (``assistant_tools/remote_*``) call ``execute_device_action``. It:
    on the device's timeline (who asked, and when) before anything is sent;
 5. notifies Device Managers on a wipe, a lock, a locate or a failure.
 
+A refused or failed action is recorded even though the request ends in an error
+(since v1.832.0). Every caller rolls the transaction back when this raises (see
+:func:`_keep_through_rollback`), which would take the row, the Device Managers'
+notice and a locate's Comment with it, so each of them is written again after
+that rollback and committed by itself. Exactly one of each per attempt, whichever
+path the request takes.
+
 The whitelisted callers enforce the role / human-confirmation; this executor
 additionally requires the acting user to hold a manager role for UI/Assistant
 sources (defense in depth — the AI gate re-runs the tool as the confirming
@@ -28,6 +35,7 @@ human, so the check binds to them).
 
 from __future__ import annotations
 
+import functools
 import json
 
 import frappe
@@ -100,17 +108,17 @@ def execute_device_action(
 		_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
 			f"{doc.name} is not linked to a {key} device yet (run a sync / confirm the discovered device first).")
 
-	# A locate request leaves a record on the device's timeline before anything is sent.
+	# A locate request leaves a record on the device's timeline before anything is sent, and the
+	# record stays when the request then fails and is rolled back.
 	if action == "locate":
+		note = _("Location requested by {0} on {1} via {2}.").format(requested_by, now_datetime(), key)
 		try:
-			doc.add_comment(
-				"Info",
-				_("Location requested by {0} on {1} via {2}.").format(requested_by, now_datetime(), key),
-			)
+			doc.add_comment("Info", note)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Device locate request not recorded")
 			_fail(doc, action, effective_mode, key, source, requested_by, pending_action,
 				f"Could not record the locate request on {doc.name}, so nothing was sent.")
+		_keep_through_rollback(functools.partial(_comment_quietly, doc, note))
 
 	# Dispatch.
 	success, result, error = True, None, None
@@ -122,7 +130,7 @@ def execute_device_action(
 	_write_log(doc, action, effective_mode, key, provider_id, source, requested_by, success, result, error, pending_action)
 
 	if not success:
-		_notify_device_managers(
+		_notify(
 			subject=_("Device action FAILED: {0} on {1}").format(action, doc.device_name or doc.name),
 			message=_("The '{0}' action on {1} failed: {2}").format(action, doc.device_name or doc.name, error),
 			device=doc.name,
@@ -130,7 +138,7 @@ def execute_device_action(
 		frappe.throw(_("Device action '{0}' failed: {1}").format(action, error), MDMProviderError)
 
 	if action in _NOTIFY_ON_SUCCESS:
-		_notify_device_managers(
+		_notify(
 			subject=_("Device {0}: {1}").format(action, doc.device_name or doc.name),
 			message=_("'{0}'{1} completed on {2} via {3}, requested by {4}.").format(
 				action,
@@ -173,32 +181,126 @@ def _dispatch(provider, action, provider_id, mode, script, patch):
 
 
 def _write_log(doc, action, mode, provider, provider_id, source, requested_by, success, result, error, pending_action):
-	"""Append an immutable Device Action Log row (never raises into the caller)."""
+	"""Append an immutable Device Action Log row (never raises into the caller).
+
+	The row is built once and written now, in the caller's transaction, and again if that
+	transaction is rolled back (:func:`_keep_through_rollback`), so a refused or failed action is
+	recorded even though the request ends in an error.
+	"""
 	try:
-		frappe.get_doc(
-			{
-				"doctype": "Device Action Log",
-				"device": doc.name,
-				"action": action,
-				"mode": mode,
-				"provider": provider,
-				"provider_device_id": provider_id,
-				"ownership": doc.ownership,
-				"source": source,
-				"requested_by": requested_by,
-				"timestamp": now_datetime(),
-				"pending_action": pending_action,
-				"success": 1 if success else 0,
-				"result": json.dumps(result, default=str, indent=1) if result is not None else None,
-				"error": (error or "")[:2000] or None,
-			}
-		).insert(ignore_permissions=True)
+		row = {
+			"doctype": "Device Action Log",
+			"device": doc.name,
+			"action": action,
+			"mode": mode,
+			"provider": provider,
+			"provider_device_id": provider_id,
+			"ownership": doc.ownership,
+			"source": source,
+			"requested_by": requested_by,
+			"timestamp": now_datetime(),
+			"pending_action": pending_action,
+			"success": 1 if success else 0,
+			"result": json.dumps(result, default=str, indent=1) if result is not None else None,
+			"error": (error or "")[:2000] or None,
+		}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Device Action Log insert failed")
+		return
+	_write_and_keep(functools.partial(_insert_log, row))
+
+
+def _insert_log(row):
+	try:
+		frappe.get_doc(dict(row)).insert(ignore_permissions=True)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Device Action Log insert failed")
 
 
+def _notify(subject, message, device):
+	"""Notify Device Managers, now and again if the caller's transaction is rolled back."""
+	_write_and_keep(functools.partial(_notify_quietly, subject, message, device))
+
+
+def _notify_quietly(subject, message, device):
+	try:
+		_notify_device_managers(subject=subject, message=message, device=device)
+	except Exception:
+		_log_quietly("Device Manager notification failed")
+
+
+def _comment_quietly(doc, note):
+	try:
+		doc.add_comment("Info", note)
+	except Exception:
+		_log_quietly("Device locate request not recorded")
+
+
+def _log_quietly(title):
+	try:
+		frappe.log_error(frappe.get_traceback(), title)
+	except Exception:
+		pass
+
+
+def _write_and_keep(write):
+	"""Run ``write`` now, in the caller's transaction, and keep it through a rollback of that transaction."""
+	write()
+	_keep_through_rollback(write)
+
+
+def _keep_through_rollback(write):
+	"""Run ``write`` again, and commit it by itself, if the caller's transaction is rolled back.
+
+	Why it is needed: every path into the executor rolls back when it raises.
+	* The form button (``api.remote_action``): frappe v16.56.0 ``frappe/app.py`` lines 156-159
+	  call ``db.rollback(chain=True)`` when the request raises; only a request that returns
+	  reaches ``sync_database``, which commits a POST (lines 161-162 and 445-446).
+	* A confirmed assistant action (``assistant_tools.gating_api._confirm_one``) calls
+	  ``frappe.db.rollback()`` as soon as the tool raises, commits its own Failed outcome, and
+	  then raises, so the request is rolled back again; a batch (``_run_batch``) rolls back
+	  after each failed action as well.
+
+	How: ``frappe.db.after_rollback`` (frappe v16.56.0 ``frappe/database/database.py``). A full
+	``rollback`` runs ``after_rollback`` after the ROLLBACK, in the fresh transaction (lines
+	1215-1229), so ``write`` runs there and nothing the caller had pending is left to be
+	committed with it. ``write`` then queues a commit at the end of the same run
+	(``CallbackManager.run`` pops callbacks until the queue is empty, frappe v16.56.0
+	``frappe/utils/__init__.py`` lines 1161-1165), so the commit comes after every other
+	rollback callback instead of clearing the ones still queued, and the first such commit
+	covers every record this module rewrote.
+
+	Exactly one record per attempt: ``commit`` resets ``after_rollback`` before it commits
+	(``database.py`` lines 1196-1197), so when the first write is committed (a path that does
+	not roll back) this never runs, and ``run`` pops each callback once, so a second rollback
+	does not repeat it. A rollback to a savepoint runs no callbacks (lines 1212-1214); no path
+	into the executor uses one. Nothing here raises: an exception from an ``after_rollback``
+	callback would escape from the caller's ``rollback``.
+	"""
+	try:
+		frappe.db.after_rollback.add(functools.partial(_rewrite_after_rollback, write))
+	except Exception:
+		_log_quietly("Device action record not kept through a rollback")
+
+
+def _rewrite_after_rollback(write):
+	try:
+		write()
+		frappe.db.after_rollback.add(_commit_rewrites)
+	except Exception:
+		_log_quietly("Device action record not rewritten after a rollback")
+
+
+def _commit_rewrites():
+	try:
+		frappe.db.commit()
+	except Exception:
+		_log_quietly("Device action record not committed after a rollback")
+
+
 def _fail(doc, action, mode, provider, source, requested_by, pending_action, message):
 	"""Log a refused/failed action and raise — used for policy violations before
-	any provider call."""
+	any provider call. The row outlives the rollback that follows (``_write_log``); the
+	refusal is still raised."""
 	_write_log(doc, action, mode, provider, doc.get("mdm_provider_device_id"), source, requested_by, False, None, message, pending_action)
 	frappe.throw(message, MDMProviderError)

@@ -26,11 +26,15 @@ and removed in ``tearDownModule``.
 Run: python -m unittest erpnext_enhancements.tests.test_mdm_provider_clients -v
 """
 
+import ast
+import collections
 import datetime
+import json
 import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote_plus
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -191,6 +195,90 @@ class FakeDevice(dict):
 		if STATE.get("comment_fails"):
 			raise RuntimeError("comment insert failed")
 		STATE.setdefault("comments", []).append((comment_type, text))
+		_db_write("Comment", text)
+
+
+def _db_write(doctype, payload):
+	"""Record a row in the stand-in database's open transaction, when a test installed one."""
+	db = STATE.get("db")
+	if db is not None:
+		db.write((doctype, payload))
+
+
+class FakeCallbackManager:
+	"""``frappe.utils.CallbackManager`` as frappe v16.56.0 has it (``frappe/utils/__init__.py``
+	lines 1129-1168): ``run`` pops and calls each function in order until the queue is empty,
+	so a function added during a run is called in that same run; ``reset`` empties it."""
+
+	def __init__(self):
+		self._functions = collections.deque()
+
+	def add(self, func):
+		self._functions.append(func)
+
+	__call__ = add
+
+	def run(self):
+		while self._functions:
+			self._functions.popleft()()
+
+	def reset(self):
+		self._functions.clear()
+
+
+class FakeDatabase:
+	"""The transaction control of ``frappe.database.Database`` at v16.56.0
+	(``frappe/database/database.py`` lines 1190-1243), over a list of rows.
+
+	``commit`` resets the rollback callbacks, runs ``before_commit``, makes the open
+	transaction's rows durable, then runs ``after_commit``. A full ``rollback`` resets the
+	commit callbacks, runs ``before_rollback``, discards the open transaction's rows, then runs
+	``after_rollback`` in the fresh transaction. A rollback to a savepoint discards the rows
+	written since it and runs no callbacks."""
+
+	def __init__(self):
+		self.committed = []
+		self.pending = []
+		self.events = []
+		self._savepoints = {}
+		self.before_commit = FakeCallbackManager()
+		self.after_commit = FakeCallbackManager()
+		self.before_rollback = FakeCallbackManager()
+		self.after_rollback = FakeCallbackManager()
+
+	def write(self, row):
+		self.pending.append(row)
+
+	def commit(self, *, chain=False):
+		self.before_rollback.reset()
+		self.after_rollback.reset()
+		self.before_commit.run()
+		self.committed.extend(self.pending)
+		self.pending = []
+		self.events.append("commit")
+		self.after_commit.run()
+
+	def rollback(self, *, save_point=None, chain=False):
+		if save_point:
+			del self.pending[self._savepoints[save_point] :]
+			self.events.append(f"rollback to {save_point}")
+			return
+		self.before_commit.reset()
+		self.after_commit.reset()
+		self.before_rollback.run()
+		self.pending = []
+		self.events.append("rollback")
+		self.after_rollback.run()
+
+	def savepoint(self, save_point):
+		self._savepoints[save_point] = len(self.pending)
+
+	def set_value(self, *args, **kwargs):
+		STATE.setdefault("set_value", []).append(args)
+
+	def rows(self, doctype):
+		"""The durable rows of one doctype, in commit order."""
+		return [payload for kind, payload in self.committed if kind == doctype]
 
 
 class FakeSettings(dict):
@@ -243,9 +331,17 @@ def _install_stubs():
 	def throw(message, exc=None, title=None, **kwargs):
 		raise (exc or FakeValidationError)(message)
 
+	def insert_row(row, **kwargs):
+		if STATE.get("log_insert_fails"):
+			raise RuntimeError("Device Action Log insert failed")
+		STATE.setdefault("logs", []).append(row)
+		_db_write(row.get("doctype"), row)
+
 	def get_doc(doctype, name=None):
 		if isinstance(doctype, dict):  # a Device Action Log being written
-			return types.SimpleNamespace(insert=lambda **k: STATE.setdefault("logs", []).append(doctype))
+			return types.SimpleNamespace(insert=lambda **k: insert_row(doctype, **k))
+		if doctype == "AI Pending Action":
+			return STATE["actions"][name]
 		if doctype == "Managed Device" and "devices" in STATE:
 			return controller.ManagedDevice(dict(STATE["devices"][name]))
 		return STATE["device"]
@@ -295,7 +391,11 @@ def _install_stubs():
 
 	device_management = types.ModuleType("erpnext_enhancements.api.device_management")
 	device_management.MANAGER_ROLES = {"Device Manager", "System Manager"}
-	device_management._notify_device_managers = lambda **kw: STATE.setdefault("notified", []).append(kw)
+	def notify_device_managers(**kw):
+		STATE.setdefault("notified", []).append(kw)
+		_db_write("Notification Log", kw)
+
+	device_management._notify_device_managers = notify_device_managers
 
 	for name, module in (
 		("frappe", frappe),
@@ -932,6 +1032,296 @@ class ExecutorTests(unittest.TestCase):
 		with self.assertRaises(client.MDMProviderError):
 			actions.execute_device_action("DEV-1", "locate", source="UI")
 		self.assertFalse(self._provider_was_called())
+
+
+class FailingProvider(RecordingProvider):
+	"""A provider whose every call fails the way a vendor API error does."""
+
+	def _record(self, action, *args):
+		STATE.setdefault("provider_calls", []).append((action, *args))
+		raise client.MDMProviderError(f"{action} rejected by the provider")
+
+
+GATING_API = REPO_ROOT / "erpnext_enhancements" / "assistant_tools" / "gating_api.py"
+
+
+class FakePendingAction:
+	"""An AI Pending Action as ``gating_api._confirm_one`` reads and saves it."""
+
+	def __init__(self, name, tool_name, arguments):
+		self.name = name
+		self.tool_name = tool_name
+		self.arguments = json.dumps(arguments)
+		self.requested_by = "manager@example.com"
+		self.status = "Pending"
+		self.expires_at = None
+		self.risk = "High"
+		self.summary = f"{tool_name} on {arguments['device']}"
+		self.target_name = None
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
+	def set(self, key, value):
+		setattr(self, key, value)
+
+	def save(self, ignore_permissions=False):
+		_db_write("AI Pending Action", {"name": self.name, "status": self.status})
+
+
+class FakeToolRegistry:
+	"""FAC's registry on the confirm path: FAC writes its own audit row, then the tool's
+	``execute`` calls the executor as the confirming user (``assistant_tools/remote_*.py``)."""
+
+	TOOLS = {"remote_lock_device": "lock", "remote_wipe_device": "wipe", "locate_device": "locate"}
+
+	def execute_tool(self, tool_name, arguments):
+		_db_write("Assistant Audit Log", {"tool": tool_name})
+		return actions.execute_device_action(
+			arguments["device"],
+			self.TOOLS[tool_name],
+			mode=arguments.get("mode"),
+			source="Assistant",
+			requested_by=fstub.session.user,
+		)
+
+
+def _load_gating_api():
+	"""The real ``_confirm_one`` and ``_run_batch`` (and the small helpers they call), loaded
+	from gating_api.py by ``ast`` and run over the stand-in ``frappe``. What they import from
+	``_gate`` is replaced: the arguments come back as stored, and the AI Action Log row is
+	written to the stand-in database."""
+	names = (
+		"_confirm_one",
+		"_run_batch",
+		"_transition",
+		"_check_identity",
+		"_skip_reason",
+		"_failure_message",
+		"_log_unexpected_failure",
+	)
+	tree = ast.parse(GATING_API.read_text(encoding="utf-8"))
+	nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+	assert sorted(node.name for node in nodes) == sorted(names), [node.name for node in nodes]
+
+	def insert_action_log(**row):
+		STATE["action_logs"] = STATE.get("action_logs", 0) + 1
+		name = f"AI-LOG-{STATE['action_logs']}"
+		_db_write("AI Action Log", {"name": name, **row})
+		return name
+
+	class SealError(Exception):
+		pass
+
+	namespace = {
+		"frappe": fstub,
+		"_": lambda text: text,
+		"json": json,
+		"now_datetime": fstub.utils.now_datetime,
+		"get_datetime": lambda value: value,
+		"monotonic": lambda: 0.0,
+		"BATCH_TIME_BUDGET_SECONDS": 45,
+		"SUMMARY_MAX": 200,
+		"SealError": SealError,
+		"insert_action_log": insert_action_log,
+		"mask_secrets": lambda value, sealed: value,
+		"truncate_json": lambda value: value,
+		"_arguments_to_execute": lambda action: (json.loads(action.arguments), []),
+		"_batch_names": lambda batch: list(batch),
+		"_batch_plan": lambda batch: [
+			(name, {key: STATE["actions"][name].get(key) for key in ("requested_by", "status", "expires_at", "tool_name", "summary")})
+			for name in batch
+		],
+	}
+	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(GATING_API), "exec"), namespace)
+	return namespace
+
+
+def _request(call):
+	"""A POST through frappe v16.56.0 ``app.application``: when the call raises, the request
+	ends with ``db.rollback(chain=True)`` (``frappe/app.py`` lines 156-159); otherwise
+	``sync_database`` commits it (lines 161-162 and 445-446). Returns the result or the error."""
+	db = fstub.db
+	try:
+		result = call()
+	except Exception as error:
+		db.rollback(chain=True)
+		return error
+	db.commit(chain=True)
+	return result
+
+
+class RecordSurvivesRollbackTests(unittest.TestCase):
+	"""A refused or failed device action is recorded even though the request ends in an error.
+
+	Runs the real executor (and the real ``api.remote_action``, ``_confirm_one`` and
+	``_run_batch``) over a stand-in database that models frappe's commit, rollback and callback
+	managers, and checks what is durable once the request is over."""
+
+	def setUp(self):
+		self._saved_db = fstub.db
+		self.addCleanup(setattr, fstub, "db", self._saved_db)
+
+	def _db(self, link_state="Managed", ownership="Company", provider=RecordingProvider, earlier=True, **extra):
+		_device_state(link_state, ownership, **extra)
+		db = FakeDatabase()
+		STATE["db"] = db
+		fstub.db = db
+		actions.get_provider_for = lambda device, settings: (provider(), "Miradore")
+		if earlier:  # something the request wrote before the action and has not committed
+			db.write(("Unrelated", "written earlier in the same request"))
+		return db
+
+	def _only_log(self, db):
+		(row,) = db.rows("Device Action Log")
+		return row
+
+	# -- the form button ---------------------------------------------------------------------
+
+	def test_a_refusal_from_the_form_leaves_its_row_and_commits_nothing_else(self):
+		for link_state, ownership, action, mode in (
+			("Managed", "BYOD", "wipe", "full"),
+			("Discovered", "Company", "lock", None),
+		):
+			with self.subTest(link_state=link_state, action=action):
+				db = self._db(link_state, ownership)
+				outcome = _request(lambda: api.remote_action("DEV-1", action, mode=mode))
+				self.assertIsInstance(outcome, client.MDMProviderError)
+				row = self._only_log(db)
+				self.assertEqual((row["action"], row["success"], row["source"]), (action, 0, "UI"))
+				self.assertNotIn("Unrelated", [kind for kind, _payload in db.committed])
+				self.assertEqual(db.events, ["rollback", "commit"])
+				self.assertFalse(STATE.get("provider_calls") or STATE.get("wiped"))
+
+	def test_a_provider_failure_from_the_form_leaves_its_row_and_its_notice(self):
+		db = self._db(provider=FailingProvider)
+		outcome = _request(lambda: api.remote_action("DEV-1", "lock"))
+		self.assertIsInstance(outcome, client.MDMProviderError)
+		row = self._only_log(db)
+		self.assertEqual((row["action"], row["success"]), ("lock", 0))
+		self.assertIn("rejected by the provider", row["error"])
+		(notice,) = db.rows("Notification Log")
+		self.assertIn("FAILED", notice["subject"])
+		self.assertNotIn("Unrelated", [kind for kind, _payload in db.committed])
+
+	def test_a_failed_locate_keeps_its_timeline_comment(self):
+		db = self._db(provider=FailingProvider)
+		outcome = _request(lambda: api.remote_action("DEV-1", "locate"))
+		self.assertIsInstance(outcome, client.MDMProviderError)
+		(comment,) = db.rows("Comment")
+		self.assertIn("Location requested by manager@example.com", comment)
+		self.assertEqual(self._only_log(db)["success"], 0)
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		# The comment is written before the request is sent, so it comes first.
+		self.assertEqual(db.committed[0][0], "Comment")
+
+	def test_a_success_from_the_form_commits_with_the_request(self):
+		db = self._db()
+		result = _request(lambda: api.remote_action("DEV-1", "lock"))
+		self.assertTrue(result["ok"])
+		self.assertEqual(db.events, ["commit"])
+		self.assertEqual(self._only_log(db)["success"], 1)
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		self.assertEqual(db.rows("Unrelated"), ["written earlier in the same request"])
+
+	# -- a confirmed assistant action --------------------------------------------------------
+
+	def _gate(self, *pending):
+		STATE["actions"] = {action.name: action for action in pending}
+		fstub.flags = AttrDict()
+		registry = types.ModuleType("frappe_assistant_core.core.tool_registry")
+		registry.get_tool_registry = FakeToolRegistry
+		patcher = mock.patch.dict(sys.modules, {"frappe_assistant_core.core.tool_registry": registry})
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		return _load_gating_api()
+
+	def test_a_refused_confirmed_action_leaves_its_row(self):
+		db = self._db(ownership="BYOD", earlier=False)
+		gate = self._gate(FakePendingAction("AI-PA-1", "remote_wipe_device", {"device": "DEV-1", "mode": "full"}))
+		outcome = _request(lambda: gate["_confirm_one"]("AI-PA-1"))
+		self.assertIsInstance(outcome, FakeValidationError)
+		self.assertIn("personally owned", str(outcome))
+		row = self._only_log(db)
+		self.assertEqual((row["action"], row["success"], row["source"]), ("wipe", 0, "Assistant"))
+		self.assertEqual(
+			[status["status"] for status in db.rows("AI Pending Action")], ["Confirmed", "Failed"]
+		)
+		(gate_log,) = db.rows("AI Action Log")
+		self.assertEqual(gate_log["success"], 0)
+		# FAC's audit row, written while the tool ran, goes with the rollback (gating_api).
+		self.assertEqual(db.rows("Assistant Audit Log"), [])
+
+	def test_a_provider_failure_on_a_confirmed_action_leaves_its_row_and_notice(self):
+		db = self._db(provider=FailingProvider, earlier=False)
+		gate = self._gate(FakePendingAction("AI-PA-1", "remote_lock_device", {"device": "DEV-1"}))
+		outcome = _request(lambda: gate["_confirm_one"]("AI-PA-1"))
+		self.assertIsInstance(outcome, FakeValidationError)
+		self.assertEqual(self._only_log(db)["success"], 0)
+		(notice,) = db.rows("Notification Log")
+		self.assertIn("FAILED", notice["subject"])
+		self.assertEqual(db.rows("Assistant Audit Log"), [])
+
+	def test_a_batch_keeps_one_row_per_action_through_each_rollback(self):
+		db = self._db(ownership="BYOD", earlier=False)
+		gate = self._gate(
+			FakePendingAction("AI-PA-1", "remote_wipe_device", {"device": "DEV-1", "mode": "full"}),
+			FakePendingAction("AI-PA-2", "remote_lock_device", {"device": "DEV-1"}),
+		)
+		response = _request(
+			lambda: gate["_run_batch"](["AI-PA-1", "AI-PA-2"], gate["_confirm_one"], "Executed")
+		)
+		self.assertEqual([item["status"] for item in response["results"]], ["Failed", "Executed"])
+		self.assertEqual(
+			[(row["action"], row["success"]) for row in db.rows("Device Action Log")],
+			[("wipe", 0), ("lock", 1)],
+		)
+		# Only the lock's notice: a refusal before the provider sends none.
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		self.assertEqual(db.rows("Assistant Audit Log"), [{"tool": "remote_lock_device"}])
+		self.assertEqual(
+			[status["status"] for status in db.rows("AI Pending Action")],
+			["Confirmed", "Failed", "Confirmed", "Executed"],
+		)
+
+	# -- exactly one, never raising ----------------------------------------------------------
+
+	def test_a_caller_that_commits_instead_gets_exactly_one_row(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.commit()
+		db.rollback()
+		db.rollback()
+		self.assertEqual(self._only_log(db)["success"], 0)
+		self.assertEqual(db.events, ["commit", "rollback", "rollback"])
+
+	def test_a_second_rollback_does_not_write_the_row_again(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.rollback()
+		db.rollback()
+		self.assertEqual(self._only_log(db)["success"], 0)
+
+	def test_the_rewrite_commits_after_the_other_rollback_callbacks_and_keeps_them(self):
+		db = self._db(ownership="BYOD")
+		ran = []
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.after_rollback.add(lambda: ran.append(len(db.rows("Device Action Log"))))
+		db.rollback()
+		# The later callback ran, before the commit that made the row durable.
+		self.assertEqual(ran, [0])
+		self.assertEqual(self._only_log(db)["success"], 0)
+
+	def test_a_rewrite_that_fails_never_raises_into_the_rollback(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		STATE["log_insert_fails"] = True
+		db.rollback()  # must not raise
+		self.assertEqual(db.rows("Device Action Log"), [])
 
 
 def _stored_device(ownership, link_state="Managed", roles=("Device Manager",), **extra):
