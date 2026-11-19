@@ -14,6 +14,10 @@ exercised rather than grepped for:
   is rate limited per user.
 - ``review.reject_document`` refuses a document that is posting or posted, or that names the
   record it created.
+- ``DocumentIntake.validate`` asks the same File read rule of a person who sets or changes
+  ``source_file`` on a save made through the DocType's own write permission, and of nobody
+  else: not the channels (they save with ``ignore_permissions``), and not a reviewer whose
+  save leaves the file as it was.
 
 ``frappe`` is a local stub installed in ``setUpModule`` and removed in ``tearDownModule``, so
 this suite has its own CI step.
@@ -33,9 +37,13 @@ if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
 BASE = "erpnext_enhancements.accounting_intake"
+CONTROLLER = f"{BASE}.doctype.document_intake.document_intake"
 MODULES = (
 	"frappe",
 	"frappe.utils",
+	"frappe.model",
+	"frappe.model.document",
+	CONTROLLER,
 	"erpnext_enhancements.utils.user_rate_limit",
 	f"{BASE}.audit",
 	f"{BASE}.intake",
@@ -47,6 +55,7 @@ frappe = None
 intake = None
 channels = None
 review = None
+controller = None
 
 
 class PermissionError_(Exception):
@@ -99,7 +108,7 @@ class _Doc:
 
 
 def setUpModule():
-	global frappe, intake, channels, review
+	global frappe, intake, channels, review, controller
 	for name in MODULES:
 		_saved[name] = sys.modules.pop(name, None)
 
@@ -126,13 +135,21 @@ def setUpModule():
 	utils.cint = lambda v: int(v or 0)
 	utils.now_datetime = lambda: "now"
 	frappe.utils = utils
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+	document.Document = type("Document", (), {})
+	model.document = document
+	frappe.model = model
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
-	for name in (f"{BASE}.intake", f"{BASE}.channels", f"{BASE}.review"):
+	sys.modules["frappe.model"] = model
+	sys.modules["frappe.model.document"] = document
+	for name in (f"{BASE}.intake", f"{BASE}.channels", f"{BASE}.review", CONTROLLER):
 		sys.modules.pop(name, None)
 	intake = importlib.import_module(f"{BASE}.intake")
 	channels = importlib.import_module(f"{BASE}.channels")
 	review = importlib.import_module(f"{BASE}.review")
+	controller = importlib.import_module(CONTROLLER)
 
 
 def tearDownModule():
@@ -316,6 +333,71 @@ class TestRejectDocument(unittest.TestCase):
 					review.reject_document("DI-1")
 				self.assertEqual(self.doc.saved, 0)
 				self.assertNotEqual(self.doc.status, "Rejected")
+
+
+class TestSourceFileIsSetByAReader(unittest.TestCase):
+	"""``DocumentIntake._guard_source_file``, run on the real controller."""
+
+	def setUp(self):
+		_reset()
+		self.files = {"/private/files/mine.pdf": ["FILE-1"], "/private/files/theirs.pdf": ["FILE-2"]}
+		self.readable = {"FILE-1"}
+		self.checked = []
+
+		def get_all(doctype, filters=None, pluck=None, **kw):
+			return list(self.files.get(filters["file_url"], [])) if doctype == "File" else []
+
+		def has_permission(doctype, ptype="read", doc=None, **kw):
+			self.checked.append(doc)
+			return doc in self.readable
+
+		frappe.get_all = get_all
+		frappe.has_permission = has_permission
+
+	def _doc(self, source_file, stored=None, new=False, ignore_permissions=False):
+		doc = controller.DocumentIntake()
+		doc.source_file = source_file
+		doc.flags = types.SimpleNamespace(ignore_permissions=ignore_permissions)
+		doc.is_new = lambda: new
+		before = None if stored is None else types.SimpleNamespace(source_file=stored)
+		doc.get_doc_before_save = lambda: before
+		return doc
+
+	def test_a_new_document_takes_a_file_its_creator_can_read(self):
+		self._doc("/private/files/mine.pdf", new=True)._guard_source_file()
+		self.assertEqual(self.checked, ["FILE-1"])
+
+	def test_a_new_document_is_refused_a_file_its_creator_cannot_read(self):
+		with self.assertRaises(PermissionError_):
+			self._doc("/private/files/theirs.pdf", new=True)._guard_source_file()
+
+	def test_changing_the_file_asks_the_same_rule(self):
+		with self.assertRaises(PermissionError_):
+			self._doc("/private/files/theirs.pdf", stored="/private/files/mine.pdf")._guard_source_file()
+		self._doc("/private/files/mine.pdf", stored="/private/files/theirs.pdf")._guard_source_file()
+
+	def test_an_unknown_file_is_refused(self):
+		with self.assertRaises(DoesNotExistError):
+			self._doc("/private/files/nowhere.pdf", new=True)._guard_source_file()
+
+	def test_a_save_that_leaves_the_file_alone_is_not_asked(self):
+		"""A reviewer works a document whoever sent it in."""
+		self._doc("/private/files/theirs.pdf", stored="/private/files/theirs.pdf")._guard_source_file()
+		self.assertEqual(self.checked, [])
+
+	def test_the_channels_are_not_asked(self):
+		"""Email, the Drive watch and the scheduler save with ignore_permissions."""
+		self._doc("/private/files/theirs.pdf", new=True, ignore_permissions=True)._guard_source_file()
+		self._doc(
+			"/private/files/theirs.pdf", stored="/private/files/mine.pdf", ignore_permissions=True
+		)._guard_source_file()
+		self.assertEqual(self.checked, [])
+
+	def test_validate_runs_the_rule(self):
+		doc = self._doc("/private/files/theirs.pdf", new=True)
+		doc.document_type, doc.party_name_text, doc.document_number = "Bill", None, None
+		with self.assertRaises(PermissionError_):
+			doc.validate()
 
 
 if __name__ == "__main__":

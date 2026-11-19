@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     created. It is rate limited to 30 calls per user per hour with `utils/user_rate_limit`.
   - `reject_document` now refuses a document that is Posting or Posted, or that names the record
     it created. Approve already refused those.
+  - A person who sets or changes a document's **Source File** on the form or through the REST
+    resource must be able to read that file, by the same rule (`DocumentIntake.validate`). The
+    channels are not asked, and neither is a save that leaves the file as it was, so a reviewer
+    can still re-extract and approve a document that came in by email, Drive, mobile or chat.
   - New bench-free suite `tests/test_intake_access_checks.py`, wired into CI.
 
 ## [1.830.0] - 2026-11-19

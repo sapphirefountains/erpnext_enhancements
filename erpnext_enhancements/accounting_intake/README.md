@@ -74,7 +74,11 @@ whitelisted wrappers; `ingest_document` itself does no check, because the email 
 channels call it in-process). `reprocess` resets only a document still being worked up
 (Received, Extracting, Needs Item Review, Needs Review, Failed) and is rate limited per user;
 `reject_document` and `reprocess` refuse a Posting or Posted document, or one that names the
-record it created. Tests: `tests/test_intake_access_checks.py`.
+record it created. A person who sets or changes **Source File** on the form or through the REST
+resource must be able to read that file (`DocumentIntake.validate`, the same rule); the channels
+save with `ignore_permissions` and are not asked, and a save that leaves the file as it was is
+not asked, so a reviewer works a document whoever sent it in. Tests:
+`tests/test_intake_access_checks.py`.
 
 ## Matching is advisory, always
 
