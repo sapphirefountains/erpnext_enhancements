@@ -22,7 +22,19 @@ value read from a Single and the next-record sort field follow the same levels
 (``frappe.client.get``, ``get_value``, ``get_single_value``, ``frappe.desk.form.utils.get_next``).
 
 A plain name in ``fields`` is left to frappe, which drops a field the caller cannot read from what
-it selects (query.py 1447-1531; ``reportview.validate_fields``, reportview.py 151-181).
+it selects (query.py 1447-1531; ``reportview.validate_fields``, reportview.py 151-181), except an
+entry that names a closed child table (below).
+
+**A child table the caller cannot read is closed.** When the table field holding a child table is
+not readable at the caller's levels, or the caller reads no level of the doctype at all, every
+reference to that child table is refused, whatever the column, the standard columns included: in
+filters (``table_field.col``, `` `tabChild`.col ``, ``[child, col, op, value]``), sort, grouping, an
+aggregate, a plain ``fields`` entry and a child query (``{"table_field": [...]}``). A request whose own
+doctype is the child table, read through such a parent (``parent``, ``parent_doctype``,
+``parent_document_type``), is refused whole on every route that takes a parent. frappe lists a child
+doctype through a parent after asking only for ``select`` on the parent, and lets the standard
+columns through (``_child_open`` has the lines). A child table whose table field the caller does read
+keeps its standard columns open and its own hidden columns refused.
 
 **A name the doctype does not have is read as frappe reads it.** frappe's query engine looks a plain
 filter name its doctype lacks up in the doctype's child tables, for a filter that names no doctype
@@ -30,7 +42,8 @@ filter name its doctype lacks up in the doctype's child tables, for a filter tha
 the child field it resolves to. Every caller of ``check_request`` states whether its filters reach
 the engine (``child_names``). Anywhere else (sort, grouping, an aggregate, a search field, a Single's
 filters, a filter that names its own doctype) a name the doctype lacks is not one of its fields and
-is not refused, and neither is a standard column (``name``, ``owner``, ``_assign`` and the rest).
+is not refused, and neither is a standard column of the doctype itself (``name``, ``owner``,
+``_assign`` and the rest).
 **Link search** follows frappe's own choice of path (search.py 125-133): with a custom query, the
 ``query`` argument or the doctype's ``standard_queries`` hook, the filters are that query's arguments
 and are not read as field names; the search field is checked on both paths.
@@ -79,6 +92,9 @@ _SIMPLE = re.compile(r"^\w+$")
 _DOTTED = re.compile(r"^(\w+)\.(\w+)$")
 _QUOTED = re.compile(r"^(['\"]).*\1$", re.S)
 _DIRECTION = re.compile(r"\s+(?:asc|desc)$", re.I)
+#: The table a plain ``fields`` entry names (`` `tabChild`. `` or ``table_field.``), whatever follows.
+_TAB_PREFIX = re.compile(r"^`tab([^`]+)`\.")
+_TABLE_PREFIX = re.compile(r"^`?(\w+)`?\.")
 
 #: frappe's default: frappe.whitelist() with no methods answers these four.
 ANY_METHOD = ["GET", "POST", "PUT", "DELETE"]
@@ -116,7 +132,8 @@ _REST_V2_COUNT = re.compile(r"^/api/v2/doctype/([^/]+)/count/?$")
 
 #: Columns every doctype has: ``default_fields``, ``optional_fields`` and ``child_table_fields``,
 #: frappe/model/__init__.py 84-98 at v16.56.0. frappe's query engine never looks one of these up in a
-#: child table (query.py 980), and none is a field a permlevel can hide.
+#: child table (query.py 980), and none is a field a permlevel can hide. On a closed child table they
+#: are refused with every other column (``_Hidden.closed_tables``).
 _STANDARD_NAMES = frozenset(
 	(
 		"doctype",
@@ -170,8 +187,11 @@ def _is_scalar(value):
 class _Hidden:
 	"""The fields of one doctype, and of its child tables, that the session user may not read."""
 
-	def __init__(self, doctype, meta, levels):
+	def __init__(self, doctype, meta, levels, closed=False):
 		self.doctype = doctype
+		#: The whole request is refused: ``doctype`` is a child table read through a parent whose table
+		#: field holding it the caller cannot read (``_child_open``).
+		self.closed = closed
 		self.fields = {df.fieldname: df for df in meta.fields}
 		self.hidden = {df.fieldname for df in meta.fields if not _is_readable(df, levels)}
 		self.hidden -= REFERENCES_NOT_HELD_BACK.get(doctype, frozenset())
@@ -182,14 +202,21 @@ class _Hidden:
 		#: (fieldnames of the child, the hidden ones) per table field, in the doctype's field order:
 		#: the order frappe searches for a filter name the doctype lacks (query.py 983-1002).
 		self.child_order = []
+		#: The table fields the caller cannot read, every one when the caller reads no level of the
+		#: doctype, and the child doctypes they hold. Every reference to such a child table is refused,
+		#: whatever the column, the standard columns included.
+		self.closed_tables = set()
+		self.closed_children = set()
 		for df in meta.fields:
 			if df.fieldtype not in _TABLE_FIELDTYPES or not df.options:
 				continue
 			child_fields = frappe.get_meta(df.options).fields
-			if _is_readable(df, levels):
+			if levels and _is_readable(df, levels):
 				hidden = {cdf.fieldname for cdf in child_fields if not _is_readable(cdf, levels)}
 			else:
 				hidden = {cdf.fieldname for cdf in child_fields}
+				self.closed_tables.add(df.fieldname)
+				self.closed_children.add(df.options)
 			self.tables[df.fieldname] = df.options
 			self.children.setdefault(df.options, set()).update(hidden)
 			self.child_order.append(({cdf.fieldname for cdf in child_fields}, hidden))
@@ -216,7 +243,7 @@ class _Hidden:
 		if _SIMPLE.match(ref):
 			if doctype and doctype != self.doctype:
 				if doctype in self.children:
-					return ref in self.children[doctype]
+					return doctype in self.closed_children or ref in self.children[doctype]
 				if not strict:
 					return False
 				return self._in_doctype(doctype, ref)
@@ -226,7 +253,7 @@ class _Hidden:
 		if match:
 			table, fieldname = match.groups()
 			if table in self.tables:
-				return fieldname in self.children[self.tables[table]]
+				return table in self.closed_tables or fieldname in self.children[self.tables[table]]
 			if table in self.fields:
 				# A Link: its own level here. The field it points at is frappe's check, made against
 				# the linked doctype's own permissions.
@@ -260,7 +287,7 @@ class _Hidden:
 		if doctype == self.doctype:
 			return fieldname in self.hidden
 		if doctype in self.children:
-			return fieldname in self.children[doctype]
+			return doctype in self.closed_children or fieldname in self.children[doctype]
 		if getattr(frappe.get_meta(doctype), "istable", False):
 			# A child table of some other doctype: not one this request can be judged against.
 			raise _Unknown(doctype)
@@ -346,19 +373,38 @@ class _Hidden:
 		return False
 
 	def in_fields(self, fields):
-		"""Expressions in ``fields``: every argument of a function or operator dict, at any depth."""
+		"""Expressions in ``fields``: every argument of a function or operator dict, at any depth.
+
+		A plain entry is left to frappe, which drops a field the caller cannot read, unless it names a
+		closed child table (``_closed_entry``).
+		"""
 		if fields is None or fields == "":
 			return False
 		if isinstance(fields, str):
 			try:
 				fields = json.loads(fields)
 			except ValueError:
-				return False  # plain names, comma-separated: frappe drops what the caller cannot read
-		if isinstance(fields, dict):
+				fields = fields.split(",")  # plain names, comma-separated
+		if isinstance(fields, str | dict):
 			fields = [fields]
 		if not isinstance(fields, list | tuple):
 			return False
-		return any(self.in_expression(field) for field in fields if isinstance(field, dict))
+		return any(
+			self.in_expression(field) if isinstance(field, dict) else self._closed_entry(field)
+			for field in fields
+		)
+
+	def _closed_entry(self, entry):
+		"""Whether ``entry``, a plain ``fields`` entry, names a closed child table: `` `tabChild`.col ``
+		or ``table_field.col`` (``*`` and an alias included)."""
+		if not isinstance(entry, str) or not self.closed_tables:
+			return False
+		entry = entry.strip()
+		match = _TAB_PREFIX.match(entry)
+		if match:
+			return match.group(1) in self.closed_children
+		match = _TABLE_PREFIX.match(entry)
+		return bool(match) and match.group(1) in self.closed_tables
 
 	def in_expression(self, value):
 		if isinstance(value, dict):
@@ -366,7 +412,8 @@ class _Hidden:
 				if isinstance(key, str) and key.strip().lower() == "as":
 					continue
 				if isinstance(key, str) and key in self.tables:
-					# A child query, {table_field: [fields of that child]} (query.py 1231-1248).
+					# A child query, {table_field: [fields of that child]} (query.py 1231-1248); every
+					# column of a closed child table reads as hidden (``names``).
 					child = self.tables[key]
 					parts = part if isinstance(part, list | tuple) else [part]
 					if any(self.names(p, doctype=child, strict=False) for p in parts):
@@ -390,13 +437,41 @@ def _hidden_for(doctype, parent=None):
 	session user reads every field of it and of its child tables."""
 	if not doctype or not isinstance(doctype, str):
 		return None
-	levels = _readable_levels(doctype, parent if isinstance(parent, str) else None)
+	parent = parent if isinstance(parent, str) and parent else None
+	levels = _readable_levels(doctype, parent)
 	if levels is None:
 		return None
 	meta = frappe.get_meta(doctype)
-	if not _hides_anything(meta, levels):
+	if parent and getattr(meta, "istable", False) and not _child_open(doctype, parent, levels):
+		return _Hidden(doctype, meta, levels, closed=True)
+	if not _hides_anything(meta, levels) and (levels or not _has_tables(meta)):
+		# A caller who reads no level of the doctype cannot read its child tables either.
 		return None
 	return _Hidden(doctype, meta, levels)
+
+
+def _has_tables(meta):
+	return any(df.fieldtype in _TABLE_FIELDTYPES and df.options for df in meta.fields)
+
+
+def _child_open(child, parent, levels):
+	"""Whether the session user reads a table field of ``parent`` that holds ``child``.
+
+	frappe 16.56.0 lists a child doctype through a parent after asking only for ``select`` on the
+	parent: the query engine's ``check_select_permission`` (database/query.py 290, 1433-1438) calls
+	``frappe.has_permission(child, "select", parent_doctype=parent)``, which for a child table goes to
+	``has_child_permission`` (permissions.py 120-129). With no stored row in hand that checks only that
+	``parent`` has a table of ``child`` (845-860) and then asks for the permission on the parent
+	(893-905); the level of the table field is checked for one stored row only (864-884). The standard
+	columns then pass ``apply_field_permissions``, since ``get_permitted_fields`` always includes them
+	(model/__init__.py 217-263). So the level of the table field is held here.
+	"""
+	if not levels:
+		return False
+	return any(
+		df.fieldtype in _TABLE_FIELDTYPES and df.options == child and _is_readable(df, levels)
+		for df in frappe.get_meta(parent).fields
+	)
 
 
 def _refuse():
@@ -427,6 +502,8 @@ def check_request(
 	hidden = _hidden_for(doctype, parent)
 	if hidden is None:
 		return
+	if hidden.closed:
+		_refuse()
 	try:
 		named = (
 			hidden.in_filters(filters, child_names)
@@ -653,11 +730,12 @@ def client_get_count(doctype, filters=None, debug=False, cache=False):
 @frappe.whitelist(methods=["GET", "POST", "PUT", "DELETE"])
 def client_get(doctype, name=None, filters=None, parent=None):
 	"""``frappe.client.get``; a document looked up by ``filters`` has them checked first (frappe
-	finds it through ``frappe.db.get_value``, whose query engine reads the filters)."""
+	finds it through ``frappe.db.get_value``, whose query engine reads the filters), and a child table
+	named through ``parent`` is held to that parent's table field."""
 	from frappe import client
 
-	if not name and filters:
-		check_request(doctype, parent, child_names=True, filters=filters)
+	if parent or (not name and filters):
+		check_request(doctype, parent, child_names=True, filters=None if name else filters)
 	return client.get(doctype, name, filters, parent)
 
 

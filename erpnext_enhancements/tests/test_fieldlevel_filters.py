@@ -418,6 +418,14 @@ METAS = {
 		],
 		[_perm("System Manager"), _perm("System Manager", 1), _perm("Desk User", 0, read=0)],
 	),
+	# A stand-in with nothing above level 0, a table included: a caller with no read on it still
+	# cannot read its child table.
+	"Site Visit": _Meta(
+		"Site Visit",
+		[_df("visit_date", 0, "Date"), _df("checks", 0, "Table", "Visit Check")],
+		[_perm("Projects User")],
+	),
+	"Visit Check": _Meta("Visit Check", [_df("item")], istable=True),
 	"Has Role": _Meta("Has Role", [_df("role", 0, "Link", "Role")], istable=True),
 	"User Email": _Meta("User Email", [_df("email_account", 0, "Link", "Email Account")], istable=True),
 	"Block Module": _Meta("Block Module", [_df("module")], istable=True),
@@ -433,6 +441,8 @@ HR_MANAGER = ("hr.manager@example.com", ("HR Manager", "All"))
 PROJECTS_USER = ("pu@example.com", ("Projects User", "All"))
 #: Reads level 0 of Item, Supplier and Project, and nothing of Customer (no Sales User role).
 STAFF = ("staff@example.com", ("Stock User", "Purchase User", "Projects User", "All"))
+#: Reads Customer at level 0.
+SALES_USER = ("sales@example.com", ("Sales User", "All"))
 #: A Desk user below System Manager: `select` on User, no read at any level of it.
 DESK_USER = ("desk@example.com", ("Desk User", "Sales User", "All"))
 SYSTEM_MANAGER = ("sm@example.com", ("System Manager", "Desk User", "All"))
@@ -1630,18 +1640,19 @@ class TestOrdinaryRequests(_RouteCase):
 	def test_client_reads(self):
 		"""A plain filter name the doctype lacks is resolved the way frappe's query engine resolves it:
 		the first child table, in field order, that has such a field (query.py 983-1002). On Item that
-		is Item Default, and on Customer and Supplier Allowed To Transact With, all level 0."""
-		for doctype in ("Item", "Customer", "Supplier"):
+		is Item Default, and on Customer and Supplier Allowed To Transact With, all level 0. Each is
+		asked by a user who reads the doctype at level 0 (STAFF reads no level of Customer)."""
+		for doctype, who in (("Item", STAFF), ("Customer", SALES_USER), ("Supplier", STAFF)):
 			with self.subTest(doctype=doctype):
-				_reset(STAFF)
+				_reset(who)
 				self.passes(ff.client_get_list, doctype, filters={"company": COMPANY})
-				_reset(STAFF)
+				_reset(who)
 				self.passes(ff.client_get_count, doctype, json.dumps([["company", "=", COMPANY]]))
-				_reset(STAFF)
+				_reset(who)
 				self.passes(
 					ff.client_get_value, doctype, "name", json.dumps({"company": COMPANY, "disabled": 0})
 				)
-				_reset(STAFF)
+				_reset(who)
 				self.passes(ff.client_get, doctype, filters=json.dumps({"company": COMPANY}))
 		_reset(STAFF)
 		self.passes(ff.client_get_value, "Item", json.dumps(["item_name", "item_group"]), "ITEM-0001")
@@ -1777,6 +1788,191 @@ class TestUserTypeReference(_RouteCase):
 					order_by=f"{fieldname} desc",
 					fields=[{"COUNT": fieldname}],
 				)
+
+
+#: Reads no level of Employee.
+NO_EMPLOYEE_READ = ("pm@example.com", ("Projects Manager", "All"))
+PAY_RATE_SINCE = "2020-01-01"
+
+
+class TestClosedChildTables(_RouteCase):
+	"""A child table whose table field the caller cannot read (Employee's level-1 ``custom_pay_rates``),
+	or any child table of a doctype the caller reads no level of, is refused in every reference,
+	whatever the column, the standard columns included."""
+
+	BELOW = (HR_USER, NO_EMPLOYEE_READ)
+
+	def check(self, call, *args, form=None, **kwargs):
+		"""Refused below the level and with no read on the parent; answered at the level."""
+		for who in self.BELOW:
+			with self.subTest(who=who[0]):
+				_reset(who, form=form)
+				self.refuses(call, *args, **kwargs)
+		_reset(HR_MANAGER, form=form)
+		self.passes(call, *args, **kwargs)
+
+	def test_the_four_shapes(self):
+		for label, filters in (
+			("report view, table_field.name is set", [["custom_pay_rates.name", "is", "set"]]),
+			(
+				"report view, table_field.creation after a date",
+				[["custom_pay_rates.creation", ">", PAY_RATE_SINCE]],
+			),
+		):
+			with self.subTest(label):
+				self.check(ff.reportview_get, form={"doctype": "Employee", "filters": json.dumps(filters)})
+		with self.subTest("get_list on the parent, [child doctype, creation, >, date]"):
+			self.check(
+				ff.client_get_list,
+				"Employee",
+				filters=[["Employee Pay Rate", "creation", ">", PAY_RATE_SINCE]],
+			)
+		with self.subTest("get_list on the child through the parent, standard columns only"):
+			self.check(
+				ff.client_get_list,
+				"Employee Pay Rate",
+				["name", "parent", "creation", "modified"],
+				parent="Employee",
+			)
+
+	def test_every_position(self):
+		for kwargs in (
+			{"filters": {"custom_pay_rates.name": ["is", "set"]}},
+			{"filters": [["Employee", "custom_pay_rates.owner", "=", "x"]]},
+			{"filters": [["`tabEmployee Pay Rate`.`modified`", ">", PAY_RATE_SINCE]]},
+			{"filters": [["Employee Pay Rate", "parent", "is", "set"]]},
+			{"or_filters": [["Employee Pay Rate", "name", "is", "set"]]},
+			{"order_by": "custom_pay_rates.modified desc"},
+			{"order_by": "`tabEmployee Pay Rate`.`creation` desc"},
+			{"group_by": "`tabEmployee Pay Rate`.`parent`"},
+			{"fields": [{"COUNT": "`tabEmployee Pay Rate`.`name`", "as": "n"}]},
+			{"fields": [{"MAX": "custom_pay_rates.creation"}]},
+			{"fields": ["name", "custom_pay_rates.name"]},
+			{"fields": ["name", "`tabEmployee Pay Rate`.`creation` as added"]},
+			{"fields": ["custom_pay_rates.*"]},
+			{"fields": json.dumps(["name", "`tabEmployee Pay Rate`.`modified`"])},
+			{"fields": "name, `tabEmployee Pay Rate`.`modified`"},
+			{"fields": [{"custom_pay_rates": ["name", "creation"]}]},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				self.check(ff.client_get_list, "Employee", **kwargs)
+
+	def test_the_child_through_its_parent_on_every_route(self):
+		self.check(ff.client_get_list, "Employee Pay Rate", parent="Employee")
+		self.check(ff.client_get, "Employee Pay Rate", "row-1", parent="Employee")
+		self.check(
+			ff.client_get_value, "Employee Pay Rate", "name", json.dumps({"name": "row-1"}), parent="Employee"
+		)
+		for call in (
+			ff.reportview_get,
+			ff.reportview_get_list,
+			ff.reportview_get_count,
+			ff.reportview_export_query,
+		):
+			with self.subTest(call=call.__name__):
+				self.check(call, form={"doctype": "Employee Pay Rate", "parent_doctype": "Employee"})
+		card = {"document_type": "Employee Pay Rate", "parent_document_type": "Employee", "function": "Count"}
+		self.check(ff.number_card_get_result, json.dumps(card), "[]")
+		chart = {
+			"name": "Pay rows",
+			"document_type": "Employee Pay Rate",
+			"parent_document_type": "Employee",
+			"chart_type": "Count",
+			"based_on": "creation",
+		}
+		self.check(ff.dashboard_chart_get, chart=json.dumps(chart), no_cache=1)
+		for who, status in ((HR_USER, 403), (NO_EMPLOYEE_READ, 403), (HR_MANAGER, 200)):
+			with self.subTest(route="REST", who=who[0]):
+				self.assertEqual(
+					self.rest(
+						"/api/resource/Employee Pay Rate",
+						{"parent": "Employee", "fields": json.dumps(["name", "parent", "creation"])},
+						who=who,
+					),
+					status,
+				)
+
+	def test_a_readable_table_keeps_its_standard_columns(self):
+		"""Timesheet's ``time_logs`` is level 0 with a level-1 column: its standard columns stay open,
+		its hidden column is refused, as before."""
+		for kwargs in (
+			{"filters": [["Timesheet Detail", "creation", ">", PAY_RATE_SINCE]]},
+			{"filters": [["time_logs.name", "is", "set"]]},
+			{"order_by": "`tabTimesheet Detail`.`modified` desc"},
+			{"fields": ["name", "time_logs.name", "`tabTimesheet Detail`.`hours`"]},
+			{"fields": [{"time_logs": ["name", "hours"]}]},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				_reset(PROJECTS_USER)
+				self.passes(ff.client_get_list, "Timesheet", **kwargs)
+		_reset(PROJECTS_USER)
+		self.passes(
+			ff.client_get_list,
+			"Timesheet Detail",
+			["name", "parent", "creation", "hours"],
+			parent="Timesheet",
+		)
+		_reset(PROJECTS_USER)
+		self.refuses(
+			ff.client_get_list, "Timesheet", filters=[["Timesheet Detail", "base_costing_rate", ">", 1]]
+		)
+		_reset(PROJECTS_USER)
+		self.refuses(
+			ff.client_get_list,
+			"Timesheet Detail",
+			filters={"base_costing_rate": [">", 1]},
+			parent="Timesheet",
+		)
+
+	def test_allowed_companies_is_closed_and_ordinary_item_requests_are_not(self):
+		for kwargs in (
+			{"filters": [["Company Restriction", "name", "is", "set"]]},
+			{"filters": {"allowed_companies.creation": [">", PAY_RATE_SINCE]}},
+			{"fields": ["name", "`tabCompany Restriction`.`parent`"]},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				_reset(STAFF)
+				self.refuses(ff.client_get_list, "Item", **kwargs)
+		_reset(STAFF)
+		self.refuses(ff.client_get_list, "Company Restriction", ["name", "parent"], parent="Item")
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Item Default", ["name", "parent", "company"], parent="Item")
+		# A bare `company` still follows frappe's first-match order: Item Default here, open.
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Item", filters={"company": COMPANY})
+
+	def test_no_read_on_the_parent_closes_every_child_table(self):
+		"""Customer, for STAFF, who reads no level of it: even its level-0 tables are closed, as frappe
+		refuses a child-table field to a caller with ``select`` only (database/query.py 1035-1043)."""
+		for kwargs in (
+			{"filters": {"company": COMPANY}},
+			{"filters": [["Allowed To Transact With", "company", "=", COMPANY]]},
+			{"filters": {"companies.name": ["is", "set"]}},
+		):
+			with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+				_reset(STAFF)
+				self.refuses(ff.client_get_list, "Customer", **kwargs)
+				_reset(SALES_USER)
+				self.passes(ff.client_get_list, "Customer", **kwargs)
+		_reset(STAFF)
+		self.refuses(ff.client_get_list, "Party Account", ["name"], parent="Customer")
+		_reset(SALES_USER)
+		self.passes(ff.client_get_list, "Party Account", ["name"], parent="Customer")
+		# Its own level-0 fields are not closed by this.
+		_reset(STAFF)
+		self.passes(ff.client_get_list, "Customer", filters={"customer_group": "Retail", "disabled": 0})
+		# The same on a doctype with nothing above level 0: HR_USER reads no level of Site Visit.
+		for kwargs in (
+			{"filters": [["Visit Check", "name", "is", "set"]]},
+			{"fields": [{"checks": ["item"]}]},
+		):
+			with self.subTest(doctype="Site Visit", **{k: str(v) for k, v in kwargs.items()}):
+				_reset(HR_USER)
+				self.refuses(ff.client_get_list, "Site Visit", **kwargs)
+				_reset(PROJECTS_USER)
+				self.passes(ff.client_get_list, "Site Visit", **kwargs)
+		_reset(HR_USER)
+		self.passes(ff.client_get_list, "Site Visit", filters={"visit_date": [">", PAY_RATE_SINCE]})
 
 
 class TestStillRefused(_RouteCase):

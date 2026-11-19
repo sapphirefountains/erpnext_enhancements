@@ -33,15 +33,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a Single and the next-record sort field follow the same levels. On a Single that hides fields
     from the caller, `get_value` accepts only readable field names, and the whole-record dict a
     lookup by filters answers with leaves without the fields the caller cannot read. Plain field
-    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read.
+    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read,
+    except an entry that names a child table the caller cannot read (below).
+  - **A child table the caller cannot read is closed.** When the user cannot read the table field
+    that holds a child table, or reads no level of the doctype at all, every reference to that child
+    table is refused, whatever the column, its standard columns (`name`, `owner`, `creation`,
+    `modified`, `parent` and the rest) included: in filters (`table_field.column`,
+    `` `tabChild`.`column` ``, `[child doctype, column, operator, value]`), sort, grouping, an
+    aggregate, a `fields` entry and a child query. A list, count, value, report, card or chart
+    request on the child doctype itself, read through such a parent (`parent`, `parent_doctype`,
+    `parent_document_type`), is refused whole. A child table whose table field the user can read is
+    unchanged: its standard columns stay open and only its own columns above the user's level are
+    refused.
   - **A name the doctype does not have is read the way frappe reads it.** frappe's query engine
     looks a plain filter name its doctype lacks up in the doctype's child tables, using the first
     table, in field order, that has a field of that name, so in filters that reach the engine such
     a name answers to that child field's level. Everywhere else (a sort, a grouping, an aggregate, a
     search field, a Single's filters, a filter that names its own doctype) a name the doctype lacks
-    is not one of its fields and is not refused, and the standard columns (`name`, `owner`,
-    `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the rest)
-    never are. Ordinary searches and lists, such as item search on sales and buying documents,
+    is not one of its fields and is not refused, and the doctype's own standard columns (`name`,
+    `owner`, `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the
+    rest) never are. Ordinary searches and lists, such as item search on sales and buying documents,
     keep working for a user who cannot read a table like `allowed_companies`.
   - **Link search follows frappe's choice of path.** With a custom query (the request's `query`,
     or a query the doctype registers through the `standard_queries` hook), the filters are that
@@ -69,7 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read Item, Customer and Supplier's `allowed_companies` table and must pass; the same routes
   naming a hidden field must still be refused. The Create Project dialog's list of desk users, over
   stand-in User metadata shaped like frappe 16.56.0's, passes for a user with `select` only on
-  User, while every other level-1 field of User stays refused for that user.
+  User, while every other level-1 field of User stays refused for that user. Closed child tables are
+  refused in every reference and through their parent, for a user below the table field's level
+  and for one with no read on the parent, and answered for a user at the level; a readable table
+  (Timesheet's `time_logs`) keeps its standard columns.
 
 ## [1.830.0] - 2026-11-19
 

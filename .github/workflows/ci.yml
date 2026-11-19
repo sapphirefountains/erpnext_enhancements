@@ -3634,6 +3634,8 @@ jobs:
       # ERPNext requests (ERPNext's item, supplier and customer searches with their custom query,
       # lists, reports, sidebar, next/previous, cards, charts, REST lists, the Create Project
       # dialog's list of desk users by User.user_type) must pass for a caller with hidden fields.
+      # A child table whose table field the caller cannot read is refused in every reference,
+      # standard columns included, and through its parent.
       - name: Field-level read on the field names a read request carries
         run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
