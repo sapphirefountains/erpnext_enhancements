@@ -1,0 +1,122 @@
+{
+ "actions": [],
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "A phase of an Estimate: its label for this job, customer-facing scope, rate overrides and totals.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "phase_number",
+  "label",
+  "scope_text",
+  "amount",
+  "cost_amount",
+  "line_count",
+  "section_overrides",
+  "contingency_override",
+  "insurance_override",
+  "column_break_overrides",
+  "fee_override",
+  "commission_override"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Phase",
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "description": "What this job calls the phase. The number is the key.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "description": "Prints under the phase on the quotation.",
+   "fieldname": "scope_text",
+   "fieldtype": "Small Text",
+   "label": "Scope (Customer-Facing)"
+  },
+  {
+   "columns": 2,
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Price",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "cost_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Cost",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "line_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Lines",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_overrides",
+   "fieldtype": "Section Break",
+   "label": "Overrides",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the parent phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "contingency_override",
+   "fieldtype": "Data",
+   "label": "Contingency %",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the parent phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "insurance_override",
+   "fieldtype": "Data",
+   "label": "Insurance %",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "column_break_overrides",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Blank: inherit from the parent phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "fee_override",
+   "fieldtype": "Data",
+   "label": "Fee %",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: inherit from the parent phase, then the estimate. A number is a percent; 0 is a real rate.",
+   "fieldname": "commission_override",
+   "fieldtype": "Data",
+   "label": "Commission %",
+   "permlevel": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate Phase",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

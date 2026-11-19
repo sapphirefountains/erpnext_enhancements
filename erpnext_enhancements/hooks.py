@@ -216,6 +216,9 @@ doctype_js = {
 		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
+		# v1.832.0 -- estimating: Create > Estimate opens a new Estimate for this deal, for the
+		# roles that may create one; View > Estimates lists the deal's estimates.
+		"public/js/estimating/opportunity_estimate.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
@@ -635,6 +638,10 @@ doc_events = {
 		# Opportunity's Connections list every quote through one field. Never raises. See
 		# crm_enhancements/product_sale.py.
 		"validate": "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link",
+		# v1.832.0: an Estimate and the Quotation it issued Link each other, so neither could be
+		# deleted. Deleting the quotation clears Estimate.quotation first (on_trash runs before the
+		# link check). The Estimate's own on_trash does the other direction. See estimating/links.py.
+		"on_trash": "erpnext_enhancements.estimating.links.release_quotation",
 	},
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",

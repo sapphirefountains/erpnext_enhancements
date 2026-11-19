@@ -925,6 +925,41 @@ jobs:
       # collisions AFTER adoption (02 03 00 and 09 03 00 exist in MF2016, not MF2011).
       - name: Cost codes name real MasterFormat sections (list check, not a regex)
         run: python -m unittest erpnext_enhancements.tests.test_cost_codes -v
+      # Estimating milestone 1 (v1.832.0). The pricing engine: a price is exactly the sum of its
+      # parts, the three add-ons sit on the cost of work instead of stacking, commission comes out of
+      # the margin rather than on top of the price, use tax only on material and equipment, and
+      # 2.10 x 2.45 rounds to 5.14 (float noise is not a half). The cases file is shared with the
+      # node step below, which holds the browser's twin to the same numbers: a form that shows a total
+      # the server will not save is the failure. No frappe stub.
+      - name: Estimate pricing engine (Python)
+        run: python -m unittest erpnext_enhancements.tests.test_estimate_math -v
+      # The Estimate's rules and its cost wall: codes checked against the catalog (FEE and the
+      # contingency code are computed, never keyed), one Quotation line per phase with allowances
+      # named and "by others" as exclusions and never a cost, every seeded template line valid, and
+      # every cost/markup/margin/rate field at permlevel 1 readable only by Estimator, Finance Team,
+      # Executive Team and System Manager -- the rule that keeps a wage from being worked out of a
+      # labor line. No frappe stub.
+      - name: Estimate rules, seeded templates and cost visibility
+        run: python -m unittest erpnext_enhancements.tests.test_estimating_rules -v
+      # The Estimate controller against a frappe stub (its own step for that reason): rates copied
+      # from the default card but never over typed ones, phase rows added for every phase a line uses
+      # and its parent, bad overrides naming their row, and the stored numbers being the engine's.
+      - name: Estimate controller (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_estimate_controller -v
+      # Issue Quotation, the seed patches and the delete links against an in-memory frappe stub (its own
+      # step): one line per phase at its price, no tax on a build job even after set_missing_values copies
+      # a customer template in, the deal on custom_source_opportunity, a 0 Item Price held for EST-SCOPE
+      # so prod's auto-insert never makes a phase price its list price, every seed step logging instead
+      # of raising (a raising patch aborts the deploy), and the on_trash hooks that let an Estimate and
+      # its Quotation be deleted in either order.
+      - name: Estimate quotation, seeds and delete links (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_estimating_api -v
+      # The browser twin of the pricing engine under node, against the same cases as the Python step,
+      # plus the editor's phase labels equal to the server's, the form script's required editor level
+      # equal to the bundle's VERSION (a tab open across a deploy draws "reload" instead of throwing),
+      # and no typed text interpolated into the page without escaping.
+      - name: Estimate editor and its pricing twin (node)
+        run: node scripts/test_estimate_math.mjs
       # The audit roster answers a DATE, not today. Every derived-status write in the
       # HR and Training modules goes through db_set(update_modified=False), which never
       # reaches save_version() -- so a stored status is a fact about TODAY and
