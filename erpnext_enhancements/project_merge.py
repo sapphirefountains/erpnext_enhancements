@@ -35,8 +35,16 @@ def get_merge_stats(source_project, target_project):
 	if source_project == target_project:
 		frappe.throw(_("Source and Target Project cannot be the same."))
 
+	# Read on Project first, then the names: a caller without it gets the same answer
+	# whatever projects are named.
+	frappe.has_permission("Project", "read", throw=True)
+
 	if not frappe.db.exists("Project", source_project):
 		frappe.throw(_("Source Project {0} does not exist.").format(source_project))
+
+	# The preview is the first step of merging two projects, so it needs read on both.
+	frappe.has_permission("Project", "read", doc=source_project, throw=True)
+	frappe.has_permission("Project", "read", doc=target_project, throw=True)
 
 	impact_map = get_impacted_documents(source_project)
 
@@ -92,7 +100,7 @@ def get_impacted_documents(source_project):
 	return impact_map
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def merge_projects(source_project, target_project):
 	"""
 	Merge source_project into target_project.

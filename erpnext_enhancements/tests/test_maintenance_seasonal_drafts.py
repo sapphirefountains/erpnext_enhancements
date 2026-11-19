@@ -189,6 +189,8 @@ def setUpModule():
     record_module = types.ModuleType(RECORD_MODULE)
     record_module.get_dashboard_context = lambda *a, **k: {}
     record_module.get_visit_payload = lambda *a, **k: {}
+    record_module.build_dashboard_context = lambda *a, **k: {}
+    record_module.build_visit_payload = lambda *a, **k: {}
     record_module.resolve_template = lambda *a, **k: None
     sys.modules[RECORD_MODULE] = record_module
 
@@ -301,10 +303,14 @@ class TestUpcoming(unittest.TestCase):
 
 
 class TestKioskButton(unittest.TestCase):
+    """The context itself, through ``maintenance_context``: the kiosk endpoint
+    ``get_maintenance_context`` adds only its session-employee and Project read checks
+    in front of it (``test_people_access_checks`` pins those)."""
+
     def test_myers_offers_a_regular_visit_and_names_the_winterization(self):
         _site()
         _draft("WINTER", "Winterization")
-        ctx = kiosk.get_maintenance_context(project="PRJ-1")
+        ctx = kiosk.maintenance_context(project="PRJ-1")
         self.assertIsNone(ctx["draft"])
         self.assertIn("/app/sapphire-maintenance-record/new?", ctx["form_route"])
         self.assertEqual(
@@ -318,7 +324,7 @@ class TestKioskButton(unittest.TestCase):
         _site()
         _draft("REGULAR", None, modified="2026-10-01 07:00:00")
         _draft("WINTER", "Winterization", modified="2026-10-05 12:40:00")
-        ctx = kiosk.get_maintenance_context(project="PRJ-1")
+        ctx = kiosk.maintenance_context(project="PRJ-1")
         self.assertEqual(ctx["draft"], "REGULAR")
         self.assertEqual(ctx["form_route"], "/desk/visit-wizard/REGULAR")
         self.assertEqual(
@@ -328,10 +334,10 @@ class TestKioskButton(unittest.TestCase):
 
     def test_a_site_with_only_regular_work_keeps_its_one_button(self):
         _site()
-        ctx = kiosk.get_maintenance_context(project="PRJ-1")
+        ctx = kiosk.maintenance_context(project="PRJ-1")
         self.assertEqual([f["label"] for f in ctx["forms"]], ["New maintenance form"])
         _draft("REGULAR")
-        ctx = kiosk.get_maintenance_context(project="PRJ-1")
+        ctx = kiosk.maintenance_context(project="PRJ-1")
         self.assertEqual([f["label"] for f in ctx["forms"]], ["Open the draft form"])
         self.assertEqual(ctx["draft"], "REGULAR")
 

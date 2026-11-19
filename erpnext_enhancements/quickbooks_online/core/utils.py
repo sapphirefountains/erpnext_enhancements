@@ -70,14 +70,19 @@ def get_secret(settings, fieldname: str) -> str | None:
 	"""Read an encrypted Password field from Settings, decrypting it.
 
 	Used for ``access_token``/``refresh_token``/``client_secret``/
-	``webhook_verifier_token``. Falls back to the raw field value if decryption
-	is unavailable (e.g. value not yet stored as a password), returning None when
-	absent.
+	``webhook_verifier_token``. A value set in memory and not yet saved is
+	returned by ``get_password`` itself. Returns None -- "not configured" -- when
+	nothing is stored, when the stored value cannot be decrypted, or when the
+	value is empty or only the ``*`` placeholder, so every caller (the webhook
+	signature check among them) refuses rather than proceeds.
 	"""
 	try:
-		return settings.get_password(fieldname)
+		value = settings.get_password(fieldname, raise_exception=False)
 	except Exception:
-		return settings.get(fieldname)
+		return None
+	if not isinstance(value, str) or not value.strip() or not value.strip("*"):
+		return None
+	return value
 
 
 def set_secret(settings, fieldname: str, value: str | None):

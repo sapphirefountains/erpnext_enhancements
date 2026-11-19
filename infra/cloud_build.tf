@@ -196,7 +196,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -211,7 +211,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -226,7 +226,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -241,7 +241,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -256,7 +256,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -271,7 +271,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -286,7 +286,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -301,7 +301,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -316,7 +316,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             "_STATE_BUCKET"    = var.state_bucket_name
@@ -365,7 +365,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_upstream_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             _VM_NAME    = var.spot_vm_name
@@ -380,7 +380,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_upstream_yaml_path
           push = {
-            branch = "manual-trigger-only"
+            branch = var.cloud_build_manual_branch
           }
           substitutions = {
             _VM_NAME    = var.standard_vm_name

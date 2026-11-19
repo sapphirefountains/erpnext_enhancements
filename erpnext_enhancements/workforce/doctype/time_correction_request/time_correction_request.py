@@ -43,6 +43,7 @@ class TimeCorrectionRequest(Document):
 		if not self.status:
 			self.status = OPEN_STATUS
 
+		self._check_filer()
 		self._check_proposals()
 		self._check_interval_ownership()
 		self._check_employee_edit_window()
@@ -76,6 +77,24 @@ class TimeCorrectionRequest(Document):
 
 		if self.proposed_start and self.proposed_end and self.proposed_end <= self.proposed_start:
 			frappe.throw(_("Proposed End must be after Proposed Start."))
+
+	def _check_filer(self):
+		"""A new request is filed for the caller's own Employee, unless the caller may
+		review that employee's requests (``permissions.can_review``: the manager roles,
+		Administrator, or the employee's ``reports_to`` login)."""
+		if not self.is_new():
+			return
+		from erpnext_enhancements.workforce import permissions
+
+		user = frappe.session.user
+		if permissions.can_review(self.employee, user):
+			return
+		if self.employee and self.employee == permissions._session_employee(user):
+			return
+		frappe.throw(
+			_("You can file a time correction request only for yourself."),
+			frappe.PermissionError,
+		)
 
 	def _check_interval_ownership(self):
 		if not self.job_interval:

@@ -18,7 +18,7 @@ from frappe.utils import cint
 TRIAGE_ROLES = ("System Manager", "Sales Manager")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retry_conversion(docname):
 	"""Re-run conversion for one request.
 
@@ -50,7 +50,7 @@ def retry_conversion(docname):
 	return {"queued": True}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_spam(docname, reason=None):
 	"""Quarantine a request. Creates nothing and stops any further conversion."""
 	frappe.only_for(TRIAGE_ROLES)
@@ -69,7 +69,7 @@ def mark_spam(docname, reason=None):
 	return {"status": "Spam"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_not_spam(docname):
 	"""Release a false positive back into the queue.
 

@@ -16,6 +16,10 @@ Two things it is deliberately careful about:
 * **Watch coverage is never returned on its own.** It measures time elapsed with
   a video playing and visible, not attention. Beside a score it is context;
   alone it reads as proof of engagement, which it is not.
+
+Row scoping follows the Desk's rule in ``training/permissions.py``: the caller's
+own record, or a direct report's (``Employee.reports_to``), unless the caller holds
+one of its ``UNSCOPED_ROLES``.
 """
 
 from typing import Any
@@ -74,6 +78,11 @@ class TrainingLearnerRecord(BaseTool):
         employee, user = self._resolve(who)
         if not user:
             return {"error": f"Could not identify a learner from {who!r}."}
+        if not self._may_read(user):
+            return {
+                "error": "You can see your own training record and your direct reports' "
+                "records only."
+            }
 
         course = arguments.get("course")
         return {
@@ -94,6 +103,17 @@ class TrainingLearnerRecord(BaseTool):
         }
 
     # ------------------------------------------------------------------ helpers
+
+    def _may_read(self, subject_user):
+        """The Desk's rule for learner-owned rows (``training/permissions.py``):
+        an unscoped training role sees anybody; otherwise your own record or a
+        direct report's."""
+        from erpnext_enhancements.training import permissions
+
+        me = frappe.session.user
+        if permissions._is_unscoped(me):
+            return True
+        return permissions._own_row({"user": subject_user}, me)
 
     def _resolve(self, who):
         """Employee + user for a docname, an email, or a person's name.

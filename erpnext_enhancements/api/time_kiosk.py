@@ -32,8 +32,13 @@ Security:
           client, for every endpoint that reads or writes an employee's own data
           (``_session_employee`` / ``_resolve_employee`` rejects a mismatched
           claimed employee).
-        - The legacy ``log_geolocation`` single-point endpoint trusts the
-          supplied ``employee`` for back-compat.
+        - The legacy ``log_geolocation`` single-point endpoint also takes the
+          employee from the session; a supplied ``employee`` is honoured only for
+          a ``TIMELINE_MANAGER_ROLES`` holder.
+        - The kiosk's project and visit lookups (``get_tasks_for_project``,
+          ``get_maintenance_context``, ``get_my_visits_today``,
+          ``get_nearby_visit``) answer only a session that resolves to an
+          Employee, and the first two also check Project read.
         - Manager views are role-gated on ``TIMELINE_MANAGER_ROLES`` (System
           Manager / HR Manager / Projects Manager — the Location Timeline page's
           own role list, and ``tests/test_location_timeline_page.py`` pins the
@@ -93,7 +98,7 @@ STOP_MIN_MINUTES = 5
 _haversine_m = haversine_m
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None,
              time_category=None, skip_reason=None, accuracy=None, offsite_acknowledged=None,
              break_minutes=None):
@@ -240,7 +245,7 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
 
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def close_interval_for_employee(employee=None, skip_reason=None, source="Triton"):
     caller_emp = _session_employee()
     
@@ -322,7 +327,7 @@ def _location_stash_key(user=None):
     return f"ee_kiosk_location_fix::{user or frappe.session.user}"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def stash_location_fix(lat=None, lng=None, accuracy=None):
     """Record the caller's own browser geolocation fix for ``LOCATION_STASH_TTL_SEC``.
 
@@ -371,7 +376,7 @@ def consume_stashed_location_fix(user=None):
     return fix
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def clock_in_with_stashed_fix(project=None, task=None, time_category=None,
                               description=None, offsite_acknowledged=None, source="Triton"):
     """Clock the CALLER in, anchored to the fix their browser stashed.
@@ -793,7 +798,7 @@ def _stamp_tracking_health(doc, settings=None):
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def refresh_tracking_health(job_interval):
     """Recompute one interval's tracking health from the Time Kiosk Log and save
     it. Managers, or the interval's own employee. Returns the stored dict."""
@@ -955,11 +960,22 @@ def get_kiosk_options():
     }
 
 
+def _require_project_read(project):
+    """Refuse unless ``project`` is a name the session user may read as a Project."""
+    if not isinstance(project, str) or not frappe.has_permission("Project", "read", doc=project):
+        frappe.throw(_("You cannot open that project."), frappe.PermissionError)
+
+
 @frappe.whitelist()
 def get_tasks_for_project(project):
-    """Open tasks under a project as [{value, label}] for the kiosk task picker."""
+    """Open tasks under a project as [{value, label}] for the kiosk task picker.
+
+    The session must resolve to an Employee who can read the Project (the same
+    projects ``get_projects`` lists for the picker)."""
+    _require_session_employee()
     if not project:
         return []
+    _require_project_read(project)
     return [
         {"value": t["name"], "label": t.get("subject") or t["name"]}
         for t in frappe.get_all(
@@ -974,6 +990,20 @@ def get_tasks_for_project(project):
 
 @frappe.whitelist()
 def get_maintenance_context(project=None, since=None):
+    """The kiosk's endpoint for :func:`maintenance_context`.
+
+    The session must resolve to an Employee who can read the Project. Server code
+    (``tasks.nudge_unsubmitted_maintenance_forms``) calls
+    :func:`maintenance_context` directly.
+    """
+    _require_session_employee()
+    if not project:
+        return {"required": False}
+    _require_project_read(project)
+    return maintenance_context(project=project, since=since)
+
+
+def maintenance_context(project=None, since=None):
     """Maintenance-form context for the kiosk's active job card.
 
     Called by the kiosk PWA when a technician is clocked into a project, and
@@ -1107,6 +1137,11 @@ def get_my_visits_today():
     """
     from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_record_names
 
+    # Staff only. Empty rather than an error for anybody else: the Visit Wizard's
+    # picker asks for this alongside other lists and must still draw.
+    if not _session_employee():
+        return []
+
     user = frappe.session.user
     or_filters = [["technician", "=", user], ["technician", "is", "not set"]]
     crewed = crew_record_names(user, docstatus=0, limit=50)
@@ -1143,8 +1178,11 @@ def get_nearby_visit(lat=None, lng=None):
     coordinates; within the configured radius (ERPNext Enhancements Settings >
     Site Geofence Radius, 0 = disabled), returns the nearest site that has a
     visit waiting — an open draft record, or an Active contract feature due
-    within 7 days. Returns None when there is nothing to suggest.
+    within 7 days. Returns None when there is nothing to suggest, and for a
+    session that does not resolve to an Employee.
     """
+    if not _session_employee():
+        return None
     if not lat or not lng:
         return None
     radius = cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "geofence_radius_m"))
@@ -1188,7 +1226,7 @@ def get_nearby_visit(lat=None, lng=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_attachment(file_name, project=None, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
@@ -1283,7 +1321,7 @@ def _gate_photo_count(job_interval):
         return 0
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_job_photo(job_interval=None, client_uid=None, file_name=None, caption=None,
                      captured_on=None, lat=None, lng=None, upload_failed=None):
     """Register or update one photo on a Job Interval.
@@ -1789,7 +1827,7 @@ TCR_LIST_FIELDS = ["name", "request_type", "status", "job_interval", "reason", "
                    "reviewed_on", "review_note", "proposed_start", "proposed_end", "proposed_project"]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_correction_request(request_type, reason, job_interval=None, proposed_start=None,
                               proposed_end=None, proposed_project=None, proposed_task=None,
                               proposed_activity=None):
@@ -1828,7 +1866,7 @@ def get_my_correction_requests(limit=20):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_correction_request(name):
     """Withdraw one of the session employee's own requests while it is still
     ``Requested``. Anything already decided stays as decided."""
@@ -1891,20 +1929,25 @@ def _valid_coords(lat, lng):
     return -90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_geolocation(employee=None, latitude=None, longitude=None, device_agent=None,
                     log_status=None, timestamp=None, job_interval=None, accuracy=None):
     """
     Logs a single geolocation entry to the Time Kiosk Log.
 
     Legacy single-point endpoint, kept for back-compat (the PWA uses the batched,
-    session-trusted ``log_geolocation_batch`` instead). Trusts the supplied
-    ``employee`` for backward compatibility.
+    session-trusted ``log_geolocation_batch`` instead). The employee is the
+    session's own; a supplied ``employee`` that is somebody else's is ignored,
+    unless the caller holds one of ``TIMELINE_MANAGER_ROLES``.
     """
-    try:
-        if not employee:
-            frappe.throw(_("Employee ID is required for logging location."))
+    session_emp = _session_employee()
+    on_behalf = bool(employee) and employee != session_emp and _is_manager()
+    if not on_behalf:
+        if not session_emp:
+            frappe.throw(_("No Employee record found for this user."), frappe.PermissionError)
+        employee = session_emp
 
+    try:
         doc = frappe.get_doc({
             "doctype": "Time Kiosk Log",
             "employee": employee,
@@ -1964,7 +2007,7 @@ def _touch_interval_fixes(job_interval, count, latest):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def log_geolocation_batch(points, offline_key=None):
     """
     Bulk-ingest geolocation points captured by the kiosk PWA worker.
@@ -2587,7 +2630,7 @@ def _assert_may_edit_time_for(employee):
     frappe.throw(_("Not permitted to edit time for this employee."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_manual_interval(project=None, start_time=None, end_time=None, reason=None,
                         task=None, time_category=None, description=None, employee=None):
     """Enter time by hand: a whole finished block, or an open session that started
@@ -2712,7 +2755,7 @@ def add_manual_interval(project=None, start_time=None, end_time=None, reason=Non
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_backdated(project=None, start_time=None, reason=None, task=None, time_category=None, description=None):
     """"I forgot to clock in" — an open session that began earlier today.
 
@@ -2733,7 +2776,7 @@ def start_backdated(project=None, start_time=None, reason=None, task=None, time_
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_interval_times(interval=None, start_time=None, end_time=None, reason=None, time_category=None):
     """Move an existing interval's start and/or end, and correct its activity.
 
@@ -2803,12 +2846,12 @@ def update_interval_times(interval=None, start_time=None, end_time=None, reason=
 
     return {"status": "success", "message": _("Times updated."), "doc": doc.name}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_day(employee=None, date=None):
     from erpnext_enhancements.workforce.approval import approve_day as _approve_day
     return _approve_day(employee, date)
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reopen_day(employee=None, date=None, reason=None):
     from erpnext_enhancements.workforce.approval import reopen_day as _reopen_day
     return _reopen_day(employee, date, reason)

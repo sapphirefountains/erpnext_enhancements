@@ -87,7 +87,7 @@ def get_comments(reference_doctype, reference_name):
 	return comments
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_comment(reference_doctype, reference_name, comment_text, parent_comment=None):
 	"""
 	Adds a new comment to a document, optionally as a reply in a thread.
@@ -150,7 +150,7 @@ def add_comment(reference_doctype, reference_name, comment_text, parent_comment=
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 	"""Attach already-uploaded File documents to the comment's parent document.
 
@@ -224,7 +224,7 @@ def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 
 	return {"success": True}
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_comment(comment_name):
 	"""
 	Deletes a comment if the user is the owner.
@@ -247,7 +247,7 @@ def delete_comment(comment_name):
 		return {"success": False, "error": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_comment(comment_name, comment_text):
 	if not comment_name or not comment_text:
 		frappe.throw(_("Comment name and comment text are required."))

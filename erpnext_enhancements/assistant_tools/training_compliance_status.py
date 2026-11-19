@@ -13,6 +13,11 @@ coverage** figure on its own. Coverage measures time elapsed with a video playin
 and visible, not attention — somebody can start a lesson and walk away. Reported
 beside a pass it is context; reported alone it reads as proof of engagement,
 which it is not. Scores and completions are what this returns.
+
+Row scoping follows the Desk's rule in ``training/permissions.py``: unless the
+caller holds one of its ``UNSCOPED_ROLES``, every list here (assignments,
+certificates and the per-course counts) covers only the caller and their direct
+reports (``Employee.reports_to``).
 """
 
 from typing import Any
@@ -123,6 +128,10 @@ class TrainingComplianceStatus(BaseTool):
         if not arguments.get("include_completed"):
             filters["status"] = ["in", OPEN_STATUSES]
 
+        visible = self._visible_users()
+        if visible is not None:
+            filters["user"] = ["in", visible]
+
         rows = frappe.get_all(
             "Training Assignment",
             filters=filters,
@@ -159,7 +168,7 @@ class TrainingComplianceStatus(BaseTool):
             "overdue": overdue,
             "due_soon": due_soon,
             "assignments": rows,
-            "by_course": self._by_course(filters.get("course")),
+            "by_course": self._by_course(filters.get("course"), visible),
             "note": (
                 "Completion here means the course was passed. It does not imply anyone "
                 "watched attentively — see the tool description."
@@ -193,6 +202,8 @@ class TrainingComplianceStatus(BaseTool):
             cert_filters["course"] = filters["course"]
         if filters.get("employee"):
             cert_filters["employee"] = filters["employee"]
+        if filters.get("user"):
+            cert_filters["user"] = filters["user"]
 
         rows = frappe.get_all(
             "Training Certificate",
@@ -227,9 +238,22 @@ class TrainingComplianceStatus(BaseTool):
 
     # ------------------------------------------------------------------ helpers
 
-    def _by_course(self, course=None):
+    def _visible_users(self):
+        """None when the caller holds an unscoped training role (everybody);
+        otherwise the logins whose rows they may see: their own and their direct
+        reports', the Desk's rule from ``training/permissions.py``."""
+        from erpnext_enhancements.training import permissions
+
+        me = frappe.session.user
+        if permissions._is_unscoped(me):
+            return None
+        return [me] + permissions._direct_report_users(me)
+
+    def _by_course(self, course=None, visible=None):
         """Per-course counts: assigned vs completed vs overdue."""
         filters = {"course": course} if course else {}
+        if visible is not None:
+            filters["user"] = ["in", visible]
         summary = {}
         for row in frappe.get_all(
             "Training Assignment",

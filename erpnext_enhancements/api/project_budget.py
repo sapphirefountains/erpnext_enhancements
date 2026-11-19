@@ -70,7 +70,7 @@ def _state(doc):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_reallocation(reallocation):
     """Record the project manager's approval, from the server session and clock."""
     doc = _draft(reallocation)
@@ -81,7 +81,7 @@ def approve_reallocation(reallocation):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def give_second_approval(reallocation):
     """Record the second approval a protected category requires.
 
@@ -110,7 +110,7 @@ def give_second_approval(reallocation):
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_approval(reallocation, which):
     """Undo an approval recorded in error. ``which`` is ``pm`` or ``second``."""
     doc = _draft(reallocation)
@@ -186,6 +186,8 @@ def get_project_reallocations(project):
     day the money moved, which is what makes a sequence of these reconstructable.
     """
     frappe.get_doc("Project", project).check_permission("read")
+    # The rows are Budget Reallocations, so reading them needs that doctype's read as well.
+    frappe.has_permission(DOCTYPE, "read", throw=True)
 
     return frappe.get_all(
         DOCTYPE,

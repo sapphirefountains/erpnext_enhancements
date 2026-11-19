@@ -156,7 +156,7 @@ PARTUUID=... /boot/efi vfat defaults,umask=077                            0 2
 - **Version:** 11.8.6-MariaDB
 - **Data directory:** `/data/mysql/` (on persistent disk)
 - **Authentication:** `mysql_native_password` (all users)
-- **Root password:** `frappe` (set during setup)
+- **Root password:** `<stored in the password manager>` (set during setup)
 - **Users:**
   - `root`@`localhost`
   - `mysql`@`localhost`
@@ -216,7 +216,7 @@ PARTUUID=... /boot/efi vfat defaults,umask=077                            0 2
 ```json
 {
     "db_name": "_800b9f9415173cf2",
-    "db_password": "cDo6wUlvARR9y19l",
+    "db_password": "<stored in the password manager>",
     "db_type": "mariadb",
     "db_user": "_800b9f9415173cf2",
     "installed_apps": [
@@ -357,7 +357,7 @@ sudo -u frappe bash -c 'export PATH=$HOME/.local/bin:$PATH && cd ~/frappe-bench 
 sudo systemctl restart frappe-bench
 
 # MariaDB access
-sudo mysql -u root -p'frappe'
+sudo mysql -u root -p'<stored in the password manager>'
 
 # Check health
 curl -s -o /dev/null -w "%{http_code}" http://localhost/api/method/frappe.ping
@@ -375,9 +375,9 @@ gcloud compute backend-services get-health spot-glb-spot-vm-backend \
 | Credential | Value |
 |---|---|
 | Frappe site name | `sapphirefountainstest.v.frappe.cloud` |
-| MariaDB root password | `frappe` |
+| MariaDB root password | `<stored in the password manager>` |
 | Site DB name | `_800b9f9415173cf2` |
-| Site DB password | `cDo6wUlvARR9y19l` |
+| Site DB password | `<stored in the password manager>` |
 | Site DB user | `_800b9f9415173cf2` |
 | Backup encryption key | User-provided |
 | IAP tunnel access | `user:sinjini@d3vtech.com` |

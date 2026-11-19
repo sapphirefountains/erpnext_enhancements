@@ -43,13 +43,15 @@ function sync_tags_from_child_table(frm) {
 		// If it's an existing document with missing tags, save it directly to the database via API.
 		// Skipped while live collab applies a remote change: the originating
 		// client performs this write; receivers only mirror tags locally.
+		// The endpoint requires write permission, so a read-only viewer only previews.
 		let applying_remote = frm._live_sync && frm._live_sync.applying_remote;
 		if (
 			!frm.is_new() &&
 			!frm.is_dirty() &&
 			has_no_core_tags &&
 			value_streams.length > 0 &&
-			!applying_remote
+			!applying_remote &&
+			frm.has_perm("write")
 		) {
 			frappe.call({
 				method: "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags_for_existing",

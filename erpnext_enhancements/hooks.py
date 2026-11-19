@@ -1587,6 +1587,17 @@ doc_events = {
 		# too, and the failures are the early warning.
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
 	},
+	"Error Log": {
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
+		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
+		# masks a traceback variable by its name only; this goes by the value's shape, including
+		# one printed inside another object's repr. A doc_event is resolved by name at insert
+		# time, so it also applies in workers and to rows frappe defers and inserts later. Never
+		# raises and never logs (a row is never lost to it, and it cannot feed itself);
+		# linear-time, and work on a very large row is capped without shortening the text. Rows
+		# already stored: security_alerts.mask_stored_error_logs, run by hand.
+		"before_insert": "erpnext_enhancements.security_alerts.mask_error_log",
+	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
 		# core Contact.autoname reads links[0], so an insert carrying only the
@@ -2316,6 +2327,11 @@ scheduler_events = {
 		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
 		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
+		# security (v1.826.6): email the same recipients while developer_mode, server_script_enabled
+		# or allow_tests is on in the site configuration, at most once per setting per day. Password
+		# sign-in is the two-factor check's (above) and is not repeated. Quiet when nothing is on;
+		# never raises. See security_alerts.check_site_configuration.
+		"erpnext_enhancements.security_alerts.check_site_configuration",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -3426,6 +3442,15 @@ before_request = [
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).
 	"erpnext_enhancements.monkeypatches.ensure_applied",
+	# OAuth client registration (v1.826.9, Nikolas 2026-11-18): dynamic registration stays on, but a
+	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
+	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
+	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
+	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
+	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
+	# and a string test and never raises. See oauth_registration.py.
+	"erpnext_enhancements.oauth_registration.guard_registration",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled

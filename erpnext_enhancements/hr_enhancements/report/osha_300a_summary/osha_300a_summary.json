@@ -6,7 +6,7 @@
  "doctype": "Report",
  "is_standard": "Yes",
  "letterhead": null,
- "modified": "2026-09-11 12:00:00.000000",
+ "modified": "2026-11-18 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "HR Enhancements",
  "name": "OSHA 300A Summary",
@@ -21,9 +21,6 @@
   },
   {
    "role": "HR Manager"
-  },
-  {
-   "role": "HR User"
   }
  ]
 }

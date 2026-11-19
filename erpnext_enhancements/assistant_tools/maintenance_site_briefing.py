@@ -26,8 +26,10 @@ class MaintenanceSiteBriefing(BaseTool):
             "deliverables), chemistry trends from the last 5 visits, and any open visit "
             "drafts. NOTE: the response contains site access codes — the same data the "
             "desk technician widget shows — so only surface them when the user actually "
-            "needs site access. Requires read permission on the Project and on Sapphire "
-            "Maintenance Records."
+            "needs site access. Requires a maintenance role (Maintenance User, Maintenance "
+            "Supervisor, Projects Manager or System Manager), read permission on the Project "
+            "and on Sapphire Maintenance Records; without the role the tool answers "
+            "'Not permitted'."
         )
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
@@ -47,8 +49,8 @@ class MaintenanceSiteBriefing(BaseTool):
 
     def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
         project = arguments["project"]
-        # get_dashboard_context reads via frappe.db.get_value / get_all without
-        # permission checks, so gate on the Project document explicitly.
+        # get_dashboard_context checks Project read and a maintenance role itself;
+        # the explicit Project check stays so this tool's refusal reads the same as before.
         require_doc_read("Project", project)
 
         from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
