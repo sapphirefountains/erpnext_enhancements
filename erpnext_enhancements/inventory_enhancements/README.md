@@ -61,7 +61,7 @@ model, the pure rules and the label reads.
 | `reorder_suggest_rules.py` | Suggested reorder levels (v1.831.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
 | `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
 | `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
-| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
+| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, where the item's stock is against the rule's scope (`stock_places`, v1.833.1), each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
 | `page/reorder_board/` | The Reorder Board (v1.730.0, `/desk/reorder-board`): Needs reorder, On order and Snoozed, each its own history entry |
@@ -1154,6 +1154,21 @@ TASK-2026-02922 to -02926.
   a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for Receiving,
   `Inventory Room - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
   a real rule. Only `Purchase` rules are listed (all of production's are).
+* **Where it is (v1.833.1, TASK-2026-03279).** A rule's warehouse is where its request delivers, not where the
+  stock is.
+  * **The line lists the stock first:** every bin the rule counts that holds the item, with its quantity
+    (`reorder_rules.stock_places` over `reorder_board.read_stock`, the Bin Manager item filter's read of
+    `tabBin` rows with stock). "Counts" means the rule's scope (`in_scope`) less job sites and the Project
+    Shelf.
+  * **Then the delivery bin:** "Reorder into" names the rule's warehouse.
+  * **A warning** when the rule's bin is empty while the stock is in another bin, or when the rule's bin is
+    not one of the item's bins in the Bin Manager (an enabled Putaway Rule, `read_assigned`). The board
+    never decides which bin is right.
+  * **"Not counted by this rule"** lists stock outside the scope, with job stock "held for jobs".
+  * **On hand** is what the rule counts, across the same scope as Projected.
+  * **Why:** production's 406-020 had its rule on an empty B2-3-4 while its stock was in B1-3-12, and the board
+    showed only B2-3-4.
+  * **Storage Location is not involved:** it has no rows on production, and the board does not read it.
 * **Covered** means a request or order line for that item, in the rule's scope, with **something still to
   come** (`reorder_rules.still_to_come`): the part of a Material Request line not yet on a submitted Purchase
   Order, plus what its submitted orders that are not Closed, Completed or Delivered have not delivered. So:
@@ -1196,8 +1211,8 @@ TASK-2026-02922 to -02926.
   `Inventory Scanner Settings.reorder_alert_role` (default Purchase Manager; Administrator, Guest and
   `triton@` excluded), with one bell notification each linking the board, and stamps them in the same
   transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing. The
-  email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
-  on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
+  email's table is four columns (item and name, the rule's warehouse headed "Reorder into", projected / reorder
+  at, suggested buy) so it reads on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
 * **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
   `unsnooze_line`, and since v1.831.0 `get_reorder_suggestions` and `apply_reorder_suggestion` (below). Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
 

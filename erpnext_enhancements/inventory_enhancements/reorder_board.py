@@ -223,15 +223,36 @@ def _item_details(item_codes, include_rates):
 	return out, suppliers
 
 
-def _on_hand(item_codes):
-	return {
-		rules.line_key(r["item_code"], r["warehouse"]): rules.flt(r["actual_qty"])
-		for r in frappe.db.sql(
-			"select item_code, warehouse, actual_qty from `tabBin` where item_code in %(codes)s",
-			{"codes": _in(item_codes)},
-			as_dict=True,
-		)
-	}
+def read_stock(item_codes):
+	"""``{item_code: [{"warehouse", "actual_qty"}]}``: every place the rules' items are on hand.
+
+	The same read as the Bin Manager's item filter (``bin_views.item_locations``): ``tabBin`` rows
+	with stock, in any warehouse. :func:`reorder_rules.stock_places` sorts them into what a rule
+	counts and what it does not (TASK-2026-03279).
+	"""
+	out = {}
+	for r in frappe.db.sql(
+		"""select item_code, warehouse, actual_qty from `tabBin`
+		where item_code in %(codes)s and actual_qty > 0""",
+		{"codes": _in(item_codes)},
+		as_dict=True,
+	):
+		out.setdefault(r["item_code"], []).append(r)
+	return out
+
+
+def read_assigned(item_codes):
+	"""``{item_code: {warehouse}}``: each item's bins in the Bin Manager, its enabled Putaway Rules
+	(the "assigned" the Bin Manager and Where Is This Item show)."""
+	out = {}
+	for r in frappe.db.sql(
+		"""select item_code, warehouse from `tabPutaway Rule`
+		where disable = 0 and item_code in %(codes)s""",
+		{"codes": _in(item_codes)},
+		as_dict=True,
+	):
+		out.setdefault(r["item_code"], set()).add(r["warehouse"])
+	return out
 
 
 def read_ancestors():
@@ -348,12 +369,6 @@ def build_board(include_rates=False, now=None):
 	rule_rows, projected_map = read_rules()
 	codes = sorted({r["item_code"] for r in rule_rows})
 	details, suppliers = _item_details(codes, include_rates)
-	on_hand = _on_hand(codes)
-	for r in rule_rows:
-		d = details.get(r["item_code"]) or {}
-		r.update(d)
-		r["on_hand"] = on_hand.get(rules.line_key(r["item_code"], r["warehouse"]), 0.0)
-		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
 	ancestors = read_ancestors()
 	# Stock on a job site is that job's, not the shop's (v1.801.0). Many of production's rules
 	# roll up at the company's root group, which a site sits under, so without this material
@@ -364,6 +379,18 @@ def build_board(include_rates=False, now=None):
 	# to it, were bought for a job. ``not_shop_warehouses`` is every job site plus the shelf, the
 	# one set Stock Scan's totals read too.
 	sites = project_shelf.not_shop_warehouses()
+	# Where each item actually is (v1.833.1, TASK-2026-03279). The rule's warehouse is where a
+	# request delivers; the stock may be in any bin under the rule's group. ``on_hand`` is what the
+	# rule counts, across the same scope as its projected qty, not the rule's own bin alone.
+	stock = read_stock(codes)
+	assigned = read_assigned(codes)
+	for r in rule_rows:
+		d = details.get(r["item_code"]) or {}
+		r.update(d)
+		r.update(
+			rules.stock_places(r, stock.get(r["item_code"]), ancestors, sites, assigned.get(r["item_code"]))
+		)
+		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
 	projected_map = site_rules.without_sites(projected_map, sites, ancestors)
 	tracked = read_tracking(rule_rows, ancestors, today, sites)
 	watches = read_watches()
@@ -396,6 +423,11 @@ _LINE_FIELDS = (
 	"warehouse_group",
 	"company",
 	"on_hand",
+	"places",
+	"elsewhere",
+	"rule_qty",
+	"rule_empty",
+	"rule_assigned",
 	"projected_qty",
 	"reorder_level",
 	"reorder_qty",
@@ -852,13 +884,15 @@ def _qty(value):
 
 
 #: The digest's columns. Four, because ``email_style.table`` fits four on a phone; the rest
-#: (on hand, supplier, rate, how long) is on the board.
-DIGEST_HEADERS = ("Item", "Warehouse", "Projected / reorder at", "Suggested buy")
+#: (where the stock is, on hand, supplier, rate, how long) is on the board. The second is the
+#: rule's warehouse, where a request delivers, so it says so (v1.833.1, TASK-2026-03279): it was
+#: headed "Warehouse" and read as where the item is.
+DIGEST_HEADERS = ("Item", "Reorder into", "Projected / reorder at", "Suggested buy")
 
 
 def digest_rows(lines, url_for):
-	"""Four cells a line: the item (code and name, linking the Item), the warehouse, projected
-	against the reorder point, and the suggested buy with its unit."""
+	"""Four cells a line: the item (code and name, linking the Item), the rule's warehouse (where
+	a request delivers), projected against the reorder point, and the suggested buy with its unit."""
 	return [
 		[
 			(url_for(l["item_code"]), " · ".join(x for x in (l["item_code"], l.get("item_name")) if x)),
