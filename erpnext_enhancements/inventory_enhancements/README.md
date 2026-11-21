@@ -1158,12 +1158,18 @@ TASK-2026-02922 to -02926.
   stock is.
   * **The line lists the stock first:** every bin the rule counts that holds the item, with its quantity
     (`reorder_rules.stock_places` over `reorder_board.read_stock`, the Bin Manager item filter's read of
-    `tabBin` rows with stock). "Counts" means the rule's scope (`in_scope`) less job sites and the Project
-    Shelf.
+    `tabBin`).
+    * A negative row is kept and shown as negative, because the projected quantity counts it.
+    * "Counts" means the rule's scope (`in_scope`) less job sites and the Project Shelf. The rule's own
+      warehouse is always counted, as `without_sites` keeps its figure.
   * **Then the delivery bin:** "Reorder into" names the rule's warehouse.
   * **A warning** when the rule's bin is empty while the stock is in another bin, or when the rule's bin is
     not one of the item's bins in the Bin Manager (an enabled Putaway Rule, `read_assigned`). The board
     never decides which bin is right.
+    * No warning for a rule that delivers to the receiving place
+      (`Inventory Scanner Settings.overhead_receiving_warehouse`, `project_shelf.fallback_warehouse`). Stock
+      is put away from there, so receiving holding none is normal. 29 of production's rules deliver to
+      `Receiving - SF`.
   * **"Not counted by this rule"** lists stock outside the scope, with job stock "held for jobs".
   * **On hand** is what the rule counts, across the same scope as Projected.
   * **Why:** production's 406-020 had its rule on an empty B2-3-4 while its stock was in B1-3-12, and the board

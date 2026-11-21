@@ -226,14 +226,16 @@ def _item_details(item_codes, include_rates):
 def read_stock(item_codes):
 	"""``{item_code: [{"warehouse", "actual_qty"}]}``: every place the rules' items are on hand.
 
-	The same read as the Bin Manager's item filter (``bin_views.item_locations``): ``tabBin`` rows
-	with stock, in any warehouse. :func:`reorder_rules.stock_places` sorts them into what a rule
-	counts and what it does not (TASK-2026-03279).
+	The Bin Manager's item filter's read (``bin_views.item_locations``), ``tabBin`` rows in any
+	warehouse, with negative rows kept: ERPNext's projected qty counts them, so the line shows
+	them as negative rather than list more on hand than the figure beside it (none on production,
+	2026-11-21). :func:`reorder_rules.stock_places` sorts them into what a rule counts and what it
+	does not (TASK-2026-03279).
 	"""
 	out = {}
 	for r in frappe.db.sql(
 		"""select item_code, warehouse, actual_qty from `tabBin`
-		where item_code in %(codes)s and actual_qty > 0""",
+		where item_code in %(codes)s and actual_qty <> 0""",
 		{"codes": _in(item_codes)},
 		as_dict=True,
 	):
@@ -384,11 +386,21 @@ def build_board(include_rates=False, now=None):
 	# rule counts, across the same scope as its projected qty, not the rule's own bin alone.
 	stock = read_stock(codes)
 	assigned = read_assigned(codes)
+	# The shop's receiving place (Inventory Scanner Settings.overhead_receiving_warehouse): a rule
+	# that delivers there is never told its bin is empty, because stock is put away from it.
+	receiving = project_shelf.fallback_warehouse()
 	for r in rule_rows:
 		d = details.get(r["item_code"]) or {}
 		r.update(d)
 		r.update(
-			rules.stock_places(r, stock.get(r["item_code"]), ancestors, sites, assigned.get(r["item_code"]))
+			rules.stock_places(
+				r,
+				stock.get(r["item_code"]),
+				ancestors,
+				sites,
+				assigned.get(r["item_code"]),
+				receiving=receiving,
+			)
 		)
 		r["default_supplier"] = suppliers.get((r["item_code"], r.get("company")))
 	projected_map = site_rules.without_sites(projected_map, sites, ancestors)
