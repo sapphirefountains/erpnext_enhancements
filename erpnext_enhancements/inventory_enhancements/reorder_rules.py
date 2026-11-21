@@ -508,6 +508,93 @@ def in_scope(warehouse, rule, ancestors) -> bool:
 	return warehouse == group or group in (ancestors or {}).get(warehouse, ())
 
 
+# --- where the stock is -----------------------------------------------------------------
+
+
+def stock_places(rule, bins, ancestors=None, not_shop=(), assigned=None, receiving=None):
+	"""Where a rule's item is on hand, split the way the rule counts it (v1.833.1, TASK-2026-03279).
+
+	A rule's ``warehouse`` is where its Material Request delivers, not where the stock is. A rule
+	with a ``warehouse_group`` is judged on every warehouse under the group, so the item can sit
+	in another bin while the rule's own bin is empty. Production's 406-020 did: its rule names
+	``Bin B2-3-4``, reconciled to 0, while its two were in ``Bin B1-3-12``. The board showed only
+	the rule's bin, and someone checking the count went to the wrong shelf.
+
+	``bins``: ``tabBin`` rows for this rule's item, any warehouse (``{"warehouse", "actual_qty"}``):
+	the Bin Manager's item filter's read (``bin_views.item_locations``), except that a negative
+	row is kept and shown as negative. ERPNext's projected qty counts it, so dropping it would
+	list more on hand than the projected figure beside it. A zero row is no place. ``not_shop``:
+	the job sites and the Project Shelf (``project_shelf.not_shop_warehouses``), which the rule's
+	projected qty already leaves out. ``assigned``: the item's bins in the Bin Manager (its
+	enabled Putaway Rules), or ``None``. ``receiving``: the shop's receiving place
+	(``Inventory Scanner Settings.overhead_receiving_warehouse``), or ``None``.
+
+	Returns a dict:
+
+	* ``places``: ``[{"warehouse", "qty"}]``, what the rule counts (in its scope, the shop's),
+	  most first;
+	* ``elsewhere``: ``[{"warehouse", "qty", "for_jobs"}]``, on hand but not counted by this
+	  rule: outside its scope, or held for jobs (``for_jobs``);
+	* ``on_hand``: the sum of ``places``;
+	* ``rule_qty``: what the rule's own warehouse holds;
+	* ``rule_receiving``: the rule delivers to the receiving place;
+	* ``rule_empty``: the rule's bin holds none while another place the rule counts holds some;
+	* ``rule_assigned``: whether the rule's warehouse is one of the item's bins. ``None`` when
+	  the item has no bins at all, so nothing is said.
+
+	**A rule that delivers to receiving is never "empty" or "not its bin"** (``rule_empty``
+	False, ``rule_assigned`` None). Stock arrives there and is put away, so a receiving room with
+	none of an item is how it should be, and "fix the rule or move the stock" would be wrong
+	advice. 29 of production's 53 rules deliver to ``Receiving - SF`` (2026-11-21). Where the
+	stock is is still listed.
+
+	**The rule's own warehouse is always counted**, even when it is a job site or the Project
+	Shelf. ``job_site_rules.without_sites`` keeps a site's own figure, so the projected qty of a
+	rule written on a site counts that site's stock, and the line must too (none on production).
+
+	It never decides which bin is right: the rule's bin may be the intended home and the stock
+	the thing out of place.
+	"""
+	rule = rule or {}
+	own = rule.get("warehouse")
+	sites = set(not_shop or ())
+	places, elsewhere = [], []
+	rule_qty = 0.0
+	for row in bins or ():
+		warehouse = row.get("warehouse")
+		qty = flt(row.get("actual_qty"))
+		if not warehouse or abs(qty) <= _EPS:
+			continue
+		if warehouse == own:
+			rule_qty += qty
+			places.append({"warehouse": warehouse, "qty": qty})
+		elif warehouse in sites:
+			elsewhere.append({"warehouse": warehouse, "qty": qty, "for_jobs": True})
+		elif in_scope(warehouse, rule, ancestors):
+			places.append({"warehouse": warehouse, "qty": qty})
+		else:
+			elsewhere.append({"warehouse": warehouse, "qty": qty, "for_jobs": False})
+
+	def most_first(place):
+		return (-place["qty"], place["warehouse"])
+
+	places.sort(key=most_first)
+	elsewhere.sort(key=most_first)
+	on_hand = sum(p["qty"] for p in places)
+	at_receiving = bool(own) and own == receiving
+	stock_elsewhere = any(p["qty"] > _EPS for p in places if p["warehouse"] != own)
+	mine = set(assigned or ())
+	return {
+		"places": places,
+		"elsewhere": elsewhere,
+		"on_hand": on_hand,
+		"rule_qty": rule_qty,
+		"rule_receiving": at_receiving,
+		"rule_empty": not at_receiving and abs(rule_qty) <= _EPS and stock_elsewhere,
+		"rule_assigned": (own in mine) if mine and not at_receiving else None,
+	}
+
+
 def assemble(rules, projected_map, tracked, watches, now, ancestors=None):
 	"""Every rule as a board line, and the lists the board shows.
 

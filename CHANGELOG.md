@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.833.1] - 2026-11-21
+
+### Fixed
+
+- **The Reorder Board sent people to a bin the item was not in** (TASK-2026-03279, from enhancement
+  request ER-2026-1335803). Each line's location cell printed the rule's own warehouse
+  (`Item Reorder.warehouse`). That is where a Material Request delivers, not where the stock is. A
+  rule with a `warehouse_group` is judged on every warehouse under that group, so the item can sit in
+  another bin while the rule's own bin is empty.
+  - **The case on production:** item 406-020. Its rule names `Bin B2-3-4`, which was counted to 0 on
+    2026-11-04. Its two were in `Bin B1-3-12`, with one more on the Project Shelf. "Below" was right
+    (2 projected across the Inventory Room, under a level of 5), but the only clue was "projected
+    across Inventory Room". Someone checking the count went to B2-3-4 and found nothing.
+  - **How often:** on 2026-11-21, 10 of production's 53 rules had their item in a bin other than the
+    rule's own, inside the rule's group. For 406-020 the rule's own bin was empty.
+  - **Where it is.** This column on Needs reorder and Snoozed now lists every bin the rule counts
+    that holds the item, with the quantity in each, largest first. "Counts" means the rule's scope
+    (`reorder_rules.in_scope`) less job sites and the Project Shelf
+    (`project_shelf.not_shop_warehouses`): the same places its projected quantity is read from. The
+    read is the Bin Manager item filter's (`tabBin` rows), with one difference: a negative row is
+    kept and shown as negative. ERPNext's projected quantity counts it, so dropping it would list
+    more on hand than the Projected figure beside it (none on production). A rule written on a job
+    site or the Project Shelf counts the stock in its own warehouse, because its projected quantity
+    does too (none on production).
+  - **Reorder into** names the rule's warehouse under the list, so it reads as where a request goes.
+  - **When the rule's bin is empty** while the stock sits in another bin, the line says so and asks
+    someone to fix the rule or move the stock. The line also says when the rule's bin is not one of
+    the item's bins in the Bin Manager, meaning it has no enabled Putaway Rule while the item has
+    others. 406-020's Putaway Rule for B2-3-4 is disabled. The board never decides which bin is right:
+    the rule's bin may be the intended home and the stock the thing out of place.
+  - **No warning for a rule that delivers to receiving.** On production, 29 of the 53 rules deliver
+    to `Receiving - SF`. Stock is put away from there, so an empty receiving room is normal, and
+    "fix the rule or move the stock" would be wrong advice. The receiving place is read from
+    `Inventory Scanner Settings.overhead_receiving_warehouse` (`project_shelf.fallback_warehouse`),
+    not from a name. The line still lists where the stock is.
+  - **Not counted by this rule** lists stock outside the rule's scope, with job stock marked "held for
+    jobs". So the line shows every place, as Where Is This Item does.
+  - **On hand** is now what the rule counts, across the same scope as Projected. It used to be the
+    rule's own bin alone, so 406-020 read 0 beside a projected 2. A rule with no group counts its own
+    bin only, so its figure does not change.
+  - The Create Material Request dialog and the daily digest now head the rule's warehouse **Reorder
+    into** instead of Warehouse.
+  - **Code:** the pure rule is `reorder_rules.stock_places`. The reads are `reorder_board.read_stock`
+    and `read_assigned`: two bound-parameter SELECTs on `tabBin` (`actual_qty <> 0`) and
+    `tabPutaway Rule` (`disable = 0`), plus the receiving setting. There are no writes, and no new
+    endpoint, field, fixture or patch.
+  - **The request named a `Storage Location` doctype.** It exists but has no rows on production, and
+    the board never read it. The Bin Manager's bins are Warehouses and its assignments are Putaway
+    Rules, and those are what the board reads.
+  - **Tests:** `tests/test_reorder_board.py`, which is already its own unittest step in CI, gains three:
+    - `TestStockPlaces`, which includes a rule that delivers to receiving, a rule on a site or the
+      shelf, and negative stock;
+    - `TestBoardShowsWhereStockIs`, which runs `build_board`'s own reads on the stub, with the reported
+      item as the case;
+    - the page's wording, under node.
+
 ## [1.833.0] - 2026-11-19
 
 Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
