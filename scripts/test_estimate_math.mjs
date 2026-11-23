@@ -124,6 +124,38 @@ test("the pay application twin matches every shared case", () => {
 	}
 });
 
+test("release amounts match the Python engine's", () => {
+	// the same inputs and answers as tests/test_pay_app_math.py TestRelease
+	const L = (key, c, pct = 0) => ({ line_key: key, scheduled_value: c, this_period_pct: pct });
+	const priced = pm.price_application(
+		{ contract_sum: 10000, retainage_applies: 1, retainage_pct: 5, stored_retainage_pct: 5, steps: [] },
+		{},
+		[L("a", 6000), L("b", 3333.33), L("c", 666.67, 50)],
+		{ a: { work: 6000, retainage_work: 300 }, b: { work: 3333.33, retainage_work: 166.67 } }
+	).lines;
+	assert.deepEqual(pm.release_amounts(priced, 100), { a: 300, b: 166.67, c: 16.67 });
+	assert.deepEqual(pm.release_amounts(priced, 50), { a: 150, b: 83.34, c: 8.34 });
+	assert.deepEqual(pm.release_amounts(priced, 100, true), { a: 300, b: 166.67, c: 0 });
+});
+
+test("a release application's percents are locked, and only accounting releases, never on a final", () => {
+	const frm = (application_type, level1, extra = {}) => ({
+		doc: {
+			docstatus: 0,
+			application_type,
+			billing_context: JSON.stringify({ retainage_applies: 1, billing_mode: "Progress" }),
+			...extra,
+		},
+		perm: [{ write: 1 }, level1 ? { write: 1 } : {}],
+	});
+	assert.equal(pe.row_editable(frm("Progress", false), {}), true);
+	assert.equal(pe.row_editable(frm("Retainage Release", true), {}), false);
+	assert.equal(pe.can_release(frm("Progress", true)), true);
+	assert.equal(pe.can_release(frm("Progress", false)), false);
+	assert.equal(pe.can_release(frm("Final", true)), false);
+	assert.equal(pe.can_release(frm("Progress", true, { docstatus: 1 })), false);
+});
+
 test("the pay application form asks for the level its bundle exports, and calls only real exports", async () => {
 	const bundle = fs.readFileSync(path.join(APP, "public/js/pay_app_editor.bundle.js"), "utf8");
 	const form = fs.readFileSync(path.join(APP, "estimating/doctype/pay_application/pay_application.js"), "utf8");

@@ -11,7 +11,7 @@
 // The editor bundle's API level this script needs; equal to VERSION in public/js/pay_app_editor.bundle.js
 // (scripts/test_estimate_math.mjs fails the build if they differ). A tab open across a deploy can pair this
 // script with an older bundle, so it asks first and draws a "reload" note rather than throwing.
-const REQUIRED_PAY_EDITOR_LEVEL = 1;
+const REQUIRED_PAY_EDITOR_LEVEL = 2;
 
 function with_pay_editor(frm, fn) {
 	frappe.require(["pay_app_editor.bundle.js", "estimate_editor.bundle.css", "pay_app_editor.bundle.css"], () => {
@@ -48,6 +48,8 @@ frappe.ui.form.on("Pay Application", {
 		}
 	},
 	milestone: (frm) => frm.doc.docstatus === 0 && frm.save(),
+	// B9: the type changes what the server prices (a Final application releases all retainage).
+	application_type: (frm) => frm.doc.docstatus === 0 && !frm.is_new() && frm.save(),
 	work_retainage_override: (frm) => !frm.__pay_editing && with_pay_editor(frm, (ed) => ed.numbers(frm)),
 	stored_retainage_override: (frm) => !frm.__pay_editing && with_pay_editor(frm, (ed) => ed.numbers(frm)),
 });
@@ -55,5 +57,5 @@ frappe.ui.form.on("Pay Application", {
 // A row edited in the table view moves the editor's numbers; skipped while the editor is the one writing.
 const numbers = (frm) => !frm.__pay_editing && with_pay_editor(frm, (ed) => ed.numbers(frm));
 const line_handlers = {};
-["this_period_pct", "stored", "work_retainage_override", "stored_retainage_override"].forEach((f) => (line_handlers[f] = numbers));
+["this_period_pct", "stored", "work_retainage_override", "stored_retainage_override", "retainage_release"].forEach((f) => (line_handlers[f] = numbers));
 frappe.ui.form.on("Pay Application Line", line_handlers);

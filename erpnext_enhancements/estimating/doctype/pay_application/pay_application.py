@@ -25,6 +25,9 @@ Things this is careful about:
   computes a defensible-looking wrong number is worse than one that will not certify.
 * **Amending is refused** (it would mint ``PAY-26-0003-1``); a wrong application is canceled, and
   only the latest one can be.
+* **Releasing retainage (B9)** is accounting's: a per-line amount at permlevel 1, on any application.
+  A **Final** application releases all of it, and certifying one closes the schedule of values: no
+  application or change order joins a job that has been billed out. Canceling it reopens the schedule.
 """
 
 import json
@@ -41,6 +44,10 @@ LINE_RESULTS = (
 	"scheduled_value",
 	"from_previous",
 	"retainage_previous",
+	"retainage_held_now",
+	"retainage_release",
+	"retainage_released_previous",
+	"retainage_released_to_date",
 	"this_period",
 	"stored",
 	"total_completed",
@@ -61,6 +68,8 @@ TOTALS = (
 	"retainage_work",
 	"retainage_stored",
 	"total_retainage",
+	"retainage_released",
+	"retainage_released_to_date",
 	"total_earned_less_retainage",
 	"less_previous_certificates",
 	"current_payment_due",
@@ -126,7 +135,15 @@ def refresh_billed(schedule):
 		limit=1,
 	)
 	billed = {}
+	retainage = {"retainage_held": 0, "retainage_released": 0}
 	if rows:
+		latest = frappe.db.get_value(
+			"Pay Application", rows[0].name, ["total_retainage", "retainage_released_to_date"], as_dict=True
+		)
+		retainage = {
+			"retainage_held": flt(latest.total_retainage),
+			"retainage_released": flt(latest.retainage_released_to_date),
+		}
 		for line in frappe.get_all(
 			"Pay Application Line",
 			filters={"parent": rows[0].name, "parenttype": "Pay Application"},
@@ -145,7 +162,10 @@ def refresh_billed(schedule):
 			"Schedule of Values Line", line.name, "billed_to_date", value, update_modified=False
 		)
 	frappe.db.set_value(
-		"Schedule of Values", schedule, "billed_to_date", pm.dollars(total), update_modified=False
+		"Schedule of Values",
+		schedule,
+		dict(retainage, billed_to_date=pm.dollars(total)),
+		update_modified=False,
 	)
 
 
@@ -157,6 +177,13 @@ class PayApplication(Document):
 				_("A pay application is not amended. Start the next one from the schedule of values.")
 			)
 		sov = frappe.get_doc("Schedule of Values", self.schedule_of_values)
+		if sov.status == "Closed":
+			frappe.throw(
+				_(
+					"The final application of this schedule has been certified, so the job is billed out. To "
+					"bill again, cancel the final application."
+				)
+			)
 		if sov.status != "Locked":
 			frappe.throw(_("Lock the schedule of values before starting a pay application against it."))
 		previous = latest_application(self.schedule_of_values)
@@ -186,6 +213,7 @@ class PayApplication(Document):
 		for row in self.lines:
 			row.work_retainage_override = ""
 			row.stored_retainage_override = ""
+			row.retainage_release = 0
 
 	def link_previous(self, previous):
 		self.previous_application = previous.name if previous else None
@@ -232,6 +260,8 @@ class PayApplication(Document):
 		self.project = sov.project
 		self.customer = sov.customer
 		self.billing_mode = sov.billing_mode
+		if self.application_type not in pm.APPLICATION_TYPES:
+			self.application_type = pm.PROGRESS
 		self.derive_chain()
 		prev = self.previous_doc()
 		self.sync_lines(sov)
@@ -240,7 +270,11 @@ class PayApplication(Document):
 		# Work completed and retainage held, per line, as the previous application stored them: earlier
 		# retainage stays held at its own rate (keep holding, Nik 2026-11-19).
 		previous_work = {
-			r.line_key: {"work": flt(r.work_completed_to_date), "retainage_work": flt(r.retainage_work)}
+			r.line_key: {
+				"work": flt(r.work_completed_to_date),
+				"retainage_work": flt(r.retainage_work),
+				"released": flt(r.retainage_released_to_date),
+			}
 			for r in (prev.lines if prev else [])
 		}
 		self.less_previous_certificates = pm.next_previous_certificates(prev.as_dict() if prev else None)
@@ -277,6 +311,7 @@ class PayApplication(Document):
 		existing = {r.line_key: r for r in self.lines if r.line_key}
 		rows = []
 		on_schedule = set()
+		excluded = []
 		orders = [line.change_order for line in sov.lines if line.change_order]
 		canceled = set(
 			frappe.get_all("Change Order", filters={"name": ["in", orders], "docstatus": 2}, pluck="name")
@@ -287,6 +322,7 @@ class PayApplication(Document):
 			if line.change_order in canceled:
 				continue
 			if line.change_order and line.approved_on and end and getdate(line.approved_on) > end:
+				excluded.append(line.change_order)
 				continue
 			on_schedule.add(line.line_key)
 			row = existing.get(line.line_key)
@@ -308,6 +344,7 @@ class PayApplication(Document):
 			if key not in on_schedule and (flt(r.this_period_pct) or flt(r.stored))
 		]
 		self.flags.on_schedule = on_schedule
+		self.flags.excluded_change_orders = excluded
 		# Existing rows go back as themselves (same child row names), new ones as dicts. append() keeps an
 		# existing row's old idx (frappe v16.56 Document.append), so renumber after.
 		self.set("lines", rows)
@@ -394,6 +431,8 @@ class PayApplication(Document):
 			"stored_materials": bool(sov.stored_materials),
 			"amount_certified": self.amount_certified,
 			"lines": [r.as_dict() for r in self.lines],
+			"application_type": self.application_type,
+			"excluded_change_orders": list(self.flags.excluded_change_orders or ()),
 		}
 		reasons = [msg for _code, msg in pm.refusals(context, priced)]
 		billed_changes = any(r.is_change_order and pm.cents(r.this_period) for r in self.lines)
@@ -410,6 +449,11 @@ class PayApplication(Document):
 
 	def on_submit(self):
 		refresh_billed(self.schedule_of_values)
+		if self.application_type == pm.FINAL:
+			frappe.db.set_value("Schedule of Values", self.schedule_of_values, "status", "Closed")
+			frappe.get_doc("Schedule of Values", self.schedule_of_values).add_comment(
+				"Info", _("Closed: final application {0} was certified.").format(self.name)
+			)
 
 	def before_cancel(self):
 		later = frappe.db.get_value(
@@ -425,3 +469,10 @@ class PayApplication(Document):
 	def on_cancel(self):
 		self.db_set("status", "Canceled")
 		refresh_billed(self.schedule_of_values)
+		if self.application_type == pm.FINAL and (
+			frappe.db.get_value("Schedule of Values", self.schedule_of_values, "status") == "Closed"
+		):
+			frappe.db.set_value("Schedule of Values", self.schedule_of_values, "status", "Locked")
+			frappe.get_doc("Schedule of Values", self.schedule_of_values).add_comment(
+				"Info", _("Reopened: final application {0} was canceled.").format(self.name)
+			)

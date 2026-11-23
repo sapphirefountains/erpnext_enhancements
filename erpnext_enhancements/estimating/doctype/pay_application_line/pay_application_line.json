@@ -26,6 +26,10 @@
   "retainage",
   "retainage_previous",
   "work_completed_to_date",
+  "retainage_held_now",
+  "retainage_release",
+  "retainage_released_previous",
+  "retainage_released_to_date",
   "phase_number",
   "is_change_order",
   "by_others",
@@ -175,6 +179,32 @@
    "read_only": 1
   },
   {
+   "description": "Held before this period plus this period's work at the rate in force.",
+   "fieldname": "retainage_held_now",
+   "fieldtype": "Currency",
+   "label": "Retainage on Work Held Before Release",
+   "read_only": 1
+  },
+  {
+   "description": "Retainage on work released on this line now. Accounting's to set. A final application releases all of it.",
+   "fieldname": "retainage_release",
+   "fieldtype": "Currency",
+   "label": "Retainage Released (this application)",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "retainage_released_previous",
+   "fieldtype": "Currency",
+   "label": "Retainage Released Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage_released_to_date",
+   "fieldtype": "Currency",
+   "label": "Retainage Released to Date",
+   "read_only": 1
+  },
+  {
    "fieldname": "phase_number",
    "fieldtype": "Int",
    "label": "Phase",
@@ -204,7 +234,7 @@
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-11-20 09:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Estimating",
  "name": "Pay Application Line",

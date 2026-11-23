@@ -21,6 +21,8 @@ Things this is careful about:
   accepts. It cannot lock while the lines and the contract sum disagree, and it cannot unlock once
   a pay application has been certified against it.
 * **A billed line cannot be deleted**: the delete is refused with the line's name, never orphaned.
+* **A closed schedule is billed out** (B9): its final pay application has been certified, so it takes
+  no change order either. Canceling that application reopens it.
 """
 
 import frappe
@@ -91,7 +93,9 @@ class ScheduleofValues(Document):
 		after their own checks. A save never changes it: read_only is not enforced on a save at v16.56
 		(``frappe.client.set_value`` and the REST update just save), so a typed status would skip both."""
 		before = self.get_doc_before_save() if not self.is_new() else None
-		for field in ("status", "locked_on", "locked_by"):
+		# The retainage figures are the pay application's (refresh_billed), written without touching
+		# modified, so a form open across a certify would save its stale copy back: the stored one wins.
+		for field in ("status", "locked_on", "locked_by", "retainage_held", "retainage_released"):
 			self.set(field, before.get(field) if before else None)
 		if not self.status:
 			self.status = "Draft"
@@ -191,8 +195,9 @@ class ScheduleofValues(Document):
 					"These lines have been billed on a certified pay application and cannot be deleted: {0}"
 				).format(", ".join(billed_gone))
 			)
-		if before.status != "Locked":
+		if before.status not in ("Locked", "Closed"):
 			return
+		closed = before.status == "Closed"
 		if flt(before.contract_sum) != flt(self.contract_sum):
 			frappe.throw(_("The schedule is locked: its contract sum changes only through a change order."))
 		for field, label in (
@@ -228,6 +233,13 @@ class ScheduleofValues(Document):
 		for key, row in new.items():
 			prior = old.get(key)
 			if prior is None:
+				if closed:
+					frappe.throw(
+						_(
+							"The final pay application of this schedule has been certified, so it takes no new "
+							"lines, change orders included. Cancel the final application first."
+						)
+					)
 				if not row.change_order:
 					changed.append(_name(row))
 				continue
