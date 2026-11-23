@@ -60,7 +60,9 @@ frappe's own lookups do not, so every name a request carries is looked up here w
 but one, frappe's query engine applies the caller's permissions and holds a field named in a linked
 doctype (``link_field.field``) to that doctype's own. ``frappe.client.get`` is the one: it finds its
 document with permissions off. There the filters are read for every caller, and a field named in
-another doctype is held to that doctype's read levels (``_Hidden._foreign``).
+another doctype is held as frappe holds it everywhere else: to that doctype's read levels, to its
+level-0 fields for a caller with ``select`` only, to its standard columns for a caller with no access
+(``_Hidden._foreign``).
 
 **One named exception.** ``REFERENCES_NOT_HELD_BACK`` lists the field references a doctype does not
 hold back from a caller below the field's level: only ``User.user_type``, for the reason given
@@ -428,9 +430,11 @@ class _Hidden:
 		frappe applies no permission to the filters (``unguarded``): the doctype a Link field points
 		at, or a table named outright.
 
-		It is held to that doctype's own read levels, as frappe's query engine holds it wherever it
-		does apply permissions (``check_filter_field_permission``, query.py 888-898), and refused
-		whole when the caller has no read on that doctype or the name is not a doctype at all.
+		It is held as frappe's query engine holds it wherever it does apply permissions
+		(``check_filter_field_permission`` and ``_get_filterable_fields``, query.py 888-898 and
+		1074-1118): a caller who reads the doctype may name its fields at the levels they read; one
+		with ``select`` only, its level-0 fields; one with neither, its standard columns alone. A
+		child table of another doctype, and a name that is not a doctype at all, are refused.
 		"""
 		if _fold(fieldname) in {_fold(name) for name in REFERENCES_NOT_HELD_BACK.get(doctype, ())}:
 			return False
@@ -438,16 +442,17 @@ class _Hidden:
 			levels = _readable_levels(doctype)
 			if levels is None:
 				return False
-			if 0 not in levels:
-				return True
-			fields = frappe.get_meta(doctype).fields
+			meta = frappe.get_meta(doctype)
 		except frappe.DoesNotExistError:
 			return True
-		names = _Names(
-			[df.fieldname for df in fields],
-			[df.fieldname for df in fields if not _is_readable(df, levels)],
-		)
-		return names.hides(fieldname)
+		if getattr(meta, "istable", False):
+			return True
+		fieldnames = [df.fieldname for df in meta.fields]
+		if 0 in levels or _has_select(meta):
+			hidden = [df.fieldname for df in meta.fields if not _is_readable(df, levels)]
+		else:
+			hidden = fieldnames
+		return _Names(fieldnames, hidden).hides(fieldname)
 
 	# -- the positions a request names fields in ---------------------------
 
@@ -616,6 +621,18 @@ def _hidden_for(doctype, parent=None):
 	return _Hidden(doctype, meta, levels)
 
 
+def _has_select(meta):
+	"""Whether the session user holds ``select`` on the doctype by role (``DocPerm.select`` at level
+	0), which frappe counts when the user has no ``read`` (``frappe.only_has_select_perm``)."""
+	roles = set(frappe.get_roles())
+	return any(
+		getattr(perm, "role", None) in roles
+		and not int(getattr(perm, "permlevel", 0) or 0)
+		and perm.get("select")
+		for perm in meta.permissions or []
+	)
+
+
 def _has_tables(meta):
 	return any(df.fieldtype in _TABLE_FIELDTYPES and df.options for df in meta.fields)
 
@@ -700,7 +717,7 @@ def check_request(
 	``unguarded``: the route hands ``filters`` to frappe with no permission applied to them
 	(``frappe.client.get`` finds its document through ``frappe.db.get_value``). There the request is
 	read for every caller but Administrator, and a field it names in another doctype, through a Link
-	field or by table, is held to that doctype's read levels (``_Hidden._foreign``).
+	field or by table, is held as frappe's query engine holds it elsewhere (``_Hidden._foreign``).
 	"""
 	hidden = _hidden_for(doctype, parent)
 	if hidden is None:
@@ -1042,7 +1059,8 @@ def _takes_custom_query(doctype, query):
 	"""
 	if query:
 		return True
-	return doctype in (frappe.get_hooks("standard_queries") or {})
+	# A doctype that is not a string is frappe's to refuse, with its own type error.
+	return isinstance(doctype, str) and doctype in (frappe.get_hooks("standard_queries") or {})
 
 
 def _search_filters(doctype, filters):

@@ -70,8 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     frappe's query engine applies the caller's permissions to a field named in a linked doctype
     (`link_field.field`), and nothing changes there. On the one route that reads its filters with
     no permission applied, the filters are now read for every caller, and a field named in another
-    doctype, through a Link field or by table, answers to that doctype's read levels; it is refused
-    whole when the caller has no read on that doctype.
+    doctype, through a Link field or by table, is held exactly as frappe's query engine holds it
+    elsewhere: to that doctype's read levels, to its level-0 fields for a caller who holds only
+    `select` on it, and to its standard columns for a caller with no access to it.
   - **A Count Number Card is judged on what it counts.** frappe counts rows for a Count card and
     never reads the aggregate field the card may still carry from an earlier setting, so that
     leftover field no longer causes a refusal.

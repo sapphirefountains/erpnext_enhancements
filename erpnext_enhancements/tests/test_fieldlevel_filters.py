@@ -241,8 +241,8 @@ def _df(fieldname, permlevel=0, fieldtype="Data", options=None):
 	return _Row(fieldname=fieldname, permlevel=permlevel, fieldtype=fieldtype, options=options)
 
 
-def _perm(role, permlevel=0, read=1):
-	return _Row(role=role, permlevel=permlevel, read=read)
+def _perm(role, permlevel=0, read=1, select=0):
+	return _Row(role=role, permlevel=permlevel, read=read, select=select)
 
 
 class _Meta:
@@ -454,7 +454,7 @@ METAS = {
 			_df("social_logins", 0, "Table", "User Social Login"),
 			_df("role_profiles", 1, "Table MultiSelect", "User Role Profile"),
 		],
-		[_perm("System Manager"), _perm("System Manager", 1), _perm("Desk User", 0, read=0)],
+		[_perm("System Manager"), _perm("System Manager", 1), _perm("Desk User", 0, read=0, select=1)],
 	),
 	# A stand-in with nothing above level 0, a table included: a caller with no read on it still
 	# cannot read its child table.
@@ -1190,6 +1190,22 @@ class TestWrappers(unittest.TestCase):
 		self.assertEqual(
 			call[2], {"link_fieldname": None, "for_link_validation": True, "query_filters_as_dict": False}
 		)
+
+	def test_a_doctype_that_is_not_a_string_is_left_to_frappes_type_check(self):
+		"""frappe answers a wrongly typed argument with its own type error; the check must not fail
+		on it first."""
+		registered = {"standard_queries": {"User": ["frappe.core.doctype.user.user.user_query"]}}
+		searches = ((ff.search_link, "search.search_link"), (ff.search_widget, "search.search_widget"))
+		for doctype in (["Item"], {"doctype": "Item"}, 7, None, True):
+			for fn, call in searches:
+				with self.subTest(doctype=doctype, fn=fn.__name__):
+					_reset()
+					STATE["hooks"] = registered
+					self.assert_passed_through(fn, call, doctype, "a")
+		_reset()
+		self.assert_passed_through(ff.client_get, "client.get", ["Employee"], filters=json.dumps({"ctc": 1}))
+		_reset()
+		self.assert_passed_through(ff.client_get_list, "client.get_list", {"a": 1}, filters={"ctc": 1})
 
 	def test_get_next(self):
 		self.assert_refused_before_frappe(ff.form_get_next, "Employee", "EMP-1", 1, sort_field="ctc")
@@ -2582,15 +2598,22 @@ class TestAnotherDoctypesFields(_RouteCase):
 				self.assertTrue(self.get(filters))
 				self.assertEqual(STATE["thrown"][-1], ff.REFUSAL)
 
-	def test_no_read_on_the_other_doctype_closes_it(self):
-		# PROJECTS_USER holds no role that reads Employee; a Desk user has ``select`` only on User.
-		self.assertTrue(self.get({"employee.employee_name": "A"}, who=PROJECTS_USER))
-		self.assertTrue(self.get({"employee.creation": [">", "2026-01-01"]}, who=PROJECTS_USER))
-		self.assertTrue(self.get({"allocated_to.full_name": ["like", "a%"]}, who=DESK_USER))
+	def test_select_only_and_no_access_follow_frappes_own_rule(self):
+		"""frappe's query engine lets a caller with ``select`` only name the level-0 fields of a
+		doctype, and a caller with no access its standard columns (query.py 1074-1118)."""
+		# A Desk user has ``select`` only on User: level 0, nothing above it.
+		self.assertFalse(self.get({"allocated_to.full_name": ["like", "a%"]}, who=DESK_USER))
+		self.assertFalse(self.get({"allocated_to.creation": [">", "2026-01-01"]}, who=DESK_USER))
 		self.assertTrue(self.get({"allocated_to.api_key": ["like", "a%"]}, who=DESK_USER))
+		self.assertTrue(self.get({"allocated_to.reset_password_key": ["is", "set"]}, who=DESK_USER))
 		# The one reference a doctype does not hold back.
 		self.assertFalse(self.get({"allocated_to.user_type": "System User"}, who=DESK_USER))
 		self.assertFalse(self.get({"allocated_to.USER_TYPE": "System User"}, who=DESK_USER))
+		# PROJECTS_USER holds no role with any permission on Employee: its standard columns only.
+		self.assertTrue(self.get({"employee.employee_name": "A"}, who=PROJECTS_USER))
+		self.assertTrue(self.get({"employee.EMPLOYEE_NAME": "A"}, who=PROJECTS_USER))
+		self.assertTrue(self.get({"employee.ctc": [">", 1]}, who=PROJECTS_USER))
+		self.assertFalse(self.get({"employee.creation": [">", "2026-01-01"]}, who=PROJECTS_USER))
 
 	def test_what_the_caller_reads_passes(self):
 		cases = {
