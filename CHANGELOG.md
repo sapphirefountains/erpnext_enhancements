@@ -52,20 +52,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `newsletter`, `frappe_assistant_core`) are not moved by this path; the runbook gives the
     commands for updating one by hand to a named tag or commit, behind the same backup.
   - **Redis is checked before a migrate starts.** Frappe reads a cache that is down as an empty
-    one instead of stopping, so a migrate started then fails partway through, after it has
-    already changed the database; on 2026-11-23 two migrates in a row stopped that way, at
-    fixture sync. `bench_update.sh redis` asks both instances the bench is configured for
-    (`redis_cache` and `redis_queue`, found the way frappe finds them: an environment override,
-    then `sites/common_site_config.json`, then frappe's default) with the bench's own Python and
-    Redis client, prints one line for each, and changes nothing. `upstream` runs it as the last
-    check before its backup, and again just before its migrate, because the backup and the
-    installs take time. A failure before the backup changes nothing. A failure before the migrate
+    one instead of stopping, so a migrate started then fails partway through, after it has already
+    changed the database; on 2026-11-23 two migrates in a row stopped that way, at fixture sync.
+    `bench_update.sh redis` asks both instances the bench is configured for (`redis_cache` and
+    `redis_queue`, found the way frappe finds them: an environment override, then
+    `sites/common_site_config.json`, then frappe's default) with the bench's own Python and Redis
+    client, prints one line for each, and changes nothing. `upstream` runs it as the last check
+    before its backup, and again just before its migrate, because the backup and the installs take
+    time. There, a failure before the backup changes nothing, and a failure before the migrate
     says the code was switched and nothing was migrated, names the backup, and says to run the
-    same command again once Redis is back. A password in an address is never printed. A queue
-    that asks for a sign-in counts as up, since frappe signs in to it with a user of its own; a
-    cache that refuses the sign-in does not; an instance behind Redis Sentinel is not checked,
-    and the output says so. Stopping `frappe-bench` stops both Redis instances, so the runbook
-    now says to leave the bench running through an update.
+    same command again once Redis is back. Every app deploy runs it too, after the fetch and
+    before its backup, with the script it has just fetched: when Redis is not ready the deploy
+    stops there, with no backup, code reset, migrate, build, redis flush or restart. Before this,
+    nothing in a deploy asked until the migrate was already running. A password in an address is
+    never printed. A queue that asks for a sign-in counts as up, since frappe signs in to it with
+    a user of its own; a cache that refuses the sign-in does not; an instance behind Redis
+    Sentinel is not checked, and the output says so. Stopping `frappe-bench` stops both Redis
+    instances, so the runbook now says to leave the bench running through an update.
   - **What an update installs and builds, written down.** The script already ran `bench setup
     requirements` after the checkout and `bench build` after the migrate. Read at frappe v16.60.2,
     the release that added the Studio and Flow frontends, that is enough: `bench build` installs

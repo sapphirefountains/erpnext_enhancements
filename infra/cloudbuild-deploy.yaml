@@ -6,13 +6,15 @@
 # The deploy user's sudoers line allows exactly that command (deploy_user_sudo_command).
 # Runbook: infra/docs/production-web-tier.md.
 #
-# Before anything on the VM changes, infra/bench_update.sh takes a database-only backup of
-# every site into <bench>/pre-migrate-backups and keeps the newest five. When it fails, or
-# there is not enough free disk, the `&&` chain stops there: no code reset, migrate, build,
-# redis flush or restart, so the site keeps running the release it had.
-# The order is fetch, backup, reset. After the fetch only the script itself is checked out
-# of the fetched commit, so the backup is always taken by the script being deployed (and the
-# first deploy that carries the script can run it); the app's code moves after the backup.
+# Before anything on the VM changes, infra/bench_update.sh checks that both Redis instances
+# answer (a migrate started while one is down stops partway), then takes a database-only
+# backup of every site into <bench>/pre-migrate-backups and keeps the newest five. When
+# either fails, or there is not enough free disk, the `&&` chain stops there: no code reset,
+# migrate, build, redis flush or restart, so the site keeps running the release it had.
+# The order is fetch, Redis check, backup, reset. After the fetch only the script itself is
+# checked out of the fetched commit, so the check and the backup are always done by the
+# script being deployed (and the first deploy that carries the script can run it); the
+# app's code moves after the backup.
 # Runbook: infra/README.md, section 13.
 steps:
   - name: 'google/cloud-sdk:latest'
@@ -52,6 +54,7 @@ steps:
             export PATH=\$$PATH:/home/frappe/.local/bin && \
             git -C apps/erpnext_enhancements fetch upstream main && \
             git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh redis && \
             bash apps/erpnext_enhancements/infra/bench_update.sh backup && \
             git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && \
             bench --site all migrate && \

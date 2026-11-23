@@ -2,8 +2,9 @@
 
 Two rules, both enforced by files that run nowhere but on a VM:
 
-* every app deploy (infra/cloudbuild-deploy.yaml) takes a database backup with bench's own
-  `backup` command before `bench migrate`, and stops when the backup fails;
+* every app deploy (infra/cloudbuild-deploy.yaml) checks that Redis answers and takes a
+  database backup with bench's own `backup` command before `bench migrate`, and stops when
+  either fails;
 * an upstream update (infra/cloudbuild-upstream.yaml) moves Frappe and ERPNext only to two
   named release tags, never to a branch head, behind the same backup.
 
@@ -153,9 +154,9 @@ class DeployYamlTests(unittest.TestCase):
 		self.assertEqual(self.block.splitlines()[0], "set -e")
 
 	def test_the_backup_comes_before_the_reset_and_migrate_in_one_and_chain(self):
-		"""Fetch, backup, reset: a failed backup leaves the app's code where it was. Only
-		the script is taken from the fetched commit first, so the deploy that first carries
-		it can run it."""
+		"""Fetch, Redis check, backup, reset: a failed check or backup leaves the app's code
+		where it was. Only the script is taken from the fetched commit first, so the deploy
+		that first carries it can run it."""
 		self.assertEqual(
 			_remote_commands(self.block),
 			[
@@ -163,6 +164,7 @@ class DeployYamlTests(unittest.TestCase):
 				r"export PATH=\$$PATH:/home/frappe/.local/bin",
 				"git -C apps/erpnext_enhancements fetch upstream main",
 				"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh",
+				"bash apps/erpnext_enhancements/infra/bench_update.sh redis",
 				"bash apps/erpnext_enhancements/infra/bench_update.sh backup",
 				"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
 				"bench --site all migrate",
@@ -179,10 +181,25 @@ class DeployYamlTests(unittest.TestCase):
 			"export PATH=$PATH:/home/frappe/.local/bin && "
 			"git -C apps/erpnext_enhancements fetch upstream main && "
 			"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && "
+			"bash apps/erpnext_enhancements/infra/bench_update.sh redis && "
 			"bash apps/erpnext_enhancements/infra/bench_update.sh backup && "
 			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && bench --site all migrate && ",
 			remote,
 		)
+
+	def test_redis_is_asked_before_the_backup_the_reset_and_the_migrate(self):
+		"""A migrate started while Redis is down stops partway, so the deploy asks first, with
+		the script it has just fetched, and a failure there leaves everything as it was."""
+		commands = _remote_commands(self.block)
+		check = commands.index("bash apps/erpnext_enhancements/infra/bench_update.sh redis")
+		fetched = "git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh"
+		self.assertEqual(commands[check - 1], fetched)
+		for later in (
+			"bash apps/erpnext_enhancements/infra/bench_update.sh backup",
+			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
+			"bench --site all migrate",
+		):
+			self.assertLess(check, commands.index(later), later)
 
 	def test_nothing_after_the_backup_can_run_when_it_fails(self):
 		# One `&&` chain: no `;` or `||` anywhere in the remote command could let migrate,

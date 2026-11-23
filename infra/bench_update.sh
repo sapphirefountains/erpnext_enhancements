@@ -18,7 +18,7 @@
 #       Checks that both Redis instances the bench is configured for answer, and changes
 #       nothing. A migrate started while one is down stops partway, with part of its work
 #       already in the database. `upstream` runs this check before its backup and again just
-#       before its migrate.
+#       before its migrate; infra/cloudbuild-deploy.yaml runs it before the deploy's backup.
 #
 # Run it as the bench's owner (sudo -iu frappe), never with sudo. The bench is the directory
 # three levels above this file (<bench>/apps/erpnext_enhancements/infra/). Runbook:

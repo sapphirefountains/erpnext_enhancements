@@ -107,7 +107,7 @@ gcloud compute project-info add-metadata \
 **Cloud Build YAML files (set `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` if you move them):**
 | File | Purpose |
 |------|---------|
-| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, takes a pre-migrate database backup (`infra/bench_update.sh backup`), runs `bench migrate && bench build`, restarts service |
+| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, checks that Redis answers (`infra/bench_update.sh redis`), takes a pre-migrate database backup (`infra/bench_update.sh backup`), runs `bench migrate && bench build`, restarts service |
 | `infra/cloudbuild-upstream.yaml` | Moves `frappe` and `erpnext` to two named release tags (`infra/bench_update.sh upstream`), behind the same backup, restarts service |
 
 **Substitutions used by the YAML files:**
@@ -173,8 +173,8 @@ bench_update.sh: this run migrated nothing and switched no app; stopping here.
 ```
 
 and the build fails without the `✅ ... updated` line. Nothing after the backup ran: no code
-reset, no migrate, no build, no redis flush, no restart. The deploy's order is fetch, backup,
-reset, so the site keeps running the release it had: the app's code, the database and the
+reset, no migrate, no build, no redis flush, no restart. The deploy's order is fetch, Redis
+check, backup, reset, so the site keeps running the release it had: the app's code, the database and the
 running processes are unchanged, and only `infra/bench_update.sh` itself was taken from the new
 commit. The reasons it names are not enough free disk, another backup still holding the lock
 after the wait, `flock` not installed, `bench backup` exiting with an error, and a site left
@@ -250,6 +250,11 @@ bench_update.sh: Redis is not ready, and a migrate started now would stop partwa
 - When the check fails before the backup, nothing was changed. When it fails just before the
   migrate, the code is already at the new tags and nothing was migrated: start Redis and run the
   same `upstream` command again.
+- **Every app deploy asks first too.** `infra/cloudbuild-deploy.yaml` runs the check after the
+  fetch and before its backup, with the script it has just fetched. When it fails, the build
+  log ends with the lines above and no `✅ ... updated` line, and nothing else ran: no backup,
+  no code reset, no migrate, no build, no redis flush, no restart. Start Redis, then re-run
+  the deploy (`gcloud builds triggers run app-deploy-prod --branch=main`).
 - A queue instance that asks for a sign-in counts as up (frappe signs in to it with a user of
   its own); a cache instance that refuses the sign-in does not. An instance reached through
   Redis Sentinel is not checked, and the output says so.

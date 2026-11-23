@@ -245,7 +245,8 @@ gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main \
   --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
 ```
 
-Every app deploy takes a database backup before `bench migrate`, and an upstream update moves
+Every app deploy checks that both Redis instances answer and takes a database backup before
+`bench migrate`, and an upstream update moves
 Frappe and ERPNext only to the two release tags it is given, after it has checked that both
 Redis instances answer. The tags above are production's releases on 2026-11-23: name the pair
 you mean to install, because an older pair is a downgrade. How to choose the tags, run the
