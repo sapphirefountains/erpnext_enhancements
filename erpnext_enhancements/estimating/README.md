@@ -10,8 +10,9 @@ phone).
 
 Milestone 2 adds the **Schedule of Values** and the **Pay Application** (G702/G703, retainage stepping
 down per D16, change orders), below; B9 adds **retainage release and the final application**. The
-Sales Invoice with retainage receivable, the G702/G703 print and portal export, the B9 reports and
-percent-complete accounting come in later releases.
+Sales Invoice with retainage receivable, the G702/G703 print and portal export and percent-complete
+accounting come in later releases. Three progress-billing reports sit on the Project Enhancements
+workspace, below.
 
 ## How a price is made
 
@@ -207,9 +208,27 @@ Receivable is B8's, and sales tax is unchanged until the CPA confirms WI-036.
 | `links.py` `guard_change_order_cancel`, `drop_canceled_change_order` | A change order on a certified application cannot be canceled; one canceled earlier leaves every schedule | Change Order `doc_events` (`before_cancel`, `on_cancel`) |
 | `../public/js/estimating/pay_app_editor.js` | The PM's editor: phases fold, percent per line, REST, past-scheduled highlight, Amount Due panel, Send to Accounting / Certify, and accounting's Release Retainage dialog | `pay_app_editor.bundle.js` + `.css`, loaded by `pay_application.js` |
 
+### Progress-billing reports (B9 follow-up)
+
+Three Script Reports, on the **Progress Billing** card of the Project Enhancements workspace with the
+Schedule of Values and the Pay Application:
+
+| Report | Rows | Roles (each may report on the reference doctype) |
+|---|---|---|
+| **Retainage Held** (ref Schedule of Values) | One per schedule holding retainage (or every one): held, released to date, held as a percent of billed, its latest certified application | the schedule's readers who also read Pay Application: System Manager, Projects Manager, Project Manager, Finance Team, Executive Team, Accounts Manager, Accounts User |
+| **Pay Applications Outstanding** (ref Pay Application) | Applications still open (Draft, To Review) with days since their period ended; locked jobs whose last certified period ended more than *Due after* days ago (default 30) or that never had one. A closed schedule never shows | the Pay Application roles above |
+| **Billed vs Scheduled** (ref Schedule of Values) | With a schedule picked, its lines by top phase (change orders last; a line by others counts nowhere) or one per line; without, one per schedule | the Schedule of Values roles, Estimator included |
+
+The arithmetic is [`billing_reports.py`](billing_reports.py) (no frappe), in whole cents. The reports
+read through `frappe.get_list`, so a person sees only the jobs they may read, and **read permlevel 0
+fields only**: a Script Report runs server-side, where the field-level read checks (1.835.0) do not
+reach, so `tests/test_billing_reports.py` holds every field they read to permlevel 0 (the amount
+certified is accounting's, so Outstanding shows the payment due). None has a print format.
+
 ## Tests (bench-free, in CI)
 
 `tests/test_estimate_math.py`, `tests/test_estimating_rules.py`, `tests/test_estimate_controller.py`
 (frappe stub), `tests/test_estimating_api.py` (Issue Quotation, seeds, delete links; frappe stub) and
-`tests/test_pay_app_math.py`, `tests/test_billing_controllers.py` (frappe stub) and
+`tests/test_pay_app_math.py`, `tests/test_billing_controllers.py` (frappe stub),
+`tests/test_billing_reports.py` (the three reports, their roles and fields) and
 `scripts/test_estimate_math.mjs` (node: both twins, both bundle levels, escaping).

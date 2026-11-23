@@ -1733,3 +1733,8 @@ erpnext_enhancements.patches.seed_estimate_templates
 # and a 0 Item Price for it on the default selling price list so prod's auto-insert never makes a phase price its list
 # price. Insert-only, cannot raise (estimating/seed.run logs each failed step), safe twice.
 erpnext_enhancements.patches.seed_estimate_scope_item
+# v1.840.0 -- estimating B9 follow-up. Re-sync the Project Enhancements workspace so its new Progress Billing card
+# (Schedule of Values, Pay Application and the three progress-billing reports) arrives. Workspaces are TIMESTAMP-gated
+# by import_file, so the JSON's `modified` is bumped and reload_doc(force=True) covers a row edited in the Desk since.
+# Post model sync, so the reports exist; never raises (one Error Log row), safe twice.
+erpnext_enhancements.patches.resync_project_enhancements_workspace_billing

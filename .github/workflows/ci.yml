@@ -981,6 +981,12 @@ jobs:
       # and certify refusing with every reason at once.
       - name: Schedule of values and pay application controllers (frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_billing_controllers -v
+      # The three progress-billing reports (B9 follow-up): which rows Retainage Held, Pay Applications
+      # Outstanding and Billed vs Scheduled show, in whole cents; every role on a report may run a report
+      # on its reference doctype and read every doctype it reads; and every field the reports read is
+      # permlevel 0, since a Script Report runs server-side where the field-level read checks do not reach.
+      - name: Progress billing reports (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_billing_reports -v
       # The browser twin of the pricing engine under node, against the same cases as the Python step,
       # plus the editor's phase labels equal to the server's, the form script's required editor level
       # equal to the bundle's VERSION (a tab open across a deploy draws "reload" instead of throwing),

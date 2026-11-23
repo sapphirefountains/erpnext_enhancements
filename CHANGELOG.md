@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.840.0] - 2026-11-23
+
+### Added
+
+- **Three progress-billing reports and a Progress Billing workspace card** (estimating B9
+  follow-up, listed in #1508). Script Reports in the Estimating module, all read with
+  `frappe.get_list`, so a person sees only the jobs they may read:
+  - **Retainage Held:** one row per schedule of values holding retainage, or every schedule with
+    the filter off. It shows what is held, what was released to date, retainage as a percent of
+    billed, and the latest certified application. Filters: account, project, status, and
+    *Include jobs holding nothing*. That box is off by default because frappe never sends an
+    unticked box to the server, so a box ticked by default could never be turned off.
+  - **Pay Applications Outstanding:** applications still open (Draft with the project manager, or
+    To Review with accounting) with the days since their period ended. It also lists locked jobs
+    with nothing open whose last certified application ended more than *Due after* days ago
+    (default 30) as **Due**, and locked jobs that never had an application as **Not started**. A
+    closed schedule is billed out and never shows.
+  - **Billed vs Scheduled:** with a schedule picked, its lines by top phase (change orders last) or
+    one row per line, giving billed to date against scheduled value, the percent and the balance.
+    Without a schedule, one row per job.
+  - The arithmetic is `estimating/billing_reports.py`, a pure module in whole cents, tested without
+    a bench in `tests/test_billing_reports.py` (its own CI step).
+- **Each report admits only roles that may run a report on its reference doctype.** frappe refuses
+  a run otherwise, after the report's own role check. Retainage Held and Outstanding also read the
+  other billing doctype, so every role on them reads both, which is why the Estimator is not on
+  Retainage Held. The test holds both rules against the doctype JSON.
+- **Only permlevel 0 fields are read.** A Script Report runs server-side, where the field-level read
+  checks (1.835.0) do not reach, so the rule is kept in the reports and the test holds every field
+  they read to it. Outstanding shows the payment due, not the amount certified, which is
+  accounting's (permlevel 1). No report has a print format.
+- **Progress Billing card** on the Project Enhancements workspace: Schedule of Values, Pay
+  Application and the three reports. The workspace JSON's `modified` is bumped, and a post-model-sync
+  patch, `resync_project_enhancements_workspace_billing`, force-reloads it. Workspaces are
+  timestamp-gated, so a row edited in the Desk would otherwise keep the file out for good. The patch
+  never raises (one Error Log row) and is safe to run twice.
+- **Prod effects on migrate:** three new Report records, the workspace re-sync and nothing else. No
+  schema change and no data written.
+
 ## [1.838.0] - 2026-11-23
 
 ### Added
