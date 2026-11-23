@@ -71,7 +71,8 @@ there. A caller with ``select`` but not ``read`` on a doctype is not exempt in g
 
 **How each route is reached.** The RPC routes are whitelisted methods, wrapped here through
 ``override_whitelisted_methods`` exactly as in ``fieldlevel_read``: each wrapper restates frappe's
-parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0),
+parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0,
+plus the link-search arguments 16.60 added, which ``_declared`` forwards only where they exist),
 checks the request, and then calls frappe's own function unchanged. ``seal_filter_originals``, a
 ``before_request`` hook, takes frappe's own copies off the whitelist once their canonical names are
 overridden, so no other dotted name for the same function (``frappe.client.search_widget`` is one)
@@ -1106,23 +1107,31 @@ def _as_flag(value):
 
 
 def _declared(fn, **optional):
-	"""The part of ``optional`` that frappe's ``fn`` declares: all of it when ``fn`` takes
-	``**kwargs``, none when its signature cannot be read.
+	"""The part of ``optional`` that frappe's ``fn`` names in its signature; none when the signature
+	cannot be read.
 
 	frappe 16.60 added ``start``, ``include_image`` and ``keep_order`` to ``search_link``, and
 	``keep_order`` to ``search_widget``; 16.56 has none of them. ``frappe.call`` passes a whitelisted
 	function only the names it declares, so a wrapper that does not declare them silently drops the
 	Link dropdown's paging, images and order; one that passes them to a frappe that does not know them
-	raises ``TypeError``. Declaring them here and forwarding only what the installed frappe accepts
-	works on both. ``inspect.signature`` follows ``__wrapped__`` through ``http_cache``.
+	raises ``TypeError`` on every Link search. Declaring them here and forwarding only what the
+	installed frappe names works on both.
+
+	``inspect.signature`` follows ``__wrapped__`` through both of frappe's layers, ``http_cache`` and
+	the whitelist's argument check, which both use ``functools.wraps``. A catch-all ``**kwargs`` is
+	deliberately not taken as acceptance: frappe's own functions never declare one, so seeing it means
+	a decorator without ``wraps`` is hiding the real parameters, and guessing there would bring the
+	``TypeError`` back. Dropping an argument costs paging; passing one costs the search.
 	"""
 	try:
 		params = inspect.signature(fn).parameters
 	except (TypeError, ValueError):
 		return {}
-	if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-		return dict(optional)
-	return {name: value for name, value in optional.items() if name in params}
+	return {
+		name: value
+		for name, value in optional.items()
+		if name in params and params[name].kind is not inspect.Parameter.VAR_KEYWORD
+	}
 
 
 @frappe.whitelist(methods=["GET", "POST", "PUT", "DELETE"])

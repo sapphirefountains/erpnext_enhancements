@@ -19,20 +19,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it declares, so the arguments were dropped without an error. Every search still answered, but
   scrolling a Link dropdown would have shown its first page again, with no images and the relevance
   order re-sorted.
-  - The wrappers now declare the three arguments and forward them only to a frappe that declares them
-    (`_declared`, through `inspect.signature`, which follows `http_cache`'s `__wrapped__`). The same
-    code runs on 16.56, where passing them would raise `TypeError`, and on 16.60.
-  - A request carries them as text, and `"0"` is truthy, so they are read as frappe's own annotations
-    would read them (`_as_int`, `_as_flag`). frappe's typing check applies to the function `frappe.call`
-    invokes, which is now the wrapper, not frappe's original.
+  - The wrappers now declare the three arguments and forward them only to a frappe whose signature
+    names them (`_declared`). `inspect.signature` reads through both of frappe's `functools.wraps`
+    layers on `search_link`, `http_cache` and the whitelist's argument check. The same code runs on
+    16.56, where passing them would raise `TypeError` on every Link search, and on 16.60.
+  - A catch-all `**kwargs` is not taken as acceptance. frappe's own functions never declare one, so
+    seeing it means a decorator without `wraps` is hiding the real parameters; forwarding there would
+    bring the `TypeError` back. Dropping an argument costs paging, passing one costs the search.
+  - The wrappers hand frappe a Python int and Python bools (`_as_int`, `_as_flag`), because a request
+    carries the values as text and `"0"` is truthy. 16.60.2's `search_link` also converts them itself,
+    so this is belt and braces.
   - Why now: on 2026-11-23 production's frappe code moved from 16.56.0 to the version-16 branch head
     (16.60.x) without a migrate. The new code asked for doctypes the database did not have (the Flow
     module's `Flow Trigger`), and every website page answered "There was an error building this page",
-    `/login` included. The site is being migrated forward to 16.60. A read of 16.56.0 to 16.60.2 found
-    no other change to the arguments of a function this app wraps: `client.py` and `reportview.py`
-    changed only functions it does not wrap, and `frappe/desk/form/load.py` did not change.
-  - Tests in `test_fieldlevel_filters.py` (`TestSixteenSixty`): both frappe signatures, the text
-    values, the field check still running first, and the signature table now listing the new names.
+    `/login` included. Production was migrated forward the same day and now runs frappe 16.60.2 and
+    erpnext 16.60.0.
+  - A read of 16.56.0 to 16.60.2 found no other change to the signature, decorators or HTTP methods
+    of a function this app wraps or seals:
+    - `client.py` and `reportview.py` changed only functions it does not wrap;
+    - `dashboard_chart.py`'s heatmap now queries through `frappe.qb.get_query` and returns a `dates`
+      key, and `number_card.py` caches its permission check per request, with no argument changes;
+    - `form/load.py`, `form/save.py`, `form/utils.py`, `listview.py` and `calendar.py` did not change.
+  - Tests in `test_fieldlevel_filters.py` (`TestSixteenSixty`) cover:
+    - both frappe signatures, read through two `functools.wraps` layers as production stacks them;
+    - a bare `**kwargs` wrapper getting nothing;
+    - the text values;
+    - the field check still running first.
+
+    The signature table now lists the new names.
 
 ## [1.835.0] - 2026-11-23
 

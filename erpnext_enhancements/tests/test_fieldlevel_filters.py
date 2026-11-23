@@ -38,6 +38,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters
 """
 
 import ast
+import functools
 import importlib
 import json
 import sys
@@ -1184,10 +1185,8 @@ class TestWrappers(unittest.TestCase):
 				"reference_doctype": None,
 				"ignore_user_permissions": False,
 				"link_fieldname": "employee",
-				# The stub takes **kwargs, so frappe 16.60's arguments are forwarded (see TestSixteenSixty).
-				"start": 0,
-				"include_image": False,
-				"keep_order": False,
+				# The stub names only *args/**kwargs, so frappe 16.60's arguments are not forwarded to
+				# it: a catch-all is not taken as acceptance (see TestSixteenSixty).
 			},
 		)
 		_reset()
@@ -1195,13 +1194,7 @@ class TestWrappers(unittest.TestCase):
 			ff.search_widget, "search.search_widget", "Employee", "a", for_link_validation=True
 		)
 		self.assertEqual(
-			call[2],
-			{
-				"link_fieldname": None,
-				"for_link_validation": True,
-				"query_filters_as_dict": False,
-				"keep_order": False,
-			},
+			call[2], {"link_fieldname": None, "for_link_validation": True, "query_filters_as_dict": False}
 		)
 
 	def test_a_doctype_that_is_not_a_string_is_left_to_frappes_type_check(self):
@@ -1479,6 +1472,20 @@ def _search_widget_v16_60(
 	return []
 
 
+def _frappe_layers(fn):
+	"""``fn`` under two ``functools.wraps`` wrappers, as frappe stacks ``http_cache`` and the
+	whitelist's ``validate_argument_types`` on ``search_link``."""
+
+	def layer(inner):
+		@functools.wraps(inner)
+		def wrapper(*args, **kwargs):
+			return inner(*args, **kwargs)
+
+		return wrapper
+
+	return layer(layer(fn))
+
+
 class TestSixteenSixty(unittest.TestCase):
 	"""frappe 16.60 gave ``search_link`` ``start``, ``include_image`` and ``keep_order``, and
 	``search_widget`` ``keep_order``; 16.56 has none of them. ``frappe.call`` passes a whitelisted
@@ -1550,6 +1557,36 @@ class TestSixteenSixty(unittest.TestCase):
 
 	def test_an_unreadable_signature_forwards_nothing(self):
 		self.assertEqual(ff._declared(object(), start=1), {})
+
+	def test_read_through_frappes_two_decorator_layers(self):
+		"""Production's ``search_link`` sits under ``http_cache`` and the whitelist's argument check,
+		both ``functools.wraps`` wrappers taking ``(*args, **kwargs)``. The signature must be read
+		through them, or every 16.56 search would get names it does not know."""
+		for original, forwarded in (
+			(_search_link_v16_60, {"start": 3, "include_image": True, "keep_order": True}),
+			(_search_link_v16_56, {}),
+		):
+			with self.subTest(original=original.__name__):
+				wrapped = _frappe_layers(original)
+				self.assertEqual(
+					ff._declared(wrapped, start=3, include_image=True, keep_order=True), forwarded
+				)
+		_reset()
+		self.search.search_link = _frappe_layers(_search_link_v16_56)
+		ff.search_link("Employee", "a", start="20", include_image="1", keep_order="1")
+		self.assertEqual(STATE["calls"][0][2], {"doctype": "Employee", "link_fieldname": None})
+
+	def test_a_catch_all_is_not_taken_as_acceptance(self):
+		"""A decorator without ``wraps`` shows only ``(*args, **kwargs)``; forwarding there would raise
+		on the frappe it hides, so nothing is forwarded."""
+
+		def bare(*args, **kwargs):
+			return _search_link_v16_56(*args, **kwargs)
+
+		self.assertEqual(ff._declared(bare, start=1, include_image=True, keep_order=True), {})
+		self.search.search_link = bare
+		ff.search_link("Employee", "a", start=5)
+		self.assertEqual(len(STATE["calls"]), 1)
 
 
 # ---------------------------------------------------------------------------
