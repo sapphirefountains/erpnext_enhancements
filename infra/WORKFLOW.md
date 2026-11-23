@@ -248,9 +248,10 @@ gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main \
 Every app deploy checks that both Redis instances answer and takes a database backup before
 `bench migrate`, and an upstream update moves
 Frappe and ERPNext only to the two release tags it is given, after it has checked that both
-Redis instances answer. The tags above are production's releases on 2026-11-23: name the pair
-you mean to install, because an older pair is a downgrade. How to choose the tags, run the
-update by hand, find the backups and restore one: [README.md, section 13](README.md#13-cicd--cloud-build-deploy--upstream-triggers),
+Redis instances answer. One run at a time holds the bench's lock, so a burst of merges deploys
+one after the other. The tags above are production's releases on 2026-11-23: name the pair you
+mean to install. A lower one is refused unless a person sets `ALLOW_DOWNGRADE=1` in a shell on
+the VM. How to choose the tags, run the update by hand, find the backups and restore one: [README.md, section 13](README.md#13-cicd--cloud-build-deploy--upstream-triggers),
 "Runbook: pre-migrate backups and upstream updates".
 
 ### One-time: adding deploy SSH key to project metadata

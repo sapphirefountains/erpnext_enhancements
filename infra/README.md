@@ -135,14 +135,46 @@ former on every run (see below). Before it starts, it checks that the disk has f
 the newest kept backup plus a 5 GB margin (`PRE_MIGRATE_MIN_FREE_MB`, default 5120), or the margin
 alone when no backup is kept yet. Production's database is about 5.8 GB before compression.
 
-**One backup at a time.** Each run holds an exclusive `flock` on
-`pre-migrate-backups/.bench_update.lock` for the whole backup, so two deploys a few minutes apart
-take their backups one after the other. A second run waits up to 900 seconds
-(`PRE_MIGRATE_LOCK_WAIT_S`), then fails without deleting anything. The lock is released however
-the backup ends, and the lock file is never deleted. `flock` ships in util-linux; the script stops
-with a clear message when it is missing. The build timeouts include that wait (deploy 2100 s,
-upstream 3300 s). The lock covers the backup only: it does not stop two deploys from running their
-migrates at the same time.
+**One run at a time.** Two locks, both `flock` (it ships in util-linux):
+
+- **The bench's lock, `<bench>/.deploy.lock`.** An app deploy holds it as `frappe` for its whole
+  chain, from before the fetch to after the redis flush, and `bench_update.sh upstream` holds it
+  from before its first check until it ends. So one run's backup is never taken while another run
+  is migrating, two migrates never overlap, and a deploy waits for an update a person is running
+  by hand. It is taken before the fetch because the fetch replaces `bench_update.sh`, which a run
+  already in progress is still reading.
+- **The deploy user's lock, `~/.frappe-bench-deploy.lock` in the deploy user's home.** Both
+  triggers' remote commands hold it from their first command until the restart has run, so two
+  triggered runs never overlap anywhere. It is a second file because the `frappe` user cannot
+  restart the bench, and the deploy user is not assumed able to open a file inside it.
+- A run waits up to 900 seconds for each lock, and the build log says which way it went:
+  `flock: getting lock took ... seconds`, or `flock: timeout while waiting to get lock`, after
+  which the run stops with nothing changed. In a burst of merges a later deploy can time out
+  this way. The run ahead of it fetches `main` when its own turn comes, so it has usually
+  deployed that commit already: check the version on the site before you re-run. The build
+  timeouts cover one wait (deploy 2100 s, upstream 3300 s).
+- Nothing a run starts is handed either lock, so a process that outlives it (git's background
+  gc, something a hook starts) cannot keep the next run waiting.
+- A third lock, `pre-migrate-backups/.bench_update.lock`, lets one backup run at a time, also
+  one taken by hand. `PRE_MIGRATE_LOCK_WAIT_S` (default 900) is the script's wait for it and for
+  the bench's lock. No lock file is ever deleted.
+- The restart a person runs after an update by hand is outside every lock. Hold merges until it
+  is done.
+
+**Who can read what.** The backups are readable by `frappe` only: the backup directory and each
+run are 0700 and every file 0600. Everything else a run writes (the code it checks out, the
+packages it installs, the assets it builds) is created under umask 022 whatever mask the caller
+had, because nginx serves `/assets` and each app's public files from disk as `www-data`. A file
+written 0600 there answers 403, and a later build overwrites it in place and keeps the mode.
+
+**A backup gets its name only when it is whole.** bench writes into
+`pre-migrate-backups/.partial-<UTC time>/`. The script renames that to `<UTC time>/` only after
+bench has exited cleanly, every site has a database file, and each `.sql.gz` passes `gzip -t`
+(an encrypted `-enc.sql.gz` is not gzip data and cannot be tested without its key). So a run that
+is stopped or killed partway (a build timeout, a dropped connection, Ctrl-C) never leaves a
+cut-off dump under a name that looks like a backup. The script removes the unfinished directory
+as it ends; when it was killed outright and could not, the next backup removes it. A directory
+whose name starts with `.partial-` is never a restore source, and plain `ls` does not show it.
 
 **What bench's own `backup` command deletes.** Verified in frappe v16.60.2. For each site,
 `bench backup` (`frappe/commands/site.py:881`) calls `scheduled_backup()` and so `new_backup()`
@@ -177,8 +209,8 @@ reset, no migrate, no build, no redis flush, no restart. The deploy's order is f
 check, backup, reset, so the site keeps running the release it had: the app's code, the database and the
 running processes are unchanged, and only `infra/bench_update.sh` itself was taken from the new
 commit. The reasons it names are not enough free disk, another backup still holding the lock
-after the wait, `flock` not installed, `bench backup` exiting with an error, and a site left
-without a database file. Fix the cause, then re-run the deploy
+after the wait, `flock` not installed, `bench backup` exiting with an error, a site left
+without a database file, and a dump that is not a whole gzip file. Fix the cause, then re-run the deploy
 (`gcloud builds triggers run app-deploy-prod --branch=main`).
 
 **Choosing the tags.** Pick a published release of each:
@@ -193,8 +225,26 @@ choice. Only `v16.MINOR.PATCH` is accepted: no branch names, no betas, no other 
 
 **Running the update.** Hold merges, update beta first, then production. The tags in these
 examples are production's releases on 2026-11-23 (frappe v16.60.2, erpnext v16.60.0): name the
-pair you chose above, never an older one, because the script installs exactly what it is
-given and an older pair is a downgrade.
+pair you chose above.
+
+**A lower tag is refused.** The script installs exactly the pair it is given, so an example from
+this page pasted after a later upgrade would take the apps back. It compares each tag with the
+version the app declares now (`__version__` in `apps/<app>/<app>/__init__.py`), as versions and
+not as text, and stops before anything changes when a tag is lower:
+`<tag> is lower than the <app> that is installed (<version>); nothing was changed`.
+
+- To go back on purpose, a person runs it in a shell on the VM with `ALLOW_DOWNGRADE=1` in front
+  of the command. Neither trigger can allow it.
+- The same version is not a downgrade, so the same command run again after a failure goes
+  through.
+- One thing the check cannot see: a bench on a branch head past its last release still declares
+  that release's version, and installing that release's tag takes the later commits away. The
+  run says so and goes on: `note: frappe declares 16.60.2, the same version as v16.60.2, but is
+  at another commit (...); the checkout moves it to the tag`. Read that line before you let an
+  update on such a bench continue.
+- When the version cannot be read, the run stops and says how to go on without the check.
+
+The two commands:
 
 ```bash
 gcloud builds triggers run app-upstream-test --branch=main \
@@ -214,8 +264,9 @@ exit
 sudo systemctl restart frappe-bench
 ```
 
-It checks both tags, that `apps/frappe` and `apps/erpnext` have no changes to tracked files,
-fetches both tags, and checks that both Redis instances answer, all before it changes anything;
+It takes the bench's lock, checks both tags, that `apps/frappe` and `apps/erpnext` have no
+changes to tracked files, fetches both tags, checks that neither is a downgrade and that both
+Redis instances answer, all before it changes anything;
 then it takes the backup, checks out the two tags (a detached checkout, so no later command
 follows a branch), and runs `bench setup requirements`, the Redis check again, `bench --site all
 migrate` and `bench build`. It prints each app's previous commit. If a step after the checkout
@@ -282,6 +333,9 @@ to a named tag or commit, with the pre-migrate backup first:
 ```bash
 sudo -iu frappe
 cd ~/frappe-bench
+# Hold the bench's lock in this shell, so no deploy or update runs meanwhile. It is released
+# when you leave the shell with `exit` below. If it times out, another run is going: stop here.
+exec 9>>.deploy.lock && flock --verbose -w 900 9
 # Both Redis instances must answer; if it says Redis is not ready, stop here.
 bash apps/erpnext_enhancements/infra/bench_update.sh redis
 # Take the pre-migrate backup; if it prints PRE-MIGRATE BACKUP FAILED, stop here.
@@ -309,7 +363,7 @@ before that migrate: everything written since is lost. Hold merges first, and pa
 ```bash
 sudo -iu frappe
 cd ~/frappe-bench
-ls pre-migrate-backups/                      # newest last
+ls pre-migrate-backups/                      # newest last; a .partial-* one is never a backup
 ls -l pre-migrate-backups/<run>/
 # Put the code back to what the backup was taken under, when it changed:
 #   upstream update: git -C apps/frappe checkout <previous commit>   (and the same for erpnext;

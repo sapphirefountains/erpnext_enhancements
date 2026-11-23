@@ -26,13 +26,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no code reset, migrate,
     build, redis flush or restart, so the site keeps running the release it had. The redis
     flush, the restart and the rest of the deploy are unchanged.
-  - **One backup at a time.** Each backup holds an exclusive `flock` on
-    `pre-migrate-backups/.bench_update.lock` (`flock` ships in util-linux; the script stops with
-    a clear message without it). A second deploy's backup waits for the first, up to 900 seconds
-    (`PRE_MIGRATE_LOCK_WAIT_S`), then fails without deleting anything. The lock is released
-    however the backup ends, is not handed to the processes bench starts, and covers the backup
-    only. The deploy step's timeout goes from 600 to 2100 seconds and the upstream step's from
-    1200 to 3300, to fit the backup and that wait.
+  - **One run at a time.** A deploy's backup taken while another run is migrating would capture a
+    half-migrated database, or fail, or make that migrate wait behind the dump. So a run holds the
+    bench's lock, `<bench>/.deploy.lock`, for everything it does as the `frappe` user: a deploy's
+    chain takes it before the fetch and holds it to after the redis flush, and `bench_update.sh
+    upstream` holds it from before its first check until it ends. It is taken before the fetch
+    because the fetch replaces the script a run already in progress is reading. The restart is run
+    by the deploy user, who is not assumed able to open a file in the bench, so each trigger's
+    remote command also holds a lock of the deploy user's own, `~/.frappe-bench-deploy.lock`, from
+    its first command until the restart has run. Each wait is up to 900 seconds and `flock
+    --verbose` says in the build log how it went; a run that cannot get a lock stops with nothing
+    changed. Nothing a run starts is handed a lock: every command in the deploy's chain ends with
+    `9>&-`, and the script starts its commands through `run`, so a process that outlives the run
+    (git's background gc, something a hook starts) cannot keep the next one waiting. The lock on
+    the backup directory, `pre-migrate-backups/.bench_update.lock`, stays, for a backup taken by
+    hand. The deploy step's timeout goes from 600 to 2100 seconds and the upstream step's from
+    1200 to 3300, to fit the backup and one wait.
+  - **Only the backup is private.** nginx serves `/assets` and each app's public files from disk
+    as `www-data`, so what an update checks out, installs and builds must be readable by other
+    users: a file written 0600 there answers 403, and a later build overwrites it in place and
+    keeps the mode. The script's own mask is therefore 022, whatever the caller's is, and the
+    backup alone narrows it to 077 and puts it back: the backup directory and each run are 0700,
+    every file in them 0600.
+  - **A backup gets its name only when it is whole.** bench writes into
+    `pre-migrate-backups/.partial-<UTC time>/`, and the script renames that to `<UTC time>/` only
+    after bench has exited cleanly, every site has a database file and each `.sql.gz` passes `gzip
+    -t` (an encrypted `-enc.sql.gz` is not gzip data and cannot be tested without its key). A run
+    that is stopped or killed partway, by a build timeout, a dropped connection or Ctrl-C,
+    therefore never leaves a cut-off dump under a name that retention, the free-space rule or a
+    person restoring would take for a backup. The script removes the unfinished directory as it
+    ends, through one EXIT trap that a HUP, INT or TERM also goes through (bash runs it once bench
+    has returned, so the locks stay held until the dump has really stopped). When the script was
+    killed outright, the next backup removes what it left, under the lock. An older backup that
+    retention cannot remove is now a warning, not a failed backup: the new one is already whole by
+    then.
   - **Bench's own `backup` command deletes older scheduled backups, now on every deploy.** At
     frappe v16.60.2 it runs `delete_temp_backups()` (`frappe/utils/backups.py`) for each site,
     which removes every file in `sites/<site>/private/backups` at least 23 hours old (or the
@@ -44,13 +71,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `_FRAPPE_TAG` and `_ERPNEXT_TAG`, each a tag like `v16.60.2` (`^v16\.[0-9]+\.[0-9]+$`); a run
     with either blank or anything else stops before it connects to the VM. On the VM the script
     checks the tags again, refuses a checkout with changes to tracked files, fetches both tags,
-    checks Redis (below), takes the same backup, checks out exactly those tags, and runs `bench
-    setup requirements`, the Redis check again, `bench --site all migrate` and `bench build`.
+    refuses a downgrade and checks Redis (both below), takes the same backup, checks out exactly
+    those tags, and runs `bench setup requirements`, the Redis check again, `bench --site all
+    migrate` and `bench build`.
     Updating by hand in a shell is the same command
     (`bash apps/erpnext_enhancements/infra/bench_update.sh upstream <frappe-tag> <erpnext-tag>`)
     and is now the only supported way. The bench's other apps (`payments`, `telephony`,
     `newsletter`, `frappe_assistant_core`) are not moved by this path; the runbook gives the
     commands for updating one by hand to a named tag or commit, behind the same backup.
+  - **An update refuses a lower tag.** The script installs exactly the pair it is given, so an
+    example pasted after a later upgrade would take the apps back. `upstream` now compares each
+    tag with the version the app declares (`__version__` in its package's `__init__.py`), as
+    versions and not as text, and stops before anything changes when a tag is lower. A person goes
+    back on purpose with `ALLOW_DOWNGRADE=1` in a shell on the VM; neither trigger can allow it.
+    The same version is not a downgrade, so the same command run again after a failure goes
+    through. What the check cannot see is a bench on a branch head past its last release, which
+    still declares that release's version: installing that release's tag takes the later commits
+    away, and the run prints a note saying so. A version that cannot be read stops the run.
   - **Redis is checked before a migrate starts.** Frappe reads a cache that is down as an empty
     one instead of stopping, so a migrate started then fails partway through, after it has already
     changed the database; on 2026-11-23 two migrates in a row stopped that way, at fixture sync.
@@ -97,16 +134,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as soon as they are on `main`.
   - `tests/test_pre_migrate_backup.py`, a new bench-free CI step: the backup comes before migrate
     in one `&&` chain, the upstream file never follows a branch and refuses anything but two
-    release tags, retention touches only its own directory (and never the lock file), plus
-    `bash -n` and shellcheck on the script and runs of it against a scratch bench: two
-    overlapping backups run one after the other, a run that cannot get the lock in time fails
-    and deletes nothing, the lock is free after a failed backup, and the free-space rule with
-    and without a kept backup. The Redis check is tested twice over: with a stub client (which
-    address is asked, what each failure prints, where the check sits in an update, the same
-    command finishing the update once Redis is back), and with the real Redis client against a
-    small socket server (an instance that is down, and one that wants a sign-in). The real
-    client was also run by hand against real `redis-server` processes at 7.1, the version
-    frappe v16.60.2 pins, and at 8.1, the one CI carries.
+    release tags, retention touches only its own directory (and never the lock file), plus `bash
+    -n` and shellcheck on the script and runs of it against a scratch bench: two overlapping
+    backups run one after the other, a run that cannot get the lock in time fails and deletes
+    nothing, the lock is free after a failed backup, and the free-space rule with and without a
+    kept backup. From the review of the first version: the file modes of what an update writes
+    under a caller's narrow mask, and of the backup under a wide one; a cut-off dump, a killed run
+    and a stopped run; the downgrade guard; and the deploy's remote command run for real, the text
+    the VM's shell receives with stand-ins for sudo, git, redis-cli and systemctl. That last test
+    found what reading the file had not: a shell runs its last command in its own place, so with
+    the restart last the deploy user's lock was let go just before the restart ran. The chain's
+    last command now closes the lock instead. Twenty-three deliberate breaks of these rules each
+    fail the suite. The Redis check is tested twice over: with a stub client (which address is
+    asked, what each failure prints, where the check sits in an update, the same command finishing
+    the update once Redis is back), and with the real Redis client against a small socket server
+    (an instance that is down, and one that wants a sign-in), at the version the CI job carries
+    and at the one frappe v16.60.2 pins (`redis~=7.1.0`), which CI installs into a directory of
+    its own. The real client was also run by hand against real `redis-server` processes at both
+    versions. `flock` is now asked for only where a lock is taken, so the Redis check alone no
+    longer reports a failed backup when it is missing.
 
 ## [1.836.0] - 2026-11-23
 

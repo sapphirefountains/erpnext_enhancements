@@ -17,6 +17,13 @@
 # whatever frappe-bench.target Requires, and these VMs have no such target. The
 # `systemctl restart frappe-bench` below does the restart, on a VM cut over to gunicorn
 # and on one still on the development Procfile alike. See infra/cloudbuild-deploy.yaml.
+#
+# One run at a time: the remote shell holds the deploy user's lock,
+# ~/.frappe-bench-deploy.lock, from its first command to the restart, as a deploy does, and
+# the script itself holds the bench's lock, <bench>/.deploy.lock, for the whole update. See
+# the note in infra/cloudbuild-deploy.yaml. A downgrade cannot be allowed from here: the
+# script refuses a tag lower than what is installed unless a person sets ALLOW_DOWNGRADE=1
+# in a shell on the VM.
 steps:
   - name: 'google/cloud-sdk:latest'
     id: 'Update Upstream Apps'
@@ -64,14 +71,17 @@ steps:
           --zone="$$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
-          --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
+          --command="exec 9>>\$$HOME/.frappe-bench-deploy.lock && \
+            flock --verbose -w 900 9 && \
+            sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
             export PATH=\$$PATH:/home/frappe/.local/bin && \
             bash apps/erpnext_enhancements/infra/bench_update.sh upstream $$FRAPPE_TAG $$ERPNEXT_TAG' && \
-            sudo systemctl restart frappe-bench"
+            sudo systemctl restart frappe-bench && \
+            exec 9>&-"
         echo "✅  $$VM updated"
 
-# 3300s: 2400s for the update and its backup, plus up to 900s waiting for another run's
-# backup to finish (PRE_MIGRATE_LOCK_WAIT_S).
+# 3300s: 2400s for the update and its backup, plus up to 900s waiting for another run to
+# finish (one lock wait).
 timeout: '3300s'
 options:
   logging: CLOUD_LOGGING_ONLY

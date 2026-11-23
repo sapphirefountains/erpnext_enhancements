@@ -15,6 +15,24 @@
 # checked out of the fetched commit, so the check and the backup are always done by the
 # script being deployed (and the first deploy that carries the script can run it); the
 # app's code moves after the backup.
+#
+# One run at a time, through two flock(1) locks in the one `&&` chain:
+#   * the deploy user's own, ~/.frappe-bench-deploy.lock, held by the remote shell from its
+#     first command to its last, the restart included. The upstream file takes the same
+#     one, so two triggered runs never overlap anywhere;
+#   * the bench's, <bench>/.deploy.lock, held by the frappe user's shell from before the
+#     fetch to after the redis flush. infra/bench_update.sh takes the same one for an
+#     update, so a deploy also waits for an update a person is running by hand, and its
+#     backup is never taken while another run is migrating. Before the fetch, because
+#     the fetch replaces the script that a run already in progress is reading.
+# The frappe user cannot restart the bench and the deploy user is not assumed able to open
+# a file inside it, hence two files. Each waits up to 900s and says so (`--verbose`); a
+# run that cannot get one stops there with nothing changed. Every command after the
+# bench's lock ends with `9>&-`: the shell alone holds the lock, so nothing a command
+# leaves running (git's background gc, a process a hook starts) can keep it. The last
+# command of all closes the deploy user's lock, and is there so that the restart is not
+# the last: a shell runs its last command in its own place, and the lock would go with it
+# before the restart had run.
 # Runbook: infra/README.md, section 13.
 steps:
   - name: 'google/cloud-sdk:latest'
@@ -50,21 +68,28 @@ steps:
           --zone="$$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
-          --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
+          --command="exec 9>>\$$HOME/.frappe-bench-deploy.lock && \
+            flock --verbose -w 900 9 && \
+            sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
             export PATH=\$$PATH:/home/frappe/.local/bin && \
-            git -C apps/erpnext_enhancements fetch upstream main && \
-            git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && \
-            bash apps/erpnext_enhancements/infra/bench_update.sh redis && \
-            bash apps/erpnext_enhancements/infra/bench_update.sh backup && \
-            git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && \
-            bench --site all migrate && \
-            bench build && \
-            redis-cli -p 13000 FLUSHDB && redis-cli -p 11000 FLUSHDB' && \
-            sudo systemctl restart frappe-bench"
+            exec 9>>.deploy.lock && \
+            flock --verbose -w 900 9 && \
+            git -C apps/erpnext_enhancements fetch upstream main 9>&- && \
+            git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh 9>&- && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh redis 9>&- && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh backup 9>&- && \
+            git -C apps/erpnext_enhancements reset --hard FETCH_HEAD 9>&- && \
+            bench --site all migrate 9>&- && \
+            bench build 9>&- && \
+            redis-cli -p 13000 FLUSHDB 9>&- && \
+            redis-cli -p 11000 FLUSHDB 9>&-' && \
+            sudo systemctl restart frappe-bench && \
+            exec 9>&-"
         echo "✅  $$VM updated"
 
-# 2100s, up from 600s: 600s more for the backup, and up to 900s waiting for another run's
-# backup to finish (PRE_MIGRATE_LOCK_WAIT_S). A timeout ends the SSH session mid-migrate.
+# 2100s, up from 600s: 600s more for the backup, and up to 900s waiting for another run to
+# finish (one lock wait: a second one can only stack when a person is running an update by
+# hand as well). A timeout ends the SSH session mid-migrate.
 timeout: '2100s'
 options:
   logging: CLOUD_LOGGING_ONLY

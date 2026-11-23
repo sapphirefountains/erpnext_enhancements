@@ -20,6 +20,12 @@ module, and, in one class, the real Redis client against a small socket server. 
 tests need bash, git, gzip and flock, so they run on Linux; CI sets REQUIRE_DEPLOY_SCRIPT_TOOLS
 so that a missing tool fails instead of skipping.
 
+Also here, from a review of the first version: only the backup is written under a narrow file
+mode (nginx serves what an update checks out and builds); a backup is written under an
+unfinished name and renamed only when it is whole; one run at a time holds the bench's lock,
+which the deploy's remote command is run for real to show, with stand-ins for sudo, git,
+redis-cli and systemctl; and an update refuses a tag lower than what is installed.
+
 Run: python -m unittest erpnext_enhancements.tests.test_pre_migrate_backup -v
 """
 
@@ -160,18 +166,23 @@ class DeployYamlTests(unittest.TestCase):
 		self.assertEqual(
 			_remote_commands(self.block),
 			[
+				r"exec 9>>\$$HOME/.frappe-bench-deploy.lock",
+				"flock --verbose -w 900 9",
 				"sudo -u frappe bash -c 'cd /home/frappe/frappe-bench",
 				r"export PATH=\$$PATH:/home/frappe/.local/bin",
-				"git -C apps/erpnext_enhancements fetch upstream main",
-				"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh",
-				"bash apps/erpnext_enhancements/infra/bench_update.sh redis",
-				"bash apps/erpnext_enhancements/infra/bench_update.sh backup",
-				"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
-				"bench --site all migrate",
-				"bench build",
-				"redis-cli -p 13000 FLUSHDB",
-				"redis-cli -p 11000 FLUSHDB'",
+				"exec 9>>.deploy.lock",
+				"flock --verbose -w 900 9",
+				"git -C apps/erpnext_enhancements fetch upstream main 9>&-",
+				"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh 9>&-",
+				"bash apps/erpnext_enhancements/infra/bench_update.sh redis 9>&-",
+				"bash apps/erpnext_enhancements/infra/bench_update.sh backup 9>&-",
+				"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD 9>&-",
+				"bench --site all migrate 9>&-",
+				"bench build 9>&-",
+				"redis-cli -p 13000 FLUSHDB 9>&-",
+				"redis-cli -p 11000 FLUSHDB 9>&-'",
 				"sudo systemctl restart frappe-bench",
+				"exec 9>&-",
 			],
 		)
 
@@ -179,11 +190,19 @@ class DeployYamlTests(unittest.TestCase):
 		remote = _remote_string(self, self.block)
 		self.assertIn(
 			"export PATH=$PATH:/home/frappe/.local/bin && "
-			"git -C apps/erpnext_enhancements fetch upstream main && "
-			"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh && "
-			"bash apps/erpnext_enhancements/infra/bench_update.sh redis && "
-			"bash apps/erpnext_enhancements/infra/bench_update.sh backup && "
-			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && bench --site all migrate && ",
+			"exec 9>>.deploy.lock && flock --verbose -w 900 9 && "
+			"git -C apps/erpnext_enhancements fetch upstream main 9>&- && "
+			"git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh 9>&- && "
+			"bash apps/erpnext_enhancements/infra/bench_update.sh redis 9>&- && "
+			"bash apps/erpnext_enhancements/infra/bench_update.sh backup 9>&- && "
+			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD 9>&- && "
+			"bench --site all migrate 9>&- && ",
+			remote,
+		)
+		self.assertTrue(
+			remote.startswith(
+				"exec 9>>$HOME/.frappe-bench-deploy.lock && flock --verbose -w 900 9 && sudo -u frappe "
+			),
 			remote,
 		)
 
@@ -191,15 +210,35 @@ class DeployYamlTests(unittest.TestCase):
 		"""A migrate started while Redis is down stops partway, so the deploy asks first, with
 		the script it has just fetched, and a failure there leaves everything as it was."""
 		commands = _remote_commands(self.block)
-		check = commands.index("bash apps/erpnext_enhancements/infra/bench_update.sh redis")
-		fetched = "git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh"
+		check = commands.index("bash apps/erpnext_enhancements/infra/bench_update.sh redis 9>&-")
+		fetched = "git -C apps/erpnext_enhancements checkout FETCH_HEAD -- infra/bench_update.sh 9>&-"
 		self.assertEqual(commands[check - 1], fetched)
 		for later in (
-			"bash apps/erpnext_enhancements/infra/bench_update.sh backup",
-			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD",
-			"bench --site all migrate",
+			"bash apps/erpnext_enhancements/infra/bench_update.sh backup 9>&-",
+			"git -C apps/erpnext_enhancements reset --hard FETCH_HEAD 9>&-",
+			"bench --site all migrate 9>&-",
 		):
 			self.assertLess(check, commands.index(later), later)
+
+	def test_one_run_at_a_time_two_locks_in_the_one_chain(self):
+		"""The deploy user's lock is taken first and held through the restart: the restart is
+		not the remote shell's last command, because a shell runs its last command in its
+		own place and the lock would go with it. The bench's lock is taken before the fetch,
+		which replaces the script a run in progress is reading, and is held by the frappe
+		user's shell alone: every command after it ends with `9>&-`, so nothing a command
+		leaves running can keep the lock. Both waits are the script's."""
+		commands = _remote_commands(self.block)
+		wait = f"flock --verbose -w {_script_lock_wait_default()} 9"
+		self.assertEqual(commands[:2], [r"exec 9>>\$$HOME/.frappe-bench-deploy.lock", wait])
+		self.assertEqual(commands[-2:], ["sudo systemctl restart frappe-bench", "exec 9>&-"])
+		opened = commands.index(f"exec 9>>{RUN_LOCK_NAME}")
+		self.assertEqual(commands[opened + 1], wait)
+		self.assertLess(opened, commands.index("git -C apps/erpnext_enhancements fetch upstream main 9>&-"))
+		under_the_lock = commands[opened + 2 : -2]
+		self.assertEqual(len(under_the_lock), 9)
+		self.assertTrue(under_the_lock[-1].endswith(" 9>&-'"), under_the_lock[-1])
+		for command in under_the_lock:
+			self.assertTrue(command.rstrip("'").endswith(" 9>&-"), command)
 
 	def test_nothing_after_the_backup_can_run_when_it_fails(self):
 		# One `&&` chain: no `;` or `||` anywhere in the remote command could let migrate,
@@ -230,12 +269,32 @@ class UpstreamYamlTests(unittest.TestCase):
 	def test_it_runs_the_script_with_both_tags_then_restarts(self):
 		commands = _remote_commands(self.block)
 		self.assertEqual(
-			commands[-2:],
+			commands[-3:],
 			[
 				"bash apps/erpnext_enhancements/infra/bench_update.sh upstream $$FRAPPE_TAG $$ERPNEXT_TAG'",
 				"sudo systemctl restart frappe-bench",
+				"exec 9>&-",
 			],
 		)
+
+	def test_it_takes_the_deploy_users_lock_first_and_the_script_takes_the_benchs(self):
+		commands = _remote_commands(self.block)
+		self.assertEqual(
+			commands[:3],
+			[
+				r"exec 9>>\$$HOME/.frappe-bench-deploy.lock",
+				f"flock --verbose -w {_script_lock_wait_default()} 9",
+				"sudo -u frappe bash -c 'cd /home/frappe/frappe-bench",
+			],
+		)
+		# The same file a deploy's remote shell holds.
+		self.assertEqual(commands[:2], _remote_commands(_script_block(DEPLOY_YAML))[:2])
+		self.assertNotIn(RUN_LOCK_NAME, self.block)
+		self.assertIn("acquire_run_lock", _code(SCRIPT.read_text(encoding="utf-8")))
+
+	def test_a_downgrade_cannot_be_allowed_from_the_trigger(self):
+		self.assertNotIn("ALLOW_DOWNGRADE", _code(self.text))
+		self.assertNotIn("ALLOW_DOWNGRADE", _code(DEPLOY_YAML.read_text(encoding="utf-8")))
 
 	def test_the_vm_receives_a_valid_command_with_both_tags(self):
 		remote = _remote_string(
@@ -244,7 +303,7 @@ class UpstreamYamlTests(unittest.TestCase):
 		self.assertTrue(
 			remote.endswith(
 				"bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.60.2 v16.60.0' "
-				"&& sudo systemctl restart frappe-bench"
+				"&& sudo systemctl restart frappe-bench && exec 9>&-"
 			),
 			remote,
 		)
@@ -362,8 +421,21 @@ class TerraformTests(unittest.TestCase):
 
 STUB_BENCH = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_CALLS"
+if [ -n "${STUB_RUN_LOCK:-}" ]; then
+	if flock -n "$STUB_RUN_LOCK" true; then echo run-lock-free; else echo run-lock-held; fi >> "$STUB_CALLS"
+fi
+if [ -n "${STUB_LEAVE_CHILD:-}" ] && [ "$*" = "$STUB_LEAVE_CHILD" ]; then
+	# A process that outlives this command, holding every descriptor the command was given.
+	sleep 60 </dev/null >/dev/null 2>&1 &
+	printf '%s\n' "$!" > "$STUB_CHILD_PID"
+fi
 if [ "${1:-}" = "--site" ] && [ "${3:-}" = "backup" ]; then
 	printf 'frappe-head-at-backup %s\n' "$(git -C apps/frappe rev-parse HEAD 2>/dev/null || echo none)" >> "$STUB_CALLS"
+	dir=""
+	args=("$@")
+	for ((i = 0; i < ${#args[@]}; i++)); do
+		if [ "${args[i]}" = "--backup-path" ]; then dir=${args[i + 1]}; fi
+	done
 	if [ -n "${STUB_BACKUP_SLEEP:-}" ]; then
 		printf 'backup-begin\n' >> "$STUB_CALLS"
 		sleep "$STUB_BACKUP_SLEEP"
@@ -378,15 +450,20 @@ if [ "${1:-}" = "--site" ] && [ "${3:-}" = "backup" ]; then
 		exit 1
 		;;
 	empty) exit 0 ;;
+	killed)
+		# The whole run dies with the first dump half written, and no trap gets to run.
+		printf 'a dump that is cut off' | gzip | head -c 12 > "$dir/20261119_000000-site1_test-database.sql.gz"
+		kill -KILL "$PPID"
+		exit 1
+		;;
 	esac
-	dir=""
-	while [ $# -gt 0 ]; do
-		if [ "$1" = "--backup-path" ]; then dir=$2; fi
-		shift
-	done
 	for s in $STUB_SITES; do
 		slug=${s//./_}
-		printf 'dump' | gzip > "$dir/20261119_000000-$slug-database.sql.gz"
+		case "${STUB_BACKUP:-ok}" in
+		cut-off) printf 'a dump that is cut off' | gzip | head -c 12 > "$dir/20261119_000000-$slug-database.sql.gz" ;;
+		encrypted) printf 'not gzip data' > "$dir/20261119_000000-$slug-database-enc.sql.gz" ;;
+		*) printf 'dump' | gzip > "$dir/20261119_000000-$slug-database.sql.gz" ;;
+		esac
 		printf '{}' > "$dir/20261119_000000-$slug-site_config_backup.json"
 	done
 	if [ -n "${STUB_BACKUP_SLEEP:-}" ]; then printf 'backup-end\n' >> "$STUB_CALLS"; fi
@@ -394,6 +471,13 @@ if [ "${1:-}" = "--site" ] && [ "${3:-}" = "backup" ]; then
 fi
 if [ -n "${STUB_LOCK:-}" ]; then
 	if flock -n "$STUB_LOCK" true; then echo lock-free; else echo lock-held; fi >> "$STUB_CALLS"
+fi
+if [ -n "${STUB_WRITES:-}" ]; then
+	# What an install or a build does: new directories and files, under the mask it was given.
+	all="$*"
+	made="sites/assets/made-by-${all// /-}"
+	mkdir -p "$made"
+	printf 'x' > "$made/file"
 fi
 if [ -n "${STUB_FAIL:-}" ] && [ "$*" = "$STUB_FAIL" ]; then exit 1; fi
 exit 0
@@ -411,11 +495,15 @@ exec @REAL_DF@ "$@"
 """
 
 #: A stand-in for the bench's own interpreter, <bench>/env/bin/python: the real one, with a stub
-#: `redis` module first on its path unless STUB_REDIS_REAL is set (@PYTHON@ and @STUB_PY@ are
-#: replaced). A wrapper, not a symlink: run through a symlink outside its environment, a
-#: virtualenv's python does not find that environment's packages.
+#: `redis` module first on its path (@PYTHON@ and @STUB_PY@ are replaced). With STUB_REDIS_REAL
+#: set it finds the real client instead: the interpreter's own, or, when the value is a
+#: directory, the one installed there. A wrapper, not a symlink: run through a symlink outside
+#: its environment, a virtualenv's python does not find that environment's packages.
 STUB_PYTHON = r"""#!/usr/bin/env bash
-if [ -z "${STUB_REDIS_REAL:-}" ]; then export PYTHONPATH=@STUB_PY@; fi
+case "${STUB_REDIS_REAL:-}" in
+"") export PYTHONPATH=@STUB_PY@ ;;
+/*) export PYTHONPATH=$STUB_REDIS_REAL ;;
+esac
 exec @PYTHON@ "$@"
 """
 
@@ -480,6 +568,12 @@ CACHE_URL = "redis://127.0.0.1:13000"
 QUEUE_URL = "redis://127.0.0.1:11000"
 
 LOCK_NAME = ".bench_update.lock"
+RUN_LOCK_NAME = ".deploy.lock"
+PARTIAL_PREFIX = ".partial-"
+
+#: The series of the Redis client frappe pins at the example release (`redis~=7.1.0`,
+#: pyproject.toml:73 at v16.60.2): the client the check runs with on a bench.
+FRAPPE_REDIS_SERIES = "7.1."
 
 
 class _ScratchBench(unittest.TestCase):
@@ -523,6 +617,7 @@ class _ScratchBench(unittest.TestCase):
 		self.calls = self.tmp / "calls.log"
 		self.root = self.bench / "pre-migrate-backups"
 		self.lock = self.root / LOCK_NAME
+		self.run_lock = self.bench / RUN_LOCK_NAME
 
 	def write_config(self, **config):
 		self.common_config.write_text(json.dumps(config))
@@ -545,9 +640,13 @@ class _ScratchBench(unittest.TestCase):
 				full[name] = value
 		return full
 
-	def run_script(self, *args, **env):
+	def run_script(self, *args, umask=None, **env):
+		"""Run the script; with `umask`, as a caller whose file mode mask is that."""
+		command = ["bash", str(SCRIPT), *args]
+		if umask is not None:
+			command = ["bash", "-c", f'umask {umask}; exec bash "$0" "$@"', str(SCRIPT), *args]
 		return subprocess.run(
-			["bash", str(SCRIPT), *args], env=self.script_env(**env), capture_output=True, text=True, timeout=120
+			command, env=self.script_env(**env), capture_output=True, text=True, timeout=120
 		)
 
 	def start_script(self, *args, **env):
@@ -578,6 +677,45 @@ class _ScratchBench(unittest.TestCase):
 			return []
 		return sorted(p.name for p in self.root.iterdir() if p.is_dir() and not p.is_symlink() and RUN_RE.match(p.name))
 
+	def partials(self):
+		"""The unfinished backups in the backup directory."""
+		if not self.root.is_dir():
+			return []
+		return sorted(p.name for p in self.root.iterdir() if p.name.startswith(PARTIAL_PREFIX))
+
+	@staticmethod
+	def mode(path):
+		return stat.S_IMODE(os.lstat(path).st_mode)
+
+	def hold_lock(self, lock=None):
+		"""Hold a lock file (the backup's by default) as another run would, until the handle closes."""
+		import fcntl
+
+		lock = lock or self.lock
+		lock.parent.mkdir(exist_ok=True)
+		handle = open(lock, "a")
+		self.addCleanup(handle.close)
+		fcntl.flock(handle, fcntl.LOCK_EX)
+		return handle
+
+	def lock_is_free(self, lock=None):
+		import fcntl
+
+		with open(lock or self.lock, "a") as handle:
+			try:
+				fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			except BlockingIOError:
+				return False
+			fcntl.flock(handle, fcntl.LOCK_UN)
+			return True
+
+	def wait_for(self, condition, what, seconds=30):
+		deadline = time.monotonic() + seconds
+		while not condition():
+			if time.monotonic() > deadline:
+				self.fail(f"timed out waiting for {what}")
+			time.sleep(0.05)
+
 
 class ScriptStaticTests(unittest.TestCase):
 	def test_bash_n(self):
@@ -599,12 +737,43 @@ class ScriptStaticTests(unittest.TestCase):
 		self.assertEqual(
 			removals,
 			[
-				'rm -rf -- "${root:?}/${runs[i]:?}"',
-				'rm -rf -- "${run_dir:?}"',
-				'rm -rf -- "${run_dir:?}"',
+				'rm -rf -- "${root:?}/${runs[i]:?}" ||',
+				'rm -rf -- "${stale:?}" || backup_failed "could not remove the unfinished backup $stale"',
+				'rm -rf -- "${PARTIAL:?}" || '
+				'warn "could not remove the unfinished backup $PARTIAL; the next backup removes it"',
 			],
 		)
-		self.assertIn('run_dir=$root/$(date -u +%Y%m%dT%H%M%SZ)', code)
+		# Both of the last two are directories named <backup dir>/.partial-<UTC time>.
+		self.assertIn('for stale in "$root"/"$PARTIAL_PREFIX"*/; do', code)
+		self.assertIn("PARTIAL=$root/$PARTIAL_PREFIX$stamp", code)
+		self.assertIn(f"readonly PARTIAL_PREFIX={PARTIAL_PREFIX}", code)
+
+	def test_an_unfinished_backup_can_never_be_taken_for_a_finished_one(self):
+		"""Retention, the free-space rule and a person listing the directory all go by the
+		name: a run's is a bare UTC time, an unfinished one's starts with a dot."""
+		code = _code(SCRIPT.read_text(encoding="utf-8"))
+		self.assertIn("readonly RUN_RE='^[0-9]{8}T[0-9]{6}Z$'", code)
+		self.assertIsNone(RUN_RE.match(PARTIAL_PREFIX + "20261119T201500Z"))
+		self.assertIn('mv -T -- "$PARTIAL" "$run_dir"', code)
+
+	def test_the_narrow_file_mode_is_the_backups_alone(self):
+		"""nginx serves what an update checks out and builds, as another user. The script's own
+		mask is the ordinary one; the backup narrows it and puts it back."""
+		code = _code(SCRIPT.read_text(encoding="utf-8"))
+		masks = [line.strip() for line in code.splitlines() if line.strip().startswith("umask")]
+		self.assertEqual(masks, ["umask 022", "umask 077", "umask 022"])
+		backup = code[code.index("take_backup() {") : code.index("check_tag() {")]
+		self.assertEqual(backup.count("umask 077"), 1)
+		self.assertEqual(backup.count("umask 022"), 1)
+		self.assertLess(backup.index("umask 077"), backup.index('mkdir -p -- "$root"'))
+
+	def test_the_script_and_the_deploy_file_name_one_bench_lock(self):
+		code = _code(SCRIPT.read_text(encoding="utf-8"))
+		self.assertIn(f"readonly RUN_LOCK_NAME={RUN_LOCK_NAME}", code)
+		self.assertIn("local wait_s lock=$BENCH_DIR/$RUN_LOCK_NAME", code)
+		commands = _remote_commands(_script_block(DEPLOY_YAML))
+		opened = commands.index(f"exec 9>>{RUN_LOCK_NAME}")
+		self.assertEqual(commands[opened - 2], "sudo -u frappe bash -c 'cd /home/frappe/frappe-bench")
 
 
 class BackupTests(_ScratchBench):
@@ -621,7 +790,10 @@ class BackupTests(_ScratchBench):
 				for kind in ("database.sql.gz", "site_config_backup.json")
 			),
 		)
-		self.assertIn(f"--site all backup --backup-path {run_dir} --ignore-backup-conf", self.call_log())
+		# bench wrote into the unfinished name; the directory was renamed once it was whole.
+		unfinished = self.root / (PARTIAL_PREFIX + run)
+		self.assertIn(f"--site all backup --backup-path {unfinished} --ignore-backup-conf", self.call_log())
+		self.assertEqual(self.partials(), [])
 		for site in self.SITES:
 			self.assertRegex(result.stdout, rf"\n  \S+  20261119_000000-{site.replace('.', '_')}-database\.sql\.gz\n")
 		self.assertNotIn("dump", result.stdout)
@@ -721,6 +893,92 @@ class BackupTests(_ScratchBench):
 			self.assertIn("usage:", result.stderr)
 		self.assertEqual(self.call_log(), [])
 
+	def test_only_the_owner_can_read_a_backup_whatever_mask_the_caller_has(self):
+		result = self.run_script("backup", umask="022")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		(run,) = self.runs()
+		self.assertEqual(self.mode(self.root), 0o700)
+		self.assertEqual(self.mode(self.root / run), 0o700)
+		self.assertEqual(self.mode(self.lock), 0o600)
+		files = list((self.root / run).iterdir())
+		self.assertEqual(len(files), 2 * len(self.SITES))
+		for path in files:
+			self.assertEqual(self.mode(path), 0o600, path.name)
+
+	def test_a_dump_that_is_cut_off_is_not_kept(self):
+		"""bench exited cleanly and every site has a file, but the file is not whole."""
+		result = self.run_script("backup", STUB_BACKUP="cut-off")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(
+			"PRE-MIGRATE BACKUP FAILED: 20261119_000000-site1_test-database.sql.gz is not a whole gzip file",
+			result.stderr,
+		)
+		self.assertEqual(self.runs(), [])
+		self.assertEqual(self.partials(), [])
+
+	def test_an_encrypted_dump_is_kept_without_the_gzip_test(self):
+		result = self.run_script("backup", STUB_BACKUP="encrypted")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		(run,) = self.runs()
+		self.assertTrue((self.root / run / "20261119_000000-site1_test-database-enc.sql.gz").is_file())
+
+	def test_a_failed_backup_leaves_no_unfinished_directory(self):
+		for mode in ("fail", "empty"):
+			self.assertEqual(self.run_script("backup", STUB_BACKUP=mode).returncode, 1, mode)
+			self.assertEqual(self.partials(), [], mode)
+			self.assertEqual(self.runs(), [], mode)
+
+	def test_a_killed_run_leaves_no_backup_name_and_the_next_run_clears_it(self):
+		"""Killed outright, the script can remove nothing. What it leaves is named as
+		unfinished, so retention, the free-space rule and a person restoring never take it
+		for a backup; the next backup removes it, under the lock."""
+		result = self.run_script("backup", STUB_BACKUP="killed")
+		self.assertEqual(result.returncode, -9)
+		self.assertEqual(self.runs(), [])
+		(left,) = self.partials()
+		self.assertTrue((self.root / left / "20261119_000000-site1_test-database.sql.gz").is_file())
+		again = self.run_script("backup")
+		self.assertEqual(again.returncode, 0, again.stderr)
+		self.assertIn(f"removing the unfinished backup {left} that an earlier run left", again.stdout)
+		self.assertEqual(len(self.runs()), 1)
+		self.assertEqual(self.partials(), [])
+
+	def test_a_stopped_run_waits_for_the_dump_keeps_its_lock_and_leaves_nothing(self):
+		"""A TERM to the script alone: bench is still dumping, so the script keeps the lock
+		until bench has returned, then removes the unfinished directory and ends as stopped."""
+		proc = self.start_script("backup", STUB_BACKUP_SLEEP="2")
+		self.wait_for(lambda: "backup-begin" in self.call_log(), "the backup to start")
+		proc.terminate()
+		time.sleep(0.5)
+		self.assertIsNone(proc.poll())
+		self.assertFalse(self.lock_is_free())
+		proc.communicate(timeout=60)
+		self.assertEqual(proc.returncode, 143)
+		self.assertIn("backup-end", self.call_log())
+		self.assertEqual(self.runs(), [])
+		self.assertEqual(self.partials(), [])
+		self.assertTrue(self.lock_is_free())
+
+	def test_an_old_backup_that_cannot_be_removed_is_a_warning_not_a_failure(self):
+		self.root.mkdir()
+		old = [f"20260101T00000{i}Z" for i in range(6)]
+		for name in old:
+			(self.root / name).mkdir()
+		held = self.root / old[0] / "held"
+		held.mkdir()
+		(held / "file").write_text("x")
+		held.chmod(0o500)
+		self.addCleanup(held.chmod, 0o700)
+		result = self.run_script("backup")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn(
+			f"warning: could not remove the older pre-migrate backup {self.root / old[0]}; remove it by hand",
+			result.stderr,
+		)
+		runs = self.runs()
+		self.assertEqual(runs[:5], [old[0], *old[2:]])
+		self.assertEqual(len(runs), 6)
+
 
 class FreeSpaceTests(_ScratchBench):
 	"""Twice the newest kept backup plus the margin, or the margin alone. The stand-in `df`
@@ -773,33 +1031,6 @@ class FreeSpaceTests(_ScratchBench):
 
 class LockTests(_ScratchBench):
 	"""One backup at a time, through an flock on <backup dir>/.bench_update.lock."""
-
-	def hold_lock(self):
-		import fcntl
-
-		self.root.mkdir(exist_ok=True)
-		handle = open(self.lock, "a")
-		self.addCleanup(handle.close)
-		fcntl.flock(handle, fcntl.LOCK_EX)
-		return handle
-
-	def lock_is_free(self):
-		import fcntl
-
-		with open(self.lock, "a") as handle:
-			try:
-				fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-			except BlockingIOError:
-				return False
-			fcntl.flock(handle, fcntl.LOCK_UN)
-			return True
-
-	def wait_for(self, condition, what, seconds=30):
-		deadline = time.monotonic() + seconds
-		while not condition():
-			if time.monotonic() > deadline:
-				self.fail(f"timed out waiting for {what}")
-			time.sleep(0.05)
 
 	def assertComplete(self, run):
 		self.assertEqual(
@@ -998,6 +1229,15 @@ class RedisCheckTests(_ScratchBench):
 		)
 		self.assertEqual(self.call_log(), [])
 
+	def test_it_needs_no_flock(self):
+		tools = self.tmp / "tools"
+		tools.mkdir()
+		for tool in ("bash", "basename", "dirname", "id", "env"):
+			(tools / tool).symlink_to(shutil.which(tool))
+		result = self.run_script("redis", PATH=f"{self.stubs}{os.pathsep}{tools}")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(self.pings(), [CACHE_URL, QUEUE_URL])
+
 
 class _FakeRedis(threading.Thread):
 	"""A socket server that speaks enough of the Redis protocol for a client to connect and
@@ -1085,6 +1325,9 @@ class RedisCheckRealClientTests(_ScratchBench):
 	which error the client raises for an instance that is down, and for one that wants a
 	sign-in."""
 
+	#: What STUB_REDIS_REAL is set to: "1" for the interpreter's own client.
+	REAL = "1"
+
 	def setUp(self):
 		super().setUp()
 		_tool_or_skip(self, importlib.util.find_spec("redis"), "the redis Python client")
@@ -1104,7 +1347,7 @@ class RedisCheckRealClientTests(_ScratchBench):
 		self.write_config(
 			redis_cache=f"redis://127.0.0.1:{cache_port}", redis_queue=f"redis://127.0.0.1:{queue_port}/1"
 		)
-		return self.run_script("redis", STUB_REDIS_REAL="1")
+		return self.run_script("redis", STUB_REDIS_REAL=self.REAL)
 
 	def test_two_instances_that_answer(self):
 		cache, queue = self.server(), self.server()
@@ -1136,6 +1379,32 @@ class RedisCheckRealClientTests(_ScratchBench):
 		queue_locked = self.run_real(plain.port, locked.port)
 		self.assertEqual(queue_locked.returncode, 0, queue_locked.stderr)
 		self.assertIn("answers (it asks for a sign-in, which this check does not send)", queue_locked.stdout)
+
+
+class RedisCheckFrappePinTests(RedisCheckRealClientTests):
+	"""The same again with the client frappe pins, which is the one the check runs with on a
+	bench. CI installs it into a directory of its own (REDIS_CLIENT_AT_FRAPPE_PIN), because the
+	job's other steps need the version they pin."""
+
+	REAL = os.environ.get("REDIS_CLIENT_AT_FRAPPE_PIN", "")
+
+	def setUp(self):
+		_ScratchBench.setUp(self)
+		_tool_or_skip(
+			self,
+			self.REAL.startswith("/") and (Path(self.REAL) / "redis").is_dir(),
+			"the redis client at frappe's pin, in the directory REDIS_CLIENT_AT_FRAPPE_PIN names",
+		)
+
+	def test_it_is_the_series_frappe_pins(self):
+		version = subprocess.run(
+			[str(self.python), "-c", "import redis; print(redis.__version__)"],
+			env=self.script_env(STUB_REDIS_REAL=self.REAL),
+			capture_output=True,
+			text=True,
+			check=True,
+		).stdout.strip()
+		self.assertTrue(version.startswith(FRAPPE_REDIS_SERIES), version)
 
 
 class UpstreamTests(_ScratchBench):
@@ -1171,13 +1440,17 @@ class UpstreamTests(_ScratchBench):
 			src.mkdir(parents=True)
 			self.git(src, "init", "-q")
 			(src / "version.txt").write_text("16.1.0\n")
-			self.git(src, "add", "version.txt")
+			(src / app).mkdir()
+			(src / app / "__init__.py").write_text('__version__ = "16.1.0"\n')
+			self.git(src, "add", "version.txt", app)
 			self.git(src, "commit", "-q", "-m", "16.1.0")
 			self.git(src, *(["tag", "-a", "-m", "v16.1.0"] if annotated else ["tag"]), "v16.1.0")
 			self.git(self.bench / "apps", "clone", "-q", "-o", "upstream", str(src), app)
 			(src / "version.txt").write_text("16.2.0\n")
+			(src / app / "__init__.py").write_text('__version__ = "16.2.0"\n')
 			self.git(src, "commit", "-q", "-am", "16.2.0")
 			self.git(src, *(["tag", "-a", "-m", "v16.2.0"] if annotated else ["tag"]), "v16.2.0")
+			# The branch head: past the release, and still declaring its version.
 			(src / "version.txt").write_text("16.3.0-dev\n")
 			self.git(src, "commit", "-q", "-am", "branch head")
 			self.old[app] = self.git(self.bench / "apps" / app, "rev-parse", "HEAD")
@@ -1244,7 +1517,7 @@ class UpstreamTests(_ScratchBench):
 			self.call_log(),
 			[
 				*checked,
-				f"--site all backup --backup-path {self.root / run} --ignore-backup-conf",
+				f"--site all backup --backup-path {self.root / (PARTIAL_PREFIX + run)} --ignore-backup-conf",
 				f"frappe-head-at-backup {self.old['frappe']}",
 				"setup requirements",
 				*checked,
@@ -1287,7 +1560,7 @@ class UpstreamTests(_ScratchBench):
 		self.assertEqual(
 			self.bench_calls(),
 			[
-				f"--site all backup --backup-path {self.root / run} --ignore-backup-conf",
+				f"--site all backup --backup-path {self.root / (PARTIAL_PREFIX + run)} --ignore-backup-conf",
 				f"frappe-head-at-backup {self.old['frappe']}",
 				"setup requirements",
 			],
@@ -1308,6 +1581,170 @@ class UpstreamTests(_ScratchBench):
 		self.assertEqual(again.returncode, 0, again.stderr)
 		self.assertEqual(self.bench_calls()[-2:], ["--site all migrate", "build"])
 
+	def test_what_an_update_writes_can_be_read_by_other_users(self):
+		"""nginx serves the built assets and each app's public files from disk as another
+		user. Whatever mask the caller has, the checkout, the installs, the migrate and the
+		build write 0644 files in 0755 directories; the backup alone is private."""
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0", umask="077", STUB_WRITES="1")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		assets = self.bench / "sites" / "assets"
+		for made in ("made-by-setup-requirements", "made-by---site-all-migrate", "made-by-build"):
+			self.assertEqual(self.mode(assets / made), 0o755, made)
+			self.assertEqual(self.mode(assets / made / "file"), 0o644, made)
+		for app in ("frappe", "erpnext"):
+			# Both files differ between the two releases, so the checkout wrote them anew.
+			self.assertEqual(self.mode(self.bench / "apps" / app / "version.txt"), 0o644, app)
+			self.assertEqual(self.mode(self.bench / "apps" / app / app / "__init__.py"), 0o644, app)
+		(run,) = self.runs()
+		self.assertEqual(self.mode(self.root), 0o700)
+		self.assertEqual(self.mode(self.root / run), 0o700)
+		for path in (self.root / run).iterdir():
+			self.assertEqual(self.mode(path), 0o600, path.name)
+
+	def test_one_run_at_a_time_from_the_first_check_to_the_end(self):
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_RUN_LOCK=str(self.run_lock))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		calls = self.bench_calls()
+		self.assertEqual(
+			[
+				calls[i + 1]
+				for i, call in enumerate(calls)
+				if call in ("setup requirements", "--site all migrate", "build")
+			],
+			["run-lock-held"] * 3,
+		)
+		backup = next(i for i, call in enumerate(calls) if call.startswith("--site all backup "))
+		self.assertEqual(calls[backup + 1], "run-lock-held")
+		self.assertTrue(self.lock_is_free(self.run_lock))
+
+	def test_it_waits_for_a_deploy_or_another_update_and_gives_up_with_nothing_changed(self):
+		handle = self.hold_lock(self.run_lock)
+		for wait in ("1", "0"):
+			result = self.run_script("upstream", "v16.2.0", "v16.2.0", PRE_MIGRATE_LOCK_WAIT_S=wait)
+			self.assertEqual(result.returncode, 1, wait)
+			self.assertIn(
+				f"a deploy or another update still held {self.run_lock} after {wait}s "
+				"(PRE_MIGRATE_LOCK_WAIT_S); nothing was changed",
+				result.stderr,
+			)
+		self.assertUntouched()
+		# ...not even a tag was fetched.
+		self.assertEqual(self.git(self.bench / "apps" / "frappe", "tag", "--list", "v16.2.0"), "")
+		proc = self.start_script("upstream", "v16.2.0", "v16.2.0", PRE_MIGRATE_LOCK_WAIT_S="30")
+		time.sleep(1)
+		self.assertIsNone(proc.poll())
+		handle.close()
+		out, err = proc.communicate(timeout=60)
+		self.assertEqual(proc.returncode, 0, err)
+		self.assertIn("a deploy or another update is running; waiting up to 30s", out)
+		self.assertEqual(self.head("frappe"), self.new["frappe"])
+
+	def test_a_process_the_update_leaves_running_keeps_neither_lock(self):
+		"""Nothing the script starts is handed a lock: a process that a hook, or git's
+		background gc, leaves behind would otherwise hold it after the script has ended."""
+		pid_file = self.tmp / "child.pid"
+		result = self.run_script(
+			"upstream",
+			"v16.2.0",
+			"v16.2.0",
+			STUB_LEAVE_CHILD="--site all migrate",
+			STUB_CHILD_PID=str(pid_file),
+		)
+		pid = int(pid_file.read_text())
+		self.addCleanup(lambda: subprocess.run(["kill", str(pid)], capture_output=True))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		os.kill(pid, 0)  # the leftover process is still running
+		self.assertTrue(self.lock_is_free(self.run_lock))
+		self.assertTrue(self.lock_is_free())
+
+	def test_it_refuses_a_tag_lower_than_what_is_installed(self):
+		"""The script installs exactly what it is given, so an old command pasted again would
+		take an app back. Either app being lower is enough, and nothing is touched."""
+		self.assertEqual(self.run_script("upstream", "v16.2.0", "v16.2.0").returncode, 0)
+		self.calls.unlink()
+		for args, app in (
+			(("v16.1.0", "v16.2.0"), "frappe"),
+			(("v16.2.0", "v16.1.0"), "erpnext"),
+			(("v16.1.0", "v16.1.0"), "frappe"),
+		):
+			result = self.run_script("upstream", *args)
+			self.assertEqual(result.returncode, 1, args)
+			self.assertIn(
+				f"v16.1.0 is lower than the {app} that is installed (16.2.0); nothing was changed",
+				result.stderr,
+			)
+			self.assertIn("set ALLOW_DOWNGRADE=1 to go back on purpose", result.stderr)
+			self.assertNotIn("UPSTREAM UPDATE FAILED", result.stderr)
+		self.assertEqual(self.call_log(), [])
+		self.assertEqual(len(self.runs()), 1)
+		for app in ("frappe", "erpnext"):
+			self.assertEqual(self.head(app), self.new[app])
+
+	def test_a_person_can_go_back_on_purpose(self):
+		self.assertEqual(self.run_script("upstream", "v16.2.0", "v16.2.0").returncode, 0)
+		time.sleep(1.1)  # a run's directory is named to the second
+		result = self.run_script("upstream", "v16.1.0", "v16.1.0", ALLOW_DOWNGRADE="1")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn("ALLOW_DOWNGRADE=1: frappe is not checked for a downgrade", result.stdout)
+		for app in ("frappe", "erpnext"):
+			self.assertEqual(self.head(app), self.old[app])
+		self.assertEqual(len(self.runs()), 2)
+
+	def test_versions_are_compared_as_versions_not_as_text(self):
+		"""16.10.0 is higher than 16.9.0, though it sorts lower as text."""
+		for app in ("frappe", "erpnext"):
+			src = self.tmp / "remotes" / app
+			for version in ("16.9.0", "16.10.0"):
+				(src / app / "__init__.py").write_text(f'__version__ = "{version}"\n')
+				self.git(src, "commit", "-q", "-am", version)
+				self.git(src, "tag", f"v{version}")
+		self.assertEqual(self.run_script("upstream", "v16.9.0", "v16.9.0").returncode, 0)
+		time.sleep(1.1)
+		up = self.run_script("upstream", "v16.10.0", "v16.10.0")
+		self.assertEqual(up.returncode, 0, up.stderr)
+		down = self.run_script("upstream", "v16.9.0", "v16.9.0")
+		self.assertEqual(down.returncode, 1)
+		self.assertIn("v16.9.0 is lower than the frappe that is installed (16.10.0)", down.stderr)
+
+	def test_a_version_it_cannot_read_is_not_waved_through(self):
+		app_dir = self.bench / "apps" / "frappe"
+		(app_dir / "frappe" / "__init__.py").write_text("# no version here\n")
+		self.git(app_dir, "commit", "-q", "-am", "no version")
+		self.old["frappe"] = self.head("frappe")
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(
+			"could not read the version of frappe that is installed (apps/frappe/frappe/__init__.py), "
+			"so a downgrade cannot be ruled out; nothing was changed",
+			result.stderr,
+		)
+		self.assertUntouched()
+		allowed = self.run_script("upstream", "v16.2.0", "v16.2.0", ALLOW_DOWNGRADE="1")
+		self.assertEqual(allowed.returncode, 0, allowed.stderr)
+		self.assertEqual(self.head("frappe"), self.new["frappe"])
+
+	def test_the_same_version_at_another_commit_is_said_not_refused(self):
+		"""A bench on the branch head declares the last release's version while holding
+		commits the tag does not. The version check cannot see that, so the run says it."""
+		for app in ("frappe", "erpnext"):
+			app_dir = self.bench / "apps" / app
+			self.git(app_dir, "fetch", "-q", "upstream", "version-16")
+			self.git(app_dir, "checkout", "-q", "--detach", "FETCH_HEAD")
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		for app in ("frappe", "erpnext"):
+			self.assertRegex(
+				result.stdout,
+				rf"note: {app} declares 16\.2\.0, the same version as v16\.2\.0, but is at another commit "
+				r"\([0-9a-f]+\); the checkout moves it to the tag",
+			)
+			self.assertEqual(self.head(app), self.new[app])
+		# The same command again is the same commit: nothing to say.
+		time.sleep(1.1)
+		again = self.run_script("upstream", "v16.2.0", "v16.2.0")
+		self.assertEqual(again.returncode, 0, again.stderr)
+		self.assertNotIn("note:", again.stdout)
+
 	def test_a_failed_backup_switches_nothing(self):
 		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_BACKUP="fail")
 		self.assertEqual(result.returncode, 1)
@@ -1324,6 +1761,152 @@ class UpstreamTests(_ScratchBench):
 		self.assertIn(str(self.root / run), result.stderr)
 		self.assertIn(f"frappe was at commit {self.old['frappe']}", result.stderr)
 		self.assertNotIn("build", self.call_log())
+
+
+#: `sudo` as the deploy's remote command uses it: `-u <user>` is dropped and, like the real one,
+#: it hands the command none of the caller's descriptors above 2.
+STUB_SUDO = r"""#!/usr/bin/env bash
+if [ "${1:-}" = "-u" ]; then shift 2; fi
+exec "$@" 9>&-
+"""
+
+#: A stand-in for a command of the chain (git on the app's checkout, redis-cli, systemctl): one
+#: line in the call log, with which of the two locks is held at that moment.
+STUB_CHAIN_TOOL = r"""#!/usr/bin/env bash
+name=$(basename "$0")
+if [ "$name" = git ] && [[ "$*" != *apps/erpnext_enhancements* ]]; then exit 1; fi
+state() { if flock -n "$1" true 2>/dev/null; then echo free; else echo held; fi; }
+printf '%s %s [bench lock %s, deploy user lock %s]\n' \
+	"$name" "$*" "$(state "$STUB_RUN_LOCK")" "$(state "$STUB_OUTER_LOCK")" >> "$STUB_CALLS"
+"""
+
+
+class DeployChainRunTests(_ScratchBench):
+	"""The deploy's remote command, run for real: the text the VM's shell receives, with the
+	bench's path pointed at a scratch bench, the real script in it, and stand-ins for sudo,
+	git, bench, redis-cli and systemctl. It is the only place the two locks are exercised as
+	the build file writes them."""
+
+	BOTH = "[bench lock held, deploy user lock held]"
+	RESTART = "systemctl restart frappe-bench [bench lock free, deploy user lock held]"
+
+	def setUp(self):
+		super().setUp()
+		for name, text in (
+			("sudo", STUB_SUDO),
+			("git", STUB_CHAIN_TOOL),
+			("redis-cli", STUB_CHAIN_TOOL),
+			("systemctl", STUB_CHAIN_TOOL),
+		):
+			stub = self.stubs / name
+			stub.write_text(text)
+			stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+		infra = self.bench / "apps" / "erpnext_enhancements" / "infra"
+		infra.mkdir(parents=True)
+		shutil.copy(SCRIPT, infra / "bench_update.sh")
+		self.outer_lock = self.tmp / ".frappe-bench-deploy.lock"
+		remote = _remote_string(self, _script_block(DEPLOY_YAML))
+		self.assertEqual(remote.count("/home/frappe/frappe-bench "), 1)
+		self.assertEqual(remote.count(" -w 900 "), 2)
+		self.remote = remote.replace("/home/frappe/frappe-bench ", f"{self.bench} ")
+
+	def chain_env(self, **env):
+		return self.script_env(STUB_RUN_LOCK=str(self.run_lock), STUB_OUTER_LOCK=str(self.outer_lock), **env)
+
+	def run_chain(self, wait="900", **env):
+		return subprocess.run(
+			["bash", "-c", self.remote.replace(" -w 900 ", f" -w {wait} ")],
+			env=self.chain_env(**env),
+			capture_output=True,
+			text=True,
+			timeout=120,
+		)
+
+	def test_a_whole_deploy_holds_both_locks_and_frees_them(self):
+		result = self.run_chain()
+		self.assertEqual(result.returncode, 0, result.stderr)
+		(run,) = self.runs()
+		app = "git -C apps/erpnext_enhancements"
+		self.assertEqual(
+			self.call_log(),
+			[
+				f"{app} fetch upstream main {self.BOTH}",
+				f"{app} checkout FETCH_HEAD -- infra/bench_update.sh {self.BOTH}",
+				f"redis-ping {CACHE_URL} connect=5 read=5",
+				f"redis-ping {QUEUE_URL} connect=5 read=5",
+				f"--site all backup --backup-path {self.root / (PARTIAL_PREFIX + run)} --ignore-backup-conf",
+				"run-lock-held",
+				"frappe-head-at-backup none",
+				f"{app} reset --hard FETCH_HEAD {self.BOTH}",
+				"--site all migrate",
+				"run-lock-held",
+				"build",
+				"run-lock-held",
+				f"redis-cli -p 13000 FLUSHDB {self.BOTH}",
+				f"redis-cli -p 11000 FLUSHDB {self.BOTH}",
+				# The restart: the frappe user's shell has ended, the deploy user's has not.
+				self.RESTART,
+			],
+		)
+		self.assertEqual(result.stdout.count("flock: getting lock took"), 2)
+		self.assertTrue(self.lock_is_free(self.run_lock))
+		self.assertTrue(self.lock_is_free(self.outer_lock))
+
+	def test_a_deploy_waits_for_the_run_that_holds_either_lock_then_stops_with_nothing_run(self):
+		for lock in (self.run_lock, self.outer_lock):
+			handle = self.hold_lock(lock)
+			result = self.run_chain(wait="1")
+			handle.close()
+			self.assertNotEqual(result.returncode, 0, lock.name)
+			self.assertIn("flock: timeout while waiting to get lock", result.stderr, lock.name)
+			self.assertEqual(self.call_log(), [], lock.name)
+			self.assertEqual(self.runs(), [])
+
+	def test_a_deploy_goes_ahead_once_the_other_run_ends(self):
+		handle = self.hold_lock(self.run_lock)
+		proc = subprocess.Popen(
+			["bash", "-c", self.remote.replace(" -w 900 ", " -w 30 ")],
+			env=self.chain_env(),
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			text=True,
+		)
+		self.addCleanup(proc.kill)
+		time.sleep(1)
+		self.assertIsNone(proc.poll())
+		self.assertEqual(self.call_log(), [])
+		handle.close()
+		_, err = proc.communicate(timeout=60)
+		self.assertEqual(proc.returncode, 0, err)
+		self.assertEqual(self.call_log()[-1], self.RESTART)
+
+	def test_a_process_a_command_leaves_running_keeps_neither_lock(self):
+		pid_file = self.tmp / "child.pid"
+		result = self.run_chain(STUB_LEAVE_CHILD="--site all migrate", STUB_CHILD_PID=str(pid_file))
+		pid = int(pid_file.read_text())
+		self.addCleanup(lambda: subprocess.run(["kill", str(pid)], capture_output=True))
+		self.assertEqual(result.returncode, 0, result.stderr)
+		os.kill(pid, 0)  # the leftover process is still running
+		self.assertTrue(self.lock_is_free(self.run_lock))
+		self.assertTrue(self.lock_is_free(self.outer_lock))
+
+	def test_a_failed_step_stops_the_chain_and_frees_both_locks(self):
+		for env, last in (
+			({"STUB_REDIS_DOWN": "13000"}, f"redis-ping {QUEUE_URL} connect=5 read=5"),
+			({"STUB_BACKUP": "fail"}, "frappe-head-at-backup none"),
+			({"STUB_FAIL": "--site all migrate"}, "run-lock-held"),
+		):
+			self.calls.unlink(missing_ok=True)
+			result = self.run_chain(**env)
+			self.assertNotEqual(result.returncode, 0, env)
+			calls = self.call_log()
+			self.assertEqual(calls[-1], last, env)
+			later = ("systemctl", "redis-cli", "build")
+			self.assertFalse([call for call in calls if call.startswith(later)], env)
+			if "STUB_FAIL" not in env:
+				self.assertFalse([call for call in calls if " reset --hard " in call], env)
+			self.assertTrue(self.lock_is_free(self.run_lock))
+			self.assertTrue(self.lock_is_free(self.outer_lock))
 
 
 if __name__ == "__main__":

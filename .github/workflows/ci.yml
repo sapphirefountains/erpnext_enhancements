@@ -2431,19 +2431,25 @@ jobs:
       # before a merge puts them on production, so this reads both Cloud Build files (and
       # parses them with PyYAML), runs the upstream file's tag check with sh, and runs the
       # script against a scratch bench with a stub `bench` and real git repos, plus bash -n
-      # and shellcheck. The Redis check runs twice over: with a stub client, and with the real
-      # one against a socket server (the same pin as the rate-limit step above, so this step
-      # changes no other step's client; frappe v16.60.2 itself pins 7.1, tried by hand). It
-      # also holds every copy-paste example to one release pair. REQUIRE_DEPLOY_SCRIPT_TOOLS
-      # makes a missing tool a failure rather than a skip. Own step: it shells out.
+      # and shellcheck. The Redis check runs with a stub client and with the real one against
+      # a socket server, at two versions: the job's own (the same pin as the rate-limit step
+      # above, so no other step's client changes) and the one frappe pins, which is what the
+      # check runs with on a bench (`redis~=7.1.0`, pyproject.toml:73 at v16.60.2), installed
+      # into a directory of its own. The deploy's remote command is also run for real, with
+      # stand-ins for sudo, git, redis-cli and systemctl, to show that one run at a time
+      # holds the locks and that the restart happens under the deploy user's. It also holds
+      # every copy-paste example to one release pair. REQUIRE_DEPLOY_SCRIPT_TOOLS makes a
+      # missing tool a failure rather than a skip. Own step: it shells out.
       - name: Pre-migrate backup and pinned upstream updates (bench-free)
         env:
           REQUIRE_DEPLOY_SCRIPT_TOOLS: "1"
+          REDIS_CLIENT_AT_FRAPPE_PIN: ${{ runner.temp }}/redis-client-at-frappe-pin
         run: |
           if ! command -v shellcheck >/dev/null; then
             sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           fi
           python -m pip install "PyYAML~=6.0.2" redis==8.1.0
+          python -m pip install --target "$REDIS_CLIENT_AT_FRAPPE_PIN" "redis~=7.1.0"
           python -m unittest erpnext_enhancements.tests.test_pre_migrate_backup -v
       # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
       # else inline; frappe's own develop branch widened that list to fourteen. The seven in

@@ -12,7 +12,8 @@
 #       then bench's own `setup requirements`, `--site all migrate` and `build`. This is the
 #       only supported way to update Frappe and ERPNext. infra/cloudbuild-upstream.yaml runs
 #       exactly this, and so does a person in a shell. Restart afterwards with
-#       `sudo systemctl restart frappe-bench` (the trigger does that itself).
+#       `sudo systemctl restart frappe-bench` (the trigger does that itself). It refuses a
+#       tag lower than the version an app has now, unless ALLOW_DOWNGRADE=1 is set.
 #
 #   bash bench_update.sh redis
 #       Checks that both Redis instances the bench is configured for answer, and changes
@@ -30,11 +31,31 @@
 #   PRE_MIGRATE_MIN_FREE_MB  the free-space margin in MB; default 5120. Before it starts, the
 #                            backup's disk must have twice the newest kept backup plus this
 #                            margin free, or the margin alone when no backup is kept yet.
-#   PRE_MIGRATE_LOCK_WAIT_S  how long a backup waits, in seconds, for another one to finish;
-#                            default 900. Only one backup runs at a time: each holds an
-#                            exclusive flock(1) on <backup dir>/.bench_update.lock (flock ships
-#                            in util-linux). A run that cannot get it in time fails and deletes
-#                            nothing. The lock file itself is never deleted.
+#   PRE_MIGRATE_LOCK_WAIT_S  how long, in seconds, a run waits for each of the two locks below;
+#                            default 900. A run that cannot get one in time fails and deletes
+#                            nothing. Neither lock file is ever deleted.
+#   ALLOW_DOWNGRADE          set to 1 to let `upstream` install a tag lower than the version
+#                            an app has now. Only a person in a shell can set it.
+#
+# Two locks, both flock(1) (it ships in util-linux):
+#   <bench>/.deploy.lock     one run at a time on the bench. `upstream` holds it from before its
+#                            first check until it ends, and infra/cloudbuild-deploy.yaml holds
+#                            the same file for a deploy's whole chain, so one run's backup is
+#                            never taken while another run is migrating.
+#   <backup dir>/.bench_update.lock
+#                            one backup at a time, also for a backup taken by hand.
+# Nothing this script starts is handed either lock (see `run`).
+#
+# File modes. A backup is readable by the bench's owner only: the backup directory, each
+# run in it and every file are created under umask 077. Everything else a run writes is
+# created under umask 022, whatever mask the caller had, because nginx serves the built
+# assets and each app's public files from disk as another user.
+#
+# A backup is written into <backup dir>/.partial-<UTC time> and gets its real name only once
+# bench has exited cleanly, every site has a database file and each plain .sql.gz passes
+# `gzip -t`. A run that is stopped or killed partway therefore never leaves a cut-off dump
+# under a name that looks like a backup; the leftover is removed when the script exits, or by
+# the next backup when the script could not.
 #
 # What the update's own steps install and build (frappe at v16.60.2): `bench setup requirements`
 # installs each app's Python packages and the JavaScript packages of each app's root
@@ -59,21 +80,27 @@
 #   outside its own directory.
 
 set -euo pipefail
-umask 077
+umask 022
 
 readonly TAG_RE='^v16\.[0-9]+\.[0-9]+$'
 readonly RUN_RE='^[0-9]{8}T[0-9]{6}Z$'
+readonly PARTIAL_PREFIX=.partial-
 readonly KEEP=5
 readonly LOCK_NAME=.bench_update.lock
+readonly RUN_LOCK_NAME=.deploy.lock
 readonly UPSTREAM_APPS=(frappe erpnext)
 
 PROG=$(basename -- "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BENCH_DIR=${BENCH_DIR:-$(cd -- "$SCRIPT_DIR/../../.." && pwd)}
 LAST_BACKUP=""
+PARTIAL=""
+SWITCHED=0
 declare -A TAGS=() WAS=()
+declare -a NOTES=()
 
 say() { printf '%s: %s\n' "$PROG" "$*"; }
+warn() { printf '%s: warning: %s\n' "$PROG" "$*" >&2; }
 die() {
 	printf '%s: %s\n' "$PROG" "$*" >&2
 	exit 1
@@ -94,13 +121,16 @@ backup_failed() {
 	exit 1
 }
 
+# Run a command without this script's two lock descriptors, so that nothing it starts (git's
+# background gc, a process a hook leaves behind) can go on holding a lock after the script
+# has ended.
+run() { "$@" 8>&- 9>&-; }
+
 check_bench() {
 	[ "$(id -u)" -ne 0 ] || die "run this as the bench's owner (sudo -iu frappe), never as root"
 	{ [ -d "$BENCH_DIR/sites" ] && [ -d "$BENCH_DIR/apps/frappe" ]; } ||
 		die "$BENCH_DIR is not a bench (it has no sites/ or apps/frappe)"
 	command -v bench >/dev/null || die "bench is not on PATH (as frappe: export PATH=\$PATH:\$HOME/.local/bin)"
-	command -v flock >/dev/null ||
-		backup_failed "flock is not installed; it ships in util-linux (sudo apt-get install util-linux)"
 	cd -- "$BENCH_DIR"
 }
 
@@ -141,7 +171,9 @@ list_runs() {
 	done | LC_ALL=C sort
 }
 
-# Keep the newest $KEEP runs in this script's own directory. Nothing else is looked at.
+# Keep the newest $KEEP runs in this script's own directory. Nothing else is looked at. The
+# new backup is already whole when this runs, so an older one that cannot be removed is a
+# warning, not a failed backup.
 prune() {
 	local root=$1 count i
 	local -a runs
@@ -149,14 +181,15 @@ prune() {
 	count=${#runs[@]}
 	for ((i = 0; i < count - KEEP; i++)); do
 		say "removing older pre-migrate backup ${runs[i]}"
-		rm -rf -- "${root:?}/${runs[i]:?}"
+		rm -rf -- "${root:?}/${runs[i]:?}" ||
+			warn "could not remove the older pre-migrate backup $root/${runs[i]}; remove it by hand"
 	done
 }
 
 # One backup at a time: an exclusive flock on <root>/$LOCK_NAME, held on file descriptor 9
 # for the whole of take_backup. The lock file sits beside the run directories, never inside
-# one, and prune never looks at it.
-# shellcheck disable=SC2317,SC2329  # also called from the EXIT trap in take_backup
+# one, and prune never looks at it. A script that ends early needs no release: the lock goes
+# with its descriptor.
 release_lock() {
 	flock -u 9 2>/dev/null || true
 	exec 9>&-
@@ -168,7 +201,6 @@ acquire_lock() {
 	[[ $wait_s =~ ^[0-9]+$ ]] || backup_failed "PRE_MIGRATE_LOCK_WAIT_S must be a whole number of seconds"
 	lock=$root/$LOCK_NAME
 	exec 9>>"$lock" || backup_failed "could not open the lock file $lock"
-	trap release_lock EXIT
 	flock -n 9 && return 0
 	if [ "$wait_s" -gt 0 ]; then
 		say "another pre-migrate backup is running; waiting up to ${wait_s}s for $lock"
@@ -178,14 +210,27 @@ acquire_lock() {
 }
 
 take_backup() {
-	local root margin_mb need_kb newest newest_kb avail_kb run_dir site slug f found rule
+	local root margin_mb need_kb newest newest_kb avail_kb stamp run_dir site slug f found rule stale
 	local -a sites
+	command -v flock >/dev/null ||
+		backup_failed "flock is not installed; it ships in util-linux (sudo apt-get install util-linux)"
 	root=$(backup_root)
 	mapfile -t sites < <(list_sites)
 	[ "${#sites[@]}" -gt 0 ] || backup_failed "no sites found under $BENCH_DIR/sites"
+	# Only the bench's owner reads a backup. The narrow mask lasts to the end of this function.
+	umask 077
 	mkdir -p -- "$root" || backup_failed "could not create $root"
 	chmod 700 -- "$root"
 	acquire_lock "$root"
+
+	# What a killed run left behind. With the lock held no other backup is being written, so
+	# every unfinished directory here is dead.
+	for stale in "$root"/"$PARTIAL_PREFIX"*/; do
+		stale=${stale%/}
+		{ [ -d "$stale" ] && [ ! -L "$stale" ]; } || continue
+		say "removing the unfinished backup ${stale##*/} that an earlier run left"
+		rm -rf -- "${stale:?}" || backup_failed "could not remove the unfinished backup $stale"
+	done
 
 	# Free space: twice the newest kept backup plus the margin, or the margin alone.
 	margin_mb=${PRE_MIGRATE_MIN_FREE_MB:-5120}
@@ -204,25 +249,33 @@ take_backup() {
 		backup_failed "only $((avail_kb / 1024)) MB free on the disk that holds $root, and $((need_kb / 1024)) MB is required: $rule. Free space there first"
 	fi
 
-	run_dir=$root/$(date -u +%Y%m%dT%H%M%SZ)
-	mkdir -- "$run_dir" || backup_failed "could not create $run_dir"
+	# Written under an unfinished name, and renamed only when it is whole. From here until the
+	# rename, the EXIT trap removes the directory however the script ends.
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	run_dir=$root/$stamp
+	[ ! -e "$run_dir" ] || backup_failed "$run_dir already exists"
+	PARTIAL=$root/$PARTIAL_PREFIX$stamp
+	mkdir -- "$PARTIAL" || backup_failed "could not create $PARTIAL"
 	say "pre-migrate backup of ${sites[*]} into $run_dir ($((avail_kb / 1024)) MB free)"
-	# 9>&-: bench and anything it starts do not inherit the lock.
-	if ! bench --site all backup --backup-path "$run_dir" --ignore-backup-conf 9>&-; then
-		rm -rf -- "${run_dir:?}"
+	run bench --site all backup --backup-path "$PARTIAL" --ignore-backup-conf ||
 		backup_failed "bench backup exited with an error"
-	fi
 	for site in "${sites[@]}"; do
 		slug=${site//./_}
 		found=""
-		for f in "$run_dir"/*-"$slug"-database*.sql.gz; do
+		for f in "$PARTIAL"/*-"$slug"-database*.sql.gz; do
 			if [ -s "$f" ]; then found=$f; fi
 		done
-		if [ -z "$found" ]; then
-			rm -rf -- "${run_dir:?}"
-			backup_failed "bench backup wrote no database file for $site"
-		fi
+		[ -n "$found" ] || backup_failed "bench backup wrote no database file for $site"
 	done
+	# A dump that was cut off is not a backup. An encrypted one (-enc.sql.gz) is not gzip data
+	# and cannot be tested without its key.
+	for f in "$PARTIAL"/*.sql.gz; do
+		[ -f "$f" ] || continue
+		case $f in *-enc.sql.gz) continue ;; esac
+		gzip -t -- "$f" 2>/dev/null || backup_failed "${f##*/} is not a whole gzip file"
+	done
+	mv -T -- "$PARTIAL" "$run_dir" || backup_failed "could not give the finished backup its name, $run_dir"
+	PARTIAL=""
 	say "pre-migrate backup written (name and size):"
 	for f in "$run_dir"/*; do
 		[ -f "$f" ] || continue
@@ -230,8 +283,8 @@ take_backup() {
 	done
 	prune "$root"
 	LAST_BACKUP=$run_dir
-	trap - EXIT
 	release_lock
+	umask 022
 }
 
 check_tag() {
@@ -250,7 +303,7 @@ check_tag() {
 check_redis() {
 	local python=$BENCH_DIR/env/bin/python status=0
 	[ -x "$python" ] || die "cannot check Redis: the bench has no env/bin/python; $1"
-	"$python" - "$BENCH_DIR/sites/common_site_config.json" "$PROG" <<'PY' || status=$?
+	run "$python" - "$BENCH_DIR/sites/common_site_config.json" "$PROG" <<'PY' || status=$?
 import json
 import os
 import sys
@@ -332,10 +385,57 @@ app_remote() {
 	fi
 }
 
-# shellcheck disable=SC2317,SC2329  # called from the EXIT trap below
+# One run at a time on the bench: an exclusive flock on <bench>/$RUN_LOCK_NAME, held on file
+# descriptor 8 until the script ends. infra/cloudbuild-deploy.yaml takes the same file for a
+# deploy's whole chain.
+acquire_run_lock() {
+	local wait_s lock=$BENCH_DIR/$RUN_LOCK_NAME
+	command -v flock >/dev/null ||
+		die "flock is not installed; it ships in util-linux (sudo apt-get install util-linux); nothing was changed"
+	wait_s=${PRE_MIGRATE_LOCK_WAIT_S:-900}
+	[[ $wait_s =~ ^[0-9]+$ ]] || die "PRE_MIGRATE_LOCK_WAIT_S must be a whole number of seconds; nothing was changed"
+	exec 8>>"$lock" || die "could not open the lock file $lock; nothing was changed"
+	flock -n 8 && return 0
+	if [ "$wait_s" -gt 0 ]; then
+		say "a deploy or another update is running; waiting up to ${wait_s}s for $lock"
+		flock -w "$wait_s" 8 && return 0
+	fi
+	die "a deploy or another update still held $lock after ${wait_s}s (PRE_MIGRATE_LOCK_WAIT_S); nothing was changed"
+}
+
+# The version an app's code declares, MAJOR.MINOR.PATCH: `__version__` in its package's
+# __init__.py, which is what frappe reports as the installed version.
+installed_version() {
+	local line
+	line=$(grep -m1 -E "^__version__ *= *[\"'][0-9]+\.[0-9]+\.[0-9]+" "apps/$1/$1/__init__.py" 2>/dev/null) || return 1
+	[[ $line =~ ([0-9]+\.[0-9]+\.[0-9]+) ]] || return 1
+	printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# The script installs exactly the tags it is given, so an old command pasted again would take
+# an app back. A tag lower than the version the app declares now is refused, unless a person
+# sets ALLOW_DOWNGRADE=1. An equal version is not a downgrade: the same command run again
+# after a failure must go through.
+check_not_a_downgrade() {
+	local app=$1 tag=$2 target have
+	target=${tag#v}
+	if [ "${ALLOW_DOWNGRADE:-}" = 1 ]; then
+		say "ALLOW_DOWNGRADE=1: $app is not checked for a downgrade"
+		return 0
+	fi
+	have=$(installed_version "$app") ||
+		die "could not read the version of $app that is installed (apps/$app/$app/__init__.py), so a downgrade cannot be ruled out; nothing was changed. To go on without this check, set ALLOW_DOWNGRADE=1"
+	if [ "$target" != "$have" ] && [ "$(printf '%s\n%s\n' "$target" "$have" | sort -V | head -n 1)" = "$target" ]; then
+		die "$tag is lower than the $app that is installed ($have); nothing was changed. Name the release you mean to install, or set ALLOW_DOWNGRADE=1 to go back on purpose"
+	fi
+	if [ "$target" = "$have" ] &&
+		[ "$(git -C "apps/$app" rev-parse HEAD)" != "$(git -C "apps/$app" rev-parse "refs/tags/$tag^{commit}" 2>/dev/null)" ]; then
+		NOTES+=("$app declares $have, the same version as $tag, but is at another commit ($(git -C "apps/$app" rev-parse --short HEAD)); the checkout moves it to the tag")
+	fi
+}
+
 upstream_failed() {
-	local status=$1 app
-	[ "$status" -ne 0 ] || return 0
+	local app
 	{
 		say "UPSTREAM UPDATE FAILED after the code was switched; the bench was not restarted."
 		say "the database backup taken before the switch is in $LAST_BACKUP"
@@ -348,14 +448,15 @@ upstream_failed() {
 
 upstream() {
 	[ "$#" -eq 2 ] || usage
-	local app dir tag remote
+	local app dir tag remote note
 	check_tag "$1" frappe
 	check_tag "$2" erpnext
 	TAGS=([frappe]=$1 [erpnext]=$2)
 	check_bench
+	acquire_run_lock
 
-	# Every check before anything changes: a clean checkout, the tag fetched and found, and
-	# both Redis instances answering.
+	# Every check before anything changes: a clean checkout, the tag fetched and found, no
+	# downgrade, and both Redis instances answering.
 	for app in "${UPSTREAM_APPS[@]}"; do
 		dir=apps/$app
 		tag=${TAGS[$app]}
@@ -365,33 +466,56 @@ upstream() {
 		fi
 		remote=$(app_remote "$dir") || die "$dir has no git remote; nothing was changed"
 		say "fetching $tag of $app from $remote"
-		git -C "$dir" fetch --quiet --no-tags "$remote" "refs/tags/$tag:refs/tags/$tag" ||
+		run git -C "$dir" fetch --quiet --no-tags "$remote" "refs/tags/$tag:refs/tags/$tag" ||
 			die "could not fetch the tag $tag of $app from $remote; nothing was changed"
 		git -C "$dir" rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null ||
 			die "the tag $tag of $app does not name a commit; nothing was changed"
+		check_not_a_downgrade "$app" "$tag"
 		WAS[$app]=$(git -C "$dir" rev-parse HEAD)
 	done
+	for note in ${NOTES[@]+"${NOTES[@]}"}; do say "note: $note"; done
 	check_redis "nothing was changed"
 
 	take_backup
 
-	trap 'upstream_failed $?' EXIT
+	SWITCHED=1
 	for app in "${UPSTREAM_APPS[@]}"; do
 		tag=${TAGS[$app]}
-		git -C "apps/$app" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$tag"
+		run git -C "apps/$app" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$tag"
 		say "$app is now at $tag (was ${WAS[$app]})"
 	done
-	bench setup requirements
+	run bench setup requirements
 	# Again, now that the backup and the installs have taken their time.
 	check_redis "the code was switched but nothing was migrated"
-	bench --site all migrate
-	bench build
-	trap - EXIT
+	run bench --site all migrate
+	run bench build
+	SWITCHED=0
 	say "frappe ${TAGS[frappe]} and erpnext ${TAGS[erpnext]} are installed and migrated."
 	say "restart the bench now: sudo systemctl restart frappe-bench"
 }
 
+# The one EXIT trap. A backup that did not finish is removed, while its directory still
+# carries its unfinished name, and an update that failed after the switch says where things
+# stand. A signal ends the script through here too: bash runs the trap once the command it
+# is waiting for has returned, so the locks stay held until that command is really gone.
+# shellcheck disable=SC2317,SC2329  # called from the traps set in main
+on_exit() {
+	local status=$?
+	trap - EXIT
+	if [ -n "$PARTIAL" ] && [ -d "$PARTIAL" ]; then
+		rm -rf -- "${PARTIAL:?}" || warn "could not remove the unfinished backup $PARTIAL; the next backup removes it"
+	fi
+	if [ "$SWITCHED" -eq 1 ] && [ "$status" -ne 0 ]; then
+		upstream_failed
+	fi
+	exit "$status"
+}
+
 main() {
+	trap on_exit EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 	case ${1:-} in
 	backup)
 		[ "$#" -eq 1 ] || usage
