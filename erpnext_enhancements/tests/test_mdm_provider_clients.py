@@ -26,11 +26,15 @@ and removed in ``tearDownModule``.
 Run: python -m unittest erpnext_enhancements.tests.test_mdm_provider_clients -v
 """
 
+import ast
+import collections
 import datetime
+import json
 import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote_plus
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +45,14 @@ API_KEY = "1_AaDf234sdf8!4"  # the spec's own example key; note the '!' encodes 
 ORG = "29ccb73d-fd7f-4e06-afa9-28d637de8a34"
 ENDPOINT = "bd7a6e9f-4658-4399-ac34-5d98caa81ac2"
 
-STUBBED = ("frappe", "frappe.utils", "requests", "erpnext_enhancements.api.device_management")
+STUBBED = (
+	"frappe",
+	"frappe.utils",
+	"frappe.model",
+	"frappe.model.document",
+	"requests",
+	"erpnext_enhancements.api.device_management",
+)
 OURS = (
 	"erpnext_enhancements.mdm_integration.client",
 	"erpnext_enhancements.mdm_integration.routing",
@@ -49,6 +60,9 @@ OURS = (
 	"erpnext_enhancements.mdm_integration.mapping",
 	"erpnext_enhancements.mdm_integration.actions",
 	"erpnext_enhancements.mdm_integration.sync",
+	"erpnext_enhancements.mdm_integration.api",
+	"erpnext_enhancements.device_management.compliance",
+	"erpnext_enhancements.device_management.doctype.managed_device.managed_device",
 	"erpnext_enhancements.utils.error_throttle",
 )
 
@@ -56,6 +70,10 @@ client = None
 mapping = None
 actions = None
 sync = None
+api = None
+controller = None
+#: The stand-in ``frappe`` module, for tests that set its flags, roles or database.
+fstub = None
 #: Per-test state for the executor/sync stubs.
 STATE = {}
 _saved = {}
@@ -83,6 +101,87 @@ class FakePermissionError(Exception):
 	pass
 
 
+class FakeValidationError(Exception):
+	pass
+
+
+class AttrDict(dict):
+	"""``frappe._dict``: missing keys read as None."""
+
+	def __getattr__(self, key):
+		return self.get(key)
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
+class StubDocument:
+	"""Enough of ``frappe.model.document.Document`` to run a controller's save the way v16 does:
+	the stored row is loaded as the doc before save, then ``validate``, then the row is stored,
+	then ``on_update``. Rows live in ``STATE["devices"]``. A missing field reads as None."""
+
+	doctype = "Managed Device"
+
+	def __init__(self, fields=None):
+		self.__dict__.update(fields or {})
+		self.__dict__["flags"] = AttrDict()
+		self.__dict__["_doc_before_save"] = None
+
+	def __getattr__(self, key):
+		if key.startswith("__"):
+			raise AttributeError(key)
+		return None
+
+	def get(self, key, default=None):
+		value = self.__dict__.get(key)
+		return default if value is None else value
+
+	def set(self, key, value):
+		setattr(self, key, value)
+
+	def as_dict(self):
+		return self._fields()
+
+	def is_new(self):
+		return self.name not in STATE.get("devices", {})
+
+	def get_doc_before_save(self):
+		return self._doc_before_save
+
+	def _fields(self):
+		return {k: v for k, v in self.__dict__.items() if k not in ("flags", "_doc_before_save")}
+
+	def _store(self):
+		self.validate()
+		STATE.setdefault("devices", {})[self.name] = self._fields()
+		self.on_update()
+
+	def save(self, ignore_permissions=None):
+		if ignore_permissions is not None:
+			self.flags.ignore_permissions = ignore_permissions
+		stored = STATE.get("devices", {}).get(self.name)
+		self.__dict__["_doc_before_save"] = type(self)(dict(stored)) if stored else None
+		self._store()
+		return self
+
+	def insert(self, ignore_permissions=None):
+		if ignore_permissions is not None:
+			self.flags.ignore_permissions = ignore_permissions
+		if not self.name:
+			self.name = f"DEV-{len(STATE.get('devices', {})) + 1}"
+		self._store()
+		return self
+
+	def validate(self):
+		pass
+
+	def on_update(self):
+		pass
+
+	def add_comment(self, comment_type, text=None, **kwargs):
+		STATE.setdefault("comments", []).append((comment_type, text))
+
+
 class FakeDevice(dict):
 	"""Enough of a Managed Device for the executor."""
 
@@ -91,6 +190,95 @@ class FakeDevice(dict):
 
 	def as_dict(self):
 		return dict(self)
+
+	def add_comment(self, comment_type, text=None, **kwargs):
+		if STATE.get("comment_fails"):
+			raise RuntimeError("comment insert failed")
+		STATE.setdefault("comments", []).append((comment_type, text))
+		_db_write("Comment", text)
+
+
+def _db_write(doctype, payload):
+	"""Record a row in the stand-in database's open transaction, when a test installed one."""
+	db = STATE.get("db")
+	if db is not None:
+		db.write((doctype, payload))
+
+
+class FakeCallbackManager:
+	"""``frappe.utils.CallbackManager`` as frappe v16.56.0 has it (``frappe/utils/__init__.py``
+	lines 1129-1168): ``run`` pops and calls each function in order until the queue is empty,
+	so a function added during a run is called in that same run; ``reset`` empties it."""
+
+	def __init__(self):
+		self._functions = collections.deque()
+
+	def add(self, func):
+		self._functions.append(func)
+
+	__call__ = add
+
+	def run(self):
+		while self._functions:
+			self._functions.popleft()()
+
+	def reset(self):
+		self._functions.clear()
+
+
+class FakeDatabase:
+	"""The transaction control of ``frappe.database.Database`` at v16.56.0
+	(``frappe/database/database.py`` lines 1190-1243), over a list of rows.
+
+	``commit`` resets the rollback callbacks, runs ``before_commit``, makes the open
+	transaction's rows durable, then runs ``after_commit``. A full ``rollback`` resets the
+	commit callbacks, runs ``before_rollback``, discards the open transaction's rows, then runs
+	``after_rollback`` in the fresh transaction. A rollback to a savepoint discards the rows
+	written since it and runs no callbacks."""
+
+	def __init__(self):
+		self.committed = []
+		self.pending = []
+		self.events = []
+		self._savepoints = {}
+		self.before_commit = FakeCallbackManager()
+		self.after_commit = FakeCallbackManager()
+		self.before_rollback = FakeCallbackManager()
+		self.after_rollback = FakeCallbackManager()
+
+	def write(self, row):
+		self.pending.append(row)
+
+	def commit(self, *, chain=False):
+		self.before_rollback.reset()
+		self.after_rollback.reset()
+		self.before_commit.run()
+		self.committed.extend(self.pending)
+		self.pending = []
+		self.events.append("commit")
+		self.after_commit.run()
+
+	def rollback(self, *, save_point=None, chain=False):
+		if save_point:
+			del self.pending[self._savepoints[save_point] :]
+			self.events.append(f"rollback to {save_point}")
+			return
+		self.before_commit.reset()
+		self.after_commit.reset()
+		self.before_rollback.run()
+		self.pending = []
+		self.events.append("rollback")
+		self.after_rollback.run()
+
+	def savepoint(self, save_point):
+		self._savepoints[save_point] = len(self.pending)
+
+	def set_value(self, *args, **kwargs):
+		STATE.setdefault("set_value", []).append(args)
+
+	def rows(self, doctype):
+		"""The durable rows of one doctype, in commit order."""
+		return [payload for kind, payload in self.committed if kind == doctype]
 
 
 class FakeSettings(dict):
@@ -115,26 +303,53 @@ class FakeSettings(dict):
 
 def _install_stubs():
 	frappe = types.ModuleType("frappe")
+
+	def get_value(doctype, filters, fieldname=None, **kwargs):
+		# Only the sync's lookups of a Managed Device by its fields reach this.
+		for name, row in STATE.get("devices", {}).items():
+			if all(row.get(key) == value for key, value in filters.items()):
+				return name
+		return None
+
 	frappe.db = types.SimpleNamespace(
 		commit=lambda: None,
 		set_value=lambda *a, **k: STATE.setdefault("set_value", []).append(a),
+		get_value=get_value,
 	)
 	frappe.get_single = lambda doctype: STATE.get("settings") or FakeSettings()
 	frappe.log_error = lambda *a, **k: None
 	frappe.local = types.SimpleNamespace(conf=types.SimpleNamespace(get=lambda key: "test"))
 	frappe._ = lambda text: text
 	frappe.PermissionError = FakePermissionError
+	frappe.ValidationError = FakeValidationError
 	frappe.session = types.SimpleNamespace(user="manager@example.com")
-	frappe.get_roles = lambda user=None: ["Device Manager"]
+	frappe.flags = AttrDict()
+	frappe.get_roles = lambda user=None: list(STATE.get("roles") or ["Device Manager"])
 	frappe.get_traceback = lambda: "traceback"
+	frappe.whitelist = lambda *a, **k: (lambda f: f)
 
-	def throw(message, exc=Exception):
-		raise exc(message)
+	def throw(message, exc=None, title=None, **kwargs):
+		raise (exc or FakeValidationError)(message)
+
+	def insert_row(row, **kwargs):
+		if STATE.get("log_insert_fails"):
+			raise RuntimeError("Device Action Log insert failed")
+		STATE.setdefault("logs", []).append(row)
+		_db_write(row.get("doctype"), row)
 
 	def get_doc(doctype, name=None):
 		if isinstance(doctype, dict):  # a Device Action Log being written
-			return types.SimpleNamespace(insert=lambda **k: STATE.setdefault("logs", []).append(doctype))
+			return types.SimpleNamespace(insert=lambda **k: insert_row(doctype, **k))
+		if doctype == "AI Pending Action":
+			return STATE["actions"][name]
+		if doctype == "Managed Device" and "devices" in STATE:
+			return controller.ManagedDevice(dict(STATE["devices"][name]))
 		return STATE["device"]
+
+	def new_doc(doctype):
+		return controller.ManagedDevice({})
+
+	frappe.new_doc = new_doc
 
 	def get_all(doctype, filters=None, fields=None, **kwargs):
 		STATE.setdefault("get_all", []).append(filters)
@@ -152,6 +367,11 @@ def _install_stubs():
 		seconds=seconds
 	)
 	frappe.utils = utils
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+	document.Document = StubDocument
+	model.document = document
+	frappe.model = model
 
 	requests = types.ModuleType("requests")
 	requests.RequestException = RequestException
@@ -171,11 +391,17 @@ def _install_stubs():
 
 	device_management = types.ModuleType("erpnext_enhancements.api.device_management")
 	device_management.MANAGER_ROLES = {"Device Manager", "System Manager"}
-	device_management._notify_device_managers = lambda **kw: STATE.setdefault("notified", []).append(kw)
+	def notify_device_managers(**kw):
+		STATE.setdefault("notified", []).append(kw)
+		_db_write("Notification Log", kw)
+
+	device_management._notify_device_managers = notify_device_managers
 
 	for name, module in (
 		("frappe", frappe),
 		("frappe.utils", utils),
+		("frappe.model", model),
+		("frappe.model.document", document),
 		("requests", requests),
 		("erpnext_enhancements.api.device_management", device_management),
 	):
@@ -183,11 +409,13 @@ def _install_stubs():
 
 
 def setUpModule():
-	global client, mapping, actions, sync
+	global client, mapping, actions, sync, api, controller, fstub
 	for name in STUBBED + OURS:
 		_saved[name] = sys.modules.pop(name, None)
 	_install_stubs()
+	from erpnext_enhancements.device_management.doctype.managed_device import managed_device
 	from erpnext_enhancements.mdm_integration import actions as actions_module
+	from erpnext_enhancements.mdm_integration import api as api_module
 	from erpnext_enhancements.mdm_integration import client as client_module
 	from erpnext_enhancements.mdm_integration import mapping as mapping_module
 	from erpnext_enhancements.mdm_integration import sync as sync_module
@@ -196,6 +424,9 @@ def setUpModule():
 	mapping = mapping_module
 	actions = actions_module
 	sync = sync_module
+	api = api_module
+	controller = managed_device
+	fstub = sys.modules["frappe"]
 
 
 def tearDownModule():
@@ -594,32 +825,61 @@ class MappingTests(unittest.TestCase):
 
 
 class RecordingProvider:
+	"""A stand-in provider that records every call. No network, no vendor API."""
+
 	key = "Miradore"
 
 	def supports(self, action):
 		return True
 
+	def _record(self, action, *args):
+		STATE.setdefault("provider_calls", []).append((action,) + args)
+		return {"recorded": action}
+
 	def wipe(self, provider_id, mode="selective"):
 		STATE.setdefault("wiped", []).append((provider_id, mode))
 		return {"miradore_action": "Retire" if mode == "selective" else "Wipe"}
 
+	def lock(self, provider_id):
+		return self._record("lock", provider_id)
+
+	def locate(self, provider_id):
+		return self._record("locate", provider_id)
+
+	def reboot(self, provider_id):
+		return self._record("reboot", provider_id)
+
+	def run_script(self, provider_id, script):
+		return self._record("run_script", provider_id, script)
+
+	def deploy_patch(self, provider_id, patch):
+		return self._record("deploy_patch", provider_id, patch)
+
+
+def _device_state(link_state, ownership, **extra):
+	STATE.clear()
+	STATE["device"] = FakeDevice(
+		name="DEV-1",
+		device_name="Crew phone",
+		device_type="Phone",
+		platform="Android",
+		ownership=ownership,
+		mdm_provider="Miradore",
+		mdm_provider_device_id="1001",
+		mdm_link_state=link_state,
+	)
+	STATE["settings"] = FakeSettings(block_full_wipe_byod=1, allow_full_wipe_corporate=1)
+	STATE.update(extra)
+	actions.get_provider_for = lambda device, settings: (RecordingProvider(), "Miradore")
+
 
 class ExecutorTests(unittest.TestCase):
-	def _run(self, link_state, ownership, mode):
-		STATE.clear()
-		STATE["device"] = FakeDevice(
-			name="DEV-1",
-			device_name="Crew phone",
-			device_type="Phone",
-			platform="Android",
-			ownership=ownership,
-			mdm_provider="Miradore",
-			mdm_provider_device_id="1001",
-			mdm_link_state=link_state,
-		)
-		STATE["settings"] = FakeSettings(block_full_wipe_byod=1, allow_full_wipe_corporate=1)
-		actions.get_provider_for = lambda device, settings: (RecordingProvider(), "Miradore")
-		return actions.execute_device_action("DEV-1", "wipe", mode=mode, source="UI")
+	def _run(self, link_state, ownership, mode, action="wipe", **kwargs):
+		_device_state(link_state, ownership)
+		return actions.execute_device_action("DEV-1", action, mode=mode, source="UI", **kwargs)
+
+	def _provider_was_called(self):
+		return bool(STATE.get("wiped") or STATE.get("provider_calls"))
 
 	def test_full_wipe_of_an_unconfirmed_device_is_refused_before_the_provider(self):
 		# A discovered device's ownership defaults to Company, so the BYOD guard alone
@@ -631,18 +891,606 @@ class ExecutorTests(unittest.TestCase):
 		(log,) = STATE["logs"]
 		self.assertEqual((log["action"], log["success"]), ("wipe", 0))
 
-	def test_selective_wipe_of_an_unconfirmed_device_goes_through(self):
-		self._run("Discovered", "Company", "selective")
-		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+	def test_selective_wipe_of_an_unconfirmed_device_is_refused_too(self):
+		with self.assertRaises(client.MDMProviderError) as ctx:
+			self._run("Discovered", "Company", "selective")
+		self.assertIn("Confirm the device", str(ctx.exception))
+		self.assertFalse(self._provider_was_called())
 
 	def test_full_wipe_of_a_confirmed_company_device_goes_through(self):
 		self._run("Managed", "Company", "full")
 		self.assertEqual(STATE["wiped"], [("1001", "full")])
 
+	def test_selective_wipe_of_a_confirmed_device_goes_through(self):
+		self._run("Managed", "Company", "selective")
+		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+
 	def test_byod_is_never_fully_wiped(self):
 		with self.assertRaises(client.MDMProviderError):
 			self._run("Managed", "BYOD", "full")
 		self.assertNotIn("wiped", STATE)
+
+	def test_a_personal_device_accepts_locate_and_lock(self):
+		for action in ("locate", "lock"):
+			with self.subTest(action=action):
+				result = self._run("Managed", "BYOD", None, action=action)
+				self.assertTrue(result["ok"])
+				self.assertEqual(STATE["provider_calls"][0][0], action)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 1))
+
+	def test_every_other_action_is_refused_on_a_personal_device_before_any_provider_call(self):
+		for action, mode, extra in (
+			("wipe", "selective", {}),
+			("wipe", "full", {}),
+			("wipe", None, {}),
+			("reboot", None, {}),
+			("run_script", None, {"script": "Get-Date"}),
+			("deploy_patch", None, {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action, mode=mode):
+				with self.assertRaises(client.MDMProviderError) as ctx:
+					self._run("Managed", "BYOD", mode, action=action, **extra)
+				self.assertIn("personally owned", str(ctx.exception))
+				self.assertIn(f"'{action}'", str(ctx.exception))
+				self.assertFalse(self._provider_was_called())
+				self.assertNotIn("comments", STATE)
+				self.assertNotIn("notified", STATE)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 0))
+
+	def test_the_personal_device_list_is_an_allowlist(self):
+		"""An action nobody has listed is refused on a personal device, whatever the provider
+		says it supports, and the wipe settings do not widen it."""
+		self.assertEqual(actions.BYOD_ACTIONS, frozenset({"locate", "lock"}))
+		with self.assertRaises(client.MDMProviderError) as ctx:
+			self._run("Managed", "BYOD", None, action="enable_lost_mode")
+		self.assertIn("personally owned", str(ctx.exception))
+		self.assertFalse(self._provider_was_called())
+
+		_device_state("Managed", "BYOD")
+		STATE["settings"] = FakeSettings(block_full_wipe_byod=0, allow_full_wipe_corporate=1)
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		self.assertFalse(self._provider_was_called())
+
+	def test_a_company_device_is_not_held_to_the_personal_device_list(self):
+		self._run("Managed", "Company", "selective")
+		self.assertEqual(STATE["wiped"], [("1001", "selective")])
+
+	def test_the_form_draws_only_locate_and_lock_for_a_personal_device(self):
+		source = (
+			Path(__file__).resolve().parents[1]
+			/ "device_management" / "doctype" / "managed_device" / "managed_device.js"
+		).read_text(encoding="utf-8")
+		self.assertIn("const personal = frm.doc.ownership === 'BYOD';", source)
+		self.assertIn("if (!personal) remote(__('Remote Wipe'), 'wipe', {", source)
+		self.assertIn("frm.doc.mdm_provider === 'Action1' && !personal", source)
+		# Lock and Locate are drawn whoever owns the device.
+		self.assertIn("\t\t\t\tremote(__('Remote Lock'), 'lock',", source)
+		self.assertIn("\t\t\t\tremote(__('Locate'), 'locate');", source)
+
+	def test_every_action_is_refused_on_an_unconfirmed_device_before_any_provider_call(self):
+		for action, mode, extra in (
+			("wipe", "full", {}),
+			("wipe", "selective", {}),
+			("lock", None, {}),
+			("locate", None, {}),
+			("reboot", None, {}),
+			("run_script", None, {"script": "Get-Date"}),
+			("deploy_patch", None, {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action, mode=mode):
+				with self.assertRaises(client.MDMProviderError) as ctx:
+					self._run("Discovered", "Company", mode, action=action, **extra)
+				self.assertIn("nobody has confirmed", str(ctx.exception))
+				self.assertIn(f"'{action}'", str(ctx.exception))
+				self.assertFalse(self._provider_was_called())
+				self.assertNotIn("comments", STATE)
+				self.assertNotIn("notified", STATE)
+				(log,) = STATE["logs"]
+				self.assertEqual((log["action"], log["success"]), (action, 0))
+
+	def test_every_action_runs_on_a_confirmed_company_device(self):
+		for action, extra in (
+			("lock", {}),
+			("locate", {}),
+			("reboot", {}),
+			("run_script", {"script": "Get-Date"}),
+			("deploy_patch", {"patch": "pkg-1"}),
+		):
+			with self.subTest(action=action):
+				result = self._run("Managed", "Company", None, action=action, **extra)
+				self.assertTrue(result["ok"])
+				self.assertEqual(STATE["provider_calls"][0][0], action)
+
+	def test_locate_writes_a_comment_naming_who_asked_and_when_then_notifies(self):
+		self._run("Managed", "Company", None, action="locate")
+		((comment_type, text),) = STATE["comments"]
+		self.assertEqual(comment_type, "Info")
+		self.assertIn("manager@example.com", text)
+		self.assertIn("2026-09-22 12:00:00", text)
+		(note,) = STATE["notified"]
+		self.assertEqual(note["device"], "DEV-1")
+		self.assertIn("locate", note["subject"])
+		self.assertIn("manager@example.com", note["message"])
+
+	def test_lock_and_wipe_still_notify_and_reboot_still_does_not(self):
+		self._run("Managed", "Company", None, action="lock")
+		self.assertEqual(len(STATE["notified"]), 1)
+		self._run("Managed", "Company", "selective", action="wipe")
+		self.assertEqual(len(STATE["notified"]), 1)
+		self._run("Managed", "Company", None, action="reboot")
+		self.assertNotIn("notified", STATE)
+
+	def test_only_locate_writes_a_timeline_comment(self):
+		self._run("Managed", "Company", None, action="lock")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_locate_that_cannot_be_recorded_sends_nothing(self):
+		_device_state("Managed", "Company", comment_fails=True)
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "locate", source="UI")
+		self.assertFalse(self._provider_was_called())
+
+
+class FailingProvider(RecordingProvider):
+	"""A provider whose every call fails the way a vendor API error does."""
+
+	def _record(self, action, *args):
+		STATE.setdefault("provider_calls", []).append((action, *args))
+		raise client.MDMProviderError(f"{action} rejected by the provider")
+
+
+GATING_API = REPO_ROOT / "erpnext_enhancements" / "assistant_tools" / "gating_api.py"
+
+
+class FakePendingAction:
+	"""An AI Pending Action as ``gating_api._confirm_one`` reads and saves it."""
+
+	def __init__(self, name, tool_name, arguments):
+		self.name = name
+		self.tool_name = tool_name
+		self.arguments = json.dumps(arguments)
+		self.requested_by = "manager@example.com"
+		self.status = "Pending"
+		self.expires_at = None
+		self.risk = "High"
+		self.summary = f"{tool_name} on {arguments['device']}"
+		self.target_name = None
+
+	def get(self, key, default=None):
+		return getattr(self, key, default)
+
+	def set(self, key, value):
+		setattr(self, key, value)
+
+	def save(self, ignore_permissions=False):
+		_db_write("AI Pending Action", {"name": self.name, "status": self.status})
+
+
+class FakeToolRegistry:
+	"""FAC's registry on the confirm path: FAC writes its own audit row, then the tool's
+	``execute`` calls the executor as the confirming user (``assistant_tools/remote_*.py``)."""
+
+	TOOLS = {"remote_lock_device": "lock", "remote_wipe_device": "wipe", "locate_device": "locate"}
+
+	def execute_tool(self, tool_name, arguments):
+		_db_write("Assistant Audit Log", {"tool": tool_name})
+		return actions.execute_device_action(
+			arguments["device"],
+			self.TOOLS[tool_name],
+			mode=arguments.get("mode"),
+			source="Assistant",
+			requested_by=fstub.session.user,
+		)
+
+
+def _load_gating_api():
+	"""The real ``_confirm_one`` and ``_run_batch`` (and the small helpers they call), loaded
+	from gating_api.py by ``ast`` and run over the stand-in ``frappe``. What they import from
+	``_gate`` is replaced: the arguments come back as stored, and the AI Action Log row is
+	written to the stand-in database."""
+	names = (
+		"_confirm_one",
+		"_run_batch",
+		"_transition",
+		"_check_identity",
+		"_skip_reason",
+		"_failure_message",
+		"_log_unexpected_failure",
+	)
+	tree = ast.parse(GATING_API.read_text(encoding="utf-8"))
+	nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+	assert sorted(node.name for node in nodes) == sorted(names), [node.name for node in nodes]
+
+	def insert_action_log(**row):
+		STATE["action_logs"] = STATE.get("action_logs", 0) + 1
+		name = f"AI-LOG-{STATE['action_logs']}"
+		_db_write("AI Action Log", {"name": name, **row})
+		return name
+
+	class SealError(Exception):
+		pass
+
+	namespace = {
+		"frappe": fstub,
+		"_": lambda text: text,
+		"json": json,
+		"now_datetime": fstub.utils.now_datetime,
+		"get_datetime": lambda value: value,
+		"monotonic": lambda: 0.0,
+		"BATCH_TIME_BUDGET_SECONDS": 45,
+		"SUMMARY_MAX": 200,
+		"SealError": SealError,
+		"insert_action_log": insert_action_log,
+		"mask_secrets": lambda value, sealed: value,
+		"truncate_json": lambda value: value,
+		"_arguments_to_execute": lambda action: (json.loads(action.arguments), []),
+		"_batch_names": lambda batch: list(batch),
+		"_batch_plan": lambda batch: [
+			(name, {key: STATE["actions"][name].get(key) for key in ("requested_by", "status", "expires_at", "tool_name", "summary")})
+			for name in batch
+		],
+	}
+	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(GATING_API), "exec"), namespace)
+	return namespace
+
+
+def _request(call):
+	"""A POST through frappe v16.56.0 ``app.application``: when the call raises, the request
+	ends with ``db.rollback(chain=True)`` (``frappe/app.py`` lines 156-159); otherwise
+	``sync_database`` commits it (lines 161-162 and 445-446). Returns the result or the error."""
+	db = fstub.db
+	try:
+		result = call()
+	except Exception as error:
+		db.rollback(chain=True)
+		return error
+	db.commit(chain=True)
+	return result
+
+
+class RecordSurvivesRollbackTests(unittest.TestCase):
+	"""A refused or failed device action is recorded even though the request ends in an error.
+
+	Runs the real executor (and the real ``api.remote_action``, ``_confirm_one`` and
+	``_run_batch``) over a stand-in database that models frappe's commit, rollback and callback
+	managers, and checks what is durable once the request is over."""
+
+	def setUp(self):
+		self._saved_db = fstub.db
+		self.addCleanup(setattr, fstub, "db", self._saved_db)
+
+	def _db(self, link_state="Managed", ownership="Company", provider=RecordingProvider, earlier=True, **extra):
+		_device_state(link_state, ownership, **extra)
+		db = FakeDatabase()
+		STATE["db"] = db
+		fstub.db = db
+		actions.get_provider_for = lambda device, settings: (provider(), "Miradore")
+		if earlier:  # something the request wrote before the action and has not committed
+			db.write(("Unrelated", "written earlier in the same request"))
+		return db
+
+	def _only_log(self, db):
+		(row,) = db.rows("Device Action Log")
+		return row
+
+	# -- the form button ---------------------------------------------------------------------
+
+	def test_a_refusal_from_the_form_leaves_its_row_and_commits_nothing_else(self):
+		for link_state, ownership, action, mode in (
+			("Managed", "BYOD", "wipe", "full"),
+			("Discovered", "Company", "lock", None),
+		):
+			with self.subTest(link_state=link_state, action=action):
+				db = self._db(link_state, ownership)
+				outcome = _request(lambda: api.remote_action("DEV-1", action, mode=mode))
+				self.assertIsInstance(outcome, client.MDMProviderError)
+				row = self._only_log(db)
+				self.assertEqual((row["action"], row["success"], row["source"]), (action, 0, "UI"))
+				self.assertNotIn("Unrelated", [kind for kind, _payload in db.committed])
+				self.assertEqual(db.events, ["rollback", "commit"])
+				self.assertFalse(STATE.get("provider_calls") or STATE.get("wiped"))
+
+	def test_a_provider_failure_from_the_form_leaves_its_row_and_its_notice(self):
+		db = self._db(provider=FailingProvider)
+		outcome = _request(lambda: api.remote_action("DEV-1", "lock"))
+		self.assertIsInstance(outcome, client.MDMProviderError)
+		row = self._only_log(db)
+		self.assertEqual((row["action"], row["success"]), ("lock", 0))
+		self.assertIn("rejected by the provider", row["error"])
+		(notice,) = db.rows("Notification Log")
+		self.assertIn("FAILED", notice["subject"])
+		self.assertNotIn("Unrelated", [kind for kind, _payload in db.committed])
+
+	def test_a_failed_locate_keeps_its_timeline_comment(self):
+		db = self._db(provider=FailingProvider)
+		outcome = _request(lambda: api.remote_action("DEV-1", "locate"))
+		self.assertIsInstance(outcome, client.MDMProviderError)
+		(comment,) = db.rows("Comment")
+		self.assertIn("Location requested by manager@example.com", comment)
+		self.assertEqual(self._only_log(db)["success"], 0)
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		# The comment is written before the request is sent, so it comes first.
+		self.assertEqual(db.committed[0][0], "Comment")
+
+	def test_a_success_from_the_form_commits_with_the_request(self):
+		db = self._db()
+		result = _request(lambda: api.remote_action("DEV-1", "lock"))
+		self.assertTrue(result["ok"])
+		self.assertEqual(db.events, ["commit"])
+		self.assertEqual(self._only_log(db)["success"], 1)
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		self.assertEqual(db.rows("Unrelated"), ["written earlier in the same request"])
+
+	# -- a confirmed assistant action --------------------------------------------------------
+
+	def _gate(self, *pending):
+		STATE["actions"] = {action.name: action for action in pending}
+		fstub.flags = AttrDict()
+		registry = types.ModuleType("frappe_assistant_core.core.tool_registry")
+		registry.get_tool_registry = FakeToolRegistry
+		patcher = mock.patch.dict(sys.modules, {"frappe_assistant_core.core.tool_registry": registry})
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		return _load_gating_api()
+
+	def test_a_refused_confirmed_action_leaves_its_row(self):
+		db = self._db(ownership="BYOD", earlier=False)
+		gate = self._gate(FakePendingAction("AI-PA-1", "remote_wipe_device", {"device": "DEV-1", "mode": "full"}))
+		outcome = _request(lambda: gate["_confirm_one"]("AI-PA-1"))
+		self.assertIsInstance(outcome, FakeValidationError)
+		self.assertIn("personally owned", str(outcome))
+		row = self._only_log(db)
+		self.assertEqual((row["action"], row["success"], row["source"]), ("wipe", 0, "Assistant"))
+		self.assertEqual(
+			[status["status"] for status in db.rows("AI Pending Action")], ["Confirmed", "Failed"]
+		)
+		(gate_log,) = db.rows("AI Action Log")
+		self.assertEqual(gate_log["success"], 0)
+		# FAC's audit row, written while the tool ran, goes with the rollback (gating_api).
+		self.assertEqual(db.rows("Assistant Audit Log"), [])
+
+	def test_a_provider_failure_on_a_confirmed_action_leaves_its_row_and_notice(self):
+		db = self._db(provider=FailingProvider, earlier=False)
+		gate = self._gate(FakePendingAction("AI-PA-1", "remote_lock_device", {"device": "DEV-1"}))
+		outcome = _request(lambda: gate["_confirm_one"]("AI-PA-1"))
+		self.assertIsInstance(outcome, FakeValidationError)
+		self.assertEqual(self._only_log(db)["success"], 0)
+		(notice,) = db.rows("Notification Log")
+		self.assertIn("FAILED", notice["subject"])
+		self.assertEqual(db.rows("Assistant Audit Log"), [])
+
+	def test_a_batch_keeps_one_row_per_action_through_each_rollback(self):
+		db = self._db(ownership="BYOD", earlier=False)
+		gate = self._gate(
+			FakePendingAction("AI-PA-1", "remote_wipe_device", {"device": "DEV-1", "mode": "full"}),
+			FakePendingAction("AI-PA-2", "remote_lock_device", {"device": "DEV-1"}),
+		)
+		response = _request(
+			lambda: gate["_run_batch"](["AI-PA-1", "AI-PA-2"], gate["_confirm_one"], "Executed")
+		)
+		self.assertEqual([item["status"] for item in response["results"]], ["Failed", "Executed"])
+		self.assertEqual(
+			[(row["action"], row["success"]) for row in db.rows("Device Action Log")],
+			[("wipe", 0), ("lock", 1)],
+		)
+		# Only the lock's notice: a refusal before the provider sends none.
+		self.assertEqual(len(db.rows("Notification Log")), 1)
+		self.assertEqual(db.rows("Assistant Audit Log"), [{"tool": "remote_lock_device"}])
+		self.assertEqual(
+			[status["status"] for status in db.rows("AI Pending Action")],
+			["Confirmed", "Failed", "Confirmed", "Executed"],
+		)
+
+	# -- exactly one, never raising ----------------------------------------------------------
+
+	def test_a_caller_that_commits_instead_gets_exactly_one_row(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.commit()
+		db.rollback()
+		db.rollback()
+		self.assertEqual(self._only_log(db)["success"], 0)
+		self.assertEqual(db.events, ["commit", "rollback", "rollback"])
+
+	def test_a_second_rollback_does_not_write_the_row_again(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.rollback()
+		db.rollback()
+		self.assertEqual(self._only_log(db)["success"], 0)
+
+	def test_the_rewrite_commits_after_the_other_rollback_callbacks_and_keeps_them(self):
+		db = self._db(ownership="BYOD")
+		ran = []
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		db.after_rollback.add(lambda: ran.append(len(db.rows("Device Action Log"))))
+		db.rollback()
+		# The later callback ran, before the commit that made the row durable.
+		self.assertEqual(ran, [0])
+		self.assertEqual(self._only_log(db)["success"], 0)
+
+	def test_a_rewrite_that_fails_never_raises_into_the_rollback(self):
+		db = self._db(ownership="BYOD")
+		with self.assertRaises(client.MDMProviderError):
+			actions.execute_device_action("DEV-1", "wipe", mode="full", source="UI")
+		STATE["log_insert_fails"] = True
+		db.rollback()  # must not raise
+		self.assertEqual(db.rows("Device Action Log"), [])
+
+
+def _stored_device(ownership, link_state="Managed", roles=("Device Manager",), **extra):
+	"""One stored Managed Device, DEV-1, for the real controller to load and save."""
+	STATE.clear()
+	STATE["roles"] = list(roles)
+	STATE["devices"] = {
+		"DEV-1": {
+			"name": "DEV-1",
+			"device_name": "Crew phone",
+			"device_type": "Phone",
+			"platform": "Android",
+			"status": "In Stock",
+			"ownership": ownership,
+			"mdm_provider": "Miradore",
+			"mdm_provider_device_id": "1001",
+			"mdm_link_state": link_state,
+			**extra,
+		}
+	}
+	fstub.flags = AttrDict()
+
+
+def _stored(field):
+	return STATE["devices"]["DEV-1"][field]
+
+
+class OwnershipRuleTests(unittest.TestCase):
+	"""``ManagedDevice._guard_ownership_change``, run over the real controller's save."""
+
+	def _change(self, old, new, roles, **save_kwargs):
+		_stored_device(old, roles=roles)
+		doc = fstub.get_doc("Managed Device", "DEV-1")
+		doc.ownership = new
+		return doc.save(**save_kwargs)
+
+	def test_byod_to_company_by_a_device_manager_is_refused_and_says_who_can(self):
+		with self.assertRaises(FakePermissionError) as ctx:
+			self._change("BYOD", "Company", ("Device Manager",))
+		self.assertIn("Only a System Manager", str(ctx.exception))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_byod_to_company_by_a_system_manager_is_saved_and_noted(self):
+		self._change("BYOD", "Company", ("System Manager",))
+		self.assertEqual(_stored("ownership"), "Company")
+		((comment_type, text),) = STATE["comments"]
+		self.assertEqual(comment_type, "Info")
+		self.assertIn("from BYOD to Company", text)
+		self.assertIn("manager@example.com", text)
+		self.assertIn("2026-09-22 12:00:00", text)
+
+	def test_company_to_byod_is_open_to_a_device_manager_and_a_system_manager_and_noted(self):
+		for roles in (("Device Manager",), ("System Manager",)):
+			with self.subTest(roles=roles):
+				self._change("Company", "BYOD", roles)
+				self.assertEqual(_stored("ownership"), "BYOD")
+				((_type, text),) = STATE["comments"]
+				self.assertIn("from Company to BYOD", text)
+
+	def test_a_save_that_leaves_ownership_alone_writes_no_comment(self):
+		for roles in (("Device Manager",), ("System Manager",)):
+			for ownership in ("Company", "BYOD"):
+				with self.subTest(roles=roles, ownership=ownership):
+					_stored_device(ownership, roles=roles)
+					doc = fstub.get_doc("Managed Device", "DEV-1")
+					doc.notes = "moved to the north shelf"
+					doc.save()
+					self.assertEqual(_stored("notes"), "moved to the north shelf")
+					self.assertNotIn("comments", STATE)
+
+	def test_a_save_with_ignore_permissions_never_turns_byod_into_company(self):
+		# Server code runs as Administrator, who holds System Manager; the role alone is not enough.
+		with self.assertRaises(FakePermissionError):
+			self._change("BYOD", "Company", ("Administrator", "System Manager"), ignore_permissions=True)
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_new_device_may_start_as_either(self):
+		for ownership in ("Company", "BYOD"):
+			with self.subTest(ownership=ownership):
+				STATE.clear()
+				doc = fstub.new_doc("Managed Device")
+				doc.device_name = "New phone"
+				doc.status = "In Stock"
+				doc.ownership = ownership
+				doc.insert()
+				self.assertEqual(STATE["devices"][doc.name]["ownership"], ownership)
+				self.assertNotIn("comments", STATE)
+
+	def test_confirm_device_lets_a_device_manager_set_company_on_a_discovered_device(self):
+		# The provider hinted BYOD when the sync created it; the person confirming says Company.
+		_stored_device("BYOD", link_state="Discovered")
+		result = api.confirm_device("DEV-1", "Company")
+		self.assertEqual(result["ownership"], "Company")
+		self.assertEqual((_stored("ownership"), _stored("mdm_link_state")), ("Company", "Managed"))
+		texts = [text for _type, text in STATE["comments"]]
+		self.assertEqual(len(texts), 2)
+		self.assertIn("from BYOD to Company", texts[0])
+		self.assertIn("Confirmed as a Company device", texts[1])
+		self.assertIsNone(getattr(fstub.flags, controller.CONFIRMING_DISCOVERED_FLAG, None))
+
+	def test_confirm_device_on_a_discovered_device_either_way(self):
+		for stored, chosen, comments in (("Company", "BYOD", 2), ("Company", "Company", 1), ("BYOD", "BYOD", 1)):
+			with self.subTest(stored=stored, chosen=chosen):
+				_stored_device(stored, link_state="Discovered")
+				api.confirm_device("DEV-1", chosen)
+				self.assertEqual(_stored("ownership"), chosen)
+				self.assertEqual(len(STATE["comments"]), comments)
+
+	def test_confirm_device_on_a_device_no_longer_discovered_is_refused(self):
+		_stored_device("BYOD", link_state="Managed")
+		with self.assertRaises(FakeValidationError) as ctx:
+			api.confirm_device("DEV-1", "Company")
+		self.assertIn("not awaiting confirmation", str(ctx.exception))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertNotIn("comments", STATE)
+
+	def test_the_confirm_flag_opens_only_its_own_device_while_stored_as_discovered(self):
+		flag = controller.CONFIRMING_DISCOVERED_FLAG
+		for link_state, named in (("Managed", "DEV-1"), ("Unmanaged", "DEV-1"), ("Discovered", "DEV-2")):
+			with self.subTest(link_state=link_state, named=named):
+				_stored_device("BYOD", link_state=link_state)
+				setattr(fstub.flags, flag, named)
+				doc = fstub.get_doc("Managed Device", "DEV-1")
+				doc.ownership = "Company"
+				with self.assertRaises(FakePermissionError):
+					doc.save()
+				self.assertEqual(_stored("ownership"), "BYOD")
+
+	def test_confirm_device_clears_its_flag_when_the_save_fails(self):
+		# An Assigned device with no assignee fails another rule in validate.
+		_stored_device("BYOD", link_state="Discovered", status="Assigned")
+		with self.assertRaises(FakeValidationError):
+			api.confirm_device("DEV-1", "Company")
+		self.assertIsNone(getattr(fstub.flags, controller.CONFIRMING_DISCOVERED_FLAG, None))
+		self.assertEqual(_stored("ownership"), "BYOD")
+
+	def test_the_sync_never_changes_ownership_on_an_existing_device(self):
+		# Run as Administrator (System Manager) with a provider hint of Company.
+		_stored_device("BYOD", roles=("Administrator", "System Manager"))
+		pd = client.ProviderDevice(provider="Miradore", provider_id="1001", os_version="15", ownership_hint="Company")
+		result = mapping.upsert_device(pd)
+		self.assertEqual((result["action"], result["device"]), ("updated", "DEV-1"))
+		self.assertEqual(_stored("ownership"), "BYOD")
+		self.assertEqual(_stored("os_version"), "15")
+		self.assertNotIn("comments", STATE)
+
+	def test_a_provider_hint_still_sets_ownership_on_a_device_the_sync_creates(self):
+		for hint, expected in (("BYOD", "BYOD"), ("Company", "Company"), (None, "Company"), ("Personal", "Company")):
+			with self.subTest(hint=hint):
+				STATE.clear()
+				STATE["devices"] = {}
+				pd = client.ProviderDevice(provider="Miradore", provider_id="2002", platform="Android", ownership_hint=hint)
+				result = mapping.upsert_device(pd)
+				self.assertEqual(result["action"], "created")
+				row = STATE["devices"][result["device"]]
+				self.assertEqual((row["ownership"], row["mdm_link_state"]), (expected, "Discovered"))
+
+	def test_the_confirm_prompt_preselects_nothing_and_requires_a_choice(self):
+		source = (
+			Path(__file__).resolve().parents[1]
+			/ "device_management" / "doctype" / "managed_device" / "managed_device.js"
+		).read_text(encoding="utf-8")
+		start = source.index("if (frm.doc.mdm_link_state === 'Discovered') {")
+		block = source[start : source.index("mdm_integration.api.confirm_device", start)]
+		self.assertIn("options: '\\nCompany\\nBYOD',", block)
+		self.assertIn("reqd: 1,", block)
+		self.assertNotIn("default:", block)
 
 
 class SyncTests(unittest.TestCase):

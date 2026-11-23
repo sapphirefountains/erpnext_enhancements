@@ -31,23 +31,53 @@
 	<header class="cs-header">
 		<h1>{{ _("Review and sign") }}</h1>
 		<p class="cs-lede">{{ boot.contract_label | e }}</p>
-		<p class="cs-hint">{{ _("Please read the agreement below, then sign at the bottom of the page.") }}</p>
+		<p class="cs-hint">{{ _("Please read the agreement below. To sign it, first confirm it's you with a code we email you.") }}</p>
 		{% if boot.in_person %}
 		<p class="cs-in-person">{{ _("You're signing in person with") }} {{ boot.presented_by_name | e }}. {{ _("Take your time; nothing is final until you press Sign & execute.") }}</p>
 		{% endif %}
 	</header>
 
+	{# The emailed code (esign.portal.send_signing_code / verify_signing_code). It goes to
+	   the address frozen on the request, shown here only masked. The bot check sits here
+	   too, because it gates sending the code. Until the code is entered the agreement
+	   below is a preview with the client's address masked, and the form is hidden. #}
+	<section class="cs-verify" id="cs-verify" aria-labelledby="cs-verify-title">
+		<h2 id="cs-verify-title">{{ _("Confirm it's you") }}</h2>
+		<p>{{ _("We'll email a 6-digit code to") }} <b>{{ boot.signer_email_hint | e }}</b>, {{ _("the address this agreement was sent to.") }}</p>
+		<div id="cs-turnstile" class="cs-turnstile"></div>
+		<button type="button" class="cs-submit" id="cs-code-send">{{ _("Email me a code") }}</button>
+		<form id="cs-code-form" novalidate hidden>
+			<label class="cs-label" for="cs-code">{{ _("Code from the email") }}</label>
+			<input class="cs-input cs-code-input" id="cs-code" type="text" inputmode="numeric"
+			       autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" spellcheck="false">
+			<div class="cs-actions">
+				<button type="submit" class="cs-submit" id="cs-code-verify">{{ _("Confirm") }}</button>
+				<button type="button" class="cs-decline" id="cs-code-resend">{{ _("Send a new code") }}</button>
+			</div>
+		</form>
+		<p class="cs-hint" id="cs-code-note" aria-live="polite"></p>
+		<p class="cs-error" id="cs-code-error" role="alert" hidden></p>
+	</section>
+	<p class="cs-verified" id="cs-verified" role="status" hidden>{{ _("Thanks, that's you. You can now initial and sign the agreement.") }}</p>
+
 	{# The stored snapshot: exactly the text that was emailed, never a live
 	   re-render. Everything a user supplied inside it was escaped when the
 	   contract body was composed. The letterhead and footer around it are the
 	   app's own markup (contract_style.wrap) and leave the snapshot untouched.
+	   Rendered with the client's address masked; contract_sign.js swaps in the
+	   snapshot as stored once the code is entered.
 	   .contract-doc is what the print format's rules are scoped to; .cs-agreement
 	   is the page's card around it. #}
 	<article class="cs-agreement contract-doc" id="cs-agreement" tabindex="0" aria-label="{{ _('Agreement') }}">
 		{{ agreement_html | safe }}
 	</article>
 
-	<form class="cs-form" id="cs-form" novalidate>
+	<div class="cs-locked" id="cs-locked">
+		<p>{{ _("To sign or decline, first confirm it's you with the code we email you.") }}</p>
+		<button type="button" class="cs-decline" id="cs-locked-go">{{ _("Go to the code step") }}</button>
+	</div>
+
+	<form class="cs-form" id="cs-form" novalidate hidden>
 		<section class="cs-section">
 			<h2>{{ _("Electronic records") }}</h2>
 			<details class="cs-disclosure">
@@ -95,20 +125,11 @@
 		</section>
 
 		<section class="cs-section">
-			<h2>{{ _("Confirm it's you") }}</h2>
-			<label class="cs-label" for="cs-email">
-				{{ _("Type the email address we sent this agreement to") }}
-			</label>
-			<input class="cs-input" id="cs-email" type="email" inputmode="email" autocomplete="email"
-			       placeholder="{{ boot.signer_email_hint | e }}">
-			<p class="cs-hint">{{ _("It's in the message you opened this link from.") }}</p>
-
+			<h2>{{ _("Your agreement to sign electronically") }}</h2>
 			<label class="cs-check">
 				<input type="checkbox" id="cs-agree">
 				<span>{{ boot.consent_text | e }}</span>
 			</label>
-
-			<div id="cs-turnstile" class="cs-turnstile"></div>
 		</section>
 
 		<p class="cs-error" id="cs-error" role="alert" hidden></p>

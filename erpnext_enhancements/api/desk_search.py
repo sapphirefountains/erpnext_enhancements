@@ -85,10 +85,19 @@ GROUP_ORDER = {key: i for i, (key, _label) in enumerate(GROUPS)}
 
 # A letter prefix typed before a number names the series to look in; anything else is used as is.
 NUMBER_PREFIXES = {
-	"P": "PRJ",
+	# A word for "a job" looks under every job prefix (JOB, PREFIX_FAMILIES): since v1.831.0 Service jobs
+	# are SRV-##### and Events jobs EVT-##### (job_prefixes.py), each counting on its own, so "project 12"
+	# means any of PRJ-00012, SRV-00012 and EVT-00012. The series' own letters stay in their series.
+	"P": "JOB",
+	"PROJ": "JOB",
+	"PROJECT": "JOB",
+	"JOB": "JOB",
 	"PRJ": "PRJ",
-	"PROJ": "PRJ",
-	"PROJECT": "PRJ",
+	"SRV": "SRV",
+	"SERVICE": "SRV",
+	"EVT": "EVT",
+	"EVENT": "EVT",
+	"EVENTS": "EVT",
 	"O": "OPP",
 	"OPP": "OPP",
 	"OPPORTUNITY": "OPP",
@@ -106,6 +115,9 @@ NUMBER_PREFIXES = {
 	"CON": "MNT-CON",
 	"CONTRACT": "MNT-CON",
 }
+
+#: A prefix that stands for several series: the number is looked for under each of them.
+PREFIX_FAMILIES = {"JOB": ("PRJ", "SRV", "EVT")}
 
 # One entry per searched doctype. title: first non-empty column is the row's title. match: text
 # columns every typed word is looked for in. email/phone: matched too, phone by digits only.
@@ -431,7 +443,14 @@ def build_query(spec, parsed, child_tables=()):
 		# The number is digits only (parse_query), so the pattern is safe to bind as is.
 		values["num_re"] = "-0*" + parsed["number"] + "$"
 		cond = "name regexp %(num_re)s"
-		if parsed["prefix"]:
+		family = PREFIX_FAMILIES.get(parsed["prefix"])
+		if family:
+			likes = []
+			for i, member in enumerate(family):
+				values[f"num_prefix_{i}"] = "%" + like_escape(member) + "-%"
+				likes.append(f"name like %(num_prefix_{i})s")
+			cond = f"({cond} and ({' or '.join(likes)}))"
+		elif parsed["prefix"]:
 			values["num_prefix"] = "%" + like_escape(parsed["prefix"]) + "-%"
 			cond = f"({cond} and name like %(num_prefix)s)"
 		ors.append(cond)

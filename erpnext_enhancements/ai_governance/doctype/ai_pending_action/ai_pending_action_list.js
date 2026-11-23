@@ -16,7 +16,8 @@
  * - The actions menu gets "Confirm & Execute Selected" and "Cancel Selected" for ticked rows.
  *
  * A row starts unticked when the server gives a `review_reason` (high risk, hidden values, a
- * submit or cancel, a write to a Task, the gate's own records or the knowledge base), and never
+ * submit or cancel, a remote device action, a write to a Task, the gate's own records or the
+ * knowledge base), and never
  * more than 50 start ticked: one review stays a bounded set. Every batch asks a second time and
  * says what will run. The
  * names go to the server at most 10 per request, one request after another, so no request runs
@@ -56,9 +57,25 @@ function esc(value) {
 	return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
 }
 
-// Ticked when the server says so, and never for High risk or hidden values whatever it says.
+// The remote device-action tools (_gate.DEVICE_ACTION_TOOLS): never ticked to begin with.
+const DEVICE_ACTION_TOOLS = new Set([
+	"remote_lock_device",
+	"remote_wipe_device",
+	"locate_device",
+	"reboot_device",
+	"run_device_script",
+	"deploy_device_patch",
+]);
+
+// Ticked when the server says so, and never for High risk, hidden values or a device action
+// whatever it says.
 function starts_ticked(row) {
-	return Boolean(row && row.batch_default) && row.risk !== "High" && !row.has_hidden;
+	return (
+		Boolean(row && row.batch_default) &&
+		row.risk !== "High" &&
+		!row.has_hidden &&
+		!DEVICE_ACTION_TOOLS.has(row.tool_name)
+	);
 }
 
 // The oldest MAX_BATCH of the rows that start ticked. Rows come oldest first.
@@ -123,6 +140,7 @@ function untick_reason(row) {
 	const reasons = [];
 	if (row.risk === "High") reasons.push(__("high risk"));
 	if (row.has_hidden) reasons.push(__("hidden values to check first"));
+	if (DEVICE_ACTION_TOOLS.has(row.tool_name)) reasons.push(__("runs a remote device action"));
 	return reasons.length ? __("Review individually recommended: {0}.", [reasons.join(", ")]) : "";
 }
 

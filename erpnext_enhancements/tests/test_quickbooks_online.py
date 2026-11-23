@@ -3083,6 +3083,20 @@ def test_prj_number_normalizes_padding():
 	assert _prj_number("4th West Apartments") is None
 
 
+def test_qbo_job_numbers_stay_prj_only():
+	"""v1.831.0: new ERPNext Service and Events jobs are SRV-##### and EVT-#####, and QuickBooks holds
+	old customer-jobs of its own named SRV-00000 to SRV-00015. The QBO matcher reads PRJ numbers only,
+	so neither kind can ever be linked to the other by number."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _prj_number, strip_prj_prefix
+
+	assert _prj_number("SRV-00003 - 4-17-13") is None  # the old QBO job, prod qbo_id 1504
+	assert _prj_number("SRV-00101 Riverton Splash Pad") is None  # what a new ERPNext job is called
+	assert _prj_number("EVT-00001 Holiday Party") is None
+	# The title stays as QuickBooks named it: its SRV- number is QuickBooks' own, not an ERPNext id.
+	assert strip_prj_prefix("SRV-00003 - 4-17-13") == "SRV-00003 - 4-17-13"
+
+
 def test_strip_prj_prefix_handles_every_format():
 	"""strip_prj_prefix removes a single leading PRJ-### token across the formats the
 	QBO data carries, leaves clean titles alone, and never blanks a number-only title."""
@@ -3296,6 +3310,37 @@ def test_match_project_links_existing_job_by_prj_number(monkeypatch):
 	assert match["status"] == "matched"
 	assert match["name"] == "PRJ-00401"
 	assert match["rule"] == "prj_number"
+
+
+def test_an_old_qbo_srv_job_is_never_matched_to_a_new_srv_project(monkeypatch):
+	"""The collision the 2026-11-19 review found: QBO customer-job 1504 "SRV-00003 - 4-17-13" must not
+	match a new ERPNext SRV-00003 by number. With no PRJ number, _match_project never runs the number
+	query; it falls back to the exact title under the parent Customer, which no new job carries."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	def no_number_query(*args, **kwargs):
+		raise AssertionError("a QBO job with no PRJ number must not be matched by number")
+
+	monkeypatch.setattr(frappe.db, "sql", no_number_query, raising=False)
+	monkeypatch.setattr(mapping, "_top_level_customer", lambda *args: "Wasatch Retail & Hospitality")
+	seen = {}
+
+	def single_or_ambiguous(doctype, filters, rule, payload, confidence=0):
+		seen.update(doctype=doctype, filters=filters, rule=rule)
+		return None
+
+	monkeypatch.setattr(mapping, "_single_or_ambiguous", single_or_ambiguous)
+	match = mapping._match_project(
+		{"Id": "1504", "DisplayName": "SRV-00003 - 4-17-13", "Job": True, "ParentRef": {"value": "1300"}},
+		types.SimpleNamespace(company="Sapphire Fountains"),
+	)
+	assert match is None
+	assert seen == {
+		"doctype": "Project",
+		"filters": {"project_name": "SRV-00003 - 4-17-13", "customer": "Wasatch Retail & Hospitality"},
+		"rule": "project_name + customer",
+	}
 
 
 def _upsert_job_no_match(monkeypatch, parent_customer):

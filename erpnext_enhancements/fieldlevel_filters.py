@@ -1,4 +1,4 @@
-"""Field references in read requests, held to the caller's field-level read (v1.835.5).
+"""Field references in read requests, held to the caller's field-level read (v1.835.0).
 
 ``fieldlevel_read.py`` keeps the fields a caller cannot read at their permlevel out of the documents
 the app sends. This module applies the same rule to the *field names a request carries*: a list,

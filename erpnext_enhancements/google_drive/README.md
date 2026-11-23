@@ -11,6 +11,7 @@ Google Drive integration for the ERPNext customizations: per-project/customer fo
 | `drive_utils.py` | Google Drive v3 API wrappers + folder provisioning | `get_drive_service`, `create_folder`, `find_folder`, `rename_folder`, `create_project_subfolders`, `provision_project_folders`, `provision_project_folder_for_opportunity`, `provision_customer_folder`, `provision_opportunity_folder`, `enqueue_opportunity_folder`, `enqueue_customer_folder` | called by `crm_enhancements.api` background worker; Opportunity/Customer `after_insert` |
 | `drive_sync.py` | Two-way attachment sync (ERPNext↔Drive) + linked-folder reconciliation | `on_file_attached`, `upload_attachment_to_drive`, `sync_shadow_attachments`/`run_shadow_sync` (hourly; one Shared Drive listing, walked in memory), `reconcile_drive_links`/`run_drive_link_reconcile` (daily), `retry_failed_syncs`, `test_connection`/`backfill_drive_links`/`check_drive_links` (whitelisted) | `File` `after_insert`; hourly + daily scheduler |
 | `drive_link_manager.py` | System-Manager bulk folder-linking backend (scan → review → apply) | `scan_drive_links`, `get_candidates`, `set_decision`, `bulk_decision`, `search_folders`, `apply_links` (whitelisted, System-Manager-only) | Desk page `/app/drive-link-manager` |
+| `folder_link_guard.py` | Who may set `custom_drive_folder_id` on an ordinary save or insert (see below) | `guard_drive_folder_link`, `DRIVE_FOLDER_FLAG` | Customer / Project / Opportunity `validate` |
 | `drive_match.py` | Pure fuzzy matcher (no frappe) ranking folders to records | `normalize`, `similarity`, `tier_for_score`, `best_matches` | used by `drive_link_manager`; unit-tested in `tests/test_drive_match.py` |
 | `doctype/project_folder_google_drive_settings/*` | Single settings doctype — `service_account_json`, `shared_drive_id` | `ProjectFolderGoogleDriveSettings` | — |
 | `doctype/drive_link_candidate/*` | Staging row for Drive Link Manager (suggestion + alternatives + decision + status) | `DriveLinkCandidate` (pass) | created by `scan_drive_links`, consumed by `apply_links` |
@@ -29,6 +30,10 @@ Google Drive integration for the ERPNext customizations: per-project/customer fo
 - **Resilience** — `create_folder` retries up to 5× with exponential backoff on HTTP 403/429; `find_folder` retries once after 2s; single quotes in folder names are escaped to avoid Drive query-syntax errors.
 
 > `custom_drive_folder_id` is a hidden Custom Field on Project managed by the app fixtures ([`../fixtures/custom_field.json`](../fixtures/custom_field.json)), synced on migrate.
+
+### Who may set the folder link
+
+The integration writes `custom_drive_folder_id` with `frappe.db.set_value` / `db_set` (the provisioners, the backfill, the Drive Link Manager and the hand-off job), which run no controller. On an ordinary save or insert of a Customer, Project or Opportunity, `folder_link_guard.guard_drive_folder_link` (`validate`, v1.833.0) lets the value change only for a System Manager, for server code that sets `doc.flags.drive_folder_update` before saving, and during migrate, install and patches. For anyone else a save carrying a different folder is refused, a save carrying it empty keeps the stored folder (a form opened before the folder was linked), and a new record keeps no folder value (a Duplicate starts unlinked). Server code that saves one of these documents with a new folder must set the flag. Tested in [`tests/test_drive_folder_link_guard.py`](../tests/test_drive_folder_link_guard.py).
 
 ## Linked-folder reconciliation
 

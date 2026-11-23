@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.water_engineering import derive, prints
+from erpnext_enhancements.water_engineering import derive, prints, svg_safe
 from erpnext_enhancements.water_engineering.engine import kits
 
 APP = REPO_ROOT / "erpnext_enhancements"
@@ -118,6 +118,7 @@ def environment(context):
         },
         we_standard_notes=lambda code=None: [{"category": "General", "title": "Code", "body": "Build to R392-302 & the NEC."}],
         we_standard_details=lambda code=None: [{"title": "Main drain", "detail_key": "md", "svg": '<svg viewBox="0 0 10 10"></svg>'}],
+        we_safe_svg=svg_safe.we_safe_svg,
         ps_date=lambda value: "11/01/2026" if value else "",
         ps_state=prints.ps.ps_state,
         ps_party=lambda doc: "<b>Acme &amp; Sons</b><br>1 Main St",

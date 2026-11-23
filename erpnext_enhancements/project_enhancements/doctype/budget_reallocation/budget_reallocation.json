@@ -174,13 +174,16 @@
    "fieldname": "pm_approved_by",
    "fieldtype": "Link",
    "label": "Project Manager Approval",
+   "no_copy": 1,
    "options": "User",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Cannot be the requester."
   },
   {
    "fieldname": "pm_approved_on",
    "fieldtype": "Datetime",
    "label": "Approved On",
+   "no_copy": 1,
    "read_only": 1
   },
   {
@@ -191,6 +194,7 @@
    "fieldname": "additional_approved_by",
    "fieldtype": "Link",
    "label": "Second Approval",
+   "no_copy": 1,
    "options": "User",
    "read_only": 1,
    "description": "Cannot be the requester, and cannot be the project manager who approved it. A second signature from the same hand is not a second signature."
@@ -199,6 +203,7 @@
    "fieldname": "additional_approved_on",
    "fieldtype": "Datetime",
    "label": "Second Approval On",
+   "no_copy": 1,
    "read_only": 1
   },
   {
@@ -214,7 +219,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-15 09:10:00.000000",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Budget Reallocation",

@@ -180,6 +180,14 @@ def _sql(query, values=None, as_dict=False):
 			for i, w, q, _v in STATE["bins"]
 			if q > 0 and _stock_item(i) and (i, w) not in assigned
 		]
+	if text.startswith("select min(posting_date) from `tabStock Ledger Entry`"):
+		# project_stock.first_movement: the day the job's first stock moved (v1.831.0).
+		days = [
+			day
+			for day, project, warehouse in STATE.get("first_moves", [])
+			if project == values["project"] or warehouse in values["sites"]
+		]
+		return [[min(days) if days else None]]
 	raise AssertionError(f"unexpected query: {text[:120]}")
 
 
@@ -588,6 +596,31 @@ class TestProjectView(_Base):
 		super().setUp()
 		STATE["ledger"] = [(BUILD, "ELBOW", SHELF, 10), (BUILD, "ELBOW", SHELF, -4), ("PRJ-OTHER", "ELBOW", SHELF, 5)]
 		STATE["bins"] = [("ELBOW", SHELF, 11, 5.5), ("PUMP", SITE, 2, 500.0), ("ELBOW", SITE, 4, 2.0)]
+
+	def test_the_day_the_jobs_first_stock_moved(self):
+		# v1.831.0: the Movements link opens Warehouse Transactions from this day, not the last 30 days.
+		STATE["first_moves"] = [
+			("2026-10-02", BUILD, SHELF),
+			("2026-09-20", None, SITE),
+			("2026-08-01", "PRJ-OTHER", SHELF),
+		]
+		self.assertEqual(views.project_view(BUILD)["movements_since"], "2026-09-20")
+		STATE["first_moves"] = []
+		self.assertIsNone(views.project_view(BUILD)["movements_since"])
+
+	def test_a_failed_read_of_that_day_never_fails_the_view(self):
+		original = views.project_stock.first_movement
+
+		def broken(*args, **kwargs):
+			raise RuntimeError("database went away")
+
+		views.project_stock.first_movement = broken
+		try:
+			out = views.project_view(BUILD)
+		finally:
+			views.project_stock.first_movement = original
+		self.assertIsNone(out["movements_since"])
+		self.assertEqual(out["shelf"]["warehouse"], SHELF)
 
 	def test_the_shelf_is_the_jobs_share_and_the_site_is_everything_there(self):
 		out = views.project_view(BUILD)

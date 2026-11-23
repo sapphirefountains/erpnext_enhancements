@@ -456,6 +456,10 @@ def project_view(project):
 		"shelf": shelf_out,
 		"site": site_out,
 		"send_refusal": _send_refusal(row_for_rules, bool(site_out), bool(site_out and site_out["disabled"])),
+		# The day the job's first stock moved, for the Movements link (v1.831.0). Never fails the view.
+		"movements_since": _quietly(
+			lambda: project_stock.first_movement(name, [site.name for site in sites]), None
+		),
 	}
 
 
