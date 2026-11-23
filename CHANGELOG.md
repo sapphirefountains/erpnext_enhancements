@@ -92,6 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editor's bundle level in `scripts/test_estimate_math.mjs`, and the no-cost-field and who-certifies
   rules in `test_estimating_rules`.
 
+### Fixed
+
+- **CI: the publishing rate-limit step pins redis-py at 8.1.0.** The step pinned fakeredis and lupa
+  but not redis-py, which fakeredis installs as a loose dependency. redis 8.2.0, released
+  2026-11-23, breaks fakeredis 2.38.0's client setup: every `FakeRedis()` raised
+  `'method_descriptor' object has no attribute '__closure__'`, so all eight Lua-versus-spec tests
+  errored on any branch. That had nothing to do with the change under test. Checked locally: the
+  same suite errors on redis 8.2.0 and passes on 8.1.0. Upgrade fakeredis, lupa and redis together.
+  This changes CI only.
+
 ## [1.833.1] - 2026-11-21
 
 ### Fixed
