@@ -67,6 +67,10 @@ frappe.ui.form.on("Estimate", {
 			frm.add_custom_button(__("Apply Template"), () => with_editor(frm, (ed) => ed.apply_template(frm, frm.doc.template)), __("Actions"));
 			frm.add_custom_button(__("New Revision"), () => with_editor(frm, (ed) => ed.new_revision(frm)), __("Actions"));
 		}
+		// Milestone 2: the estimate fills a schedule of values once; its rows stay editable there.
+		if (!frm.is_new() && frm.doc.status !== "Superseded" && frappe.model.can_create("Schedule of Values")) {
+			frm.add_custom_button(__("Schedule of Values"), () => make_schedule(frm), __("Create"));
+		}
 		if (frm.doc.quotation) {
 			frm.add_custom_button(__("Quotation {0}", [frm.doc.quotation]), () =>
 				frappe.set_route("Form", "Quotation", frm.doc.quotation)
@@ -101,6 +105,40 @@ frappe.ui.form.on("Estimate", {
 		}
 	},
 });
+
+function make_schedule(frm) {
+	if (!frm.doc.project) {
+		frappe.msgprint(__("Link this estimate to a project first: a schedule of values bills a project."));
+		return;
+	}
+	const d = new frappe.ui.Dialog({
+		title: __("Schedule of Values from this estimate"),
+		fields: [
+			{
+				fieldname: "rule",
+				fieldtype: "Select",
+				label: __("Rows"),
+				default: "phase_cost_type",
+				options: [
+					{ value: "phase_cost_type", label: __("One row per phase and cost type") },
+					{ value: "line", label: __("One row per estimate line") },
+				],
+				description: __("The rows add up to the estimate exactly, and stay editable until the schedule is locked."),
+			},
+		],
+		primary_action_label: __("Create"),
+		primary_action: async ({ rule }) => {
+			d.hide();
+			const r = await frappe.call({
+				method: "erpnext_enhancements.api.estimating.make_schedule_of_values",
+				args: { estimate: frm.doc.name, rule },
+				freeze: true,
+			});
+			if (r && r.message) frappe.set_route("Form", "Schedule of Values", r.message);
+		},
+	});
+	d.show();
+}
 
 // Any rate typed in the Rates section, or any row edited in the table view, moves the editor's numbers.
 // Skipped while the editor is the one writing (frm.__estimate_editing): it updates itself, and a redraw

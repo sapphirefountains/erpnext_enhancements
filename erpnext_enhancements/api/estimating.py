@@ -32,7 +32,7 @@ Things this is careful about, including the ones that look like bugs:
 
 import frappe
 from frappe import _
-from frappe.utils import escape_html, getdate, nowdate
+from frappe.utils import escape_html, flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.estimating import rules, seed
 
@@ -238,3 +238,185 @@ def new_revision(estimate):
 def cost_codes():
 	"""The cost code catalog a line may use, for the lines editor's picker. Public in the repo anyway."""
 	return rules.code_options()
+
+
+# ---------------------------------------------------------------- schedule of values (milestone 2)
+
+
+@frappe.whitelist(methods=["POST"])
+def make_schedule_of_values(estimate, rule="phase_cost_type"):
+	"""A draft Schedule of Values filled from the Estimate's priced lines. Returns its name.
+
+	Rows group the estimate's lines by phase and cost type (the 2026-11-04 rule) or one per line, and
+	sum to the estimate exactly (``pay_app_math.sov_rows`` asserts the partition). The contract sum
+	starts at the estimate's total; the rows stay editable until the schedule is locked.
+	"""
+	from erpnext_enhancements.estimating import pay_app_math as pm
+
+	doc = frappe.get_doc("Estimate", estimate)
+	doc.check_permission("read")
+	frappe.has_permission("Schedule of Values", "create", throw=True)
+	if doc.status == "Superseded":
+		frappe.throw(_("This revision is superseded. Make the schedule from the newest revision."))
+	if not doc.project:
+		frappe.throw(_("Link the estimate to a project first: a schedule of values bills a project."))
+	if rule not in ("phase_cost_type", "line"):
+		rule = "phase_cost_type"
+	rows, check = pm.sov_rows(_phase_dicts(doc), _line_dicts(doc), rule=rule, total=doc.total_amount)
+	sov = frappe.new_doc("Schedule of Values")
+	sov.update(
+		{
+			"title": doc.title,
+			"project": doc.project,
+			"customer": doc.customer,
+			"basis": "Estimate",
+			"estimate": doc.name,
+			"estimate_revision": doc.revision,
+			"contract_sum": check["total"],
+			"company": doc.company,
+		}
+	)
+	for row in rows:
+		sov.append(
+			"lines",
+			{
+				k: row[k]
+				for k in (
+					"item_no",
+					"phase_number",
+					"description",
+					"cost_type",
+					"scheduled_value",
+					"by_others",
+					"source_lines",
+				)
+			},
+		)
+	sov.insert()
+	return sov.name
+
+
+def _schedule(schedule, ptype="write"):
+	sov = frappe.get_doc("Schedule of Values", schedule)
+	sov.check_permission(ptype)
+	return sov
+
+
+def _co_description(co):
+	"""What the change order adds, in the customer's words: the first line of its scope addendum."""
+	from frappe.utils import strip_html
+
+	text = " ".join(strip_html(co.scope_addendum or "").split())
+	label = _("Change order {0}").format(co.co_number or co.name)
+	return (f"{label}: {text}" if text else label)[:140]
+
+
+@frappe.whitelist(methods=["POST"])
+def add_change_orders(schedule):
+	"""Add a row for every approved change order of the project not yet on the schedule.
+
+	Approved means submitted and approved by the customer; the row carries the change order's price
+	(its signed ``cost_impact``, a credit negative) and the date the customer approved it, which is
+	the date that decides the first application it bills on. Returns how many rows were added.
+	"""
+	sov = _schedule(schedule)
+	have = {r.change_order for r in sov.lines if r.change_order}
+	# get_list, not get_all: a change order's price and scope go only to people who may read it.
+	orders = frappe.get_list(
+		"Change Order",
+		filters={"project": sov.project, "docstatus": 1, "customer_approved": 1},
+		fields=["name", "co_number", "cost_impact", "customer_approved_on", "scope_addendum", "cause"],
+		order_by="co_number asc",
+	)
+	added = 0
+	for co in orders:
+		if co.name in have:
+			continue
+		number = co.co_number or 0
+		sov.append(
+			"lines",
+			{
+				"item_no": f"CO-{number:02d}" if number else co.name,
+				"description": _co_description(co),
+				"scheduled_value": flt(co.cost_impact),
+				"change_order": co.name,
+				"approved_on": getdate(co.customer_approved_on) if co.customer_approved_on else None,
+			},
+		)
+		added += 1
+	if added:
+		sov.save()
+	return added
+
+
+@frappe.whitelist(methods=["POST"])
+def lock_schedule(schedule):
+	"""Lock the schedule: its lines become the contract breakdown that pay applications bill against."""
+	sov = _schedule(schedule)
+	if sov.status == "Locked":
+		return sov.name
+	sov.save()  # total it up exactly as stored
+	problems = sov.lock_problems()
+	if problems:
+		frappe.throw(
+			"<ul>" + "".join(f"<li>{escape_html(p)}</li>" for p in problems) + "</ul>",
+			title=_("Not ready to lock"),
+		)
+	sov.db_set({"status": "Locked", "locked_on": now_datetime(), "locked_by": frappe.session.user})
+	sov.add_comment("Info", _("Locked at a contract sum of {0}.").format(rules.money(sov.contract_sum)))
+	return sov.name
+
+
+@frappe.whitelist(methods=["POST"])
+def unlock_schedule(schedule):
+	"""Unlock a schedule nothing has been certified against yet."""
+	sov = _schedule(schedule)
+	if frappe.db.exists("Pay Application", {"schedule_of_values": sov.name, "docstatus": 1}):
+		frappe.throw(
+			_(
+				"A pay application has been certified against this schedule, so its lines stay as they are. A change in scope is a change order."
+			)
+		)
+	sov.db_set({"status": "Draft", "locked_on": None, "locked_by": None})
+	sov.add_comment("Info", _("Unlocked."))
+	return sov.name
+
+
+@frappe.whitelist(methods=["POST"])
+def start_pay_application(schedule, period_to=None):
+	"""The next pay application of a locked schedule, as a draft. Returns its name."""
+	sov = _schedule(schedule, "read")
+	frappe.has_permission("Pay Application", "create", throw=True)
+	pa = frappe.new_doc("Pay Application")
+	pa.schedule_of_values = sov.name
+	pa.period_to = getdate(period_to) if period_to else getdate(nowdate())
+	pa.insert()
+	return pa.name
+
+
+def _pay_application(name):
+	pa = frappe.get_doc("Pay Application", name)
+	pa.check_permission("write")
+	if pa.docstatus != 0:
+		frappe.throw(_("This application is already certified."))
+	return pa
+
+
+@frappe.whitelist(methods=["POST"])
+def send_for_review(pay_application):
+	"""The project manager's "send to accounting": saves the percents and marks it To Review."""
+	pa = _pay_application(pay_application)
+	pa.status = "To Review"
+	pa.sent_for_review_by = frappe.session.user
+	pa.sent_for_review_on = now_datetime()
+	pa.save()
+	return pa.name
+
+
+@frappe.whitelist(methods=["POST"])
+def back_to_progress(pay_application):
+	"""Accounting sends it back to the project manager."""
+	pa = _pay_application(pay_application)
+	pa.status = "Draft"
+	pa.save()
+	return pa.name

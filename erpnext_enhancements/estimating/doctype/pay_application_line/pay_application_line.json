@@ -1,0 +1,216 @@
+{
+ "actions": [],
+ "creation": "2026-11-20 09:00:00.000000",
+ "description": "A line of a pay application's continuation sheet (AIA G703).",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_no",
+  "description",
+  "scheduled_value",
+  "from_previous",
+  "this_period_pct",
+  "this_period",
+  "stored",
+  "total_completed",
+  "percent_complete",
+  "balance",
+  "adjustment_note",
+  "column_break_ret",
+  "work_retainage_override",
+  "stored_retainage_override",
+  "work_retainage_pct",
+  "stored_retainage_pct",
+  "retainage_work",
+  "retainage_stored",
+  "retainage",
+  "retainage_previous",
+  "work_completed_to_date",
+  "phase_number",
+  "is_change_order",
+  "by_others",
+  "line_key"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "item_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item",
+   "read_only": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Description of Work",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "scheduled_value",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Scheduled Value (C)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "from_previous",
+   "fieldtype": "Currency",
+   "label": "From Previous (D)",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "description": "The percent of this line completed this period (Nik, 2026-11-06).",
+   "fieldname": "this_period_pct",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "This Period %",
+   "precision": "2"
+  },
+  {
+   "columns": 1,
+   "fieldname": "this_period",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "This Period (E)",
+   "read_only": 1
+  },
+  {
+   "description": "Materials on hand and not yet installed: a balance, not a running total.",
+   "fieldname": "stored",
+   "fieldtype": "Currency",
+   "label": "Stored Materials (F)"
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_completed",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Completed and Stored (G)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "percent_complete",
+   "fieldtype": "Percent",
+   "label": "% (G / C)",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "balance",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Balance to Finish (I)",
+   "read_only": 1
+  },
+  {
+   "description": "Required when this period's amount is negative.",
+   "fieldname": "adjustment_note",
+   "fieldtype": "Data",
+   "label": "Note"
+  },
+  {
+   "fieldname": "column_break_ret",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Blank: the application's rate. 0 is a real rate. Accounting's to set.",
+   "fieldname": "work_retainage_override",
+   "fieldtype": "Data",
+   "label": "Retainage on Work % (this line)",
+   "permlevel": 1
+  },
+  {
+   "description": "Blank: the application's rate. 0 is a real rate. Accounting's to set.",
+   "fieldname": "stored_retainage_override",
+   "fieldtype": "Data",
+   "label": "Retainage on Stored % (this line)",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "work_retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Work % Used",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stored_retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Stored % Used",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage_work",
+   "fieldtype": "Currency",
+   "label": "Retainage on Work",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage_stored",
+   "fieldtype": "Currency",
+   "label": "Retainage on Stored",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage",
+   "fieldtype": "Currency",
+   "label": "Retainage",
+   "read_only": 1
+  },
+  {
+   "description": "Held by the earlier applications at the rates in force then; stays held until release.",
+   "fieldname": "retainage_previous",
+   "fieldtype": "Currency",
+   "label": "Retainage on Work Held Before This Period",
+   "read_only": 1
+  },
+  {
+   "fieldname": "work_completed_to_date",
+   "fieldtype": "Currency",
+   "label": "Work Completed to Date (D + E)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "label": "Phase",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_change_order",
+   "fieldtype": "Check",
+   "label": "Change Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "by_others",
+   "fieldtype": "Check",
+   "label": "By Others",
+   "read_only": 1
+  },
+  {
+   "fieldname": "line_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Line Key",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-20 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Pay Application Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
