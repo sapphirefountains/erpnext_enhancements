@@ -83,11 +83,14 @@ out.gate_won = fk.gate_for(flow, "Closed Won");
 out.gate_lost = fk.gate_for(flow, "Lost");
 out.gate_open = fk.gate_for(flow, "Needs Analysis");
 out.gate_none = fk.gate_for({}, "Closed Won");
-out.defs = fk.field_defs(flow, ["custom_budget_rank", "nope", "custom_scope_rank"]).map((f) => [f.fieldname, f.anchor]);
-const step = fk.panel_step("move", "T", "I", fk.field_defs(flow, flow.won.fields));
+// A DocType whose config declares a `won` with fields (none does since v1.799.0): the generic path.
+const won_flow = input.won_flow;
+out.gate_won_fields = fk.gate_for(won_flow, "Done");
+out.defs = fk.field_defs(won_flow, ["beta", "nope", "alpha"]).map((f) => [f.fieldname, f.anchor]);
+const step = fk.panel_step("move", "T", "I", fk.field_defs(won_flow, won_flow.won.fields));
 out.step = [step.key, step.synthetic, step.fields.length];
 out.missing_all = fk.gate_missing(step.fields, {}).map((f) => f.fieldname);
-out.missing_some = fk.gate_missing(step.fields, { custom_scope_rank: "1", custom_schedule_rank: " ", custom_budget_rank: 3 }).map((f) => f.fieldname);
+out.missing_some = fk.gate_missing(step.fields, { alpha: "1", beta: " " }).map((f) => f.fieldname);
 out.lost_fields = fk.lost_fields(flow.lost, (s) => "~" + s).map((f) => [f.fieldname, f.fieldtype, f.options || "", f.reqd || 0, f.label]);
 const create_step = {
 	fields: [
@@ -119,7 +122,7 @@ const closed_flow = Object.assign({}, flow, { closed: { field: "status", in: ["C
 out.undo_allowed = {
 	plain: fk.undo_allowed(closed_flow, { status: "Qualification", x: 1 }, { x: 2 }),
 	open_to_open: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Needs Analysis" }),
-	into_won: fk.undo_allowed(closed_flow, { status: "Proposal/Price Quote" }, { status: "Closed Won", custom_scope_rank: "1" }),
+	into_won: fk.undo_allowed(closed_flow, { status: "Proposal/Price Quote" }, { status: "Closed Won" }),
 	into_lost: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Lost" }),
 	into_converted: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Converted" }),
 	out_of_won: fk.undo_allowed(closed_flow, { status: "Closed Won" }, { status: "Qualification" }),
@@ -143,7 +146,7 @@ const q = fk.create_save_queue({
 	clear_timeout: () => {},
 });
 q.set_modified("m1");
-q.change("custom_scope_rank", "1");
+q.change("expected_closing", "2026-12-01");
 q.change("status", "Closed Won");
 out.manual_timers = timers.length;
 out.manual_state = q.state;
@@ -211,7 +214,7 @@ out.over_owner = [kit.bulk_request(big, picks40, "owner", {}).names.length, kit.
 const outcome = kit.bulk_outcome(["A", "B", "C", "D"], [
 	{ name: "A", ok: 1, modified: "m" },
 	{ name: "B", conflict: 1, modified_by: "office@example.com" },
-	{ name: "C", ok: 0, message: "Closed Won needs its ranks" },
+	{ name: "C", ok: 0, message: "Closed Won is won one deal at a time" },
 ]);
 out.outcome = outcome;
 out.after = kit.after_bulk(["A", "B", "C", "D"], outcome);
@@ -261,13 +264,12 @@ PAYLOAD = {
 	"currency": "USD",
 }
 
-RANKS = ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"]
-
-
 def _flow_field(fieldname, fieldtype="Data", **extra):
 	return {"fieldname": fieldname, "fieldtype": fieldtype, "label": fieldname, **extra}
 
 
+# The Opportunity flow as get_flow sends it since v1.799.0: no ``won`` (a move into Closed Won
+# carries only the status), ``lost`` as before.
 FLOW = {
 	"steps": [
 		{"key": "basics", "create": 1, "fields": [_flow_field("custom_opportunity_name", reqd=1, create=1)]},
@@ -276,17 +278,28 @@ FLOW = {
 			"fields": [
 				_flow_field("status", "Select"),
 				{"fieldtype": "Column Break", "fieldname": "cb"},
-				*[_flow_field(f, "Select", options="\n1\n2\n3") for f in RANKS],
+				_flow_field("expected_closing", "Date"),
 			],
 		},
 	],
-	"won": {"status": "Closed Won", "status_field": "status", "fields": RANKS},
 	"lost": {
 		"status": "Lost",
 		"status_field": "status",
 		"reasons": "Opportunity Lost Reason Detail",
 		"competitors": "Competitor Detail",
 	},
+}
+# A flow whose config declares a ``won`` with fields, for the panel's generic gate path.
+WON_FIELDS = ["alpha", "beta"]
+WON_FLOW = {
+	"steps": [
+		{"key": "basics", "create": 1, "fields": [_flow_field("title", reqd=1, create=1)]},
+		{
+			"key": "extra",
+			"fields": [_flow_field("status", "Select"), *[_flow_field(f, "Select", options="\n1\n2") for f in WON_FIELDS]],
+		},
+	],
+	"won": {"status": "Done", "status_field": "status", "fields": WON_FIELDS},
 }
 NEW_FLOW = {
 	"values": {"status": "Qualification", "opportunity_owner": None, "opportunity_from": "Lead"},
@@ -312,7 +325,7 @@ def _run_node():
 		shutil.copytree(BOARD_JS, folder / "opportunity_board")
 		shutil.copytree(FORM_KIT_JS, folder / "form_kit")
 		(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
-		payload = {"flow": FLOW, "new_flow": NEW_FLOW, "payload": PAYLOAD}
+		payload = {"flow": FLOW, "won_flow": WON_FLOW, "new_flow": NEW_FLOW, "payload": PAYLOAD}
 		proc = subprocess.run(
 			[node, str(folder / "runner.mjs"), str(folder), json.dumps(payload)],
 			capture_output=True,
@@ -331,21 +344,22 @@ class TestThePanelsDecisions(unittest.TestCase):
 	def setUpClass(cls):
 		cls.out = _run_node()
 
-	def test_a_move_into_closed_won_carries_the_ranks_and_lost_its_reasons(self):
+	def test_a_move_into_closed_won_carries_only_the_status_and_lost_its_reasons(self):
 		o = self.out
-		self.assertEqual(o["gate_won"], {"kind": "won", "status": "Closed Won", "fieldnames": RANKS})
+		self.assertIsNone(o["gate_won"], "Closed Won needs nothing beyond its status (v1.799.0)")
 		self.assertEqual(o["gate_lost"], {"kind": "lost", "status": "Lost"})
 		self.assertIsNone(o["gate_open"], "an open stage needs nothing beyond its status")
 		self.assertIsNone(o["gate_none"])
+		self.assertEqual(o["gate_won_fields"], {"kind": "won", "status": "Done", "fieldnames": WON_FIELDS})
 
 	def test_the_panels_own_step_is_built_from_the_flows_own_fields(self):
 		o = self.out
-		self.assertEqual(o["defs"], [["custom_budget_rank", "close"], ["custom_scope_rank", "close"]])
-		self.assertEqual(o["step"], ["move", 1, 3])
+		self.assertEqual(o["defs"], [["beta", "extra"], ["alpha", "extra"]])
+		self.assertEqual(o["step"], ["move", 1, 2])
 
 	def test_every_required_field_of_a_move_is_required_whatever_its_reqd(self):
-		self.assertEqual(self.out["missing_all"], RANKS)
-		self.assertEqual(self.out["missing_some"], ["custom_schedule_rank"])
+		self.assertEqual(self.out["missing_all"], WON_FIELDS)
+		self.assertEqual(self.out["missing_some"], ["beta"])
 
 	def test_set_as_lost_asks_the_same_three_things_everywhere(self):
 		self.assertEqual(
@@ -391,7 +405,7 @@ class TestThePanelsDecisions(unittest.TestCase):
 		o = self.out
 		self.assertEqual(o["manual_timers"], 0)
 		self.assertEqual(o["manual_state"], "dirty")
-		self.assertEqual(o["manual_sent"], [[{"custom_scope_rank": "1", "status": "Closed Won"}, "m1"]])
+		self.assertEqual(o["manual_sent"], [[{"expected_closing": "2026-12-01", "status": "Closed Won"}, "m1"]])
 		self.assertEqual(o["manual_after"], ["saved", "m2"])
 
 
@@ -482,7 +496,7 @@ class TestTheBoardsPartC(unittest.TestCase):
 
 	def test_bulk_offers_every_stage_but_an_unlisted_one_and_closed_won(self):
 		"""Closed Won is not a bulk move (review of #1286, a departure from P6.7's text): each won
-		deal needs its own ranks and its own hand-off prompt."""
+		deal needs its own hand-off prompt."""
 		self.assertEqual(
 			self.out["bulk_stages"],
 			["qualification", "needs-analysis", "on-hold", "lost", "replied"],
@@ -508,7 +522,7 @@ class TestTheBoardsPartC(unittest.TestCase):
 		self.assertEqual(o["conflicts"], [{"name": "B", "modified_by": "office@example.com"}])
 		self.assertEqual(
 			o["failed"],
-			[{"name": "C", "message": "Closed Won needs its ranks"}, {"name": "D", "message": ""}],
+			[{"name": "C", "message": "Closed Won is won one deal at a time"}, {"name": "D", "message": ""}],
 		)
 		self.assertEqual(o["total"], 4)
 		self.assertEqual(self.out["after"], ["B", "C", "D"])
@@ -662,8 +676,8 @@ def _install_frappe_stub():
 
 def _install_saver():
 	"""The form kit's saver, replaced by a recorder that keeps the real one's rules: the lock on
-	``modified`` (the conflict shape), write permission on the deal, Closed Won refused without its
-	three ranks, and only what the flow lets the person write assigned."""
+	``modified`` (the conflict shape), write permission on the deal, and only what the flow lets the
+	person write assigned."""
 	saver = types.ModuleType(SAVER)
 	frappe = sys.modules["frappe"]
 
@@ -688,10 +702,6 @@ def _install_saver():
 			return conflict
 		assigned = {k: v for k, v in values.items() if k not in STATE["not_writable"]}
 		after = {**doc.values, **assigned}
-		if after.get("status") == "Closed Won" and not all(
-			str(after.get(f) or "") in ("1", "2", "3") for f in RANKS
-		):
-			frappe.throw("<b>Scope Rank</b>, Schedule Rank and Budget Rank must be 1, 2 or 3.")
 		doc.values = after
 		doc.modified = datetime.datetime(2026, 10, 14, 10, 0, len(STATE["saves"]))
 		return {"name": name, "modified": str(doc.modified), "values": assigned, "completeness": {}}
@@ -758,7 +768,7 @@ class TestTheBulkEndpoint(unittest.TestCase):
 				"docs": {
 					"A": _Doc("A"),
 					"B": _Doc("B", "Needs Analysis"),
-					"C": _Doc("C", custom_scope_rank="2", custom_schedule_rank="1", custom_budget_rank="3"),
+					"C": _Doc("C"),
 					"W": _Doc("W", "Closed Won"),
 				},
 				"no_write": set(),
@@ -822,24 +832,16 @@ class TestTheBulkEndpoint(unittest.TestCase):
 		self.assertIn("which version", results[0]["message"])
 
 	def test_closed_won_is_never_a_bulk_move(self):
-		"""Review of #1286: each won deal needs its own ranks and its own hand-off prompt (twenty
-		stacked, none naming its deal, and Esc on one un-wins it), so a bulk win is refused before any
-		deal is touched, with or without ranks."""
-		ranks = {"custom_scope_rank": "1", "custom_schedule_rank": "2", "custom_budget_rank": "3"}
-		for values in ({"status": "Closed Won"}, {"status": "Closed Won", "ranks": ranks}):
-			with (
-				self.subTest(values=values),
-				self.assertRaises(sys.modules["frappe"].ValidationError) as caught,
-			):
-				self.bulk(["A", "C"], "stage", values)
-			self.assertEqual(str(caught.exception), self.mod.WIN_ONE_AT_A_TIME)
+		"""Review of #1286: each won deal needs its own hand-off prompt (twenty stacked, none naming
+		its deal, and Esc on one un-wins it), so a bulk win is refused before any deal is touched."""
+		with self.assertRaises(sys.modules["frappe"].ValidationError) as caught:
+			self.bulk(["A", "C"], "stage", {"status": "Closed Won"})
+		self.assertEqual(str(caught.exception), self.mod.WIN_ONE_AT_A_TIME)
 		self.assertEqual(STATE["saves"], [])
-		self.assertEqual(
-			self.mod.WIN_ONE_AT_A_TIME, "Win deals one at a time: each needs its own ranks and hand-off."
-		)
+		self.assertEqual(self.mod.WIN_ONE_AT_A_TIME, "Win deals one at a time: each needs its own hand-off.")
 
 	def test_an_open_stage_move_carries_only_the_status(self):
-		results = self.bulk(["A", "C"], "stage", {"status": "Proposal/Price Quote", "ranks": {"x": 1}})
+		results = self.bulk(["A", "C"], "stage", {"status": "Proposal/Price Quote", "extra": {"x": 1}})
 		self.assertEqual([r["ok"] for r in results], [1, 1])
 		self.assertEqual([s[2] for s in STATE["saves"]], [{"status": "Proposal/Price Quote"}] * 2)
 
@@ -1162,10 +1164,9 @@ class TestTheWiring(unittest.TestCase):
 	def test_the_bulk_panel_never_offers_or_sends_closed_won(self):
 		page = _code(PAGE_JS)
 		bulk = page[page.index("\trender_bulk() {") : page.index("\tbulk_outcome_html(outcome) {")]
-		self.assertNotIn("payload_values.ranks", bulk)
 		self.assertNotIn("flow.won", bulk)
 		self.assertIn('if (stage.gate === "won") return;', bulk)
-		self.assertIn("Win deals one at a time: each needs its own ranks and hand-off.", bulk)
+		self.assertIn("Win deals one at a time: each needs its own hand-off.", bulk)
 
 	def test_the_selection_storage_is_guarded(self):
 		page = _code(PAGE_JS)

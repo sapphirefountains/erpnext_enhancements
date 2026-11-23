@@ -119,6 +119,17 @@ Verified, and all of them expensive to rediscover:
   `inventory_enhancements/item_naming_rules.py` takes the last route and says why. **Note the
   failure direction: it passes.** An acceptance criterion or KPI written the obvious way
   reports clean forever and nobody goes looking.
+- **A Desk Page that shares its address with a DocType is never reached.** Frappe's router makes a
+  route out of every DocType the user can read by slugging its name (`warehouse-map` for
+  `Warehouse Map`), and asks "is the first part of the address a DocType?" before "is it a page?"
+  (`router.js` `setup` and `segment_kind`, read at v16.56.0; a Workspace is asked before both). So
+  a Page `warehouse-map` beside a DocType `Warehouse Map` opens the DocType's list view for
+  everyone who can read it, and the page for everyone who cannot: one address, two destinations,
+  no error in either. The Warehouse Map's DocType is `Warehouse Floor Map` for this reason
+  (v1.818.0). `tests/test_warehouse_map.py` holds every Page in the app against every DocType in
+  the app, and `tests/test_workspaces.py` does the same for Workspaces; neither can see a clash
+  with a DocType that ERPNext or Frappe ships, so check the name of a new Page against those by
+  hand.
 - **A `www/` controller whose filename contains a hyphen is never imported by Frappe**, so
   its `get_context()` silently never runs. `stripe-return.py` was broken this way from the
   day it was written. `scripts/check_www_controllers.py` guards it in CI.
@@ -219,6 +230,15 @@ Verified, and all of them expensive to rediscover:
   one Frappe derives. `tests/test_doctype_controller_names.py` fails the build on it now, and
   111 child tables plus 144 other doctypes were clean — this is a one-letter trap, not a
   widespread one. `override_doctype_class` entries are skipped by the sweep entirely.
+- **A `doctype_js` file and the bundle it `frappe.require`s can reach a Desk tab from two different
+  deploys.** The script travels in the form's meta; the bundle is resolved through the tab's
+  `frappe.boot.assets_json`, which is as old as the tab. A tab open across a deploy gets the new script
+  (meta cache cleared by another tab) over the old hashed bundle, or over a `window.sf_*` installed
+  earlier, and the first call to an export the old bundle lacks throws — v1.816.0 put "pt.merge_views is
+  not a function" in front of every Project opened in such a tab. So when a form script starts calling
+  something new from a bundle, bump the bundle's `VERSION` and the level the script checks before it
+  mounts (`REQUIRED_LOGIC_LEVEL` in `project_enhancements.js`); a too-old bundle draws a "Reload this page"
+  note, never a throw or a `msgprint`. `scripts/test_procurement_tracker.mjs` holds the two numbers equal.
 - **Merging to `main` does more than deploy this app's code.** The prod deploy `FLUSHDB`s
   **both** redis instances — `:13000` and `:11000` — and restarts the bench. The `:11000`
   flush destroys every queued background job, silently, whether or not it had anything to

@@ -214,7 +214,7 @@
     "type": "Document Type",
     "document_type": "QuickBooks Sync Mapping",
     "function": "Count",
-    "filters_json": "[[\"QuickBooks Sync Mapping\",\"conflict_status\",\"=\",\"Conflict\",false]]",
+    "filters_json": "[[\"QuickBooks Sync Mapping\",\"conflict_status\",\"in\",[\"Conflict\",\"QuickBooks Changed\"],false]]",
     "is_public": 1,
     "show_percentage_stats": 0,
     "stats_time_interval": "Weekly"

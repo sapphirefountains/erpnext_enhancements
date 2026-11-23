@@ -68,7 +68,9 @@ EMAIL_FOR_PHONE = {
 	("Customer", "custom_primary_phone"): "custom_primary_email_address",
 	("Lead", "custom_account_phone_number"): "custom_account_email",
 	("Lead", "custom_contact_phone_number"): "custom_contact_email",
-	("Supplier", "custom_phone_number"): "custom_email_address",
+	# ("Supplier", "custom_phone_number") pointed at custom_email_address until v1.799.1; that
+	# field is hidden (UI field audit, 0 of 1,214), so an email in a supplier's phone field is
+	# reported and left where it is.
 }
 
 #: Where a website found in an email field belongs, per doctype.

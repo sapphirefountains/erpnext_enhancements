@@ -114,6 +114,9 @@ MP.methods = {
 	add_crew: `${MP.api}.add_crew`,
 	// A Fountain Move task's day and crew (MPFM below): the Project Planner's write, on this page.
 	move_fountain_move: `${MP.api}.move_fountain_move`,
+	// v1.796.0 (MPDW below): a manager moves a visit onto a past day as a historical record, and Undo.
+	move_done_visit: "erpnext_enhancements.api.planner_history.move_done_visit",
+	restore_done_visit: "erpnext_enhancements.api.planner_history.restore_done_visit",
 };
 
 const mp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -202,6 +205,7 @@ class MaintenancePlanner {
 		this.init_phase6c();
 		this.init_phase6d();
 		this.init_phase6e();
+		this.init_done_work(); // v1.796.0: visits onto past days (MPDW)
 		this.init_phase_c1();
 		this.init_toolbar();
 		this.init_tour();
@@ -512,6 +516,11 @@ class MaintenancePlanner {
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
+		// v1.788.0: the tabs (and My day beside them) go last, after the tools, at the bar's right end, as
+		// the Project Planner's do (Nikolas, 2026-11-03). The phone's "Filters and tools" button is appended
+		// after them by init_toolbar.
+		$seg.appendTo($bar);
+		this.$myday.appendTo($bar);
 		this.update_undo_button();
 
 		// The key of the visit kinds is in the "?" help only (legend_sections); it was a row of its own
@@ -682,12 +691,26 @@ class MaintenancePlanner {
 		return __("Not a work day");
 	}
 
+	// The hours a free day shows beside its pencilled hours: the Project Planner's pp_hours_text (Nikolas,
+	// 2026-11-03: "Pencil should be the only hours displayed when something is tentative"). When the pencil
+	// covers the free hours only the pencil is said ("8h pencil"); otherwise both, with no plus sign.
+	hours_text(free, soft, free_text) {
+		const pencil = Math.max(0, Number(soft) || 0);
+		const open = Math.max(0, Number(free) || 0);
+		if (pencil <= 0.01) return free_text;
+		const pencil_text = __("{0}h pencil", [this.fmt_hours(pencil)]);
+		if (open > 0.01 && pencil + 0.01 >= open) return pencil_text;
+		return `${free_text} · ${pencil_text}`;
+	}
+
 	// The availability of one technician on one day, as a class and a short text. `kind` is one of
 	// off, over, full and free. `ratio` fills the capacity bar.
 	avail_state(cell) {
 		if (!cell) return { kind: "none", cls: "mp-idle", text: "", ratio: 0 };
 		const capacity = Number(cell.capacity) || 0;
 		const booked = Number(cell.booked) || 0;
+		// C1's soft hours (pencilled visits and tasks), said on the cell since v1.788.0, not only in its tooltip.
+		const soft = Math.max(0, Number(cell.soft_booked) || 0);
 		const over = booked - capacity;
 		let state;
 		if (capacity <= 0) {
@@ -704,12 +727,13 @@ class MaintenancePlanner {
 			state = {
 				kind: free > 0.01 ? "free" : "full",
 				cls: ratio <= 0.75 ? "mp-green" : "mp-amber",
-				text: free > 0.01 ? __("{0}h free", [this.fmt_hours(free)]) : __("Full"),
+				text: this.hours_text(free, soft, free > 0.01 ? __("{0}h free", [this.fmt_hours(free)]) : __("Full")),
 				ratio,
 			};
 			if (cell.off) state.text += ` · ${__("½ day off")}`;
 		}
 		if ((cell.conflicts || []).length) state.cls += " mp-conflict";
+		state.soft = soft;
 		return state;
 	}
 
@@ -852,6 +876,7 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.mph) this.mph.close(); // the hover card belongs to cards a redraw replaces (v1.788.0)
 		if (!this.data) return;
 		this.by_key = {};
 		this.day_cards = {};
@@ -1218,7 +1243,7 @@ class MaintenancePlanner {
 		const classes = [card.kind === "projected" ? "mp-projected" : `mp-${card.status}`];
 		if (card.label) classes.push(MP.extra_labels.includes(card.label) ? "mp-extra" : "mp-seasonal");
 		if (card.overdue && card.kind === "visit") classes.push("mp-overdue");
-		if (card.movable) classes.push("mp-movable");
+		if (card.movable || this.mpdw_can_move(card)) classes.push("mp-movable"); // v1.796.0: MPDW
 		if (card.saving) classes.push("mp-saving");
 		// C1 (v1.601.0): a pencilled visit is hatched like the Project Planner's pencil cards, and an
 		// unpublished draft gets the dashed outline Draft mode uses there.
@@ -1393,8 +1418,17 @@ class MaintenancePlanner {
 			if (e.key !== "Enter" && e.key !== " ") return;
 			const card_el = e.target.closest && e.target.closest(".mp-card");
 			if (!card_el) return;
-			e.preventDefault();
 			const card = this.by_key[card_el.getAttribute("data-key")];
+			// Ctrl+Enter (⌘Enter): the card's record in a new tab (v1.788.0).
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (e.repeat) return;
+				if (card && this.mpr_open_new_tab(card)) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+				return;
+			}
+			e.preventDefault();
 			if (card) this.mpr_open_card(card);
 		});
 	}
@@ -1422,7 +1456,8 @@ class MaintenancePlanner {
 		const card_el = el.closest(".mp-card");
 		if (!card_el) return null;
 		const card = this.by_key[card_el.getAttribute("data-key")];
-		if (!card || !card.movable || card.saving) return null;
+		// v1.796.0: a manager also picks up a finished or started visit, to move it to a past day (MPDW).
+		if (!card || !(card.movable || this.mpdw_can_move(card)) || card.saving) return null;
 		// In the crew view the same visit sits in each crew member's row: remember whose chip it is.
 		const row = card_el.getAttribute("data-row-user");
 		return { kind: "card", el: card_el, card, from_user: row == null ? null : row };
@@ -1541,7 +1576,8 @@ class MaintenancePlanner {
 		}
 		drag.target_el = target ? target.el : null;
 		if (!target) return;
-		target.el.classList.add(target.date && target.date < this.today() ? "mp-over-no" : "mp-over");
+		// v1.796.0: which days refuse depends on the card and on who drags it (MPDW).
+		target.el.classList.add(this.mpdw_no_drop(drag.source && drag.source.card, target.date) ? "mp-over-no" : "mp-over");
 	}
 
 	end_drag() {
@@ -1633,6 +1669,7 @@ class MaintenancePlanner {
 
 	drop(source, target) {
 		if (this.p6b_drop(source, target)) return;
+		if (this.mpdw_drop(source, target)) return; // v1.796.0: a visit onto a past day (MPDW)
 		const plan = this.plan_drop(source, target);
 		if (!plan) return;
 		if (plan.refuse) {
@@ -1644,7 +1681,10 @@ class MaintenancePlanner {
 			return;
 		}
 		if (plan.fm) {
-			this.fm_apply(plan.card, plan.fm);
+			const run = () => this.fm_apply(plan.card, plan.fm);
+			// v1.796.0: a manager may record a move job on a past day; it only asks first (MPDW).
+			if (plan.past) frappe.confirm(__("{0} is before today. Record the move job on a past day?", [mp_when(plan.past)]), run);
+			else run();
 			return;
 		}
 		this.apply(plan.card, plan.change);
@@ -1904,6 +1944,7 @@ class MaintenancePlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
+		if (this.mpdw_undo(snap)) return; // v1.796.0: exactly the dates the visit had (MPDW)
 		if (this.p6b_undo(snap)) return;
 		if (this.p6e_undo(snap)) return;
 		if (this.fm_undo(snap)) return;
@@ -2407,6 +2448,7 @@ const MP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.mps_kit_ready(); // Simple mode draws with the kit
+		this.mph_ready(); // v1.788.0: the hover card on a card
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -3295,6 +3337,13 @@ const MP6B_METHODS = {
 		const items = [
 			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
 			record ? { label: record, on_click: () => this.mpr_open_card(card) } : null,
+			record
+				? {
+						label: visit ? __("Open visit in new tab") : __("Open contract in new tab"),
+						hint: __("Ctrl+Enter"),
+						on_click: () => this.mpr_open_new_tab(card),
+				  }
+				: null,
 			{ label: __("Assign to…"), hint: movable ? "" : why, disabled: !movable, on_click: () => this.p6b_assign(card) },
 			this.p6b_next_free_item(card, movable, why),
 		].filter(Boolean);
@@ -4189,6 +4238,7 @@ const MP6B_METHODS = {
 					item(key("←") + key("→"), "The previous or next month or week."),
 					item(key("1") + key("2") + key("3"), "Month, week or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("Ctrl") + key("Enter"), "Open the focused visit or contract in a new tab (⌘Enter on a Mac)."),
 					item(key("/"), "Search visits, moves, sites and technicians."),
 					item(key("?"), "This help."),
 					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
@@ -6604,7 +6654,9 @@ const MPFM_METHODS = {
 	fm_plan_move(source, target) {
 		const card = source.card;
 		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
-		if (target.date !== card.date && target.date < this.today()) {
+		// v1.796.0: a manager may put a move job on a past day (a record of when it was done), after a yes.
+		const past = !!(target.date && target.date !== card.date && target.date < this.today());
+		if (past && !(this.data && this.data.can_backdate)) {
 			return { refuse: __("Move jobs can only be moved to today or a later day.") };
 		}
 		const change = {};
@@ -6625,7 +6677,7 @@ const MPFM_METHODS = {
 			change.from_user = row_user;
 			change.added = target.user;
 		}
-		return Object.keys(change).length ? { card, fm: change } : null;
+		return Object.keys(change).length ? { card, fm: change, past: past ? target.date : null } : null;
 	},
 
 	// Show it straight away, save it, reload: the reload is the truth.
@@ -8254,6 +8306,28 @@ const MPR_METHODS = {
 		this.open_card(card);
 	},
 
+	// The record behind a card (mpr_open_card's kinds), as records.record_of needs it. Null for a card
+	// with none (a projected visit's contract counts; a booking this person may not open does not).
+	mpr_record_of(card) {
+		const kit = this.mpr_kit();
+		if (!kit || !card) return null;
+		if (card.kind === "visit") return kit.records.record_of("visit", { name: card.name });
+		if (card.kind === "projected") return kit.records.record_of("projected", card);
+		if (card.kind === "move") return kit.records.record_of("move", { name: card.name });
+		if (card.kind === "booking") {
+			return kit.records.record_of(card.booking_kind === "travel" ? "travel" : "task", { ref: card.ref, open: card.open });
+		}
+		return null;
+	},
+
+	// The card's record in a new tab: the "Open … in new tab" menu item and Ctrl+Enter on a focused card
+	// (Nikolas, 2026-11-03). Through the kit's window.open on the record's Desk address, so this page, its
+	// history and its drafts stay as they are. False with nothing to open, and nothing happens then.
+	mpr_open_new_tab(card) {
+		const kit = this.mpr_kit();
+		return !!(kit && kit.records.open_new_tab(this.mpr_record_of(card)));
+	},
+
 	// Their Employee record, or their Planner Resource; their week when the server said neither opens
 	// for this person (`open_as`, api/planner_open.py: most planner users may open no Employee but
 	// their own).
@@ -8303,6 +8377,269 @@ const MPR_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MPR_METHODS);
+
+// ====================================================================== MPH: the hover card (v1.788.0)
+//
+// The Project Planner's hover card (PPH there), on this planner's cards: a visit, a projected visit, a
+// Fountain Move and a technician's project work. Drawn by the kit's popover (planner_kit/popover.js)
+// after a short delay from mph_card, which says what the card's title= lists, as rows: the site, the
+// visit, its day, time and hours, who goes, and what is wrong with it. Mouse and pen only.
+
+const MPH_METHODS = {
+	mph_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.popover || this.mph) return;
+		this.mph = kit.popover.attach(this.$body[0], { selector: ".mp-card[data-key]", describe: (el) => this.mph_describe(el) });
+	},
+
+	mph_describe(el) {
+		const card_el = el.closest(".mp-card[data-key]");
+		const card = card_el && this.by_key ? this.by_key[card_el.getAttribute("data-key")] : null;
+		return card ? this.mph_card(card) : null;
+	},
+
+	mph_card(card) {
+		const booking = card.kind === "booking";
+		const people = booking ? (card.technician ? [card.technician] : []) : this.visit_people(card);
+		const names = people.map((user) => this.tech_name(user));
+		const time = card.slot && card.slot.length === 2 ? card.slot.join("–") : "";
+		const hours = card.full_day
+			? __("Full day")
+			: Number(card.planned_hours) > 0
+			? __("{0}h each", [mp_hours(card.planned_hours)])
+			: Number(card.hours) > 0
+			? __("{0}h", [mp_hours(card.hours)])
+			: "";
+		const tags = [];
+		if (card.kind === "projected") tags.push(card.movable ? __("Next visit") : __("Projected"));
+		if (card.tentative) tags.push(__("Pencil (tentative)"));
+		if (card.drafted && this.draft_on) tags.push(__("Draft: not published yet"));
+		if (card.status === "pending") tags.push(__("Pending review"));
+		if (card.status === "done") tags.push(__("Done"));
+		if (booking) tags.push(__(MP.booking_kinds[card.booking_kind in MP.booking_kinds ? card.booking_kind : "task"]));
+		const what = booking
+			? ""
+			: card.label
+			? __(card.label)
+			: card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
+		const warnings = [];
+		if (card.overdue) warnings.push(__("Overdue"));
+		if (card.on_hold) warnings.push(__("On hold"));
+		if (card.flagged) warnings.push(__("Chemistry flagged"));
+		const day_cell = card.technician && card.date ? this.cell_of(card.technician, card.date) : null;
+		if (day_cell && this.is_off(day_cell)) warnings.push(`${__("Day off")}: ${this.off_label(day_cell)}`);
+		return {
+			title: booking ? card.label || card.ref || "" : this.site_of(card),
+			subtitle: booking ? card.project || "" : card.site_full && card.site_full !== card.site ? card.site_full : card.project || "",
+			tags,
+			rows: [
+				[__("Visit"), what],
+				[__("When"), card.date ? mp_when(card.date) : __("Not scheduled")],
+				[__("Time"), time],
+				[__("Hours"), hours],
+				[people.length > 1 ? __("Crew") : __("Who"), names.length ? names.join(", ") : __("Unassigned")],
+				[__("Record"), booking ? card.ref || "" : card.name || ""],
+			],
+			warnings,
+			notes: booking ? [__("Read-only. Move it on the Project Planner.")] : [],
+		};
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPH_METHODS);
+
+// ====================================================================== MPDW: visits onto past days (v1.796.0)
+//
+// Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
+// previously done tasks and such to old dates for historical reasons." His picks for this planner: a
+// submitted or in-review visit moves to another past day with its clock times, and an unstarted draft (or a
+// Fountain Move job, MPFM's fm_plan_move) can go on a past day. Managers only (the server's `backdate` and
+// `can_backdate`), and an automatic note on the visit. The server is api/planner_history.py.
+//
+// History, not schedule. A finished or started visit stays not `movable`, so its crew, technician, length,
+// pencil and every other gesture stay locked; `backdate` lets a manager drag it by its day, or pick the day
+// from its menu ("Move to a past day…"), and nothing else. An unstarted draft dropped on a day before today
+// asks first, then is recorded as done that day: its day of visit is set, so the Visit Wizard dates it there.
+// The write is move_done_visit, never move_visit: no reason, no "Notify crew?", never drafted (Draft mode
+// says so), nothing on the contract moves. The day is today or earlier. Undo puts back exactly the dates the
+// visit had (restore_done_visit).
+
+const MPDW_PURE = {
+	// Why a visit cannot be recorded on `ymd`, or null. Done work goes on today or an earlier day.
+	refusal(ymd, today) {
+		if (!ymd) return __("Pick the day the visit was done.");
+		if (ymd > today) return __("Done work goes on today or an earlier day.");
+		return null;
+	},
+};
+
+const MPDW_METHODS = {
+	init_done_work() {
+		// "Move to a past day…" on a visit's hold / right-click menu, for a manager.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.mpdw_menu_items(target));
+	},
+
+	// A finished, in-review or started visit this person may move to a past day (the server's `backdate`).
+	mpdw_can_move(card) {
+		return !!(card && card.kind === "visit" && card.backdate && !card.movable);
+	},
+
+	// Whether a drop on `ymd` is refused for the dragged card. Done work goes on today or earlier; a manager's
+	// unstarted draft or move job may go on any day; for anyone else a day before today is refused, as before.
+	mpdw_no_drop(card, ymd) {
+		if (!ymd) return false;
+		const today = this.today();
+		if (this.mpdw_can_move(card)) return ymd > today;
+		const may = !!(this.data && this.data.can_backdate);
+		if (card && may && (card.kind === "visit" || card.kind === "move")) return false;
+		return ymd < today;
+	},
+
+	// A visit dropped on a day: a finished or started one onto a past day, or an unstarted draft onto a day
+	// before today. True when it was one of those (handled here); false for every other drop.
+	mpdw_drop(source, target) {
+		const card = source && source.kind === "card" ? source.card : null;
+		if (!card || card.kind !== "visit" || !card.backdate || !target || !target.date) return false;
+		const today = this.today();
+		if (card.movable && (target.date >= today || target.date === card.date)) return false;
+		const site = this.site_of(card);
+		const row_user = source.from_user == null ? card.technician || "" : source.from_user;
+		if (target.row && (target.user || "") !== row_user) {
+			frappe.show_alert(
+				{ message: __("{0}: only its day moves onto a past day. Drop it on its own row.", [site]), indicator: "orange" },
+				7
+			);
+			return true;
+		}
+		if (target.date === card.date) return true;
+		const refusal = MPDW_PURE.refusal(target.date, today);
+		if (refusal) {
+			frappe.show_alert({ message: refusal, indicator: "orange" }, 6);
+			return true;
+		}
+		const run = () => this.mpdw_commit(card, target.date);
+		if (card.movable) {
+			frappe.confirm(
+				__("Record {0} as done on {1}? The visit is dated that day, and the technician fills it in from there.", [
+					site,
+					mp_when(target.date),
+				]),
+				run
+			);
+		} else {
+			run();
+		}
+		return true;
+	},
+
+	mpdw_menu_items(target) {
+		const card = target && target.kind === "card" ? target.card : null;
+		if (!card || card.kind !== "visit" || !card.backdate) return [];
+		return [
+			{
+				label: __("Move to a past day…"),
+				title: __("Record the day this visit was done"),
+				on_click: () => this.mpdw_dialog(card),
+			},
+		];
+	},
+
+	mpdw_dialog(card) {
+		const today = this.today();
+		const site = this.site_of(card);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Move to a past day"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "help",
+					options: `<p class="text-muted">${mp_esc(
+						__("The day {0} was done. Its scheduled day and clock times move with it, and a note goes on the visit.", [site])
+					)}</p>`,
+				},
+				{
+					fieldtype: "Date",
+					fieldname: "date",
+					label: __("Day of the visit"),
+					reqd: 1,
+					default: card.date && card.date <= today ? card.date : today,
+				},
+			],
+			primary_action_label: __("Move"),
+			primary_action: (values) => {
+				const ymd = values && values.date;
+				const refusal = MPDW_PURE.refusal(ymd, today);
+				if (refusal) {
+					frappe.msgprint(refusal);
+					return;
+				}
+				dialog.hide();
+				this.mpdw_commit(card, ymd);
+			},
+		});
+		dialog.show();
+	},
+
+	// Write the move, offer Undo, reload (the reload is the truth). Resolves with the answer, or null when
+	// nothing was written (a refusal has shown the server's own message).
+	mpdw_commit(card, ymd) {
+		const site = this.site_of(card);
+		card.saving = true;
+		this.render();
+		let message = __("{0} moved to {1}", [site, mp_when(ymd)]);
+		if (this.draft_on) message += ` (${__("saved now: a past day is never drafted")})`;
+		return Promise.resolve(
+			frappe.call({
+				method: MP.methods.move_done_visit,
+				args: { record: card.name, modified: this.modified[card.name] || card.modified, date: ymd },
+			})
+		)
+			.then((r) => {
+				const result = (r && r.message) || null;
+				if (!result || result.unchanged) return result;
+				if (result.name && result.modified) this.modified[result.name] = result.modified;
+				const toasted = this.push_undo({ kind: "mpdw", site, record: card.name }, message);
+				if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
+				(result.warnings || []).forEach((warning) => frappe.show_alert({ message: warning, indicator: "orange" }, 10));
+				return result;
+			})
+			.catch(() => null)
+			.finally(() => {
+				card.saving = false;
+				this.load();
+			});
+	},
+
+	// Undo of a move onto a past day: exactly the dates the visit had, blanks included, which the server
+	// kept when it moved (it takes none from here).
+	mpdw_undo(snap) {
+		if (!snap || snap.kind !== "mpdw") return false;
+		const card = this.by_key[snap.record];
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		Promise.resolve(
+			frappe.call({
+				method: MP.methods.restore_done_visit,
+				args: { record: snap.record, modified: this.modified[snap.record] || (card && card.modified) || "" },
+			})
+		)
+			.then((r) => {
+				const result = r && r.message;
+				if (!result) return;
+				if (result.name && result.modified) this.modified[result.name] = result.modified;
+				frappe.show_alert({ message: __("Undone: {0}", [snap.site]), indicator: "green" }, 5);
+			})
+			.catch(() => null)
+			.finally(() => this.load());
+		return true;
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPDW_METHODS);
+
 
 // ====================================================================== P12: the first-visit tour, and "?" for the views
 //

@@ -4,9 +4,308 @@ Orientation for the **Procurement Tracker**, the collapsible procurement tree on
 form's Budget tab.
 
 Written first as the groundwork for four queued changes, then updated once those landed
-(v1.194.0 – v1.197.0). Line references are against that merged state. Where a defect it
-originally documented has since been fixed, it says so rather than quietly dropping it — the
-reasoning is usually the part worth keeping.
+(v1.194.0 – v1.197.0). Line references are against that merged state, and **v1.811.0 moved most
+of them**: the widget's sorting moved into its own module and the renderer was restructured, so
+read a `:123` below as "about there, in the v1.197.0 file". Where a defect it originally
+documented has since been fixed, it says so rather than quietly dropping it — the reasoning is
+usually the part worth keeping.
+
+## v1.811.0: where it is now, filters, and the tracker by item
+
+Nik, 2026-11-12: *"it'd be nice to see what's where for items. So enhanced filtering and
+formatting of data."* Read this section first; it is the current shape.
+
+| Layer | Where |
+|---|---|
+| Endpoint the widget calls | `project_enhancements.get_procurement_overview` → `{groups, items, filters, located, today}`. `groups` is `get_procurement_documents`, unchanged in shape |
+| A line's state, the by-item rows, the filter choices | [`procurement_overview.py`](../erpnext_enhancements/procurement_overview.py) — app root, pure, no `frappe` import |
+| Where an item is now: the rule | [`inventory_enhancements/project_stock_rules.py`](../erpnext_enhancements/inventory_enhancements/project_stock_rules.py) — pure |
+| Where an item is now: the queries | [`inventory_enhancements/project_stock.py`](../erpnext_enhancements/inventory_enhancements/project_stock.py) — `places_for(project, item_codes)` |
+| The widget's decisions (filters, address, sorting, labels, print) | [`public/js/procurement_tracker/logic.js`](../erpnext_enhancements/public/js/procurement_tracker/logic.js), bundled as `procurement_tracker.bundle.js` → `window.sf_procurement_tracker`. The bundle's `VERSION` is an API level the form script checks (`REQUIRED_LOGIC_LEVEL`, v1.816.1): bump both together when the script needs a new export, or a tab open across a deploy shows a "Reload" note instead of the tracker |
+| The widget itself | `public/js/project_enhancements.js` — `mountProcurementTracker` (the Vue app and template) and `render_procurement_tracker` (load, unmount, mount) |
+
+**Where it is now.** ERPNext keeps on-hand by item and warehouse, with no project on that table.
+The stock ledger does carry the project, so the answer is built from the ledger rows that name
+the job, added up by item and warehouse and **capped at what the Bin row holds now** (a move or a
+count made with no job on it takes stock away without the ledger saying whose it was). At the
+job's own site warehouse everything on hand is the job's, so the Bin rows there are read as they
+stand. A Material Issue or delivery with the job on it is *taken to the job*; a purchase return is
+*returned to the supplier*; what the purchasing documents say arrived and nothing accounts for is
+*place not recorded*, said in those words. A non-stock item reads *Location not tracked (not a
+stock item)*.
+
+Two refinements, both from the review of the first version:
+
+- **Parts brought back are counted once.** A Material Receipt with the job on it is parts coming
+  back from the job (`ledger_kind` → `LEDGER_BROUGHT_BACK`): they are at the place they came back
+  to, and what came back is taken off "taken to the job", never below zero.
+- **The Project Shelf's number is one number.** With the Project Shelf's module installed,
+  `places_for` takes the job's share of the shelf from `project_shelf.shelf_stock` (through
+  `project_stock._shelf_rows`, the adapter the Bin Manager also uses) and hands it to
+  `item_places` as `held`, instead of its own ledger sum. That function shares a short shelf out
+  between the jobs that claim it, so the tracker and the Bin Manager's By project view cannot
+  disagree. Without the module the ledger rule is already the answer on both screens.
+
+It is **per item for the project, not per line**: two lines of one item share one answer, and the
+cell says so (`where_now_lines`). The old Warehouse column, where the line was *received*, is
+still there as "Received at …" under the places, and still on the row as `warehouse` /
+`received_at`.
+
+The lookup is a fixed handful of queries for the whole project (the ledger grouped once, the Bin
+rows at the warehouses involved, their names, the items, and the job sites), never one per line.
+If it fails, the feed still answers, `located` is false, the widget says the locations could not
+be read, and the failure is in the Error Log.
+
+**The Project Shelf** is whatever `inventory_enhancements/project_shelf.py::warehouse()` says
+(another release's module, settled 2026-11-12). `project_stock.shelf_warehouse` imports it where
+it is used; on a site whose code does not have it yet, the setting
+`Inventory Scanner Settings.project_shelf_warehouse` is read with `Document.get`, and a site
+without that field has no shelf, so the old `Stores` is simply a named shop location.
+
+**Returned to the supplier** has two sources that describe the same goods: the ledger's
+purchase-return rows that name the job, and `supplier_returns.returned_lines(project=...)` (the
+Supplier Return record, another release again, imported the same way). They are never added; the
+larger figure is the place. Each Supplier Return that names the item is listed under the places
+with its status (`supplier_returns` on the row), "sent back" once its goods have left and "to go
+back" before, for a non-stock item too.
+
+**A line's state** is one of To order, Ordered, Partly received, Received, Late, Closed (plus
+Quote only and Bill only for documents that never joined a chain), from the line's own
+quantities. It is what the Status column now shows and what the status filter matches;
+`order_status` and `receive_status` are still on every row and still drive the Doc Chain badge
+and the document rollup. Three decisions worth knowing:
+
+- **Closed is not late.** An order that was closed (or delivered straight to the customer) with
+  goods outstanding, or a stopped request, is *Closed*: nobody is chasing it. 148 order lines on
+  production sat on orders closed with nothing received.
+- **A draft order is not an order**, so a line that sits only on a draft is *To order*. That
+  holds for a draft the per-doctype sweep finds too (`_minimal_item_row` reports its quantity as
+  `draft_ordered_qty`, as a chain row does).
+- **A split line is late per order.** One request line across two orders arrives as two rows,
+  each with the request's totals and its own order's date. The order that delivered its share is
+  not late because the other one is.
+
+**The by-item view** is one row per item for the project: requested, ordered and received across
+every document (de-duplicated on the child row before summing, quotes and bills left out of the
+quantities but kept in the Documents column), status, where it is now, the due date, suppliers
+and documents. It has its own **Print list**: the items on screen with where each is now, as a
+plain page for the browser's print dialog. The document PDFs were left alone on purpose: they go
+to suppliers.
+
+**Filters, and the address.** Where (Project Shelf, Job site, Shop bins, Taken to the job,
+Returned to supplier, Not received yet, Location not tracked), Status, Supplier and "Needs action
+only", plus the search box. Only choices that match at least one line are offered. The view and
+every filter are written into the address as `pt_view`, `pt_where`, `pt_status`, `pt_supplier`,
+`pt_action` and `pt_q` with `history.replaceState`: they survive a reload, come back with Back and
+Forward, and travel in a shared link, and a filter is never a history entry of its own. frappe
+copies an address's query into `frappe.route_options` on every route change; the widget takes its
+own keys back out so the next list view is not asked to filter on them.
+
+**Status labels** are the Desk's own badge (`.es-badge` with `data-theme`), with fallback colours
+for a Desk that predates it. `.status-badge` is no longer used here (the Tasks tree still uses it).
+
+**The address write waits a quarter of a second** (typing must not write it per key), and a write
+still waiting when the form refreshes is cancelled with its app (`beforeUnmount`), so the old view
+is never put back over the new one.
+
+**Three old gotchas are closed** (see *Gotchas*): the Vue app is unmounted before the next one is
+mounted, nothing reaches `v-html` unescaped, and the mount target is no longer a document-global
+id. What is expanded and how each table is sorted now survives a form refresh (`frm.__pt_keep`).
+
+**Return (Supplier Returns, v1.807.0).** `canReturn`, `returnToSupplier` and `canReturnLine` live
+in `mountProcurementTracker` with the other row actions: a Return button on a submitted receipt's
+header and a Return link on a line's receipt step, both through the launcher in
+`public/js/supplier_return_start.js` (an unsaved Supplier Return; nothing is saved, emailed or
+moved until its own form does it). `tests/test_supplier_returns.py` holds the script to them, and
+`tests/test_tracker_supplier_returns.py` runs the tracker's reading of returns against the real
+`returned_lines`.
+
+**The assistant tool** gained `view="items"`, and every item row in every view carries the new
+keys (`line_state`, `line_states`, `needs_action`, `is_late`, `expected_date`, `supplier`,
+`where_now`, `where_now_text`, `location_tracked`, `location_kinds`, `received_at`). Nothing was
+renamed or removed.
+
+## v1.814.0: what was spent
+
+Nik, 2026-11-12: *"on the procurement tracker, there should be another column for the price of the
+item we spent."* A reading of it, built and open to correction; read it after the v1.811.0 section.
+
+| Layer | Where |
+|---|---|
+| The rules: what a line costs, no price vs no charge, spent, unit price, a document's total | [`procurement_prices.py`](../erpnext_enhancements/procurement_prices.py) — app root, pure |
+| The price columns of the query, who may see them | `project_enhancements/__init__.py` — `_chain_rows(project, prices)`, `_price_access`, `_price_total`, `_line_counts` |
+| By-item sums | `procurement_overview.by_item(rows, today, prices=True)` → `procurement_prices.item_spending` |
+| The widget | `logic.js` (`price_cells`, `price_text`, `item_price_view`, `doc_price_text`, `spent_summary`, the `rate` / `amount` / `unit_price` / `spent` sort columns, the `pt_noprice` filter) and `mountProcurementTracker` |
+
+- **ERPNext holds no bills.** The only price is the purchase order line's rate. **Spent is what
+  was ordered** (the submitted lines' own `base_amount`, company currency); the received value
+  (`received_value`, received quantity times `base_rate`) is a second figure. Neither is "billed" or
+  "paid", and nothing on screen says so.
+- **A missing price is not a zero.** `price_state` is `priced`, `no_price` (rate 0 or blank) or
+  `no_charge` (rate 0 and `is_free_item`). A `no_price` line carries no `po_rate` / `po_amount`, is
+  left out of every sum, and is counted (`no_price_lines`). Purchase Order Item has no
+  `allow_zero_valuation_rate` (Purchase Receipt Item has, and the receipt-only path reads it).
+- **What Spent is not.** It is the sum of the order lines' own `base_amount`. It leaves out a
+  discount applied to the whole order, taxes and freight, and it counts an order closed short in
+  full; a discount on the line itself is in the rate, so it is in the amount. Example: 10 units at
+  $10 with a 10% discount on the whole order shows $100, where the order's net is $90. The column's
+  tooltip (`SPENT_NOTE` in `logic.js`) says so.
+- **A quote is not a spend.** `quote_*` keys, shown on the line as "quote" and "quoted, not
+  spent", never in `spent`. A request or an RFQ has no price.
+- **Only a document that exists is priced.** The chain query's quotation and receipt joins have no
+  docstatus filter (they never did), so a canceled document's line is in the rows. The query selects
+  `pr.docstatus` and `sq.docstatus`, and `price_keys` skips a canceled quote or receipt (no quote, no
+  value total) and carries a draft one with `quote_docstatus` / `receipt_docstatus` 0, which the
+  tracker labels "draft". Which documents are listed is unchanged.
+- **A draft is not an order**, as for quantities: `draft_spent`, not `spent`. A cancelled order's
+  line (its join comes back empty) has none.
+- **Money is keyed on the order line.** One request line split across two orders is one request
+  line and two prices; `dedupe_lines` (request-line grain) is the wrong grain for it, so
+  `procurement_prices._distinct` keys on `po_item`. An order line seen twice (the receipt and invoice
+  joins repeat it) counts once.
+- **A receipt is valued at the order's rate**, not its own copied one (`receipt_value`): the receipt
+  line's rate is 0 exactly where the price was left off the order and added later with Update Items.
+- **An order can span jobs.** `price_total` is this job's lines (`job_lines`), with `doc_lines` from
+  one `count(*) group by parent` per doctype, `partial` when they differ and `doc_total` (the
+  order's own `base_total`) then. The sweep skips a line that names another job.
+- **Who sees it, and the known limit.** The endpoints and the Project form ask only for Project read.
+  `_price_access()` returns `None` unless the person may read Purchase Orders (quotes: Supplier Quotation too), and then
+  no price key is on any row, item or document, `prices` is absent from the overview and the widget
+  draws no price column. `test_procurement_prices.py` holds this, and holds every pre-existing key.
+  **Known limit:** the feed applies no User Permissions (it reads with `get_all`), so if someone is
+  ever restricted by supplier or by order, the tracker would have to apply that too. On production no
+  User Permission restricts Purchase Order or Supplier today.
+- **Units.** `po_unit_rate` is per stock unit (`base_rate / conversion_factor`). On production an
+  FT line and a Unit line of one item can both have factor 1, so a range can be two prices for two
+  things: `price_uoms` lists the units and the cell says "Priced per FT and per Unit".
+- **Print.** The by-item Print list gains Unit price and Spent and a total, on a landscape page. The
+  document PDFs (`procurement_print.py`) are Frappe's own print formats and go to suppliers: untouched.
+- **The address** carries the new filter as `pt_noprice=1` beside the others, written with
+  `history.replaceState`; a person who is sent no prices has it switched off on load.
+
+## v1.816.0: saved views, the column picker and filters on columns
+
+Nik, 2026-11-12: *"for the Procurement Tracker, allow users to create special views and columns they
+see. That would let them create a view for auditing location of bins, or seeing financial information.
+These views should have some default presets, but everyone should be able to make custom views just for
+them and the browser remembers the last used layout. Column picking and filtering should be a thing."*
+Read it after the two sections above.
+
+| Layer | Where |
+|---|---|
+| What a view may hold, repair of a stored one, owner / quota / name rules | [`procurement_view_rules.py`](../erpnext_enhancements/procurement_view_rules.py) — app root, pure |
+| The columns, tests, limits and the shipped presets (one file, read by both sides) | [`data/procurement_tracker_views.json`](../erpnext_enhancements/data/procurement_tracker_views.json) |
+| The endpoints | [`procurement_views.py`](../erpnext_enhancements/procurement_views.py) — `get_views`, `save_view`, `rename_view`, `delete_view` |
+| The record | `Procurement Tracker View` — [`project_enhancements/doctype/procurement_tracker_view/`](../erpnext_enhancements/project_enhancements/doctype/procurement_tracker_view/) |
+| The widget's decisions | `logic.js`, section *saved views*: `clean_layout`, `resolve_start`, `shown_columns`, `rule_matches`, `write_view_query`, `remember` / `parse_remembered` |
+| The widget | `mountProcurementTracker`: the View / Columns / Column filters panels and the filter bar |
+
+**A view** is `{columns, sort, filters}` for one grouping. `filters` is the five that were always on
+the toolbar (Where, Status, Supplier, Needs action, No price only) plus `rules`: filters on a column,
+each `{column, op, ...}` with *contains* (text), *is any of* (a status, a place or a supplier),
+*is between* (a number or a date, either end optional) or *is blank / not blank*. Several rules all
+have to hold. A view never holds the search box. Every column of the two tables is in the picker;
+**the fields added to the picker are ones the feed already returned**, so there is no new query:
+
+| Column | Grouping | Field |
+|---|---|---|
+| Still to order, Still to arrive | both | `to_order_qty`, `waiting_qty` |
+| Due | by document (by item had it) | `expected_date` |
+| Supplier | by document (by item had it) | `supplier` |
+| Received at, Unit | both | `warehouse` / `received_at`, `stock_uom` |
+| Lines on this job | by item | `line_count` |
+| Received value, Lines with no price | by item (prices) | `received_value`, `no_price_lines` + `draft_no_price_lines` |
+
+*Not added, for a later change* (each would need a new query or a new field): the supplier's contact,
+what the item cost last time, the bin's own label (the where-now cell names the warehouse, not the
+shelf position), the receipt's date, who made the request, the project's cost code.
+
+**The presets** (`presets` in the JSON file; their columns and filters are in the pull request that
+added them, and a test holds each one to a layout the server accepts):
+
+| Preset | Grouping | Shows | Filters |
+|---|---|---|---|
+| Standard | document | the tracker as it was: Item, Where it is now, Requested, Ordered, Received, Rate, Amount, Status, Doc Chain | none |
+| Standard | item | Item, Requested, Ordered, Received, Unit price, Spent, Status, Where it is now, Due, Supplier, Documents | none |
+| Location audit | item | Item, Unit, Received, Still to arrive, Where it is now, Received at, Status, Due | none; sorted by Status, most urgent first |
+| Items with no place recorded | item | Item, Unit, Received, Where it is now, Received at, Status | Where it is now contains "no place recorded" |
+| Money (by item) | item | Item, Ordered, Received, Unit price, Spent, Received value, Lines with no price, Supplier, Status | none |
+| Money (by document) | document | Item, Ordered, Received, Rate, Amount, Supplier, Status | none |
+| Missing prices | item | Item, Ordered, Received, Unit price, Lines with no price, Supplier, Documents | No price only |
+| To chase | item | Item, Ordered, Received, Still to arrive, Status, Due, Supplier, Documents | Needs action only; sorted by Status |
+
+Two money views because Rate and Amount exist only by document and Unit price and Spent only by item.
+The "no place recorded" preset depends on the words `project_stock_rules.place_text` writes for
+`KIND_UNRECORDED` (a test holds the phrase to it).
+
+**Where views live, and why.** `Procurement Tracker View`, owned by whoever made it (Frappe's own
+`owner`), not per project. **Not `frappe.model.user_settings`:** on this site user settings are served
+from Redis and every deploy `FLUSHDB`s it (see the gotcha in `CLAUDE.md`). The DocType gives **no
+role but System Manager any permission**, so `/api/resource` and reports reach none of them; people use
+the four endpoints in `procurement_views.py`, which gate on Project read, check the owner before every
+read of a record, change and delete (a stranger's view reads as "not found", exactly like one that does
+not exist), hold the layout to the strict validator, and write only the caller's own records.
+`validate` on the controller is the backstop for the Desk form. A person keeps 50 views, with distinct
+names (ignoring case and spacing); a view keeps its grouping, and Save a copy is how a built-in one is
+changed. Reading never writes: `get_views` repairs a stored layout on the way out (an unknown column
+dropped, a filter that no longer fits dropped, nothing usable becomes the standard layout) and says
+`repaired`, so one bad record cannot break the tracker.
+
+**Who sees what is unchanged.** A layout is names, not data. The price keys are not in the response
+for a person who may not read Purchase Orders (`_price_access`, v1.814.0), so a view that names a price
+column has nothing to draw for them; `shown_columns` leaves it out and the tracker says which columns
+of the view are missing and why ("... not shown to you: prices are for people who may read Purchase
+Orders"), and a filter on a price column is set aside the same way. The picker lists the price columns
+for them as not available. A person without price access saving a copy of the Money view keeps its price
+column names; they simply do not draw for them.
+
+**Where a layout comes from when the tracker opens** (`resolve_start`, tested in the node suite):
+
+1. The **address** wins when it names a view or a filter (any `pt_*` key). `pt_layout` is the view's id
+   (absent for the two standard views, as a plain address already means them); `pt_view` is the
+   grouping. A view in the link that is not the person's (a stranger's id, a deleted one) opens the
+   standard view and says so.
+2. **Every filter comes from the address**, over the view's own: the five toolbar filters (absent means
+   the view's own, which for Standard is off) and the filters on columns (`pt_rules`, JSON, written only
+   where they differ from the view's own and only up to 1,500 characters). **Never from this person's
+   memory**: a link must show the recipient the rows its sender saw. Only what cannot hide a row, the
+   columns and the sort, comes back from what the form kept across a refresh or the browser's memory, and
+   only when that memory is of the same view.
+3. With **no address at all**, the browser's last layout is used, else Standard by document. A remembered
+   view that no longer exists (deleted on another device) opens Standard with a note; when the saved views
+   could not be loaded at all (`views_ok` false) its id is kept, so a failed request does not erase it.
+
+The address also says when a filter the view has on has been turned **off** (`pt_action=0`,
+`pt_status=`), otherwise a reload would bring a cleared filter back from the saved view. It is written
+with `history.replaceState`, like every other key: **never a history entry, so Back and Forward are
+untouched**. Opening a view, changing a column or a filter writes nothing to the Project form
+(`frm.doc` is never touched), so the form is not marked changed.
+
+**What the browser remembers** is `localStorage["sf_pt_layout_v1:<user>"]`: per person (a shared
+browser does not leak one person's view names to another) and per grouping (going to By item and back
+brings By document back as it was), `{id, layout}` each, the search left out. Every access is in
+`try`/`catch`; without storage the tracker works and the layout is kept only for the life of the form
+(`frm.__pt_keep.layout`). What is read back is cleaned like any stored view, so a layout written by an
+older release is mended and an unreadable one is ignored. A write still waiting when the form refreshes
+is made, not dropped.
+
+**Switching grouping** takes the layout last used in that grouping (or its Standard view) and carries every
+toolbar filter and the search across as they stand now, an unticked one included
+(`switch_grouping`); the filters on columns stay with their view.
+
+**A sort.** A click on a header in By item changes the view's sort (a change to the view). A click on a
+document's table is that document's own, as before; the view's sort is the starting point of every
+document's table. "Not sorted" in the Columns panel clears it.
+
+**The tracker never waits on the views.** `get_views` is fetched beside the feed and the tracker draws
+after at most four seconds without it (frappe never calls the error callback for a query timeout or a
+deadlock, so settling on the callbacks alone could hang); the server answers `unavailable` instead of a
+500 when it cannot read the table (a deploy not yet migrated). **Known limits.** A very long set of filters
+on columns does not fit an address and is left out of it. A person without Purchase Order read who opens
+Missing prices sees every item and is told why. A view shared by link opens for somebody else only if it is a built-in one; there is no
+sharing of personal views (not asked for). The picker reorders with up and down buttons, not by dragging.
+The by-item **Print list** still prints its own fixed columns, not the view's. Not run on a bench: see the
+pull request.
 
 ## First, the name collision
 
@@ -430,13 +729,6 @@ submitted Purchase Orders across 160 submitted MR item rows: **zero discrepancie
 
 Still open:
 
-- **The Vue app is never unmounted.** Every `refresh` does `$(wrapper).html(...)` and then
-  `createApp(...).mount(...)` on a fresh node, orphaning the previous instance with its watchers
-  still live. The mount target is a hard-coded document-global id, `#procurement-tracker-app`.
-  Fixing this is the prerequisite for any realtime refresh.
-- **`v-html` on unescaped data.** `highlight()` escapes the *search tokens* for the regex, but
-  never escapes `text` — item codes, item names, warehouses, supplier names and document names
-  all reach the DOM raw.
 - **`_supplementary_documents` swallows every exception** — a bare `except Exception` with
   `frappe.log_error`. A doctype whose sweep fails silently vanishes from the feed rather than
   erroring.
@@ -451,6 +743,14 @@ Still open:
 
 Closed, and worth not reintroducing:
 
+- The Vue app never being unmounted: every `refresh` mounted a new app over the last one's node
+  and left the old one alive with its watchers. `render_procurement_tracker` unmounts it first,
+  and mounts on its own node rather than a document-global id (v1.811.0).
+- `v-html` on unescaped data: item codes, names, suppliers and document names reached the DOM
+  raw. Every `v-html` now goes through `hl()` → `logic.highlight_html`, which escapes each piece
+  (v1.811.0; `tests/test_project_stock.py` holds the template to it).
+- A submitted Purchase Receipt with no order behind it (a store run) reading "Not Received" on
+  the receipt that received it (v1.811.0, `_minimal_item_row`).
 - The item row inheriting its parent's status (v1.194.0).
 - `ordered_qty` falling back to the requested quantity (v1.194.0).
 - `getStatusColorClass` collapsing partial and complete into one class (v1.194.0).
@@ -477,6 +777,14 @@ Closed, and worth not reintroducing:
 - [`tests/test_procurement_status.py`](../erpnext_enhancements/tests/test_procurement_status.py)
   — **bench-required**, so it does *not* run in CI. Carries the end-to-end reproduction through
   the real query, plus the draft-PO case.
+
+- [`tests/test_procurement_overview.py`](../erpnext_enhancements/tests/test_procurement_overview.py)
+  — bench-free **pytest**, own CI step: the where-now rule, the line states, the by-item sums.
+- [`tests/test_project_stock.py`](../erpnext_enhancements/tests/test_project_stock.py)
+  — bench-free unittest on its own `frappe` stub, own CI step: the lookup's queries, the feed's
+  new functions lifted out of the package, and the UNION's two column lists held equal.
+- [`scripts/test_procurement_tracker.mjs`](../scripts/test_procurement_tracker.mjs)
+  — node, own CI step: the widget's pure logic.
 
 Note the split is load-bearing: the pytest suite is bench-free and runs on every push; the
 unittest-style bench suite needs `bench --site <site> run-tests`. A new *pytest* suite must be

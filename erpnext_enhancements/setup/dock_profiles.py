@@ -75,6 +75,10 @@ TRAVEL = ("Workspace", "Travel")
 TRAINING = ("Workspace", "Training")
 KPI_DASHBOARDS = ("Workspace", "KPI Dashboards")
 WATER_ENGINEERING = ("Workspace", "Water Engineering")
+# The guided Fountain Designer page (phase F of the rebuild, TASK-2026-03018), beside its workspace.
+# The Water Engineering Wizard it replaced never had a Dock row of its own; it was retired in v1.771.0
+# (phase H) and /desk/water-engineering-wizard now lands here (global_enhancements/retired_routes.js).
+FOUNTAIN_DESIGNER = ("URL", "/desk/fountain-designer")
 QUICKBOOKS = ("Workspace", "QuickBooks Online")
 AI_GOVERNANCE = ("Workspace", "AI Governance")
 MORNING_BRIEFING = ("Workspace", "Morning Briefing")
@@ -133,7 +137,7 @@ PROFILES = {
 	"Finance": (ACCOUNTS, QUICKBOOKS, SELLING, PROJECTS, MAINTENANCE),
 	"Purchasing": (BUYING, STOCK, PROJECTS),
 	"Production Lead": (PROJECTS, OPPORTUNITIES, BUYING, STOCK, MAINTENANCE),
-	"Design": (PROJECTS, OPPORTUNITIES, BUYING, WATER_ENGINEERING),
+	"Design": (PROJECTS, OPPORTUNITIES, BUYING, WATER_ENGINEERING, FOUNTAIN_DESIGNER),
 	"Field Tech": tuple(entry for entry, _tile in FIELD_TECH),
 }
 

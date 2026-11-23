@@ -344,7 +344,7 @@ def jet_trajectory(
                 "nozzle_type": make_input(nozzle_type, "", "user"),
                 "k": make_input(k, "", "standard", "jet efficiency"),
             },
-            formula="required_head = target_height / k ; psi = head / 2.31",
+            formula="required_head = target_height / k ; psi = head / 2.308966",
             steps=[
                 f"k({nozzle_type}) = {k:g}",
                 f"required head = {th:g} / {k:g} = {req_head:.2f} ft = {req_psi:.2f} psi at the nozzle",

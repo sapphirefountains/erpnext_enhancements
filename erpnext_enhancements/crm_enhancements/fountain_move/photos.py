@@ -174,8 +174,11 @@ def mirror_to_drive(docname, attempt=1):
 
 
 def _target_for(req, doctype):
+	# A match confirmed by staff (``api.confirm_match``) leaves the existing Customer's
+	# Drive folder alone: only the new Opportunity receives the photos.
+	customer = None if req.get("match_confirmed_by") else req.created_customer
 	return {
-		"Customer": req.created_customer,
+		"Customer": customer,
 		"Opportunity": req.created_opportunity,
 		"Project": None,
 	}.get(doctype)

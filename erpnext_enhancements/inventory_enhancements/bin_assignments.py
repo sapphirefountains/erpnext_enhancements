@@ -92,6 +92,8 @@ from frappe import _
 from frappe.utils import cint, cstr, flt, now_datetime
 
 from erpnext_enhancements.api import stock_scan as scan
+from erpnext_enhancements.inventory_enhancements import job_sites
+from erpnext_enhancements.inventory_enhancements import project_shelf
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as rules
 
 RULE = "Putaway Rule"
@@ -196,6 +198,10 @@ def _assignable_location(warehouse):
 	if not location.company:
 		frappe.throw(_("{0} belongs to no company, so nothing can be put on it.").format(name))
 	_refuse_boneyard(location)
+	# Nor to a job's site (v1.801.0): stock is sent there and used there, never kept there.
+	job_sites.refuse_as_bin(location)
+	# Nor to the Project Shelf (v1.817.0): parts wait there for their job and leave.
+	project_shelf.refuse_as_bin(location)
 	return location
 
 
@@ -623,7 +629,7 @@ def _plan_source(item, source, qty):
 
 
 @frappe.whitelist(methods=["POST"])
-def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0):
+def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=0, project=None):
 	"""Push stock out of the bin being managed (``from_warehouse``) into another bin: a submitted
 	Material Transfer, the same voucher *Move here* posts (``api.stock_scan._transfer_entry``).
 
@@ -632,6 +638,17 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	Item Default pointing at it cleared). A partial move keeps the source assigned and says so
 	(``log.source_kept`` and the message). The boneyard is refused as a home before anything is
 	posted. Off by default; the pages tick it when the whole quantity moves.
+
+	**To or from a job's site** (v1.801.0, ``job_sites``) this is the same transfer, and it
+	carries that job: on the stock entry, so both ledger rows name the Project, and on the log
+	row. A site is refused as a home exactly as the boneyard is. The page reaches a site through
+	``api.stock_scan.job_site``, which opens the job's site warehouse the first time.
+
+	**To or from the Project Shelf** (v1.817.0) the transfer always carries a job
+	(``api.stock_scan._transfer_project``): ``project`` is the job the stock was bought for when
+	it is released to a bin, or the job it is set aside for when it goes onto the shelf. Left
+	out on a move off the shelf, the one job that holds the item there is used; with several or
+	none, the move is refused and says to name one. The shelf is refused as a home too.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -648,13 +665,24 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	release, left, defaults = False, 0.0, []
 	if home:
 		_refuse_boneyard(destination)
+		job_sites.refuse_as_bin(destination)
+		project_shelf.refuse_as_bin(destination)
 		require_manage()
 		_check_capacity(item, destination, adding=qty)
 		release, left, defaults = _plan_source(item, source, qty)
+	job = scan._transfer_project(source, destination, item, project)
 	scan._require("Stock Entry", "create", "submit")
 
-	log = scan._begin_log(ref, rules.ACTION_MOVE_TO, item, qty, destination, from_warehouse=source.name)
-	se = scan._transfer_entry(rules.ACTION_MOVE_TO, item, qty, source, destination)
+	log = scan._begin_log(
+		ref,
+		rules.ACTION_MOVE_TO,
+		item,
+		qty,
+		destination,
+		from_warehouse=source.name,
+		project=job,
+	)
+	se = scan._transfer_entry(rules.ACTION_MOVE_TO, item, qty, source, destination, project=job)
 	scan._post(se)
 	rule, changes = None, []
 	if home:
@@ -702,7 +730,7 @@ def _boneyard_for(source):
 
 
 @frappe.whitelist(methods=["POST"])
-def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
+def send_to_boneyard(item_code, from_warehouse, qty, client_ref, project=None):
 	"""Send stock a bin no longer keeps to the boneyard, and take the item off that bin.
 
 	A submitted Material Transfer of ``qty`` from ``from_warehouse`` into the Boneyard set in
@@ -715,6 +743,9 @@ def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
 
 	Needs the module gate (it is an assignment action) as well as Stock Entry create and submit
 	(the transfer posts as the user), whether or not the item had a rule at the source.
+
+	From the Project Shelf (v1.817.0) the trip carries the job the stock was bought for
+	(``project``, or the one job that holds the item there), as every move off the shelf does.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -729,10 +760,19 @@ def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
 	source = scan._transfer_source(location.name, boneyard, item, qty)
 	require_manage()
 	release, left, defaults = _plan_source(item, source, qty)
+	job = scan._transfer_project(source, boneyard, item, project)
 	scan._require("Stock Entry", "create", "submit")
 
-	log = scan._begin_log(ref, rules.ACTION_BONEYARD, item, qty, boneyard, from_warehouse=source.name)
-	se = scan._transfer_entry(rules.ACTION_BONEYARD, item, qty, source, boneyard)
+	log = scan._begin_log(
+		ref,
+		rules.ACTION_BONEYARD,
+		item,
+		qty,
+		boneyard,
+		from_warehouse=source.name,
+		project=job,
+	)
+	se = scan._transfer_entry(rules.ACTION_BONEYARD, item, qty, source, boneyard, project=job)
 	scan._post(se)
 	changes = _release(item, source, defaults) if release else []
 	changes.append(_source_note(source, left, release))
@@ -979,6 +1019,11 @@ def manager_boot():
 	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
 	* ``item_groups`` / ``uoms`` / ``refuse_from`` -- the quick Item's pick lists and the naming
 	  guard's go-live date, the same ones the store run offers.
+	* Since v1.812.0, what the page's filters and views need (``bin_views.decorate``): on each bin
+	  its ``kind`` (shop bin, Project Shelf, job site, boneyard, vehicle), a job site's ``project``
+	  / ``project_name`` / ``customer``, and ``missing_items`` / ``unassigned_items`` /
+	  ``stock_value``; and on the boot ``shelf_warehouse`` / ``shelf_name``, ``job_sites`` and
+	  ``can_see_value``. If that part cannot be read the page still gets everything above.
 
 	Role-checked like every endpoint here (``api.stock_scan._check_access``). Read-only, GET.
 	"""
@@ -1003,7 +1048,17 @@ def manager_boot():
 		for row in rows
 	]
 	bins.sort(key=lambda b: rules.natural_key(b["warehouse_name"]))
+	extras = {}
+	try:
+		# Imported here: bin_views imports this module's neighbours, and the page must load even
+		# if that module cannot.
+		from erpnext_enhancements.inventory_enhancements import bin_views
+
+		extras = bin_views.decorate(bins)
+	except Exception:
+		frappe.log_error(title="Bin Manager: the views' data could not be read")
 	return {
+		**extras,
 		"bins": bins,
 		"can_manage": can_manage(),
 		"can_count": bool(

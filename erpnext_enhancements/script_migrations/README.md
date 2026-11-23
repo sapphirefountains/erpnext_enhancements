@@ -13,7 +13,6 @@ Almost everything here is wired through `doc_events` / `scheduler_events` in [`h
 | `project.remove_open_status` | `Project` `before_save` | Coerces Project status `Open` → `Active` (sets `doc.status` directly, not `db_set`) and msgprints. |
 | `project.update_elapsed_time_daily` | `scheduler_events.daily` | Bulk-refreshes `custom_total_time_elapsed` for all non-closed Projects; commits. |
 | `opportunity.stamp_won_date` | `Opportunity` `before_save` | On `Closed Won`, stamps `custom_date_closed_won` if unset. |
-| `opportunity.validate_ranks_on_won` | `Opportunity` `before_save` | On `Closed Won`, throws unless Scope/Schedule/Budget ranks are each 1/2/3. |
 | `opportunity.update_lead_status` | `Opportunity` `before_save` | When a new Opportunity comes from a Lead, marks the Lead **Converted**. |
 | `customer.set_last_activity` | `Customer` `before_save` | Stamps `custom_last_activity_date = today` on every save. |
 | `customer.customer_inactivity_reminder` | `scheduler_events.daily` | Creates Open follow-up ToDos for **Prospect** customers (`custom_prospect` checked) past their reminder window, allocated to the account's `custom_reminder_assignee` (the account executive) or the document owner when unset — per-customer `custom_reminder_days`, falling back to the global `inactivity_threshold` from the **Sales Activity Settings** Single; `-1` opts a customer out; skips non-prospects and customers with an existing Open ToDo; commits. |

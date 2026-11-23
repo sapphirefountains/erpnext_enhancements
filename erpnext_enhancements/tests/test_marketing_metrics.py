@@ -505,9 +505,14 @@ class ReadTests(unittest.TestCase):
 		source = (PUBLISH / "constants.py").read_text(encoding="utf-8")
 		block = source[source.index("The engagement pull-back") :]
 		block = block[: block.index("\n\t)\n)")]
-		entries = re.findall(r'\((CONNECTION_\w+), "(\w+)"', block)
+		# v1.756.0's page-level stats follow in the same tuple, and are reads too.
+		pull_back, page_stats = block.split("# Page-level stats", 1)
+		entries = re.findall(r'\((CONNECTION_\w+), "(\w+)"', pull_back)
 		self.assertEqual(len(entries), 4)
 		self.assertEqual({method for _, method in entries}, {"GET"})
+		later = re.findall(r'\(\s*(CONNECTION_\w+),\s*"(\w+)"', page_stats)
+		self.assertEqual(len(later), 2)
+		self.assertEqual({method for _, method in later}, {"GET"})
 
 
 # ---------------------------------------------------------------- 6. attribution

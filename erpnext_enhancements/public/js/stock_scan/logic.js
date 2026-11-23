@@ -389,6 +389,112 @@ export function makeHomeDefault(qty, onHand) {
 }
 
 // ---------------------------------------------------------------------------
+// Job sites (v1.801.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * The places an item is on hand, split into the shop's and the job sites'. Material sent to a
+ * job sits in that job's own site warehouse (`inventory_enhancements/job_sites.py`), and the
+ * server marks each such place `job_site`. The page names the two apart: stock on a job site
+ * can be brought back, but it is not stock the shop has, and "Also at: Job Site …" under an
+ * empty shelf would send somebody to buy nothing while a job goes short.
+ *
+ * The Project Shelf (v1.817.0, `project_shelf`) is the third kind: in the building, and
+ * bought for a job. It is never one of the shop's places either.
+ */
+export function splitPlaces(places) {
+	const shop = [];
+	const shelf = [];
+	const sites = [];
+	for (const place of Array.isArray(places) ? places : []) {
+		if (!place) continue;
+		(place.project_shelf ? shelf : place.job_site ? sites : shop).push(place);
+	}
+	return { shop, shelf, sites };
+}
+
+/**
+ * "Show on map" (v1.818.0): the Warehouse Map page's address for a location (`w`) or an item
+ * (`item`). The map is a Desk page; its own server call decides which map and box to show.
+ * Nothing to point at is no link ("").
+ */
+export function mapUrl(target) {
+	const t = target || {};
+	const w = typeof t.w === "string" ? t.w.trim() : "";
+	const item = typeof t.item === "string" ? t.item.trim() : "";
+	if (w) return `/desk/warehouse-map?w=${encodeURIComponent(w)}`;
+	if (item) return `/desk/warehouse-map?item=${encodeURIComponent(item)}`;
+	return "";
+}
+
+/**
+ * The job a take is charged to. At a job site it is that site's own job, whatever job the
+ * chip at the top remembers from earlier in the shift; the server applies the same rule
+ * (`job_site_rules.site_take_project`), so this only keeps the page from asking for a job
+ * the take already has. Elsewhere it is the picked job, or none.
+ */
+export function takeProject(item, job) {
+	const site = item && item.job_site;
+	if (site && site.project) return site.project;
+	return job && job.project ? job.project : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The Project Shelf (v1.817.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a take must name a job before it is sent: always at the Project Shelf (every unit
+ * there belongs to one), elsewhere when the setting says so. Never when the take already has
+ * one (`project`: the run's job, or a job site's own). The server refuses the same takes
+ * (`project_shelf_rules.take_needs_job`); this keeps the page from sending one it would refuse.
+ */
+export function takeNeedsJob(item, requireSetting, project) {
+	if (project) return false;
+	return !!(Number(requireSetting) || (item && item.project_shelf));
+}
+
+/**
+ * The question a move asks about its job, from its two ends (each `{project_shelf, job_site}`):
+ * "off" when stock leaves the Project Shelf for a bin (which job was it bought for), "onto"
+ * when stock is set aside on the shelf (which job is it for), "" when the move asks nothing.
+ * A move between the shelf and a job site asks nothing: the site's job is the answer. The
+ * server's rule is `project_shelf_rules.move_project`.
+ */
+export function moveJobMode(source, destination) {
+	if (!source || !destination) return "";
+	if (source.project_shelf && !destination.job_site) return "off";
+	if (destination.project_shelf && !source.job_site) return "onto";
+	return "";
+}
+
+/** The jobs that really hold an item on the shelf: a job and a quantity above zero. */
+function heldJobs(jobs) {
+	return (Array.isArray(jobs) ? jobs : []).filter((job) => job && job.project && Number(job.qty) > 0);
+}
+
+/**
+ * The job a move off the shelf starts on: the one job that holds the item there, or null when
+ * the person has to say. That is when none or several hold it, and also when `exact` is not
+ * true: the jobs then do not account for every unit on the shelf (a count, a move with no job
+ * on it), so hanging what is there on the one job that has a tag would be a guess. The server
+ * applies the same test when the page sends no job (`project_shelf_rules.item_exact`).
+ */
+export function soleShelfJob(jobs, exact) {
+	const held = heldJobs(jobs);
+	if (exact !== true || held.length !== 1) return null;
+	return { project: held[0].project, project_name: held[0].project_name || held[0].project };
+}
+
+/** "Water Wall (3), Lobby (2), and 1 more": the jobs that hold an item on the shelf. "" for none. */
+export function shelfJobsText(jobs, max = 3) {
+	const held = heldJobs(jobs);
+	if (!held.length) return "";
+	const shown = held.slice(0, max).map((job) => `${job.project_name || job.project} (${plain(job.qty)})`);
+	return `${shown.join(", ")}${held.length > max ? `, and ${held.length - max} more` : ""}`;
+}
+
+// ---------------------------------------------------------------------------
 // Store runs (v1.536.0): "Bought on a store run"
 // ---------------------------------------------------------------------------
 
@@ -786,6 +892,78 @@ export const MAX_ADD_VALUE = 25000;
  */
 export function isCostPrompt(result) {
 	return !!(result && typeof result === "object" && result.needs_valuation_rate === true);
+}
+
+/**
+ * Whether a save's answer is the question "what did one cost?" for an order line with no price
+ * (v1.809.0): `add` answers `{needs_order_price: true, ...}` when the line being received is a stock
+ * item's and its order has no price on it. Nothing was posted.
+ */
+export function isOrderPricePrompt(result) {
+	return !!(result && typeof result === "object" && result.needs_order_price === true);
+}
+
+/**
+ * What the person typed as the price of one unit on the order: `{rate}` or `{problem}`. The same
+ * reading of a number as `unitCostProblem`, without the cap on a without-order add: this is the
+ * order's own price. At most MAX_UNIT_PRICE (above), which `receipt_price_rules.MAX_UNIT_PRICE`
+ * equals; the server checks it again (`receipt_price_rules.checked_price`).
+ */
+export function orderPriceProblem(text, uom) {
+	const per = uom ? ` per ${uom}` : "";
+	const raw = String(text === null || text === undefined ? "" : text).trim();
+	if (!raw) return { problem: `Enter the price${per}.` };
+	if (raw.includes(",") && !/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(raw)) {
+		return { problem: `Enter the price${per} as a number, like 12.50.` };
+	}
+	const plainText = raw.replace(/,/g, "");
+	if (!/^(\d+\.?\d*|\.\d+)$/.test(plainText)) return { problem: `Enter the price${per} as a number, like 12.50.` };
+	const rate = Number(plainText);
+	if (!Number.isFinite(rate) || rate < 0.005) return { problem: `The price${per} must be more than 0.` };
+	if (rate > MAX_UNIT_PRICE) {
+		return { problem: `A price${per} above ${MAX_UNIT_PRICE.toLocaleString("en-US")} is not right. Check the number.` };
+	}
+	return { rate: Math.round(rate * 1e6) / 1e6 };
+}
+
+/**
+ * The words of that question, from the server's payload. Three people (`receipt_price_rules`): one who
+ * may price the order, one who may only mark the line free, and one who can do neither. For the last
+ * the server has already asked purchasing (`asked`, their names) and the sheet only says so.
+ */
+export function orderPriceText(prompt, qty) {
+	const p = prompt || {};
+	const uom = p.uom || "unit";
+	const name = p.item_name || p.item_code || "this item";
+	const order = p.purchase_order || "the purchase order";
+	const asked = Array.isArray(p.asked) ? p.asked.filter(Boolean) : [];
+	const stuck = !p.can_price && !p.can_mark_free;
+	const who = asked.length > 1 ? `${asked.slice(0, -1).join(", ")} and ${asked[asked.length - 1]}` : asked[0];
+	const askedLine = asked.length
+		? `${who} ${asked.length === 1 ? "has" : "have"} been asked to put the price on the order.`
+		: "Tell purchasing it needs a price.";
+	let note;
+	if (p.can_price) {
+		note = `The price is put on ${order}, and the ${qty === undefined || qty === "" ? "goods are" : `${plain(qty)} you counted are`} received at it.`;
+	} else if (p.can_mark_free) {
+		note = "If it was not free, stop: purchasing has to put the price on the order first.";
+	} else {
+		note = `Nothing was received. ${askedLine} Set it aside and receive it once the order has a price.`;
+	}
+	return {
+		title: stuck ? "This one can't be received yet" : "What did one cost?",
+		lead: `${order} has no price for ${name}. Stock comes in at the price on the order, so it can't be received without one.`,
+		label: `Price per ${uom}`,
+		per: `Enter what ONE ${uom} cost, not the total. It is on the packing slip or the invoice.`,
+		cannot: p.why || `You can't set prices on ${order}. Purchasing can.`,
+		reasonLabel: "Why was it free?",
+		reasonHint: "A free sample, a warranty replacement.",
+		reasonMissing: "Say why it was free.",
+		note,
+		button: "Receive at this price",
+		free: "It was free",
+		stop: stuck ? "OK" : "Stop",
+	};
 }
 
 /**

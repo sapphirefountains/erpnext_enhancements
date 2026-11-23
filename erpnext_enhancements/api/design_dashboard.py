@@ -22,7 +22,7 @@ from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
 ROW_LIMIT = 25
 
 # The Status Select, in workflow order (water_feature_design.json).
-WIP_STATUSES = ("Draft", "Inputs Gathered", "Calculated", "Reviewed")
+WIP_STATUSES = ("Draft", "Derived", "Inputs Gathered", "Calculated", "Reviewed")
 SIGNOFF_STATUS = "Reviewed"
 ISSUED_STATUS = "Issued"
 

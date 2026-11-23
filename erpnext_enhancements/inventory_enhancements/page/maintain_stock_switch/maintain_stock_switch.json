@@ -1,0 +1,27 @@
+{
+ "content": "",
+ "creation": "2026-11-12 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "package",
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "maintain-stock-switch",
+ "owner": "Administrator",
+ "page_name": "maintain-stock-switch",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Item Manager"
+  },
+  {
+   "role": "Stock Manager"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Switch Items to Maintain Stock"
+}

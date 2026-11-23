@@ -1,0 +1,697 @@
+{
+ "_comment": "Shared by tests/test_estimate_math.py (Python engine) and scripts/test_estimate_math.mjs (browser twin). Made-up numbers only; this repo is public.",
+ "round_money": [
+  [
+   5.1450000000000005,
+   5.14
+  ],
+  [
+   5.155,
+   5.16
+  ],
+  [
+   0.125,
+   0.12
+  ],
+  [
+   0.135,
+   0.14
+  ],
+  [
+   2.675,
+   2.68
+  ],
+  [
+   -1.005,
+   -1.0
+  ],
+  [
+   1084.645,
+   1084.64
+  ],
+  [
+   10.0,
+   10.0
+  ],
+  [
+   0,
+   0
+  ]
+ ],
+ "round_money_1dp": [
+  [
+   29.85,
+   29.8
+  ],
+  [
+   29.95,
+   30.0
+  ]
+ ],
+ "phase_chain": [
+  [
+   120,
+   [
+    120,
+    100
+   ]
+  ],
+  [
+   300,
+   [
+    300
+   ]
+  ],
+  [
+   0,
+   []
+  ],
+  [
+   "",
+   []
+  ],
+  [
+   150,
+   [
+    150,
+    100
+   ]
+  ],
+  [
+   99,
+   [
+    99
+   ]
+  ],
+  [
+   "710",
+   [
+    710,
+    700
+   ]
+  ]
+ ],
+ "parse_rate": [
+  [
+   "",
+   null
+  ],
+  [
+   null,
+   null
+  ],
+  [
+   "5",
+   5
+  ],
+  [
+   "5%",
+   5
+  ],
+  [
+   " 7.5 % ",
+   7.5
+  ],
+  [
+   0,
+   0
+  ],
+  [
+   "0",
+   0
+  ]
+ ],
+ "backfill": [
+  {
+   "price": 2500,
+   "qty": 1,
+   "cost_type": "Subcontract",
+   "rates": {
+    "markup_pct": 10,
+    "tax_pct": 7.25,
+    "contingency_pct": 5,
+    "insurance_pct": 7,
+    "fee_pct": 12
+   },
+   "unit_cost": 1832.84,
+   "reprices_to": 2499.99
+  },
+  {
+   "price": 1800,
+   "qty": 1,
+   "cost_type": "Material",
+   "rates": {
+    "markup_pct": 15,
+    "tax_pct": 7.25,
+    "contingency_pct": 5,
+    "insurance_pct": 7,
+    "fee_pct": 12
+   },
+   "unit_cost": 1176.95,
+   "reprices_to": 1800.0
+  },
+  {
+   "price": 750,
+   "qty": 3,
+   "cost_type": "Labor",
+   "rates": {
+    "markup_pct": 0,
+    "tax_pct": 7.25,
+    "contingency_pct": 0,
+    "insurance_pct": 0,
+    "fee_pct": 12
+   },
+   "unit_cost": 223.21,
+   "reprices_to": 749.99
+  }
+ ],
+ "estimates": [
+  {
+   "name": "design-build",
+   "estimate": {
+    "markup_material": 15,
+    "markup_equipment": 15,
+    "markup_subcontract": 10,
+    "markup_labor": 0,
+    "markup_expense": 0,
+    "tax_pct": 7.25,
+    "contingency_pct": 5,
+    "insurance_pct": 7,
+    "fee_pct": 12,
+    "commission_pct": 10
+   },
+   "phases": [
+    {
+     "phase_number": 100,
+     "label": "Design and planning",
+     "commission_override": "0"
+    },
+    {
+     "phase_number": 120,
+     "label": "Schematic design",
+     "fee_override": "20"
+    },
+    {
+     "phase_number": 300,
+     "label": "Rough-in"
+    },
+    {
+     "phase_number": 500,
+     "label": "Mechanical room",
+     "contingency_override": "",
+     "insurance_override": "3%"
+    }
+   ],
+   "lines": [
+    {
+     "phase_number": 300,
+     "cost_type": "Material",
+     "cost_code": "22 5213.13",
+     "qty": 120,
+     "unit_cost": 5.91,
+     "basis": "Design"
+    },
+    {
+     "phase_number": 300,
+     "cost_type": "Labor",
+     "cost_code": "LAB-DIRECT",
+     "qty": 2.1,
+     "unit_cost": 2.45
+    },
+    {
+     "phase_number": 500,
+     "cost_type": "Equipment",
+     "cost_code": "22 5216",
+     "qty": 2,
+     "unit_cost": 2717.39,
+     "basis": "Catalog"
+    },
+    {
+     "phase_number": 500,
+     "cost_type": "Subcontract",
+     "cost_code": "",
+     "qty": 1,
+     "unit_cost": 0,
+     "sheet_price": 2500,
+     "basis": "Quote"
+    },
+    {
+     "phase_number": 500,
+     "cost_type": "Labor",
+     "cost_code": "LAB-DIRECT",
+     "qty": 88,
+     "unit_cost": 58,
+     "markup_override": "45"
+    },
+    {
+     "phase_number": 120,
+     "cost_type": "Labor",
+     "cost_code": "LAB-DESIGN",
+     "qty": 40,
+     "unit_cost": 95
+    },
+    {
+     "phase_number": 110,
+     "cost_type": "Expense",
+     "cost_code": "OH-TRAVEL",
+     "qty": 1,
+     "unit_cost": 333.33,
+     "contingency_override": "0"
+    },
+    {
+     "phase_number": 700,
+     "cost_type": "Subcontract",
+     "cost_code": "09 3000",
+     "qty": 1,
+     "unit_cost": 9999,
+     "by_others": 1
+    },
+    {
+     "phase_number": 700,
+     "cost_type": "Material",
+     "cost_code": "",
+     "qty": 1,
+     "unit_cost": 0,
+     "basis": "Allowance",
+     "sheet_price": 2000
+    },
+    {
+     "phase_number": 700,
+     "cost_type": "Material",
+     "cost_code": "13 1213",
+     "qty": 3,
+     "unit_cost": 0
+    }
+   ],
+   "expect": {
+    "lines": [
+     {
+      "base_cost": 709.2,
+      "tax_amount": 51.42,
+      "cost_amount": 760.62,
+      "markup_amount": 114.09,
+      "cost_of_work": 874.71,
+      "contingency_amount": 43.74,
+      "insurance_amount": 61.23,
+      "fee_amount": 104.97,
+      "amount": 1084.65,
+      "unit_price": 9.04,
+      "commission_amount": 108.46,
+      "margin_amount": 324.03,
+      "margin_pct": 29.9,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 15.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 5.14,
+      "tax_amount": 0.0,
+      "cost_amount": 5.14,
+      "markup_amount": 0.0,
+      "cost_of_work": 5.14,
+      "contingency_amount": 0.26,
+      "insurance_amount": 0.36,
+      "fee_amount": 0.62,
+      "amount": 6.38,
+      "unit_price": 3.04,
+      "commission_amount": 0.64,
+      "margin_amount": 1.24,
+      "margin_pct": 19.4,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 0.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 5434.78,
+      "tax_amount": 394.02,
+      "cost_amount": 5828.8,
+      "markup_amount": 874.32,
+      "cost_of_work": 6703.12,
+      "contingency_amount": 335.16,
+      "insurance_amount": 201.09,
+      "fee_amount": 804.37,
+      "amount": 8043.74,
+      "unit_price": 4021.87,
+      "commission_amount": 804.37,
+      "margin_amount": 2214.94,
+      "margin_pct": 27.5,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 3.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 15.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 0.0,
+      "tax_amount": 0.0,
+      "cost_amount": 0.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 0.0,
+      "contingency_amount": 0.0,
+      "insurance_amount": 0.0,
+      "fee_amount": 0.0,
+      "amount": 2500.0,
+      "unit_price": 2500.0,
+      "commission_amount": 250.0,
+      "margin_amount": 0.0,
+      "margin_pct": 0.0,
+      "needs_cost": true,
+      "priced": false,
+      "contingency_pct": 5.0,
+      "insurance_pct": 3.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 10.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 5104.0,
+      "tax_amount": 0.0,
+      "cost_amount": 5104.0,
+      "markup_amount": 2296.8,
+      "cost_of_work": 7400.8,
+      "contingency_amount": 370.04,
+      "insurance_amount": 222.02,
+      "fee_amount": 888.1,
+      "amount": 8880.96,
+      "unit_price": 100.92,
+      "commission_amount": 888.1,
+      "margin_amount": 3776.96,
+      "margin_pct": 42.5,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 3.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 45.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 3800.0,
+      "tax_amount": 0.0,
+      "cost_amount": 3800.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 3800.0,
+      "contingency_amount": 190.0,
+      "insurance_amount": 266.0,
+      "fee_amount": 760.0,
+      "amount": 5016.0,
+      "unit_price": 125.4,
+      "commission_amount": 0.0,
+      "margin_amount": 1216.0,
+      "margin_pct": 24.2,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 20.0,
+      "commission_pct": 0.0,
+      "markup_pct": 0.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 333.33,
+      "tax_amount": 0.0,
+      "cost_amount": 333.33,
+      "markup_amount": 0.0,
+      "cost_of_work": 333.33,
+      "contingency_amount": 0.0,
+      "insurance_amount": 23.33,
+      "fee_amount": 40.0,
+      "amount": 396.66,
+      "unit_price": 396.66,
+      "commission_amount": 0.0,
+      "margin_amount": 63.33,
+      "margin_pct": 16.0,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 0.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 0.0,
+      "markup_pct": 0.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 0.0,
+      "tax_amount": 0.0,
+      "cost_amount": 0.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 0.0,
+      "contingency_amount": 0.0,
+      "insurance_amount": 0.0,
+      "fee_amount": 0.0,
+      "amount": 0.0,
+      "unit_price": 0.0,
+      "commission_amount": 0.0,
+      "margin_amount": 0.0,
+      "margin_pct": 0.0,
+      "needs_cost": false,
+      "priced": false,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 10.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 0.0,
+      "tax_amount": 0.0,
+      "cost_amount": 0.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 0.0,
+      "contingency_amount": 0.0,
+      "insurance_amount": 0.0,
+      "fee_amount": 0.0,
+      "amount": 2000.0,
+      "unit_price": 2000.0,
+      "commission_amount": 200.0,
+      "margin_amount": 0.0,
+      "margin_pct": 0.0,
+      "needs_cost": true,
+      "priced": false,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 15.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 0.0,
+      "tax_amount": 0.0,
+      "cost_amount": 0.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 0.0,
+      "contingency_amount": 0.0,
+      "insurance_amount": 0.0,
+      "fee_amount": 0.0,
+      "amount": 0.0,
+      "unit_price": 0.0,
+      "commission_amount": 0.0,
+      "margin_amount": 0.0,
+      "margin_pct": 0.0,
+      "needs_cost": true,
+      "priced": false,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 15.0,
+      "tax_pct": 7.25
+     }
+    ],
+    "phases": {
+     "300": {
+      "amount": 1091.03,
+      "cost_amount": 765.76,
+      "line_count": 2,
+      "missing_cost": 0,
+      "labor_lines": 1
+     },
+     "500": {
+      "amount": 19424.7,
+      "cost_amount": 10932.8,
+      "line_count": 3,
+      "missing_cost": 1,
+      "labor_lines": 1
+     },
+     "120": {
+      "amount": 5016.0,
+      "cost_amount": 3800.0,
+      "line_count": 1,
+      "missing_cost": 0,
+      "labor_lines": 1
+     },
+     "100": {
+      "amount": 5412.66,
+      "cost_amount": 4133.33,
+      "line_count": 2,
+      "missing_cost": 0,
+      "labor_lines": 1
+     },
+     "110": {
+      "amount": 396.66,
+      "cost_amount": 333.33,
+      "line_count": 1,
+      "missing_cost": 0,
+      "labor_lines": 0
+     },
+     "700": {
+      "amount": 2000.0,
+      "cost_amount": 0.0,
+      "line_count": 2,
+      "missing_cost": 2,
+      "labor_lines": 0
+     }
+    },
+    "totals": {
+     "amount": 27928.39,
+     "cost_amount": 15831.89,
+     "priced_amount": 23428.39,
+     "markup_amount": 3285.21,
+     "cost_of_work": 19117.1,
+     "tax_amount": 445.44,
+     "contingency_amount": 939.2,
+     "insurance_amount": 774.03,
+     "fee_amount": 2598.06,
+     "commission_amount": 2251.57,
+     "line_count": 9,
+     "missing_cost": 3,
+     "missing_code": 2,
+     "allowance_count": 1,
+     "margin_amount": 7596.5,
+     "margin_pct": 32.4,
+     "net_margin_amount": 5794.93,
+     "net_margin_pct": 24.7
+    }
+   }
+  },
+  {
+   "name": "event-no-phases",
+   "estimate": {
+    "markup_material": 15,
+    "markup_equipment": 15,
+    "markup_subcontract": 10,
+    "markup_labor": 0,
+    "markup_expense": 0,
+    "tax_pct": 7.25,
+    "contingency_pct": 5,
+    "insurance_pct": 7,
+    "fee_pct": 12,
+    "commission_pct": 10
+   },
+   "phases": [],
+   "lines": [
+    {
+     "phase_number": 0,
+     "cost_type": "Equipment",
+     "cost_code": "",
+     "qty": 4,
+     "unit_cost": 125.5
+    },
+    {
+     "phase_number": 0,
+     "cost_type": "Labor",
+     "cost_code": "LAB-DIRECT",
+     "qty": 12,
+     "unit_cost": 42.25
+    }
+   ],
+   "expect": {
+    "lines": [
+     {
+      "base_cost": 502.0,
+      "tax_amount": 36.4,
+      "cost_amount": 538.4,
+      "markup_amount": 80.76,
+      "cost_of_work": 619.16,
+      "contingency_amount": 30.96,
+      "insurance_amount": 43.34,
+      "fee_amount": 74.3,
+      "amount": 767.76,
+      "unit_price": 191.94,
+      "commission_amount": 76.78,
+      "margin_amount": 229.36,
+      "margin_pct": 29.9,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 15.0,
+      "tax_pct": 7.25
+     },
+     {
+      "base_cost": 507.0,
+      "tax_amount": 0.0,
+      "cost_amount": 507.0,
+      "markup_amount": 0.0,
+      "cost_of_work": 507.0,
+      "contingency_amount": 25.35,
+      "insurance_amount": 35.49,
+      "fee_amount": 60.84,
+      "amount": 628.68,
+      "unit_price": 52.39,
+      "commission_amount": 62.87,
+      "margin_amount": 121.68,
+      "margin_pct": 19.4,
+      "needs_cost": false,
+      "priced": true,
+      "contingency_pct": 5.0,
+      "insurance_pct": 7.0,
+      "fee_pct": 12.0,
+      "commission_pct": 10.0,
+      "markup_pct": 0.0,
+      "tax_pct": 7.25
+     }
+    ],
+    "phases": {
+     "0": {
+      "amount": 1396.44,
+      "cost_amount": 1045.4,
+      "line_count": 2,
+      "missing_cost": 0,
+      "labor_lines": 1
+     }
+    },
+    "totals": {
+     "amount": 1396.44,
+     "cost_amount": 1045.4,
+     "priced_amount": 1396.44,
+     "markup_amount": 80.76,
+     "cost_of_work": 1126.16,
+     "tax_amount": 36.4,
+     "contingency_amount": 56.31,
+     "insurance_amount": 78.83,
+     "fee_amount": 135.14,
+     "commission_amount": 139.65,
+     "line_count": 2,
+     "missing_cost": 0,
+     "missing_code": 1,
+     "allowance_count": 0,
+     "margin_amount": 351.04,
+     "margin_pct": 25.1,
+     "net_margin_amount": 211.39,
+     "net_margin_pct": 15.1
+    }
+   }
+  }
+ ]
+}

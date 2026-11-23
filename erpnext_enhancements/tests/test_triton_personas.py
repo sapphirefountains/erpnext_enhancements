@@ -50,6 +50,12 @@ def install_stubs():
 	frappe.session = types.SimpleNamespace(user="a@sapphirefountains.com")
 	frappe.log_error = lambda *a, **k: None
 	frappe.get_cached_doc = lambda *a, **k: types.SimpleNamespace()
+	# `user_has_widget_access` reads the caller's user_type; every stub user is staff
+	# unless a test says otherwise (`frappe._test_user_types`).
+	frappe._test_user_types = {}
+	frappe.get_cached_value = lambda doctype, name, field, *a, **k: (
+		frappe._test_user_types.get(name, "System User") if field == "user_type" else None
+	)
 	frappe.db = types.SimpleNamespace(get_value=lambda *a, **k: None)
 
 	cache = _Cache()
@@ -207,9 +213,9 @@ def test_update_only_sends_the_fields_supplied(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_start_session_forwards_persona_key(monkeypatch):
 	triton_chat, calls, _ = _load(monkeypatch, request_result={"id": 1})
-	monkeypatch.setattr(
-		triton_chat, "get_settings", lambda: {"default_model": "gemini-3.5-flash"}
-	)
+	# Auto. A named default would make `start_session` ask Triton for its model
+	# list first (`_listed_model_or_auto`), and this test is about the persona.
+	monkeypatch.setattr(triton_chat, "get_settings", lambda: {"default_model": ""})
 
 	triton_chat.start_session(persona_key="builtin:dan_bot")
 	assert calls[0][2]["persona_key"] == "builtin:dan_bot"
@@ -304,3 +310,73 @@ def test_stream_query_never_searches_on_a_hidden_continuation(monkeypatch):
 	sent = _run_stream(monkeypatch, prompt="proceed", hidden=1, use_search=1)
 	assert "use_search" not in sent["json"]
 	assert sent["json"]["hidden"] is True
+
+
+# ---------------------------------------------------------------------------
+# Who may use the widget at all
+# ---------------------------------------------------------------------------
+def test_widget_access_needs_a_system_user_with_the_allow_list_off(monkeypatch):
+	triton_chat, _, frappe = _load(monkeypatch)
+	settings = {"restrict_to_whitelist": 0, "allowed_users": set()}
+
+	frappe.session.user = "staff@sapphirefountains.com"
+	assert triton_chat.user_has_widget_access(settings) is True
+
+	frappe.session.user = "customer@example.com"
+	frappe._test_user_types["customer@example.com"] = "Website User"
+	assert triton_chat.user_has_widget_access(settings) is False
+
+	frappe.session.user = "Guest"
+	assert triton_chat.user_has_widget_access(settings) is False
+
+
+def test_the_allow_list_does_not_admit_a_website_user(monkeypatch):
+	triton_chat, _, frappe = _load(monkeypatch)
+	settings = {"restrict_to_whitelist": 1, "allowed_users": {"customer@example.com"}}
+	frappe.session.user = "customer@example.com"
+	frappe._test_user_types["customer@example.com"] = "Website User"
+	assert triton_chat.user_has_widget_access(settings) is False
+
+	frappe.session.user = "Administrator"
+	assert triton_chat.user_has_widget_access(settings) is True
+
+
+def test_the_two_proxied_ai_calls_carry_a_per_user_rate_limit():
+	"""`stream_query` and `morning_briefing` each call the model. The limit is keyed on the
+	session user (utils/user_rate_limit), not on the client address the office shares."""
+	import ast
+	import pathlib
+
+	source = (pathlib.Path(__file__).resolve().parents[1] / "triton_chat.py").read_text(encoding="utf-8")
+	decorated = {}
+	for node in ast.walk(ast.parse(source)):
+		if isinstance(node, ast.FunctionDef):
+			decorated[node.name] = [
+				getattr(d.func, "id", None) for d in node.decorator_list if isinstance(d, ast.Call)
+			]
+	for name in ("stream_query", "morning_briefing"):
+		assert "user_rate_limit" in decorated[name], name
+
+
+# ---------------------------------------------------------------------------
+# Action ids reach the URL path only in the expected shape
+# ---------------------------------------------------------------------------
+def test_confirm_and_cancel_build_the_action_route(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	action_id = "3f2b8c1e-9a4d-4e7b-8c2a-1d0e5f6a7b8c"
+	triton_chat.confirm_action(action_id=action_id, session_id="4")
+	triton_chat.cancel_action(action_id=f" {action_id} ")
+	assert calls[0] == ("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {"session_id": 4})
+	assert calls[1] == ("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {"session_id": None})
+
+
+def test_confirm_and_cancel_refuse_an_unexpected_action_id(monkeypatch):
+	triton_chat, calls, _ = _load(monkeypatch, request_result={})
+	for bad in ("", "  ", None, "a/b", "../personas", "a?b=1", "a#b", "a b", "a%2Fb", "x" * 65):
+		for fn in (triton_chat.confirm_action, triton_chat.cancel_action):
+			try:
+				fn(action_id=bad)
+			except Exception:
+				continue
+			raise AssertionError(f"expected a throw for {bad!r}")
+	assert calls == []

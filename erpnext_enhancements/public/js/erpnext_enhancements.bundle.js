@@ -130,6 +130,13 @@ import "./global_enhancements/sidebar_collapse_heal.js";
 // sidebar across tabs, the record sidebar and the Training rail on every form and page), kept in
 // this browser. tests/test_sidebar_memory.py + scripts/test_sidebar_memory.js hold it.
 import "./global_enhancements/sidebar_memory.js";
+// v1.793.0 (Nik 2026-11-03, Mock C of the sidebar round): the module sidebar folds to frappe's own
+// 48px icon rail beside the pinned Dock instead of hiding (one wrapped method,
+// Sidebar.hides_when_collapsed), with the dock tiles' tooltip on each row, a pin, the rows this
+// person uses most first, count badges on Task / Pending Confirmations / My Work, a Recent row, and
+// a bottom bar on phones. After sidebar_memory.js: it reads that file's per-user copy of the
+// collapse key. tests/test_sidebar_rail.py + scripts/test_sidebar_rail.js hold it.
+import "./global_enhancements/sidebar_rail.js";
 // erpnext_enhancements.workspace_blocks.onWorkspaceReturn: reloads a workspace's data
 // blocks when you come back to it. v16's Workspace.show() returns early on the
 // workspace already shown, so a return from a form re-runs no block script, and every
@@ -142,6 +149,7 @@ import "./global_enhancements/workspace_block_return.js";
 // never arrived, which seven pages used to carry a copy each.
 import "./sf_kit_loader.js";
 import "./global_enhancements/page_search.js"; // S4c: a "Pages" search section + Alt+Shift page shortcuts
+import "./global_enhancements/desk_search.js"; // v1.795.0: the search box lists records first, grouped, with a preview
 // WI-081 Phase 1: the "My Work" row and count in the desk sidebar, and the "Assigned to you"
 // banner (Done / Snooze / Reassign / Reply) at the top of any record you are assigned on. Sets
 // erpnext_enhancements.my_work.refresh_count, which the My Work page calls after it acts.
@@ -154,6 +162,11 @@ import "./merge_tool/merge_tool.js";
 // (triton_widget.js here; process_document.js via doctype_js loads later).
 import "./global_enhancements/mermaid_theme.js";
 import "./global_enhancements/triton_widget.js";
+// The framed Triton widget's gate (v1.802.0): on the classic widget it reads one boot key and
+// returns. For a person on the framed widget it fetches triton_frame.bundle.js (never part of
+// this bundle) and hands the button back to triton_widget.js if the frame cannot work. After
+// triton_widget.js, because it wraps the SapphireTriton.ask that file defines.
+import "./global_enhancements/triton_frame_gate.js";
 // project_enhancements (task_tree_manager / column_selector / gantt_zoom are
 // preloaded globally so doctype scripts and lazy dashboard tabs can use their
 // erpnext_enhancements.* namespaces immediately)
@@ -187,6 +200,19 @@ import "./training/desk_assets.js";
 // The guided page is where a guided DocType's records open, new and existing (form kit P5.2):
 // frappe.create_routes for New, and a before_show on the Form factory for the rest. See the file.
 import "./guided_default.js";
+// Retired Desk pages sent on to their replacements through frappe.re_route (v1.771.0: the Water
+// Engineering Wizard to the Fountain Designer). See the file.
+import "./global_enhancements/retired_routes.js";
+// Previous / next arrows and a "3 of 12" counter in the form sidebar's attachment preview, and
+// Left / Right keys while it is open and visible (v1.780.0). Wraps frappe 16.53's
+// frappe.ui.form.Attachments; installs nothing on a frappe without its preview. The rows are
+// stepped in the order the sidebar has drawn them. No history entry: frappe's router re-renders
+// the form on every popstate. See the file.
+import "./global_enhancements/attachment_preview_nav.js";
+// Form breadcrumbs that lead to this app's pages (v1.779.0): the Project form's "Project" crumb
+// goes to the Projects Dashboard, Opportunity's to the Opportunity Kanban, and a Task's trail reads
+// Projects > its project > the task. Wraps frappe 16.53's frappe.ui.form.get_breadcrumbs. See the file.
+import "./global_enhancements/breadcrumb_targets.js";
 
 // v1.686.0: installed for the form scripts (see record_actions / party_sources above). Plain objects
 // copied from the module namespaces: erpnext_enhancements.record_actions.open_reminder and so on.

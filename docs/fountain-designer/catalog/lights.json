@@ -1,0 +1,921 @@
+[
+ {
+  "id": "oase-profilux-led-1100-01",
+  "manufacturer": "OASE",
+  "model": "ProfiLux LED 1100/01",
+  "part_no": "51296 (order no. on sheet)",
+  "watts": 23,
+  "voltage": "24 VDC",
+  "lumens": 918,
+  "beam_deg": 11,
+  "color": "neutral white 4000 K (+/-200 K), CRI 80",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://cdn.poolsupplyunlimited.com/Products/Manuals/154737_2015916114834.pdf",
+    "title": "OASE ProfiLux LED 1100/01 data sheet v2.3 (01.09.2014)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications",
+    "note": "manufacturer data sheet hosted by poolsupplyunlimited.com"
+   }
+  ],
+  "notes": "Page 1 text: power consumption only 23 W, 918 lumen at 11 deg beam angle (+/-2), 4000 K, 24 V DC connector with 4 m cable, IP68, stainless steel 1.4404 (AISI 316L), housing 125 x 32 mm (125 x 87 mm overall), 100,000 h life claimed, wet and dry installation, fresh/pool/sea water, DMX/RDM controllable via Underwater Switch. Page 2 table (text extraction scrambled the label/value pairing) shows 25.3 W and 0.95 A rated current, 4 kg weight and 2800 mm cable; the 23 W vs 25.3 W discrepancy is on the sheet itself (probably LED vs total input); 23 W used. No UL/ETL listing stated on the sheet. No maximum immersion depth stated."
+ },
+ {
+  "id": "jandy-commercial-wphv3ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 120 VAC, 42 W, 5000K",
+  "part_no": "WPHV3LS",
+  "watts": 42,
+  "voltage": "120 VAC",
+  "lumens": 2798,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WPHV3LS50 / 100 / 150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wphv5ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 120 VAC, 65 W, 5000K",
+  "part_no": "WPHV5LS",
+  "watts": 65,
+  "voltage": "120 VAC",
+  "lumens": 4282,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WPHV5LS50 / 100 / 150 / 250 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wplv3ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 12 VAC, 42 W, 5000K",
+  "part_no": "WPLV3LS",
+  "watts": 42,
+  "voltage": "12 VAC",
+  "lumens": 2530,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WPLV3LS50 / 100 / 150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wplv5ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 12 VAC, 65 W, 5000K",
+  "part_no": "WPLV5LS",
+  "watts": 65,
+  "voltage": "12 VAC",
+  "lumens": 4176,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WPLV5LS50 / 100 / 150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wshv1ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Small, 120 VAC, 18 W, 5000K",
+  "part_no": "WSHV1LS",
+  "watts": 18,
+  "voltage": "120 VAC",
+  "lumens": 805,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WSHV1LS50 / 100 / 150 / 250 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wslv1ls",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Small, 12 VAC, 18 W, 5000K",
+  "part_no": "WSLV1LS",
+  "watts": 18,
+  "voltage": "12 VAC",
+  "lumens": 793,
+  "beam_deg": null,
+  "color": "white 5000K (daylight)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WSLV1LS50 / 100 / 150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwphv3ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 120 VAC, 42 W, 2700K",
+  "part_no": "WWPHV3LS150",
+  "watts": 42,
+  "voltage": "120 VAC",
+  "lumens": 2494,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWPHV3LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwphv5ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 120 VAC, 65 W, 2700K",
+  "part_no": "WWPHV5LS150",
+  "watts": 65,
+  "voltage": "120 VAC",
+  "lumens": 3990,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWPHV5LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwplv3ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 12 VAC, 42 W, 2700K",
+  "part_no": "WWPLV3LS150",
+  "watts": 42,
+  "voltage": "12 VAC",
+  "lumens": 2265,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWPLV3LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwplv5ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Large, 12 VAC, 65 W, 2700K",
+  "part_no": "WWPLV5LS150",
+  "watts": 65,
+  "voltage": "12 VAC",
+  "lumens": 3875,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWPLV5LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwshv1ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Small, 120 VAC, 18 W, 2700K",
+  "part_no": "WWSHV1LS150",
+  "watts": 18,
+  "voltage": "120 VAC",
+  "lumens": 766,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWSHV1LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-commercial-wwslv1ls150",
+  "manufacturer": "Jandy",
+  "model": "Commercial White LED Light, Small, 12 VAC, 18 W, 2700K",
+  "part_no": "WWSLV1LS150",
+  "watts": 18,
+  "voltage": "12 VAC",
+  "lumens": 753,
+  "beam_deg": null,
+  "color": "white 2700K (warm white)",
+  "listing": [
+   "ETL listed (standard not named on sheet)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/lighting/80934_sl_led_whitelights.pdf?rev=2cc087048c844fd29829dd94f55fbfe5%3Fforce%3D1",
+    "title": "Jandy Commercial White LED Lights sell sheet (80934 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "specifications table",
+    "note": "manufacturer (Zodiac/Jandy) PDF on jandy.com"
+   }
+  ],
+  "notes": "Jandy Commercial White LED light, stainless steel body and face ring, ETL listed for installation (sheet does not name the standard), compatible with Jandy and most competitive niches. Equivalent brightness claimed vs 100/300/500 W incandescent. Part numbers: WWSLV1LS150 (cord lengths 50/100/150/250 ft vary by part). Lumens, watts and voltage as printed in the specification table; the sheet does not publish beam angle, IP rating or depth."
+ },
+ {
+  "id": "jandy-infinite-watercolors-iwc15w100",
+  "manufacturer": "Jandy",
+  "model": "Infinite WaterColors Nicheless LED Light 15 W RGBW",
+  "part_no": "IWC15W100 / IWC15W200",
+  "watts": 15,
+  "voltage": "14 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGBW",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/water-features/56042slinfinitewatercolors.pdf?rev=55d5513e7a12461494c4a68a61e6ed31%3Fforce%3D1",
+    "title": "Jandy Infinite WaterColors LED lights sell sheet (56042 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "light models, watts, voltage",
+    "note": "manufacturer PDF on jandy.com"
+   }
+  ],
+  "notes": "Sheet lists watts and 14 VAC but publishes no lumens, beam angle, IP rating or listing for this nicheless light (lumens null). Needs the Infinite WaterColors light controller (300 W, IWCLC300W). The 100/200 in the part number is the cord length in feet."
+ },
+ {
+  "id": "jandy-infinite-watercolors-iwc25w100",
+  "manufacturer": "Jandy",
+  "model": "Infinite WaterColors Nicheless LED Light 25 W RGBW",
+  "part_no": "IWC25W100 / IWC25W200",
+  "watts": 25,
+  "voltage": "14 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGBW",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/water-features/56042slinfinitewatercolors.pdf?rev=55d5513e7a12461494c4a68a61e6ed31%3Fforce%3D1",
+    "title": "Jandy Infinite WaterColors LED lights sell sheet (56042 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "light models, watts, voltage",
+    "note": "manufacturer PDF on jandy.com"
+   }
+  ],
+  "notes": "Sheet lists watts and 14 VAC but publishes no lumens, beam angle, IP rating or listing for this nicheless light (lumens null). Needs the Infinite WaterColors light controller (300 W, IWCLC300W). The 100/200 in the part number is the cord length in feet."
+ },
+ {
+  "id": "jandy-infinite-watercolors-iwcp50w100",
+  "manufacturer": "Jandy",
+  "model": "Infinite WaterColors Niched Pool LED Light 50 W RGBW",
+  "part_no": "IWCP50W100 / IWCP50W200",
+  "watts": 50,
+  "voltage": "14 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGBW",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/water-features/56042slinfinitewatercolors.pdf?rev=55d5513e7a12461494c4a68a61e6ed31%3Fforce%3D1",
+    "title": "Jandy Infinite WaterColors LED lights sell sheet (56042 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "light models, watts, voltage",
+    "note": "manufacturer PDF on jandy.com"
+   }
+  ],
+  "notes": "Sheet lists watts and 14 VAC but publishes no lumens, beam angle, IP rating or listing for this niched pool light (lumens null). Needs the Infinite WaterColors light controller (300 W, IWCLC300W). The 100/200 in the part number is the cord length in feet."
+ },
+ {
+  "id": "jandy-infinite-watercolors-iwcs25w100",
+  "manufacturer": "Jandy",
+  "model": "Infinite WaterColors Niched Spa LED Light 25 W RGBW",
+  "part_no": "IWCS25W100 / IWCS25W200",
+  "watts": 25,
+  "voltage": "14 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGBW",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.jandy.com/-/media/zodiac/global/downloads/jandy/water-features/56042slinfinitewatercolors.pdf?rev=55d5513e7a12461494c4a68a61e6ed31%3Fforce%3D1",
+    "title": "Jandy Infinite WaterColors LED lights sell sheet (56042 SL)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "light models, watts, voltage",
+    "note": "manufacturer PDF on jandy.com"
+   }
+  ],
+  "notes": "Sheet lists watts and 14 VAC but publishes no lumens, beam angle, IP rating or listing for this niched spa light (lumens null). Needs the Infinite WaterColors light controller (300 W, IWCLC300W). The 100/200 in the part number is the cord length in feet."
+ },
+ {
+  "id": "hayward-colorlogic-sp0524led",
+  "manufacturer": "Hayward",
+  "model": "ColorLogic LED pool light 12 V (SP0524LED)",
+  "part_no": "SP0524LED / SP0524SLED",
+  "watts": 50,
+  "voltage": "12 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGB color-changing",
+  "listing": [
+   "UL listed, file E39338"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://commerce.hayward-pool-assets.com/magento/akeneo/W3SP0527LED100/manuals/092153ARevB_e052.pdf",
+    "title": "Hayward ColorLogic LED pool and spa light installation and operation manual 092153A Rev B",
+    "page": 3,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / wattage table and UL listing text",
+    "note": "manufacturer PDF on hayward-pool-assets.com"
+   }
+  ],
+  "notes": "Hayward ColorLogic LED light. Manual states ColorLogic LED pool lights (SP0524, SP0525, SP0527, W3SP0527) are UL listed under file number E39338 (standard number not given), for permanently installed pools only; the top of the lens must be at least 18 in (46 cm) below normal water level. Manual gives no lumens, beam angle or IP rating. Wattage 50 W per manual table; lumens not published."
+ },
+ {
+  "id": "hayward-colorlogic-sp0525led",
+  "manufacturer": "Hayward",
+  "model": "ColorLogic LED pool light 120 V, 50 W (SP0525LED)",
+  "part_no": "SP0525LED / SP0525SLED",
+  "watts": 50,
+  "voltage": "120 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGB color-changing",
+  "listing": [
+   "UL listed, file E39338"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://commerce.hayward-pool-assets.com/magento/akeneo/W3SP0527LED100/manuals/092153ARevB_e052.pdf",
+    "title": "Hayward ColorLogic LED pool and spa light installation and operation manual 092153A Rev B",
+    "page": 3,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / wattage table and UL listing text",
+    "note": "manufacturer PDF on hayward-pool-assets.com"
+   }
+  ],
+  "notes": "Hayward ColorLogic LED light. Manual states ColorLogic LED pool lights (SP0524, SP0525, SP0527, W3SP0527) are UL listed under file number E39338 (standard number not given), for permanently installed pools only; the top of the lens must be at least 18 in (46 cm) below normal water level. Manual gives no lumens, beam angle or IP rating. Wattage 50 W per manual table; lumens not published."
+ },
+ {
+  "id": "hayward-colorlogic-4-0-w3sp0527led",
+  "manufacturer": "Hayward",
+  "model": "ColorLogic 4.0 LED pool light 120 V (W3SP0527LED)",
+  "part_no": "W3SP0527LED100 / W3SP0527SLED",
+  "watts": 95,
+  "voltage": "120 VAC",
+  "lumens": 950,
+  "beam_deg": null,
+  "color": "RGB color-changing (5 colors per product page)",
+  "listing": [
+   "UL listed, file E39338"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://commerce.hayward-pool-assets.com/magento/akeneo/W3SP0527LED100/manuals/092153ARevB_e052.pdf",
+    "title": "Hayward ColorLogic LED pool and spa light installation and operation manual 092153A Rev B",
+    "page": 3,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / wattage table and UL listing text",
+    "note": "manufacturer PDF on hayward-pool-assets.com"
+   },
+   {
+    "url": "https://www.hayward.com/colorlogic-4-0-led-pool-light-120v-100-ft-cord-plastic-trim-open-line-w3sp0527led100.html",
+    "title": "Hayward ColorLogic 4.0 LED Pool Light W3SP0527LED100 product page",
+    "page": null,
+    "accessed": "2026-11-01",
+    "what": "lumen output field",
+    "note": "manufacturer web page, not a PDF"
+   }
+  ],
+  "notes": "Hayward ColorLogic LED light. Manual states ColorLogic LED pool lights (SP0524, SP0525, SP0527, W3SP0527) are UL listed under file number E39338 (standard number not given), for permanently installed pools only; the top of the lens must be at least 18 in (46 cm) below normal water level. Manual gives no lumens, beam angle or IP rating. Watts 95 W and 120 V agree between the manual table and the product page. Lumens 950 are from the manufacturer product page only (field \"Lumen output\"); an earlier web search result quoted a Hayward support page saying lumen information for this product was unavailable, and that page was not opened, so treat 950 as unconfirmed. Product page also lists a 1-year parts warranty."
+ },
+ {
+  "id": "hayward-colorlogic-spa-sp0535led",
+  "manufacturer": "Hayward",
+  "model": "ColorLogic LED spa light 120 V, 40 W (SP0535LED)",
+  "part_no": "SP0535LED / W3SP0535LED",
+  "watts": 40,
+  "voltage": "120 VAC",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "RGB color-changing",
+  "listing": [
+   "UL listed, file E39338 (spa lights)"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://commerce.hayward-pool-assets.com/magento/akeneo/W3SP0527LED100/manuals/092153ARevB_e052.pdf",
+    "title": "Hayward ColorLogic LED pool and spa light installation and operation manual 092153A Rev B",
+    "page": 3,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / wattage table and UL listing text",
+    "note": "manufacturer PDF on hayward-pool-assets.com"
+   }
+  ],
+  "notes": "Spa version per manual table (SP0532 12 V 25 W, SP0533 120 V 25 W, SP0535 120 V 40 W). Lumens, beam angle and IP rating not published in the manual."
+ },
+ {
+  "id": "pentair-intellibrite-5g-color-pool-120v",
+  "manufacturer": "Pentair",
+  "model": "IntelliBrite 5G Color LED pool light 120 V",
+  "part_no": "601000-601004 / 602000-602004",
+  "watts": 28,
+  "voltage": "120 V",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "multi-color",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.pentair.com/assets/intellibrite-architectural-series-specifications-grid-pdf",
+    "title": "IntelliBrite Architectural Series Pool and Spa Lighting specifications grid (2024)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / power table",
+    "note": "manufacturer PDF on pentair.com"
+   }
+  ],
+  "notes": "Pentair grid lists item number, voltage, power and incandescent equivalency only; no lumens, beam angle, IP rating or listing. The grid sets the 5G item numbers beside Architectural Series item numbers and the layout does not make clear which series the Power column belongs to, so wattage may refer to the Architectural counterpart; the pentair.com 5G Color product page (not opened as a document) was quoted in a search result as 26 W for the 5G color pool light. Cord 30 to 250 ft. 12 V versions 601010-601013 / 602010-602012 are also 28 W in the grid."
+ },
+ {
+  "id": "pentair-intellibrite-5g-color-spa-120v",
+  "manufacturer": "Pentair",
+  "model": "IntelliBrite 5G Color LED spa light 120 V",
+  "part_no": "640120-640124",
+  "watts": 18,
+  "voltage": "120 V",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "multi-color",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.pentair.com/assets/intellibrite-architectural-series-specifications-grid-pdf",
+    "title": "IntelliBrite Architectural Series Pool and Spa Lighting specifications grid (2024)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / power table",
+    "note": "manufacturer PDF on pentair.com"
+   }
+  ],
+  "notes": "Pentair grid lists item number, voltage, power and incandescent equivalency only; no lumens, beam angle, IP rating or listing. The grid sets the 5G item numbers beside Architectural Series item numbers and the layout does not make clear which series the Power column belongs to, so wattage may refer to the Architectural counterpart; the pentair.com 5G Color product page (not opened as a document) was quoted in a search result as 26 W for the 5G color pool light. 12 V spa versions 640130-640133 are also 18 W."
+ },
+ {
+  "id": "pentair-intellibrite-5g-white-pool-120v-26w",
+  "manufacturer": "Pentair",
+  "model": "IntelliBrite 5G White LED pool light 120 V, 26 W",
+  "part_no": "601100-601104",
+  "watts": 26,
+  "voltage": "120 V",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "white",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.pentair.com/assets/intellibrite-architectural-series-specifications-grid-pdf",
+    "title": "IntelliBrite Architectural Series Pool and Spa Lighting specifications grid (2024)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / power table",
+    "note": "manufacturer PDF on pentair.com"
+   }
+  ],
+  "notes": "Pentair grid lists item number, voltage, power and incandescent equivalency only; no lumens, beam angle, IP rating or listing. The grid sets the 5G item numbers beside Architectural Series item numbers and the layout does not make clear which series the Power column belongs to, so wattage may refer to the Architectural counterpart; the pentair.com 5G Color product page (not opened as a document) was quoted in a search result as 26 W for the 5G color pool light. Incandescent equivalency 300 W / 500 W as printed for the 12 V rows."
+ },
+ {
+  "id": "pentair-intellibrite-5g-white-pool-120v-31w",
+  "manufacturer": "Pentair",
+  "model": "IntelliBrite 5G White LED pool light 120 V, 31 W",
+  "part_no": "601200-601204 / 601300-601304",
+  "watts": 31,
+  "voltage": "120 V",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "white",
+  "listing": [],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.pentair.com/assets/intellibrite-architectural-series-specifications-grid-pdf",
+    "title": "IntelliBrite Architectural Series Pool and Spa Lighting specifications grid (2024)",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "model / voltage / power table",
+    "note": "manufacturer PDF on pentair.com"
+   }
+  ],
+  "notes": "Pentair grid lists item number, voltage, power and incandescent equivalency only; no lumens, beam angle, IP rating or listing. The grid sets the 5G item numbers beside Architectural Series item numbers and the layout does not make clear which series the Power column belongs to, so wattage may refer to the Architectural counterpart; the pentair.com 5G Color product page (not opened as a document) was quoted in a search result as 26 W for the 5G color pool light. "
+ },
+ {
+  "id": "wibre-4-0050-30-11",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0050 surface-mounted spotlight, cold white",
+  "part_no": "4.0050.30.11",
+  "watts": 5,
+  "voltage": "12 VDC (constant current 350 mA)",
+  "lumens": 675,
+  "beam_deg": 25,
+  "color": "cold white 6000K",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/content/downloads/WIBRE_Catalogue_Centum_EN.pdf",
+    "title": "WIBRE CENTUM catalogue (EN)",
+    "page": null,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Beam 25 deg medium spot; IP68 up to 3 m water depth (3 m = 9.8 ft). Warm 3000K 540 lm (.12) and neutral 4500K 575 lm (.13) versions exist. Listing not stated in the pages read."
+ },
+ {
+  "id": "wibre-4-0100-30-11",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0100 surface-mounted spotlight, cold white",
+  "part_no": "4.0100.30.11",
+  "watts": 18,
+  "voltage": "12 VDC (constant current 1200 mA)",
+  "lumens": 2300,
+  "beam_deg": 30,
+  "color": "cold white 6000K",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/content/downloads/WIBRE_Catalogue_Centum_EN.pdf",
+    "title": "WIBRE CENTUM catalogue (EN)",
+    "page": null,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Beam 30 deg medium; IP68 up to 3 m (9.8 ft). The catalogue text layout makes the .12/.13 colour-to-lumen pairing ambiguous (a search result of the product page gave .12 = 1880 lm 3000K), so only the .11 cold-white row is recorded."
+ },
+ {
+  "id": "wibre-4-0083-00-11",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0083 recessed spotlight, cold white",
+  "part_no": "4.0083.00.11",
+  "watts": 9,
+  "voltage": "12 VDC (constant current 700 mA)",
+  "lumens": 915,
+  "beam_deg": 30,
+  "color": "cold white 6000K",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0083.pdf",
+    "title": "WIBRE 4.0083 recessed spotlight catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Beam 30 deg medium; sheet header says IP68 (depth for this model not captured). Underwater operation only; for smaller pools, jacuzzis and water bodies. .12 (750 lm) and .13 (855 lm) are the warm and neutral versions in the same row order, not separately recorded."
+ },
+ {
+  "id": "wibre-4-0273-00-11",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0273 recessed swimming-pool spotlight, 27 POW-LED, cold white",
+  "part_no": "4.0273.00.11",
+  "watts": 85,
+  "voltage": "12 VDC (constant current 700 mA)",
+  "lumens": 4050,
+  "beam_deg": null,
+  "color": "6000K cold white",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0273.pdf",
+    "title": "WIBRE 4.0273 recessed spotlight (swimming pool light, saline version) catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Saline version in 904L stainless steel; IP68 up to 3 m (9.8 ft); built-in pot 4.0274.73.00 sold separately; 3 m cable. Beam angle not given on this page. The sheet notes an updated version 4.0292."
+ },
+ {
+  "id": "wibre-4-0273-00-12",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0273 recessed swimming-pool spotlight, 27 POW-LED, warm white",
+  "part_no": "4.0273.00.12",
+  "watts": 85,
+  "voltage": "12 VDC (constant current 700 mA)",
+  "lumens": 3510,
+  "beam_deg": null,
+  "color": "3000K warm white",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0273.pdf",
+    "title": "WIBRE 4.0273 recessed spotlight (swimming pool light, saline version) catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Saline version in 904L stainless steel; IP68 up to 3 m (9.8 ft); built-in pot 4.0274.73.00 sold separately; 3 m cable. Beam angle not given on this page. The sheet notes an updated version 4.0292."
+ },
+ {
+  "id": "wibre-4-0273-00-13",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0273 recessed swimming-pool spotlight, 27 POW-LED, neutral white",
+  "part_no": "4.0273.00.13",
+  "watts": 85,
+  "voltage": "12 VDC (constant current 700 mA)",
+  "lumens": 3780,
+  "beam_deg": null,
+  "color": "4500K neutral white",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0273.pdf",
+    "title": "WIBRE 4.0273 recessed spotlight (swimming pool light, saline version) catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Saline version in 904L stainless steel; IP68 up to 3 m (9.8 ft); built-in pot 4.0274.73.00 sold separately; 3 m cable. Beam angle not given on this page. The sheet notes an updated version 4.0292."
+ },
+ {
+  "id": "wibre-4-0273-00-01",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0273 recessed swimming-pool spotlight, 18 POW-LED, 24 V",
+  "part_no": "4.0273.00.01",
+  "watts": 50,
+  "voltage": "24 VDC (constant current 700 mA)",
+  "lumens": 2700,
+  "beam_deg": null,
+  "color": "cold white 6000K",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0273.pdf",
+    "title": "WIBRE 4.0273 recessed spotlight (swimming pool light, saline version) catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Total 50 W, 2700 lm as printed; same page also lists halogen 100-400 W versions (not recorded). Beam angle not given."
+ },
+ {
+  "id": "wibre-4-0275-00-11",
+  "manufacturer": "WIBRE",
+  "model": "CENTUM 4.0275 flush-mount swimming-pool spotlight, 27 POW-LED, cold white",
+  "part_no": "4.0275.00.11",
+  "watts": 85,
+  "voltage": "12 VDC (constant current 700 mA)",
+  "lumens": 4050,
+  "beam_deg": null,
+  "color": "cold white 6000K",
+  "listing": [],
+  "ip_rating": "IP68",
+  "max_depth_ft": 9.8,
+  "source": [
+   {
+    "url": "https://www.wibre.de/files/public/product-downloads/Catalog_4.0275.pdf",
+    "title": "WIBRE 4.0275 recessed spotlight (flush-mount swimming-pool light) catalogue page",
+    "page": 1,
+    "accessed": "2026-11-01",
+    "what": "article table",
+    "note": "manufacturer PDF on wibre.de"
+   }
+  ],
+  "notes": "WIBRE CENTUM series stainless steel underwater luminaire, constant-current LED, IP68, 316Ti/904L stainless steel. Stainless steel 1.4571; IP68 up to 3 m (9.8 ft); built-in pot 4.0274.75.00. Beam angle not given on this page. Updated version 4.0291."
+ },
+ {
+  "id": "kasco-led-lighting-kit-led3125",
+  "manufacturer": "Kasco",
+  "model": "Fountain LED light kit, 3 fixtures (LED3125xxx)",
+  "part_no": "LED3125050 ... LED3125400",
+  "watts": 9,
+  "voltage": "120 V single phase 60 Hz",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "not stated",
+  "listing": [
+   "ETL approved for floating fountains; UL-676 (as printed for the optional bronze lighting; LED lights \"also available\")"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://cdn.shopify.com/s/files/1/0009/3470/7315/files/7.3jf_quick_spec.pdf",
+    "title": "Kasco 7.3JF quick spec (Kasco Optional Lighting Package Specifications table, rev 1/17/13)",
+    "page": 2,
+    "accessed": "2026-11-01",
+    "what": "lighting package table",
+    "note": "manufacturer PDF hosted on cdn.shopify.com"
+   }
+  ],
+  "notes": "9 W per fixture, 27 W total for 3 fixtures, drivers in each fixture, cord 50-400 ft; lens position above water. Sheet gives no lumens, beam angle or IP rating (lumens null)."
+ },
+ {
+  "id": "kasco-halogen-lighting-kit-lr375",
+  "manufacturer": "Kasco",
+  "model": "Fountain bronze halogen light kit, 3 fixtures (LR375xxx)",
+  "part_no": "LR375100 ... LR375400",
+  "watts": 75,
+  "voltage": "120 V single phase 60 Hz (remote low-voltage transformer)",
+  "lumens": null,
+  "beam_deg": null,
+  "color": "halogen (not stated)",
+  "listing": [
+   "ETL approved for floating fountains; UL-676"
+  ],
+  "ip_rating": null,
+  "max_depth_ft": null,
+  "source": [
+   {
+    "url": "https://cdn.shopify.com/s/files/1/0009/3470/7315/files/7.3jf_quick_spec.pdf",
+    "title": "Kasco 7.3JF quick spec (Kasco Optional Lighting Package Specifications table, rev 1/17/13)",
+    "page": 2,
+    "accessed": "2026-11-01",
+    "what": "lighting package table",
+    "note": "manufacturer PDF hosted on cdn.shopify.com"
+   }
+  ],
+  "notes": "75 W per fixture (MR-16 type per the 7.3JF sheet text), 225 W for 3 fixtures; cord 100-400 ft; lens position above water. Sheet gives no lumens, beam angle or IP rating (lumens null)."
+ }
+]

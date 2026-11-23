@@ -16,6 +16,8 @@
  *    realtime prompt in create_project_prompt.js. There is no manual "Create
  *    Project" button on the toolbar; project creation runs from that prompt or
  *    from the Hand-Off Process tab (opportunity_handoff.js).
+ *  - "Quote <product>" (v1.827.0): starts a Product Configuration for the deal and opens it
+ *    (record_actions.open_quote_product, shared with the guided page's Actions menu).
  *  - Listen on the `project_creation_status` realtime channel to report
  *    background project-creation success/failure (incl. Google Drive folder
  *    provisioning results). Registered once, and quiet while the progress
@@ -43,13 +45,15 @@ function sync_tags_from_child_table(frm) {
 		// If it's an existing document with missing tags, save it directly to the database via API.
 		// Skipped while live collab applies a remote change: the originating
 		// client performs this write; receivers only mirror tags locally.
+		// The endpoint requires write permission, so a read-only viewer only previews.
 		let applying_remote = frm._live_sync && frm._live_sync.applying_remote;
 		if (
 			!frm.is_new() &&
 			!frm.is_dirty() &&
 			has_no_core_tags &&
 			value_streams.length > 0 &&
-			!applying_remote
+			!applying_remote &&
+			frm.has_perm("write")
 		) {
 			frappe.call({
 				method: "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags_for_existing",
@@ -104,6 +108,26 @@ frappe.ui.form.on("Opportunity", {
 		// button. Defensively drop any standard "Create > Project" entry if a
 		// future ERPNext / site adds one.
 		frm.remove_custom_button("Project", "Create");
+
+		// v1.827.0: "Quote <product>" — a Product Configuration for this deal, opened when made. The
+		// guided page's Actions menu offers the same through the same function (record_actions.js).
+		// Guarded on the function itself: this script travels with the form's meta, the bundle that
+		// installs record_actions with the tab, and a tab open across a deploy can hold an old bundle.
+		const actions = window.erpnext_enhancements && erpnext_enhancements.record_actions;
+		if (
+			!frm.is_new() &&
+			actions &&
+			typeof actions.can_quote_product === "function" &&
+			actions.can_quote_product(frm.doctype, frm.doc)
+		) {
+			frm.add_custom_button(actions.quote_product_label(), () => {
+				if (frm.is_dirty()) {
+					frm.save().then(() => actions.open_quote_product(frm.doc.name));
+				} else {
+					actions.open_quote_product(frm.doc.name);
+				}
+			});
+		}
 
 		// Form kit P4-B: open this record in the guided step-by-step page. Only for a saved
 		// record (step 1 of a new one is the page's own "new" screen) and only when this person

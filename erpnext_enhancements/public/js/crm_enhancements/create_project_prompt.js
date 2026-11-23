@@ -47,6 +47,12 @@ frappe.provide("erpnext_enhancements.crm");
 	const EVENT = "ee_prompt_create_project";
 	const open_prompts = {}; // opportunity_name -> true while a prompt/dialog is showing
 
+	// v1.827.0: what a product sale (crm_enhancements/product_sale.py) is told instead of a project:
+	// a deal a person ticked Product Sale (No Project), with nothing else on its linked quotes.
+	const PRODUCT_SALE_TEXT =
+		"This deal is marked a product sale, so it gets no project: its Sales Order is the record. If it needs one after all, use Create Project Anyway on the Hand-Off Process tab.";
+	const MARK_METHOD = "erpnext_enhancements.crm_enhancements.handoff.mark_product_sale";
+
 	const PROGRESS_EVENT = "ee_project_creation_progress";
 	const STATUS_EVENT = "project_creation_status";
 	const STATE_METHOD =
@@ -137,6 +143,16 @@ frappe.provide("erpnext_enhancements.crm");
 				opportunity: opportunity_name,
 			})
 			.then(function (state) {
+				// v1.827.0: a product sale gets no project (crm_enhancements/product_sale.py), unless
+				// this is the Hand-Off Process tab's Create Project Anyway.
+				if (state && state.is_product_sale && !opts.create_anyway) {
+					frappe.msgprint({
+						title: __("No project for a product sale"),
+						indicator: "blue",
+						message: __(PRODUCT_SALE_TEXT),
+					});
+					return;
+				}
 				if (state && state.available && state.enabled && !state.gate_open) {
 					frappe.msgprint({
 						title: __("Hand-Off Required"),
@@ -180,9 +196,20 @@ frappe.provide("erpnext_enhancements.crm");
 				.catch(function () {
 					return {};
 				}),
+			// Design projects (Nik, 2026-10-30): a deal whose only value stream is Design (2026-11-02)
+			// preselects the Design Project (PRO-0206) template. A Fountain Move intake's template wins.
+			// Advisory too.
+			frappe
+				.xcall("erpnext_enhancements.project_enhancements.design_projects.opportunity_defaults", {
+					opportunity: opportunity_name,
+				})
+				.catch(function () {
+					return {};
+				}),
 		]).then(function (results) {
 			const default_users = results[0] || [];
 			const move_defaults = results[2] || {};
+			const design_defaults = results[3] || {};
 			// The inboxes are not Users, so they are offered alongside the desk
 			// users rather than found among them.
 			const user_options = default_users.concat(
@@ -211,7 +238,7 @@ frappe.provide("erpnext_enhancements.crm");
 						// in, all dated the project's first day. They are loaded per job from
 						// the planner's Build out grid instead.
 						get_query: () => ({ filters: { custom_template_kind: ["is", "not set"] } }),
-						default: move_defaults.template || undefined,
+						default: move_defaults.template || design_defaults.template || undefined,
 						description: move_defaults.is_fountain_move
 							? __("This came from the fountain move form, so the project will be a Fountain Move.")
 							: undefined,
@@ -288,6 +315,8 @@ frappe.provide("erpnext_enhancements.crm");
 								// server validates exactly what passed here.
 								users: addresses.join(", "),
 								project_template: values.project_template,
+								// v1.827.0: Create Project Anyway on a deal ticked Product Sale.
+								create_anyway: opts.create_anyway ? 1 : 0,
 							},
 						})
 					)
@@ -297,6 +326,16 @@ frappe.provide("erpnext_enhancements.crm");
 							if (result.status === "exists") {
 								tracker.cancel();
 								report(opportunity_name, { status: "exists", project: result.project }, opts);
+								return;
+							}
+							// v1.827.0: the server found a product sale, which gets no project.
+							if (result.status === "product_sale") {
+								tracker.cancel();
+								frappe.msgprint({
+									title: __("No project for a product sale"),
+									indicator: "blue",
+									message: __(PRODUCT_SALE_TEXT),
+								});
 								return;
 							}
 							// "running": someone (or another tab) had already started it,
@@ -460,7 +499,7 @@ frappe.provide("erpnext_enhancements.crm");
 			});
 	}
 
-	// set_route with an options object, as the Project form's Open in Project Planner does: on v16 it
+	// set_route with an options object, as the Project form's Open in Planner does: on v16 it
 	// fills route_options and writes the query, and it is a history entry of its own, so Back comes
 	// back here. The planner takes build_out off the address as it lands (ppg_take_build_out), so
 	// Back, Forward and a reload of that entry show the Gantt and never open the dialog again.
@@ -823,6 +862,50 @@ frappe.provide("erpnext_enhancements.crm");
 			});
 		};
 
+		// v1.827.0: the deal's quotes in ERPNext are all products (crm_enhancements/product_sale.py
+		// suggests it). Is it a product sale? Yes ticks Product Sale (No Project) and asks nothing more;
+		// "It needs a project" goes on to the hand-off question. Closing it (Esc) decides nothing, and
+		// leaves a fresh win won: a product question is not the "un-win" No of the questions below.
+		const ask_product_sale = function (otherwise) {
+			let answered = false;
+			const d = new frappe.ui.Dialog({
+				title: __("Is this a product sale?"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "body",
+						options: `<p>${__(
+							"Everything quoted on this deal in ERPNext is a standard product. A product sale gets no project and no hand-off meeting: its Sales Order is the record."
+						)}</p><p class="text-muted">${__(
+							"Choose It Needs a Project if the deal also has other work, a custom control panel, or a quote that lives in QuickBooks."
+						)}</p>`,
+					},
+				],
+				primary_action_label: __("Product Sale, No Project"),
+				primary_action() {
+					answered = true;
+					d.hide();
+					done();
+					frappe
+						.xcall(MARK_METHOD, { opportunity: opportunity_name, ticked: 1 })
+						.then(function () {
+							frappe.show_alert({ message: __("Marked a product sale: no project."), indicator: "blue" });
+							refresh_view();
+						});
+				},
+				secondary_action_label: __("It Needs a Project"),
+				secondary_action() {
+					answered = true;
+					d.hide();
+					otherwise();
+				},
+			});
+			d.onhide = function () {
+				if (!answered) done();
+			};
+			d.show();
+		};
+
 		const ask_schedule = function () {
 			ask(__("Schedule the hand-off meeting now?"), function () {
 				done();
@@ -845,6 +928,15 @@ frappe.provide("erpnext_enhancements.crm");
 					done();
 					return;
 				}
+				// v1.827.0: a product sale gets no project and no hand-off, so there is no next step
+				// to ask about. A fresh win says so once; reopening the deal asks nothing.
+				if (state && state.is_product_sale) {
+					done();
+					if (opts.mode === "transition") {
+						frappe.show_alert({ message: __(PRODUCT_SALE_TEXT), indicator: "blue" }, 10);
+					}
+					return;
+				}
 				if (state && state.on_lead) {
 					lead_warning = `<p class="text-warning" style="margin-bottom:8px;"><b>${__(
 						"This deal is still on a Lead."
@@ -854,8 +946,13 @@ frappe.provide("erpnext_enhancements.crm");
 				}
 				const needs_meeting =
 					state && state.available && state.enabled && state.gate_applies && !state.held && !state.event;
-				if (needs_meeting) ask_schedule();
-				else ask_create();
+				const next_step = function () {
+					if (needs_meeting) ask_schedule();
+					else ask_create();
+				};
+				// v1.827.0: the configurator only suggests a product sale; the person decides here.
+				if (state && state.product_sale_suggested) ask_product_sale(next_step);
+				else next_step();
 			})
 			// A transient failure of the state read must not swallow the prompt
 			// entirely: fall back to the older question, which the gate check

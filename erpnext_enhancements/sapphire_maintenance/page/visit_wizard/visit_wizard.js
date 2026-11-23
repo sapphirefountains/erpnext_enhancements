@@ -179,6 +179,34 @@ const VZ_STYLE = `
 // server enforces (checked_visit_date). Mirrored only to bound the date picker.
 const VZ_MAX_BACKFILL_DAYS = 60;
 
+// The earliest day a visit may be dated, as checked_visit_date decides it: MAX_BACKFILL_DAYS
+// back, or the visit's scheduled day when that is older (Nik, 2026-11-02: a visit scheduled
+// 96 days back could not be dated to its own day). No limit for a Maintenance Reviewer, who
+// can set any date on the desk form anyway. by_schedule says the scheduled day set it.
+function vz_visit_date_floor(today, scheduled) {
+	if (frappe.user && frappe.user.has_role && frappe.user.has_role("Maintenance Reviewer")) {
+		return { earliest: "", by_schedule: false };
+	}
+	const window_start = frappe.datetime.add_days(today, -VZ_MAX_BACKFILL_DAYS);
+	if (scheduled && scheduled < window_start) return { earliest: scheduled, by_schedule: true };
+	return { earliest: window_start, by_schedule: false };
+}
+
+// Why ``value`` cannot be the visit's date, in the server's words, or "" when it can.
+function vz_visit_date_refusal(value, today, scheduled) {
+	if (!value) return "";
+	if (value > today) return __("A visit cannot be logged for a future date.");
+	const floor = vz_visit_date_floor(today, scheduled);
+	if (!floor.earliest || value >= floor.earliest) return "";
+	return floor.by_schedule
+		? __("This visit was scheduled for {0}; you can date it any day from then to today.", [
+				frappe.datetime.str_to_user(scheduled),
+			])
+		: __("A visit can only be backdated {0} days. Check the date, or ask a supervisor to enter it.", [
+				VZ_MAX_BACKFILL_DAYS,
+			]);
+}
+
 const VZ_STRIP_TAGS = "script,style,iframe,object,embed,link,meta,base,form,input,button";
 const VZ_URL_ATTRS = ["href", "src", "xlink:href", "action", "formaction"];
 
@@ -1220,11 +1248,18 @@ class VisitWizard {
 					],
 					primary_action_label: __("Start form"),
 					primary_action: (values) => {
-						if (values.visit_date > frappe.datetime.get_today()) {
-							frappe.msgprint(__("A visit cannot be logged for a future date."));
+						const site = by_contract[values.contract] || {};
+						// The site's open regular draft is the visit this opens, so its scheduled
+						// day sets the earliest date, as create_visit checks it.
+						const refusal = vz_visit_date_refusal(
+							values.visit_date,
+							frappe.datetime.get_today(),
+							site.open_draft_scheduled
+						);
+						if (refusal) {
+							frappe.msgprint(refusal);
 							return;
 						}
-						const site = by_contract[values.contract] || {};
 						if (site.visit_shape !== "Per Site Visit" && !values.serial_no) {
 							frappe.msgprint(__("Pick which water feature this visit covers."));
 							return;
@@ -4316,13 +4351,17 @@ class VisitWizard {
 	// submit a draft for review that isn't on the same day as the day they fill it out").
 	// Empty means the day it is submitted, which is what a visit filled in on the day wants.
 	// The server applies the Log a visit rule (checked_visit_date) and drops clock times
-	// from another day, which only the kiosk autofill can have put there.
+	// from another day, which only the kiosk autofill can have put there. A visit scheduled
+	// longer ago than the window may be dated back to its scheduled day (vz_visit_date_floor).
 	render_visit_date() {
 		const today = frappe.datetime.get_today();
-		const earliest = frappe.datetime.add_days(today, -VZ_MAX_BACKFILL_DAYS);
 		const scheduled = this.doc.scheduled_visit_date;
-		const hint =
-			!this.doc.visit_date && scheduled && scheduled < today
+		const { earliest, by_schedule } = vz_visit_date_floor(today, scheduled);
+		const hint = by_schedule
+			? __("This visit was scheduled for {0}; you can date it any day from then to today.", [
+					frappe.datetime.str_to_user(scheduled),
+				])
+			: !this.doc.visit_date && scheduled && scheduled < today
 				? __("This visit was scheduled for {0}. If you did the work then, pick that day.", [
 						frappe.datetime.str_to_user(scheduled),
 					])
@@ -4331,17 +4370,16 @@ class VisitWizard {
 			<div class="vz-card">
 				<div class="vz-card-title">${__("Date of visit")}</div>
 				<div class="vz-card-sub">${frappe.utils.escape_html(hint)}</div>
-				<input class="vz-date" type="date" min="${earliest}" max="${today}">
+				<input class="vz-date" type="date"${earliest ? ` min="${earliest}"` : ""} max="${today}">
 			</div>
 		`);
 		const $input = $card.find("input").val(this.doc.visit_date || today);
 		if (this.doc.docstatus !== 0) $input.prop("disabled", true);
 		$input.on("change", () => {
 			const value = $input.val();
-			if (value && (value > today || value < earliest)) {
-				frappe.msgprint(
-					__("Pick a day between {0} and today.", [frappe.datetime.str_to_user(earliest)])
-				);
+			const refusal = vz_visit_date_refusal(value, today, scheduled);
+			if (refusal) {
+				frappe.msgprint(refusal);
 				$input.val(this.doc.visit_date || today);
 				return;
 			}

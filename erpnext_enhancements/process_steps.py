@@ -1002,7 +1002,7 @@ def _may_complete(project_row, role):
 	return False
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def complete_step(project, step_name, notes=None):
 	"""Mark one hand-off step complete. **The only supported way to do it.**
 
@@ -1051,7 +1051,7 @@ def complete_step(project, step_name, notes=None):
 	return {"already": False, "step_number": row.step_number}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_process(project):
 	"""Seed the hand-off tracker on an existing Project (form button).
 
@@ -1141,7 +1141,7 @@ def get_payment_followup(project):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_payment_followup(project, remind_at=None):
 	"""Schedule the next chase on an unpaid initial payment.
 

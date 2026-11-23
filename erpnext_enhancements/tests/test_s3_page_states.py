@@ -8,7 +8,8 @@ Each of these pages sat on "Loading…" for good, or went blank, when its server
   dialog every minute while the server answered 5xx.
 * Stripe Payments dashboard — no loading or error state at all.
 * QuickBooks Online dashboard — no error handling, and the sync-log rows went into markup unescaped.
-* Water Engineering Wizard — four calls, none with an error path.
+* Water Engineering Wizard — four calls, none with an error path. (Retired in v1.771.0, Fountain
+  Designer phase H; the Fountain Designer page has its own state checks in test_fountain_designer.)
 * Device Console and Inventory Scanner Audit — the start-up call had no error path.
 
 Now each gets sf_kit from ONE shared loader, ``window.sf_kit_ready()`` in
@@ -21,7 +22,7 @@ panel whose "Try again" runs the load again (or the no-access panel on a 403). A
 refresh uses the kit's quiet path, so frappe puts up no dialog for it.
 
 The behaviour is run too, against the REAL kit as well as the stand-in:
-``scripts/test_s3_page_states.mjs`` (the Day Board, Stripe, QuickBooks and Water pages, run by
+``scripts/test_s3_page_states.mjs`` (the Day Board, Stripe and QuickBooks pages, run by
 TestTheRealKitHarness below), ``scripts/test_rental_planner_history.js`` and
 ``scripts/test_desk_page_history.js`` (the Rental Planner and both scanner pages). These are the
 static checks. Bench-free: the scripts are read as text, comments stripped.
@@ -48,8 +49,6 @@ PAGES = {
 	/ "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
 	"quickbooks-online-dashboard": APP
 	/ "quickbooks_online/page/quickbooks_online_dashboard/quickbooks_online_dashboard.js",
-	"water-engineering-wizard": APP
-	/ "water_engineering/page/water_engineering_wizard/water_engineering_wizard.js",
 	"device-console": APP / "device_management/page/device_console/device_console.js",
 	"inventory-scanner-audit": APP
 	/ "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
@@ -61,7 +60,6 @@ FIRST_LOAD = {
 	"maintenance-day-board": "get_day_board_data",
 	"stripe-payments-dashboard": "get_dashboard_status",
 	"quickbooks-online-dashboard": "get_dashboard_status",
-	"water-engineering-wizard": "check_permission",
 	"device-console": "get_console_bootstrap",
 	"inventory-scanner-audit": "get_bootstrap",
 }
@@ -100,7 +98,7 @@ class TestEveryPageLoadsTheKit(unittest.TestCase):
 				self.assertNotIn("/assets/erpnext_enhancements/js/sf_kit", _code(path))
 
 	def test_every_page_goes_through_the_shared_loader(self):
-		"""One loader for all seven, behind a guard for a Desk whose global bundle predates it."""
+		"""One loader for every page here, behind a guard for a Desk whose global bundle predates it."""
 		for name, path in PAGES.items():
 			with self.subTest(page=name):
 				self.assertRegex(
@@ -299,19 +297,6 @@ class TestRefreshes(unittest.TestCase):
 		)
 		self.assertIn("qboSignedOut(sf, qbo_root.find(", poll)
 
-	def test_a_stale_design_reply_never_paints(self):
-		code = _code(PAGES["water-engineering-wizard"])
-		block = code[code.index("function load_design_state(") : code.index("function render_design_state(")]
-		self.assertIn('const picked = () => $body.find("#we-design-pick").val() === design;', block)
-		self.assertIn("if (picked()) render_design_state($state, message);", block)
-		self.assertIn("if (!picked()) return;", block)
-
-	def test_design_options_are_not_built_as_markup(self):
-		code = _code(PAGES["water-engineering-wizard"])
-		block = code[code.index("function load_design_list(") : code.index("function load_design_state(")]
-		self.assertNotIn("<option value=", block)
-		self.assertIn('$("<option></option>").val(d.name).text(label)', block)
-
 	def test_the_scanner_start_up_has_its_own_slot(self):
 		"""Its loading or error panel must not paint over the lines of a count already started."""
 		code = _code(PAGES["inventory-scanner-audit"])
@@ -376,7 +361,7 @@ class TestQuickBooksLogRowsAreEscaped(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "node is not on PATH")
 class TestTheRealKitHarness(unittest.TestCase):
-	"""The Day Board, Stripe, QuickBooks and Water pages against the real sf_kit bundle."""
+	"""The Day Board, Stripe and QuickBooks pages against the real sf_kit bundle."""
 
 	def test_the_real_kit_harness_passes(self):
 		result = subprocess.run(
@@ -412,7 +397,6 @@ class TestThePagesStayInTheDesk(unittest.TestCase):
 			"maintenance-day-board",
 			"stripe-payments-dashboard",
 			"quickbooks-online-dashboard",
-			"water-engineering-wizard",
 		):
 			with self.subTest(page=name):
 				code = _code(PAGES[name])

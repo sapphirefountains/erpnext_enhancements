@@ -227,6 +227,15 @@ frappe.provide("erpnext_enhancements.contract_viewer");
 			);
 			return $note;
 		}
+		if (info.route === "issued") {
+			// A Certificate of Warranty signed for Sapphire as it was issued: there never was
+			// paper, so there is no scan to ask for (signed_copy.signed_copy).
+			$note
+				.removeClass("alert-warning")
+				.addClass("alert-info")
+				.text(__("Signed for Sapphire Fountains when it was issued. Below is the certificate as issued.") + " " + signed_line(info));
+			return $note;
+		}
 		$note.append(
 			$("<div></div>").text(
 				__(

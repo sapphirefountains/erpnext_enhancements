@@ -168,7 +168,7 @@
    "help": "Anything about the money that the numbers alone don't say. It is copied onto the Project when the Project is created; after that the two are kept separately."
   },
   "custom_first_invoice_percentage": {
-   "hint": "Percent of the Opportunity Amount to put on the first invoice",
+   "hint": "Percent of the Opportunity Amount due as the down payment (the first invoice)",
    "help": "Named in the hand-off note to Billing with the dollar figure it works out to. Copied onto the Project, where the PM can change it. Left blank, the note asks Billing to confirm the amount with Sales."
   },
   "custom_billing_email": {
@@ -177,19 +177,7 @@
   },
   "status": {
    "hint": "The deal's current stage",
-   "help": "Each stage sets a default probability. Closed Won needs all three ranks, texts the team and asks you to book the hand-off meeting; answering No puts the deal back where it was. Lost opens a dialog that needs at least one lost reason. On Hold has no default probability."
-  },
-  "custom_scope_rank": {
-   "hint": "Rank scope 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
-  },
-  "custom_schedule_rank": {
-   "hint": "Rank schedule 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
-  },
-  "custom_budget_rank": {
-   "hint": "Rank budget 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
-   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
+   "help": "Each stage sets a default probability. Closed Won texts the team and asks you to book the hand-off meeting; answering No puts the deal back where it was. Lost opens a dialog that needs at least one lost reason. On Hold has no default probability."
   },
   "custom_date_closed_won": {
    "hint": "Set automatically the day the deal is marked Closed Won",
@@ -314,6 +302,10 @@
   "custom_handoff_gate_applies": {
    "hint": "Set automatically when a deal newly moves to Closed Won; never by hand",
    "help": "While ticked, no Project can be created until the hand-off meeting is booked or skipped. Deals that were already won before the hand-off process began stay unticked and exempt."
+  },
+  "custom_product_sale": {
+   "hint": "Tick when the deal sells only standard products: no project, its Sales Order is the record",
+   "help": "For an E-Stop or another standard product sold on its own. A ticked deal gets no hand-off meeting and no project. Quoting a product suggests it; a person decides. A linked quote with anything else on it (a fountain, a control panel, labor) makes it a job again. To undo, untick it or use Create Project Anyway."
   }
  }
 }

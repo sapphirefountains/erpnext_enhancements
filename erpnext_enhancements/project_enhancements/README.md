@@ -8,7 +8,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 
 | File | Purpose | Key functions / classes | Wiring |
 |---|---|---|---|
-| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `on_update` → `sync_attachments_from_opportunity` (one copy of each file, by `utils/attachment_copies.files_to_copy`, v1.749.1); `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
+| `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `get_procurement_overview`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `on_update` → `sync_attachments_from_opportunity` (one copy of each file, by `utils/attachment_copies.files_to_copy`, v1.749.1); `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
 | `doctype/master_project/master_project.py` | Master Project controller; rollup of member Projects + Tasks | `MasterProject.get_projects_and_tasks` | Doctype controller |
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project_notes`, `project_stakeholder`, `{build,design,rent,service}_customer_requests`, `{build,design,rent,service}_deliverables` | Project child tables ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
@@ -21,16 +21,17 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/change_order/change_order.js` | The approval buttons. **Not optional** — every approval stamp is read-only and `before_submit` refuses a change order neither party has approved, so until v1.465.0 the four endpoints in `api/change_order.py` had no caller and no change order could be locked at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
 | `doctype/project_budget_category/project_budget_category.py` | The budget-category catalog (WI-075 sub-phase M). Its one real job: **the protection flag cannot be quietly unticked** — `budgets.PROTECTED` is the rule and the Check is its display, so `validate` restores a flag that has been removed and never clears one that has been added | `ProjectBudgetCategory` | Doctype controller; seeded by `seed_budget_categories` |
 | `doctype/project_budget_line/project_budget_line.py` | Child table on Project: one category, what it is budgeted at, and the computed committed/actual with a **coverage verdict** beside them. No controller logic — everything that decides anything lives on the parent, and a child controller with opinions would be a third place the same rules could disagree | `ProjectBudgetLine` | child-table controller |
-| `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; a protected category on either side needs a second approval that cannot come from the requester or the approving PM; amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
+| `doctype/budget_reallocation/budget_reallocation.py` | Submittable record of money moving between two categories. Net zero by construction and checked at apply time; the PM approval cannot come from the requester, and a protected category on either side needs a second approval that cannot come from the requester or the approving PM; approval stamps change only through the approval endpoints (`APPROVAL_FLAG`); amendment refused, and a cancellation that would drive a line negative refused too | `BudgetReallocation` | Doctype controller; approvals via [`api/project_budget.py`](../api/project_budget.py) |
 | `doctype/budget_reallocation/budget_reallocation.js` | The approval buttons. **Not optional** — every approval field is read-only and `before_submit` refuses a reallocation with no PM approval, so without these no reallocation could be submitted at all. Auto-loaded by frappe; deliberately **not** in `doctype_js`, which would append it a second time with no dedupe | form script | — |
 | `budget_rollup.py` | The frappe glue that fills in each budget line's committed, actual and coverage, then derives `Project.estimated_costing` from the lines. Returns on its first line when a project has no budget lines — and deliberately does **not** zero a total it cannot derive. Judgement in [`quality/budgets.py`](../quality/budgets.py), which imports no `frappe` | `refresh`, `spend_for_project`, `unclassified_for_project`, `on_project_validate` | `doc_events["Project"]["validate"]` |
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
 | `doctype/project_dashboard_permitted_role/*.py` | Child table: one `role` per row | `ProjectDashboardPermittedRole` | child-table controller |
-| `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
+| `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_products_data` (the Products tab, v1.824.0), `set_build_priority` (the order board's build priority, v1.831.0), `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
 | `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement beside the form lighting up the part being filled in (v1.612.0); "With the client" mode has the client initial each clause in the agreement as it is filled in and sign at the end, executed in the builder (`sign_here`); or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `agreement_sections`, `progress`, `get_builder`, `save_builder`, `issue_contract`, `sign_here`, `start_card_on_file`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
-| `signed_copy.py` | **Signed copy** (v1.744.0): what the button opens for a Signed contract (the e-signed PDF, a filed scan, else the executed copy) and filing a paper scan. A file is offered only when frappe's own download check would serve it. See [Signed copy](#signed-copy-v17440) | `signed_copy`, `signed_copy_for`, `get_signed_copy`, `record_signed_scan`; pure `pick_signed_file`, `is_signed_copy_name` | `ProjectContract.onload` and `SapphireMaintenanceContract.onload`; `contract_viewer.open_signed_copy`; `doctype/project_contract/project_contract_list.js`; the Contracts tab (`contracts_tab.js`, v1.745.0) |
+| `warranty_certificate.py` | **Certificate of Warranty** (v1.808.0): the rules of the one contract type only Sapphire signs. Which template keys are one-sided, what it may start from, the one-year end date, the two-line site address, and the layout step that keeps it on one page. No `frappe` import, so it is tested without a bench. See [Certificate of Warranty](#certificate-of-warranty-v18080) | `ONE_SIDED_KEYS`, `is_one_sided`, `source_allowed`, `warranty_end_date`, `site_address_lines`, `address_from_record`, `fit_level`, `fit_class` | `ProjectContract.validate` / `on_submit`, `create_contract`, `contract_builder._payload` / `email_certificate`, `esign.api._assert_sendable` |
+| `signed_copy.py` | **Signed copy** (v1.744.0): what the button opens for a Signed contract (the e-signed PDF, a filed scan, else the executed copy) and filing a paper scan. A file is offered only when frappe's own download check would serve it. See [Signed copy](#signed-copy-v17440) | `signed_copy`, `signed_copy_for`, `get_signed_copy`, `record_signed_scan`; pure `pick_signed_file`, `is_signed_copy_name` | `ProjectContract.onload` and `SapphireMaintenanceContract.onload`; `contract_viewer.open_signed_copy`; `doctype/project_contract/project_contract_list.js`; `get_contracts` (the Contract button's picker, v1.783.0; the Contracts tab until then) |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
@@ -46,6 +47,9 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
 | `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
+| `design_projects.py` | Design projects (Nik, 2026-10-30): the **Design Project (PRO-0206)** Project Template, PRO-0206's four design stages as four template Tasks (Predesign, Schematic Design, Design Development, Construction Documents), in order, each waiting on the one before, dated from the project's start (about twelve weeks) and with no hours. Leaf tasks, not groups, and never named `Phase NNN`, so the planner never reads a stage as a build phase; the planners' Simple mode lists them as the job's top-level items. The Create Project dialog prefills the template only for a deal whose only value stream is Design (`opportunity_defaults`, Nik 2026-11-02; a Build + Design deal opens it empty, and a Fountain Move intake's template wins). Seeds the template insert-only and then disables the old *Design Project Template* (its projects untouched, and still saveable: ERPNext refuses a disabled template only when `project_template` changes). Descriptions are one-line summaries pointing at PRO-0206: the repo is public and PRO-0206 is internal | `STAGES`, `opportunity_defaults`, `seed_template`, `disable_old_template`; pure `template_task_values`, `is_design_only_deal` | `create_project_prompt.js`; `patches/seed_design_project_template.py` |
+| `scope_tasks.py` | The Scope tab's task actions, pure (no frappe; v1.777.0, Nik 2026-11-03): a Project Template's tasks as a plan for one project (`plan_import`: which become new Tasks, under which parent, which are skipped because a Task with the same subject already sits under that parent, what each waits on, with a dependency on a skipped task pointing at the Task already there), the mass delete's order (`delete_order`: the picked tasks plus everything under them, deepest first), the "Add from template" preview (`preview_rows`) and where a new task lands among its siblings (`next_position`). See [The Scope tab's Tasks Tree](#the-scope-tabs-tasks-tree-v17770) | `plan_import`, `delete_order`, `preview_rows`, `next_position`, `template_order`, `subject_key` | `api/scope_tasks.py`; `tests/test_scope_tasks.py` |
+| `job_prefixes.py` | Job number prefixes (v1.831.0, Nik at the 2026-11-19 Ops Review): a **new** Project of type Service is numbered `SRV-#####`, of type Events `EVT-#####`, every other type keeps `PRJ-#####`; no existing Project is renamed. Projects are named by Document Naming Rules, not the naming series: prod's unconditional `PRJ-` rule (priority 0) plus two rules with a `project_type` condition and priority 10, which Frappe tries first. Each prefix counts on its own (SRV-00101, starting above QuickBooks' own old SRV-00000 to SRV-00015 jobs; EVT-00001; PRJ- carries on from 787). The QuickBooks job matcher stays PRJ-only for the same reason. The prefix is chosen once, at insert, so a type set or changed later never renames the job. `fill_type_from_template` gives a Project with no type the type of its template, so a job made from *Service Project Template* is SRV-. The module docstring lists every path that creates a Project and the type each one sets before insert | `RULES`, `prefix_for`, `fill_type_from_template` | `doc_events["Project"]["before_insert"]` (after `fountain_move_jobs.apply_on_insert`); `patches/seed_job_prefix_naming_rules.py` |
 | `fountain_move_jobs.py` | Fountain Move jobs (Nik, 2026-10-21): a **Service** project with `custom_is_fountain_move` ticked. A new ticked project gets the **Fountain Move** template when none was chosen (and that template ticks the box; an Opportunity from the /fountain-move intake ticks it and preselects the template in Create Project); its task cards are moved on the **Maintenance Planner** and are read-only on the Project Planner (`mark_read_only`, and `_load` refuses a single-task edit there). Which tasks get a card is one SQL condition, `OPEN_MOVE_TASKS_SQL`, shared by the calendar (`planner_cards`) and that planner's search box (`search_cards`, v1.741.0: also matches the project's number, name, customer and address city, and has no date range). Seeds the template (Confirm move date 0 h; Move day 4 h, crew 2, Outdoor; Invoice 0 h) and converts PRJ-00775 | `apply_on_insert`, `insert_defaults`, `opportunity_defaults`, `planner_cards`, `search_cards`, `move_task`, `mark_read_only`, `refuse_on_project_planner`, `seed_template`, `make_move_job` | `doc_events["Project"]["before_insert"]`; `api/project_planner` (`get_planner`, `_load`); `api/maintenance_planner` (`get_planner`, `move_fountain_move`); `patches/seed_fountain_move_template.py`, `patches/make_prj_00775_a_move_job.py` |
 | `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own, except on a project whose schedule is still Draft, where they are the project's and every scheduler shares them (P3) | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
@@ -59,6 +63,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `route_slots.py` | C3: the route view's own clock times for every stop of a person's day (`route_payload`'s two passes), keyed by stop; leave-by = arrival less the drive. Pure core, one engine call per range | `day_slots`, `stop_key`, `first_slot`, `compute` | `calendar_sync.timing`, `leave_by` |
 | `leave_by.py` | C3: the opt-in leave-by ping, every five minutes, **off until Project Planner Settings → *Leave-by pings*** and each person's *Ping me at leave-by time*. Bell, then text, else email; once per person per stop per day (`Planner Ping Log`); no Google request | `send_leave_by_pings`, `select`, `due`, `message` | `scheduler_events` cron `4-59/5` |
 | `doctype/planner_ping_log/` | `user|date|stop` claim (unique) that keeps a leave-by ping to once per person per stop per day across workers and deploys | `PlannerPingLog` | `leave_by` |
+| `doctype/procurement_tracker_view/` | One person's saved layout for the Procurement Tracker (v1.816.0): a name, a grouping and a JSON layout, owned by whoever made it. **No role but System Manager has a permission on it**; people reach their own views only through `procurement_views.py`, which checks the owner every time. `validate` holds the layout to `procurement_view_rules.validate_layout` whoever writes the record | `ProcurementTrackerView` | `procurement_views.get_views` / `save_view` / `rename_view` / `delete_view`; the tracker widget |
 | `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, the near window for timed route stops (`timed_days_ahead`, 14), colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
 | `doctype/calendar_sync_link/` | One Google event ERPNext owns: source (`doctype|name|key`, unique), calendar, event id, content hash, Google etag of our last write, last synced, last error | `CalendarSyncLink` | written only by `calendar_sync.engine` |
 | `doctype/calendar_time_off_review/` | C4: an event on the vacations calendar the time-off read could not put on one person. `CTOR-.#####`, one per Google event id (unique). The schedulers pick a person, Everyone or Ignored, optionally for every event with the same title | `CalendarTimeOffReview` (queues `time_off.apply_review` after commit) | made by `calendar_sync.time_off` |
@@ -89,6 +94,203 @@ Related code outside this folder:
 - `opportunity_enhancements.py` (repo root) — `make_project` override (stamps the source Opportunity). Wired via `override_whitelisted_methods`.
 - `dashboard_overrides.py` (repo root) — adds a "Travel" connections group to the **Employee** dashboard. Wired via `override_doctype_dashboards["Employee"]`.
 - The dashboard UI is the **"Projects Dashboard" Custom HTML Block** (`custom_html_blocks/projects_dashboard.{js,html,css}`); the only front-end helpers left under `public/js/project_enhancements/dashboard_components/` are the shared `column_selector.js` / `column_resizer.js` — see the [public README](../public/README.md#project-dashboard-components).
+
+## The Scope tab's Tasks Tree (v1.777.0)
+
+Nik, 2026-11-03: "I need the Scope tab to be rethought. The Tasks Tree should probably be at the
+top, and I'd like a way to import entire templates of tasks via the Tasks Tree. Make the Add a new
+task button have a good flow without leaving the project page." And later that day: "Also a way to
+mass delete tasks from the Project page of the Scope tab." TASK-2026-03067.
+
+**The layout.** The Scope tab (`custom_scope`) now opens with the *Tasks Tree* section
+(`custom_tasks_section`, `custom_tasks_html`: the `TaskTreeManager` grid from
+`public/js/project_enhancements/task_tree_manager.js`), then the hidden Scope Description section,
+then the four value-stream scope sections (Design, Build, Service, Events: customer requests and
+deliverables), each shown for its own project type as before and now **collapsible, collapsed when
+it holds no rows** (`collapsible_depends_on` on its two tables). The order is the
+`Project-main-field_order` Property Setter and each Custom Field's `insert_after`, both in
+`fixtures/`; v16 places by the array, so `tests/test_scope_tasks.py` fails the build when the two
+disagree. No patch: the fixture import on `bench migrate` updates the existing Property Setter.
+
+**Three flows on the tree, every one a `frappe.ui.Dialog`** (server: [`api/scope_tasks.py`](../api/scope_tasks.py);
+rules: [`scope_tasks.py`](scope_tasks.py) here, pure). No route change and no history entry, so
+Back and Forward keep working (Nik's rule).
+
+- **Add task** (toolbar, and the per-row **+** that preselects the row as parent): subject, parent,
+  *holds subtasks*, priority, type, assignee, expected start and end, expected hours, description;
+  *Add and add another* keeps the dialog open. `add_task` accepts only those fields
+  (`clean_add_values`), makes a non-group parent a group first (and says so), places the task after
+  its siblings (`custom_subtask_order`) and inserts it through the Task controller **as the caller**;
+  the assignee goes through Frappe's own `assign_to.add`, and a failure there is a warning on the
+  alert, not a lost task. The tree refreshes and opens the parent; the task's name in the tree is a
+  same-tab link to its full form.
+- **Add from template**: `get_template_catalog` lists every enabled Project Template (the project's
+  own type first) with a preview of its tasks (`preview_rows`: hierarchy, day offset, duration,
+  hours, what each waits on); the dialog asks where the roots go (a task of this project, or the top
+  level) and the date to count from. `import_template` creates them in **one request**:
+  - **ERPNext's own code builds each Task.** `Project.create_task_from_template` (erpnext 16.52.1,
+    the tag prod runs) sets subject, description, weight, type, group flag, color, priority,
+    `template_task` and the holiday-adjusted dates from the template's *Begin On* / *Duration* days.
+    It dates them off the Project it is called on, so the chosen start is set on an **in-memory**
+    Project that is never saved. `task_templates.copy_template_planning` (`Task.before_insert`)
+    then carries the template's hours, crew size and qualifications across.
+  - **Linking is a second save, as ERPNext's `dependency_mapping` does it**, except a parent or a
+    dependency may be a Task that was already on the project: the picked node, or a skipped task.
+  - **Skips.** A template task whose subject (by its words: capitals and spacing aside) already
+    exists under the same parent is skipped and listed; a skipped group is still a parent, so a
+    second import adds only the children missing under the existing group; a canceled task never
+    blocks; a dependency on a skipped task points at the existing task.
+  - **All or nothing.** A Task ERPNext refuses (a date past the project's Scheduled End Date, a child
+    ending after its parent, an open task under a completed parent) fails the request with ERPNext's
+    message and the whole import rolls back.
+- **Select → Delete selected**: a checkbox per row (the drag handles step aside), *Select all*,
+  *Cancel*. The confirm asks `delete_preview` first, so it can say how many subtasks a picked group
+  takes with it. `delete_tasks` deletes deepest first (ERPNext refuses a Task with children), each
+  under its own savepoint, with `frappe.flags.mute_messages` on so a refusal's queued message
+  cannot pop a modal over the summary (see the `frappe.throw` note in `CLAUDE.md`'s memory); a
+  task Frappe or ERPNext refuses (linked from a timesheet, locked, not permitted) is **kept and
+  listed with its reason** while the rest go, and an expected refusal is not logged. At most 200
+  tasks per request. A dependency between two picked tasks is unlinked inside the savepoint first
+  (Frappe counts a `Task Depends On` row in another Task as a link; ERPNext's `on_trash` clears only
+  the parent's rows), and only between picked tasks: one outside the pick still blocks.
+
+**The gate.** Reads (`get_template_catalog`, `delete_preview`) and every write need *write* on the
+Project; Project Templates and template Tasks are then read with `get_all`, because Projects User
+holds only *select* on Project Template. Each Task is inserted, saved and deleted as the caller, so
+a role that may not create or delete Tasks is refused by Frappe itself.
+
+**The raw asset path is only a fallback.** `project_form_script.js` used to `frappe.require` the raw
+`/assets/.../task_tree_manager.js` on every render, although the class ships in the global
+`erpnext_enhancements.bundle.js`. The raw path is served immutable for a year, so a device that had
+cached it kept redefining `TaskTreeManager` with the stale copy over the bundle's fresh one. It now
+requires the raw path only when the bundle lacks the class.
+
+### Drag any task under another; a parent's dates follow its subtasks (v1.787.0)
+
+Nikolas, 2026-11-03, from the meeting with James and Clegg: "Make any task a parent by simple drag and
+drop over on the Tasks Tree view. So for the parent child tasks, make rigid start and end dates based
+off the child tasks so a child task is always within the range of its parent task."
+
+**Why dragging onto a task did not work.** The tree has nested by drag since it was built: the
+middle band of the hovered row meant "make it a subtask", the edges meant "reorder". Three things
+hid that and one broke it. The band was 40% of a 32px row, too thin to hit on purpose. The save
+(`project_dashboard.update_task_structure`) saved **every** visible row on each drag, with
+`ignore_permissions`, and swallowed the refusal: the tree showed the move until the next reload. And
+the refusal was certain on a leaf target: ERPNext's `Task.validate` (16.52.1) calls
+`validate_parent_is_group`, which throws for a parent whose *Is Parent* box is off, while this app
+promoted the parent in the override controller's `before_save`, which frappe runs **after**
+`validate`. So a drop onto a task that had no subtasks yet was refused every time, and nothing on
+screen said so. The promotion is in the controller's `before_validate` now
+(`task_enhancements/doctype/task/task.py`).
+
+**What the tree does now** (`task_tree_manager.js`, `task_tree.css`):
+
+- While a row is dragged, the row under the pointer says what the drop will do: its middle **half**
+  takes a wash plus a pill reading *Make subtask of <task>*; its top or bottom quarter draws a 2px
+  line on the edge SortableJS will insert at (`evt.willInsertAfter`). A hint bar above the grid says
+  the same in words for as long as the drag lasts.
+- **Move under…** on every row (the indent icon) is the no-mouse path: a dialog with a Link to a task
+  of the project, empty for the top level; the task goes after the new parent's last subtask.
+- The save is `api/scope_tasks.move_tasks`: only the rows whose parent or position changed are saved,
+  through the Task controller as the caller, under one savepoint; a leaf dropped on becomes a group
+  first (the alert says so). ERPNext's refusal (an open task under a completed parent, a project
+  mismatch) comes back as `refused` and the tree shows it in a dialog titled *Could not move …* and
+  **re-fetches**, so it never sits showing a move that was not saved. The re-fetch rides on the
+  promise `frappe.call` returns, not on its `error` callback, which Frappe does not call on every
+  failure.
+- SortableJS is **vendored and pinned**: `public/js/project_enhancements/lib/sortable-1.15.6.min.js`
+  (the UMD build that sets `window.Sortable`, loaded on demand with `frappe.require`, like the
+  Gantt library beside it). It used to load from a CDN on its unpinned "latest" tag. The file name
+  carries the version because raw `/assets` paths are served immutable for a year: a new release
+  must be a new file name.
+
+### Round two: nest by drop for real, one Actions menu, sortable headers, sideways scroll (v1.791.0)
+
+Nikolas, 2026-11-03, on the live tree right after #1418 deployed: "Perhaps an Actions button that
+displays all three options. Also perhaps a good horizontal scroll would help with smaller screens.
+Also the column headers should allow us to sort the table by ascending or descending their columns.
+I'd also like to be able to make any task a parent, not just already parent ones ... right now it
+just moves the order of the tasks and doesn't let me nest them via drag and drop."
+
+**Why #1418's drop still only reordered.** The server side was right (the promotion runs before
+ERPNext's `validate_parent_is_group`; every parent on prod spans its subtasks). The drag was not,
+and no harness could see it because the fault was SortableJS's own behaviour: with
+`swapThreshold: 0.65` it calls `onMove` once the pointer is 17.5% into a row, the tree answered
+"reorder" on that edge band and returned true, and SortableJS **swapped the two rows at once**. The
+target slid out from under the pointer, the pointer then sat over the dragged row itself (where
+SortableJS fires nothing) all the way down the list, and the drop saved the last intent recorded, a
+reorder. The nest band was reachable only by backing into a row from the far side. Reproduced on
+prod in Chrome (PRJ-00754, the save a dry run) before anything was changed: a slow drag logged one
+`onMove` at 8 px below the next row's top, a swap, silence, a swap on the row after, and a reorder
+on release. A fast drag that jumped straight into a row's middle nested, which is why a quick try
+passed.
+
+**What the tree does now** (`task_tree_manager.js`, `task_tree.css`):
+
+- **Nothing moves during a drag.** SortableJS supplies the handle, the ghost row, touch and the
+  auto-scroll, and is refused on every move (`onMove` returns false, `swapThreshold: 1` so it asks
+  over the whole row, `animation: 0`). The drop target is read from the pointer
+  (`document.elementFromPoint`) on each `dragover` (a document listener bound for the drag **in the
+  capture phase**: SortableJS stops every dragover it finishes handling, so a bubble listener hears
+  none of them during a native drag; review of #1423), from `onMove`'s own event on the touch
+  fallback, and once more from the drop event's point. The zones are the ones Nikolas asked for: the **body
+  of a row nests** (a wash and a *Nest under <task>* pill), only a **thin band at each edge**
+  reorders (a quarter of the row, held between 6 and 10 px; 10 px on the 45 px rows the Desk draws),
+  drawn as a 3 px line. A line always means "before the lower row": under an open parent it is the
+  first subtask, under the last subtask of a group it is the next row's level, and only the last row
+  on screen has an "after". The row itself, its own subtasks, its own parent and the place it already
+  is draw nothing. A native drag that ends in `dragend` without a `drop` (Escape, let go off the
+  page) saves nothing, and so does a touch gesture the browser takes over (`pointercancel`,
+  `touchcancel`; `TaskTreeManager.CANCEL_EVENTS`). No drag makes a subtask the last of its own
+  group (its parent's body does nothing; the line under the group's last row outdents it): that is
+  *Move under…*, as the handle's tooltip says. A nest saves one row with no position (the server appends it); a reorder
+  sends every sibling of the new parent with its position. The rules are pure functions on
+  `erpnext_enhancements.task_tree_rules` (`dropZone`, `dropPlan`, `reorderRows`), run under node by
+  `scripts/test_task_tree_manager.js` in its own CI step.
+- **One Actions menu per row** (⋯): *Add subtask*, *Move under…*, *Delete* (`rowActions`), a
+  `role="menu"` with arrow keys that wrap, Home/End, Escape back to the button (`menuMove`), closed
+  by a click outside. A refused delete shows ERPNext's reason.
+- **Sortable headers**, within each parent: ascending, descending, then the manual order
+  (`nextSort`, `sortTree`); priority and status by rank (a row shown as OVERDUE from `is_overdue`
+  sorts as Overdue), dates and numbers by value, names numerically, a missing value last either way. Applied on a copy of the rows already loaded (`this.tasks` keeps the manual order, and
+  `rememberChildren` hangs fetched subtasks on their parent's row so a re-render draws them from
+  memory), so nothing is written; remembered per browser in `localStorage`
+  (`taskTreeSort_<user>`, try/catch, never `user_settings`). While a sort is on there is no
+  SortableJS instance at all: the handles dim with a tooltip and the hint line says how to get the
+  manual order back, so a sorted order can never be saved as the manual one. The same lock holds
+  while a name, owner or status filter is on (`dragLockReason`): hidden siblings keep their
+  positions and the visible ones' would collide.
+- **The inline "Add root task…" / "Add subtask…" rows are gone** (Nikolas, 2026-11-03: "Get rid of the
+  Add root task and Add subtask lines in the Tasks tree"): *Add task*, a row's *Actions → Add subtask*
+  and *Add from template* are the ways to add. `create_inline_task` stays on the server for the
+  feedback task writer.
+- **Sideways scroll**: `.task-grid` is `overflow-x: auto`, header and body keep a 960 px floor, the
+  Task cell is `position: sticky` (it inherits the row's explicit background so it covers what scrolls
+  under it; the nest wash is opaque through `color-mix` for the same reason) and the nest pill lives
+  in it. The toolbar and the filter row wrap at phone width.
+
+**A parent's dates follow its subtasks** (`task_enhancements/parent_dates.py`): a task with subtasks
+has the earliest subtask `exp_start_date` and the latest subtask `exp_end_date`, up every ancestor.
+Where no subtask has a start (or an end) the parent keeps its own, so dropping an undated task under
+a dated one does not wipe the dated one's plan. Every subtask counts whatever its status: ERPNext
+refuses a child ending after its parent whatever the child's status. It is kept by Task hooks:
+`before_validate` (a parent re-derives its own dates; then the parent and its ancestors are widened
+for the dates this save carries, **before** ERPNext's `validate_parent_expected_end_date` reads the
+parent, so that check can never refuse a drag), `on_update` (the new parent and, after a move, the
+old one recomputed from the database, which also shrinks a range a subtask left) and `after_delete`.
+The ancestors are written with `db.set_value`, never saved, so no hook fires again and a Planner
+publish that saves the parent in the same batch is not tripped by a bumped `modified`. The direct
+writers in `project_dashboard.py` (the tree's inline editor through `update_multiple_docs` and
+`update_task_date`, the Gantt) refuse a parent's dates and walk the parents themselves after a
+subtask's write. On the Task form the two fields are read-only while the task has subtasks, with a
+note saying why; in the tree a parent's dates are plain text with a tooltip. The Project Planner's
+`_move` refuses a task with subtasks with the same message (it lists leaf tasks only, so a backstop),
+and its draft-time parent-end warning is gone: Publish can no longer be refused on it
+(`api/project_planner._parent_end_widened`). The Project's own derived window
+(`sync_project_dates_from_tasks`) is untouched except in order: it reads MIN/MAX over the project,
+parents included, after every save, and runs **after** the roll-up so an old parent has shrunk first. The one-shot `patches/sync_parent_task_dates` brings every existing parent up to
+the rule, bottom-up, logs instead of raising, and is safe to re-run. `tests/test_task_parent_dates.py`
+holds all of it.
 
 ## Scope of Work (WI-075, v1.447.0)
 
@@ -157,7 +359,12 @@ Four decisions worth not undoing:
 
 The approval stamps are read-only and written only by `api/change_order.py`, from the server clock
 and the session user. The old client path on `complete_step` let the browser propose a timestamp
-and the audit found retroactive box-ticking.
+and the audit found retroactive box-ticking. `read_only` is not checked on the server, so the
+controller holds the rule: a save that changes `pm_approved`, `customer_approved`,
+`customer_approval_note` or their by/on stamps is refused unless one of the endpoints set
+`APPROVAL_FLAG`, and so is a new change order that arrives carrying one. Migrate, patches and a
+System Manager's Data Import keep what they write. The stamps are `no_copy`, so Duplicate starts
+unapproved.
 
 Those endpoints are reached from `change_order.js` — *Approve as Project Manager*, *Record
 Customer Approval* and a revoke beside each, offered only while the change order is unsubmitted.
@@ -233,7 +440,11 @@ predates it.
   converts contracted work into margin.
 - **The second approval cannot come from the same hand** — not the requester, not the project
   manager who already approved. A control one person satisfies by clicking twice is a control in
-  appearance only.
+  appearance only. The project manager approval cannot come from the requester either.
+- **The stamps are written only by `api/project_budget.py`.** `requested_by` is the session user
+  on insert; a save that changes it or an approval stamp is refused unless an approve or revoke
+  endpoint set `APPROVAL_FLAG`, and so is a new reallocation carrying an approval. Migrate,
+  patches and a System Manager's Data Import keep what they write.
 - **Balances are stamped, then never re-read.** The lines go on changing; this document records
   one move against the numbers as they stood that day.
 - **Amendment is refused**, and so is a cancellation that would drive a line negative — if a later
@@ -247,10 +458,10 @@ not create a line the project does not have yet.
 
 ## Projects Dashboard
 
-- **One surface (consolidated in v1.159.8):** the dashboard is the **"Projects Dashboard" Custom HTML Block**, embedded on the **Home** and **Projects** workspaces (placed by `setup.custom_html_blocks.sync_custom_html_blocks`, which also *deploys* it — the repo `.js`/`.html`/`.css` become the block's `script`/`html`/`style` on migrate, no asset build). It renders a tabbed shell — Priority Overview (default) and Portfolio Gantt, with Active Internal Projects, Completed Projects and Summary behind a **View More** button (v1.719.0; the old *Dashboard* tab is the Summary) — plus one **+** button whose menu holds **New Project** / **New Master Project**, all in one IIFE (`custom_html_blocks/projects_dashboard.js`). A *second*, parallel desk-page implementation (`/app/project-dashboard`) was **removed** here; the desk shortcut + Project Enhancements workspace link now point at the Projects workspace (`retire_project_dashboard_desk_page` patch).
-- **Data source:** the whitelisted methods in `project_dashboard.py`. `get_project_data` uses bulk SQL/`get_all` for task counts and derives assignees from **ToDo** rows (Project has no `project_user` column — selecting one would raise "Unknown column"). The **Summary** tab (the old *Dashboard* tab) computes its headline cards + status/type/completion breakdowns client-side from that same `get_project_data` payload (no separate endpoint). The Active Internal Projects tab shows only active projects whose `project_type` is internal (`INTERNAL_PROJECT_TYPES`, defined in the block JS).
+- **One surface (consolidated in v1.159.8):** the dashboard is the **"Projects Dashboard" Custom HTML Block**, embedded on the **Home** and **Projects** workspaces (placed by `setup.custom_html_blocks.sync_custom_html_blocks`, which also *deploys* it — the repo `.js`/`.html`/`.css` become the block's `script`/`html`/`style` on migrate, no asset build). Since v1.781.0 (Mock B) it renders a navy head band — title, search, Refresh with "Updated N min ago", the **+** button whose menu holds **New Project** / **New Master Project**, and four live tiles (Active, Past expected end, Due in 30 days, No company rank) that filter the Priority Overview — over six always-visible tabs: Priority Overview (default; stream chips that combine into a union since v1.798.0, Ranked only, Group by stream), Portfolio Gantt, Internal, Completed, Summary (the old *Dashboard* tab) and, since v1.824.0, **Products** (Nikolas, 2026-11-18: a product sale is a Sales Order, not a Project): the product Sales Orders by stage (Ordered / Paid, Building, Testing, Ready, Delivered) with the promise date and Late, the open product quotations and Products-stream opportunities with the win rate, finished units on hand and component shortages, and the active Projects of type Products (the custom-engineered control panels), narrowed by the product-line chips E-Stops / Control Panels / Other; all in one IIFE (`custom_html_blocks/projects_dashboard.js`). The "View More" button of v1.719.0 is retired. A *second*, parallel desk-page implementation (`/app/project-dashboard`) was **removed** here; the desk shortcut + Project Enhancements workspace link now point at the Projects workspace (`retire_project_dashboard_desk_page` patch).
+- **Data source:** the whitelisted methods in `project_dashboard.py`. `get_project_data` uses bulk SQL/`get_all` for task counts and derives assignees from **ToDo** rows (Project has no `project_user` column — selecting one would raise "Unknown column"). The tiles, the stream chip counts and the **Summary** tab's cards + status/type/completion breakdowns are all computed client-side from that same `get_project_data` payload (no separate endpoint). The Priority Overview's **Budget** column is `custom_project_dollar_amount`; it replaced Spend % (`estimated_costing` over the budget), which was always a dash because `estimated_costing` is 0 on every active project. The Internal tab shows only active projects whose `project_type` is internal (`INTERNAL_PROJECT_TYPES`, defined in the block JS), and the same list is the Priority Overview's "Internal" stream. The **Products** tab reads its own endpoint, `get_products_data`: the page gate, then read permission per section (a section the person cannot read answers `{"allowed": False}`; the paid chip also needs Sales Invoice read), with every rule it applies (which Items are products, an order's stage, which orders the shelf covers, the win rate) in the Frappe-free `erpnext_enhancements/product_orders.py`. A product Item is one the Product Configurator made (`custom_source_configuration`) or one whose code is in a PDT product family, apart from the billing codes PDT-0701 and PDT-0400 (PDT-0030, Sapphire Connect hardware, is a product: Nikolas, 2026-11-18); the item group "Configured Products" alone is not trusted, because prod keeps 13 hand-made Items in it. A Quotation or Sales Order counts only when **every** line is a product or freight (`classify_lines`, the rule quote to order shares): a fountain job carrying one Splash Wizard is a job and stays off the tab, and values are the product lines, never the grand total. A product order with a control panel on it needs a project, so it shows in the control panel section (on its linked Project's row, whatever the Project's type, or as "No project yet"), not on the order board. The win rate is the product quotes' (won = ordered; Lost and Expired are lost), a deal shows through a product quotation that names it, not through the Products value stream, and component shortages leave Work In Progress warehouses out. **Since v1.831.0** (the 2026-11-19 Ops Review) each order on the board carries what a product order has instead of a job's company and value-stream priority: a **build priority** (which open order to build first, 1 first) kept on the Sales Order in `custom_build_priority` (Int, allowed on submit), set by clicking the rank on the board, which calls `set_build_priority` (page gate, then write on that Sales Order; a `db.set_value` that leaves `modified` alone, plus a timeline comment), and orders sort by it within each stage before the promise date; a **percent complete** (`product_orders.order_percent_complete`: the build is 80 of it, from the units produced on its submitted Work Orders, and the delivery the last 20); and an **expected end** (`order_expected_end`: the latest planned end of a Work Order still being built, else the promise date, with "After promise" when the plan runs past it), which took the promise-date column's place. What a person chooses on the block (tab, sort, chip, Ranked only, grouping, product lines, columns, widths) is kept per browser in `localStorage` under `chb_*` keys, never in frappe `user_settings`.
 - **Realtime:** `publish_realtime_update(doc, method)` fires `frappe.publish_realtime("project_dashboard_updated", …)` and is registered on both **Task** `on_update` and **Project** `on_update`.
-- **Permission gating:** the block is visible to anyone who can see its workspace. `check_permission()` still gates the whitelisted reads (Custom Role + Has Role for the "Project Dashboard" page, falling back to the legacy `Project Dashboard Settings.permitted_roles`); list reads fetch with ignore-permissions (a portfolio view), while inline-edit/write endpoints enforce per-document `frappe.has_permission("Project", "write", …)`, and `update_project_details` restricts edits to a whitelisted `EDITABLE_PROJECT_FIELDS` set.
+- **Permission gating:** the block is visible to anyone who can see its workspace. `check_permission()` still gates the whitelisted reads (Custom Role + Has Role for the "Project Dashboard" page, falling back to the legacy `Project Dashboard Settings.permitted_roles`); list reads fetch with ignore-permissions (a portfolio view), while inline-edit/write endpoints enforce per-document `frappe.has_permission("Project", "write", …)`, and `update_project_details` restricts edits to a whitelisted `EDITABLE_PROJECT_FIELDS` set. Since v1.833.0 the bulk edit, `update_multiple_docs`, accepts only `EDITABLE_PROJECT_FIELDS` for a Project and `EDITABLE_TASK_FIELDS` (`exp_start_date`, `exp_end_date`, `expected_time`, the Tasks tree's editable cells) for a Task; a request naming any other field is refused whole, before anything is written. `tests/test_dashboard_bulk_edit_fields.py` holds the lists to the JavaScript that sends them.
 
 ## Hand-Off Process engine (PRO-0204, v1.3.0)
 
@@ -307,7 +518,8 @@ module [`process_steps.py`](../process_steps.py):
   Step 4's email is prefilled by `crm_enhancements.handoff.billing_notice_context`
   (v1.327.0): it goes to the **Billing Email** on the Project, else the one on its
   Opportunity, else the configured Billing route (`billing@sapphirefountains.com`), and it
-  names the **First Invoice Percentage** and the money that works out to against the
+  names the **Down Payment Percentage** ("First Invoice Percentage" until v1.783.0; the field
+  is still `custom_first_invoice_percentage`) and the money that works out to against the
   project amount. Both fields are Custom Fields on Opportunity *and* Project — Sales
   agrees them on the deal, the PM can revise them on the project. Blank percentage prints
   "confirm the amount with Sales" rather than a figure nobody set.
@@ -339,19 +551,38 @@ module [`process_steps.py`](../process_steps.py):
 
 ## Contract generation (Phase 4, v1.5.0)
 
-Eight agreements generate inside ERPNext. The revised suite (Apr 2026): **MSA**
+Eight agreements generate inside ERPNext, and since v1.808.0 a ninth document, the one-year
+[Certificate of Warranty](#certificate-of-warranty-v18080), which only Sapphire signs. The revised suite (Apr 2026): **MSA**
 (Master Subcontractor Agreement, per Supplier, Tier 1/Tier 2), **SOW** (Statement of
 Work — only creatable under a *Signed* MSA for the same Supplier; the gate lives in
 `ProjectContract.validate_msa_gate`), **Owner Contract** (phase-selectable
-Design/Construction/Maintenance), **Rental Agreement**, and **Maintenance Services
+Design/Construction/Maintenance), **Events Agreement** ("Rental Agreement" until v1.783.0;
+`template_key rental`, series `SF-RA-`), and **Maintenance Services
 Agreement** (base rate plus chemicals, emergency rates, a 12% increase at renewal and any
 payment method on file since v1.611.0; a card authorization prints as a secure-link
 instruction and/or a blank card form — card data never enters ERPNext). Plus the three retained originals (per
 the Contract Comparison Report, no replacement in the revised suite): **Mutual NDA**
-(DOC-0033, party = Customer/Supplier/Employee picked per contract), **Architect
-Agreement** (DOC-0101, the architect engages Sapphire — party Customer; includes its
-own embedded SOW page), and **Employee-Contractor Agreement** (DOC-0137). The
-superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templated.
+(DOC-0033, party = Customer/Supplier/Employee picked per contract), **Design
+Agreement** ("Architect Agreement" until v1.783.0; `template_key architect`; DOC-0101, the
+architect engages Sapphire — party Customer; includes its own embedded SOW page), and
+**Employee-Contractor Agreement** (DOC-0137). The superseded originals
+(DOC-0032/0034/0099/0100/0102) are deliberately NOT templated.
+
+Since v1.783.0 (Nikolas, 2026-11-03) the NDA and the Employee-Contractor Agreement are
+**hidden**: `enabled = 0` on the Contract Template, so neither picker offers them and
+`create_contract` refuses a new one, while the contracts already issued on them keep working.
+`patches/rename_agreement_templates` makes both changes on an existing site (the seed is
+insert-only) and retitles the live bodies' heading and defining sentences too; the seed and
+the template files carry the same words for a fresh site. The Generate Contract dialog
+(`record_actions.open_generate_contract`) and the Builder's start screen both read
+`contract_builder.get_contract_types`, the enabled templates under their live titles, so a
+template switched on or off in the Desk is offered or not without a code change. The Design
+Agreement is on the Builder's start screen only: the Generate Contract dialog has no party field
+and `create_contract` would make the project's customer the party, where a Design Agreement's
+other side is the architect. The Project Contract form's Contract Type Link lists enabled
+templates only. Before `rename_agreement_templates` rewrites a body it freezes every Signed
+contract of that type (`freeze_contract_copies`), so a paper-signed Rental Agreement reprints as
+it was signed.
 
 - **`Contract Template`** (`doctype/contract_template/`) — the Jinja HTML bodies,
   seeded insert-only from `templates/contracts/` (regeneration pipeline:
@@ -453,12 +684,23 @@ or sent for the client to sign in their own time.
 - **Hand them another device** (was *Sign it here now*) issues (submits) the contract, then `esign.api.start_in_person_signing`
   makes a signing link without emailing it and opens `/contract-sign` in a new tab: a tab and
   not a frame, because the page can go on to Stripe to save a card and Stripe refuses frames.
-  Everything else is the emailed flow: the client re-types their address, the bot check runs,
+  Everything else is the emailed flow: the client enters the code emailed to their address, the bot check runs,
   the snapshot is hashed, the signed copy is emailed to them. The request records
   `signing_channel = In Person` and `presented_by`, the certificate prints both, and the link
   lives `IN_PERSON_LINK_HOURS` (12). The builder polls `get_signing_status` and moves to the
   executed copy when it is signed. *Send it to them* is the existing `send_for_signature`; a
   resend always resets the channel to Email Link.
+- **The emailed code** (`esign/email_code.py`, v1.833.0; Nik, 2026-11-19). On `/contract-sign` the
+  signer asks for a code (`portal.send_signing_code`), which goes to the address frozen on the
+  request and is typed back (`portal.verify_signing_code`) before the session may sign or decline:
+  six digits from `secrets`, ten minutes, five tries, three sends per request per fifteen minutes,
+  a keyed hash in the cache only, bound to the live link, single use. A wrong, expired, used or
+  exhausted code gets one message, and entries also count against the request's persisted limit
+  (`email_attempts`), which pauses the link when spent. The page shows the address masked, and the
+  agreement before the code with that address masked; the right code returns it as stored. The
+  bot-check verdict is the server's own (`turnstile.verify`): a request with no bot-check token goes on to the code under the same limits, recorded as "Unavailable". The bot check is a signal kept on the evidence, not a gate: what the signing page relies on is the single-use link, the emailed code, and the limits on sending and entering codes. The request records
+  `email_code_verified` and `email_code_verified_on`. The Contract Builder's own signing
+  (`sign_in_person`) asks for no code and records none.
 - **Executed copies and template changes.** An e-signed contract prints the copy stored on its
   Contract Signature Request; one marked signed on paper now stores its own (`executed_html`, frozen by
   `freeze_executed_copy` in `on_update_after_submit`). A template patch freezes paper-signed contracts and
@@ -564,8 +806,8 @@ or sent for the client to sign in their own time.
 
 **Signed copy** opens what a customer signed in one click. It is on a Signed Project Contract, on a
 Sapphire Maintenance Contract beside *View Agreement* (when the agreement it was mapped from is
-Signed), on each Signed row of the Project Contract list, and (v1.745.0) on each row of the
-**Contracts tab** on the Project and Customer forms that has a Signed agreement behind it. Before
+Signed), on each Signed row of the Project Contract list, and (v1.745.0 to v1.782.x) on each row
+of the Contracts tab on the Project and Customer forms that had a Signed agreement behind it. Before
 it, the e-signed PDF was reachable only from the Attachments sidebar. Nothing in the Desk read the
 Signature Request's `signed_document`.
 
@@ -593,20 +835,135 @@ Signature Request's `signed_document`.
   agreement). The PDF then opens inside the click. A window opened after a round trip is what popup
   blockers stop, Safari first. The list has no onload, so it fetches `get_signed_copy` on click and
   offers a link if the window is blocked.
-- **The Contracts tab** (`public/js/project_enhancements/contracts_tab.js`, v1.745.0) works like
-  the list: it has no onload either, so it fetches on click through the same two viewer calls.
-  `get_contracts` only says *which* contract a row opens, as `signed_copy_of`, and never resolves
-  a file while listing. A Project Contract row gets it when its own status is Signed, subcontracts
+- **`get_contracts`** (the Contracts tab's list until v1.783.0, the Contract button's picker
+  since) only says *which* contract a row opens, as `signed_copy_of`, and never resolves a file
+  while listing. A Project Contract row gets it when its own status is Signed, subcontracts
   included. The status decides, not `executed`, because a paper-signed contract has no Signed
-  request. A maintenance contract row gets it when its agreement is Signed, and opens that
-  agreement's copy. `_agreement_statuses` reads those statuses in one `get_list` for the whole
-  list, so an agreement this reader cannot read has no status and no button, as on the
-  maintenance form.
+  request. A maintenance contract row gets it when its agreement is Signed. `_agreement_statuses`
+  reads those statuses in one `get_list` for the whole list, so an agreement this reader cannot
+  read has no status, as on the maintenance form.
 - `tests/test_signed_copy` (bench-free, its own CI step) pins the order, the name match
   (SF-MAINT-2026-0001 does not claim SF-MAINT-2026-00010's PDF), the download check, the filing
-  refusals and the wiring. For the Contracts tab it also pins which rows get the button, that the
-  agreement-status lookup is one query, that listing costs the same queries for one row or many,
-  and that `contracts_tab.js` calls the viewer's opener rather than a copy of it.
+  refusals and the wiring, and for `get_contracts` which rows carry `signed_copy_of`, that the
+  agreement-status lookup is one query, and that listing costs the same queries for one row or
+  many.
+
+### The Contract button (v1.783.0)
+
+Nikolas, 2026-11-03: "Add Contract button to Scope to view contract. If no contract is listed,
+then it asks and opens the Contract Builder. Remove the contract tab in Project DocType and just
+make that button the new primary way to view and create contracts."
+
+- **Where.** `public/js/project_enhancements/contract_button.js`, loaded on Project and Customer.
+  On a Project it is a bar at the top of the **Scope** tab's pane (`frm.layout.tabs`, fieldname
+  `custom_scope`), above the Tasks Tree; on a Customer, a **Contract** button in the page head.
+  Nothing on a new, unsaved record.
+- **What a press does**, decided from `get_contracts` at that moment (no query on refresh):
+  one contract opens the **Contract Builder's review step**
+  (`/desk/contract-builder/<contract>/review`: the whole agreement, its signature, sign or send);
+  several open a picker (type, status, party, date) first; a Sapphire Maintenance Contract row
+  opens its own form, read-only, because it carries no legal text. None: *"No contract on this
+  project yet. Create one?"* and, on yes, the Builder's start screen with this project (or this
+  customer) in `frappe.route_options`, which the start screen consumes and the picked type's
+  start dialog takes as its default (v1.783.0 change in `contract_builder.js`: the type buttons
+  pass those options on, where they passed `{}`). Someone who cannot create a Project Contract,
+  or a site with the suite off (`frappe.boot.ee_process_automation`), gets the plain statement.
+- **The Contracts tab is gone.** Its two Custom Fields per form (`custom_contracts_tab`,
+  `custom_contracts_html`; created by `add_project_contracts_tab` and
+  `add_customer_contracts_tab`, never in the fixtures) are deleted by
+  `patches/remove_contracts_tabs`, which skips a field already gone, logs one that will not
+  delete, and never raises. `contracts_tab.js` is deleted; `contract_viewer.js` stays on the two
+  contract forms and the list, and is no longer loaded on Project or Customer.
+- Routes only — never `window.open` or a reload — so Back and Forward keep working.
+  `tests/test_contract_renames` pins the routes, the hook entries and the patch.
+
+### Certificate of Warranty (v1.808.0)
+
+Nikolas, 2026-11-12: "I need this added to the Contract Builder", attaching Sapphire's one-year
+Certificate of Warranty as a Word document. It is a ninth Contract Template, added the way the
+other eight were, with the differences below held in `warranty_certificate.py`.
+
+- **What it is.** Contract Template `warranty` ("Certificate of Warranty (One Year)", party
+  Customer), body `templates/contracts/certificate_of_warranty.html`, series `SF-WAR-YYYY-####`.
+  A fresh site gets it from `seed_contract_templates`; an existing one from
+  `patches/seed_warranty_certificate_template` (insert-only, that one key, prints what it did,
+  cannot raise). Like every template, its wording is edited on the site record afterwards.
+- **The wording is the Word document's**, paragraph for paragraph (`tests/test_warranty_certificate`
+  holds the four paragraphs and compares). No summary card and no initials: the Word copy has
+  neither.
+- **The blanks.** The project block prints `project_title` and `site_address`; *Date* is
+  `contract_date`; *Work Completed or Material Supplied by Sapphire on* is `warranty_start_date`;
+  *Sapphire Project/Number* is `project_title` and the `project` link ("Name — PRJ-00999"); *By*
+  and *Its* are `warranty_signer` and `warranty_signer_title`. An empty one prints a line to
+  fill in by hand. Dates print written out ("November 12, 2026").
+- **Filled from the project** (`create_contract` → `_prefill_warranty_from_project`): the
+  customer, contact, project name and number as for any contract; the site address put on two
+  lines (the project's one-line address split before "City, ST ZIP", else its Primary Address
+  record); the completion date from *Production Completed*, else the actual end date, and
+  **never** the expected end date, which is a plan. Most projects record no completion date
+  today, so the builder usually asks. The signer and title start from the countersigner kept in
+  ERPNext Enhancements Settings for e-signed contracts.
+- **The term is one year and the end date is never typed.** `validate` sets `warranty_end_date`
+  to the same day a year after `warranty_start_date` (February 29 ends on February 28), and
+  clears it when the start is cleared. The certificate does not print it, because the Word
+  document has no end date and its own wording counts the year from the Certificate of
+  Substantial Completion or Occupancy. It is on the record so "is this still under warranty?"
+  has an answer.
+- **Which date to enter.** The certificate has one date line, *Work Completed or Material
+  Supplied by Sapphire on*, and its wording counts the year "from the date of execution of the
+  Certificate of Substantial Completion or Occupancy, as required by the Contract Documents".
+  So the field carries the line's own words as its label, and its help text quotes that sentence
+  and says: enter the certificate of completion's date when the project has one, otherwise the
+  day the work was completed or the material supplied. The certificate's wording is untouched.
+- **Only Sapphire signs it** (`warranty_certificate.ONE_SIDED_KEYS`). The Word document has one
+  signature block. So the builder's last step is *Review and issue*, with no "sign it here" and
+  no "send it to them"; `contract_builder._payload` reports `one_sided` with `can_sign_here` and
+  `can_send` off; `sign_here` and every `esign.api` send path refuse it (`_assert_sendable`);
+  the body has no `sig(`; and the form hides *Send for Signature*.
+  - **Issuing with a name in *Signed for Sapphire by* is the signature**
+    (`ProjectContract._sign_for_sapphire`, from `on_submit`): status goes straight to Signed,
+    `signed_by` / `signed_on` take the signer and the certificate's date, the copy is frozen
+    (`executed_html`) so a later template edit cannot change what was issued, and the timeline
+    records who pressed the button. Only a Contract Manager or System Manager can submit, so
+    only they can sign this way. The By line prints the name in the signature face **only once
+    issued**: a draft and a cancelled certificate print an empty line.
+  - **Signed here, it is dated the day it is issued** (`_date_certificate_signed_here`, from
+    `validate`). The *Date* line sits beside the signature, and a typed signature's only
+    evidence of when is the system, so while a signer is named `contract_date` is set to today
+    on every save of the draft and at issue, is read-only on the form and in the builder, and
+    `signed_on` is the same day. It cannot be back-dated or post-dated. A certificate for a job
+    finished earlier carries that in the work-completed date, which stays editable.
+  - **With no name it is issued for ink**: By and Its print blank, the status is Out for
+    Signature, and *Mark as Signed* on the form records it, as for any paper contract.
+    *Signed copy* then takes the scan.
+- **Emailing it is one explicit press.** Nothing sends a certificate on its own: not issuing it,
+  not a hook, not a scheduler. On a Signed certificate the builder offers *Email it to the
+  customer* to a Contract Manager; the dialog shows the address (the contract's Contact Email,
+  editable) and **Send** calls `contract_builder.email_certificate`: one email, with the signed
+  scan when one is filed, otherwise a PDF of the frozen copy. An ink-signed certificate with no
+  scan on file is refused, because the copy in the system has no signature on it. The send is
+  written to the timeline.
+- **Where it starts.** The Builder's start screen (Project, or just a client); the Project's
+  Contract button, which opens that screen with the project filled in; and *Generate Contract*
+  on a Project. Not from an Opportunity: a certificate is about finished work. `create_contract`
+  enforces the same on the server (`warranty_certificate.source_allowed`): any other source is
+  refused before a draft is made.
+- **How it looks.** The print design system's letterhead with the eyebrow reading
+  "BUILD · WARRANTY" (`contract_style.EYEBROW_BY_TEMPLATE`), the project block boxed to the right
+  of the wordmark, the title centered, the four paragraphs, then Sapphire's lines indented, on one
+  Letter page. The footer leaves out "Confidential" for this type: a certificate is made to be
+  handed to an owner and their contractor. The CSS is in the `Project Contract Print` record,
+  scoped under `.ct-warranty`.
+- **One page, always.** A long project name or address makes the project block taller and wraps
+  the Project/Number line; left alone, a name of about ninety characters pushed the whole
+  signature block to a second page. `warranty_certificate.fit_level` estimates the growth from
+  the lengths and the template adds `ct-warranty-fit-1` to `-3` to its wrapper: each step sets the
+  type a little smaller (10.5pt down to 9pt), closes the spacing and widens the project block.
+  Nothing is ever cut: the name and every address line print in full, and an unbroken word wraps.
+  The steps were set from prints through headless Chrome in a deliberately wide face, with a step
+  to spare, because the server may not have the faces the stylesheet asks for. Measured to hold
+  for a 140-character name (the field's limit) over a four-line address. The test suite prints
+  those cases through Chrome where one is installed and counts the pages.
 
 ## Project Brief sections (v1.444.0)
 
@@ -703,6 +1060,43 @@ Buying), which is unrelated and not in this repo.
   `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
   per-doctype sweep for documents linked to the project that never appeared in a chain.
 - **No caching**, server or client: a fresh round-trip on every form refresh.
+- **Where it is now, filters and the by-item view (v1.811.0).** The widget calls
+  `get_procurement_overview`, which is `get_procurement_documents` plus one row per item for the
+  job and the filter choices. Every line says what it is waiting on (To order, Ordered, Partly
+  received, Received, Late, Closed; [`procurement_overview.py`](../procurement_overview.py), pure)
+  and where its item is now for this job: on the Project Shelf, at the job's site, in a named bin,
+  taken to the job, returned to the supplier, or "place not recorded". That comes from the stock
+  ledger rows that name the job, capped at what each Bin row holds
+  ([`inventory_enhancements/project_stock.py`](../inventory_enhancements/project_stock.py), a fixed
+  handful of queries per project, never one per line). A non-stock item says its location is not
+  tracked. The view and the filters (place, status, supplier, needs action, search) live in the
+  address as `pt_*` keys, written with `history.replaceState`. The widget's decisions are
+  [`public/js/procurement_tracker/logic.js`](../public/js/procurement_tracker/logic.js), tested
+  under node.
+- **What was spent (v1.814.0).** The query also reads the order, receipt and quotation lines'
+  prices ([`procurement_prices.py`](../procurement_prices.py), pure): **Spent** is what was
+  ordered (the submitted order lines' `base_amount`; ERPNext holds no bills), a rate of 0 is
+  *No price* and left out of every sum, a quote is never a spend, and a document's total says when
+  it is only this job's lines. The keys are on the rows **only for a person who may read Purchase
+  Orders** (`_price_access`): the endpoints themselves ask only for Project read. See
+  [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md).
+- **Saved views (v1.816.0).** A view is a named layout for By item or By document: the columns and
+  their order, the sort, the five toolbar filters and any filters on a column. Eight views ship
+  with the app (`data/procurement_tracker_views.json`: Standard for each grouping, Location audit,
+  Items with no place recorded, Money by item and by document, Missing prices, To chase) and cannot
+  be changed, only copied. A person's own views are `Procurement Tracker View` records
+  (`doctype/procurement_tracker_view/`), reached **only** through
+  [`procurement_views.py`](../procurement_views.py) (`get_views`, `save_view`, `rename_view`,
+  `delete_view`), which checks the owner on every call; the DocType gives no role but System
+  Manager any permission. Not Frappe's user settings: those are served from Redis, which every
+  deploy flushes. What a layout may hold, the repair of an outdated one and the owner rules are
+  [`procurement_view_rules.py`](../procurement_view_rules.py) (pure). A layout names columns and
+  carries no data, so it cannot reveal a price column: the server leaves prices out of the feed for
+  a person who may not read Purchase Orders, and the tracker says which columns of the view are
+  missing and why. The browser remembers the last layout per person and grouping
+  (`localStorage`, in try/catch); the address names the view (`pt_layout`) and wins.
+  [`tests/test_procurement_view_rules.py`](../tests/test_procurement_view_rules.py) and the node
+  suite hold it. See [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md).
 - **Printing (v1.517.0):** every document row has **Print** (Frappe's print view, new tab) and
   every group header has **Print**, which prints the group as one PDF — **All**, or **Open**
   where the doctype has one (Material Request, Purchase Order, Purchase Invoice). "Open" is
@@ -717,6 +1111,29 @@ Anything beyond a passing change here wants
 [`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md) first — it maps the
 render path, the chain SQL and its `OR`-join fan-out, the three separate things called "status",
 and the production data volumes.
+
+### A project for the row Update Items adds (v1.816.3, ER-2026-1333210)
+
+`Purchase Order Item.project` is mandatory, and `procurement_project.cascade_project_to_items`
+(a `before_validate` hook on the **Purchase Order**) fills blank lines from the header. That hook
+cannot help a row added to a *submitted* order: ERPNext's *Update Items*
+(`accounts_controller.update_child_qty_rate`) builds the new `Purchase Order Item` without a
+project and calls `child_item.insert()` **on the row by itself**, before the order is saved, so the
+mandatory check refused it ("Value missing for: Project") in a dialog with no Project column.
+
+`procurement_line_project.fill_new_line_project` is a `before_insert` hook on **Purchase Order
+Item** (`hooks.py`, `doc_events["Purchase Order Item"]`). It runs ahead of Frappe's mandatory check
+and gives the row: the order's header project; else the one project the order's lines share. An
+order with no header project whose lines name *several* projects is not guessed at: the row is
+refused in plain words (put the item on its own order, or have purchasing amend the order). A
+project already on the row is never touched. If the order cannot be read the hook steps aside and
+Frappe's own mandatory error stands. The stock dialog stays as it is: its field list is built
+inside `erpnext.utils.update_child_items`, and the server ignores any extra column, so a Project
+column would need a copy of core JS and would not reach the server anyway.
+
+The Sales Order's *Update Items* shares that code and is not affected: this app makes nothing on
+`Sales Order Item` mandatory. `inventory_enhancements/receipt_price.py` calls
+`update_child_qty_rate` with existing rows only, which never insert.
 
 ## Pick Routing Map (v1.190.0)
 
@@ -790,7 +1207,7 @@ the core **Projects** module sidebar right after Task, with Crew Utilization amo
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
-**Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
+**Opened from a Project** (v1.667.0). The Project form's *Open in Planner* button (its own button in the page head since v1.779.0; it was *View > Open in Project Planner*)
 (`public/js/project_enhancements/project_planner_link.js`) routes to that project's Gantt,
 `/desk/project-planner/gantt/<name>?project=<name>` (P6, v1.709.0; before it, the planner's default view, or
 the Lookahead on the week a project that had not started yet starts). The button is only on
@@ -1203,8 +1620,15 @@ so it had grown into one long flat row. v1.687.0 made it **one bar** with four m
 approved 2026-10-21) folds those four into two, and gives both planners the same structure:
 
 ```
-‹ Today ›  title   [Lookahead] Gantt Crew Calendar   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+‹ Today ›  title   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻   [Lookahead] Gantt Crew Calendar Overview
 ```
+
+- **The tabs sit at the bar's right end** (v1.788.0; Nikolas, 2026-11-03: "Float right for the side for
+  the Lookahead, Gantt, Crew, Calendar, and Overview tabs"), after the tools, with the Calendar's
+  Week/Month switch beside them; ‹ Today › and the range stay left. It is DOM order (`build_shell`
+  appends `$seg` and `$cal_seg` after the refresh button), not a CSS `order`, so the tablist, the keyboard
+  order and the phone's compact row (its "Filters and tools" button is appended after them) follow. The
+  Maintenance Planner's Month/Week/Crew tabs and My day move the same way.
 
 - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
   roving tabindex, ArrowLeft/Right/Home/End move focus (choosing one is a route change with its own
@@ -1270,7 +1694,20 @@ in a header of their own, each its own history entry:
   *Show hours* (a browser preference, off) adds the hours or the time slot beside the days. A task with no
   hours still books a full day (the engine's rule, `crew_availability.full_day_hours`), so the day cell
   says *Full*, *3h free* or *Off* as before. The tray (*Not scheduled*, *Needs crew*) sits beside the board
-  on a laptop and above it on a phone. *Day n of N* counts the **task's** working days from its own dates,
+  on a laptop and above it on a phone. **A person's day is ordered by project name, then task name**
+  (v1.788.0, `booking_order`; Nikolas, 2026-11-03: "events should go in order of Project Name, Task
+  Name"), a drive and a personal block first, another planner's bookings among the rest by the names they
+  came with; the Calendar's foreign items take the same order. **Resting the mouse on a chip** (any
+  `.pp-card` or `.pp-fcard`, on every tab) draws the kit's hover card after a short delay (`PPH` block,
+  `pph_task` / `pph_foreign`; `planner_kit.popover`): the task and its project, its days, the time slot
+  or the hours, the hours booked that day and planned, the crew with the lead marked, pencil / draft /
+  overdue marks, conflicts and warnings in red, the hours-actual and equipment notes. Gone when the mouse
+  leaves, on Esc, a press, a scroll or a route change; mouse and pen only, so a phone's hold-to-open quick
+  look is unchanged; the chip's `title=` stays as the accessible fallback. **A day's free hours read
+  "8h pencil" alone when the pencil covers them** (v1.788.0, `pp_hours_text`; Nikolas: "Pencil should be
+  the only hours displayed when something is tentative"), else "4h free · 2h pencil" with no plus sign;
+  Full, Over and Off keep the pencil after them. The Capacity heatmap reads the same way (an all-pencil
+  week is "8h pencil"; otherwise "36h of 40h · 4h pencil"). *Day n of N* counts the **task's** working days from its own dates,
   the same count as the calendar card's *5 days* (`duration_text`), not how many of those days this person is
   booked: someone on a Monday to Wednesday pattern has chips on three days of a task both views call five.
   **It is not yet one true bar:** a multi-day task is still one chip per day, drawn joined, because the chip
@@ -1326,6 +1763,8 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `panel({title, subtitle, fields, width, key, owner, push, reopen})` | A `frappe.ui.FieldGroup` in the drawer, shaped like a `frappe.ui.Dialog`: `set_primary_action`, `$wrapper`, `show`, `hide`, `get_value(s)`, `set_value(s)`, `fields_dict`, `onhide`, `add_values(fn)` (a page's own controls in the panel, for `unsaved()`) | The fields are made at once in a hidden holder, so `$wrapper.find(...)` works before `show()` as it does on a Dialog. `panel.unsaved()` (v1.753.0): the open panel's values differ from what they were at the person's first pointer or key inside it (a page's own `set_value` never counts) |
 | `records.record_of(kind, item)` / `records.open(record)` / `records.open_item(kind, item)` | A tap opens the item's record (v1.753.0): `task`, `move`, `rental` → Task; `visit` → Sapphire Maintenance Record, or with `projected` its Sapphire Maintenance Contract; `projected` → the contract; `travel` → Travel Trip; `project` → Project; `person` → as its `open_as` says (Employee or Planner Resource; none without it); `asset` → Asset | `record_of` is null for a drafted new task, for driving, a block or a note, for a row the server marked `open: false` (`api/planner_open.py`), and for a doctype `frappe.model.can_read` refuses, so the page keeps its old answer. `open` routes `("Form", doctype, name)` through `drawer.navigate`, in the same tab, after a `frappe.confirm` when `panel.unsaved()`, and closes the Undo toast first |
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
+| `popover.attach(root, {selector, describe, delay})` | The hover card on a chip (v1.788.0): after `delay` ms (350) with the mouse at rest on an element matching `selector`, the card `describe(el)` returns — `{title, subtitle, tags, rows: [[label, value]], warnings, notes}`, or null for nothing — drawn under the chip (above it near the bottom), inside the viewport | Mouse and pen only, so a finger's hold-to-open quick look is untouched. Closes on leave, Esc, a press, a scroll, a route change, and while a `*-drag-active` class is on the body nothing shows. Holds the chip's `title` aside while up (the browser's tooltip would show under it) and sets `aria-describedby`; gives the title back on close. One card at a time; everything set as text (`popover_html`, pure). Returns `{close, destroy}` |
+| `records.url(record)` / `records.open_new_tab(record)` | The record's Desk address (`/desk/<slug>/<name>`, the router's `slug` where it is loaded, the same spelling without it) and a new tab on it with `noopener` (v1.788.0): the planners' *Open … in new tab* items and Ctrl+Enter | Nothing on this page changes: no drawer closes, no history entry moves, an unsaved side panel is left alone. False with no record |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
 | `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
 | `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, named by `title` through `aria-label` alone, or by the step's heading when there is none, and described by the step's sentence; the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
@@ -1443,7 +1882,13 @@ do to a drag.
   lifts at 0.3 s as before, and is only dropped back where it was). On a task card: *Edit* (the 6A side
   panel), *Assign to…*, *Move to next free day*, *Pencil* or *Firm up*, *Duplicate*, *Duplicate to…*,
   *Split across days…* (one-day task: *Split in two…*), *Project at a glance*, *Open project*. On an empty
-  spot: *Add task here…* and *Everyone's day*. On a name: *See their week*.
+  spot: *Add task here…* and *Everyone's day*. On a name: *See their week*. Since v1.788.0 (Nikolas,
+  2026-11-03: "Open Link in New Tab for right click") *Open task in new tab* follows *Open task* and *Open
+  project in new tab* follows *Open project*, on a card's menu, a project name's and the Overview's rows,
+  and **Ctrl+Enter** (⌘Enter) on a focused card, task name or project name does the same
+  (`ppr_open_new_tab`, `ppr_new_tab_for`): the kit's `records.open_new_tab`, a `window.open` on the Desk
+  address a tap would route to, so the planner, its history and its held drafts stay put. A drafted new
+  task has no record yet, so neither does anything for it; a Ctrl-click stays the multi-select.
   - *Assign to…* opens a drawer listing who has the hours free on that day (`who_is_free`, the hours
     being the task's estimate shared by the crew over its working days, a full day with no estimate)
     and who does not, with the reason. Click one to add them (`add_crew`), or pick "Replace <person>"
@@ -1627,7 +2072,7 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
   opens a kit drawer with `get_conflicts(start, end, planner)` for the dates on screen, grouped by
   day: each conflict's icon, the person (or vehicle, or task for a qualification), the sentence, the
   block's note when `block_notes` has it, and its records. The page's own record opens in its side
-  panel; anything else is a read-only link (*Open in Maintenance Planner* / *Open in Project Planner*
+  panel; anything else is a read-only link (*Open in Maintenance Planner* / *Open in Planner*
   / *Open trip* / *Open task*). Kept conflicts hide behind **Show kept (N)**, which shows who kept
   each and why. The count is the same call, read once after each load (debounced, `silent`), never on
   a plain re-render; an open drawer reads it again after every change.
@@ -1706,7 +2151,7 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
     landing never reads one (an old row's is ignored), so `planner_views_prefs.SCHEMA["project"]["view"]`
     is unchanged (named views from *Save view as…* still carry their view). The redirect uses
     `replace_route`, so Back leaves the planner. A link that names a filter (`?project=`, the Project
-    form's *Open in Project Planner*) opens the device's calendar tab with it, and never Today (it has no
+    form's *Open in Planner*) opens the device's calendar tab with it, and never Today (it has no
     filters to show). Someone the planner
     does not list, sent to Today by the landing, gets the planner (`p8_landed`, `render_today`).
   - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
@@ -2252,6 +2697,19 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   cards did. A **Needs crew** chip in the board's own bar narrows it to the tasks short of crew,
   which replaces the Needs crew tray. The Overdue tray stays. The Resources panel is not on this tab.
 - **Collapsing** a project or a phase draws its work as plain runs, and is remembered in this browser.
+  Since v1.788.0 the arrows, Expand all / Collapse all, the Needs crew chip, "+N more" and the Overview's
+  Expand all redraw inside `ppl_keep_scroll` (Nikolas, 2026-11-03: expanding "refreshes the view bringing
+  you to the top"): the board's pane, every scrolling ancestor and the window are taken before the redraw
+  and put back after it, in a `finally`.
+- **A month band** (v1.788.0; Nikolas: "don't just show the weeks, but also the month") sits over the day
+  headings: one cell a month across its days ("November"; the short name where fewer than four of its days
+  are on screen, the full name on hover; the year said only when the window holds two), sticky at the top
+  with the headings sticking just under it, as the Gantt's timeline reads. A week start keeps its left
+  rule; the first of a month gets a firmer one (`ppl-month-start`). `PPL_PURE.month_bands`,
+  `ppl_monthband_html`; the phone's list by day has no band. The band and the headings are one sticky
+  block (`.ppl-sticky`), so no offset is hard-coded between them (a tablet's rows are 40px), and the
+  month's name is sticky inside its cell (`overflow: clip`, not `hidden`, so the cell is no scroll
+  container), so it stays in view as the board scrolls sideways.
 - The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
 - **Drop targets.** Every row's days take a drop, a project's and a phase's too, so a project with no
   dated work yet still has days to drop its Not scheduled chips on.
@@ -2273,7 +2731,7 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
   opens the Project filter's project, else the one this device opened last (localStorage
   `ee_project_planner_gantt_project:<user>`). Each project opened is a route, so Back and Forward step
   through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
-  routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
+  routes. The Project form's *Open in Planner* lands here. ‹ › scroll the chart a step of its
   zoom, and Today scrolls to today.
 - **`?build_out=template`** (v1.749.0, TASK-2026-02984). The Opportunity hand-off's "Build out from a
   planner template", offered once its Project is made (`crm_enhancements/create_project_prompt.js`),
@@ -2876,12 +3334,13 @@ while they are being constructed.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
 - `doctype_js["Project"]` includes `public/js/project_enhancements/project_gantt_widget.js` — the embeddable Gantt widget's first embed, mounted into `custom_gantt_chart_html` on the Schedule tab (read-only, status filter + Today; replaced the legacy interactive frappe-gantt renderer that lived in `doctype/project/project.js` — see the [public README](../public/README.md)).
 - `doctype_js["Project"]` also includes `public/js/project_enhancements/pick_routing_map.js`, which binds the Budget tab's `custom_btn_pick_routing_map` Button (created by the `add_project_pick_routing_button` patch).
+- `doctype_js["Project"]` and `doctype_js["Customer"]` include `public/js/project_enhancements/contract_button.js` (v1.783.0), the Contract button; `contract_viewer.js` is no longer on either form (it stays on Project Contract, Sapphire Maintenance Contract and the Project Contract list).
 
 ## Gotchas
 
 - **Mixed indentation:** most files use tabs; `dashboard_overrides.py` uses 4 spaces.
 - `get_all_projects_for_gantt` deliberately drops the `check_permission()` gate (reads with `get_all`) and filters to client-facing project types. **As of the widget-based portfolio Gantt it has no JS consumers** (the block now goes through the permission-checked `api/gantt.py::get_gantt_data`, which enforces the caller's Project/Task read permissions — a deliberate tightening); it remains whitelisted for now and is a removal candidate together with `update_project_dates_from_gantt` / `update_task_dates_from_gantt` / `update_task_progress_from_gantt` / `add_task_dependency` (their last consumers were the retired frappe-gantt embeds).
-- Several Task fields are queried conditionally via `frappe.get_meta(...).has_field(...)` (`custom_is_recurring`, `baseline_start_date/baseline_end_date`) because they are optional site-level custom fields.
+- Some Task fields are queried conditionally via `frappe.get_meta(...).has_field(...)` (`baseline_start_date/baseline_end_date`) because they are optional site-level custom fields. `custom_is_recurring` was read the same way until v1.799.1, when the UI field audit hid the recurring-task fields and the dashboard stopped reading it.
 - `merge_projects` uses `frappe.db.set_value` for child tables/Singles (speed) but `doc.save()` for parents (to fire controller logic), and `log_error`s per-doc failures rather than aborting the whole merge. `get_linked_doctypes` discovers Project links dynamically from metadata, so any new Link-to-Project field automatically expands merge scope.
 - **Export/print does not come from a server-rendered PDF, and that is deliberate.** Server-side PDF is non-functional on production — *both* backends fail for environment reasons this repo cannot fix (`docs/pdf-generation.md`). The two Print Formats above render their HTML print views correctly and browser print-to-PDF works, but the desk's **Download PDF** button will not until that runbook is executed on the VM. Every Print action added in v1.266.0 therefore opens a browser print window instead.
 - **PNG export was here before and was removed** (added v1.166.0, removed v1.167.0 — "at request", no reason recorded). It captured the DHTMLX DOM with `dom-to-image` from a CDN, which could not have worked reliably at scale: **DHTMLX virtualises its rows**, so a large chart exported only the ~40 near the viewport, clipped to the current scroll position. v1.266.0 brought it back rendering vector SVG from the row data instead (`public/js/gantt_widget/gantt_export.js`). If you are tempted by DHTMLX's built-in `exportToPNG`/`exportToPDF`: they POST the chart to `export.dhtmlx.com`.

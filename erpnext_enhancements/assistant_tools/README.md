@@ -328,8 +328,8 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 
 | Tool | Area | Wraps |
 |---|---|---|
-| `training_compliance_status` | Training | perm-enforced Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone |
-| `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names |
+| `training_compliance_status` | Training | Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone. Scoped like the Desk (`training/permissions.py`): the caller and their direct reports unless they hold an unscoped training role |
+| `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names. Your own record or a direct report's unless you hold an unscoped training role (`training/permissions.py`) |
 | `training_course_catalog` | Training | the course-shaped third: catalogue + gates + version history + aggregate assignment/attempt counts. `item_analysis` is aggregate only and **withholds questions below 5 recorded answers** — a success rate over three people identifies them |
 | `draft_course_spec` | Training | **read** — draft a whole course (lessons, blocks, quizzes) as a validated Course Spec from a plain-language brief, via ERPNext's own Vertex client. Writes nothing; returns a preview + a one-hour token. Bounds imported from the Training Question controller; only AI-authorable block types (no uploaded media) |
 | `author_training_course` | Training | **write (gated)** — build a Training Course + unpublished draft from a Course Spec (or a `draft_course_spec` token) via the deterministic materializer (`api/training_course_authoring`), reusing the manual builder's own `create_draft_version` + `save_draft_version`. Every quiz question is stamped `ai_generated` with **no** reviewer, so publication stays gated on a human; the course lands as a Draft. Second app write tool after `create_followup_task` |
@@ -343,7 +343,7 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `maintenance_visit_history` | Maintenance | perm-enforced queries + `_chemistry_trends` |
 | `maintenance_site_briefing` | Maintenance | `sapphire_maintenance_record.py::get_dashboard_context` |
 | `project_status_overview` | Projects | Project Dashboard `get_project_data` / health / gantt / master-project feeds |
-| `project_procurement_status` | Projects | `project_enhancements::get_procurement_status` / `get_procurement_documents` |
+| `project_procurement_status` | Projects | `project_enhancements::get_procurement_status` / `get_procurement_documents` / `get_procurement_overview` (the `items` view, v1.811.0: one row per item for the project). Every item row also carries its state (`line_state`, `needs_action`, `expected_date`, `supplier`) and where the item is now for the job (`where_now`, `where_now_text`, `location_tracked`). v1.814.0: for a caller who may read Purchase Orders, also what was ordered and at what price (`spent`, `unit_price_*`, `no_price_lines`, `received_value`, `draft_spent`, `quote_*` on an item; `price_total` on a document); new keys only, absent without Purchase Order read |
 | `project_pickup_route` | Projects | `api/pickup_routing.py::get_pickup_route_data` — **strips `api_key`** (a live billable Google Maps *browser* key) and `use_routes_api`; keeps address-less suppliers rather than dropping them, since a shorter route that omits them is quietly wrong |
 | `crew_schedule_suggestions` | Projects | `api/project_planner.py::suggest_dates` (v1.578.0): the best days, and who, for a Task, ranked by the driving it would add to each person's route and limited to people with the free hours. It suggests **when**, never who on its own initiative (Nik declined a "suggest a crew" auto-fill). Read-only: it books nothing, though a Google answer it needed is cached as a `Planner Drive Time` row |
 | `crew_day_route` | Projects | `api/project_planner.py::get_route`: one person's stops for a day in driving order, with arrival times and drive minutes. Accepts a Planner Resource, a full name or an email. **Strips `maps_key`** (the browser Maps key), the same reason `project_pickup_route` strips `api_key` |
@@ -364,9 +364,9 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 | `quickbooks_sync_status` | Accounting | QBO connection state + failed-run count + recent QuickBooks Sync Log rows; pass `sync_log` for one run's summary |
 | `document_intake_queue` | Accounting | Accounting Document Intake review queue — counts by status, needs-attention backlog, one doc's lines + matches (companion to Triton's `sfo_extract_document`) |
 | `closed_won_handoff_status` | Sales | Closed-Won Opportunities with no project yet (hand-off backlog, oldest first); pass `opportunity` for its hand-off step state. Historical deals (pre-ERPNext, untouched 90 days) are left out and counted in `historical_excluded` (v1.629.0) |
-| `water_calc` | Water Engineering | stateless `water_engineering.engine` dispatch — one hydraulic calc returned with its formula, steps, citations, warnings and A/B/C options |
-| `water_design_status` | Water Engineering | a Water Feature Design's rollups, completion %, `next_inputs_needed`, typed issues, readiness gates and calc audit trail; lists designs when `design` is omitted |
-| `save_water_design` | Water Engineering | **write (gated)** — creates/updates a Water Feature Design (child tables replaced wholesale), then recomputes |
+| `water_calc` | Water Engineering | one engine calculation through `water_engineering/calculator.py` (via `api/designer._run_calc`), returned with its formula, steps, citations, warnings and A/B/C options; the `calc` enum is `calculator.CALCS`, the Fountain Designer's Calculator drawer list |
+| `water_design_status` | Water Engineering | a Fountain Designer design as the page shows it (`api/designer.design_status`): the stored verdict and rollups (`results_json`), typed issues (`design_issues_json`), readiness gates (`readiness_json`), counts, `designer_url`, the print and packet links, the calc audit trail, and with `include_model` the schema-2 model; lists designs when `design` is omitted |
+| `save_water_design` | Water Engineering | **write (gated)** — creates/updates a design through `api/designer.save_design` from a schema-2 `model` or the old `basins` / `features` / `pipe_segments` / `pumps` payload (merged onto the stored model, each section sent pinned `custom`, the rest named under `ignored`); replies with the status tool's state (v1.771.0) |
 | `control_panel_status` | Water Engineering | a Control Panel Design's power/nameplate, UI screens, I/O points, interlock checklist and lighting/solenoid rollups |
 | `item_naming_check` | Inventory | a proposed Item Code/Name against the naming SOP — duplicates, scored neighbours, code family, `PDT-`/`SRV-` block occupancy, every mechanical name defect, and a STOP/FIX/PASS verdict. Advisory: nothing this tool reports blocks a save by itself. From 2026-10-01 (POL-0602; shipped in v1.532.0) the `Item` doc_event refuses a *new* Item for two of these findings only (a code duplicating an existing one after normalisation, a name that is just the code) |
 | `item_naming_suggest` | Inventory | the guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): a plain-words description (and, optionally, the vendor part number) in; the suggested code family, POL-0602 name segments, Item Group and unit out, each with a reason, plus the naming rules' and the new-Item guard's verdict and any existing Item that looks the same (`api.item_suggest.run_suggestion`, the guided page's own call). Read-only (no Item, no File; the Gemini client's AI Model Usage row is its one side effect). Never gives a PDT-/SRV- number and never invents a part number. Gated on Item create. No photo argument on purpose: a File named by an assistant call would need the gate's file denylist, and a Triton chat attachment is refused there anyway |
@@ -404,6 +404,24 @@ now writes each row's category from the tool's own annotations — `read_only`, 
 or `privileged` for `HIGH_RISK` — on insert and on every migrate. The contract test
 `test_fac_category_reproduces_each_tools_own_hints` asserts the merge is a no-op for
 every registered tool.
+
+## Which OAuth clients may register (v1.826.9)
+
+Claude and Google's connector reach this site's MCP server over OAuth, and both register
+themselves first (RFC 7591). Frappe and FAC each expose a guest `register_client` endpoint for
+that. `erpnext_enhancements/oauth_registration.py` (`before_request`) lets a registration through
+only when every redirect URI is on its allow-list, within hourly limits per client address
+(10 refused requests, 60 accepted registrations):
+
+- `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`
+- any path on `oauth-redirect.googleusercontent.com`, `oauth-redirect-sandbox.googleusercontent.com`
+  and `oauth-redirect-test.googleusercontent.com`
+
+To connect another client, add its redirect address to site config
+`oauth_registration_redirect_allowlist` (a list of `host` or `host/path-prefix` strings; a local
+client needs `http://localhost` or `http://127.0.0.1` listed explicitly). `oauth_registration_guard: 0`
+turns the check off. A refused registration answers 400 `invalid_redirect_uri` naming the URI, or
+429 when over the rate. The module docstring has the full rule.
 
 ## Deployment notes
 

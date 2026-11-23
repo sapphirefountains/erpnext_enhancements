@@ -72,6 +72,14 @@
   {
    "added": 0,
    "hidden": 0,
+   "icon": "drafting-compass",
+   "link_type": "URL",
+   "title": "Fountain Designer",
+   "url": "/desk/fountain-designer"
+  },
+  {
+   "added": 0,
+   "hidden": 0,
    "icon": "book-open-check",
    "link_to": "QuickBooks Online",
    "link_type": "Workspace",
@@ -134,7 +142,7 @@
    "url": "/desk/stock-scan"
   }
  ],
- "modified": "2026-10-27 12:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "mount_on": "erpnext",
  "name": "erpnext_enhancements",

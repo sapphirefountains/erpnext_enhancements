@@ -38,6 +38,9 @@ IDENTITY_FIELDS = {
 	"ad_account": ("platform", "external_id"),
 	"ad_campaign": ("ad_account", "external_id"),
 	"ad_daily_metric": ("campaign", "metric_date"),
+	# v1.756.0, the Marketing Performance page's named-by-key daily rows.
+	"business_profile_daily_metric": ("location_id", "metric_date"),
+	"social_page_daily_metric": ("social_account", "metric_date"),
 }
 
 #: Substrings that have no business in a doctype a non-System-Manager can read.
@@ -128,7 +131,11 @@ class TestMarketingSettingsDials(unittest.TestCase):
 			for name, f in self.fields.items()
 			if f.get("fieldtype") == "Int"
 		}
-		unclassified = ints - set(self.dials)
+		# Exemptions, each with its reason:
+		# - low_review_stars (v1.757.0): 0 turns the low-review alert off, so a 0 is a decision and must
+		#   not heal back to 2. Its default still reaches the existing row through the backfill patch.
+		exempt = {"low_review_stars"}
+		unclassified = ints - set(self.dials) - exempt
 		self.assertFalse(
 			unclassified,
 			f"New Int field(s) on Marketing Settings not in POSITIVE_DIALS: "

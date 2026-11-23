@@ -1632,6 +1632,11 @@ class TestGetPlanner(unittest.TestCase):
 		# v1.753.0: what a tap opens for this caller (api/planner_open): Austin's Employee, the visit.
 		self.assertEqual([(r["name"], r["open_as"]) for r in data["resources"]], [("RES-1", "Employee")])
 		self.assertEqual({f["ref"]: (f.get("open"), f.get("projected")) for f in data["foreign"]}["SMR-1"], (True, False))
+		# v1.788.0: each foreign item carries its project (an ID) and its time slot, for the Calendar's
+		# order by project and the hover card's Time row.
+		for item in data["foreign"]:
+			self.assertIn("project", item)
+			self.assertIn("slot", item)
 		# P3: with the schedule columns present, each project says whether its schedule is published
 		# (this row has no value stored, which reads Draft).
 		self.assertEqual(
@@ -1823,8 +1828,9 @@ class TestDisplayRule(unittest.TestCase):
 		tree = ast.parse((Path(__file__).resolve().parents[1] / "api/project_planner.py").read_text(encoding="utf-8"))
 		fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_planner")
 		# P5 added google (the Lookahead reads with Google off); unset, it is on, as before.
-		self.assertEqual([a.arg for a in fn.args.args], ["start", "end", "draft", "all_tasks", "google"])
-		self.assertEqual([ast.literal_eval(d) for d in fn.args.defaults], [0, 0, 1])
+		# v1.796.0 added done (Display ▸ Show done work); unset, no done task is read.
+		self.assertEqual([a.arg for a in fn.args.args], ["start", "end", "draft", "all_tasks", "google", "done"])
+		self.assertEqual([ast.literal_eval(d) for d in fn.args.defaults], [0, 0, 1, 0])
 
 
 # ---------------------------------------------------------------------- routes (Phase 2)

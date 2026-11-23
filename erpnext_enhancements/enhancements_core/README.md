@@ -23,7 +23,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | `doctype/user_form_draft/…py` | Per-user autosaved form draft | (stub) |
 | `doctype/process_document/…py` | Mermaid.js process documentation (ported from a DB-only custom DocType in v0.8.0; form script: `public/js/process_document.js` — brand-themed preview + Visual Builder dialog since v1.12.0; chart content version-controlled in `setup/process_documents.py` and upserted on every migrate since v1.11.0) | (stub) |
 | `report/data_normalization_preview/` | **Data Normalization Preview** (System Manager): a dry run of the phone/email/website/address cleanup — every field in `utils/normalize_fields.py` through `utils/normalize.py`, listed as *Will change*, *Can't normalize — needs a person* or *Already clean*. Writes nothing; one SELECT per doctype; submitted/cancelled records are counted, never listed; Singles read with `get_single_value` and reported only. See [docs/data-normalization.md](../../docs/data-normalization.md) | `execute`, `collect` |
-| `page/ga4_dashboard/ga4_dashboard.js` | GA4 + GSC charts page | `on_page_load` |
+| `page/ga4_dashboard/ga4_dashboard.js` | Redirect to Marketing Performance (v1.756.0) | `on_page_show` |
 | `page/location_timeline/location_timeline.js` | Leaflet map replay of kiosk points | `on_page_load` |
 | `page/integrations_health/integrations_health.js` | Green/amber/red tiles for every external integration + scheduler/errors; data from [`api/integrations_health.py`](../api/README.md) | `on_page_load` |
 | `page/time_kiosk/time_kiosk.js` | Legacy redirect to the `/kiosk` PWA | `on_page_load`/`on_page_show` |
@@ -49,7 +49,7 @@ Logs are pushed in batches by [`api/time_kiosk.py`](../api/README.md), replayed 
 
 ## Desk pages
 
-- **`ga4-dashboard`** (System Manager / Sales roles / Marketing Team and Marketing Manager since v1.681.0, because the Marketing Hub links it) — parallel GA4 + GSC fetch, per-section error isolation, `frappe.Chart`s + escaped HTML tables. Setup below.
+- **`ga4-dashboard`** — retired in v1.756.0: it replaces itself with **Marketing Performance** (`marketing/page/marketing_performance/`, see `marketing/README.md`). The Page record stays so old links land. The GA4 Settings setup below still applies: the daily pull and the nightly snapshot read them.
 - **`location-timeline`** (System Manager / HR Manager) — Leaflet map of Time Kiosk Log points via `api.time_kiosk.get_location_history`.
 - **`integrations-health`** (System Manager) — one ops screen for every external service (QuickBooks, Google Drive, Telephony/Triton, Gemini, GA4/GSC) plus Frappe scheduler liveness and a 24 h Error Log digest. Each integration is a green/amber/red tile; data comes from `api.integrations_health.get_health` (DB-only, no outbound calls on load — the Drive tile's *Test connection* button runs the one live check on demand via `run_drive_test`). Secrets are read only as "configured?" booleans, never returned. Use it to spot a lapsed QuickBooks OAuth token, an unconfigured Drive service account, or a stalled hourly job at a glance.
 - **`guided-entry`** (Sales User / Sales Manager / System Manager; each record is permission-checked again by `form_kit.api`) — form kit P4-B, generic over `form_kit.config.CONFIGS` (Opportunity today), opened from the Opportunity form's **Guided** button. `/desk/guided-entry/<DocType>/new` is step 1, which inserts the record; `/desk/guided-entry/<DocType>/<name>/<step>` is every later step, each its own history entry so Back and Forward walk the steps. After step 1 the `new` entry is *replaced* (`frappe.route_flags.replace_route`) by the record's own first step and the next step is pushed, so Back can never land on an empty step 1 and insert a second record. Saving goes through one queue (`public/js/form_kit/save_queue.js`): on leaving a step and 2.5 s after typing stops, one request in flight, each carrying the last `modified`; a conflict is shown field by field (*Keep mine* / *Use theirs*), a validation error at the top of the step. Every request is `sf_kit.call(..., {quiet: true})`. Field hints stay inline under each field (the page opts its fields out of `field_description_icons.js` with `df.ee_desc_inline`) and the longer help opens from an (i) button. Tests: `tests/test_guided_entry.py` (node + static).
@@ -57,7 +57,7 @@ Logs are pushed in batches by [`api/time_kiosk.py`](../api/README.md), replayed 
 
 ## Google Analytics 4 & Search Console dashboard
 
-A custom dashboard (page `ga4-dashboard`, `/app/ga4-dashboard`) that renders GA4 + GSC metrics inside ERPNext. Backed by [`api/analytics.py`](../api/README.md).
+Since v1.756.0 the figures are stored by day (`marketing/performance/web_sync.py`) and shown on the **Marketing Performance** page (`/desk/marketing-performance`); the old `ga4-dashboard` page redirects there. The setup below is what both the daily pull and the nightly snapshot read.
 
 ### Setup
 
@@ -68,17 +68,11 @@ A custom dashboard (page `ga4-dashboard`, `/app/ga4-dashboard`) that renders GA4
    - `GA4 Property ID` — from GA4 Admin → Property Settings.
    - `GSC Property URL` — your exact GSC property string (e.g. `https://www.example.com/` or `sc-domain:example.com`).
    - `Credentials JSON` — attach the downloaded key. **Check "Is Private"** so the file lands in the private files directory (`api/analytics.py` rejects a public path to avoid leaking the key).
-5. Open the dashboard by searching **ga4-dashboard** or visiting `/app/ga4-dashboard`.
+5. Open **Marketing Performance** (`/desk/marketing-performance`); a System Manager runs the history backfill once from its menu.
 
 ### What it shows
 
-Traffic timeline (Active Users / Sessions, 30 days), acquisition channels (donut), conversions per event (bar), device breakdown (donut), top countries (bar), top pages (table) — plus, from Search Console: search-performance timeline (Clicks/Impressions), top queries, and top landing pages (Clicks/Impressions/CTR/Position).
-
-Read access is granted to **System Manager**, **Sales User**, **Sales Manager**.
-
-### ⚠️ API quota note
-
-Each dashboard load fires ~6 GA4 + ~3 GSC requests concurrently. Concurrency improves load time, but heavy interactive use across the team will exhaust Google API quotas. If you hit rate-limit errors, refactor to a scheduled job that caches GA4/GSC data into a custom doctype and have the dashboard read from MariaDB instead.
+See **Marketing Performance** in [`marketing/README.md`](../marketing/README.md#the-marketing-performance-page-v17560): trend, landing pages joined across GA4 and Search Console, flags, queries, channels, funnel, calls, spend, Business Profile, social pages and source health.
 
 ## Gotchas
 

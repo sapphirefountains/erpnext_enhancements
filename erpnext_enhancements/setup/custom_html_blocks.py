@@ -102,10 +102,9 @@ BLOCKS = [
 	("Service Day Board", "service_day_board"),
 	("Service Chemistry Alerts", "service_chemistry_alerts"),
 	("Service Labor Capture", "service_labor_capture"),
-	("Marketing Funnel Cascade", "marketing_funnel_cascade"),
-	("Marketing Channel Spend", "marketing_channel_spend"),
-	("Marketing Unsourced Leads", "marketing_unsourced_leads"),
-	("Marketing Source Health", "marketing_source_health"),
+	# The four Marketing widgets were here until v1.756.0, when the Marketing Performance page
+	# took their place. The seeder never deletes, so patches/retire_marketing_dashboard_widgets
+	# removes the records once the Marketing Dashboard no longer points at them.
 	("HR Training Compliance", "hr_training_compliance"),
 	("HR Time Capture", "hr_time_capture"),
 	("HR Headcount Movement", "hr_headcount_movement"),
@@ -210,12 +209,6 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 		"Service Day Board",
 		"Service Chemistry Alerts",
 		"Service Labor Capture",
-	),
-	"Marketing Dashboard": (
-		"Marketing Funnel Cascade",
-		"Marketing Channel Spend",
-		"Marketing Unsourced Leads",
-		"Marketing Source Health",
 	),
 	# The learner workspace. One block, and no KPI Cockpit beside it: this page is
 	# for the person looking at it, not for reading the business.

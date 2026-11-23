@@ -28,6 +28,36 @@ from erpnext_enhancements.setup.workspace_tweaks import drop_unreadable_sidebar_
 from erpnext_enhancements.utils.normalize_hook import desk_registry
 
 
+def _warehouse_map_flag():
+	"""``frappe.boot.ee_warehouse_map`` (v1.818.0): 1 when a Warehouse Map that is not hidden
+	exists. Every "Show on map" door in the Desk reads it (the Bin Manager, the Item and Warehouse
+	forms, two reports), so none of them is offered where it would lead to an empty page; Stock
+	Scan reads the same fact in its own boot. Cosmetic: the page and its endpoints check
+	permission themselves. Imported and asked here so that nothing about it can break the boot."""
+	try:
+		from erpnext_enhancements.inventory_enhancements.warehouse_map_files import has_visible_map
+
+		return 1 if has_visible_map() else 0
+	except Exception:
+		return 0
+
+
+def _configurable_products():
+	"""``frappe.boot.ee_configurable_products`` (v1.827.0): ``[{name, product_name}]`` for the
+	Configurable Products that are switched on, while the Product Configurator is. The Opportunity's
+	"Quote <product>" action reads it for its label and its product choice, and is not offered when it
+	is empty. One small read (one row on prod); cosmetic, since ``quoting.start_configuration``
+	checks the product and the person itself. Never breaks the boot."""
+	try:
+		if not product_configurator_enabled():
+			return []
+		from erpnext_enhancements.product_configurator.quoting import enabled_products
+
+		return [{"name": row.name, "product_name": row.product_name or row.name} for row in enabled_products()]
+	except Exception:
+		return []
+
+
 def boot_session(bootinfo):
 	"""Ship the live-collab doctype allowlist and feature flags to the desk client.
 
@@ -71,8 +101,10 @@ def boot_session(bootinfo):
 
 	``frappe.boot.ee_product_configurator`` gates the Product Configuration /
 	Configurable Product generation buttons (Item + BOM + Selling Price,
-	Create Component Items); the server-side guards in
+	Create Component Items, Create Quotation); the server-side guards in
 	``product_configurator.api`` remain the authority.
+	``frappe.boot.ee_configurable_products`` lists the enabled products for the
+	Opportunity's "Quote <product>" action (:func:`_configurable_products`).
 
 	``frappe.boot.ee_package_dispatch`` gates the Package Dispatch form's auto-fill
 	triggers (catalog-item value + customer address); the form itself works with
@@ -121,6 +153,9 @@ def boot_session(bootinfo):
 	CRM, Projects, Time Kiosk, Travel, Training and Stock Scan, the same as their Dock rail. Hiding
 	only; System Managers and Workspace Managers keep the whole grid. See
 	``setup.dock_profiles.trim_home_grid``.
+
+	``frappe.boot.triton_frame`` is there only for a person on the framed Triton widget (v1.802.0),
+	and its absence is what leaves the classic widget in charge. See :func:`_triton_frame`.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -131,6 +166,7 @@ def boot_session(bootinfo):
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_industry_rule = industry_rule_for_client()
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0
+	bootinfo.ee_configurable_products = _configurable_products()
 	bootinfo.ee_package_dispatch = 1 if package_dispatch_enabled() else 0
 	bootinfo.ee_fountain_move = 1 if fountain_move_intake_enabled() else 0
 	bootinfo.ee_fountain_move_public = 1 if fountain_move_public_form_enabled() else 0
@@ -144,9 +180,34 @@ def boot_session(bootinfo):
 	if normalize_registry:
 		bootinfo.sf_normalize = normalize_registry
 	bootinfo.sf_field_help = _field_help_doctypes()
+	bootinfo.ee_warehouse_map = _warehouse_map_flag()
 	bootinfo.sf_guided = _guided_doctypes()
 	drop_unreadable_sidebar_links(bootinfo)
 	trim_home_grid(bootinfo)
+	triton_frame = _triton_frame()
+	if triton_frame:
+		bootinfo.triton_frame = triton_frame
+
+
+def _triton_frame():
+	"""``frappe.boot.triton_frame`` for a person on the framed Triton widget, else nothing (v1.802.0).
+
+	The key is absent for everyone on the classic widget, which is everyone until *Triton
+	Assistant Settings > Widget* is changed. Present, it is ``{"origin", "url", "page_context"}``:
+	where the frame loads from, and whether the Desk may tell it which record is open.
+	``public/js/global_enhancements/triton_frame_gate.js`` reads it to load the framed loader, and
+	the classic widget reads it to stay asleep. See ``api.triton_frame.frame_config``.
+
+	Never raises, and imported here rather than at the top: that module pulls in ``triton_chat``
+	and with it ``requests`` and ``werkzeug``, which the bench-free suites that import ``boot``
+	do not stub.
+	"""
+	try:
+		from erpnext_enhancements.api import triton_frame
+
+		return triton_frame.boot_payload()
+	except Exception:
+		return None
 
 
 def _field_help_doctypes():

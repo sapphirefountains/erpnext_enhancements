@@ -20,6 +20,7 @@ import frappe
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
+from erpnext_enhancements.crm_enhancements import product_sale
 from erpnext_enhancements.crm_enhancements import project_creation_progress as progress
 from erpnext_enhancements.crm_enhancements.project_copy import copy_site_and_budget
 from erpnext_enhancements.utils import attachment_copies
@@ -44,8 +45,8 @@ def _notify_recipients(users):
 
 
 # The enqueue function now accepts 'project_template' and passes it on.
-@frappe.whitelist()
-def enqueue_project_creation(opportunity_name, users=None, project_template=None):
+@frappe.whitelist(methods=["POST"])
+def enqueue_project_creation(opportunity_name, users=None, project_template=None, create_anyway=None):
 	"""Queue background creation of a Project from an Opportunity.
 
 	Whitelisted entry point called from the Opportunity form (client side) so the
@@ -58,13 +59,29 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 			:func:`_notify_recipients`, so a trailing separator is harmless.
 		project_template: Name of the Project Template to apply to the new
 			Project. Required.
+		create_anyway: Truthy from the Hand-Off Process tab's "Create Project
+			Anyway": a deal ticked Product Sale (No Project) gets its project
+			after all, and the tick is cleared (v1.827.0, see below).
 
 	Returns:
 		dict: ``{"status": "queued", "phase", "state", "steps"}`` once the job is
 		enqueued; ``{"status": "running", ...}`` with the same keys when a job
 		for this Opportunity is already queued or running (nothing new is
 		queued); ``{"status": "exists", "project"}`` when it already has its
-		Project. The client draws its progress bar from ``steps``.
+		Project; ``{"status": "product_sale", "message"}`` when the deal is a
+		product sale and ``create_anyway`` is not set (v1.827.0, see below). The
+		client draws its progress bar from ``steps``.
+
+	A product sale skips project creation (v1.827.0; decision 2026-11-18, "the
+	Sales Order is the record"). Recognized by
+	:func:`~erpnext_enhancements.crm_enhancements.product_sale.is_product_opportunity`:
+	a person ticked Product Sale (No Project) and nothing else is on the deal's
+	linked quotes. A configured product alone never makes a product sale.
+	Answered before the template and the notify list are checked, because
+	neither matters for a deal that will have no project. **The escape is
+	always there:** ``create_anyway`` creates the project regardless and clears
+	the tick, in the same transaction as the queueing, so a refusal further
+	down (a bad address, no template) leaves the tick as it was.
 
 	Raises:
 		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing,
@@ -85,6 +102,16 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	# state (the requester, the Error Log's name). project_creation_state's read check is
 	# the same rule's other half.
 	frappe.has_permission("Opportunity", "write", doc=opportunity_name, throw=True)
+
+	anyway = str(create_anyway or "").strip().lower() in ("1", "true", "yes")
+	if not anyway and product_sale.is_product_opportunity(opportunity_name):
+		return {
+			"status": "product_sale",
+			"message": (
+				"This deal is marked a product sale, so it gets no project: its Sales Order is the "
+				"record. If it needs one after all, use Create Project Anyway on the Hand-Off Process tab."
+			),
+		}
 
 	# Normalized here so a field holding only separators ("," / " ") is refused up
 	# front rather than queueing a job that notifies nobody.
@@ -117,6 +144,11 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	if current["phase"] in ("queued", "running"):
 		return {"status": "running", **current}
 
+	if anyway:
+		# The project is wanted after all: the deal is a job, and the tick saying otherwise goes. Same
+		# request, same transaction as the queueing, so a refusal above never clears it.
+		_clear_product_sale(opportunity_name)
+
 	state = progress.mark_queued(opportunity_name, frappe.session.user)
 	# One job id per Opportunity, deduplicated: frappe.enqueue queues nothing while a job with this
 	# id is queued or started. The job's own row lock covers the rest (a job queued some other way).
@@ -135,6 +167,17 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		# above and here. Report that job as it stands rather than a "queued" this call never made.
 		return {"status": "running", **progress.creation_state(opportunity_name)}
 	return {"status": "queued", "phase": "queued", "state": state, "steps": progress.steps()}
+
+
+def _clear_product_sale(opportunity_name):
+	"""Untick Product Sale (No Project) for Create Project Anyway (v1.827.0). Never raises."""
+	try:
+		if frappe.db.has_column("Opportunity", product_sale.MARKER) and frappe.db.get_value(
+			"Opportunity", opportunity_name, product_sale.MARKER
+		):
+			frappe.db.set_value("Opportunity", opportunity_name, product_sale.MARKER, 0)
+	except Exception:
+		frappe.log_error(title="Create Project Anyway: tick not cleared", message=frappe.get_traceback())
 
 
 def sync_opportunity_tags(doc, method=None):
@@ -182,7 +225,7 @@ def sync_opportunity_tags(doc, method=None):
 		doc._user_tags = None
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def sync_opportunity_tags_for_existing(opportunity_name):
 	"""Sync tags for an existing Opportunity without triggering a full save.
 
@@ -198,11 +241,15 @@ def sync_opportunity_tags_for_existing(opportunity_name):
 		str | None: The recomputed ``_user_tags`` value.
 
 	Side effects:
-		DB write to ``Opportunity._user_tags``.
+		DB write to ``Opportunity._user_tags``, without touching ``modified``.
+
+	Requires write permission on the Opportunity (the form only calls it for someone who can
+	save the record).
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity_name)
+	doc.check_permission("write")
 	sync_opportunity_tags(doc)
-	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags)
+	frappe.db.set_value("Opportunity", opportunity_name, "_user_tags", doc._user_tags, update_modified=False)
 	return doc._user_tags
 
 
@@ -522,9 +569,6 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 			# --- All field and table mapping logic remains the same ---
 			direct_mappings = {
-				"custom_scope_rank": "custom_scope_rank",
-				"custom_schedule_rank": "custom_schedule_rank",
-				"custom_budget_rank": "custom_budget_rank",
 				"custom_opportunity_summary": "custom_project_description",
 				"custom_general_scope_description": "custom_general_scope_description",
 				"custom_project_start_date": "custom_project_start_date",
@@ -539,7 +583,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 				"custom_event_date_time_notes": "custom_event_date_time_notes",
 				"custom_take_down_date_time_notes": "custom_take_down_date_time_notes",
 				"opportunity_amount": "custom_project_dollar_amount",
-				"custom_estimated_cost": "custom_project_cost",
+				# custom_estimated_cost -> custom_project_cost was copied here until v1.799.1:
+				# the source is hidden (UI field audit; 2 of 855 deals ever held one).
 				"party_name": "customer",
 				# Who the deal was actually with. Same fieldname on both sides
 				# (setup/custom_fields.py provisions it for every party doctype),
@@ -567,16 +612,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			sync_contact.apply_primary_contact_details(project)
 
 			# Derive a single Project.project_type from the (possibly multiple)
-			# selected value streams, picking the highest-priority one present.
-			priority_order = ["Design", "Build", "Service", "Events"]
-			project_type_value = None
-
+			# selected value streams, picking the highest-priority one present
+			# (Design, Build, Service, Events). v1.827.0: a deal whose linked quotes
+			# are a control-panel product order gets "Products" instead (decision
+			# 2026-11-18 pick 1; the Products tab lists panel projects by that type).
+			# See product_sale.project_type_for; it never raises.
 			value_streams = [d.get("value_stream") for d in opp.get("custom_value_stream")]
-
-			for p in priority_order:
-				if p in value_streams:
-					project_type_value = p
-					break
+			project_type_value = product_sale.project_type_for_deal(opportunity_name, value_streams)
 
 			if project_type_value:
 				project.project_type = project_type_value
@@ -584,7 +626,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			child_table_mappings = {
 				"custom_value_stream": "custom_value_stream",
 				"custom_contacts__address_table": "custom_contacts__address_table",
-				"custom_scope_contributors": "custom_scope_contributors",
+				# custom_scope_contributors was copied here until v1.799.1: hidden on both sides
+				# by the UI field audit (1 of 855 deals, 1 of 668 projects held a row).
 				"custom_design_customer_requests": "custom_design_customer_requests",
 				"custom_design_deliverables": "custom_design_deliverables",
 				"custom_build_customer_requests": "custom_build_customer_requests",

@@ -805,8 +805,9 @@ hooked method (`desk/search.py:510-538`). Up to 5 hits, `index` 160, each `SOP-0
 matched words in bold and everything else escaped (v16 renders label and description as HTML), the kind
 and department as the description, and the route `["Form", "Knowledge Article", <number>]`, so a hit
 opens the article through `frappe.set_route` and Back returns. It never raises and leaves no message.
-This app's own live global search (`public/js/erpnext_enhancements.js`, `api/search.py`) is unchanged,
-keeps its 3-character floor, and cannot return the same rows: neither KB doctype is in global search.
+This app's own live record search (`public/js/global_enhancements/desk_search.js`, `api/desk_search.py`,
+v1.795.0; before that `api/search.py` from `erpnext_enhancements.js`) searches no KB doctype, so it cannot
+return the same rows; it lists these hits under a "Knowledge base" heading, below the records.
 People see the hook after their next page load, because `has_awesomebar_search` is part of boot.
 
 ## AI tools (PR 6a)

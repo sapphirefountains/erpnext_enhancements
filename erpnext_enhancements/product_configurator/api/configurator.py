@@ -8,6 +8,17 @@ endpoint gates on doctype permission; the ERPNext-mutating ones additionally
 gate on the ``product_configurator_enabled`` master switch (previews and
 option loading always work: the switch guards mutations, not math — the
 "data at rest is ungated" convention).
+
+Quoting (v1.827.0): ``start_configuration`` and ``create_quotation`` are the two
+calls a sale makes, from the Opportunity's "Quote <product>" action and the
+configuration's "Create Quotation" button today, and from the phone quick-quote
+page and the Triton tool later. They are thin adapters over ``quoting.py``,
+which says what each is careful about. ``start_configuration`` makes a
+configuration (data at rest, so it is not gated by the switch);
+``create_quotation`` makes ERPNext records, so it is.
+
+Refusals read in plain words: what the person can't do and who can fix it, not
+"Not permitted (write Product Configuration)".
 """
 
 import json
@@ -21,10 +32,22 @@ CONFIG_DOCTYPE = "Product Configuration"
 
 
 def _require(ptype, doctype=CONFIG_DOCTYPE):
-	if not frappe.has_permission(doctype, ptype):
-		frappe.throw(
-			_("Not permitted ({0} {1}).").format(ptype, doctype), frappe.PermissionError
+	if frappe.has_permission(doctype, ptype):
+		return
+	if doctype == CONFIG_DOCTYPE and ptype != "read":
+		from erpnext_enhancements.product_configurator.quoting import product_engineer_refusal
+
+		message = product_engineer_refusal()
+	elif doctype == "Configurable Product" and ptype != "read":
+		message = _(
+			"Changing a product definition needs the Product Engineer role, and your user doesn't have "
+			"it yet. Ask a System Manager to add it to your user."
 		)
+	else:
+		message = _("You can't see {0} records yet. Ask a System Manager for the Product Engineer role.").format(
+			_(doctype)
+		)
+	frappe.throw(message, frappe.PermissionError, title=_("Product Engineer role needed"))
 
 
 def _parse(payload):
@@ -106,7 +129,7 @@ def preview_configuration(payload):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_erpnext_records(configuration):
 	"""Create/refresh the Item, default BOM and selling Item Price."""
 	throw_if_product_configurator_disabled()
@@ -116,7 +139,29 @@ def generate_erpnext_records(configuration):
 	return erp_integration.generate(configuration)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
+def start_configuration(opportunity=None, product=None, customer=None, selections=None):
+	"""Start a Product Configuration for a deal (or an Account); returns ``{configuration, ...}``.
+
+	``product`` may be left out while only one Configurable Product is enabled. ``selections`` is
+	``{option_key: choice_code | qty}`` (a dict or its JSON) for callers with no form.
+	"""
+	from erpnext_enhancements.product_configurator import quoting
+
+	return quoting.start_configuration(
+		opportunity=opportunity, product=product, customer=customer, selections=selections
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_quotation(configuration):
+	"""Make (or return) the configuration's draft Quotation, generating its Item, BOM and price first."""
+	from erpnext_enhancements.product_configurator import quoting
+
+	return quoting.create_quotation(configuration)
+
+
+@frappe.whitelist(methods=["POST"])
 def ensure_component_items(product):
 	"""Create missing Suppliers and component Items for a product definition."""
 	throw_if_product_configurator_disabled()

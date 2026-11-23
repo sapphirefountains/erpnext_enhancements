@@ -96,6 +96,28 @@ def can_review(employee, user=None):
 	return bool(employee) and _reports_to_user(employee) == user
 
 
+def is_party_to_request(employee, filer, user=None):
+	"""Is ``user`` the person whose hours a request changes (the login of ``employee``)
+	or the person who filed it (``filer``, the request's ``owner``)? Either one may not
+	decide it, whatever their roles: a person never approves their own hours."""
+	user = _resolve(user)
+	if filer and filer == user:
+		return True
+	if not employee:
+		return False
+	if _session_employee(user) == employee:
+		return True
+	return (frappe.db.get_value("Employee", employee, "user_id") or None) == user
+
+
+def may_decide_request(employee, filer, user=None):
+	"""May ``user`` approve or decline a request for ``employee`` filed by ``filer``? A
+	reviewer (:func:`can_review`) who is not a party to it (:func:`is_party_to_request`).
+	The endpoint gate, the controller's status rule and the form's button test."""
+	user = _resolve(user)
+	return can_review(employee, user) and not is_party_to_request(employee, filer, user)
+
+
 def time_correction_request_query_conditions(user=None):
 	user = _resolve(user)
 	if _has_any(TCR_MANAGER_ROLES, user):

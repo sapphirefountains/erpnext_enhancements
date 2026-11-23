@@ -4,7 +4,7 @@
 // List-view triage for Water Feature Designs: the indicator answers "which
 // designs need attention" without opening them — blockers (red) beat warnings
 // (orange) beat package-ready (green) beat plain status. The counts are
-// denormalized onto the doc by recompute(), so the list stays a cheap query.
+// denormalized onto the doc by every derive (validate), so the list stays a cheap query.
 
 frappe.listview_settings["Water Feature Design"] = {
 	add_fields: ["blocker_count", "warning_count", "issue_ready", "status"],
@@ -23,8 +23,7 @@ frappe.listview_settings["Water Feature Design"] = {
 		}
 		const colors = {
 			Draft: "gray",
-			"Inputs Gathered": "blue",
-			Calculated: "blue",
+			Derived: "blue",
 			Reviewed: "green",
 			Issued: "green",
 		};

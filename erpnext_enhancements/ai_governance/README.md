@@ -165,7 +165,8 @@ count. They call three endpoints in `gating_api`:
   says whether each has hidden values without reading or decrypting them. A row starts unticked
   (`batch_default` false, with a `review_reason`) for High risk, hidden values, a submit or cancel
   (`_gate._changes_docstatus`, or since v1.545.0 a `submit_document` / `cancel_document` card,
-  `_gate.DOCSTATUS_TOOLS`), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
+  `_gate.DOCSTATUS_TOOLS`), a remote device action (any of `_gate.DEVICE_ACTION_TOOLS`, whatever its
+  risk), a write to one of `_gate.NEVER_EXEMPT`, or unreadable arguments.
   For a never-exempt target the reason names its kind (`gating_api._never_exempt_reason`): a Task,
   the gate's own records, or since v1.538.0 the company knowledge base (since v1.560.0 including a
   `draft_knowledge_article` card, whose target the gate takes from the tool's name).
@@ -246,7 +247,7 @@ placeholder into real records.
 | `AI Model Usage` | Model usage accounting |
 | `AI Confirmation Exempt Doctype` | Doctypes exempted from the confirmation requirement: permanent rows, or time-boxed windows via `exempt_until` (see above) |
 | `Triton Settings` | Single — connection settings for the Triton assistant |
-| `Triton Assistant Settings` | Assistant behaviour configuration |
+| `Triton Assistant Settings` | Assistant behaviour configuration. Since v1.802.0 also **Widget** (`widget_mode`: Classic, Framed for pilot users, Framed for everyone; default Classic), the pilot table (`framed_pilot_users`) and an optional **Framed Site Address**: who gets the framed widget, a frame around Triton's own chat page, in place of the classic one. Read by `api/triton_frame.py`, never from the browser. Saving it clears every person's cached boot payload (`on_update`), so the change reaches them on their next Desk load; see [`docs/triton-framed-widget.md`](../../docs/triton-framed-widget.md) |
 | `Triton Allowed User` | Per-user access to the assistant |
 | `Triton Chat Attachment` | Anchor row for one file attached to a Triton chat turn. Owner-scoped (`permissions.py`, wired under both `permission_query_conditions` and `has_permission`). It exists so the uploaded `File` has something to be attached *to*: an orphan private File is readable only through `File.has_permission`'s `doc.owner == user` shortcut — an accident rather than a policy — and nothing in core ever garbage-collects one. Attached here, the file inherits this row's hook and is deleted with it. Behaviour lives in [`triton_attachments.py`](../triton_attachments.py) |
 | `Training Insight` | Captured insights for assistant tuning |

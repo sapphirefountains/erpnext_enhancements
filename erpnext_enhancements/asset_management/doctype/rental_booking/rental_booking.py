@@ -104,7 +104,7 @@ class RentalBooking(Document):
 				title=_("Status"),
 			)
 
-	@frappe.whitelist()
+	@frappe.whitelist(methods=["POST"])
 	def set_status(self, status):
 		"""Move the booking to ``status`` — the form's action buttons call this."""
 		self.check_permission("write")

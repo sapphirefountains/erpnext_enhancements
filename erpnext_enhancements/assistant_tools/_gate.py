@@ -171,6 +171,8 @@ EXPLICIT_READONLY = {
 # never depends on the fail-closed fallback to confirm them.
 APP_MUTATING = {
     "create_followup_task",
+    # v1.757.0 -- one Marketing Event (a marker on the marketing trend). Low, like the follow-up task.
+    "log_marketing_event",
     "workforce_clock_in",
     "workforce_clock_out",
     # mdm_integration remote device actions — all gated (lock/wipe/locate the
@@ -247,6 +249,7 @@ LOW_RISK = {
     "create_dashboard",
     "create_dashboard_chart",
     "create_followup_task",
+    "log_marketing_event",
     "save_water_design",
     "author_training_course",
     # a private File the requester owns; nothing existing changes and deleting it undoes it
@@ -261,6 +264,21 @@ EXEMPTABLE_TOOLS = {"create_document", "update_document"}
 #: with the same reason as a create that submits (``gating_api._review_reasons``). Both are
 #: HIGH_RISK as well; the reason says what the card does, the risk says how much it matters.
 DOCSTATUS_TOOLS = frozenset({"submit_document", "cancel_document"})
+
+#: The remote device-action tools (``mdm_integration.actions.execute_device_action``). Every one
+#: starts unticked in the batch dialog whatever its risk band, so a batch approval never includes a
+#: device action unless someone ticks it (``gating_api._review_reasons``). ``tests/test_ai_gate_batch.py``
+#: holds this equal to the set of tools that call the executor.
+DEVICE_ACTION_TOOLS = frozenset(
+    {
+        "remote_lock_device",
+        "remote_wipe_device",
+        "locate_device",
+        "reboot_device",
+        "run_device_script",
+        "deploy_device_patch",
+    }
+)
 
 # tool name -> callable(arguments) -> bool  (True = this CALL needs confirmation)
 #
@@ -893,6 +911,10 @@ def summarize_tool_call(tool_name, arguments):
     if tool_name == "generate_document":
         label = (args.get("title") or args.get("filename") or "").strip()
         return f"Generate a PDF document {label}".strip()
+    if tool_name == "log_marketing_event":
+        text = (args.get("title") or "").strip()
+        snippet = (text[:60] + "…") if len(text) > 60 else text
+        return f"Log marketing event “{snippet}” on {args.get('event_date') or '?'}".strip()
     if tool_name == "create_followup_task":
         text = (args.get("description") or "").strip()
         snippet = (text[:60] + "…") if len(text) > 60 else text
@@ -1567,6 +1589,18 @@ def _error_response(message, error_type="AIGateError"):
 #: Tools whose arguments are {doctype, data, ...} with `data` written onto the document.
 PRECHECKED_TOOLS = frozenset({"create_document", "update_document"})
 
+#: Since v1.809.0 a new Item starts with Maintain Stock ticked. A person at the form sees the
+#: box; an assistant's create_document does not, so a labor line or a fee created without the
+#: field would quietly become a stock item, and that can't be undone from the form once the
+#: item is used. So a create of an Item must say `is_stock_item` on purpose, either way. This
+#: is refused before a card is made, with what to send, like a bad Select value.
+ITEM_STOCK_CHOICE = (
+    "Item: say whether it keeps stock. Add \"is_stock_item\": 1 for a part or material that sits "
+    "on a shelf, or \"is_stock_item\": 0 for labor, a fee, freight, rent or any other service "
+    "(and for a fixed asset). New items default to keeping stock, so leaving it out would make "
+    "a service a stock item."
+)
+
 #: Whole options strings that `Meta.get_select_fields()` skips (frappe v16 meta.py).
 _PLACEHOLDER_SELECT_OPTIONS = frozenset({"[Select]", "Loading..."})
 
@@ -1659,6 +1693,8 @@ def _precheck_problems(arguments, get_meta, tool_name="update_document"):
     is_sensitive = _sensitive_key_predicate()
     meta = _meta(get_meta, doctype)
     problems = _select_problems(meta, data, f"{doctype} ", is_sensitive)
+    if tool_name == "create_document" and doctype == "Item" and "is_stock_item" not in data:
+        problems.append(ITEM_STOCK_CHOICE)
     for df in getattr(meta, "fields", None) or []:
         if getattr(df, "fieldtype", None) not in _TABLE_FIELDTYPES:
             continue

@@ -18,13 +18,19 @@ Gating is the shared department contract in ``api/dashboard_widgets.py``:
 Executive roles per ``api/kpi.py``, plus a per-widget toggle defaulting OFF.
 Drill-through links are only rendered for departments the viewer can actually
 open, so an Accounts Manager does not get a link into the HR dashboard.
+
+Revenue and margin figures (``kpi_dashboards/money.py``) are read only for Accounts
+Manager and System Manager. ``_values`` is the one place a snapshot's rows are read, so
+every widget here leaves them out for anyone else: a tile for one is absent, the scorecard
+counts only the figures the viewer may see, and the risk queue lists no revenue or margin
+figure.
 """
 
 import frappe
 from frappe.utils import flt, getdate, nowdate
 
 from erpnext_enhancements.api.dashboard_widgets import can_view, fetch_all, widget_feed
-from erpnext_enhancements.kpi_dashboards import snapshots
+from erpnext_enhancements.kpi_dashboards import money, snapshots
 
 # Departments shown on the scorecard, in reading order. Executive is excluded —
 # it is a rollup of these, so scoring it alongside them double-counts.
@@ -35,6 +41,8 @@ SCORECARD_DEPARTMENTS = ("Finance", "Sales", "Marketing", "Operations", "Design"
 SNAPSHOT_STALE_DAYS = 2
 
 RISK_LIMIT = 12
+
+NOTHING_FOR_ROLE = "Nothing to show for your role."
 
 PERIOD = "Daily"
 
@@ -52,13 +60,14 @@ def _latest_snapshot(department):
 
 
 def _values(snapshot_name):
-	return fetch_all(
+	rows = fetch_all(
 		"KPI Snapshot Value",
 		filters={"parent": snapshot_name},
 		fields=["kpi_key", "label", "value", "value_text", "unit", "status", "trend_pct", "is_stale"],
 		order_by="idx asc",
 		limit=200,
 	)
+	return money.without_revenue(rows)
 
 
 def _value_map(department):
@@ -155,6 +164,8 @@ def get_cash_runway():
 
 	keys = ("cash_collected_30", "revenue_30", "ar_outstanding", "dso")
 	figures = [f for f in (_figure(values, key) for key in keys) if f]
+	if not figures and not money.can_see_revenue():
+		return {"figures": [], "unavailable": NOTHING_FOR_ROLE}
 	return {
 		"figures": figures,
 		"snapshot_date": str(getdate(snapshot.snapshot_date)) if snapshot.snapshot_date else None,

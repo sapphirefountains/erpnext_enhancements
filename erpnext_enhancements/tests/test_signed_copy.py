@@ -21,10 +21,12 @@ What a mistake here costs, and why each case exists:
   contract signed.
 * **A form that will not open.** ``signed_copy`` runs in two forms' onload, so a failed lookup is
   logged and answered, never raised.
-* **The Contracts tab's button on the wrong row, or a slower tab** (v1.745.0). A row gets it when
-  its own status is Signed, or its maintenance contract's agreement is, and never from
-  ``executed``, which a paper signature never sets. An agreement the reader cannot read gives no
-  button. The statuses come from one query for the whole list, and listing never resolves a file.
+* **``signed_copy_of`` on the wrong row, or a slower list** (v1.745.0; the Contracts tab that
+  drew the button is gone since v1.783.0, and ``get_contracts`` now feeds the Contract button's
+  picker). A row gets it when its own status is Signed, or its maintenance contract's agreement
+  is, and never from ``executed``, which a paper signature never sets. An agreement the reader
+  cannot read gives no button. The statuses come from one query for the whole list, and listing
+  never resolves a file.
 
 Run: python -m unittest erpnext_enhancements.tests.test_signed_copy -v
 """
@@ -889,44 +891,6 @@ class TestWiring(Base):
         """JS with its comments removed, so an assertion is about what runs, not what is said."""
         js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
         return re.sub(r"//.*$", "", js, flags=re.M)
-
-    def test_contracts_tab_rows_open_the_signed_copy_through_the_shared_opener(self):
-        code = self._code_only(self._read("public", "js", "project_enhancements", "contracts_tab.js"))
-        # The row carries the server's answer to "which contract", and the button is drawn only then.
-        self.assertIn('data-signed-copy-of="${esc(row.signed_copy_of || "")}"', code)
-        self.assertIn('const signed_copy_of = $card.attr("data-signed-copy-of");', code)
-        self.assertIn("if (signed_copy_of) {", code)
-        # The list's two calls, on the viewer's exports: fetch on click, then open.
-        self.assertIn("const viewer = erpnext_enhancements.contract_viewer;", code)
-        self.assertRegex(
-            code,
-            r"viewer\s*\.fetch_signed_copy\(signed_copy_of\)\s*"
-            r"\.then\(\(info\) => viewer\.open_signed_copy\(info, \{ template_key \}\)\)",
-        )
-        # A maintenance row styles its agreement as the maintenance form does.
-        self.assertRegex(code, r'doctype === "Sapphire Maintenance Contract"\s*\?\s*"maintenance"')
-        # The click stops propagation, as Open and Generate Agreement do. Consistency only: the
-        # toggle is bound to .ee-contract-head, a sibling of the actions row, so a click here
-        # could not expand the card either way.
-        button = code[code.index('__("Signed copy")') : code.index("fetch_signed_copy(signed_copy_of)")]
-        self.assertIn("e.stopPropagation();", button)
-        # And no copy of the opener: the endpoint, the window and the dialogs stay in the viewer.
-        for own in ("get_signed_copy", "signed_copy.", "window.open", "open_file", "frappe.ui.Dialog"):
-            self.assertNotIn(own, code, own)
-        self.assertNotRegex(code, r"function\s+(fetch_signed_copy|open_signed_copy)\b")
-
-    def test_contracts_tab_loads_after_the_viewer_on_both_forms(self):
-        tree = ast.parse(self._read("hooks.py"))
-        form_js = next(
-            ast.literal_eval(node.value)
-            for node in tree.body
-            if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "doctype_js" for t in node.targets)
-        )
-        viewer = "public/js/project_enhancements/contract_viewer.js"
-        tab = "public/js/project_enhancements/contracts_tab.js"
-        for doctype in ("Project", "Customer"):
-            entries = form_js[doctype]
-            self.assertLess(entries.index(viewer), entries.index(tab), doctype)
 
     def test_the_esign_pdf_name_is_the_convention_this_looks_for(self):
         lifecycle = self._read("project_enhancements", "esign", "lifecycle.py")

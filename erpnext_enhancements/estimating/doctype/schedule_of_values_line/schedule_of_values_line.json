@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "creation": "2026-11-20 09:00:00.000000",
+ "description": "A row of a Schedule of Values. Carries no cost and no markup, by design.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "item_no",
+  "phase_number",
+  "description",
+  "scheduled_value",
+  "by_others",
+  "column_break_line",
+  "cost_type",
+  "billed_to_date",
+  "change_order",
+  "approved_on",
+  "source_lines",
+  "line_key"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "item_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Item"
+  },
+  {
+   "columns": 1,
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Phase"
+  },
+  {
+   "columns": 4,
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Description of Work",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "scheduled_value",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Scheduled Value"
+  },
+  {
+   "columns": 1,
+   "description": "Scope the customer provides. Stays on the schedule, flagged, and is never billed.",
+   "fieldname": "by_others",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "By Others"
+  },
+  {
+   "fieldname": "column_break_line",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "cost_type",
+   "fieldtype": "Select",
+   "label": "Cost Type",
+   "options": "\nMaterial\nEquipment\nLabor\nSubcontract\nExpense"
+  },
+  {
+   "columns": 1,
+   "description": "Completed and stored on the latest certified pay application.",
+   "fieldname": "billed_to_date",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Billed to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "change_order",
+   "fieldtype": "Link",
+   "label": "Change Order",
+   "no_copy": 1,
+   "options": "Change Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Date",
+   "label": "Approved On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The estimate lines this row was made from.",
+   "fieldname": "source_lines",
+   "fieldtype": "Small Text",
+   "label": "Estimate Lines",
+   "read_only": 1
+  },
+  {
+   "fieldname": "line_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Line Key",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-20 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Schedule of Values Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

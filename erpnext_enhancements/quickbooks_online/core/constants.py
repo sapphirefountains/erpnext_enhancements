@@ -132,6 +132,16 @@ ERPNEXT_OWNED_PARTY_FIELDS = {
 	"Customer": ("customer_group", "territory"),
 }
 
+# ``QuickBooks Sync Mapping.conflict_status`` for a linked record whose QuickBooks side has
+# moved on and no longer agrees with ERPNext (v1.800.0, Nik's 2026-10-06 decision: the sync
+# links, never overwrites). The sync sets it and stores the differences in ``qbo_changes``;
+# only a person on the Record Matching page clears it (Keep ERPNext / Use QuickBooks values /
+# Refresh draft). It is an option in the doctype's own JSON. ``Conflict`` is the status the
+# sync wrote before v1.800.0; rows that still carry it are re-read on their next sync and
+# become this status or ``Clean``.
+QBO_CHANGED = "QuickBooks Changed"
+LEGACY_CONFLICT = "Conflict"
+
 # QBO rejects a CDC ``changedSince`` cursor older than 30 days. When the stored
 # cursor predates that window (e.g. the integration was paused), sync.run_cdc
 # clamps it to stay inside the window so the poll still succeeds; anything older

@@ -41,6 +41,16 @@
   "linkedin_last_error_at",
   "linkedin_access_token",
   "linkedin_refresh_token",
+  "google_business_section",
+  "google_business_client_id",
+  "google_business_client_secret",
+  "google_business_column_break",
+  "google_business_connection_status",
+  "google_business_connected_on",
+  "google_business_connected_by",
+  "google_business_status_message",
+  "google_business_last_error_at",
+  "google_business_refresh_token",
   "meta_publishing_section",
   "meta_publishing_client_id",
   "meta_publishing_client_secret",
@@ -298,6 +308,67 @@
   {
    "description": "Set only by the Connect flow. Encrypted.",
    "fieldname": "linkedin_refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token"
+  },
+  {
+   "description": "Read-only: the listing's daily calls, website clicks, direction requests and impressions, and its reviews. Google keeps the API's quota at 0 until it approves the project (docs/marketing-connectors-runbook.md). The only scope Google offers is business.manage; nothing here sends anything but GETs.",
+   "fieldname": "google_business_section",
+   "fieldtype": "Section Break",
+   "label": "Google Business Profile"
+  },
+  {
+   "description": "From Google Cloud (APIs & Services -> Credentials), in the project Google approved for Business Profile API access. Not secret.",
+   "fieldname": "google_business_client_id",
+   "fieldtype": "Data",
+   "label": "OAuth Client ID"
+  },
+  {
+   "fieldname": "google_business_client_secret",
+   "fieldtype": "Password",
+   "label": "OAuth Client Secret"
+  },
+  {
+   "fieldname": "google_business_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "google_business_connection_status",
+   "fieldtype": "Select",
+   "in_list_view": 0,
+   "label": "Connection",
+   "options": "\nNot Connected\nConnected\nAuth Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_business_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_business_connected_by",
+   "fieldtype": "Link",
+   "label": "Connected By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_business_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_business_last_error_at",
+   "fieldtype": "Datetime",
+   "label": "Last Error At",
+   "read_only": 1
+  },
+  {
+   "description": "Set only by the Connect flow. Encrypted.",
+   "fieldname": "google_business_refresh_token",
    "fieldtype": "Password",
    "hidden": 1,
    "label": "Refresh Token"

@@ -1,0 +1,22 @@
+{# A client's approval link for a Service Call (v1.778.0). Customer-facing.
+
+   A FRAGMENT: the letterhead, heading and footer come from email_style.render() in
+   sapphire_maintenance/service_call_approval.py (_email_request), on the Service pillar. No
+   container here: the shell owns the measure.
+
+   The ee.* text macros escape their argument. ee.button does not escape its URL, which is
+   server-built from get_url() and carries the link's token; it must not be entity-escaped or
+   the link breaks. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Hello,") }}
+
+{{ ee.p("Thank you for calling. Here is the " ~ service|lower ~ " you asked about for " ~ site ~ (", planned for " ~ scheduled if scheduled else "") ~ ". The rate is " ~ rate ~ ". The page behind the button has the full summary and our short terms.") }}
+
+{{ ee.button(approval_url, "Review and approve") }}
+
+{{ ee.note("It takes a minute: read the summary, type your name and press Approve. The link answers once and expires " ~ expires_on ~ ". If anything is not right, just reply to this email.") }}
+
+{{ ee.button_fallback(approval_url) }}
+
+{{ ee.p("Thank you, " ~ company) }}

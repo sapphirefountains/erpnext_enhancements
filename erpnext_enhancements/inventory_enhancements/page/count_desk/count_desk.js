@@ -69,6 +69,11 @@ class CountDeskPage {
 		});
 		page.set_secondary_action(__("Refresh"), () => this.ctl && this.ctl.refresh(), "refresh");
 		this.bind();
+		// A bay, shelf or bin made on the Warehouse Map (v1.820.0) is a location the plan has not read: its
+		// list is read again the next time the plan is shown, as after one of this page's own posts.
+		$(document).on("sf-warehouses-changed", () => {
+			if (this.ctl && this.ctl.state) this.ctl.state.boot_stale = true;
+		});
 	}
 
 	env() {

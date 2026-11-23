@@ -15,6 +15,9 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements.api.device_management import MANAGER_ROLES
+from erpnext_enhancements.device_management.doctype.managed_device.managed_device import (
+	CONFIRMING_DISCOVERED_FLAG,
+)
 from erpnext_enhancements.mdm_integration.actions import execute_device_action
 from erpnext_enhancements.mdm_integration.client import get_provider
 from erpnext_enhancements.mdm_integration.sync import clear_provider_auth_block, run_device_sync
@@ -26,7 +29,24 @@ def _check_manager():
 		frappe.throw(_("You are not permitted to manage the MDM integration."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+def _require_desk_session():
+	"""Refuse a request authenticated by an ``Authorization`` header (token or API key).
+
+	Device actions are requested from the Managed Device form, which authenticates with the
+	session cookie and never sends that header. Outside a web request (a job, the console,
+	a test run) there is no header and this does nothing. Same rule as
+	``assistant_tools.gating_api._require_desk_session``.
+	"""
+	if getattr(getattr(frappe, "local", None), "request", None) is None:
+		return
+	if frappe.get_request_header("Authorization"):
+		frappe.throw(
+			_("Device actions are requested from the Managed Device form, signed in as yourself."),
+			frappe.PermissionError,
+		)
+
+
+@frappe.whitelist(methods=["POST"])
 def test_connection(provider):
 	"""List a provider's devices once and report the count (or the error)."""
 	_check_manager()
@@ -46,7 +66,7 @@ def test_connection(provider):
 		return {"ok": False, "provider": provider, "mode": settings.provider_mode, "error": str(exc)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def trigger_sync(provider):
 	"""Run one provider's device sync now and return the log counters."""
 	_check_manager()
@@ -63,9 +83,10 @@ def trigger_sync(provider):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def remote_action(device, action, mode=None, script=None, patch=None):
 	"""Manager-UI entry into the action executor (the form button calls this)."""
+	_require_desk_session()
 	_check_manager()
 	return execute_device_action(
 		device, action, mode=mode, source="UI", script=script, patch=patch, requested_by=frappe.session.user
@@ -78,9 +99,15 @@ def confirm_device(device, ownership):
 	who owns it.
 
 	The sync creates provider devices it cannot match as Discovered, with
-	ownership defaulting to Company. Until confirmed, a full wipe is refused
+	ownership defaulting to Company. Until confirmed, every device action is refused
 	(``actions.execute_device_action``), because the BYOD guard is only as good as
 	that ownership field. Recorded on the device's timeline.
+
+	This is the one save in which a Device Manager may set ownership to Company on a device
+	stored as BYOD (a provider can hint BYOD when the sync creates it). Elsewhere that change
+	requires a System Manager (``ManagedDevice._guard_ownership_change``). The controller
+	allows it only when ``frappe.flags`` names this device and the stored link state is
+	Discovered, and the flag is cleared as soon as the save returns.
 	"""
 	_check_manager()
 	if ownership not in ("Company", "BYOD"):
@@ -90,6 +117,10 @@ def confirm_device(device, ownership):
 		frappe.throw(_("{0} is not awaiting confirmation.").format(doc.name), frappe.ValidationError)
 	doc.ownership = ownership
 	doc.mdm_link_state = "Managed"
-	doc.save()
+	setattr(frappe.flags, CONFIRMING_DISCOVERED_FLAG, doc.name)
+	try:
+		doc.save()
+	finally:
+		setattr(frappe.flags, CONFIRMING_DISCOVERED_FLAG, None)
 	doc.add_comment("Info", _("Confirmed as a {0} device by {1}.").format(ownership, frappe.session.user))
 	return {"device": doc.name, "ownership": doc.ownership, "mdm_link_state": doc.mdm_link_state}

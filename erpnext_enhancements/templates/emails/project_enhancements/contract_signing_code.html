@@ -1,0 +1,20 @@
+{# One-time signing code. Customer-facing. Sent by esign/portal.send_signing_code.
+
+   A FRAGMENT: the letterhead, heading and footer come from email_style.render()
+   in esign/portal.py. Do not add a container here — the shell owns the measure.
+
+   Short on purpose: the code, the document it is for, how long it works, and what to
+   do if they did not ask for it. The code is never in the subject line.
+
+   NOTE: frappe's Jinja env has NO autoescape — the macros escape their own args. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Here is your code to sign " ~ contract_label ~ ".") }}
+
+{{ ee.kpis([{"label": "Your signing code", "value": code, "tone": "primary"}]) }}
+
+{{ ee.note("Type it on the signing page. It works once, for " ~ minutes ~ " minutes.") }}
+
+{{ ee.note("Didn't ask for a code? You can ignore this email. Nothing is signed without it.") }}
+
+{{ ee.p("Thank you, " ~ company) }}

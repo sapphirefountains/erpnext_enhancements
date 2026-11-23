@@ -16,10 +16,10 @@ def gallons_to_pounds(gallons: float) -> float:
 
 
 def feet_to_psi(feet_of_head: float) -> float:
-    """Feet of head -> psi (fresh water; 2.31 ft/psi, engineering standard)."""
+    """Feet of head -> psi (fresh water; 2.308966 ft/psi, DOC-0049 F-Formulas F173)."""
     return float(feet_of_head) / FT_PER_PSI
 
 
 def psi_to_feet(psi: float) -> float:
-    """psi -> feet of head (fresh water; 2.31 ft/psi, engineering standard)."""
+    """psi -> feet of head (fresh water; 2.308966 ft/psi, DOC-0049 F-Formulas F173)."""
     return float(psi) * FT_PER_PSI

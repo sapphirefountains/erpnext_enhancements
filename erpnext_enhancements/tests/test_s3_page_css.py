@@ -86,7 +86,8 @@ CI = REPO / ".github" / "workflows" / "ci.yml"
 
 PAGES = {
 	"drive_link_manager": APP / "google_drive" / "page" / "drive_link_manager",
-	"ga4_dashboard": APP / "integration_hub" / "page" / "ga4_dashboard",
+	# v1.756.0: the GA4 Dashboard became a redirect with no stylesheet; its successor is on the tokens.
+	"marketing_performance": APP / "marketing" / "page" / "marketing_performance",
 	"inspection_wizard": APP / "quality" / "page" / "inspection_wizard",
 	"training_insights": APP / "training" / "page" / "training_insights",
 	"training_glossary_review": APP / "training" / "page" / "training_glossary_review",
@@ -105,6 +106,8 @@ PAGES = {
 	"rental_planner": APP / "asset_management" / "page" / "rental_planner",
 	# WI-081 (v1.696.0): built on the tokens from the start.
 	"my_work": APP / "task_enhancements" / "page" / "my_work",
+	# v1.833.0: built on the tokens from the start.
+	"time_edit_approvals": APP / "workforce" / "page" / "time_edit_approvals",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -112,7 +115,7 @@ PAGES = {
 # session, so an unprefixed selector leaks onto every page visited after it.
 NAMESPACES = {
 	"drive_link_manager": re.compile(r"\.(?:dlm-[\w-]+|drive-link-manager\b)"),
-	"ga4_dashboard": re.compile(r"\.(?:ga4-|gsc-)[\w-]+"),
+	"marketing_performance": re.compile(r"\.mkp-[\w-]+"),
 	"inspection_wizard": re.compile(r"\.qw-[\w-]+"),
 	"training_insights": re.compile(r"\.ti-[\w-]+"),
 	"training_glossary_review": re.compile(r"\.gr-page\b"),
@@ -131,13 +134,14 @@ NAMESPACES = {
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 	"rental_planner": re.compile(r"\.rp-[\w-]+"),
 	"my_work": re.compile(r"\.myw-[\w-]+"),
+	"time_edit_approvals": re.compile(r"\.tea-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
 # `pulse` animate with whichever loaded last.
 KEYFRAME_PREFIXES = {
 	"drive_link_manager": ("dlm-",),
-	"ga4_dashboard": ("ga4-", "gsc-"),
+	"marketing_performance": ("mkp-",),
 	"inspection_wizard": ("qw-",),
 	"training_insights": ("ti-",),
 	"training_glossary_review": ("gr-",),
@@ -150,6 +154,7 @@ KEYFRAME_PREFIXES = {
 	"maintenance_planner": ("mp-",),
 	"rental_planner": ("rp-",),
 	"my_work": ("myw-",),
+	"time_edit_approvals": ("tea-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages

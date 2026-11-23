@@ -4,6 +4,14 @@
 # Contract / Contract Template / Contract Signature Request sync permission rows naming it.
 # Insert-only; grants it to nobody.
 erpnext_enhancements.patches.seed_contract_manager_role
+# v1.818.0: the "Warehouse Map Editor" role (and its one-role profile) that creates and changes Warehouse Floor Maps (the Warehouse Map page's records).
+# pre_model_sync so the role exists before the Warehouse Floor Map DocType syncs the permission row naming it.
+# Insert-only; grants it to nobody.
+erpnext_enhancements.patches.seed_warehouse_map_editor_role
+# v1.832.0: the "Estimator" role (estimating milestone 1; TASK-2026-02149's cost-and-margin audience with Finance Team,
+# Executive Team and System Manager). pre_model_sync so the role exists before Estimate / Estimate Template / Estimate
+# Rate Card sync the permission rows naming it. Insert-only; grants it to nobody.
+erpnext_enhancements.patches.seed_estimator_role
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
@@ -1520,3 +1528,208 @@ erpnext_enhancements.patches.dedupe_project_attachment_rows
 # (2026-10-27): 6 files, 16 File rows, 3 rows linked and tagged. One savepoint per file, commits after each, moves the
 # bytes back itself after a savepoint rollback; prints counts. Cannot raise, safe twice.
 erpnext_enhancements.patches.privatize_kiosk_attachment_files
+# Marketing Performance (v1.756.0, Nik 2026-10-29): re-sync the Marketing Dashboard (its four widget blocks gone, a
+# Marketing Performance shortcut in their place), the Marketing Hub and the Integration Hub (their GA4 Dashboard
+# shortcuts and links now open the new page), then delete the four retired Custom HTML Block records the seeder no longer
+# writes -- never forced, so one a private workspace still links to is kept and logged. Prints what it did; cannot raise,
+# safe twice.
+erpnext_enhancements.patches.retire_marketing_dashboard_widgets
+# Marketing Performance (v1.756.0): the three new Marketing Settings fields (google_business_profile_enabled 0,
+# social_page_stats_enabled 0, branded_terms "sapphire") get their defaults on the existing row, only where tabSingles has
+# no row for them. The same function runs on after_migrate; this line is the one a site whose Patch Log already holds the
+# 2026-08 backfill still runs. Safe twice.
+erpnext_enhancements.patches.backfill_marketing_performance_settings
+# Marketing insights (v1.757.0): the new Marketing Settings thresholds, alert roles and key pages get their defaults
+# on the existing row (only where tabSingles has no row: the alerts must not be dormant by accident), and the
+# service-line rules are seeded when that table is empty. Safe twice.
+erpnext_enhancements.patches.backfill_marketing_insights_settings
+# Marketing insights (v1.757.0): re-import the Marketing Hub (the six marketing reports; Marketing Event, Tracked Link
+# and Business Profile Review). Logs a failure, never raises, safe twice.
+erpnext_enhancements.patches.marketing_insights_hub_links
+# Fountain Designer catalog (v1.758.0): move Nozzle Profile rows off the retired nozzle_type names (Smooth Bore,
+# Aerating, Spray, Cascade, Foam, Jet) onto the new ones, so no profile is left unsaveable. db.set_value, no modified
+# bump; logs, never raises, safe twice.
+erpnext_enhancements.patches.remap_nozzle_profile_types
+# Fountain Designer catalog (v1.758.0): copy each Item's legacy custom_pump_curve table into a Pump Curve record. The
+# Item rows stay (readers fall back to them); an Item that already has a Pump Curve is skipped. Logs, never raises,
+# safe twice.
+erpnext_enhancements.patches.migrate_item_pump_curves
+# Fountain Designer phase C (v1.759.0): the Sapphire house rules and utility rates on Water Engineering Settings get
+# their defaults on the existing row, only where tabSingles has no row for them (a rule set to 0 stays 0). Writes
+# every missing default, so a never-saved Single does not lose contractor_name. Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_water_house_rules
+# Fountain Designer page (v1.761.0, phase F): re-import the Water Engineering workspace (the Fountain Designer
+# shortcut and its Tools link). Logs a failure, never raises, safe twice.
+erpnext_enhancements.patches.fountain_designer_workspace_link
+# Fountain Designer phase E (v1.768.0): Water Feature Design no longer declares its nine child tables; convert each
+# design's stored child rows (read straight from their tables) into a schema-2 model_json with engine.model.migrate,
+# and map the v1 statuses (Inputs Gathered -> Draft, Calculated -> Derived). db.set_value only, no modified bump;
+# deletes nothing, a design it cannot convert gets a line in its notes. Logs, never raises, safe twice.
+erpnext_enhancements.patches.convert_water_feature_designs_to_model
+# Fountain Designer phase G (v1.770.0): Water Engineering Settings gains the budget rules (labor rate, contingency,
+# range); run backfill_water_house_rules again so the existing row gets their defaults, only where tabSingles has no
+# row for them. Cannot raise; safe twice.
+erpnext_enhancements.patches.backfill_water_budget_rules
+# Fountain Designer phase G (v1.770.0): Water Feature Design.budget_total now means the BOM subtotal plus the
+# house-rule contingency (the Budget the prints show), with the sum in the new bom_subtotal; write both on every
+# design that is not canceled, from its stored bom rows and the current rules. set_value without modified; logs
+# per design, never raises, safe twice.
+erpnext_enhancements.patches.backfill_water_design_budget
+# Fountain Designer phase H (v1.771.0): retire the nine schema-1 child DocTypes of Water Feature Design. Rows of a
+# schema-2 or vanished design are deleted from the five tables the conversion above read and from Calc Result (derived);
+# a live design's rows in Electrical Load, Venue Fixture or Equipment (never read) and an unconverted design's are KEPT with
+# its table and DocType and named in the Error Log. A table is dropped once empty (delete_doc never drops it), and only
+# then its DocType and any Custom Field / Property Setter. Logs every outcome, never raises, safe twice. Prod
+# 2026-11-01: 13 rows, all of the schema-2 WFD-2026-209315, all in those six tables.
+erpnext_enhancements.patches.retire_water_feature_child_doctypes
+# Fountain Designer phase H (v1.771.0): retire the Water Engineering Wizard page. Re-import the Water Engineering and
+# Design Hub workspaces (import_file_by_path force), delete the Page row, point any other Workspace Link / Shortcut /
+# Sidebar item still naming it at the Fountain Designer, delete any Desktop Icon that opens it. Logs, never raises.
+erpnext_enhancements.patches.retire_water_engineering_wizard
+# Design projects (v1.773.0, Nik 2026-10-30): create the Project Template "Design Project (PRO-0206)" (type Design) of four
+# template Tasks, PRO-0206's stages in order, each waiting on the one before: Predesign (PD) days 0-13, Schematic Design
+# (SD) 14-34, Design Development (DD) 35-62, Construction Documents (CD) 63-83, no hours. Insert-only by name, one
+# savepoint. Then, only once the new template exists, tick Disabled on the old "Design Project Template" (a field write;
+# its tasks and its 16 projects are untouched). Cannot raise.
+erpnext_enhancements.patches.seed_design_project_template
+# Service Calls (v1.778.0, Nikolas 2026-11-03): the three-task "Service Call" Project Template (Approval received,
+# Service visit, Invoice sent; leaf tasks, each waiting on the one before; re-dated from the scheduled visit by the
+# intake) and the "Small Repair" visit template with its three sections. Both insert-only by name, both log instead
+# of raising. The Service Call Rate table is NOT seeded: rates are entered on prod, never in the repo.
+erpnext_enhancements.patches.seed_service_call_project_template
+erpnext_enhancements.patches.seed_small_repair_template
+# Contracts (v1.783.0, Nikolas 2026-11-03). The Contracts tab leaves Project and Customer: its four Custom Fields
+# (two per form, created by add_project_contracts_tab and add_customer_contracts_tab, never in the fixtures) are
+# deleted one by one; a field that will not delete is logged and the rest still go. The Contract button on the
+# Scope tab and in the Customer page head takes over. Cannot raise.
+erpnext_enhancements.patches.remove_contracts_tabs
+# Contract Template titles on existing sites (seed_contract_templates is insert-only): Architect Agreement ->
+# Design Agreement, Rental Agreement -> Events Agreement, the live bodies' heading and defining sentences with
+# them; Employee-Contractor Agreement and the NDA set enabled = 0 (hidden from the pickers, issued contracts
+# untouched). Keys, record names and the SF-RA- series stay. One savepoint per template, logs, never raises.
+erpnext_enhancements.patches.rename_agreement_templates
+# Parent task dates (v1.787.0, Nikolas 2026-11-03): a task with subtasks takes the earliest subtask start and the latest
+# subtask end (task_enhancements/parent_dates.py keeps it from now on). One pass over every existing parent, bottom-up,
+# writing only the date columns that differ (set_value, modified untouched). Logs, never raises, safe twice.
+erpnext_enhancements.patches.sync_parent_task_dates
+# Warehouse Transactions (v1.797.0, TASK-2026-03137): force-import the Inventory Enhancements workspace and the
+# Operations Hub, which now link the new report (a shortcut and a Reports-card link on the first, an Inventory-card
+# link on the second). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
+erpnext_enhancements.patches.warehouse_transactions_hub_links
+# v1.797.1 (Nik, 2026-11-05): a Desk-added Custom DocPerm row (2026-05-28) gave Production Team read, write, create
+# and delete on User, which is System Manager's job alone. Never a fixture. Deletes every Production Team row on User
+# the way Role Permissions Manager's Remove does (delete_doc, force), then clears User's cache. Other roles' rows on
+# User and Production Team's rows elsewhere stay. Cannot raise, safe twice.
+erpnext_enhancements.patches.remove_production_team_user_docperm
+# v1.799.1 (UI field audit, PR 2 of the hiding plan; Nik's rule 2026-11-08: hide, never delete): sets hidden = 1 on
+# the 16 Hide-graded Custom Fields that are not in the fixtures (Account's and Lead's primary_contact_* fields, Item
+# custom_pump_curve, Assignment Rule, CRM Deal, UTM Campaign, User twitter) with db.set_value, then clears each
+# touched doctype's cache. Breaks are left visible (a hidden break hides the fields after it). A missing row is a
+# no-op. No delete_doc, no column dropped. Never raises.
+erpnext_enhancements.patches.hide_audit_code_created_fields
+# Job-site warehouses (v1.801.0, Nik 2026-11-11: one warehouse per Build project). Five steps, each logged and none
+# able to stop the next: create Warehouse.custom_job_site_project (create_custom_fields, is_system_generated);
+# renumber the Warehouse tree ONLY if two warehouses share an lft (prod: Service Van and Customer Rental Locations
+# both at 24); create the group "Job Sites" beside Inventory - SF (found by warehouse_name + company; skipped
+# without the shop group); fill Inventory Scanner Settings.job_sites_warehouse ONLY where tabSingles has no row for
+# it (never on a never-saved Single); move the parentless leaf "Job Site" under the group, otherwise untouched
+# (still enabled; received PO lines name it). Cannot raise, safe twice. Each step answers done / already /
+# skipped / failed; when any did not finish, ONE Error Log row "Job sites patch (add_job_sites_warehouse):
+# finish these steps by hand" lists all five with the by-hand fix.
+erpnext_enhancements.patches.add_job_sites_warehouse
+# Framed Triton widget (v1.802.0). Triton Assistant Settings gains `widget_mode` (Select, default "Classic"); a
+# default on a NEW field of a Single never reaches the row that already exists, so the field reads None on every
+# live site. Harmless to behaviour (api.triton_frame reads a missing or unknown mode as Classic) but the settings
+# form would open with an empty Widget box on the page where the pilot is switched on. Writes "Classic" ONLY where
+# tabSingles has no row for the field, never over a stored value. Reads tabSingles with db.sql. Safe twice.
+erpnext_enhancements.patches.backfill_triton_widget_mode
+# Inventory reports (v1.805.0): force-import the Inventory Enhancements workspace and the Operations Hub so the four
+# new reports (Location Contents, Where Is This Item, Project Materials, Job Site Contents) show in their cards on a
+# site whose stored rows are as new as the files. Each import in its own savepoint; a failure is logged and rolled
+# back, never raised. Writes no business data. Safe twice.
+erpnext_enhancements.patches.inventory_reports_hub_links
+# Project ID backfill (v1.816.4, Nik 2026-11-13: "Yes do that"). WRITES PRODUCTION DATA: sets Project.custom_project_id to
+# the Project's name wherever it is NULL or not byte-for-byte the name (451 of 671 Projects on prod, all blank), in one
+# UPDATE that leaves modified / modified_by alone and runs no hook. Keyed on the rule, BINARY compare (the default collation
+# ignores case and trailing spaces). Logs counts only. Guarded on the column, cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_project_id
+# Supplier Returns (v1.807.0, Nik 2026-11-12). (1) Seeds the Email Template "Supplier Return Request" that words the
+# return request emailed to a supplier, ONLY when it does not exist (after that it is the buyer's; a missing one falls
+# back to the same built-in wording). HTML, content only. Nothing is sent by seeding it: a request goes only from a
+# person's click in the Supplier Return form. (2) Force-imports the Inventory Enhancements workspace, whose Purchasing
+# card gains Supplier Returns and its Money Outstanding report and a shortcut counting returns waiting on money
+# (timestamp-bumped too; this is the belt), in a savepoint so a failed import keeps the old workspace. Both insert-only
+# or idempotent, cannot raise, safe twice, and each prints what it did.
+erpnext_enhancements.patches.seed_supplier_return_request_template
+erpnext_enhancements.patches.supplier_returns_hub_links
+# Certificate of Warranty (v1.808.0, Nik 2026-11-12: "I need this added to the Contract Builder"). Inserts ONE
+# Contract Template, `warranty`, from templates/contracts/certificate_of_warranty.html. seed_contract_templates has
+# already run on every existing site, so the ninth template it now lists never reaches one without this. Insert-only
+# (a `warranty` template already there is left as it is), only that key, prints what it did. Cannot raise, safe twice.
+erpnext_enhancements.patches.seed_warranty_certificate_template
+# The Project Shelf (v1.817.0, Nik 2026-11-12: everything ordered for a project is received onto one shared shelf,
+# and stock there is not shop stock). Six steps, each logged and none able to stop the next: rename the warehouse
+# "Stores" to "Project Shelf" with Frappe's own rename_doc (force, because ERPNext 16.54.0's Warehouse is not
+# renameable from the Desk; every Link follows: Item Defaults, Putaway Rules, on-hand and ledger rows, order and
+# request lines, the Company's default warehouse) and set warehouse_name, which that ERPNext version has no rename
+# hook to do; index the Warehouse names again for the Desk's search; rewrite the quoted old name in people's saved
+# list filters (__UserSettings; Frappe 16.56.0's rename looks for them with LIKE and no wildcards, so it rewrites
+# none) and drop their cached copies, reporting how many rows and people but never who; fill Inventory Scanner Settings
+# .project_shelf_warehouse and .overhead_receiving_warehouse ("Inventory Room") ONLY where tabSingles has no row
+# for the field (on a never-saved Single every declared default is written first); blank default_warehouse on the
+# Item Default rows that name the shelf WHERE THE ITEM HAS MAINTAIN STOCK OFF (Nik 2026-11-12: "Blank the 705"; the
+# rule is read at run time, never a list or a count, so an item switched to Maintain Stock first keeps its row; a
+# disabled item is included; only that field, the row stays; counts printed, never an item). On a site with no shop group
+# "Inventory - SF", or with no Stores and no Project Shelf, every step answers "not needed here" and NO Error Log
+# row is written. Nothing is merged where both names exist. Moves no stock, rewrites no order line, disables no
+# Putaway Rule, changes no stock item's default; prints how many of each still point at the shelf. Cannot raise, safe twice. Each
+# step answers done / already / skipped / failed; when any did not finish, ONE Error Log row "Project Shelf patch
+# (rename_stores_to_project_shelf): finish these steps by hand" lists them with the by-hand fix.
+erpnext_enhancements.patches.rename_stores_to_project_shelf
+# v1.819.0 -- Carrier Tracking Settings (FedEx and UPS package tracking): write each declared default that has no
+# tabSingles row, never over a stored value. A brand-new Single, so this mostly guards the future: a field added later
+# gets its default, and a later write of one field cannot blank the switches. Also on after_migrate. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults
+# v1.823.0 -- The Inventory Room swap (the owner, 2026-11-17: "Those bays should exist in the Inventory Room, not the
+# Inventory warehouse"). WRITES PRODUCTION DATA. The leaf "Inventory Room - SF" holds stock, so ERPNext will not make it
+# the group; the names are swapped instead, in this order, each with Frappe's own rename_doc (force, because ERPNext
+# 16.54.0's Warehouse is not renameable from the Desk; every Link follows) and warehouse_name set by hand (no rename
+# hook at that version): (1) the leaf "Inventory Room - SF" becomes "Receiving - SF"; (2) people's saved list filters
+# that name it move to Receiving (__UserSettings: Frappe 16.56.0's rename looks for them with LIKE and no wildcards);
+# (3) ONLY THEN, and only when (1) and (2) answered done or already, the group "Inventory - SF" becomes
+# "Inventory Room - SF", so nothing that meant the room ends up on the whole shop; (4) filters that named the group
+# follow it; (5) Warehouse names indexed again here (the deploy clears the job queue). Nothing moves in the tree, no
+# stock moves, nothing is merged. A filter rewrite never runs while the old name belongs to a warehouse, so a second run
+# leaves filters on the renamed group alone. Counts printed, never who. The old room's QR label opens the group now and
+# must be reprinted as Receiving. On a site with no "Inventory Room - SF" leaf and no "Receiving - SF" every step
+# answers "not needed here" and NO Error Log row is written. Cannot raise, safe twice. When any step did not finish,
+# ONE Error Log row "Inventory Room patch (swap_inventory_room_names): finish these steps by hand" lists them.
+erpnext_enhancements.patches.swap_inventory_room_names
+# v1.828.0 -- Product build, test and ship (TASK-2026-03230): seed the Quality Inspection Template "Pre-Shipment
+# Functional Test - E-Stop" (the default Product Build Settings names) and its 12 Quality Inspection Parameters, a
+# starter draft for Logan to refine: Pass checks (Value "Pass"), configuration-dependent checks that accept Pass or N/A
+# through an acceptance formula, and the control voltage as a numeric reading 21.6 to 26.4 VDC. Insert-only: an existing
+# parameter or template is left exactly as it is, so edits on the site survive. Cannot raise (logs), safe twice.
+erpnext_enhancements.patches.seed_estop_pre_shipment_test
+# v1.829.0 -- Product Build Settings gains Email the Customer When It Ships (default 1) and the shipping fields. Write each
+# declared default ONLY where tabSingles has no row for it, never over a stored value, so a settings page saved before this
+# release does not show the new box unticked and save it as 0. Also on after_migrate. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_product_build_settings_defaults
+# v1.831.0 -- Job number prefixes (Nik, 2026-11-19 Ops Review): seed two Document Naming Rules on Project, SRV- (condition
+# project_type = Service) and EVT- (project_type = Events), 5 digits, priority 10 so Frappe tries them before the
+# unconditional PRJ- rule (priority 0). Each counts on its own; SRV- starts after 100 (QuickBooks holds old customer-jobs
+# named SRV-00000 to SRV-00015), EVT- after 0, or after the highest existing Project with that prefix if higher (none on
+# prod, so SRV-00101 and EVT-00001). Create-only per prefix: an existing or disabled rule is left alone, the PRJ-
+# rule and its counter are never touched, and NO Project is renamed or retyped. Cannot raise (one Error Log row per
+# failed prefix), safe twice. See project_enhancements/job_prefixes.py.
+erpnext_enhancements.patches.seed_job_prefix_naming_rules
+# v1.832.0 -- estimating milestone 1. One empty default "Standard" Estimate Rate Card (every rate 0: the repo is public and
+# Finance types the rates in the Desk); does nothing when any rate card exists. Insert-only, safe twice.
+erpnext_enhancements.patches.seed_estimate_rate_card
+# v1.832.0 -- estimating milestone 1. The Design-Build, Build, Event and Custom Panel Estimate Templates from
+# estimating/data/estimate_templates.json; insert-only by template name, no prices. Safe twice.
+erpnext_enhancements.patches.seed_estimate_templates
+# v1.832.0 -- estimating milestone 1. The non-stock Item EST-SCOPE every quotation line an Estimate issues uses (unit Unit),
+# and a 0 Item Price for it on the default selling price list so prod's auto-insert never makes a phase price its list
+# price. Insert-only, cannot raise (estimating/seed.run logs each failed step), safe twice.
+erpnext_enhancements.patches.seed_estimate_scope_item

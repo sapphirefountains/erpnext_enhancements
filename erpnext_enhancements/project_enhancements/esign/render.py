@@ -89,3 +89,12 @@ def _typed(name):
 	if not name:
 		return ""
 	return f'<span class="ct-sig-typed" style="{_TYPED_STYLE}">{frappe.utils.escape_html(str(name))}</span>'
+
+
+def typed_signature(name):
+	"""A name in the typed-signature face, or "" for no name.
+
+	For a line Sapphire signs by itself, with no Contract Signature Request behind it: the
+	Certificate of Warranty's By line (``project_contract._render_context``).
+	"""
+	return _typed(name)

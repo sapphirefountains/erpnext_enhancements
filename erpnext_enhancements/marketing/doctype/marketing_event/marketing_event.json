@@ -1,0 +1,142 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "event_date",
+  "title",
+  "event_type",
+  "column_break_main",
+  "link",
+  "reference_doctype",
+  "reference_name",
+  "details_section",
+  "notes",
+  "source",
+  "auto_key"
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Event",
+ "owner": "Administrator",
+ "sort_field": "event_date",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:MEV-{YYYY}-{#####}",
+ "title_field": "title",
+ "description": "Something that happened to marketing on a day: a site edit, a post, a campaign, an ad, a mention. Drawn as a marker on the Marketing Performance trend. Entered by hand, filled automatically from published social posts and new campaigns, or logged by an assistant through log_marketing_event.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Marketing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1
+  },
+  {
+   "role": "Marketing Team",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "report": 1
+  }
+ ],
+ "fields": [
+  {
+   "fieldname": "event_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "What happened",
+   "reqd": 1
+  },
+  {
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type",
+   "options": "Site Edit\nSocial Post\nCampaign\nAd\nPress\nOffline\nOther",
+   "default": "Other",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "link",
+   "fieldtype": "Data",
+   "label": "Link",
+   "options": "URL"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Record Type",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Record",
+   "options": "reference_doctype"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Entered By",
+   "options": "Manual\nAutomatic\nAssistant",
+   "default": "Manual",
+   "read_only": 1
+  },
+  {
+   "fieldname": "auto_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Automatic Key",
+   "read_only": 1,
+   "unique": 1,
+   "no_copy": 1,
+   "description": "Set on rows the nightly fill wrote (the record they came from), so running it twice adds nothing."
+  }
+ ]
+}

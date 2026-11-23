@@ -1,0 +1,496 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "Priced lines grouped by phase, built from a job-kind template. Issues a draft Quotation.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "title",
+  "status",
+  "revision",
+  "column_break_party",
+  "customer",
+  "opportunity",
+  "project",
+  "column_break_kind",
+  "template",
+  "job_kind",
+  "accuracy_class",
+  "transaction_date",
+  "valid_till",
+  "company",
+  "section_lines",
+  "lines_editor",
+  "section_tables",
+  "phases",
+  "lines",
+  "section_totals",
+  "total_amount",
+  "line_count",
+  "missing_cost_count",
+  "missing_code_count",
+  "allowance_count",
+  "column_break_totals",
+  "total_cost",
+  "margin_amount",
+  "margin_pct",
+  "commission_amount",
+  "net_margin_amount",
+  "net_margin_pct",
+  "section_rates",
+  "rate_card",
+  "labor_rate",
+  "tax_pct",
+  "column_break_markup",
+  "markup_material",
+  "markup_equipment",
+  "markup_labor",
+  "markup_subcontract",
+  "markup_expense",
+  "column_break_overheads",
+  "contingency_pct",
+  "insurance_pct",
+  "fee_pct",
+  "commission_pct",
+  "section_proposal",
+  "terms",
+  "column_break_proposal",
+  "quotation",
+  "previous_revision",
+  "prepared_by"
+ ],
+ "fields": [
+  {
+   "default": "EST-.YY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "EST-.YY.-.####",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nIssued\nAccepted\nSuperseded",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_party",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Who the quotation goes to. Blank: the opportunity's party.",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Account",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Opportunity",
+   "options": "Opportunity"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "column_break_kind",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "template",
+   "fieldtype": "Link",
+   "label": "Template",
+   "options": "Estimate Template"
+  },
+  {
+   "fetch_from": "template.job_kind",
+   "fetch_if_empty": 1,
+   "fieldname": "job_kind",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Job Kind",
+   "options": "\nDesign-Build\nBuild\nEvent\nCustom Panel\nProduct\nOther"
+  },
+  {
+   "fieldname": "accuracy_class",
+   "fieldtype": "Select",
+   "label": "Accuracy",
+   "options": "\nClass 5 (rough order, -50% to +100%)\nClass 4 (study, -30% to +50%)\nClass 3 (budget, -20% to +30%)\nClass 2 (control, -15% to +20%)\nClass 1 (bid, -10% to +15%)"
+  },
+  {
+   "default": "Today",
+   "fieldname": "transaction_date",
+   "fieldtype": "Date",
+   "label": "Date"
+  },
+  {
+   "fieldname": "valid_till",
+   "fieldtype": "Date",
+   "label": "Valid Until"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Company",
+   "options": "Company",
+   "remember_last_selected_value": 1
+  },
+  {
+   "fieldname": "section_lines",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "lines_editor",
+   "fieldtype": "HTML",
+   "label": "Lines Editor"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_tables",
+   "fieldtype": "Section Break",
+   "label": "Phases and Lines (Table View)"
+  },
+  {
+   "fieldname": "phases",
+   "fieldtype": "Table",
+   "label": "Phases",
+   "options": "Estimate Phase"
+  },
+  {
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Lines",
+   "options": "Estimate Line"
+  },
+  {
+   "fieldname": "section_totals",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "bold": 1,
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Price, All Lines",
+   "read_only": 1
+  },
+  {
+   "fieldname": "line_count",
+   "fieldtype": "Int",
+   "label": "Lines",
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_cost_count",
+   "fieldtype": "Int",
+   "label": "Lines Without a Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_code_count",
+   "fieldtype": "Int",
+   "label": "Lines Without a Cost Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allowance_count",
+   "fieldtype": "Int",
+   "label": "Allowances",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "label": "Cost, Priced Lines",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "margin_amount",
+   "fieldtype": "Currency",
+   "label": "Margin, Priced Lines",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "margin_pct",
+   "fieldtype": "Percent",
+   "label": "Margin %",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "commission_amount",
+   "fieldtype": "Currency",
+   "label": "Commission (Internal)",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "net_margin_amount",
+   "fieldtype": "Currency",
+   "label": "Margin After Commission",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "net_margin_pct",
+   "fieldtype": "Percent",
+   "label": "Margin After Commission %",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "description": "Copied from the rate card when the estimate is made, so a later change to the card never reprices it. Change them here for this job; phases and lines can override again.",
+   "fieldname": "section_rates",
+   "fieldtype": "Section Break",
+   "label": "Rates",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "rate_card",
+   "fieldtype": "Link",
+   "label": "Rate Card",
+   "options": "Estimate Rate Card",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "labor_rate",
+   "fieldtype": "Currency",
+   "label": "Labor Cost per Hour",
+   "permlevel": 1
+  },
+  {
+   "description": "On material and equipment cost.",
+   "fieldname": "tax_pct",
+   "fieldtype": "Percent",
+   "label": "Use Tax %",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "column_break_markup",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "markup_material",
+   "fieldtype": "Percent",
+   "label": "Markup: Material",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "markup_equipment",
+   "fieldtype": "Percent",
+   "label": "Markup: Equipment",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "markup_labor",
+   "fieldtype": "Percent",
+   "label": "Markup: Labor",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "markup_subcontract",
+   "fieldtype": "Percent",
+   "label": "Markup: Subcontract",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "markup_expense",
+   "fieldtype": "Percent",
+   "label": "Markup: Expense",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "column_break_overheads",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "contingency_pct",
+   "fieldtype": "Percent",
+   "label": "Contingency",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "insurance_pct",
+   "fieldtype": "Percent",
+   "label": "Insurance",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "fee_pct",
+   "fieldtype": "Percent",
+   "label": "Fee (Overhead and Profit)",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "commission_pct",
+   "fieldtype": "Percent",
+   "label": "Commission (Internal)",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "section_proposal",
+   "fieldtype": "Section Break",
+   "label": "Quotation"
+  },
+  {
+   "description": "Copied to the quotation's terms when it is issued.",
+   "fieldname": "terms",
+   "fieldtype": "Text Editor",
+   "label": "Exclusions and Terms"
+  },
+  {
+   "fieldname": "column_break_proposal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "quotation",
+   "fieldtype": "Link",
+   "label": "Quotation",
+   "no_copy": 1,
+   "options": "Quotation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_revision",
+   "fieldtype": "Link",
+   "label": "Previous Revision",
+   "no_copy": 1,
+   "options": "Estimate",
+   "read_only": 1
+  },
+  {
+   "default": "__user",
+   "fieldname": "prepared_by",
+   "fieldtype": "Link",
+   "label": "Prepared By",
+   "options": "User"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Estimator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Estimator",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Executive Team",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Finance Team",
+   "write": 1
+  }
+ ],
+ "search_fields": "title,customer,opportunity,status",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

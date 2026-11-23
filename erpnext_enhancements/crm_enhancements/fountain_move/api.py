@@ -11,14 +11,14 @@ genuine requests that arrived before it, which is exactly backwards.
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import cint, now_datetime
 
 #: Who may triage. Sales User is deliberately absent: retry re-runs a job that
 #: creates CRM masters, and marking something spam hides a real customer.
 TRIAGE_ROLES = ("System Manager", "Sales Manager")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def retry_conversion(docname):
 	"""Re-run conversion for one request.
 
@@ -35,7 +35,9 @@ def retry_conversion(docname):
 	if status == "Converting":
 		frappe.throw(_("This request is being converted right now. Give it a moment."))
 
-	frappe.db.set_value("Fountain Move Request", docname, "status", "Queued", update_modified=False)
+	# Retry is a person's action, so it stamps `modified`: the daily digest counts a Queued
+	# request's hour from there (notify._stalled_queued).
+	frappe.db.set_value("Fountain Move Request", docname, "status", "Queued")
 	frappe.db.commit()
 
 	frappe.enqueue(
@@ -50,7 +52,53 @@ def retry_conversion(docname):
 	return {"queued": True}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
+def confirm_match(docname, customer):
+	"""Confirm which existing Customer a held request belongs to, then convert it.
+
+	For a request in Duplicate Review: a public-form submission that matched an existing
+	record, or one that matched several. Records who confirmed and when, links the request
+	to ``customer`` and queues the conversion, which creates the Opportunity under that
+	Customer and writes nothing onto the Customer, its Contacts or its Addresses
+	(``conversion._convert_confirmed``).
+	"""
+	frappe.only_for(TRIAGE_ROLES)
+
+	status = frappe.db.get_value("Fountain Move Request", docname, "status")
+	if not status:
+		frappe.throw(_("Request not found."))
+	if status != "Duplicate Review":
+		frappe.throw(_("Only a request waiting in Duplicate Review can have its match confirmed."))
+	if not customer or not frappe.db.exists("Customer", customer):
+		frappe.throw(_("Choose the Customer this request belongs to."))
+
+	frappe.db.set_value(
+		"Fountain Move Request",
+		docname,
+		{
+			"created_customer": customer,
+			"reused_customer": 1,
+			"match_confirmed_by": frappe.session.user,
+			"match_confirmed_on": now_datetime(),
+			"status": "Queued",
+		},
+		update_modified=False,
+	)
+	frappe.db.commit()
+
+	frappe.enqueue(
+		"erpnext_enhancements.crm_enhancements.fountain_move.conversion.run_conversion",
+		queue="long",
+		enqueue_after_commit=True,
+		job_id=f"fmr-convert-{docname}",
+		deduplicate=True,
+		docname=docname,
+		force=1,
+	)
+	return {"queued": True, "customer": customer}
+
+
+@frappe.whitelist(methods=["POST"])
 def mark_spam(docname, reason=None):
 	"""Quarantine a request. Creates nothing and stops any further conversion."""
 	frappe.only_for(TRIAGE_ROLES)
@@ -69,7 +117,7 @@ def mark_spam(docname, reason=None):
 	return {"status": "Spam"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_not_spam(docname):
 	"""Release a false positive back into the queue.
 

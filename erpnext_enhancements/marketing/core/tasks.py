@@ -106,7 +106,7 @@ def run_sync(platforms):
 
 
 def daily_prune():
-	"""Raw payloads past retention; clicks past retention that no Lead carries."""
+	"""Raw payloads past retention. The metric tables and clicks are kept (v1.756.0)."""
 	from frappe.utils import cint
 
 	from erpnext_enhancements.marketing.core.sync import prune

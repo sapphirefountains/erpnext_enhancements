@@ -412,7 +412,7 @@ def get_merge_preview(doctype, survivor, loser):
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def perform_merge(doctype, survivor, loser):
 	"""Merge ``loser`` into ``survivor``. Runs inline for typical merges; enqueues
 	a background job when the reference count exceeds

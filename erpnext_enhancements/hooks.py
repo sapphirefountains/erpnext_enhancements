@@ -53,8 +53,8 @@ app_include_js = [
 	# globals exist before any bundled consumer runs.
 	"/assets/erpnext_enhancements/js/vue.global.js",
 	"/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js",
-	# Kanban patch suite (hold-to-drag, Opportunity styling, leak hotfix for
-	# frappe/frappe#24156, drag-to-scroll perf fix). See public/js/ee_kanban.bundle.js
+	# Kanban patch suite (hold-to-drag, Opportunity styling, drag-to-scroll
+	# perf fix). See public/js/ee_kanban.bundle.js
 	# for the imports and each file's removal conditions.
 	#
 	# The "ee_" prefix is load-bearing (v1.574.2). assets.json is ONE flat map keyed by
@@ -129,9 +129,12 @@ standard_help_items = [
 # hook, so people see it after their next page load). So "PO", "SOP" and "SOP-06-0001" find published
 # articles from two letters, where v16's global search never would (ft_min_word_len=4). It searches
 # the published Knowledge Article only, as the person typing, and never raises (a hook's exception
-# goes to the "awesomebar" logger, not the Error Log). Nothing in public/js or api/search.py changes:
-# this app's live global search keeps its 3-character floor, and cannot return the same rows, since
-# neither KB doctype is in global search. See knowledge_base/search_service.py and its README.
+# goes to the "awesomebar" logger, not the Error Log). This app's live record search
+# (public/js/global_enhancements/desk_search.js + api/desk_search.py, v1.795.0) is not a hook: the hook
+# normalizes each result to label/value/index/route/description, which drops the phone, email,
+# related links and group headings those rows carry. It searches no KB doctype, so the two never
+# return the same rows; desk_search.js puts these hits under a "Knowledge base" heading below the
+# records. See knowledge_base/search_service.py and its README.
 awesomebar_search = ["erpnext_enhancements.knowledge_base.search_service.awesomebar_hits"]
 
 doctype_js = {
@@ -176,7 +179,9 @@ doctype_js = {
 	# inventory (v1.521.0): the Warehouse form's doors to the QR label print page
 	# (/warehouse-labels) and to the Stock Scan page (/stock-scan) the label opens.
 	# A location gets "QR Label" + "Open Stock Scan"; a group gets "Print QR Labels"
-	# for everything beneath it. Both are www routes, so the buttons window.open them.
+	# for everything beneath it, and (v1.831.0) "Rack QR Sheet" (/rack-qr-sheet): one
+	# page per rack, each shelf's code with its position, to hang beside the rack.
+	# All are www routes, so the buttons window.open them.
 	"Warehouse": ["public/js/warehouse_stock_scan.js"],
 	# security: the Drive service-account key goes in through a dialog, not the
 	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a
@@ -211,6 +216,9 @@ doctype_js = {
 		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
+		# v1.832.0 -- estimating: Create > Estimate opens a new Estimate for this deal, for the
+		# roles that may create one; View > Estimates lists the deal's estimates.
+		"public/js/estimating/opportunity_estimate.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
@@ -223,6 +231,13 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
+		# v1.807.0 -- Supplier Returns: the launcher the Procurement Tracker's Return buttons call
+		# (erpnext_enhancements.supplier_return.start). See the Purchase Receipt entry below.
+		"public/js/supplier_return_start.js",
+		# The Scope tab's Tasks Tree (custom_tasks_html): mounts the TaskTreeManager
+		# class that erpnext_enhancements.bundle.js ships, and falls back to the raw
+		# /assets path only when the bundle lacks it (v1.777.0). The tree's own
+		# dialogs (Add task, Add from template, Delete selected) call api/scope_tasks.py.
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
@@ -231,14 +246,12 @@ doctype_js = {
 		# Opportunity entry above.
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
-		# Contracts tab (custom_contracts_html): every contract on the job —
-		# agreements and the operational maintenance contracts beside them —
-		# each openable in place to its full legal text, and a Signed one
-		# (or a maintenance contract's Signed agreement) to its signed copy
-		# (v1.745.0). The viewer is the shared renderer and Signed copy
-		# opener, and must load first.
-		"public/js/project_enhancements/contract_viewer.js",
-		"public/js/project_enhancements/contracts_tab.js",
+		# The Contract button at the top of the Scope tab (v1.783.0, Nikolas
+		# 2026-11-03): one contract opens the Contract Builder's review step, several
+		# a picker, none a confirm and the Builder's start screen with this project
+		# filled in. It replaced the Contracts tab (v1.181.0–v1.782.x), whose two
+		# Custom Fields patches/remove_contracts_tabs deletes.
+		"public/js/project_enhancements/contract_button.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		# Schedule tab Gantt (custom_gantt_chart_html): read-only embed of the
 		# reusable Gantt widget (erpnext_enhancements.gantt.mount — see
@@ -262,7 +275,7 @@ doctype_js = {
 		# (due, and nobody has written the checklist) and `unknown` (the build status is not a
 		# recognised option, so due-ness is not knowable). Generates nothing.
 		"public/js/quality/project_inspections.js",
-		# custom pages S5b (v1.667.0): View > Open in Project Planner, the planner filtered to
+		# custom pages S5b (v1.667.0): Open in Planner (its own button since v1.779.0), the planner filtered to
 		# this project (it reads `project` from frappe.route_options). Only for those whose
 		# roles open the page.
 		"public/js/project_enhancements/project_planner_link.js",
@@ -270,10 +283,15 @@ doctype_js = {
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
 	# filled in. Loaded on the two forms that offer it (Preview Contract on the
-	# agreement itself, View Agreement on the operational maintenance contract);
-	# the Project form gets it in its own list above.
+	# agreement itself, View Agreement on the operational maintenance contract).
 	"Project Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	"Sapphire Maintenance Contract": ["public/js/project_enhancements/contract_viewer.js"],
+	# sapphire_maintenance (v1.778.0): the New Service Call intake dialog, which the Service Call
+	# form opens over itself when it is new and empty (the workspace's "New Service Call" shortcut
+	# and the list's "+ Add" both land there). One screen that makes the Address, the Opportunity at
+	# its first status, the Service project on the three-task template and the Service Call. The
+	# form's own buttons are in the doctype folder's service_call.js.
+	"Service Call": ["public/js/sapphire_maintenance/service_call_intake.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
 	# (see app_include_js + COMMENT_APP_DOCTYPES). Doctypes that only needed the
 	# comments tab no longer require a doctype_js entry; the entries below keep
@@ -288,9 +306,13 @@ doctype_js = {
 		# for two of its findings only --
 		# see the "Item" doc_event (inventory_enhancements.item_naming_guard).
 		"public/js/item_naming_advisor.js",
+		# v1.758.0 -- the Pump Curves panel (this Item's Pump Curve records, charted, with
+		# "New Pump Curve") and the legacy custom_pump_curve chart.
 		"public/js/water_engineering/pump_curve_chart.js",
 		# v1.726.0 -- "Find suppliers": opens the Find a Supplier page on this Item (shared with PO).
 		"public/js/supplier_finder_buttons.js",
+		# v1.818.0 -- "Show on map": opens the Warehouse Map page with this Item lit up.
+		"public/js/warehouse_map_links.js",
 		# v1.754.0 -- Actions > "Turn on Maintain Stock" for an Item ERPNext's form refuses to
 		# switch: shows each safety check, then a confirm calls api.maintain_stock.turn_on.
 		# Also steps in on Save when the box was ticked on such an Item, before ERPNext's refusal.
@@ -299,6 +321,11 @@ doctype_js = {
 	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
 	# used by the design form's live dashboard; loaded before the auto-loaded form script.
 	"Water Feature Design": ["public/js/water_engineering/fountain_canvas.js"],
+	# v1.758.0 -- the Fountain Designer catalog editor: the same script as on Item draws the
+	# head-vs-flow chart and the Generic-estimate banner on a Pump Curve, and display height
+	# and flow vs head on a Nozzle Profile. It registers its handlers once per session.
+	"Pump Curve": ["public/js/water_engineering/pump_curve_chart.js"],
+	"Nozzle Profile": ["public/js/water_engineering/pump_curve_chart.js"],
 	"Process Document": ["public/js/process_document.js"],
 	"Employee": [
 		"public/js/vue.global.js",
@@ -311,7 +338,10 @@ doctype_js = {
 		# user_id, because training records belong to a User.
 		"public/js/training/employee_training.js",
 	],
-	"Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
+	# "Account" (the chart of accounts) carried vue.global.js + comments.js + account.js until
+	# v1.799.1, to mount the Comments App into its custom_comments_field. That tab reached the
+	# chart-of-accounts DocType by mistake on 2026-04-20 along with the Customer's Primary
+	# Contact section; the UI field audit hid all nine fields, so there is nothing to mount.
 	"Customer": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -320,11 +350,10 @@ doctype_js = {
 		"public/js/global_enhancements/primary_contact.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		"public/js/stripe_payments/customer_autopay.js",
-		# Contracts tab — the same list the Project form carries, scoped to the
-		# agreements this customer is a party to. Viewer first (shared renderer
-		# and Signed copy opener).
-		"public/js/project_enhancements/contract_viewer.js",
-		"public/js/project_enhancements/contracts_tab.js",
+		# The Contract button in the page head (v1.783.0): the agreements this
+		# customer is a party to, through the same picker and Builder route as the
+		# Project form's. Replaced the Contracts tab of v1.182.0.
+		"public/js/project_enhancements/contract_button.js",
 		# training: "are the people who operate this client's fountain trained?" --
 		# completions with expiry computed against today. The endpoint answering it
 		# had no caller until v1.334.0.
@@ -335,7 +364,17 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/sales_order_enhancements.js",
+		# v1.828.0 -- product_fulfillment: Make Work Orders on a submitted order with configured
+		# product lines (the same plan its on_submit hook runs; never builds twice).
+		"public/js/product_fulfillment/sales_order.js",
 	],
+	# v1.828.0 -- product_fulfillment: the Build Checklist button and progress headline on a
+	# configured product's Work Order; Print Label and Start Test on a product unit's serial
+	# number; the builder beside Inspected By on its test; the QC gate's verdict on a Delivery Note.
+	"Work Order": ["public/js/product_fulfillment/work_order.js"],
+	"Serial No": ["public/js/product_fulfillment/serial_no.js"],
+	"Quality Inspection": ["public/js/product_fulfillment/quality_inspection.js"],
+	"Delivery Note": ["public/js/product_fulfillment/delivery_note.js"],
 	"Task": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -355,7 +394,24 @@ doctype_js = {
 		"public/js/po_receive_items.js",
 		# v1.726.0 -- "Find suppliers": who else sells this order's items (Find a Supplier page).
 		"public/js/supplier_finder_buttons.js",
+		# v1.807.0 -- Supplier Returns: Create > Return to Supplier, once something was received.
+		"public/js/supplier_return_start.js",
+		# v1.819.0 -- package tracking (ER-2026-1333277): a banner at the top of the order with each
+		# tracking number, the carrier's status and estimated arrival beside the purchaser's own date,
+		# Add tracking number and Refresh (api/package_tracking.py). Draws nothing while the master switch is
+		# off; a canceled order's packages read-only; on an order with none, only a small Add button while a
+		# package can still be on its way. A plain script, not a bundle, so it needs no level guard; it never
+		# writes frm.doc, so the form never turns "Not Saved".
+		"public/js/po_package_tracking.js",
 	],
+	# v1.807.0 -- Supplier Returns (Nik, 2026-11-12). One file under five doctypes: Create >
+	# Return to Supplier on a submitted receipt (the ticked rows, or every line that can still go
+	# back) and on an order, and a line at the top of a Purchase Return, Debit Note, replacement
+	# receipt or refund payment naming the Supplier Return it belongs to. The standard doctypes
+	# gain no Custom Field: the link is kept on the Supplier Return and their forms ask for it
+	# (api/supplier_returns.linked). The file registers behind one flag, so being evaluated once
+	# per doctype changes nothing. Purchase Receipt had no doctype_js entry before this.
+	"Purchase Receipt": ["public/js/supplier_return_start.js"],
 	"Material Request": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -383,7 +439,9 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/lead.js",
-		"public/js/global_enhancements/primary_contact.js",
+		# primary_contact.js is not listed here since v1.799.1: Lead's primary_contact set
+		# (0 of 227 leads filled) is hidden by the UI field audit, so there is no field
+		# for it to fill.
 	],
 	"Contact": [
 		"public/js/vue.global.js",
@@ -421,8 +479,16 @@ doctype_js = {
 	# accounting_intake
 	"Document Intake": "public/js/accounting_intake/document_intake.js",
 	# quickbooks_online write-back button (intake-created PI / Payment Entry)
-	"Purchase Invoice": "public/js/quickbooks_online/qbo_writeback_button.js",
-	"Payment Entry": "public/js/quickbooks_online/qbo_writeback_button.js",
+	# v1.807.0 -- and supplier_return_start.js, which says which Supplier Return a Debit Note or
+	# a refund payment belongs to (see the Purchase Receipt entry above).
+	"Purchase Invoice": [
+		"public/js/quickbooks_online/qbo_writeback_button.js",
+		"public/js/supplier_return_start.js",
+	],
+	"Payment Entry": [
+		"public/js/quickbooks_online/qbo_writeback_button.js",
+		"public/js/supplier_return_start.js",
+	],
 	# stripe_payments
 	"Stripe Payments Settings": "public/js/stripe_payments/stripe_payments_settings.js",
 	"Sales Invoice": "public/js/stripe_payments/sales_invoice_pay_button.js",
@@ -567,9 +633,27 @@ doc_events = {
 	},
 	"Quotation": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		# v1.827.0: a quote made ERPNext's way (Create > Quotation sets `opportunity`) also names its
+		# deal in custom_source_opportunity, the field configurator quotes use instead, so the
+		# Opportunity's Connections list every quote through one field. Never raises. See
+		# crm_enhancements/product_sale.py.
+		"validate": "erpnext_enhancements.crm_enhancements.product_sale.mirror_deal_link",
+		# v1.832.0: an Estimate and the Quotation it issued Link each other, so neither could be
+		# deleted. Deleting the quotation clears Estimate.quotation first (on_trash runs before the
+		# link check). The Estimate's own on_trash does the other direction. See estimating/links.py.
+		"on_trash": "erpnext_enhancements.estimating.links.release_quotation",
 	},
 	"Issue": {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+	},
+	# estimating (milestone 2): a change order on a certified pay application cannot be
+	# quietly canceled; the refusal names the application, and a compensating change order is the
+	# instrument. Change Order is this app's own DocType, but its controller lives in
+	# project_enhancements and the rule belongs with the billing. See estimating/links.py.
+	"Change Order": {
+		"before_cancel": "erpnext_enhancements.estimating.links.guard_change_order_cancel",
+		# ...and one canceled before any certified application had it leaves every schedule of values.
+		"on_cancel": "erpnext_enhancements.estimating.links.drop_canceled_change_order",
 	},
 	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
 	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
@@ -639,8 +723,18 @@ doc_events = {
 		# (all tasks, everyone who could see the calendar) — removed v1.346.0 in
 		# favour of nothing, deliberately: see script_migrations/task.py.
 		"on_update": [
-			"erpnext_enhancements.tasks.generate_next_task",
+			# tasks.generate_next_task (the recurring-task clone) was first here until v1.799.1:
+			# the UI field audit found custom_is_recurring 0 on every one of 8,703 tasks, so the
+			# hook never fired. Its fourteen Task fields are hidden, not deleted.
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+			# v1.787.0 (Nikolas, 2026-11-03): a parent task's expected start/end follow its subtasks
+			# (earliest start, latest end), up every ancestor. After this save the parent and, after
+			# a move, the previous parent are recomputed from the database. Written with
+			# db.set_value, so no Task hook fires again. Never raises. See
+			# task_enhancements/parent_dates.py. BEFORE sync_project_dates_from_tasks, which takes
+			# MIN/MAX over every task of the project, parents included: the old parent must have
+			# shrunk by then, or the Project's window keeps a stale wide range (review of #1418).
+			"erpnext_enhancements.task_enhancements.parent_dates.on_task_update",
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# Project Planner Phase 3B: a change that moves someone's bookings in the next 48 hours
 			# queues one alert per person, sent after commit. Gated by Project Planner Settings
@@ -679,12 +773,24 @@ doc_events = {
 		# act_* on every save, a dependent its reschedule pushes included. before_validate, not
 		# validate: frappe runs it before the controller's validate, on insert and save. Widens only,
 		# never raises. See project_enhancements/project_window.py.
-		"before_validate": "erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		"before_validate": [
+			# v1.787.0: parent dates follow the subtasks. FIRST, before the project window: a parent
+			# re-derives its own dates from its subtasks, then the parent and every ancestor are
+			# widened to take in this task's dates, so ERPNext's validate_parent_expected_end_date
+			# (16.52.1, which refuses a child ending after its parent the moment parent_task or
+			# exp_end_date changed) can never refuse a drag on the Tasks Tree. The project window
+			# below then widens for the dates this hook settles on. See task_enhancements/parent_dates.py.
+			"erpnext_enhancements.task_enhancements.parent_dates.before_task_validate",
+			"erpnext_enhancements.project_enhancements.project_window.before_task_validate",
+		],
 		"on_trash": [
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
+		# v1.787.0: a deleted subtask's parent (and its ancestors) follow the subtasks left. after_delete,
+		# not on_trash: the row is gone by then, so the recompute reads the database as it will stay.
+		"after_delete": "erpnext_enhancements.task_enhancements.parent_dates.after_task_delete",
 		"validate": [
 			# training: warn-only certification check when a task is assigned to somebody
 			# lacking a current certification for the task type. Never blocks.
@@ -725,8 +831,22 @@ doc_events = {
 			# Opportunity ticks it too), so ERPNext's after_insert copies the move tasks in the same
 			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
 			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
+			# Job number prefixes (v1.831.0, Nik 2026-11-19): a Project with no type takes its
+			# template's, because the type is read ONCE, when the Project is named right after these
+			# hooks, to choose SRV- (Service), EVT- (Events) or PRJ- (the Document Naming Rules
+			# patches/seed_job_prefix_naming_rules seeds). After apply_on_insert, which may fill the
+			# template. Only fills a blank, never raises. See project_enhancements/job_prefixes.py.
+			"erpnext_enhancements.project_enhancements.job_prefixes.fill_type_from_template",
 		],
-		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
+		"after_insert": [
+			"erpnext_enhancements.process_steps.announce_seeded_steps",
+			# Project ID (v1.816.4): the Project's name in custom_project_id, for a Project created
+			# with flags.ignore_validate (the Opportunity hand-off job), where the validate entry
+			# below never runs. Never raises. See project_enhancements/project_id.py.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_on_insert",
+		],
+		# Project ID (v1.816.4): a renamed Project's custom_project_id follows at once.
+		"after_rename": "erpnext_enhancements.project_enhancements.project_id.follow_rename",
 		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines
 		# exist, the project total from them. It does nothing and costs nothing on a project with
 		# no budget lines, which is every project on prod today. Appended into THIS dict rather
@@ -743,6 +863,15 @@ doc_events = {
 			# once, never block. ERPNext's expected_*/actual_* pairs are validated by core.
 			# See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+			# Project ID (v1.816.4): every save carries the Project's own name in custom_project_id,
+			# which the report "Active Projects w/ TL and PM" shows. Never raises.
+			"erpnext_enhancements.project_enhancements.project_id.ensure_project_id",
+			# v1.833.0: custom_drive_folder_id changes only through the Drive integration (which
+			# writes it with db.set_value / db_set), a System Manager, or server code that sets
+			# doc.flags.drive_folder_update. A save carrying another folder is refused; one
+			# carrying it empty keeps the stored folder; a new record keeps none. Same entry on
+			# Opportunity and Customer. See google_drive/folder_link_guard.py.
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
@@ -795,7 +924,14 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
-		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		"after_insert": [
+			"erpnext_enhancements.api.communication.after_insert_communication",
+			# Fountain Designer phase G: an email sent from a Water Feature Design goes out in the email
+			# design system's chrome (Design pillar). The composer edits plain text; this wraps the
+			# in-memory content frappe's make() sends right after insert, after the Text Editor
+			# sanitizer, so the stored copy stays plain. Returns at once for anything else; never raises.
+			"erpnext_enhancements.water_engineering.email_hooks.wrap_design_email",
+		],
 		# email_from_communication runs on on_update, NOT after_insert: Frappe's
 		# inbound-mail pipeline inserts the Communication BEFORE it creates the
 		# attachment File docs (then re-saves), so at after_insert the attachment query
@@ -826,6 +962,9 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
 			# Calendar sync (C2): a canceled visit's event is removed.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+			# Service Calls (v1.778.0): a canceled visit sends its call back to Approved, so another
+			# can be drafted. Never raises.
+			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_cancel",
 		],
 		# Calendar sync (C2): a deleted visit's event is removed; a change after submit re-syncs it.
 		"on_trash": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
@@ -842,6 +981,10 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_submit",
 			# Calendar sync (C2): a done visit keeps its event, with a check mark.
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+			# Service Calls (v1.778.0): a visit filed against a Service Call marks the call Done and
+			# links the visit; the invoice step of the submission job then marks it Invoiced. Never
+			# raises. See sapphire_maintenance/service_calls.py.
+			"erpnext_enhancements.sapphire_maintenance.service_calls.on_visit_submit",
 		],
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
 		# throws -- by the time this runs a truck is usually already at the site, and
@@ -938,7 +1081,8 @@ doc_events = {
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
 		# the post-submit "Mark as Signed" button (on_update_after_submit).
 		#
-		# event rentals (v1.564.0): a Rental Agreement that becomes Signed confirms its Rental
+		# event rentals (v1.564.0): an Events Agreement (template_key rental; "Rental Agreement"
+		# until v1.783.0) that becomes Signed confirms its Rental
 		# Booking (firming the fountains' calendars) and drafts the deposit invoice. Same two
 		# signing paths. Runs in the signer's transaction -- usually a Guest on /contract-sign --
 		# so it never raises: a booking that cannot be confirmed (its fountains were taken while
@@ -1001,7 +1145,18 @@ doc_events = {
 	# Proposed Item Code, and accounting_intake.review checks every line first. `validate`
 	# doc_events run after ERPNext's own Item.validate, which is what fills the blank name.
 	"Item": {
+		# v1.828.0 -- product_fulfillment: a configured product kept in stock gets serial numbers
+		# (series from Product Build Settings, default SF-.YY.-.#####), a 365-day warranty period and
+		# the Pre-Shipment Functional Test template, each only where blank. before_validate, so
+		# ERPNext's own Item.validate sees the values (it refuses to change Has Serial No once stock
+		# has moved; this only turns it on for an Item with no stock ledger). Never raises.
+		"before_validate": "erpnext_enhancements.product_fulfillment.serials.prepare_configured_item",
 		"validate": "erpnext_enhancements.inventory_enhancements.item_naming_guard.validate_new_item",
+		# v1.809.0 -- an Item's Maintain Stock Decision rows (the Switch Items to Maintain Stock
+		# page's memory of it) link to the Item, and Frappe refuses to delete a document that is
+		# linked to. on_trash runs before that check, so the rows go first and an Item can still
+		# be deleted or merged away. Never raises; nothing happens for an item with no row.
+		"on_trash": "erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.forget_item",
 	},
 	# WI-013: block submitting a Purchase Order above the configurable approval
 	# threshold (ERPNext Enhancements Settings.po_approval_threshold, default 500;
@@ -1020,6 +1175,16 @@ doc_events = {
 		# the REST API, data import and Material-Request-mapped documents.
 		"before_validate": [
 			"erpnext_enhancements.procurement_project.cascade_project_to_items",
+			# The Project Shelf (v1.817.0, Nik 2026-11-12): a draft line with a project and no
+			# location gets the project's default place -- the Project Shelf for a job, the
+			# item's own bin for an Overhead project. After the cascade (it needs the project)
+			# and before ERPNext's set_missing_values, which would fill the blank from the Item
+			# Default. A location that is there is left alone, with one exception held on every
+			# save of a draft: an Overhead line on the Project Shelf goes to the item's own bin
+			# (ERPNext puts it there by itself; the Company's default warehouse is the shelf).
+			# Never raises. The Desk form does the same sooner, as the line is typed
+			# (public/js/purchase_order_project.js); correctness does not depend on it.
+			"erpnext_enhancements.procurement_project.default_line_warehouses",
 			# ER-2026-362239: push the header's expected delivery date into item rows
 			# that have none. NOT the Required By cascade -- ERPNext already does that
 			# one in buying_controller.validate_schedule_date(), and does more than
@@ -1071,6 +1236,51 @@ doc_events = {
 		],
 		# My Work (WI-081): close its open assignments when it moves into a finished state.
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+		# carrier_tracking (v1.819.0): a tracked package never blocks deleting an order. Frappe's
+		# delete_doc runs on_trash before its Dynamic Link check (v16.56.0 delete_doc.py:177 vs 184-185),
+		# so this removes the order's Tracked Packages first; a draft amendment hands them back to the
+		# order it amended. Returns at once without the table, never raises (logs).
+		"on_trash": "erpnext_enhancements.carrier_tracking.purchase_order_hooks.on_trash",
+		# carrier_tracking (v1.819.0): an amendment of a canceled order takes its packages with it
+		# (the same boxes), at the moment the amendment exists. A second run moves nothing; a number
+		# already on the amendment is not doubled. Never raises (logs).
+		"after_insert": "erpnext_enhancements.carrier_tracking.purchase_order_hooks.after_insert",
+	},
+	# A row added to a SUBMITTED order with Update Items. ONE entry for the doctype, two rules in
+	# a list, and the order is the point: a second "Purchase Order Item" key further down would
+	# silently replace this one (a repeated key in a dict literal is not an error), and the
+	# location rule needs the project the first rule fills.
+	"Purchase Order Item": {
+		"before_insert": [
+			# v1.816.3 (ER-2026-1333210): a row added to a SUBMITTED order with Update Items.
+			# ERPNext inserts that row ON ITS OWN (accounts_controller.update_child_qty_rate calls
+			# child_item.insert() before parent.save()), so the order's before_validate hooks above never
+			# see it, and it arrives with no project -- mandatory here -- which refused the row with
+			# "Value missing for: Project" in a dialog that has no Project column. before_insert on the
+			# child is the earliest hook that fires for that insert and runs ahead of the mandatory check
+			# (frappe Document.insert: before_insert, then _validate). The row takes the order's header
+			# project, else the one project its lines share; several projects and no header is refused in
+			# words rather than guessed. Never overwrites a project that is set.
+			"erpnext_enhancements.procurement_line_project.fill_new_line_project",
+			# The Project Shelf (v1.817.0): the same row's LOCATION. ERPNext inserts that row on its
+			# own (accounts_controller.update_child_qty_rate), so the order's before_validate hooks
+			# never see it, and it arrives with the Company's default warehouse, which is the shelf.
+			# This gives it its location by the rule: an Overhead line on the shelf goes to the
+			# item's own bin, a line with no location gets its project's default place, and a JOB's
+			# line at a location nobody chose goes to the shelf. "Nobody chose" is exactly what
+			# ERPNext fills for the item by itself (its own function is asked: the item's, its
+			# group's or its brand's default, else the Company's), which for a stock item with a
+			# bin is that bin, in shop stock. A location typed in the dialog, and the order's own
+			# target warehouse, are left alone. Known limit: the item's own default picked on
+			# purpose in the dialog cannot be told from ERPNext's fill, and goes to the shelf too.
+			# SECOND, after the project rule above: it places the row
+			# by the project that rule has just filled (the header's, else the one the lines
+			# share). When that rule refuses the row (several jobs, no header) this never runs. It
+			# still fills a blank project from the header itself, which does nothing while the rule
+			# above runs first and keeps the row whole if that rule is ever unhooked. Rows saved
+			# with their order never fire it. Never raises.
+			"erpnext_enhancements.procurement_project.default_new_order_line",
+		],
 	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is
@@ -1092,19 +1302,185 @@ doc_events = {
 	# cancel is one). They stand aside during install/migrate/patch/test and for a document
 	# flagged ignore_maintain_stock_guard. before_cancel runs before ERPNext's on_cancel touches
 	# the ledger; validate catches a return at its first save, before it can be submitted.
+	#
+	# v1.809.0 -- a price is required when a stock item is received (Nik, 2026-11-12;
+	# inventory_enhancements/receipt_price_rules.py has the rule and why). before_submit REFUSES a
+	# stock item's line whose rate is $0 and that is not ticked Allow Zero Valuation Rate (ERPNext's
+	# own field: a free sample, a warranty replacement). It is the one refusal behind every way a
+	# receipt is made -- the form, the order's Receive Items dialog, Stock Scan, the store-run
+	# sheet, the intake's drafts -- because each ends in this submit. validate only WARNS, on a
+	# draft, in a web request, and never raises: the intake creates drafts for a person to finish.
+	# Returns and internal transfers are left alone; nothing changes a rate on an existing document.
+	# The same before_submit also judges a row a PERSON ticked free: whoever submits must be
+	# allowed to price that order, and Remarks must say "No charge: ...". Without it the form's
+	# tick was a way around what the two receiving screens ask. Rows ERPNext frees itself (a
+	# customer-provided item, a pricing rule's free item) pass untouched.
+	#
+	# v1.807.0 -- Supplier Returns. A Supplier Return (inventory_enhancements/supplier_returns.py)
+	# links ERPNext's own Purchase Return, and a replacement receipt, by name; these three bring it
+	# up to date when that document is submitted, canceled or deleted: its Stock line, and a
+	# dropped link. After the stage handlers, so a return's order stage has already been walked
+	# back. on_document_change NEVER raises (it logs): a stale label on a Supplier Return must not
+	# be the reason a receipt cannot be submitted. It reads by name and does nothing when no
+	# Supplier Return names this document, which is every receipt today.
 	"Purchase Receipt": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+		# The Project Shelf (v1.817.0): a receipt saved for the first time puts each order line
+		# in its default receiving place. It is what covers the Desk's Create > Purchase Receipt,
+		# which copies the order line's warehouse: an Overhead line that names the Project Shelf
+		# goes to the item's own bin. First save only, never a return, and never when a person
+		# has just said where the lines go (Receive Items, a scan at a bin). Never raises.
+		"before_validate": "erpnext_enhancements.procurement_project.default_receipt_warehouses",
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_return",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
 		"before_cancel": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_unstocked_receipt_cancel",
-		"on_submit": "erpnext_enhancements.po_order_stage.advance_on_receipt",
-		"on_cancel": "erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+		"on_submit": [
+			"erpnext_enhancements.po_order_stage.advance_on_receipt",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		],
+		"on_cancel": [
+			"erpnext_enhancements.po_order_stage.revert_on_receipt_cancel",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		],
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+	},
+	# v1.809.0 -- the price rule for a Stock Entry of type Material Receipt, the Desk's other way
+	# to bring stock in. ERPNext swaps a typed $0 for the item's last valuation, and refuses when
+	# there is none; but it takes a last valuation of exactly 0 without a word, so an item whose
+	# stock is already valued at nothing could be received again at $0. Refused at submit for a
+	# stock item's incoming row whose Basic Rate is 0 and that is not ticked Allow Zero Valuation
+	# Rate. Every other purpose (issue, transfer, manufacture) is left alone, and so is the Stock
+	# Scan page's own receipt, which always carries a cost above zero. Stock Entry had no
+	# doc_events block before.
+	"Stock Entry": {
+		"validate": "erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+		# v1.828.0 -- product_fulfillment: a unit's Manufacture entry stamps each serial number it
+		# made with who built it (the Work Order's Built By, else the person submitting) and the
+		# Work Order that made it. The QC gate reads that builder: the tester must be someone else.
+		# Only Manufacture entries against a Work Order; never raises.
+		"on_submit": [
+			"erpnext_enhancements.product_fulfillment.serials.stamp_builders",
+			# v1.828.0 -- a Material Issue that takes out configured units without a passed test says
+			# so (a warning: issuing is also how a failed unit is scrapped). Never raises.
+			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
+		],
 	},
 	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
 	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY
 	# line of its receipt credited that account, or when it names no receipt, so billing an old
 	# non-stock line would leave that account wrong. Refused at validate, so a draft says so.
 	# Purchase Invoice had no doc_events block before this one.
+	#
+	# v1.807.0 -- Supplier Returns, two things. (1) tell_the_bill: an orange message, never a
+	# refusal, when a bill being entered covers a receipt line or an order line that is on a
+	# standing Supplier Return with no Debit Note yet, so the person entering it knows the bill
+	# should not charge for what went back. After the guard, so a refused bill is not also given
+	# advice; only in a person's web request; never raises. (2) on_document_change: a Debit Note a
+	# Supplier Return links sets that return's outcome when it is submitted (Credit Received once
+	# nothing is owed on it) and takes it back when it is canceled or deleted. Never raises.
+	#
+	# v1.809.0 -- and the price rule above, for an invoice that receives stock itself (Update
+	# Stock ticked). An invoice that only bills is not judged: it puts nothing on a shelf.
 	"Purchase Invoice": {
-		"validate": "erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+		# The guard first; then Supplier Returns' advice, so a refused bill is not also given
+		# advice; then the price warning, which never raises.
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_billing_unstocked_receipts",
+			"erpnext_enhancements.inventory_enhancements.supplier_returns.tell_the_bill",
+			"erpnext_enhancements.inventory_enhancements.receipt_price.warn_unpriced_stock_lines",
+		],
+		"before_submit": "erpnext_enhancements.inventory_enhancements.receipt_price.refuse_unpriced_stock_lines",
+		"on_submit": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+	},
+	# v1.809.0 -- the bulk "Switch Items to Maintain Stock" page can switch an item whose Sales
+	# Invoices never updated stock (the relaxed rule, behind a tick box). Canceling or crediting
+	# such an invoice moves no stock, but Create > Delivery Note on one would take out of stock
+	# goods that left long ago. Refused, for an item switched that way, against an invoice posted
+	# on or before the day of the switch. Reads the Maintain Stock Decision row the switch left;
+	# no row, no table, or a normal item: nothing happens. Delivery Note had no doc_events before.
+	"Delivery Note": {
+		"validate": [
+			"erpnext_enhancements.inventory_enhancements.maintain_stock.refuse_delivering_old_invoices",
+			# v1.829.0 -- product_fulfillment (TASK-2026-03231): a Carrier shipping note's tracking
+			# number is cleaned and its tracking link (custom_tracking_url) set from the carrier's
+			# public page. Any other method clears the link.
+			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_validate",
+		],
+		# v1.828.0 -- product_fulfillment, the QC gate (Nik 2026-11-18): a Delivery Note that ships a
+		# configured product is refused until every unit on it has its serial number picked and the
+		# newest submitted Pre-Shipment Functional Test of each serial is Accepted and signed by
+		# someone other than its builder. Ours, not ERPNext's inspection_required_before_delivery,
+		# which checks one inspection per line and cannot see serials (ADR 0019). Returns pass;
+		# Product Build Settings' Require a Passed Test Before Delivery switches it off.
+		"before_submit": [
+			"erpnext_enhancements.product_fulfillment.qc_gate.delivery_note_before_submit",
+			# v1.829.0 -- then how it travels: a note shipping a configured product names its
+			# fulfillment method, and Carrier shipping needs the carrier and tracking number, Sapphire
+			# delivery a date and a person. After the QC gate, so an untested unit is refused first.
+			"erpnext_enhancements.product_fulfillment.shipping.delivery_note_before_submit",
+		],
+		# v1.829.0 -- Carrier shipping emails the customer contact "Shipped" with the tracking link
+		# (queued in Email Queue, so a deploy's FLUSHDB cannot lose it); Sapphire delivery assigns the
+		# note to the person delivering it on the delivery date. Never undoes the submit.
+		"on_submit": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_submit",
+		# v1.829.0 -- a draft Sapphire delivery is assigned as soon as it names a person. Idempotent.
+		"on_update": "erpnext_enhancements.product_fulfillment.shipping.delivery_note_on_update",
+	},
+	# v1.828.0 -- product_fulfillment (TASK-2026-03229): a configured product line on a submitted
+	# Sales Order gets one Work Order per unit from its Item's default BOM, unless finished units on
+	# the shelf cover it. Made as the system and released at once when a WIP and a finished
+	# warehouse resolve; drafts otherwise. Never stops the order: a failure rolls back to a
+	# savepoint, logs, and the order's Make Work Orders button runs the same plan again (it never
+	# builds twice). validate: a product line on a draft order delivers from Product Build
+	# Settings' finished units warehouse, when one is set. Sales Order had no doc_events before.
+	"Sales Order": {
+		"validate": "erpnext_enhancements.product_fulfillment.build.on_sales_order_validate",
+		"on_submit": "erpnext_enhancements.product_fulfillment.build.on_sales_order_submit",
+	},
+	# v1.828.0 -- product_fulfillment: a new Work Order for a configured product copies its
+	# configuration's build steps into custom_build_steps (the Build Checklist page ticks them),
+	# whoever made it -- our Sales Order hook or ERPNext's own Sales Order > Work Order. A copy,
+	# never a link. Never raises. Work Order had no doc_events before.
+	"Work Order": {
+		"before_insert": "erpnext_enhancements.product_fulfillment.build.fill_checklist",
+		# v1.828.0 -- Built By (custom_built_by) is written only by the Build Checklist's endpoints and
+		# the Manufacture stamp (db.set_value, no save). Any change through a document save -- form,
+		# frappe.client.set_value, REST, import, bulk edit -- is refused unless by a System Manager:
+		# both builders hold Manufacturing Manager, and the field is what stops a builder signing the
+		# test. A submitted Work Order runs before_update_after_submit instead of validate.
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+		"before_update_after_submit": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+	},
+	# v1.828.0 -- the same guard on the unit itself: Serial No.custom_built_by.
+	"Serial No": {
+		"validate": "erpnext_enhancements.product_fulfillment.serials.guard_builder",
+	},
+	# v1.828.0 -- product_fulfillment: the Pre-Shipment Functional Test is ERPNext's own Quality
+	# Inspection, one per unit (ADR 0019). Only inspections of configured products are touched.
+	# before_validate names the Stock Entry row that holds the serial, so a re-test after a failure
+	# is not refused as "every row already has a Quality Inspection", and tidies Pass/N/A readings.
+	# validate: the serial is the Item's, the tester is not the builder (refused), one Rejected
+	# reading rejects the unit. before_submit: the person submitting is the tester it names.
+	"Quality Inspection": {
+		"before_validate": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_before_validate",
+		"validate": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_validate",
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.quality_inspection_before_submit",
+	},
+	# v1.807.0 -- Supplier Returns: the refund. A submitted Payment Entry that RECEIVES money from
+	# a Supplier and names a Supplier Return's Debit Note (or the already-paid bill that note was
+	# set against) is linked as that return's refund and sets Refund Received with the payment's
+	# own amount and date; canceling or deleting it takes that back. An ordinary payment TO a
+	# supplier is never matched (payment_type must be Receive). Never raises. Payment Entry had no
+	# doc_events block before this one.
+	"Payment Entry": {
+		"on_submit": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
+		"on_trash": "erpnext_enhancements.inventory_enhancements.supplier_returns.on_document_change",
 	},
 	# v1.754.0 -- and the third half: anything that rebuilds such a receipt's ledger from today's
 	# Maintain Stock flag. A Landed Cost Voucher cancels and re-posts its receipts' stock ledger and
@@ -1187,6 +1563,8 @@ doc_events = {
 			# Settings) unless the probability was set by hand; typing one marks it so. Does nothing
 			# without the custom field or the table; never raises.
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
+			# v1.833.0: who may set custom_drive_folder_id (see the Project entry).
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": [
 			# Form kit P3.2 (v1.669.0): ERPNext's hidden contact_person kept equal to the visible
@@ -1210,7 +1588,11 @@ doc_events = {
 			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
 			# so the SLA data is already meaningful whenever a switch is flipped.
 			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
-			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
+			# v1.827.0: right after it. A tick or untick of Product Sale (No Project) on the form
+			# lifts or restores the hand-off gate exactly as handoff.mark_product_sale does, so a
+			# hand-ticked won deal is not left gated (Create Project Anyway refused, the escalation
+			# still calling it overdue). Never raises.
+			"erpnext_enhancements.crm_enhancements.handoff.follow_product_sale_tick",
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
@@ -1270,9 +1652,26 @@ doc_events = {
 			"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name",
 		],
 		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
+		# Warehouse Map (v1.818.0): a File attached to a Warehouse Floor Map is a floor plan picture,
+		# a real building's layout, and is never public. The map's own validate only stops a public
+		# address being STORED on the map; this refuses the public File itself, however it was made
+		# (the Desk form's attach panel, the File form's Is Private box, any upload naming the
+		# DocType). Refused rather than re-saved privately: the throw rolls the request back and
+		# File.on_rollback removes the blob this insert wrote. Runs on EVERY File on the site, so
+		# it returns after one getattr for anything else. See
+		# inventory_enhancements/warehouse_map_files.py.
+		"validate": "erpnext_enhancements.inventory_enhancements.warehouse_map_files.refuse_public_file",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
+	},
+	# Warehouse Map (v1.818.0): a box on the map can carry its own order of shelves and bins
+	# (Warehouse Floor Map Shape.bin_order), a list of warehouse names kept as text. Frappe's
+	# rename rewrites Link fields and does not reach text, so this rewrites the lines that name the
+	# renamed warehouse. It cannot raise: it must never be the reason a rename failed. The only
+	# write is to the map's own rows. See inventory_enhancements/warehouse_map_files.py.
+	"Warehouse": {
+		"after_rename": "erpnext_enhancements.inventory_enhancements.warehouse_map_files.follow_warehouse_rename",
 	},
 	# knowledge_base (WI-080 PR 3, v1.555.0): no typed text about a DRAFT is kept outside the
 	# draft. A System Manager reads every Comment and every ToDo on the site (v16 comment.json's
@@ -1320,6 +1719,17 @@ doc_events = {
 		# than on_session_creation because this row is written for failed attempts
 		# too, and the failures are the early warning.
 		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
+	},
+	"Error Log": {
+		# v1.826.6: replace credential-shaped values in error, method and metadata with a fixed marker
+		# before the row is stored (utils/log_masking.py), keeping the rest of the text. frappe
+		# masks a traceback variable by its name only; this goes by the value's shape, including
+		# one printed inside another object's repr. A doc_event is resolved by name at insert
+		# time, so it also applies in workers and to rows frappe defers and inserts later. Never
+		# raises and never logs (a row is never lost to it, and it cannot feed itself);
+		# linear-time, and work on a very large row is capped without shortening the text. Rows
+		# already stored: security_alerts.mask_stored_error_logs, run by hand.
+		"before_insert": "erpnext_enhancements.security_alerts.mask_error_log",
 	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
@@ -1472,6 +1882,8 @@ doc_events = {
 			# customer in manual review. This hook exempts background jobs, bulk
 			# contexts and callers that set flags.ignore_mandatory.
 			"erpnext_enhancements.crm_enhancements.data_quality.enforce_industry",
+			# v1.833.0: who may set custom_drive_folder_id (see the Project entry).
+			"erpnext_enhancements.google_drive.folder_link_guard.guard_drive_folder_link",
 		],
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
@@ -1482,7 +1894,9 @@ doc_events = {
 		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# stripe_payments: auto-charge a saved method when an invoice for an
-	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
+	# autopay-enrolled customer is submitted -- only an invoice billed from a maintenance
+	# agreement, at or under the autopay limit in Stripe Payments Settings (none set: none).
+	# Any other gets a comment saying automatic payment did not run, and waits for the desk.
 	"Sales Invoice": {
 		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
 		# stripe_payments: refuse to cancel an invoice while a Stripe payment for it is still
@@ -1493,6 +1907,10 @@ doc_events = {
 		# charged it again on submit. Runs inside the cancel's transaction and never commits
 		# (ERPNext's own before_cancel has written by then); a no-op while Stripe is off.
 		"before_cancel": "erpnext_enhancements.stripe_payments.core.card_element.before_invoice_cancel",
+		# v1.828.0 -- product_fulfillment: the QC gate on an invoice that ships stock itself (Update
+		# Stock ticked). Without it a configured unit could leave on an invoice untested. Does nothing
+		# when Update Stock is off, or on a return.
+		"before_submit": "erpnext_enhancements.product_fulfillment.qc_gate.sales_invoice_before_submit",
 	},
 	# ai_governance (FAC 3.0.0 compat): give each of this app's assistant tools the FAC category
 	# its own annotations imply, at the moment FAC inserts its row. FAC seeds every external
@@ -1550,6 +1968,10 @@ scheduler_events = {
 		# but it tripped monitoring). Offsets keep the writers apart. Ordered so the
 		# token is refreshed (:00) before CDC pulls (:20) and retries run last (:40).
 		# All three self-throttle/guard internally and no-op while disconnected.
+		# The :40 job reaps orphaned runs and retries a failed CDC poll. It never starts
+		# an Import All or a Run Resync (v1.800.0): until then it restarted a full import
+		# after every failed one, on this 300-second queue, 2 to 6 times a day. And no
+		# job here saves over a record the sync has already linked; CDC flags instead.
 		"0 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed"],
 		"20 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll"],
 		"40 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs"],
@@ -1648,6 +2070,13 @@ scheduler_events = {
 			# anywhere. test_hooks_integrity caught exactly that. The chat sweeps are gone
 			# as of v1.426.0; the rule that caught it is not.
 			"erpnext_enhancements.hr_enhancements.lonework.sweep_overdue_sessions",
+			# v1.809.0 -- the Switch Items to Maintain Stock page's background job, started again
+			# while any Maintain Stock Decision row is still Queued. The rows are the work list, so
+			# a deploy that flushes the job queue loses nothing: this picks the run back up within
+			# ten minutes. With nothing Queued (the usual state) it is one count and nothing else.
+			# It never queues an item itself -- only a person pressing Switch on the page does --
+			# and it never raises. See inventory_enhancements/maintain_stock_bulk.py.
+			"erpnext_enhancements.inventory_enhancements.maintain_stock_bulk.resume_queue",
 			# Lead triage (TASK-2026-01473): speed-to-lead SLA. Reminds a Lead's owner once
 			# its first-response deadline passes, escalates once the escalation time does,
 			# each at most once per Lead (Lead.custom_sla_alert). Deadlines are in working
@@ -1781,6 +2210,34 @@ scheduler_events = {
 		# publishing connections; the publish switches play no part. Enqueues on `long`.
 		# 03:50: after the 03:35 token upkeep. Dormant while Marketing Settings.enabled is 0.
 		"50 3 * * *": ["erpnext_enhancements.marketing.publish.metrics_sync.nightly_social_metrics"],
+		# marketing (v1.756.0): GA4 and Search Console stored by day, kept forever, for the
+		# Marketing Performance page -- GA4 by total, landing page, channel, landing page x
+		# source/medium, device, city; Search Console by total, page, query, page x query.
+		# Restates the last 7 days (Search Console publishes final figures 2-3 days late) plus
+		# any days missed, replacing each day the answer holds. Not gated by Marketing Settings:
+		# it reads the GA4 Settings the nightly snapshot already uses. First, every source that
+		# is ready and has never been backfilled gets its full history queued (GA4 and Search
+		# Console the first night after deploy), and a backfill a deploy FLUSHDB dropped is
+		# re-queued from its cursor (on its Marketing Sync Log row). Jobs on `long`.
+		"40 3 * * *": ["erpnext_enhancements.marketing.performance.web_sync.nightly_web_sync"],
+		# marketing (v1.756.0): Google Business Profile's daily calls, website clicks,
+		# directions and impressions, and its reviews. Dormant: master switch AND
+		# google_business_profile_enabled ship 0, and Google must approve API access first.
+		"45 3 * * *": ["erpnext_enhancements.marketing.gbp.sync.nightly_business_profile_sync"],
+		# marketing (v1.756.0): followers, reach and views per Social Account, through the
+		# publishing connections' read scopes. 03:55, after the 03:35 token upkeep. Dormant:
+		# master switch AND social_page_stats_enabled ship 0.
+		"55 3 * * *": ["erpnext_enhancements.marketing.publish.page_stats.nightly_social_page_stats"],
+		# marketing (v1.757.0): event markers for the trend -- each published Social Publish Job and
+		# each new Campaign of the last 14 days becomes a Marketing Event, keyed by the record it came
+		# from so a second run adds nothing (a missed night is caught up). Cheap, in-process.
+		"5 4 * * *": ["erpnext_enhancements.marketing.performance.events.fill_events"],
+		# marketing (v1.757.0): the marketing alerts -- Monday's week-over-week drop in sessions or
+		# search clicks, a key page out of Google (URL Inspection), a 2-star-or-worse review, a
+		# missed first-time call -- one email to the alert roles, each alert throttled by its own
+		# Marketing Alert row. Runs from day one: alerts_paused ships 0 and every threshold is
+		# backfilled. 06:15, after the night's pulls and before the 06:30 briefing.
+		"15 6 * * *": ["erpnext_enhancements.marketing.performance.alerts.run_alerts"],
 		# travel_management (Plan a Trip PR 4): trip change alerts. A save of a Booked or In
 		# Progress trip records what changed for each person as a Pending Trip Change Alert
 		# (notifications.on_trip_update); this sends each one once its last change is 10
@@ -1806,6 +2263,12 @@ scheduler_events = {
 		"4-59/5 * * * *": ["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 	},
 	"daily": [
+		# Supplier Returns (v1.807.0): re-read the Debit Note of each return still waiting on
+		# money. A debit note set against a later bill in Payment Reconciliation changes its
+		# outstanding amount without any doc_event this app hears, so "Credit Received" would
+		# otherwise wait for somebody to open the return. Reads and one save per return; sends
+		# nothing (a return request goes only from a person's click); never raises.
+		"erpnext_enhancements.inventory_enhancements.supplier_returns.sync_open_returns",
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
 		# lapsed holds (status Expired frees the fountains); and draft each confirmed rental's
 		# balance invoice when delivery is Rental Settings.balance_days_before_delivery away. A
@@ -1887,6 +2350,10 @@ scheduler_events = {
 		# fourteen days, so the list says what the page already does (the page and the sign
 		# endpoint read expiry from expires_on and never wait for this).
 		"erpnext_enhancements.sapphire_maintenance.sign_off.expire_stale",
+		# Service Call approval links (v1.778.0): a live link past its fourteen days is Expired, its
+		# call Declined with the reason, and the Opportunity Lost (decision 2026-11-03: an expired
+		# link marks it Lost). The page and the endpoints read expiry from expires_on themselves.
+		"erpnext_enhancements.sapphire_maintenance.service_call_approval.expire_stale",
 		# declined-card dunning: retry failed Stripe auto-charges on a schedule,
 		# email the customer, and on exhaustion disable autopay + service hold.
 		"erpnext_enhancements.stripe_payments.core.dunning.run_dunning_cycle",
@@ -1949,9 +2416,10 @@ scheduler_events = {
 		# a rebuilt VM undoes it silently -- and every IP-keyed rate limit, the web-lead
 		# ingress's included, quietly becomes one global bucket. Read-only, ungated.
 		"erpnext_enhancements.utils.client_ip.check_client_ip_derivation",
-		# marketing: prune Marketing Raw Payload past raw_payload_retention_days, and Ad
-		# Click rows past 180 days that no Lead carries (Google keeps click_view 90 days, so
-		# a click nobody matched in that time never will). No-op while the module is off.
+		# marketing: prune Marketing Raw Payload past raw_payload_retention_days, and nothing
+		# else. Until v1.756.0 it also deleted Ad Click rows past 180 days that no Lead carried;
+		# every metric table is kept forever now (Nik, 2026-10-29: "let's make sure we are
+		# keeping a history"). No-op while the module is off.
 		"erpnext_enhancements.marketing.core.tasks.daily_prune",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
@@ -2000,6 +2468,11 @@ scheduler_events = {
 		# guard, whose routes never ask. Quiet when there is nothing to report; repeats daily until
 		# there is not; never raises. See security_alerts.check_two_factor_coverage.
 		"erpnext_enhancements.security_alerts.check_two_factor_coverage",
+		# security (v1.826.6): email the same recipients while developer_mode, server_script_enabled
+		# or allow_tests is on in the site configuration, at most once per setting per day. Password
+		# sign-in is the two-factor check's (above) and is not repeated. Quiet when nothing is on;
+		# never raises. See security_alerts.check_site_configuration.
+		"erpnext_enhancements.security_alerts.check_site_configuration",
 	],
 	"daily_long": [
 		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
@@ -2025,6 +2498,17 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# carrier_tracking (v1.819.0, ER-2026-1333277): ask FedEx and UPS about the packages on open purchase
+		# orders. Does nothing and logs nothing until Carrier Tracking Settings has a carrier switched on with
+		# credentials. At most 25 packages and 120 s a run, each package at most every 2 h, never-checked then
+		# oldest-checked first; delivered, Other/unknown-carrier and stale rows are not polled. A carrier that
+		# refused us, said "too many requests", failed at its token endpoint or gave an account- or request-wide
+		# error is skipped for the rest of the run, and no package is counted for it; a refusal that may be
+		# about one number is compared with the run's other packages before it counts (tracking.Round). Each
+		# answer is committed on its own and a row whose save fails is set aside (one bad row cannot stop the
+		# run), so a deploy's FLUSHDB costs one run and the next picks up. Never raises.
+		# See carrier_tracking/tracking.py and poll_rules.py.
+		"erpnext_enhancements.carrier_tracking.tracking.poll",
 		# inventory (v1.730.0): the Reorder Board's Reorder Watch rows -- a row for each item and
 		# warehouse that went at or below its reorder point (below_since, to the hour), snoozes that ran
 		# out cleared for the next digest, rows for what recovered deleted. ~116 rules, reads with
@@ -2083,7 +2567,8 @@ scheduler_events = {
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
 		# Re-charge autopay invoices whose enqueued charge job never ran (deploy FLUSHDB
 		# between commit and execution). poll_pending/dunning only touch existing Stripe
-		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded.
+		# Payment rows; this covers invoices that produced none. charge_saved_method is guarded,
+		# and the sweep charges only what autopay on submit would (saved_methods.automatic_charge_allowed).
 		"erpnext_enhancements.stripe_payments.core.tasks.sweep_missed_autopay",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
@@ -2139,6 +2624,9 @@ scheduler_events = {
 # (Maintenance, Morning Briefing, CRM, Projects, Time Kiosk, Travel, Training, Stock Scan, the same
 # as their Dock rail) for anyone whose dock profile is Field Tech. Hides tiles only; System and
 # Workspace Managers keep the whole grid (v1.751.0, setup/dock_profiles.trim_home_grid).
+# And frappe.boot.triton_frame ({origin, url, page_context}), ONLY for a person Triton Assistant Settings
+# puts on the framed Triton widget (v1.802.0, api/triton_frame.frame_config). Absent for everyone else,
+# which is everyone until that setting is changed: its absence is what keeps the classic widget in charge.
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------
@@ -2184,10 +2672,10 @@ website_route_rules = [
 page_renderer = ["erpnext_enhancements.setup.stock_web_forms.UnpublishedStockWebFormPage"]
 website_clear_cache = ["erpnext_enhancements.setup.stock_web_forms.clear_route_cache"]
 
-# Jinja methods available to Print Formats / web templates. The print sandbox
-# cannot parse the Water Feature Design pipe segments' fittings/components JSON
-# rows, so the aggregation (DOC-0121 Fitting Schedule) and the typed design
-# issues (Design Review section) are exposed as callables instead.
+# Jinja methods available to Print Formats / web templates. A Water Feature Design's typed
+# issues (the Design Review section) are exposed as a callable because the print sandbox cannot
+# parse the stored JSON. we_fitting_schedule went in v1.771.0 (Fountain Designer phase H): no
+# print reads it since the phase G formats, whose context is built by packet.we_print.
 #
 # The Project Schedule format draws Gantt bars as percentage-positioned divs, and
 # a bar's left/width are a fraction of the project's whole date span. The print
@@ -2196,7 +2684,6 @@ website_clear_cache = ["erpnext_enhancements.setup.stock_web_forms.clear_route_c
 # public/js/gantt_widget/gantt_export.js cannot help) -- hence pre-computed rows.
 jinja = {
 	"methods": [
-		"erpnext_enhancements.water_engineering.issues.we_fitting_schedule",
 		"erpnext_enhancements.water_engineering.issues.we_design_issues",
 		# Control-panel NEC panel schedule (circuits + service totals). The 430.24/
 		# 430.62/Art.450 math can't run in the print sandbox, so it's computed here.
@@ -2205,10 +2692,17 @@ jinja = {
 		# schematics (SVG), and the code-keyed standard-note list — all computed in
 		# Python because the print sandbox can't build them.
 		"erpnext_enhancements.water_engineering.packet.we_title_block",
+		# The print context of a schema-2 design (Fountain Designer phase G): every Water
+		# Feature Design format and the packet read their sheets from it (prints.build).
+		"erpnext_enhancements.water_engineering.packet.we_print",
 		"erpnext_enhancements.water_engineering.packet.we_circulation_schematic",
 		"erpnext_enhancements.water_engineering.packet.we_electrical_oneline",
 		"erpnext_enhancements.water_engineering.packet.we_standard_notes",
 		"erpnext_enhancements.water_engineering.packet.we_standard_details",
+		# A stored drawing (SVG text) reduced to the elements and attributes the module's own
+		# drawing code emits, or "" when it is not one well-formed SVG: every Water Feature Design
+		# format and the packet place a drawing only through it (water_engineering/svg_safe.py).
+		"erpnext_enhancements.water_engineering.svg_safe.we_safe_svg",
 		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
 		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 		# The union of Purchase Order.project and Purchase Order Item.project, so the PO
@@ -2421,6 +2915,11 @@ after_install = [
 	# on a fresh site, and without the fields the page keeps the door shut and says "being set
 	# up" for ever. create_custom_fields(update=True): idempotent, and the patch never raises.
 	"erpnext_enhancements.patches.add_store_run_receipt_fields.execute",
+	# Job-site warehouses (v1.801.0): Warehouse.custom_job_site_project, the field that makes a
+	# warehouse a job's site. Same reason once more -- the patch never runs on a fresh site.
+	# Only the field: the group and the setting wait for a real warehouse tree, which a fresh
+	# site does not have (the patch's own steps skip without Inventory - SF). Never raises.
+	"erpnext_enhancements.patches.add_job_sites_warehouse.install_field",
 	# portal hardening (v1.755.0): the same callable as the after_migrate entry below, so a fresh
 	# site does not serve ERPNext's stock web forms tasks, issues and addresses (or their portal
 	# menu rows) until its first migrate. ERPNext installs first, so the forms exist. Never raises.
@@ -2543,6 +3042,10 @@ after_migrate = [
 	# patches.txt; here as the backstop for a site whose Patch Log already has the entry.
 	# Idempotent, fills missing rows only, and must never raise.
 	"erpnext_enhancements.patches.backfill_marketing_settings_defaults.backfill_marketing_settings_defaults",
+	# carrier_tracking (v1.819.0): the same fill-missing-rows backfill for Carrier Tracking Settings, the FedEx and
+	# UPS credentials Single. New in this release, so today it only materializes the off switches and the Sandbox
+	# choices; on every later migrate it gives a newly added field its default. Never raises.
+	"erpnext_enhancements.patches.backfill_carrier_tracking_settings_defaults.backfill_carrier_tracking_settings_defaults",
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
 	# water_engineering: the aquatic-equipment catalog (filters, heaters, chem feed,
 	# controllers, skimmers, VGB drains, therapy jets, gauges) — Item custom spec
@@ -2559,7 +3062,8 @@ after_migrate = [
 	# water_engineering: starter Standard Details (schematic SVG placeholders) for
 	# the packet's SP-4 details sheet. Idempotent + guarded; replaced with cut-sheets.
 	"erpnext_enhancements.water_engineering.setup.ensure_standard_details",
-	# water_engineering: the Results + Calculation Audit Print Formats for a design
+	# water_engineering: the Water Feature Design print formats (Design Report, Engineering
+	# Calculations, Schedules, Drawings, Budget Proposal, Operations and Winterization, Packet)
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
 	# water_engineering: workspace triage Number Cards over the denormalized
@@ -2569,10 +3073,21 @@ after_migrate = [
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 	# product_configurator: Item provenance field (marks configurator-generated
-	# Items so regenerate can safely reuse them) + the Build Instructions /
-	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
+	# Items so regenerate can safely reuse them), and since v1.827.0 the
+	# configuration link on Quotation Item and Sales Order Item (Make Sales Order
+	# copies it across) + the Build Instructions / QC Checklist / Pricing Summary
+	# Print Formats (idempotent + guarded). The Pricing Summary is also what
+	# Create Quotation attaches to the Quotation.
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
+	# product_fulfillment (v1.828.0): the Product Unit Label (Serial No) and the Pre-Shipment Test
+	# Certificate (Quality Inspection). Upserted so template edits deploy; guarded. ABOVE
+	# ensure_chrome_pdf_generator, like the rest.
+	"erpnext_enhancements.product_fulfillment.setup_print_formats.ensure_print_formats",
+	# product_fulfillment (v1.829.0): every Product Build Settings default with no tabSingles row gets
+	# one, never over a stored value, so a field added later (Email the Customer When It Ships) is not
+	# saved as 0 by the next person to save the page. Also a patch. Never raises.
+	"erpnext_enhancements.patches.backfill_product_build_settings_defaults.backfill_product_build_settings_defaults",
 	# enhancements_core: the supplier-facing Purchase Order print format. Procurement
 	# has no module of its own (po_approval / po_segregation / procurement_project sit
 	# at the app root) and a Print Format needs a real Module Def, so it lands in the
@@ -2590,6 +3105,10 @@ after_migrate = [
 	# Invoice. Same module and same reason as the order's format. MUST sit ABOVE
 	# ensure_chrome_pdf_generator, or they render on wkhtmltopdf.
 	"erpnext_enhancements.enhancements_core.setup_procurement_print_formats.ensure_procurement_print_formats",
+	# inventory_enhancements (v1.807.0): "Supplier Return - Sapphire", the PDF attached to a
+	# return request and the paper that goes in the box, built from the same fragments as the
+	# five above. Idempotent + guarded. MUST sit ABOVE ensure_chrome_pdf_generator.
+	"erpnext_enhancements.inventory_enhancements.setup_supplier_return_print_format.ensure_supplier_return_print_format",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
@@ -3026,8 +3545,8 @@ override_whitelisted_methods = {
 	# level-1 values back. Each override calls frappe's own function unchanged and scrubs what
 	# it produced; stored Versions are never touched. The REST twins (/api/resource,
 	# /api/v2/document) are routes no override can reach: see `after_request` below. The
-	# signatures and HTTP methods mirror frappe's and tests/test_fieldlevel_read.py pins
-	# them. See fieldlevel_read.py.
+	# signatures and HTTP methods mirror frappe's (apply_workflow is narrower: POST only) and
+	# tests/test_fieldlevel_read.py pins them. See fieldlevel_read.py.
 	"frappe.desk.form.load.getdoc": "erpnext_enhancements.fieldlevel_read.getdoc",
 	"frappe.desk.form.load.get_docinfo": "erpnext_enhancements.fieldlevel_read.get_docinfo",
 	"frappe.desk.form.save.savedocs": "erpnext_enhancements.fieldlevel_read.savedocs",
@@ -3080,6 +3599,15 @@ before_request = [
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).
 	"erpnext_enhancements.monkeypatches.ensure_applied",
+	# OAuth client registration (v1.826.9, Nikolas 2026-11-18): dynamic registration stays on, but a
+	# POST to any method path or `cmd` whose dotted name ends in `register_client` (frappe's and
+	# Frappe Assistant Core's, under any dotted name) proceeds only when every redirect URI is on
+	# the allow-list (Claude's callback, Google's three connector hosts, plus site config
+	# `oauth_registration_redirect_allowlist`), with hourly limits per client address (10 refused requests, 60 accepted registrations). A refusal
+	# ends the request with a 400/429 JSON body in RFC 7591's error shape; site config
+	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
+	# and a string test and never raises. See oauth_registration.py.
+	"erpnext_enhancements.oauth_registration.guard_registration",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled
@@ -3145,6 +3673,10 @@ override_doctype_dashboards = {
 # owners only; Travel Coordinator / HR Manager / System Manager see all.
 permission_query_conditions = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.get_permission_query_conditions",
+	# carrier_tracking (v1.819.0): Tracked Package lists and reports show only packages on a Purchase
+	# Order the person can read, using Frappe's own match conditions for Purchase Order (User
+	# Permissions, owner rules, shares). Fails closed; System Manager unscoped.
+	"Tracked Package": "erpnext_enhancements.carrier_tracking.permissions.query_conditions",
 	# Managed Device: employees see only the device assigned to them (BYOD privacy)
 	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
 	# Sapphire Maintenance Record: portal customers see only their own submitted visits
@@ -3155,7 +3687,18 @@ permission_query_conditions = {
 	# -- without this, `read` on the doctype would have meant read on every
 	# department. api/kpi.py::_can_view decides which; this enforces it where Frappe
 	# actually checks reads.
+	# The same condition also holds revenue and margin figures (kpi_dashboards/money.py) to
+	# Accounts Manager and System Manager: for anyone else a KPI Snapshot list, report or
+	# count, including one by KPI Snapshot Value columns, returns only snapshots that hold
+	# none. The snapshot document read leaves those rows out
+	# (KPISnapshot.apply_fieldlevel_read_permissions).
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.get_permission_query_conditions",
+	# KPI Snapshot Value: a query whose own doctype is the child table leaves the revenue
+	# and margin rows out for the same callers.
+	"KPI Snapshot Value": "erpnext_enhancements.kpi_dashboards.permissions.get_value_permission_query_conditions",
+	# KPI Target: a target for a revenue or margin figure is listed for Accounts Manager and
+	# System Manager only. has_permission below is the single-document counterpart.
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.get_target_permission_query_conditions",
 	# Training Assignment: a learner sees only their own; a supervisor also sees
 	# their direct reports (Employee.reports_to), which is what makes the sign-off
 	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
@@ -3257,10 +3800,15 @@ permission_query_conditions = {
 }
 
 has_permission = {
+	# carrier_tracking (v1.819.0): one Tracked Package is visible only with read on its Purchase Order.
+	"Tracked Package": "erpnext_enhancements.carrier_tracking.permissions.has_permission",
 	# The single-document counterpart of the KPI Snapshot query condition above.
 	# A query condition filters lists; this is what refuses a direct read of one
 	# snapshot by name.
 	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.has_permission",
+	# A KPI Target for a revenue or margin figure: read, write, create and delete by
+	# Accounts Manager and System Manager only (Sales Manager keeps every other target).
+	"KPI Target": "erpnext_enhancements.kpi_dashboards.permissions.target_has_permission",
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",
@@ -3416,6 +3964,15 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
 # published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
+# Warehouse Floor Map / Warehouse Floor Map Shape (v1.818.0): a box on the warehouse map links the
+# Warehouse it stands for. A map only points at warehouses, so it must never be the reason an empty
+# bin cannot be deleted. The box left behind is drawn as "deleted" in the map's editor and refused
+# on the map's next save until it is removed or tied to another warehouse. (A warehouse that is only
+# DISABLED keeps its box: drawn dashed, saved as it is, and back when the warehouse is enabled.)
+# Both names are listed: Frappe skips the child DocType that holds the Link, and the parent it
+# reports. Added to the list above rather than written into it, because two suites read that line
+# as it stands.
+ignore_links_on_delete += ["Warehouse Floor Map", "Warehouse Floor Map Shape"]
 
 portal_menu_items = [
 	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and
@@ -3574,6 +4131,10 @@ assistant_tools = [
 	# v1.29.0 — the first AI *write* tool. Mutating: gated by _gate.py
 	# (APP_MUTATING) so it proposes an AI Pending Action when write gating is on.
 	"erpnext_enhancements.assistant_tools.create_followup_task.CreateFollowupTask",
+	# v1.757.0 -- log a marker on the Marketing Performance trend (a site edit, a post, a campaign),
+	# so an agent such as the SEO session records its own changes. Mutating: gated (APP_MUTATING),
+	# Low risk (one create).
+	"erpnext_enhancements.assistant_tools.log_marketing_event.LogMarketingEvent",
 	# v1.545.0 — cancel a submitted document. FAC has submit_document and no cancel, and its
 	# update_document refuses any change to a submitted document, so an approved
 	# {"docstatus": 2} card could only fail. HIGH risk and never exempt, like submit
@@ -3599,8 +4160,12 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.closed_won_handoff_status.ClosedWonHandoffStatus",
 	# v1.90.0 Water Engineering — fountain hydraulic calc tools. water_calc and
 	# water_design_status are read-only (EXPLICIT_READONLY); save_water_design
-	# writes a Water Feature Design and is gated (APP_MUTATING, Low risk). All
-	# three share the pure water_engineering.engine with the desk wizard.
+	# writes a Water Feature Design and is gated (APP_MUTATING, Low risk). Since
+	# v1.771.0 (Fountain Designer phase H) all three go through api/designer.py, the
+	# page's own API: water_calc runs water_engineering/calculator.py (the Calculator
+	# drawer's list and dispatch), water_design_status reads the stored verdict,
+	# issues and readiness (design_status), and save_water_design saves a schema-2
+	# model, or the old table payload merged onto it, through save_design.
 	"erpnext_enhancements.assistant_tools.water_calc.WaterCalc",
 	"erpnext_enhancements.assistant_tools.water_design_status.WaterDesignStatus",
 	"erpnext_enhancements.assistant_tools.save_water_design.SaveWaterDesign",
@@ -3657,7 +4222,7 @@ assistant_skills = [
 # first time it loads hooks, so this runs once per process before any patched
 # path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
 # neither the import alias nor the call is mistaken for a hook. See
-# monkeypatches.py for what/why — currently four:
+# monkeypatches.py for what/why — currently five:
 #   1. stop a cached `None` (e.g. the `telephony` Module Def query) from crashing
 #      get_modules_from_all_apps and the app switcher;
 #   2. force-download every executable attachment type from /private/files/ and
@@ -3673,7 +4238,14 @@ assistant_skills = [
 #      accepts (v1.727.1). FAC 3.0.0's string `count(name)` logged an Error Log
 #      row on every call. Inert unless FAC's module is byte-for-byte 3.0.0's, so
 #      it switches itself off when FAC is upgraded (fixed upstream in 3.1.0).
-#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py.
+#      Delete it after that upgrade; see ai_governance/fac_list_documents_count.py;
+#   5. the website print view (`/<DocType>/<name>`) takes only the DocType's exact
+#      name (v1.755.4). frappe 16.53.0's PrintPage matched the name in any letter
+#      case, then could not load a controller for that spelling and answered its
+#      error page instead of a 404. It narrows PrintPage.can_render, which runs
+#      after the static, web form, document and template renderers, so it cannot
+#      hide their pages. The upstream fix, carried here; delete it once frappe
+#      ships it.
 # Also applied from before_request and before_job (monkeypatches.ensure_applied):
 # hooks are served from the redis cache, so this import does not run in every worker.
 from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches

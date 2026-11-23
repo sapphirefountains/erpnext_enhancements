@@ -501,9 +501,39 @@ header.navbar {
 /* The three quantity columns. Right-aligned and nowrap so the digits line up and a
    long item description cannot push them onto two lines. */
 .procurement-tracker .glass-table th.qty-col,
-.procurement-tracker .glass-table td.qty-col {
+.procurement-tracker .glass-table td.qty-col,
+.procurement-tracker .glass-table th.money-col,
+.procurement-tracker .glass-table td.money-col {
     text-align: right;
     white-space: nowrap;
+}
+
+/* What things cost (v1.814.0): the price columns share the quantity columns' alignment. A line with
+   no price says so in words, in a muted amber, so it reads as a gap to fix and never as $0.00. */
+.procurement-tracker .pt-no-price {
+    color: var(--yellow-600, #b7791f);
+    font-style: italic;
+}
+
+/* The value and its small print stack inside one box, so on a phone (where the cell is a flex row of
+   label and value) the notes wrap under the figure instead of running off the edge. */
+.procurement-tracker .pt-money-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .doc-price {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.procurement-tracker .pt-total td {
+    font-weight: 600;
+    border-top: 2px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .pt-total small {
+    font-weight: 400;
 }
 
 /* Quantity sitting on unsubmitted Purchase Orders. Muted because it is context, not
@@ -632,18 +662,17 @@ mark {
 .procurement-tracker .glass-table th {
     background-color: #f0f0f0;
     /* Light grey background for tab look */
-    border: 1px solid #666;
-    /* Strict grid lines */
-    padding: 12px 15px;
-    /* Ensure padding is maintained */
+    border: 1px solid #c8ccd0;
+    /* Grid lines, quiet enough that the numbers are what the eye lands on (v1.811.0: they
+       were #666, as dark as the text) */
+    padding: 8px 12px;
     color: #333;
 }
 
 .procurement-tracker .glass-table td {
-    border: 1px solid #666;
-    /* Strict grid lines */
-    padding: 18px 15px;
-    /* Ensure padding is maintained */
+    border: 1px solid #c8ccd0;
+    padding: 10px 12px;
+    vertical-align: top;
 }
 
 [data-theme="dark"] .procurement-tracker .glass-table th {
@@ -732,6 +761,620 @@ mark {
 .procurement-tracker .doc-items {
     margin: 6px 0 4px 22px;
     animation: slideDown 0.25s ease-out;
+}
+
+/* --------------------------------------------------------------------------
+   Procurement Tracker, v1.811.0: the toolbar (two groupings and four filters), the
+   where-it-is-now column, and three levels that read as three levels.
+
+   Every colour here is one of the Desk's own variables with a plain fallback, so the dark
+   theme follows without a second set of rules.
+   -------------------------------------------------------------------------- */
+
+.procurement-tracker .pt-toolbar {
+    padding: 8px;
+    border-radius: 8px;
+    background: var(--fg-color, #fff);
+    border: 1px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .pt-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-top: 8px;
+}
+
+.procurement-tracker .pt-filter,
+.procurement-tracker .pt-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-weight: normal;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-filter select {
+    width: auto;
+    min-width: 120px;
+    max-width: 220px;
+    height: 28px;
+    padding: 2px 8px;
+    color: var(--text-color, #1f272e);
+}
+
+.procurement-tracker .pt-check {
+    color: var(--text-color, #1f272e);
+    cursor: pointer;
+}
+
+.procurement-tracker .pt-check input {
+    margin: 0;
+}
+
+.procurement-tracker .pt-views .btn.active {
+    background: var(--btn-primary, #171717);
+    border-color: var(--btn-primary, #171717);
+    color: var(--neutral, #fff);
+}
+
+.procurement-tracker .pt-print-list {
+    margin-left: 0;
+}
+
+.procurement-tracker .pt-summary {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-warning {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #f1c40f;
+    background: #fff8e1;
+    color: #5c4400;
+    font-size: 12px;
+}
+
+[data-theme="dark"] .procurement-tracker .pt-warning {
+    background: #4a3b00;
+    border-color: #8d6e00;
+    color: #fff8e1;
+}
+
+/* Saved views (v1.816.0): the view menu, the column picker, the column filters, and the filter bar.
+   Each panel opens under its button and closes on Escape or a click elsewhere. */
+.procurement-tracker .pt-menu-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.procurement-tracker .pt-view-btn b {
+    font-weight: 600;
+}
+
+.procurement-tracker .pt-changed {
+    color: var(--text-muted, #6c7680);
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-count {
+    display: inline-block;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--control-bg, #f3f3f3);
+    color: var(--text-color, #1f272e);
+    font-size: 11px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.procurement-tracker .pt-menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 280px;
+    max-width: calc(100vw - 32px);
+    max-height: 70vh;
+    overflow: auto;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--fg-color, #fff);
+    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+    text-align: left;
+}
+
+.procurement-tracker .pt-menu--wide {
+    width: 420px;
+}
+
+.procurement-tracker .pt-menu-head {
+    padding: 6px 8px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-menu-note {
+    margin: 2px 8px 6px;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-menu-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color, #1f272e);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.procurement-tracker .pt-menu-item small {
+    color: var(--text-muted, #6c7680);
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-menu-item:hover,
+.procurement-tracker .pt-menu-item:focus-visible {
+    background: var(--control-bg, #f3f3f3);
+}
+
+.procurement-tracker .pt-menu-item.current {
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--btn-primary, #171717);
+}
+
+.procurement-tracker .pt-menu-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 8px 4px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .pt-colist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.procurement-tracker .pt-colist li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 8px;
+}
+
+.procurement-tracker .pt-colist li.off {
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-colist label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-weight: normal;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.procurement-tracker .pt-colist input {
+    margin: 0;
+}
+
+.procurement-tracker .pt-colmove {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.procurement-tracker .pt-sortrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 4px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color, #d1d8dd);
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-sortrow label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.procurement-tracker .pt-sortrow select {
+    width: auto;
+    height: 28px;
+}
+
+.procurement-tracker .pt-rule {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border-color, #ebeef0);
+}
+
+.procurement-tracker .pt-rule select,
+.procurement-tracker .pt-rule input[type="text"],
+.procurement-tracker .pt-rule input[type="number"],
+.procurement-tracker .pt-rule input[type="date"] {
+    width: auto;
+    min-width: 0;
+    height: 28px;
+    max-width: 150px;
+}
+
+.procurement-tracker .pt-rule-range,
+.procurement-tracker .pt-rule-choices {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    font-size: 12px;
+}
+
+.procurement-tracker .pt-rule-choices label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.procurement-tracker .pt-filterbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--control-bg, #f3f3f3);
+    font-size: 12px;
+    color: var(--text-color, #1f272e);
+}
+
+.procurement-tracker .pt-note {
+    margin: 0 0 8px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--fg-color, #fff);
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-empty {
+    padding: 20px;
+}
+
+/* The three levels. Level 1 is a heading, level 2 a row under it with a rule down its left
+   side, level 3 the table inside that rule: the eye can follow one document down the page. */
+.procurement-tracker .group-content {
+    margin-left: 8px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-color, #d1d8dd);
+}
+
+.procurement-tracker .doc-items {
+    margin-left: 14px;
+}
+
+.procurement-tracker .doc-header {
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+.procurement-tracker .doc-header .doc-supplier {
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-table {
+    min-width: 760px;
+}
+
+.procurement-tracker .pt-items-table {
+    min-width: 900px;
+}
+
+/* An item: its code, then its name on at most two lines. A 90-character description used to
+   set the width of the whole table. */
+.procurement-tracker .pt-table td.pt-item {
+    min-width: 150px;
+    max-width: 300px;
+}
+
+.procurement-tracker .pt-item-code {
+    display: block;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .pt-item-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .glass-table th.qty-col,
+.procurement-tracker .glass-table td.qty-col,
+.procurement-tracker .glass-table th.money-col,
+.procurement-tracker .glass-table td.money-col {
+    font-variant-numeric: tabular-nums;
+    width: 1%;
+}
+
+/* A status. The Desk's own badge (frappe's .es-badge, coloured by data-theme) where the Desk
+   has it; the variables below are the same colours for a Desk that does not, so the label is
+   never a bare word. */
+.procurement-tracker .pt-pill {
+    --pt-fill: #f3f3f3;
+    --pt-fg: #525252;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    border-radius: 9999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 1.3;
+    background: var(--c-fill, var(--pt-fill));
+    color: var(--c-fg, var(--pt-fg));
+    margin: 0 4px 2px 0;
+}
+
+.procurement-tracker .pt-pill[data-theme="blue"] { --pt-fill: #e3f2fd; --pt-fg: #0d47a1; }
+.procurement-tracker .pt-pill[data-theme="green"] { --pt-fill: #e8f5e9; --pt-fg: #1b5e20; }
+.procurement-tracker .pt-pill[data-theme="amber"] { --pt-fill: #fff8e1; --pt-fg: #8d6e00; }
+.procurement-tracker .pt-pill[data-theme="orange"] { --pt-fill: #fff3e0; --pt-fg: #b54708; }
+.procurement-tracker .pt-pill[data-theme="red"] { --pt-fill: #ffebee; --pt-fg: #b71c1c; }
+.procurement-tracker .pt-pill[data-theme="violet"] { --pt-fill: #f3e8ff; --pt-fg: #5b21b6; }
+
+.procurement-tracker .doc-chain-container {
+    gap: 6px;
+}
+
+.procurement-tracker .doc-chain-step {
+    gap: 4px 6px;
+}
+
+/* Where it is now: one chip per place, each with its quantity in words. The left edge says
+   what kind of place: somewhere to pick it up, somewhere it went, or a gap in the record. */
+.procurement-tracker .pt-where {
+    min-width: 170px;
+}
+
+.procurement-tracker .pt-place {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 0 3px;
+    padding: 1px 8px;
+    border-left: 3px solid #8d99a6;
+    border-radius: 3px;
+    background: var(--subtle-fg, rgba(0, 0, 0, 0.04));
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .pt-place--shelf { border-left-color: #1976d2; }
+.procurement-tracker .pt-place--site { border-left-color: #2e7d32; }
+.procurement-tracker .pt-place--bin { border-left-color: #6d4c41; }
+.procurement-tracker .pt-place--gone { border-left-color: #8d99a6; color: var(--text-muted, #6c7680); }
+.procurement-tracker .pt-place--gap { border-left-color: #e65100; }
+
+.procurement-tracker .pt-where-none {
+    font-size: 12px;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-where-untracked {
+    font-style: italic;
+}
+
+.procurement-tracker .pt-where-note {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted, #6c7680);
+}
+
+.procurement-tracker .pt-supplier-name {
+    display: block;
+    overflow-wrap: anywhere;
+}
+
+.procurement-tracker .pt-table td.pt-supplier {
+    min-width: 110px;
+}
+
+.procurement-tracker .pt-table td.pt-due {
+    white-space: nowrap;
+}
+
+.procurement-tracker .pt-docs .doc-chain-step .doc-link {
+    white-space: nowrap;
+}
+
+/* A phone. The table becomes one card per line: each cell on its own row, its column's name
+   in front of it (data-label), nothing to scroll sideways. The toolbar stops sticking, since
+   four filters pinned to the top would be half the screen. */
+@media (max-width: 640px) {
+    .procurement-tracker .pt-toolbar {
+        position: static;
+    }
+
+    .procurement-tracker .pt-filter {
+        flex: 1 1 45%;
+    }
+
+    .procurement-tracker .pt-filter select {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: none;
+    }
+
+    .procurement-tracker .pt-summary {
+        margin-left: 0;
+        flex: 1 1 100%;
+    }
+    /* The panels fill the width: a 280px box under a button near the right edge would run off the screen. */
+    .procurement-tracker .pt-menu-wrap {
+        position: static;
+    }
+
+    .procurement-tracker .pt-menu,
+    .procurement-tracker .pt-menu--wide {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        top: 12vh;
+        width: auto;
+        max-width: none;
+        max-height: 76vh;
+    }
+
+    .procurement-tracker .pt-rule select,
+    .procurement-tracker .pt-rule input[type="text"],
+    .procurement-tracker .pt-rule input[type="number"],
+    .procurement-tracker .pt-rule input[type="date"] {
+        flex: 1 1 40%;
+        max-width: none;
+    }
+
+    .procurement-tracker .group-content {
+        margin-left: 2px;
+        padding-left: 6px;
+    }
+
+    .procurement-tracker .doc-items {
+        margin-left: 0;
+    }
+
+    .procurement-tracker .doc-header .doc-supplier {
+        flex: 1 1 100%;
+        order: 9;
+    }
+
+    .procurement-tracker .table-responsive {
+        border: 0;
+        box-shadow: none;
+        overflow: visible;
+    }
+
+    .procurement-tracker .pt-table,
+    .procurement-tracker .pt-items-table {
+        min-width: 0;
+        background: transparent;
+    }
+
+    .procurement-tracker .pt-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+
+    .procurement-tracker .pt-table,
+    .procurement-tracker .pt-table tbody,
+    .procurement-tracker .pt-table tr,
+    .procurement-tracker .pt-table td {
+        display: block;
+        width: auto;
+    }
+
+    .procurement-tracker .pt-table tr {
+        margin: 0 0 8px;
+        border: 1px solid var(--border-color, #d1d8dd);
+        border-radius: 6px;
+        background: var(--fg-color, #fff);
+    }
+
+    .procurement-tracker .pt-table td,
+    .procurement-tracker .glass-table.pt-table td.qty-col,
+    .procurement-tracker .glass-table.pt-table td.money-col {
+        display: flex;
+        gap: 10px;
+        padding: 6px 10px;
+        border: 0;
+        border-bottom: 1px solid var(--border-color, #d1d8dd);
+        text-align: left;
+        max-width: none;
+        min-width: 0;
+        width: auto;
+    }
+
+    .procurement-tracker .pt-table tr td:last-child {
+        border-bottom: 0;
+    }
+
+    .procurement-tracker .pt-total td:empty {
+        display: none;
+    }
+
+    .procurement-tracker .pt-table .pt-money-cell {
+        flex: 1 1 auto;
+        white-space: normal;
+        text-align: left;
+    }
+
+    .procurement-tracker .pt-table td[data-label]::before {
+        content: attr(data-label);
+        flex: 0 0 92px;
+        font-size: 11px;
+        color: var(--text-muted, #6c7680);
+    }
+
+    .procurement-tracker .pt-table td.pt-item,
+    .procurement-tracker .pt-table td.pt-where,
+    .procurement-tracker .pt-table td.pt-status,
+    .procurement-tracker .pt-table td.pt-supplier,
+    .procurement-tracker .pt-table td.pt-docs {
+        flex-wrap: wrap;
+    }
+
+    .procurement-tracker .pt-table td.pt-item::before,
+    .procurement-tracker .pt-table td.pt-where::before,
+    .procurement-tracker .pt-table td.pt-docs::before {
+        flex-basis: 100%;
+    }
 }
 
 /* Project Comments Section - Timeline Style */
@@ -1502,45 +2145,17 @@ body.desktop-page .desktop-icon .icon-title,
    OPPORTUNITY KANBAN CUSTOMIZATION
    ========================================================================== */
 
-/* High-value card styling */
-.kanban-card-body.opportunity-high-value {
-    background-color: #00263E !important;
-    color: #ffffff !important;
-    border-radius: var(--border-radius-md, 8px);
-}
-
-.kanban-card-body.opportunity-high-value .kanban-card-title,
-.kanban-card-body.opportunity-high-value .kanban-card-content,
-.kanban-card-body.opportunity-high-value .kanban-card-docname,
-.kanban-card-body.opportunity-high-value .text-muted,
-.kanban-card-body.opportunity-high-value .small,
-.kanban-card-body.opportunity-high-value .frappe-timestamp,
-.kanban-card-body.opportunity-high-value .kanban-card-meta,
-.kanban-card-body.opportunity-high-value .kanban-card-footer {
-    color: #ffffff !important;
-}
-
-/* Timeless Night: the deep-navy high-value card sits too close to the near-black
-   desk background, so lift the navy slightly and add an edge to keep it distinct. */
-[data-theme="dark"] .kanban-card-body.opportunity-high-value {
-    background-color: #013a5e !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-}
-
-/* Ensure tags and other elements also look good on dark background */
-.kanban-card-body.opportunity-high-value .tag-label {
-    border-color: rgba(255, 255, 255, 0.4) !important;
-    color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* Value stream dots container */
+/* The value-stream dots: one per distinct stream, drawn into .kanban-card-meta
+   by kanban_customization.js. That row is a flex row (frappe 16.53 kanban.scss),
+   so order: -1 puts the dots at the left, where the like heart sat, and the
+   assignees keep their margin-left: auto on the right. The navy fill that
+   .opportunity-high-value gave deals over 4000 (v1.779.0) was withdrawn in
+   v1.794.0 - Nikolas: it made the cards difficult to read. */
 .kanban-card-value-stream {
     display: flex;
     gap: 5px;
-    margin-top: 8px;
-    padding-top: 4px;
     align-items: center;
+    order: -1;
 }
 
 /* Individual dots */
@@ -1550,6 +2165,30 @@ body.desktop-page .desktop-icon .icon-title,
     border-radius: 50%;
     display: inline-block;
     box-shadow: 0 0 2px rgba(0,0,0,0.2);
+}
+
+/* The customer's name on a card is a link to the Customer or Lead (v1.779.0,
+   kanban_customization.js link_party). Underlined on hover only, so the card's
+   fields keep reading as fields. */
+.kanban-doc-field a.kanban-card-party-link {
+    color: var(--text-color);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-muted);
+}
+.kanban-doc-field a.kanban-card-party-link:hover,
+.kanban-doc-field a.kanban-card-party-link:focus {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    text-decoration: none;
+}
+
+/* The contact's mobile after the Full Name on the same row (v1.794.0,
+   kanban_customization.js merge_contact_row): muted, so the name reads first. */
+.kanban-doc-field .kanban-card-contact-phone {
+    color: var(--text-muted);
+    /* beside the name's .truncate span (flex: 1 1 auto): the name shortens, the number stays whole */
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 /* ==========================================================================
@@ -1656,4 +2295,441 @@ body.desktop-page .desktop-icon .icon-title,
 /* !important: the button also carries Bootstrap's `.text-muted`, which is !important. */
 .ee-page-sidebar-toggle.active {
     color: var(--text-color) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Attachment preview arrows (v1.780.0, global_enhancements/attachment_preview_nav.js)
+
+   Previous, "3 of 12" and Next at the front of frappe's .attachment-preview-actions
+   (form_sidebar.scss at 16.53.0: a 40px flex header, the title flex: 1 with min-width 0 and an
+   ellipsis, the actions a flex row with a 2px gap, each es-button 28px square). The group never
+   shrinks and nothing in it wraps, so at the pane's minimum width (25% of the page) the file name's
+   ellipsis gives way first. Frappe's own variables, so light and dark are both right; the dark
+   theme needs no rule of its own. */
+body[data-route^="Form"] .attachment-preview .attachment-preview-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-right: 4px;
+    padding-right: 4px;
+    border-right: 1px solid var(--border-color);
+}
+body[data-route^="Form"] .attachment-preview .attachment-preview-count {
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    padding: 0 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar rail (v1.793.0, global_enhancements/sidebar_rail.js; Nik 2026-11-03, Mock C)
+
+   The 48px rail itself is frappe 16.53's own (sidebar.scss, `.body-sidebar-container:not(.expanded)`);
+   the script only stops a collapse beside the pinned Dock from hiding the panel. What is ours: the
+   pin and Recent rows in the standard band, the count badges on an icon (frappe folds
+   `.sidebar-item-suffix` to width 0 in the rail, so a suffix count vanishes there), the hairline
+   after the used-most band, the Recent popover (mounted on the container, beside the panel, because
+   `.body-sidebar` clips what overhangs it), and the phone bottom bar. Frappe's own variables, so
+   light and dark are both right. */
+.body-sidebar .ee-rail-pin button.item-anchor,
+.body-sidebar .ee-rail-recent-item button.item-anchor {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: inherit;
+}
+.body-sidebar .sidebar-item-icon {
+    position: relative;
+}
+.ee-rail-badge {
+    position: absolute;
+    top: -7px;
+    right: -9px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 150px;
+    background: var(--blue-500, #00609c);
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--desk-sidebar-bg, var(--surface-gray-1, #f8f8f8));
+    pointer-events: none;
+}
+.ee-rail-badge--overdue {
+    background: var(--red-500, #bd2e2b);
+}
+/* Expanded, the My Work row already shows its number as a suffix. */
+.body-sidebar-container.expanded .ee-my-work-item .ee-rail-badge {
+    display: none;
+}
+/* The used-most band: a caption above it when expanded, a hairline after it in both states. */
+.body-sidebar .ee-rail-top-last {
+    position: relative;
+    margin-bottom: 10px;
+}
+.body-sidebar .ee-rail-top-last::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: -6px;
+    height: 1px;
+    background: var(--outline-gray-2, #dadbdd);
+}
+/* The caption's words come from the script (`__("Used most")`), so they are translated. */
+.body-sidebar-container.expanded .ee-rail-top-first[data-ee-caption]::before {
+    content: attr(data-ee-caption);
+    display: block;
+    padding: 4px 8px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover {
+    position: absolute;
+    z-index: 1025;
+    width: 272px;
+    padding: 6px;
+    background: var(--surface-elevation-3, var(--surface-base, #ffffff));
+    border: 1px solid var(--outline-gray-2, #dadbdd);
+    border-radius: 8px;
+    box-shadow: var(--shadow-md, 0 6px 24px rgba(0, 0, 0, 0.14));
+}
+.ee-rail-popover-title {
+    margin: 4px 8px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-empty {
+    padding: 6px 8px 10px;
+    font-size: 12px;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--ink-gray-8, #171717);
+    font-size: 12.5px;
+    text-decoration: none;
+}
+.ee-rail-popover-row:hover,
+.ee-rail-popover-row:focus-visible {
+    background: var(--surface-gray-2, #ededed);
+    color: var(--ink-gray-8, #171717);
+    text-decoration: none;
+}
+.ee-rail-popover-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ee-rail-popover-when {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--ink-gray-5, #6b6b6b);
+}
+.ee-rail-popover-order {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 7px 8px;
+    border-top: 1px solid var(--outline-gray-1, #ededed);
+    text-align: left;
+    font-size: 11.5px;
+    color: var(--ink-gray-6, #525252);
+    background: transparent;
+    cursor: pointer;
+}
+.ee-rail-popover-order:hover {
+    color: var(--ink-gray-8, #171717);
+}
+
+/* The phone bottom bar: the module's first four rows plus More. Below md only; the script builds
+   it only there too, so the desktop rule is a belt for a browser that lies about its width. The
+   script also keeps it off a page that hides the sidebar and off a page with a bottom bar of its
+   own (the visit wizard's .vz-nav, for one), so nothing here needs to know those pages. */
+.ee-quick-bar {
+    display: none;
+}
+@media (max-width: 767.98px) {
+    .ee-quick-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1019;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        height: calc(56px + env(safe-area-inset-bottom, 0px));
+        padding: 4px 4px env(safe-area-inset-bottom, 0px);
+        background: var(--desk-sidebar-bg, var(--surface-gray-1, #f8f8f8));
+        border-top: 1px solid var(--outline-gray-1, #ededed);
+    }
+    .ee-quick-bar-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink-gray-6, #525252);
+        font-size: 10px;
+        font-weight: 500;
+        text-decoration: none;
+    }
+    .ee-quick-bar-item:hover,
+    .ee-quick-bar-item:focus-visible {
+        color: var(--ink-gray-8, #171717);
+        text-decoration: none;
+    }
+    .ee-quick-bar-item.active {
+        color: var(--blue-500, #00609c);
+    }
+    .ee-quick-bar-icon {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 28px;
+        border-radius: 14px;
+    }
+    .ee-quick-bar-item.active .ee-quick-bar-icon {
+        background: var(--blue-100, #e2eef6);
+    }
+    .ee-quick-bar-icon .icon {
+        width: 22px;
+        height: 22px;
+    }
+    .ee-quick-bar-icon .ee-rail-badge {
+        top: -3px;
+        right: 4px;
+    }
+    .ee-quick-bar-label {
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Room under the page for the bar, so the last row of a list is never behind it. */
+    body.ee-quick-bar-on .page-container,
+    body.ee-quick-bar-on .main-section > .page-container {
+        padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    }
+    body.ee-quick-bar-hidden .ee-quick-bar,
+    body.modal-open .ee-quick-bar,
+    body:has(.modal.show) .ee-quick-bar {
+        display: none;
+    }
+    /* The Triton button (triton_widget.css: fixed, bottom 16px on a phone, z-index 1040) sat on the
+       bar's fifth slot and covered More (Nik, 2026-11-04, on a phone). While the bar shows it floats
+       16px above it, and drops back when the bar hides for a focused input or a dialog. The guided
+       page keeps its own lift above its footer (guided_entry.bundle.css). */
+    body.ee-quick-bar-on:not(.ee-quick-bar-hidden):not(.modal-open):not(.ge-page-active) .triton-fab {
+        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
+}
+
+/* ==========================================================================
+   DESK SEARCH (global_enhancements/desk_search.js, v1.795.0)
+
+   The search box (Ctrl+K) lists records first, grouped under headings, each
+   with a preview line, call/email chips and related-record links. Frappe's
+   list is 300px tall, which held seven one-line rows; grouped two-line rows
+   need more. A heading sits inside its group's first row (an Awesomplete row
+   is the only thing it can hold), so the selection highlight starts below it.
+   ========================================================================== */
+.awesomplete > ul.ee-ds-list {
+    max-height: min(62vh, 560px);
+}
+
+.ee-ds-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    height: 22px;
+    margin: -2px 0 4px;
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-light);
+}
+
+.awesomplete > ul > li.ee-ds-headed {
+    margin-top: 4px;
+}
+
+.awesomplete > ul > li.ee-ds-headed:first-child {
+    margin-top: 0;
+}
+
+.awesomplete > ul > li.ee-ds-headed:hover,
+.awesomplete > ul > li.ee-ds-headed[aria-selected="true"] {
+    background: linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 28px,
+        var(--sapphire-dropdown-hover-bg, var(--control-bg)) 28px
+    ) !important;
+}
+
+.ee-ds-head .ee-ds-seeall {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-muted);
+}
+
+.ee-ds-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ee-ds-main,
+.ee-ds-main:hover,
+.ee-ds-main:focus {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+}
+
+.ee-ds-top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ee-ds-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.ee-ds-type {
+    flex: none;
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.ee-ds-sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ee-ds-actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+.ee-ds-action.ee-ds-call,
+.ee-ds-action.ee-ds-mail {
+    display: inline-block;
+    max-width: 190px;
+    padding: 2px 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.ee-ds-action.ee-ds-call:hover,
+.ee-ds-action.ee-ds-mail:hover,
+.ee-ds-rel:hover {
+    border-color: var(--text-light);
+    text-decoration: none;
+}
+
+.ee-ds-related {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    margin-top: 4px;
+}
+
+.ee-ds-rel {
+    padding: 1px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--control-bg);
+    font-size: 12px;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.ee-ds-rel-kind {
+    color: var(--text-light);
+}
+
+/* Phones: the chips drop under the title and grow to a finger's size. */
+@media (max-width: 767px) {
+    .awesomplete > ul.ee-ds-list {
+        max-height: calc(100vh - 170px);
+    }
+
+    .ee-ds-line {
+        flex-wrap: wrap;
+    }
+
+    .ee-ds-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .ee-ds-action.ee-ds-call,
+    .ee-ds-action.ee-ds-mail {
+        max-width: 100%;
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    .ee-ds-rel {
+        padding: 5px 10px;
+        font-size: 13px;
+    }
 }

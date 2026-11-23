@@ -592,7 +592,7 @@ export class RecordEditor {
 			no_submit_on_enter: true,
 			// v1.685.0: v16's Layout.set_dependant_property applies mandatory_depends_on and
 			// read_only_depends_on only for a form, a dialog or a web form; a plain FieldGroup skips
-			// them in silence, so Closed Won's ranks never showed as required. Applied here instead,
+			// them in silence, so a `won` gate's fields never showed as required. Applied here instead,
 			// on each step's own group (One page and Tabs refresh every group on each change:
 			// FieldGroups.refresh_dependency).
 			set_dependant_property(condition, fieldname, property) {
@@ -941,11 +941,11 @@ export class RecordEditor {
 	// control: v16's Table MultiSelect rejects a value while it is read-only or hidden (it has no
 	// input area to draw its pills in), FieldGroup.set_value then never resolves, and every field of
 	// the step stayed in `suppress`, so field_changed ignored it. On the Close step that was the
-	// status and the three ranks: nothing typed there was saved.
+	// status: nothing typed there was saved.
 	//
 	// Review of #1300:
 	//   - The conditions are refreshed as each value lands (one pass per tick), not after the slowest
-	//     one: a Link whose check never answers must not hold back Closed Won's asterisks.
+	//     one: a Link whose check never answers must not hold back a required field's asterisk.
 	//   - A field is listened to again only while this very control is still on screen: a slow first
 	//     draw must not take the field of the next draw (a quick step change, a redraw) off `suppress`.
 	//   - A value shown on load is not checked: v16's Link would run validate_link_and_fetch with the

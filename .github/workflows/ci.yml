@@ -19,10 +19,17 @@ name: CI
 # matters; scoping `push` to main keeps CI on the deploy branch (main deploys
 # automatically) without re-running the same commit twice. The trade-off, stated
 # plainly: a branch pushed with NO open PR now gets no CI until the PR is opened.
+#
+# `schedule` runs ONLY the secret scan's full-history walk (every other job carries
+# `if: github.event_name != 'schedule'`). A PR scans only what it adds, so the nightly
+# full walk is half of the backstop for whatever that range cannot see; the other half
+# is the full walk on every push to main. See the `secret-scan` job.
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 9 * * *" # 09:17 UTC, 02:17 or 03:17 in Utah: nobody is merging
 
 # Keyed on the PR number for PR runs so a new commit supersedes the previous run
 # for that same PR -- which is what cancel-in-progress is actually for. Falls
@@ -42,9 +49,21 @@ on:
 #
 # So: supersede on PRs, never on main. The cost is that back-to-back merges queue
 # instead of collapsing, which is the correct trade for the deploy branch.
+#
+# The event name is in the key too, for the nightly `schedule` run. It runs on
+# refs/heads/main, so without it the nightly shared main-push runs' group -- and with
+# cancel-in-progress off, a group holds one running and ONE pending run, a new arrival
+# replacing the pending one. A nightly arriving behind a running push could have
+# replaced a pending push run, leaving a merged commit's CI never run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Read-only for the token every job gets. No job here writes to the repository, comments, tags or
+# calls the GitHub API: checkout reads, and the clean-blob cache action uses the Actions runtime
+# token rather than this one. `release.yml` declares what it needs for itself.
+permissions:
+  contents: read
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -84,6 +103,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint (ruff, advisory)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -118,6 +138,7 @@ jobs:
   # job gates nothing. Errors are at zero today, so any error is a new one.
   eslint:
     name: Lint JS (eslint, errors are a gate)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -156,6 +177,7 @@ jobs:
   # ---------------------------------------------------------------------------
   undefined-names:
     name: No undefined names (F821)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -185,8 +207,15 @@ jobs:
   # ---------------------------------------------------------------------------
   unit-tests:
     name: Standalone unit tests
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10, and not because the tests got slow. On 2026-11-02 GitHub took 2.5 to 8
+    # minutes to close this job after its last step had finished, on every branch, and the
+    # timeout counts that closing lag. With the steps themselves at 6.5-7.5 minutes (and the
+    # step count growing with almost every PR), the job was cancelled three times that day
+    # with every step passed -- a red X that means nothing. 20 minutes still catches a real
+    # hang.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -333,6 +362,14 @@ jobs:
       # an unreadable tabDocType must delete nothing, and no failure may raise out of the patch.
       - name: Orphan DocPerm cleanup (deletes only rows for DocTypes that do not exist)
         run: python -m unittest erpnext_enhancements.tests.test_orphan_docperm_cleanup -v
+      # v1.797.1: who may change User records. The remove_production_team_user_docperm patch deletes a
+      # Desk-added row that gave Production Team write on User, and must leave every other role's row on
+      # User (System Manager's above all) and Production Team's rows on other doctypes alone, delete the
+      # way Role Permissions Manager does (delete_doc, force), and never raise. The same suite fails the
+      # build if custom_docperm.json ever grants a non-System-Manager role more than Select/Export on User.
+      # Own step: it installs its own frappe stub.
+      - name: User permission guard (patch removes Production Team's User row; fixture never grants User)
+        run: python -m unittest erpnext_enhancements.tests.test_user_docperm_guard -v
       # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.
@@ -354,6 +391,14 @@ jobs:
       # every employee on this site holds it.
       - name: KPI Snapshot permissions (widened reads stay department-scoped)
         run: python -m unittest erpnext_enhancements.tests.test_kpi_snapshot_permissions -v
+      # Revenue and margin figures on the KPI dashboards go to Accounts Manager and System
+      # Manager only (kpi_dashboards/money.py). Reads every aggregator's source, so a new
+      # money-looking KPI must be restricted or listed as reviewed, and runs the rule through
+      # the cockpit endpoint, snapshot reads, the KPI Snapshot and KPI Target list conditions
+      # (in SQLite), the executive widgets, the assistant tool and the wall band.
+      # Its own step: it installs its own frappe stub and restores sys.modules afterward.
+      - name: KPI revenue and margin figures (Accounts Manager / System Manager only)
+        run: python -m unittest erpnext_enhancements.tests.test_kpi_money_roles -v
       # Three UOM patches whose ORDER is load-bearing: the Gallon rename has to
       # land before the disable pass, or that pass sees `Gallon` unused and
       # switches off a UOM three live documents point at. Also pins that the
@@ -393,6 +438,18 @@ jobs:
       # real shared script against a fake DOM; node is on PATH in this job.
       - name: Project form hides (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
+      # Project ID mirror (v1.816.2): project.js shows the name in custom_project_id on every refresh.
+      # It used to use frm.set_value, which dirties the form whenever the stored value differs, so
+      # Projects opened as "Not Saved" and a reload asked "Leave site?". Runs the real script under
+      # node against a stubbed Desk that dirties like frappe.model.set_value.
+      - name: Project ID mirror does not dirty the form (executed under node)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_mirror -v
+      # Project ID kept true on the server (v1.816.4): the backfill patch (selects by the byte-exact rule so a case or
+      # trailing-space difference is corrected, never touches modified, logs counts not names, safe twice, cannot raise) and the
+      # validate / after_insert / after_rename hooks, plus their wiring in hooks.py and patches.txt. Own step: it installs
+      # its own frappe stub.
+      - name: Project ID backfill patch and hooks (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_project_id_backfill -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a
@@ -439,6 +496,62 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sidebar_memory -v
       - name: Sidebar memory (executed, not grepped)
         run: node scripts/test_sidebar_memory.js
+      # Previous / next arrows in the form sidebar's attachment preview (v1.780.0, Nik
+      # 2026-11-03). The suite runs scripts/test_attachment_preview_nav.js under node against a
+      # stubbed frappe, DOM, router and browser history (the rows as drawn, the wrap, the
+      # counter, the keys and a hidden form page, no history entry, the release on a route
+      # change, the user's Back and a sidebar rebuild) and holds the seams the harness cannot
+      # see: the bundle import, the stylesheet's classes, the icon names against the pinned
+      # inventory, no history write at all. Own step so its node run and output stay apart from
+      # the other desk suites.
+      - name: Attachment preview arrows (executed under node, plus the wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_attachment_preview_nav -v
+      # Form breadcrumbs that lead to this app's pages (v1.779.0, Nik 2026-11-03): the Project
+      # form's crumb to the Projects Dashboard, Opportunity's to the Kanban, a Task's trail through
+      # its Project. The node step runs breadcrumb_targets.js against a stub of frappe 16.53's
+      # frappe.ui.form.get_breadcrumbs; the unittest step holds the seams (the global bundle
+      # imports it, every target is a /desk/ path, it wraps the form builder and not the
+      # deprecated frappe.breadcrumbs layer).
+      - name: Breadcrumb targets (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_breadcrumb_targets -v
+      - name: Breadcrumb targets (executed, not grepped)
+        run: node scripts/test_breadcrumb_targets.js
+      # The Desk module sidebar as frappe's 48px icon rail beside the pinned Dock (v1.793.0, Nik
+      # 2026-11-03, Mock C): one wrapped method (Sidebar.hides_when_collapsed) stops a collapse
+      # from hiding the panel; the rows this person uses most come first, badges sit on the icons,
+      # a Recent row and a phone bottom bar are added. The node step runs sidebar_rail.js against
+      # a stub of frappe 16.53's Sidebar prototype (the wrapper answers false on a desktop and
+      # frappe's own on a phone, the rail-by-default runs once per person, the Route History
+      # spelling of each row, the used-most order never moves a group, the Training tile opens the
+      # Course list); the unittest step holds the seams (the bundle imports it after
+      # sidebar_memory.js, the stylesheet has the classes the script sets, the bar is below 768px
+      # only, the endpoint is a read-only GET, the compat test names the one allowance).
+      - name: Sidebar rail (wiring and the endpoint)
+        run: python -m unittest erpnext_enhancements.tests.test_sidebar_rail -v
+      - name: Sidebar rail (executed, not grepped)
+        run: node scripts/test_sidebar_rail.js
+      # The Desk search box lists records first, grouped, with a preview (v1.796.0; Nik, 2026-11-04:
+      # a customer's first name listed sixteen screen names above their Contact). The unittest step runs
+      # api/desk_search.py against a fake frappe: what the typed text means (words, a phone, a
+      # document number), the ranking ladder, the SQL it builds (text bound, never inlined; columns
+      # only from the spec and the table), grouping, permissions, related links, one failing doctype
+      # never stopping the rest; plus the bundle, stylesheet and CI wiring. The node step runs
+      # desk_search.js against a stub of frappe 16.53's AwesomeBar and Awesomplete and a small fake
+      # DOM: the composed order, headings, chips, clicks that never select their row, a stale answer
+      # never replacing a newer one, recent records. Each installs its own stubs, so its own steps.
+      - name: Desk search (endpoint and wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_search -v
+      - name: Desk search (executed, not grepped)
+        run: node scripts/test_desk_search.js
+      # The Opportunity Kanban customization on frappe 16.53's classic engine (v1.779.0). Its old
+      # hooks (KanbanView.render_card / get_data) do not exist on 16.50+, so the high-value cards
+      # and value-stream dots had been silently gone since 2026-10-06; the node step runs the file
+      # against the engine's real shapes (set_fields, render_kanban_board, KanbanBoardCard), the
+      # customer link included, so it cannot go quiet again.
+      - name: Opportunity Kanban customization (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_kanban_customization -v
+      - name: Opportunity Kanban customization (executed, not grepped)
+        run: node scripts/test_kanban_customization.js
       # An icon name no sprite has draws nothing and raises nothing: on frappe v16.50.0 five
       # slots on our Dock rail were blank, from workspace icons (money, service, water,
       # assistant, mobile) that no v16 sprite ever had, plus book-marked, which 16.50's lucide
@@ -672,17 +785,28 @@ jobs:
       # date, YouTube's trailing days restated, the cursor moves only on a clean pull, a 401
       # stops that network only; parsers on recorded shapes with 2026's metric names; every read
       # a GET on the allowlist; posts joined to leads and revenue on their tags.
-      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers
-        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher -v
+      # test_marketing_performance (v1.756.0), stub-free: the Marketing Performance page. GA4 and
+      # Search Console joined on a normalized path, the flags at their thresholds, branded queries,
+      # the nightly restate window, calls (first-time by number, an Opportunity credited to one call),
+      # who sees money and who sees callers, Business Profile's GET-only allowlist and parsers, the
+      # social page-stats parsers, and the page's range-in-the-address logic under node.
+      # test_marketing_insights (v1.757.0), stub-free: the reports', graphs', alerts' and digest's rules -- inquiry
+      # sources, query changes, the expected-CTR curve, near page one, fading pages, the service-line mapping, missed
+      # calls, funnel bars, the alert rules (none ships dormant), the Monday digest and the tracked-link builder.
+      - name: Marketing settings dials + ad-model identity + publishing gate + outbox + approval + app + metrics + publishers + performance page + insights
+        run: python -m unittest erpnext_enhancements.tests.test_marketing_settings erpnext_enhancements.tests.test_marketing_publishing erpnext_enhancements.tests.test_marketing_outbox erpnext_enhancements.tests.test_marketing_approval erpnext_enhancements.tests.test_marketing_spa erpnext_enhancements.tests.test_marketing_metrics erpnext_enhancements.tests.test_marketing_meta_publisher erpnext_enhancements.tests.test_marketing_linkedin_publisher erpnext_enhancements.tests.test_marketing_youtube_publisher erpnext_enhancements.tests.test_marketing_performance erpnext_enhancements.tests.test_marketing_insights -v
       # Publishing rate limits (TASK-2026-01482, v1.510.0). Each rule is a pure Python function
       # (the spec) mirrored by a Redis Lua script; this runs THE REAL LUA (fakeredis + lupa)
       # against the spec over randomized sequences, so the two cannot drift. Also: YouTube's
       # Pacific quota day checked against the tz database, Meta usage headers, Retry-After, and
       # admit() for each network. Own step: it needs fakeredis + lupa, pinned. The suite FAILS
       # rather than skips its Lua half when CI is set and they are missing (GitHub sets CI=true).
+      # redis is pinned too (v1.834.0): fakeredis pulls in redis-py unpinned, and redis 8.2.0
+      # (2026-11-23) breaks fakeredis 2.38.0's client setup -- every FakeRedis() raised
+      # "'method_descriptor' object has no attribute '__closure__'". Move the three together.
       - name: Publishing rate limits, Python spec vs Redis Lua (bench-free)
         run: |
-          python -m pip install fakeredis==2.38.0 lupa==2.8
+          python -m pip install fakeredis==2.38.0 lupa==2.8 redis==8.1.0
           python -m unittest erpnext_enhancements.tests.test_marketing_ratelimit -v
       # The read-only ad-spend connectors (TASK-2026-01476, v1.503.0), built against
       # recorded-shape fixtures because API access is still pending. Pins, in order: nothing
@@ -768,6 +892,22 @@ jobs:
       # `bench migrate`, which on this repo is the deploy, so it half-installed prod.
       - name: Singles table is not queried through the ORM
         run: python -m unittest erpnext_enhancements.tests.test_singles_table_access -v
+      # Who may write each settings Single: the roles with write at permlevel 0 are pinned to a
+      # reviewed table, and the ERPNext Enhancements Settings controller keeps writes to System Manager.
+      # Pure filesystem plus a stubbed frappe, so it runs as plain unittest.
+      - name: Settings pages write roles
+        run: python -m unittest erpnext_enhancements.tests.test_settings_write_roles -v
+      # AST only, no frappe import. Every whitelisted endpoint either declares `methods=` or is
+      # on a baseline that can only shrink (tests/data/whitelist_methods_baseline.txt), so a new
+      # state-changing endpoint is written POST-only on purpose rather than by default.
+      - name: Whitelisted endpoints declare their HTTP methods
+        run: python -m unittest erpnext_enhancements.tests.test_whitelist_methods_ratchet -v
+      # Every `@frappe.whitelist(allow_guest=True)` function is listed in
+      # tests/data/guest_endpoints.json with who calls it and what checks the caller. A new
+      # guest endpoint, or a removed one, fails the build until the register agrees. AST only,
+      # no frappe stub.
+      - name: Guest endpoint register (every guest endpoint has a caller and a check)
+        run: python -m unittest erpnext_enhancements.tests.test_guest_endpoint_register -v
       # Frappe v16's log_error picks the Error Log title by CONTENT, not position:
       # given (a, b) it swaps them only when `a` contains a newline. So the legacy
       # log_error(message, title) stores a one-line message as the row's TITLE and
@@ -788,6 +928,55 @@ jobs:
       # collisions AFTER adoption (02 03 00 and 09 03 00 exist in MF2016, not MF2011).
       - name: Cost codes name real MasterFormat sections (list check, not a regex)
         run: python -m unittest erpnext_enhancements.tests.test_cost_codes -v
+      # Estimating milestone 1 (v1.832.0). The pricing engine: a price is exactly the sum of its
+      # parts, the three add-ons sit on the cost of work instead of stacking, commission comes out of
+      # the margin rather than on top of the price, use tax only on material and equipment, and
+      # 2.10 x 2.45 rounds to 5.14 (float noise is not a half). The cases file is shared with the
+      # node step below, which holds the browser's twin to the same numbers: a form that shows a total
+      # the server will not save is the failure. No frappe stub.
+      - name: Estimate pricing engine (Python)
+        run: python -m unittest erpnext_enhancements.tests.test_estimate_math -v
+      # The Estimate's rules and its cost wall: codes checked against the catalog (FEE and the
+      # contingency code are computed, never keyed), one Quotation line per phase with allowances
+      # named and "by others" as exclusions and never a cost, every seeded template line valid, and
+      # every cost/markup/margin/rate field at permlevel 1 readable only by Estimator, Finance Team,
+      # Executive Team and System Manager -- the rule that keeps a wage from being worked out of a
+      # labor line. No frappe stub.
+      - name: Estimate rules, seeded templates and cost visibility
+        run: python -m unittest erpnext_enhancements.tests.test_estimating_rules -v
+      # The Estimate controller against a frappe stub (its own step for that reason): rates copied
+      # from the default card but never over typed ones, phase rows added for every phase a line uses
+      # and its parent, bad overrides naming their row, and the stored numbers being the engine's.
+      - name: Estimate controller (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_estimate_controller -v
+      # Issue Quotation, the seed patches and the delete links against an in-memory frappe stub (its own
+      # step): one line per phase at its price, no tax on a build job even after set_missing_values copies
+      # a customer template in, the deal on custom_source_opportunity, a 0 Item Price held for EST-SCOPE
+      # so prod's auto-insert never makes a phase price its list price, every seed step logging instead
+      # of raising (a raising patch aborts the deploy), and the on_trash hooks that let an Estimate and
+      # its Quotation be deleted in either order.
+      - name: Estimate quotation, seeds and delete links (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_estimating_api -v
+      # Estimating milestone 2, the schedule of values and the pay application, as arithmetic in whole
+      # cents: column D is the earlier applications' WORK completed (stored material is a balance, so it
+      # is never counted twice), line 7 sums what was certified so a short certification carries forward,
+      # retainage steps down by the percent complete at the START of the period, a finished line closes
+      # to the cent, and an estimate projects onto schedule rows as an exact partition. The node step
+      # holds the browser twin to the same cases. No frappe stub.
+      - name: Pay application arithmetic (G702 / G703)
+        run: python -m unittest erpnext_enhancements.tests.test_pay_app_math -v
+      # The Schedule of Values and Pay Application controllers against a frappe stub (their own step):
+      # line keys minted once, a locked schedule taking change orders only, a billed line never deleted,
+      # the chain by stored link and by line key, change orders joining by approval date, milestones,
+      # and certify refusing with every reason at once.
+      - name: Schedule of values and pay application controllers (frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_billing_controllers -v
+      # The browser twin of the pricing engine under node, against the same cases as the Python step,
+      # plus the editor's phase labels equal to the server's, the form script's required editor level
+      # equal to the bundle's VERSION (a tab open across a deploy draws "reload" instead of throwing),
+      # and no typed text interpolated into the page without escaping.
+      - name: Estimate editor and its pricing twin (node)
+        run: node scripts/test_estimate_math.mjs
       # The audit roster answers a DATE, not today. Every derived-status write in the
       # HR and Training modules goes through db_set(update_modified=False), which never
       # reaches save_version() -- so a stored status is a fact about TODAY and
@@ -941,6 +1130,19 @@ jobs:
       # Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner per-project publish and baseline (P3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_publish_baseline -v
+      # Operations-side endpoints check access before they read or write: the maintenance briefing
+      # and visit payload, the maintenance contract mappers, the Task tree (and its node cap), the
+      # Change Order / Budget Reallocation / Scorecard lists, project comments, the Projects
+      # Dashboard readers, Opportunity tag sync, Asset Booking availability, sign-off requests,
+      # and the delete and merge previews. AST over the source plus two helpers executed against a
+      # fake frappe namespace; it imports no frappe and installs no stub.
+      - name: Access checks, operations side (checked before read or write)
+        run: python -m unittest erpnext_enhancements.tests.test_access_checks_ops -v
+      # The Visit Wizard's bootstrap includes the site briefing only for the roles the briefing
+      # endpoint answers. Runs get_visit_bootstrap from its source against a stand-in frappe; it
+      # imports no frappe and installs no stub.
+      - name: Visit Wizard bootstrap briefing role
+        run: python -m unittest erpnext_enhancements.tests.test_visit_briefing_role -v
       # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
       # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
       # follower first and the planner then moves it again, so a crew turns up a day off with nothing
@@ -1473,6 +1675,14 @@ jobs:
       # reader's own (partial) readable set, so a hidden article takes no slot,
       # no draft or retired text ever returned, the Version doctype never read, and static checks
       # that neither module names that doctype or passes a SQL function string as a field.
+      # Service Calls (v1.778.0, Nikolas 2026-11-03): a one-off job without an agreement. The intake
+      # planner (what is created, in what order, with what names, status and template), the rate copy,
+      # the three-task dates, the approval state machine (tokens by shape, expiry, guest endpoints
+      # POST-only and rate limited, no .update( from a guest), the invoice line builder, and the shape
+      # of the doctypes, hooks and patches. Plain pytest functions with their own frappe stub, so a
+      # pytest step of its own: `python -m unittest` collects none of them.
+      - name: Service Calls (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_service_calls.py -q
       - name: Knowledge base search (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_search.py -q
       # v1.569.0: an article as the company register's template (POL-0002/0003/0004), printed, in a
@@ -1645,6 +1855,15 @@ jobs:
       # because a control one person satisfies by clicking twice is a control in appearance only.
       - name: Project budgets (a zero nobody recorded is not a zero that was spent)
         run: python -m unittest erpnext_enhancements.tests.test_project_budgets -v
+      # Approval stamps on Budget Reallocation and Change Order. Runs both controllers and their
+      # approval endpoints over a stand-in frappe (own step: it installs a frappe stub in
+      # setUpModule): the requester does not record the first approval, the two approvals on a
+      # reallocation come from different people, and a stamp changes only through the approve,
+      # record and revoke endpoints -- an ordinary save that changes one, or a new document that
+      # arrives carrying one, is refused, while migrate, patches and a System Manager's Data
+      # Import keep what they write.
+      - name: Approval stamps (written only by the approval endpoints)
+        run: python -m unittest erpnext_enhancements.tests.test_approval_stamps -v
       # Subcontractor scorecards (WI-075 sub-phase N). A vendor scorecard is the one artifact
       # in this programme that gets PRINTED AND CARRIED INTO A NEGOTIATION, so its failure mode
       # is not a crash -- it is a page asserting every subcontractor is flawless. Measured on
@@ -1830,6 +2049,17 @@ jobs:
         run: node scripts/test_sf_kit.mjs
       - name: sf_kit page pieces (stylesheet rules + wiring)
         run: python -m unittest erpnext_enhancements.tests.test_sf_kit -v
+      # Fountain Designer page (phase F of the rebuild, v1.761.0): the guided designer built against
+      # phase E's API contract with a ?demo=1 fixture. The node step runs the page's pure modules: the
+      # route and the address it writes, the quick/full step lists, the debounced derive dropping a
+      # stale reply, the model helpers (pinning, presets, merge_derived), the SVG allow-list, every step
+      # rendered for the three demo designs, and the demo answering every endpoint. The unittest step
+      # holds the page record, the bundles (by name, never global), the stylesheet to the tokens, the
+      # workspace/Dock entries, and the README contract to every key the fixture sends.
+      - name: Fountain Designer page (pure modules, node)
+        run: node scripts/test_fountain_designer.mjs
+      - name: Fountain Designer page (wiring, stylesheet, contract)
+        run: python -m unittest erpnext_enhancements.tests.test_fountain_designer -v
       # Form kit P4-A, the guided-entry engine (form_kit/): an Opportunity's form walked into
       # steps against the real v16 meta plus this app's custom fields and property setters
       # (every field the form shows is in the flow), permissions per field as the Desk works
@@ -2136,8 +2366,18 @@ jobs:
       # sign-in check: it reports a staff account with no 2FA role, 2FA off or bypassed, and
       # password or LDAP sign-in switched on, stays quiet on a healthy site, escapes account
       # names, and never raises.
+      # Since v1.826.6 also the Error Log before_insert masking hook (never raises, never logs,
+      # registered on Error Log), the hand-run backfill of stored rows (System Manager, POST,
+      # dry run by default, counts only) and the daily site-configuration check (one email per
+      # setting per day).
       - name: Administrator login alerts + two-factor coverage (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
+      # Error Log value masking (v1.826.6): utils/log_masking.mask_secrets on each value shape it
+      # masks, ordinary text left alone, idempotence, a 1 MB input and pathological ones inside a
+      # time budget, text past the scan cap kept rather than cut, and the repository's secrets
+      # scanner clean on the masker and its tests. Pure module, no frappe stub; own step anyway.
+      - name: Error Log value masking (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_log_masking -v
       # Client-IP derivation guard (TASK-2026-01478). GCLB -> nginx -> bench only yields a
       # real request_ip because of a hand-placed nginx realip file on the VM; this pins that
       # file (infra/configs/nginx-realip.conf), the startup script that installs it on every
@@ -2147,6 +2387,12 @@ jobs:
       # duration of each test and take it out again.
       - name: Client-IP derivation guard (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_client_ip -v
+      # OAuth client registration (v1.826.9): the redirect-URI allow-list, the site-config
+      # entries, the request matcher, the per-address rate, and the before_request hook (other
+      # requests pass untouched and it never raises there; a matching request is refused with a
+      # JSON body and fails closed). Own step: puts a frappe stub in sys.modules in setUpModule.
+      - name: OAuth client registration guard (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_oauth_registration -v
       # The bench's production process units (v1.753.3): gunicorn instead of `bench serve`,
       # the Werkzeug development server prod had been serving the internet with. Nothing in
       # infra/configs runs in CI, and a VM only exercises it at a cutover, so this pins the
@@ -2181,6 +2427,14 @@ jobs:
       # Own step: installs its own frappe stub in setUpModule.
       - name: Private files are never served inline (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_private_file_serving -v
+      # frappe 16.53.0's print-view renderer claims /<DocType>/<name> for a DocType name in any
+      # letter case, then cannot load a controller for that spelling, so the page is frappe's
+      # error page instead of a 404. monkeypatches.py requires the exact name (the upstream fix,
+      # carried until frappe ships it).
+      #
+      # Own step: installs its own frappe stub in setUpModule.
+      - name: Print view takes the exact DocType name (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_print_view_doctype_name -v
       # Guards the "routes the truck to the wrong address, confidently" class of
       # bug: the supplier pick-up address fallback order, our own yard never
       # becoming a stop, and the PO -> Project union that either link alone drops.
@@ -2257,6 +2511,19 @@ jobs:
       # holding another Item. Runs the real files against a stub of the v16 pieces they hook.
       - name: New records from a grid keep what was typed (bench-free, node)
         run: node scripts/test_new_item_prefill.mjs
+      # v1.830.0: record values in rendered HTML. The boot JSON of the kiosk, wall display,
+      # itinerary and training preview goes through one script-safe encoder; the rentals page
+      # escapes every record value (the real template body is rendered); the child-task tree
+      # escapes status and assignee; save_item_link stores only an address the guided Item flow
+      # accepts. Own step: each suite loads its functions with ast over a stand-in frappe, so no
+      # stub is installed. Needs jinja2, installed at the top of this job.
+      - name: Record values are escaped where they are rendered (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_output_escaping -v
+      # The browser halves of the same rule, run under node: the sidebar attachment row and the
+      # comment box's file link (global_enhancements/safe_file_link.js) and the Purchase Order's
+      # supplier-link buttons (procurement_links.js, run in a vm over a stub of frappe).
+      - name: Attachment and purchase links escape their values (bench-free, node)
+        run: node scripts/test_safe_file_link.mjs
       # Same audit: the Contact "Account" field mirrored the first Customer link, so a supplier's
       # employee took the first fanned-out Customer as their employer, and clearing it promoted the
       # next one. Also AddressLinkGuard: a staff-created linkless Address is never filed under the
@@ -2293,6 +2560,13 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_process_documents -v
       - name: Contract e-signature (tokens, sig() fallthrough, template patch)
         run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
+      # Own step: its frappe stub (in-memory cache, moving clock) must not meet
+      # test_contract_esign's. The emailed signing code (v1.833.0): six digits, ten minutes,
+      # five tries, three sends per fifteen minutes, single use; the endpoints that send and
+      # check it; the bot-check verdict decided by the server alone; the address masked in the
+      # agreement before the code; the evidence record stamping the verified code.
+      - name: Contract e-signature emailed code (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_esign_email_code -v
       # Own step: its frappe stub serves the real Project Contract meta from the doctype JSON
       # (the builder's steps are read from it) and must not meet test_contract_esign's.
       # Covers the 2026-10-13 maintenance terms (renders per payment method, eight initials,
@@ -2327,6 +2601,20 @@ jobs:
       # only the shipped bodies (prod's SOW is still v1.5.0). Needs jinja2.
       - name: Subcontractor agreement (MSA + SOW) layout and inputs
         run: python -m unittest erpnext_enhancements.tests.test_subcontractor_agreement_layout -v
+      # Own step: it stubs frappe, a fake site and the Project Contract controller's own imports.
+      # The one-year Certificate of Warranty in the Contract Builder (v1.808.0). Pins the wording
+      # against the Word document paragraph for paragraph; every merge field (filled, blank,
+      # escaped) and an input for each; the date rule (ends one year after the work was completed,
+      # February 29 included, never typed, never printed); that only Sapphire signs (issuing with a
+      # signer named signs it and freezes the copy, the By line shows the name only once issued,
+      # no path sends it to a customer to sign); that email is one explicit Contract Manager call
+      # with the PDF and nothing else in the feature sends mail; and the seed patch (insert-only,
+      # one key, never raises, says what it did). Needs jinja2. It also prints the long cases (a
+      # 140-character project name, a four-line address, one unbroken word) through the runner's
+      # own headless Chrome and counts the pages: one, always. Those cases skip where no Chrome
+      # is installed, and never fail for Chrome not starting; they fail only on a second page.
+      - name: Certificate of Warranty (wording, merge fields, date rule, signing, email)
+        run: python -m unittest erpnext_enhancements.tests.test_warranty_certificate -v
       # Own step for the same reason as the suites above: its frappe stub points
       # get_app_path at the repo so the real logo.svg is read. Guards the print
       # format fixture too — the footer's #footer-html / .page / .topage hooks
@@ -2342,6 +2630,15 @@ jobs:
       # another record, an e-signed contract, or anyone who cannot mark a contract signed.
       - name: Signed copy (which file, private-file access, filing a scan)
         run: python -m unittest erpnext_enhancements.tests.test_signed_copy -v
+      # Own step: it stubs frappe and a fake site for the two v1.783.0 contract patches. The
+      # rename patch and the fields' delete both run inside `bench migrate`, which is the deploy,
+      # so each is held to "never raises", idempotent, and touching exactly the named records;
+      # the seed, the template files and the patch must name the same titles, so a fresh site
+      # reads as a migrated one; and the Contract button's routes, the Generate Contract list
+      # (enabled templates from the server, no hidden one) and the Events Agreement / Down
+      # Payment Percentage wording are pinned where the brief named them.
+      - name: Contracts v1.783.0 (Contract button, tab removal, template renames)
+        run: python -m unittest erpnext_enhancements.tests.test_contract_renames -v
       # test_kpi_departments: the seven places a KPI department is named must agree
       # (v1.530.0, when Service split off Operations). All three are ast/JSON only.
       # test_kpi_metrics also pins combine_store_runs (v1.536.0): a store run recorded on the
@@ -2385,10 +2682,51 @@ jobs:
       # icon button, Reset widths moved into its menu. The node harness runs the block's real
       # script and the real ColumnSelector against a recording jQuery stand-in and drives the
       # buttons; the unittest holds the markup, script and stylesheet in agreement. Files only.
+      # Since v1.824.0 the harness also drives the Products tab: asked for once when shown, an
+      # empty site's panels, orders grouped by stage, the stage and line filters, and a failed
+      # project read never drawn over it.
       - name: Projects Dashboard toolbar (node harness + shell agreement)
         run: |
           node scripts/test_projects_dashboard_toolbar.mjs
           python -m unittest erpnext_enhancements.tests.test_projects_dashboard_toolbar -v
+      # Products tab (v1.824.0): which Sales Orders are product orders, and which stage each is
+      # in. A PDT rule written the obvious way puts every service quote on the tab (PDT-0701 is on
+      # 325 invoice lines on prod); trusting the item group "Configured Products" puts a first aid
+      # kit on the board; a unit built for one order is counted again as shelf stock for the next.
+      # The rules suite is stub-free. The endpoint suite runs get_products_data on its own frappe
+      # stub (setUpModule, so its own process): the empty answer prod gets today, the per-section
+      # permissions, and the CLAUDE.md rules (no SQL function as a get_all string, no query naming
+      # the configurator's column on a site without it).
+      - name: Products tab rules + endpoint on a stub
+        run: |
+          python -m unittest erpnext_enhancements.tests.test_product_orders -v
+          python -m unittest erpnext_enhancements.tests.test_products_tab_endpoint -v
+      # Projects Dashboard bulk edit (v1.833.0): update_multiple_docs accepts only the fields the
+      # dashboard's own grid edits (Project and Task); one other field refuses the whole request.
+      # Runs the endpoint on its own frappe stub (setUpModule, so its own process) and holds the
+      # field lists to the JavaScript that sends them.
+      - name: Projects Dashboard bulk edit fields (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_dashboard_bulk_edit_fields -v
+      # Build, test and ship a product unit (v1.828.0, TASK-2026-03229 / -03230). The rules suite is
+      # stub-free: the person who built a unit signs its test (or a case difference in the user id lets
+      # them), a unit that failed a re-test ships on its old pass, ERPNext's FIFO auto-pick ships an
+      # untested unit because the gate never asked for a serial per unit, or planning a Sales Order twice
+      # builds every unit twice. The wiring suite installs its own frappe stub (setUpModule, so its own
+      # process): the allow-on-submit fields a phone ticks on a submitted Work Order, the settings
+      # defaults against the code and the seed template, the label and certificate rendered (a draft
+      # must say NOT SIGNED, a failure FAILED), and the Delivery Note gate and the Work Order plan glue.
+      - name: Product build, test and ship (rules + wiring on a stub)
+        run: |
+          python -m unittest erpnext_enhancements.tests.test_product_fulfillment_rules -v
+          python -m unittest erpnext_enhancements.tests.test_product_fulfillment_wiring -v
+      # Getting it to the customer (v1.829.0, TASK-2026-03231). Its own process: it installs a frappe
+      # stub and an email_style stub in setUpModule. The Shipped email's tracking button pointing at
+      # nothing because prod's "UPS store" or "Usps" was not recognized, or at an unescaped quote from a
+      # pasted number; a carrier shipment submitted with no tracking number or a Sapphire delivery with
+      # nobody to deliver it; the Sales Order's fulfillment field drifting in name from the Delivery
+      # Note's so Make Delivery Note stops carrying it; the new settings default not backfilled.
+      - name: Product shipping (rules, emails, hooks on a stub)
+        run: python -m unittest erpnext_enhancements.tests.test_product_fulfillment_shipping -v
       # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
       # every block's status colours in both themes. Fails on any of the literal status hexes
       # (and their rgba() tints) the blocks used before, comments stripped so a note naming
@@ -2450,12 +2788,143 @@ jobs:
       # builders and checks every fieldname they read against the JSON defining it.
       - name: Project Brief type sections (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_project_brief_sections -v
-      - name: Water engineering (pure engine + design issues + controller helpers)
+      # test_water_design_issues tested the schema-1 issue producers (build_issues, build_readiness);
+      # both went with the nine child DocTypes in v1.771.0 (Fountain Designer phase H), and the model-2
+      # producers are tested in test_designer_derive.
+      - name: Water engineering (pure engine + controller helpers)
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_water_engine
-          erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # Fountain Designer phase H (v1.771.0): the nine schema-1 child DocTypes and the Water
+      # Engineering Wizard are gone and stay gone. A sweep of every .py/.js/.json/.html under the app
+      # and scripts/ (comments and docstrings stripped) for their names, the survivors PLAN.md 3.2
+      # keeps, the /desk/water-engineering-wizard redirect, and both patches run dry against an
+      # in-memory site shaped like production (13 rows, all of the schema-2 WFD-2026-209315): the
+      # drop patch keeps an unconverted design's rows and its table, and neither patch ever raises,
+      # because a raising patch aborts bench migrate, which is the deploy. Its own stand-ins for
+      # frappe, so its own step.
+      - name: Water engineering retirement (phase H sweep + the two patches, dry)
+        run: python -m unittest erpnext_enhancements.tests.test_water_engineering_retirement -v
+      # Fountain Designer phase S (v1.765.0): basin concrete, rebar, gravel and earthwork
+      # quantities with hand goldens (Nikolas's 10 x 6 ft x 18 in basin) and the hydrostatic,
+      # uplift and bearing checks. Plain pytest functions, so its own pytest step: `python -m
+      # unittest` would collect nothing from it. Pure engine, no frappe stub.
+      # v1.766.0 adds the structure in general: walls and footings, seismic and wind loads, vault
+      # lids, gratings, steel frames and towers, weir-lip sag, veneer, rigging (DRC port pinned to
+      # its JavaScript), equipment pads, thrust blocks, bracing and moorings.
+      - name: Water engineering structural (bench-free pytest suite)
+        run: >-
+          python -m pytest
+          erpnext_enhancements/tests/test_structural_takeoff.py
+          erpnext_enhancements/tests/test_structural_geometry.py
+          erpnext_enhancements/tests/test_structural_loads.py
+          erpnext_enhancements/tests/test_structural_walls.py
+          erpnext_enhancements/tests/test_structural_steel.py
+          erpnext_enhancements/tests/test_structural_supports.py -q
+      # The electrical package (engine/electrical/, phase L of the Fountain Designer,
+      # v1.763.0): NEC 430.52 breakers, 310.16 conductors, voltage drop, conduit fill,
+      # feeders, the Article 680 checklist and electrical_report, plus parity with the
+      # Digital Rain Curtain's electrical.js. Plain pytest functions, so its own pytest
+      # step -- `python -m unittest` would collect nothing from these files. The controls
+      # package (engine/controls/, v1.764.0: starters, VFD with bypass, Splash Wizard,
+      # panel design) shares the step.
+      - name: Water engineering electrical and controls (bench-free pytest suite)
+        run: >-
+          python -m pytest
+          erpnext_enhancements/tests/test_electrical_sizing.py
+          erpnext_enhancements/tests/test_electrical_report.py
+          erpnext_enhancements/tests/test_electrical_drc_parity.py
+          erpnext_enhancements/tests/test_controls_design.py -q
+      # Fountain Designer phase A (v1.760.0): the Darcy solver in engine/hydraulics/, ported from the
+      # Digital Rain Curtain JS and held to it by committed golden vectors (tests/golden/drc/*.json,
+      # 1e-12 for closed forms, 1e-9 for bisections). PLAIN PYTEST FUNCTIONS, so a pytest step of
+      # their own -- `python -m unittest` would collect nothing and report success. No Node needed:
+      # regenerating the JSON is a manual step with the DRC checkout (tools/golden/drc/). The suites
+      # import no frappe and install no stub, so one process runs all seven.
+      - name: Water engineering hydraulics (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_hydraulics_water.py
+          erpnext_enhancements/tests/test_hydraulics_catalog.py
+          erpnext_enhancements/tests/test_hydraulics_fittings.py
+          erpnext_enhancements/tests/test_hydraulics_segment.py
+          erpnext_enhancements/tests/test_hydraulics_pump.py
+          erpnext_enhancements/tests/test_hydraulics_terminals.py
+          erpnext_enhancements/tests/test_hydraulics_operating_point.py
+      # Fountain Designer phase B (v1.767.0): the manifold and network solvers, surge, basin checks
+      # (engine/hydraulics/), and autosize, BOM, upkeep and pipe supports (engine/). Plain pytest
+      # functions again, frappe-free with no stub, so one step; the ported parts read committed
+      # goldens (tests/golden/drc/{manifold,surge,basin_checks,autosize,upkeep,structure}.json) and
+      # the network solver is held to phase A's operating point at 1e-9.
+      - name: Water engineering network, autosize and BOM (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_hydraulics_manifold.py
+          erpnext_enhancements/tests/test_hydraulics_network.py
+          erpnext_enhancements/tests/test_hydraulics_surge.py
+          erpnext_enhancements/tests/test_hydraulics_basin_checks.py
+          erpnext_enhancements/tests/test_autosize.py
+          erpnext_enhancements/tests/test_bom.py
+          erpnext_enhancements/tests/test_structure_upkeep.py
+      # Fountain Designer catalog (v1.758.0). PLAIN PYTEST FUNCTIONS with their own in-memory
+      # frappe, so their own `python -m pytest` step (unittest would collect nothing). Guards the
+      # approved-seed loader -- only approved rows, provenance on every record, a second run
+      # changing nothing, one bad row not stopping the rest, an existing Item's name and
+      # description never overwritten -- plus the Pump Curve / nozzle point checks, the remap
+      # patch writing only live Select options, and api/water_design.pump_curves preferring
+      # Pump Curve records over the Item's legacy table.
+      - name: Water engineering catalog (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_water_catalog.py -q
+      # Fountain Designer phase C (v1.759.0): the feature-family rules, the schema-2 design model,
+      # the kits and the Sapphire house rules. Plain pytest functions, so their own pytest step:
+      # `python -m unittest` would collect none of them. test_water_house_rules puts its frappe
+      # stub in sys.modules only for the length of each test (monkeypatch), so it shares the step.
+      # Phase J (v1.772.0) adds test_jurisdictions: the per-state table, the rules keyed on it and
+      # workforce.sites.elevation_at, its frappe and requests stubs monkeypatched the same way, and
+      # holds the package copy of the table equal to docs/fountain-designer/catalog/jurisdictions.json,
+      # which the validator step checks (keys, types, a cite beside every value, the 48 states).
+      - name: Fountain Designer jurisdiction table (the research's validator)
+        run: python docs/fountain-designer/catalog/jurisdictions-validate.py
+      - name: Fountain Designer families, model and house rules (bench-free pytest suite)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_families_weir.py
+          erpnext_enhancements/tests/test_families_jets.py
+          erpnext_enhancements/tests/test_families_others.py
+          erpnext_enhancements/tests/test_water_model.py
+          erpnext_enhancements/tests/test_water_house_rules.py
+          erpnext_enhancements/tests/test_jurisdictions.py
+      # Fountain Designer phase E (v1.768.0): water_engineering/derive.py runs the whole ladder end to
+      # end with the real engine (phases A, B, C, L, S) on phase F's three demo designs and every kit,
+      # and its reply is held to the page's contract (public/js/fountain_designer/README.md) key for
+      # key, then pushed through the page's own merge, verdict panel and chart allow-list under node.
+      # test_designer_api checks api/designer.py (boot against the demo fixture, GET vs POST, save,
+      # sign-off, the Quotation and Material Request pushes) with its own frappe stub, installed and
+      # removed per test (monkeypatch), so the suites share one process. test_drawings_duty_chart
+      # (v1.769.0) holds the duty-point SVG and the page-safe drawings to chart.js's allow-list. Plain
+      # pytest functions: their own step.
+      - name: Fountain Designer derive, API and charts (bench-free pytest suites)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_designer_derive.py
+          erpnext_enhancements/tests/test_designer_api.py
+          erpnext_enhancements/tests/test_drawings_duty_chart.py
+      # Fountain Designer phase G (v1.770.0): every Water Feature Design print format and the submittal
+      # packet rendered under real Jinja2, set up as frappe sets it up (no autoescape, DebugUndefined,
+      # which PRINTS a missing name with its braces), over the three demo designs and a regulated spa run
+      # through derive_model. Checks no Jinja left over, no doubled escape, no table with no rows, no raw
+      # float, no drawing id twice on a page; the Utah R392-302-41 and NEC 680 lines, the O&M water
+      # split, the winterization checklist and the budget arithmetic. Plain pytest functions with their
+      # own frappe stub per test: its own step (unittest would collect nothing). test_water_svg_safe
+      # runs water_engineering/svg_safe.py, the allowlist every stored drawing passes before a format or
+      # the packet prints it, over samples off the list and over the real generator's drawings (none of
+      # which may lose anything), and holds every print path and the packet preview to it.
+      - name: Fountain Designer print formats and packet (bench-free pytest suite)
+        run: >-
+          python -m pytest -q
+          erpnext_enhancements/tests/test_water_prints.py
+          erpnext_enhancements/tests/test_water_svg_safe.py
       # Own step: this suite installs its own frappe stub in setUpModule, so it
       # must not share a process with the other stub-installing suites. It guards
       # the hourly Drive shadow sync's survival when the DB connection drops
@@ -2486,6 +2955,11 @@ jobs:
       # people a Google 404 (PRJ-00706).
       - name: Drive link reconciliation (dead folders are flagged on the record)
         run: python -m unittest erpnext_enhancements.tests.test_drive_link_reconcile -v
+      # Own step for the same reason -- its own frappe stub in setUpModule. Runs the
+      # validate hook that decides who may set custom_drive_folder_id on Customer, Project
+      # and Opportunity (google_drive/folder_link_guard.py).
+      - name: Drive folder link (who may set it)
+        run: python -m unittest erpnext_enhancements.tests.test_drive_folder_link_guard -v
       # THREE separate steps, not one `unittest a b c`. Each installs its own
       # frappe stub in setUpModule, and running them in one process cross-talks:
       # the roles suite imports the real erpnext_enhancements.training.roles, and
@@ -2836,6 +3310,12 @@ jobs:
       # bills somebody's receipt to a real vendor and looks ordinary until it is paid.
       - name: Intake reimbursement (the dead Expense Claim path, and why no name matching)
         run: python -m unittest erpnext_enhancements.tests.test_intake_reimbursement -v
+      # Access checks on the Document Intake endpoints (v1.833.0): the upload and mobile
+      # endpoints accept a File only when the caller can read it, re-extract refuses a
+      # document past extraction and is rate limited per user, and reject refuses a posted
+      # one. The real modules run over a frappe stub, so this has its own step.
+      - name: Document Intake access checks (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_intake_access_checks -v
       # Two reasons not to send somebody -- approved time off and restricted duty --
       # were both already recorded and nothing read them when a visit was scheduled.
       # This pins three decisions: warn NEVER block (a hard gate moves the work off the
@@ -2970,6 +3450,14 @@ jobs:
       # WARNS THE NEXT PERSON, which is the half that makes it worth thirty seconds.
       - name: HR hazards (SDS, PPE, and warning the next technician)
         run: python -m unittest erpnext_enhancements.tests.test_hr_hazards -v
+      # Access checks on the people-facing endpoints (v1.826.2): tier reviews, permit
+      # transitions, incident and hazard reports, the telephony endpoints, the SMS reply
+      # drafter, the kiosk's project and visit lookups, time correction requests and the
+      # two training assistant tools, pinned at source level; plus the per-user rate limit
+      # (utils/user_rate_limit) run for real. Its own step: it installs a frappe stub in
+      # setUpModule.
+      - name: People-side access checks + per-user rate limit (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_people_access_checks -v
       # Can somebody who is not a developer start a course? The visual editor
       # shipped in v1.364.0 with NO entry point anywhere -- grepping for
       # "training-canvas" outside its own directory returned two CHANGELOG lines
@@ -3259,6 +3747,20 @@ jobs:
       # stripped, the photo is stored six hours late (v1.526.1).
       - name: Workforce client timestamps (browser ISO -> site-local naive)
         run: python -m unittest erpnext_enhancements.tests.test_workforce_client_time -v
+      # Its own step too (frappe stub in setUpModule). Hand edits to time wait for
+      # approval (v1.833.0): an employee's change to their own interval, or one added by
+      # hand, is Waiting; an approver's edit to someone else's is not (the reports_to
+      # supervisor, HR Manager, System Manager; not Projects Manager); neither the employee
+      # nor the editor may approve it; the approver is told once per waiting spell, after
+      # the save, and a failed notice never fails the edit; the approvals page's read
+      # returns only what the caller may decide; approve and send back record who and when;
+      # the payroll export's totals and overtime split leave Waiting and Sent Back entries
+      # out and list them on their own sheet; the Timesheet sync writes no line for them;
+      # and rows from before the field read blank and count. Also a Time Correction Request
+      # (v1.833.0): never decided by the employee it is for or by its filer, through the
+      # review endpoints or a status saved on the form, and the form's buttons follow.
+      - name: Workforce hand-edit approval (payroll + Timesheet exclusion)
+        run: python -m unittest erpnext_enhancements.tests.test_time_edit_approval -v
       # Semi-monthly commission periods. Every failure mode here is a *plausible*
       # statement -- right shape, wrong rows -- which nothing downstream can
       # notice: a boundary day in neither period (the live report was dropping
@@ -3306,6 +3808,15 @@ jobs:
       # because a shortcut without its content block renders as nothing.
       - name: QuickBooks record matching (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_matching.py -q
+      # "QuickBooks sync links, never overwrites" (v1.800.0). Own pytest step (plain
+      # functions + monkeypatch). Pins the two behaviors that went away: retry_failed
+      # never starts an Import All (it ran 2 to 6 a day on the 300-second queue), and no
+      # sync saves over a record a mapping already links -- a linked Project whose
+      # QuickBooks job changed customer and status is flagged, not saved, with
+      # overwrite=True as much as without. Also holds the three review endpoints to
+      # POST and the operator gate, and that RQ's job timeout is no longer swallowed.
+      - name: QuickBooks sync links, never overwrites (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_quickbooks_link_only.py -q
       # The Record Matching page's Excel round trip (v1.721.0). Own pytest step, and the REAL
       # openpyxl at Frappe v16's pin: the dropdowns, hidden key columns and header lookup are
       # what is under test, and a stub would agree with anything. Guards the import's
@@ -3379,6 +3890,15 @@ jobs:
       # bench-free unittest tests, green, and named nowhere in this file.
       - name: Product Configurator engine (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_product_configurator_engine -v
+      # E-Stop quote to order (v1.827.0). Guards a quote line that reads differently from the last
+      # one, a configured price ERPNext re-prices into a fake discount, a Sales Order that can't save
+      # for want of a warehouse, a quote to the wrong party, a refusal in frappe's words instead of
+      # "ask for the Product Engineer role", a product sale that still gets a project (or a panel job
+      # that loses one), and an Opportunity frozen by ERPNext writing "Quotation" or "Converted" over
+      # its stage. Plain pytest functions, so its own pytest step: unittest would collect nothing.
+      # Installs a fake `frappe` per test through monkeypatch, so it stays out of the stubbed suites.
+      - name: Product quote to order (bench-free)
+        run: python -m pytest erpnext_enhancements/tests/test_product_quote.py -q
       # PO header -> line Project cascade. Third suite the guard below found running
       # nowhere: its own frappe stub had gone stale -- `procurement_project` grew a
       # `from frappe.utils import flt` and the stub is a plain ModuleType, which the
@@ -3387,6 +3907,13 @@ jobs:
       # sys.modules and must not cross-talk with the other stubbed suites.
       - name: Procurement project cascade (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_procurement_project -v
+      # ER-2026-1333210: the project a row added with Update Items takes. ERPNext inserts that
+      # row by itself before saving the order, so the cascade above cannot reach it; this suite
+      # holds the rule (header, else the one shared line project, else refuse in words), the
+      # defensive paths, and that hooks.py registers it on Purchase Order Item.before_insert.
+      # unittest, with its own frappe stub installed in setUpModule, so its own step.
+      - name: Purchase Order Update Items line project (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_line_project -v
       # The guard that found both of the above: every bench-free suite must be named
       # in this file. A suite absent from it is not skipped, it is INVISIBLE -- and
       # the existing in-file "am I wired into CI" idiom cannot catch that, because a
@@ -3435,6 +3962,22 @@ jobs:
         run: node scripts/test_triton_markdown.mjs
       - name: Triton inline citation renderer (bench-free, node)
         run: node scripts/test_triton_citations.mjs
+      # The framed Triton widget's loader, gate and bridge (v1.802.0), run for real against a
+      # stand-in window. Each rule it holds fails with nothing thrown and nothing on screen:
+      # the frame's address written a second time (chat navigation then lands in the tab's
+      # history and Back stops moving the Desk); a frame that never says "ready", speaks
+      # another contract version or cannot sign the person in leaving a dead panel instead of
+      # the classic widget, or a working chat being swapped out after it HAS signed in; a
+      # `message` from any other origin or window moving the Desk or drawing a sign-in ticket;
+      # a link from a reply followed to somewhere that is not a page of this Desk (a URL, a
+      # `javascript:` value, `//host`, a path that climbs out with `..`); a clock-in request
+      # clocking somebody in, or asking for location, before the person pressed Confirm; and
+      # the gate fetching or wrapping anything for a person on the classic widget. It also
+      # pins that the loader stays out of the Desk's main bundle, that triton_widget.js sleeps
+      # while boot says "framed", and that the contract version and the fifteen message names
+      # in contract.js are the ones written in docs/triton-framed-widget.md.
+      - name: Framed Triton widget loader, gate and bridge (bench-free, node)
+        run: node scripts/test_triton_frame.mjs
       # The browser half of Triton clock-in. Pins the rules that make it safe rather
       # than merely working: location is requested ONLY inside a click handler (never
       # on boot), always with maximumAge 0 and enableHighAccuracy -- a cached or coarse
@@ -3450,6 +3993,14 @@ jobs:
       # broken this way from the day it was written until v1.159.10.
       - name: www controller filenames must be importable
         run: python scripts/check_www_controllers.py
+      # The committed-secrets gate's own proof (the `secret-scan` job runs the script; this
+      # proves the script). Throwaway git repos with planted fakes: the full walk and the PR
+      # range each find a service-account key, an OAuth client secret and a googleapis token,
+      # the range finds a key added and removed inside it, the full walk reads loose objects, both
+      # refuse a shallow clone, and the clean-blob cache is discarded whole when the rules
+      # change -- a stale cache is a key a stronger rule never reads, and the job stays green.
+      - name: Committed-secrets scanner (planted keys, PR range, clean-blob cache)
+        run: python -m unittest erpnext_enhancements.tests.test_secret_scan -v
       # Frappe calls orjson.loads() on EVERY file in the app-level directories named by
       # IMPORTABLE_DOCTYPES — no *.json filter. One stray file aborts the whole schema
       # sync, so the site fails to migrate on deploy. This killed production's migrate on
@@ -3479,6 +4030,13 @@ jobs:
       # is gone. Own step: it stubs frappe, twilio and requests in setUpModule.
       - name: Webhook auth, MDM + telephony (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_webhook_auth -v
+      # Configuration checks on three inbound paths (v1.826.5): the Twilio voicemail
+      # download accepts only this account's recording URLs on api.twilio.com; the Stripe
+      # and QuickBooks Online secret readers return None for a missing, undecryptable or
+      # placeholder value; the QuickBooks Time webhook refuses every request while its
+      # site_config secret is unset. Own step: it stubs frappe and requests in setUpModule.
+      - name: Inbound secret and URL checks (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inbound_secret_checks -v
       # The requests the MDM provider clients actually send, checked against the vendors'
       # specs (v1.506.0). Both Live adapters had been written against guessed endpoints:
       # Miradore sync called a list endpoint API v2 does not have (12,803 failed syncs), and
@@ -3545,6 +4103,54 @@ jobs:
       # task turning movable on the Project Planner or vanishing from the Maintenance Planner.
       - name: Fountain Move jobs (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move_jobs.py -q
+      # Job number prefixes (Nik, 2026-11-19; v1.831.0): new Service jobs SRV-#####, new Events jobs
+      # EVT-#####, the rest PRJ-#####, by two Document Naming Rules a patch seeds. Its own step because it
+      # installs its own frappe stub. Guards a seed patch that raises (an aborted migrate is a failed
+      # deploy), re-creates a rule somebody disabled, starts a counter at a name in use, touches the PRJ-
+      # rule or renames a Project; rules that do not outrank PRJ- (every job silently stays PRJ-); and a
+      # template-type fill that overwrites a chosen type or runs after the Project is named.
+      - name: Job number prefixes (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_job_prefixes.py -q
+      # Fountain Move public-form matches (Nik, 2026-11-19). Its own step because it installs its own
+      # frappe stub. Runs the conversion: a public request that matches an existing party waits in
+      # Duplicate Review and writes nothing; no match, a Desk entry and the first request through a
+      # staff invite convert as before; Confirm Match creates only the Opportunity.
+      - name: Fountain Move public-form matches (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_fountain_move_public_match.py -q
+      # Design projects (Nik, 2026-10-30): PRO-0206's four stages as the Design Project (PRO-0206) template.
+      # Its own step because it installs its own frappe stub. Guards a seed patch that raises (an aborted
+      # migrate is a failed deploy) or re-seeds over Nik's edits, the old template disabled before the new
+      # one exists, stage dates that overlap or read as a build phase, and the Create Project dialog
+      # prefilling it for a deal that is not Design.
+      - name: Design project template (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_design_projects.py -q
+      # Scope tab task actions (Nik, 2026-11-03; v1.777.0): a template's tasks into the Tasks Tree,
+      # the in-page Add task dialog, the mass delete. Its own step because it installs its own frappe
+      # stub. Guards an import that duplicates a task already on the job or flattens the template
+      # (a child under the root, a dependency dropped), a second import adding a second group instead
+      # of the missing children, a mass delete that tries a parent before its children or leaves
+      # frappe.flags.mute_messages on, the dialog's values reaching the Task with a field it never
+      # offered, the fixtures putting the tree anywhere but first on the Scope tab, and a dialog
+      # flow that pushes browser history.
+      - name: Scope tab task actions (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_scope_tasks.py -q
+      # The Tasks Tree's rules executed under node (v1.791.0): what a drop does (the thin edge band
+      # reorders, the row body nests, a line is always "before the lower row"), the column sort
+      # within each parent and its way back to the manual order, the row menu's keys. #1418 shipped
+      # a drop-to-nest that read as fixed and still only reordered on prod: SortableJS swapped the
+      # rows on the edge band and the drop saved the last intent seen. The tree now refuses every
+      # SortableJS move and decides from the pointer alone, which these rules pin.
+      - name: Tasks Tree rules (executed under node)
+        run: node scripts/test_task_tree_manager.js
+      # Drag-to-parent on the Tasks Tree + parent dates that follow the subtasks (Nikolas, 2026-11-03;
+      # v1.787.0). Its own step (own frappe stub). Guards the parent promoted AFTER ERPNext's
+      # validate_parent_is_group has thrown (the before_save bug that refused every drop onto a leaf),
+      # the parent widened after validate_parent_expected_end_date has read it (hook order), a hook or
+      # the patch raising out of a save or a migrate, a parent's date wiped by an undated subtask, a
+      # move saved half-way or a refusal the tree swallows, SortableJS back on @latest from a CDN, and
+      # the inline editor or Gantt writing a parent's dates past the hooks.
+      - name: Tasks Tree drag-to-parent + parent dates (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_task_parent_dates.py -q
       # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
       # sys.modules — sharing a process with another stub-installing suite is how
       # they cross-talk. Guards two things that fail expensively and quietly: a
@@ -3590,6 +4196,63 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
+      # The Procurement Tracker's "where it is now", its line states and its by-item view (v1.811.0).
+      # procurement_overview.py and inventory_enhancements/project_stock_rules.py are pure, so this is
+      # plain pytest (a unittest step would collect nothing and pass). Fails the build if a place ever
+      # shows more than its Bin row holds, if a job's stock at another job's site reads as its own, if a
+      # closed order reads as late or a draft order as ordered, if the by-item sums stop de-duplicating
+      # the feed's fan-out or start counting quotes and bills, or if a non-stock item's location stops
+      # being said in words.
+      - name: Procurement Tracker states, by-item view and where-now rules (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_overview.py -q
+      # What the Procurement Tracker says things cost (v1.814.0). procurement_prices.py is pure, and the
+      # feed's own functions are lifted out of project_enhancements/__init__.py (which needs a bench to
+      # import) and run on a frappe stand-in of this file's own, so this is plain pytest with its own
+      # step (a unittest step would collect nothing and pass). Fails the build if a missing price ever
+      # reads as $0.00 or is added into a sum, if a request line split across two orders is priced once,
+      # if a quote or a draft order is added into what was spent, if an order spanning two jobs is
+      # totalled whole, if a receipt is valued at its own copied rate instead of the order's, and, the
+      # permission rule, if a price key reaches the response of a person who may not read Purchase
+      # Orders, or if any key the tracker and the assistant tool already read goes missing.
+      - name: Procurement Tracker prices and who may see them (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_prices.py -q
+      # The where-now lookup against the database (inventory_enhancements/project_stock.py) on its own
+      # frappe stub, so its own step: one ledger query and three reads whatever the number of lines, a
+      # site with no Project Shelf setting has no shelf, and a settings or job-site read that fails
+      # never raises. Then the feed's new functions lifted out of project_enhancements/__init__.py
+      # (which needs a bench to import): the overview is gated on Project read first, and a failed
+      # lookup leaves the feed standing and says so. And the source: both SELECTs of the feed's UNION
+      # name the same columns in the same order (a drift there fails only on MariaDB), the tracker
+      # script dials an endpoint that exists, and every v-html goes through the escaping highlighter.
+      - name: Procurement Tracker where-now lookup and feed wiring (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_stock -v
+      # The tracker's pure browser logic (public/js/procurement_tracker/logic.js) under node: the view
+      # and its filters round-trip through the address and never become a history entry, the filters
+      # narrow lines, documents and items alike, blanks sort last both ways, a half-done status never
+      # takes a finished one's colour, names are never read as markup (table and printed list), and the
+      # form script calls only what exists. And (v1.816.1) the form script's required logic level equals the
+      # bundle's VERSION, and a logic that is too old draws a reload note instead of throwing.
+      - name: Procurement Tracker filters, address and sorting (node)
+        run: node scripts/test_procurement_tracker.mjs
+      # The Procurement Tracker's saved views (v1.816.0): procurement_view_rules.py is pure, and the
+      # endpoints (procurement_views.py) and the DocType controller run on a frappe stand-in of this
+      # file's own with an in-memory table, so this is plain pytest with its own step (a unittest step
+      # would collect nothing and pass, and the stand-in must not leak into another suite). Fails the
+      # build if a view stored with an unknown column, a filter that does not suit its column, or more
+      # than the size limit is ever accepted, if a broken or outdated stored view fails to come back
+      # repaired, and the safety rule: if anybody but a view's owner can read, change, rename or delete
+      # it, or tell from the answer whether it exists, or if any role but System Manager gets a
+      # permission on the DocType (which would open every person's views through /api/resource).
+      - name: Procurement Tracker saved views, layout rules and owner checks (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_view_rules.py -q
+      # The tracker's "returned to the supplier" against the REAL Supplier Return module (v1.807.0), not
+      # a stand-in: supplier_returns.returned_lines on test_supplier_returns' own stub (real SQL on
+      # SQLite, returns made through that module's own functions), read through project_stock._returns
+      # as places_for reads it. Fails the build if a key the tracker reads is renamed, if a status stops
+      # or starts meaning "the goods have left", if a quantity changes unit, or if the ledger's return
+      # rows and a Supplier Return are ever added together. Reuses that suite's stub, so its own step.
+      - name: Procurement Tracker against the real Supplier Return module (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_tracker_supplier_returns -v
       # Receive Items on the Purchase Order (ER-2026-458194): the endpoint is POST-only,
       # the receipt is inserted and submitted through the framework's permission checks
       # (no ignore_permissions), it is built by ERPNext's own mapper, and the form script
@@ -3680,6 +4343,17 @@ jobs:
         run: |
           python -m pip install "PyQRCode~=1.2.1"
           python -m unittest erpnext_enhancements.tests.test_stock_scan_rules -v
+      # The printable rack QR sheet (v1.831.0, www/rack-qr-sheet.html): one page per rack, each
+      # shelf's Stock Scan code with its position, Shelf 1 at the top unless the Warehouse Map's box
+      # says otherwise, a Room box printing a page per rack inside it. The rows, the sizes, the read
+      # (the labels' own URL and QR drawing), the controller's login redirect and roles, the
+      # template rendered through Jinja over a stand-in for templates/web.html (names escaped, only
+      # the SVG marked safe), and the Warehouse form's button. PyQRCode draws the real codes and
+      # Jinja2 renders the template; both are installed here so those halves run instead of skip.
+      - name: Rack QR sheet (bench-free)
+        run: |
+          python -m pip install "PyQRCode~=1.2.1" "Jinja2>=3.1"
+          python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v
       # Stock Scan's surface, asserted on the source because there is no bench in CI to post
       # a voucher against. Guards the class of bug where a phone moves stock nobody could move
       # in the Desk, or moves it twice: every endpoint POST-only, never guest, role-checked
@@ -3727,6 +4401,37 @@ jobs:
       # Boneyard patch (once, idempotent, never over a stored setting). Own frappe stub, own step.
       - name: Bin assignments, Putaway Rules, boneyard and counts (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_bin_assignments -v
+      # Job-site warehouses (v1.801.0, the owner's 2026-11-11 decision: one warehouse per Build project). If this
+      # fails, material sent to a job could read as stock the shop still has (the search total, "Also at", a
+      # reorder rule that rolls up at the company's root), a take at a job's site could be charged to another job
+      # or to none, a site could be opened twice or by somebody who cannot post the transfer, an item could be
+      # given a site as its bin, stock could be sent to a finished job's site where it cannot be used, two phones
+      # could fail to agree on one site (the Project row lock), or the setup patch could write over a Stock
+      # Manager's setting, abort the deploy, or skip a step without leaving the one Error Log row that says so.
+      # job_site_rules.py runs directly; job_sites.py, api/stock_scan.py and bin_assignments.py run on
+      # test_bin_assignments' frappe stub (reused, so its own step). unittest classes.
+      - name: Job-site warehouses (one per project, out of shop availability) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_job_sites -v
+      # The Project Shelf (v1.817.0, the owner's 2026-11-12 decision: everything ordered for a project is received
+      # onto one shared shelf, and stock there is not shop stock). If this fails, a purchase line for a job could
+      # default somewhere other than the shelf (or an Overhead line onto it), parts bought for a job could read as
+      # stock the shop has (the search total, "Also at", a reorder rule that rolls up at the company's root), a
+      # take or a move could leave the shelf with no job on its ledger row so the by-job numbers drift unseen,
+      # the function the reports and the Procurement Tracker call could change shape or hide what its tags do not
+      # explain, an item could be given the shelf as its bin, or the rename patch could merge two warehouses,
+      # write over a Stock Manager's setting, abort the deploy, or skip a step without the one Error Log row that
+      # says so. project_shelf_rules.py runs directly; project_shelf.py, api/stock_scan.py, bin_assignments.py and
+      # procurement_project.py run on test_job_sites' frappe stub (reused, so its own step). unittest classes.
+      - name: The Project Shelf (received for a job, out of shop availability, by job) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
+      # The Inventory Room swap (v1.823.0, patches/swap_inventory_room_names.py, the owner's 2026-11-17 decision): the leaf
+      # Inventory Room becomes Receiving, then the group Inventory becomes Inventory Room. If this fails, the group could be
+      # renamed while the room still held its name (two warehouses merged, or the room's stock, defaults and filters landing
+      # on the whole shop), a saved list filter on the room could end up on the group or a second run could send a filter
+      # on the renamed group to Receiving, a failed step could leave half a rename or abort the deploy, a person could be
+      # named in the build log, or a site without these warehouses could be alerted. Own frappe stub, so its own step.
+      - name: The Inventory Room swap (Inventory Room to Receiving, Inventory to Inventory Room) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_swap_inventory_room_names -v
       # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
       # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
       # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push
@@ -3734,6 +4439,39 @@ jobs:
       # endpoint with its client_ref, the last against the real page script. node is on PATH here.
       - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
+      # The Bin Manager's views beyond one bin (v1.812.0, inventory_enhancements/bin_views.py): By
+      # project, Job sites, Problems and the picker's filters. Its own frappe stub with stand-ins for
+      # api.stock_scan and job_sites, so its own step. Fails the build if an endpoint reads before the
+      # role gate or writes anything, if "unassigned stock" is counted at a job site, the boneyard or
+      # the Project Shelf, if a customer reaches a caller who cannot read Projects or a value one who
+      # cannot read the Stock Ledger, if the boot's extras can fail the page, if the Project Shelf's
+      # numbers stop coming through project_stock.shelf_stock, or if a SQL function is written as a
+      # get_all field. The page side (four tabs as history entries, filters written into the address
+      # in place, Back from a bin onto the filtered picker, the moves between shelf and site through
+      # the existing move_to) is scripts/test_bin_manager.mjs, run by the step above.
+      - name: Bin Manager views (by project, job sites, problems, filters) (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_bin_views -v
+      # The Warehouse Map (v1.818.0, api/warehouse_map.py, inventory_enhancements/warehouse_map_rules.py
+      # and the Warehouse Floor Map DocType): a drawn floor plan with a box for each bay and room. Its own
+      # frappe stub (whose Document.save asks the write permission and runs the real validate) with
+      # stand-ins for api.stock_scan, bin_assignments, bin_views and job_sites, so its own step. Fails
+      # the build if a read happens before the role gate, if a half-drawn (disabled) map is shown on
+      # the page to anyone but its editors, if a save goes past the DocType's own permission or writes
+      # a key the payload merely carries, if a stale editor can overwrite a newer map or a save can
+      # leave its stamp out, if one warehouse can sit on two boxes or two maps, if the floor plan
+      # picture can be anything but that map's own private File, if a public File attached to a map is
+      # let through (it is a real building's layout and this repo is public), if the page goes back to
+      # Frappe's upload dialog (a Private switch, and a picture shrunk to 1024 by 768), if a bay's front
+      # view is in creation order (bin 10 before bin 9) or puts Center before Left, if a map's name can
+      # hold a double quote (the Desk's own selector throws and the page never shows), if the rename
+      # hook can raise, if a map created, deleted, hidden or shown leaves the Desk's cached boot data
+      # (and so every Show on map door) as it was, or if the endpoint file writes anything but the
+      # map's own record. Runs
+      # scripts/test_warehouse_map.mjs under node: every screen its own address, the front view's
+      # order and the arrows that change it, a box moved or sized stays inside the drawing, Save sends
+      # the stored fields only. unittest classes; node is on PATH here.
+      - name: Warehouse Map (rules, endpoints, permissions, page logic) (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_warehouse_map -v
       # Reorder levels on the Bin Manager and the Inventory Scanner Audit (v1.725.0,
       # api/reorder_levels.py): the endpoints on a frappe stub whose Item.save refuses what ERPNext's
       # Item.validate refuses. A stale page must write nothing (the Item's modified), the Item's write
@@ -3794,6 +4532,27 @@ jobs:
       # summary, row key and paste equal the Python's (tests/data/count_desk_vectors.json).
       - name: Count Desk rules, endpoints and page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_count_desk -v
+      # Warehouse Transactions (v1.797.0, TASK-2026-03136/03137): every stock movement and who made it. Fails the
+      # build if a blank Item, Warehouse or User filter adds a condition (why it is a Script Report, not a Query
+      # Report), if canceled entries stop being skipped, if a warehouse stops covering its bins, if a count's change
+      # (stored as actual_qty 0 by ERPNext 16.52.1) stops being derived from the previous balance, if a ledger read
+      # stops going through the permission-checked get_list, if a field read is not on Stock Ledger Entry at ERPNext
+      # v16.52.1, or if the hub links, card counts, stamps or the force-import patch (savepoint + rollback per
+      # workspace) drift. Own frappe stub, so its own step; unittest classes.
+      - name: Warehouse Transactions report and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v
+      # Inventory reports (v1.805.0): Location Contents, Where Is This Item, Project Materials and Job Site Contents.
+      # Fails the build if a status rule changes (as expected, assigned and empty, here and unassigned, here but
+      # assigned to another bin, on order, undecided, held at a place that is never a bin), if Location Contents
+      # stops calling the Bin Manager's own listing rule (api.stock_scan._items_at, no row cap) or grows a copy of
+      # it, if the Project Shelf's shares stop adding up to what is on the shelf, if the project roll-up changes
+      # (ordered from order lines, received from receipt lines, returns, still to come against closed-short, used
+      # less brought back, "not located" for non-stock lines), if a report raises before the Project Shelf field
+      # exists, if a stock ledger read stops skipping canceled entries or a value is interpolated into SQL, if a row
+      # carries markup (print and export read the raw cell), or if the hub links, card counts or the force-import
+      # patch (savepoint + rollback per workspace) drift. Own frappe stub, so its own step; unittest classes.
+      - name: Inventory reports and hub links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_inventory_reports -v
       # "Turn on Maintain Stock" (v1.754.0): writes is_stock_item past ERPNext's Item.cant_change, so
       # every check is all that stands between the action and a stock ledger that takes out what never
       # went in. Fails the build if a check stops refusing (a live ledger entry, a submitted delivery
@@ -3806,8 +4565,100 @@ jobs:
       # a repost rebuilds it from today's flag). The check queries run for real on SQLite
       # (tests/sqlite_sql_helper.py), and the form script under node. Own frappe stub, so its own
       # step; unittest classes.
-      - name: Turn on Maintain Stock (checks, switch, endpoints, receipt guards; bench-free, SQLite)
+      #
+      # v1.809.0, same module and stub: an open Purchase Order or Material Request no longer refuses,
+      # so the build fails if the switch stops recounting the Bin through ERPNext's own
+      # stock_balance functions, recounts before the flag is written and the cache cleared, leaves a
+      # line without a warehouse, or lets an open Sales Order through. And the bulk page (Switch
+      # Items to Maintain Stock): the name rule that tells a part from labor or a fee, a person's
+      # choice beating it, the bulk reader held equal to the single-item one, an apply that queues
+      # only what the server itself would switch, the job committing each item and refusing one
+      # without stopping the rest, a run picked up from its rows after a deploy, nothing switching
+      # on migrate, and the Delivery Note guard behind the relaxed Sales Invoice rule. Also: the
+      # rule calling a placeholder, a copy, a nameless item, an office supply or an uncoded
+      # catch-all line a part; an Item creator in the app that does not state is_stock_item; a job
+      # timeout recorded as a refusal; and the second Bin recount after the commit going missing.
+      # Runs scripts/test_maintain_stock_switch.mjs under node as well.
+      - name: Turn on Maintain Stock (checks, switch, open orders, bulk page; bench-free, SQLite)
         run: python -m unittest erpnext_enhancements.tests.test_maintain_stock -v
+      # A price is required when a stock item is received (v1.809.0). Fails the build if a stock
+      # item's $0 line can be submitted on a Purchase Receipt or a stock-updating Purchase Invoice,
+      # if ERPNext's own Allow Zero Valuation Rate stops being the way to say "free on purpose", if
+      # a draft is refused instead of warned (the intake makes drafts), if the warning can raise, if
+      # a price reaches an order any way but ERPNext's update_child_qty_rate or for a person who may
+      # not edit the order, or if Receive Items or Stock Scan stops asking before it builds a
+      # receipt. Also: "no charge" open to a person who may not price the order or given without
+      # a reason, a line such a person cannot settle coming in at $0 or blocking the rest of the
+      # delivery instead of being left for purchasing with a ToDo, a screen telling them to tick
+      # anything, and a Material Receipt bringing a stock item in at $0. And the Desk form and
+      # an intake draft as a way around it: a row ticked Allow Zero Valuation Rate by a person
+      # who may not price the order, or with no "No charge:" reason in Remarks, must refuse at
+      # submit, while a customer-provided item and a pricing rule's free item still pass. Own
+      # frappe stub, so its own step; unittest classes.
+      - name: A price at receipt (rule, hooks, every receiving path; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_receipt_price -v
+      # Supplier Returns (v1.807.0): the rules of sending something back to a supplier. Fails the
+      # build if an outcome (refund, credit, replacement, closed) can be recorded before the items
+      # were marked Sent Back, if a Stock User can mark money received or an Accounts User can ship,
+      # if a line can return more than its receipt line received less what other returns hold, if a
+      # receipt line of an item switched to a stock item later (no stock ledger entry) is put on the
+      # standard Purchase Return (ERPNext would take out stock that was never put in), if the
+      # standard return is cut to the wrong lines or a shortfall is trimmed in silence, if a typed
+      # refund is accepted once a Debit Note or Payment Entry is linked, if a debit note the
+      # supplier still owes on counts as money received, or if the keys the Project Materials
+      # report reads (returned_line) are renamed; if one payment covering two returns can be counted
+      # in full on each, if a finished return's fees stop being locked, or if a Purchase Return
+      # that took more than its record says can be linked. Pure: no frappe, no stub. unittest.
+      - name: Supplier Returns rules (steps, quantities, which document, the money rule; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v
+      # Supplier Returns, the module and its endpoints, with the module's own queries run for real
+      # on SQLite. Fails the build if a second return against a receipt can take what the first
+      # holds; if a record-only line reaches ERPNext's mapper or the Maintain Stock guard's
+      # ignore flag is ever set; if the drafted Purchase Return or Debit Note carries lines or
+      # quantities that are not this return's, is submitted, or (the debit note) moves stock a
+      # second time; if a status or an amount typed into a save sticks; if a payment TO a supplier
+      # is taken for a refund; if anything but the Send button's endpoint can send the return
+      # request (a save, a step, a doc_event, the daily job) or that endpoint accepts an API key;
+      # if a doc_event can raise into a Purchase Receipt's or a payment's submit; or if hooks, the
+      # DocType's options, the scripts' lists, Stock Scan's endpoint map, the print format, the
+      # workspace or the patches drift from the code; if a return reopened from Denied can claim
+      # what another return took meanwhile; if the Debit Note drafted against an unpaid bill is
+      # left booked against itself (ERPNext 16.54's default), so the bill stays unpaid; or if a
+      # canceled receipt leaves its return with no way out. Own frappe stub, so its own step.
+      - name: Supplier Returns module (accounting cases, email, hooks; bench-free, SQLite)
+        run: python -m unittest erpnext_enhancements.tests.test_supplier_returns -v
+      # Package tracking, the carrier client (v1.819.0, carrier_tracking/client.py, normalize.py, carriers.py).
+      # Fails the build if a FedEx or UPS URL, header or login drifts from what the carriers document; if a token
+      # is fetched for every package (UPS's token endpoint is throttled far below Track, and FedEx's answers 403 for
+      # ten minutes) or cached for its whole life; if a 401 is retried more than once; if a 429, a 5xx, a timeout or
+      # a body that is not JSON raises, or comes back with a status that would overwrite what the carrier said
+      # last; if "not found" and "invalid" are confused with "could not check"; if a carrier's error that echoes
+      # the client secret, the client id or the access token reaches the result unmasked; or if the settings stop
+      # being off by default or the backfill writes over a stored switch. No frappe needed: the client takes its
+      # HTTP and cache as arguments. unittest.
+      - name: Carrier tracking client (FedEx and UPS tokens, errors, normalization, secrets; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_client -v
+      # Package tracking, tracked packages on Purchase Orders and the hourly poller (v1.819.0,
+      # carrier_tracking/poll_rules.py, tracking.py, package_rules.py, api/package_tracking.py). Fails the build if
+      # adding or removing a tracking number ever needs write or submit on the order, or works without read on the
+      # order and the Tracked Package right; if anyone but System Manager can write a Tracked Package (and so type a
+      # status); if a write endpoint accepts GET; if the poller asks a carrier, writes a row or logs a line while the
+      # feature or every carrier is off; if a run can exceed 25 packages or its time budget, or keeps asking a
+      # carrier that refused us; if "could not check" changes a stored status or stops a package; if a delivered,
+      # invalid, never-found, stale or 90-day-old package keeps being polled; or if poll() can raise into the
+      # scheduler or log a token. Own frappe stub, so its own step. unittest.
+      - name: Carrier tracking poller and endpoints (permission rule, limits, silence while off; bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_poller -v
+      # Package tracking, the Purchase Order banner and the carrier health tiles (v1.819.0,
+      # public/js/po_package_tracking.js, api/integrations_health.py). Runs the real banner script under node
+      # (scripts/test_po_package_tracking.js) and fails the build if it dirties the form (the order would open as
+      # "Not Saved" and leaving it would ask "Leave site?"), writes frm.doc, changes the route (Back would stop
+      # where it should not), draws a javascript: link or an unescaped tracking number, replaces the purchaser's
+      # Expected Delivery Date with the carrier's, or shows Add, Remove or Refresh to someone the server refused;
+      # or if the FedEx or UPS health tile reads the secret as more than a boolean or shows a last problem
+      # unmasked. Own frappe stub for the tiles, so its own step. unittest.
+      - name: Carrier tracking banner and health tiles (form stays clean, links safe; bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_carrier_tracking_banner -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the
@@ -3831,8 +4682,30 @@ jobs:
       # never resolve to it -- blank fell through to Triton Settings'
       # chat_model_id, which is set on every real site. The failure is silent
       # (the picker just opens on Flash), so it needs a test rather than review.
+      #
+      # Since v1.801.1 it also holds a pinned copy of the Gemini half of Triton's
+      # model catalog and fails when the widget's fallback list offers an id that
+      # is not in it. The fallback offered `gemini-3.1-pro-preview` as "Pro" after
+      # Triton dropped it on 2026-11-11, and nothing noticed: a stale model id is
+      # not an error anywhere in this app, it is a picker entry that quietly does
+      # something else. The same file checks that a stale *Default Model* setting
+      # starts a chat on Auto instead of reaching Triton, and that
+      # `api/telephony.py` no longer names the Live model Google retires on
+      # 2026-12-13. The truth is in the Triton repository
+      # (`backend/app/core/model_catalog.py`); the pin moves with it by hand.
       - name: Triton widget default model (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_triton_widget_defaults.py -q
+      # The framed Triton widget's server half (v1.802.0): who is put on it, and the one-time
+      # sign-in ticket. Its own step because it re-installs the frappe/requests stubs and swaps
+      # frappe.throw. pytest, not unittest: it uses monkeypatch and parametrize. What it pins:
+      # every unclear case reads as Classic (the mode field is new, so on every live site it has
+      # no row and reads None), the framed widget cannot go around the master switch or the
+      # allow-list, a ticket is issued only over POST and only to someone on the framed widget,
+      # a failure comes back as one plain sentence (it is shown to the person by the frame) and
+      # never as a Desk dialog, the call to Triton gives up inside the frame's own 15-second
+      # wait, and neither the shared secret nor a ticket reaches a log line or the cache.
+      - name: Framed Triton widget mode and sign-in ticket (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_triton_frame.py -q
       # Gemini Enterprise Agent Platform client (v1.476.0). Its own step for the reason the
       # two above have one: it installs its own frappe/requests/google-auth stubs at module
       # scope. What it pins is the shape of the one request this app sends to the platform:
@@ -4104,6 +4977,22 @@ jobs:
       # node is on PATH in this job, so the harness cannot skip here.
       - name: Planner taps open the record (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_tap_opens -v
+      # Done work onto old dates (Nik, 2026-11-04, v1.796.0): a manager moves a Completed task on the Project
+      # Planner's Gantt or grids, or a finished visit on the Maintenance Planner, as a historical record. Pins
+      # that every date moves together and stays valid for ERPNext (Completed On never after today), that the
+      # endpoints are managers only, never draft, ask no reason, tell nobody and switch off ERPNext's dependent
+      # push, that Undo is exact, and the pages' wiring (their own blocks, above the tour). planner_history runs
+      # against a frappe stub; the page rules under node. Unittest, in its own step: its stub stays its own.
+      - name: Planner done work onto old dates (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_history -v
+      # Nikolas's six planner picks of 2026-11-03 (v1.788.0): the Lookahead's month band, "Open … in new tab"
+      # and Ctrl+Enter, the scroll kept over a redraw, the view tabs at the bar's right end, the Crew board's
+      # order and the hover card, and the pencil-only hours rule. Runs scripts/test_planner_six_picks.js
+      # against the real kit (records, popover) and both real page scripts, and pins the wiring (every
+      # redraw an arrow causes goes through the scroll keeper; the kit's one window.open is open_new_tab).
+      # node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner six picks of 2026-11-03 (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_six_picks -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
@@ -4233,6 +5122,12 @@ jobs:
       # two-letter form cannot be exercised on this US-only site at all.
       - name: Address component mapping (bench-free, node)
         run: node scripts/test_address_components.js
+      # The same widget driven end to end against a fake DOM and a fake Places library (v1.774.0): a
+      # pick reaches on_place (the Fountain Designer's address, point and state) and on_pick (the
+      # Address forms' fields, through the Country lookup). Both run inside the pick handler, which the
+      # pure-region test above cannot reach, and a regression in either fills nothing, silently.
+      - name: Address autocomplete picks (bench-free, node)
+        run: node scripts/test_address_autocomplete_pick.js
       # The floating Triton widget's streaming re-entrancy rule: every function that
       # clears the transcript, or switches which session it belongs to, must refuse
       # while a stream is in flight. Two of the four were missing it, and the failure is
@@ -4317,6 +5212,7 @@ jobs:
   # ---------------------------------------------------------------------------
   version-sync:
     name: Version sync (__init__.py == package.json)
+    if: github.event_name != 'schedule' # the nightly run is for secret-scan alone
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -4366,53 +5262,103 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Committed secrets — a HARD gate, and deliberately its own job.
+  # Committed secrets — a HARD gate on every event, and deliberately its own job.
   #
-  # This app has no service-account JSON key anywhere: Drive and Calendar delegate
-  # through the VM's own identity, and the retired Google Chat integration did the
-  # same (ADR 0009 was keyless by construction, and ADR 0011 removed it entirely).
-  # The design removes the credential; this job is what keeps it removed, because
-  # the design holds only until somebody drops a key file in the tree to test
-  # something locally.
+  # Drive and Calendar share a real service-account key, held in an encrypted Password
+  # field and never in the tree; the retired Google Chat integration was keyless (ADR
+  # 0009, removed by ADR 0011). This job is what keeps "never in the tree" true, because
+  # it holds only until somebody drops a key file in to test something locally.
   #
-  # NOT a step in `unit-tests`, for one concrete reason: `actions/checkout` clones
-  # at depth 1, and the whole point of the scan is HISTORY. `git rm` does not
-  # un-publish anything — a key committed and reverted an hour later is still in
-  # the pack, still in every clone, still on GitHub. On a shallow clone the script
-  # would examine one commit and report a clean history it never read, which is the
-  # precise failure mode ("passes because the pattern is wrong") a secret scanner
-  # must not have. So: its own job, `fetch-depth: 0`, and the script itself REFUSES
-  # to run on a shallow clone rather than reporting a false pass.
+  # HISTORY, not just HEAD: `git rm` does not un-publish anything. A key committed and
+  # reverted an hour later is still in the pack, in every clone and on GitHub (the repo
+  # is public). So: its own job with `fetch-depth: 0`, and the script REFUSES a shallow
+  # clone rather than report a clean history it never read. NO `continue-on-error`:
+  # ruff is advisory because of a style backlog, and that reasoning does not transfer.
+  # An advisory secret scan is not a secret scan.
   #
-  # NO `continue-on-error`. `ruff check` above is advisory by design, because of a
-  # known style backlog; that reasoning does not transfer. An advisory secret scan
-  # is not a secret scan.
+  # TWO SCOPES, one script, one set of rules:
   #
-  # Proven, not assumed (2026-08-08): planting a fake service-account key, an OAuth
-  # client secret and a base64 token beside a googleapis URL made it exit 1 on all
-  # three; removing them returned it to 0 over 2,187 working-tree files and 7,437
-  # history blobs in ~22s. Scanning this repo's real history found nothing.
+  #   pull_request -> "No committed secrets (PR range)": the working tree plus every blob
+  #     reachable from the PR's merge commit and not from main (`--since origin/main`),
+  #     intermediate commits included, so a key added and removed inside the PR is still
+  #     caught. (Not loose objects: a push carries only reachable ones, all in the range.) That is sound because main's history was gated as it landed: what a PR
+  #     can add to the repository is exactly that range.
+  #   push to main, and nightly -> "No committed secrets (full history)": every blob in
+  #     the object database, with a cache of blobs already scanned clean. This is the
+  #     backstop: for a rule that got stronger (a new rule is a new fingerprint, so the
+  #     cache is discarded and everything is re-read), and for anything a range could not
+  #     see.
+  #
+  # Why the split. The full walk took ~22s when this job was written (2026-08-08: 2,187
+  # working-tree files, 7,437 history blobs) and 10-15 minutes by 2026-11-02, two runs
+  # having been cancelled at the old 10-minute limit on 2026-10-14 with the scan itself
+  # clean. CHANGELOG.md is the cause: a multi-megabyte file with 1,400+ versions, one per
+  # PR, about 5 GB of text per run that was nearly all read and found clean the day
+  # before: 14m37s and 14m43s on main that day. Measured for v1.774.2 (see CHANGELOG): the
+  # PR range scanned in 9.9s in CI; the full walk on a fresh clone took 543s with an empty
+  # cache and 6.1s with a warm one. A rule change empties the cache, so the first full walk
+  # after one is the slow run: 17m20s in CI on 2026-11-02. The provider and password rules
+  # added on 2026-11-18 read the same text with more patterns. Each skips a line that lacks
+  # the substring it needs (the script's `_QUICK_TRIGGERS`): measured on a fresh clone, the
+  # walk took twice as long without that and about a tenth longer with it. 60 minutes is
+  # the headroom for that one run; a job killed at its limit saves no cache, so a limit that
+  # is too short fails the same way on every run after it.
+  #
+  # THE CACHE is a list of blob shas keyed on `--rules-hash`, a hash of the whole script,
+  # so any change to a pattern, the marker, the window or the code that applies them
+  # starts from empty. The cache key adds the run id and `restore-keys` takes the newest
+  # cache under the same rules, so each run starts from the last one's list. Only main
+  # and the nightly run read or write it, and GitHub scopes a PR's caches to that PR, so
+  # no pull request can write a list that main then trusts.
+  #
+  # Proven, not assumed: planting a fake service-account key, an OAuth client secret and
+  # a base64 token beside a googleapis URL makes it exit 1 on all three, in both scopes —
+  # tests/test_secret_scan.py (Standalone unit tests) does it on every PR now, along with
+  # a cache written under other rules being ignored.
   # ---------------------------------------------------------------------------
-  # The history scan reads every version of every file, and CHANGELOG.md alone is now a
-  # 3.7 MB file with 1,400+ versions (every PR adds one): about 5 GB of text per run. That
-  # took ~22s when this job was written and 5-10 minutes by 2026-10-14, when two runs were
-  # cancelled at the old 10-minute limit with the scan itself still clean. 30 minutes is
-  # headroom, not a fix; the fix is to skip blobs already scanned clean (a blob is
-  # content-addressed, so clean once is clean for the same rules).
   secret-scan:
-    name: No committed secrets (working tree + full git history)
+    name: ${{ github.event_name == 'pull_request' && 'No committed secrets (PR range)' || 'No committed secrets (full history)' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
-          # Load-bearing. The default depth of 1 makes the history scan a no-op.
+          # Load-bearing for the full walk (depth 1 would make it a one-commit scan), and
+          # the range needs main's history to subtract. The script refuses a shallow clone.
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Scan every tracked file and every blob in history
-        run: python scripts/check_no_committed_secrets.py
+
+      - name: Fetch main, the base of the range
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: Scan the working tree and every blob this PR adds
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_no_committed_secrets.py --since origin/main
+
+      - name: Rules fingerprint (the cache key)
+        id: rules
+        if: github.event_name != 'pull_request'
+        run: echo "hash=$(python scripts/check_no_committed_secrets.py --rules-hash)" >> "$GITHUB_OUTPUT"
+      - name: Restore the clean-blob cache
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/secret-scan/clean-blobs.txt
+          key: secret-scan-${{ steps.rules.outputs.hash }}-${{ github.run_id }}
+          restore-keys: secret-scan-${{ steps.rules.outputs.hash }}-
+      - name: Scan the working tree and every blob in history
+        if: github.event_name != 'pull_request'
+        run: python scripts/check_no_committed_secrets.py --cache ~/.cache/secret-scan/clean-blobs.txt
+      # Saved even when the scan fails: the list holds only blobs found clean, and a
+      # finding in one blob says nothing about the others.
+      - name: Save the clean-blob cache
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && steps.rules.outputs.hash != '' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/secret-scan/clean-blobs.txt
+          key: secret-scan-${{ steps.rules.outputs.hash }}-${{ github.run_id }}
 
   # ---------------------------------------------------------------------------
   # NOTE: A Frappe integration-test job (spinning up a real bench with ERPNext

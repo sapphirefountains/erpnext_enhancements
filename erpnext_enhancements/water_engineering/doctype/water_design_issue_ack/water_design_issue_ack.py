@@ -3,7 +3,7 @@
 
 """One acknowledged design warning: who signed off on which issue, when.
 
-Rows are appended by ``api/water_design.acknowledge_issue`` and pruned by the
+Rows are appended by ``api/designer.acknowledge_issue`` and pruned by the
 parent's validate when their issue key no longer matches a live issue (a stale
 acknowledgement must never grandfather a new problem). Deleting a row in the
 grid un-acknowledges the warning.

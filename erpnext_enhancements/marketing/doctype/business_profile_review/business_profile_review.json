@@ -1,0 +1,185 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:GBPR-{location_id}-{review_key}",
+ "creation": "2026-10-29 18:00:00.000000",
+ "description": "One Google Business Profile review, as of the last nightly read. Each review is its own row so that one the reviewer deletes is not lost: Google returns only the reviews that exist now. Written only by marketing/gbp/sync.py.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "location_id",
+  "review_key",
+  "location_title",
+  "column_break_key",
+  "star_rating",
+  "create_time",
+  "update_time",
+  "review_section",
+  "reviewer_name",
+  "comment",
+  "reply_section",
+  "reply_comment",
+  "reply_time",
+  "tracking_section",
+  "first_seen",
+  "last_seen",
+  "column_break_tracking",
+  "removed_on",
+  "review_id"
+ ],
+ "fields": [
+  {
+   "fieldname": "location_id",
+   "fieldtype": "Data",
+   "label": "Listing ID",
+   "reqd": 1,
+   "set_only_once": 1,
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "review_key",
+   "fieldtype": "Data",
+   "label": "Review Key",
+   "reqd": 1,
+   "set_only_once": 1,
+   "read_only": 1,
+   "hidden": 1,
+   "description": "A hash of Google's reviewId (performance.rules.value_key): the ID is too long to name a record with, and the same review must always resolve to the same row."
+  },
+  {
+   "fieldname": "location_title",
+   "fieldtype": "Data",
+   "label": "Listing",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_key",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "star_rating",
+   "fieldtype": "Int",
+   "label": "Stars",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "create_time",
+   "fieldtype": "Datetime",
+   "label": "Written",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Google's createTime, in the site's time zone."
+  },
+  {
+   "fieldname": "update_time",
+   "fieldtype": "Datetime",
+   "label": "Edited",
+   "read_only": 1,
+   "description": "Google's updateTime, in the site's time zone."
+  },
+  {
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "reviewer_name",
+   "fieldtype": "Data",
+   "label": "Reviewer",
+   "read_only": 1,
+   "description": "The display name Google shows publicly with the review."
+  },
+  {
+   "fieldname": "comment",
+   "fieldtype": "Long Text",
+   "label": "Comment",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reply_section",
+   "fieldtype": "Section Break",
+   "label": "Our reply"
+  },
+  {
+   "fieldname": "reply_comment",
+   "fieldtype": "Long Text",
+   "label": "Reply",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reply_time",
+   "fieldtype": "Datetime",
+   "label": "Replied",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Tracking"
+  },
+  {
+   "fieldname": "first_seen",
+   "fieldtype": "Date",
+   "label": "First Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_seen",
+   "fieldtype": "Date",
+   "label": "Last Seen",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_tracking",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "removed_on",
+   "fieldtype": "Date",
+   "label": "Gone From Google",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "description": "The first night a complete read of the listing's reviews no longer had it: deleted by the reviewer or removed by Google. Kept, because Google does not give a deleted review back."
+  },
+  {
+   "fieldname": "review_id",
+   "fieldtype": "Small Text",
+   "label": "Google Review ID",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Business Profile Review",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 0,
+   "delete": 1,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  }
+ ],
+ "sort_field": "create_time",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "reviewer_name"
+}

@@ -46,7 +46,8 @@ explicit address or a Role whose holders are invited.
 routes is the "Create Accounting Project & Send Invoice" note, composed from the
 Project's step-4 button. It used to take the configured Billing list and say
 nothing about money, which left Billing to go and find out how much of the deal
-to invoice — so the deal now carries the answer. **First Invoice Percentage** and
+to invoice — so the deal now carries the answer. **Down Payment Percentage** (the field
+is still ``custom_first_invoice_percentage``; labelled "First Invoice Percentage" until v1.783.0) and
 **Billing Email** are Custom Fields on *both* Opportunity and Project;
 :func:`billing_terms` resolves them field by field, Project over Opportunity, and
 :func:`billing_notice_context` hands the composer the recipients, the percentage
@@ -82,7 +83,7 @@ from frappe.utils import (
 )
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.crm_enhancements import handoff_calendar
+from erpnext_enhancements.crm_enhancements import handoff_calendar, product_sale
 from erpnext_enhancements.crm_enhancements.historical import is_historical
 from erpnext_enhancements.feature_flags import handoff_gate_enabled, process_automation_enabled
 from erpnext_enhancements.utils.working_days import add_working_days
@@ -367,7 +368,7 @@ def project_meeting_attendees(project):
 	return resolve_project_attendees(project)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_project_meeting(project, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the project launch meeting and invite the team.
 
@@ -1087,7 +1088,7 @@ def _cancel_meeting(event_name):
 		}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def schedule_handoff_meeting(opportunity, starts_on=None, attendees=None, duration_minutes=None):
 	"""Book (or move) the hand-off meeting and invite Sales, Production and Billing.
 
@@ -1199,8 +1200,8 @@ def _stamp_handoff(doc, skip_reason=None):
 
 	``db_set`` rather than ``save``: these are read-only fields on a document the
 	user may not otherwise be allowed to write, and going through ``save`` would
-	re-run the whole Opportunity validation chain (including the rank gate) for
-	what is a single-fact stamp.
+	re-run the whole Opportunity validation chain for what is a single-fact
+	stamp.
 	"""
 	now = now_datetime()
 	doc.db_set(
@@ -1237,7 +1238,7 @@ def _mirror_onto_project(opportunity, when, by, skip_reason):
 		frappe.log_error(frappe.get_traceback(), "Hand-off: mirror onto project failed")
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mark_handoff_complete(opportunity):
 	"""Record that the hand-off meeting happened. This is what opens the gate."""
 	doc = frappe.get_doc("Opportunity", opportunity)
@@ -1253,7 +1254,7 @@ def mark_handoff_complete(opportunity):
 	return {"already": False, "on": str(stamped), "by": frappe.session.user}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def skip_handoff(opportunity, reason):
 	"""Skip the hand-off meeting, on the record, with a reason.
 
@@ -1303,8 +1304,20 @@ def handoff_state(opportunity):
 	# A deal still on a Lead cannot hand off cleanly: the Project takes the Lead as its customer
 	# and no Google Drive folder is made. The Closed Won prompt warns (Nik, 2026-10-13).
 	on_lead = frappe.db.get_value("Opportunity", opportunity, "opportunity_from") == "Lead"
+	# Product sale (v1.827.0, product_sale.py): a person's tick, which linked quotes can overrule.
+	# is_product_sale: the prompt asks nothing and the tab offers only Create Project Anyway.
+	# product_sale_suggested: the prompt and the tab ask the person. product_sale_conflict: ticked,
+	# but a linked quote carries something else, so the deal is a job. Both branches, like the two
+	# above, so it holds on a site without the gate fields too.
+	products = product_sale.deal_state(opportunity)
+	product_keys = {
+		"is_product_sale": products["is_product_sale"],
+		"product_sale_marked": products["marked"],
+		"product_sale_suggested": products["suggested"],
+		"product_sale_conflict": products["conflict"],
+	}
 	if not _has_gate_fields():
-		return {"available": False, "is_historical": historical, "on_lead": on_lead}
+		return {"available": False, "is_historical": historical, "on_lead": on_lead, **product_keys}
 
 	row = frappe.db.get_value(
 		"Opportunity",
@@ -1360,7 +1373,149 @@ def handoff_state(opportunity):
 		"gate_open": not handoff_block_reason(opportunity),
 		"gate_message": _(GATE_MESSAGE),
 		"is_historical": historical,
+		**product_keys,
 	}
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_product_sale(opportunity, ticked=1):
+	"""Tick or untick Product Sale (No Project) on a deal: a person's decision (v1.827.0).
+
+	Called by the Closed Won prompt, the Hand-Off Process tab and the question after Create Quotation.
+	Needs write on the deal. Written with ``set_value`` (which moves ``modified``, so a stale open
+	form is told it changed) rather than a full save, which would run every Opportunity hook and
+	could be refused by one unrelated to this, as the board's snooze does it. The parameter is
+	``ticked``, not ``product_sale``: that name is the module this file reads the rule from.
+
+	The hand-off gate follows the tick (:func:`product_sale_gate_updates`), exactly as a tick on the
+	form does through :func:`follow_product_sale_tick`. Ticking also gives the deal the Products
+	value stream, as the Task asked. Returns the deal's product-sale state.
+	"""
+	if not frappe.db.exists("Opportunity", opportunity):
+		frappe.throw(_("Opportunity {0} was not found.").format(opportunity))
+	if not frappe.has_permission("Opportunity", "write", doc=opportunity):
+		frappe.throw(
+			_("You can't change this Opportunity, so you can't mark it a product sale."),
+			frappe.PermissionError,
+		)
+	if not frappe.db.has_column("Opportunity", product_sale.MARKER):
+		frappe.throw(_("Product Sale (No Project) is not set up on this site yet. Run a migrate first."))
+	value = 1 if cint(ticked) else 0
+	updates = {product_sale.MARKER: value}
+	if _has_gate_fields():
+		row = frappe.db.get_value(
+			"Opportunity",
+			opportunity,
+			["status", "custom_created_project", "custom_handoff_meeting_held", "custom_handoff_due_by"],
+			as_dict=True,
+		)
+		is_product = bool(value) and product_sale.documents_agree(opportunity)
+		updates.update(product_sale_gate_updates(value, row or {}, is_product))
+	frappe.db.set_value("Opportunity", opportunity, updates)
+	if value:
+		_tag_products_stream(opportunity)
+	return product_sale.deal_state(opportunity)
+
+
+def product_sale_gate_updates(ticked, row, is_product):
+	"""What the hand-off gate becomes when Product Sale is ticked or unticked (v1.827.0).
+
+	Only on a won deal with no project and no recorded meeting: elsewhere the gate is either not
+	stamped yet (it is at the win) or already done with.
+
+	* **Ticked, and the deal really is a product sale** (``is_product``: no linked quote disagrees):
+	  the gate lifts. There is nothing to hand off, the overdue escalation reads the gate, and a gate
+	  left closed would refuse even Create Project Anyway. The deadline stamped at the win stays: it
+	  is the record that the gate applied (the escalation and the tab read the flag, not the date).
+	* **Unticked:** only a gate the tick lifted comes back, and the stamped deadline is how that is
+	  known. :func:`stamp_handoff_gate` stamps it only on a deal it gates, so a Service Call's deal, a
+	  deal won before the gate shipped, or a deal ticked before its win has none and stays ungated.
+	  Create Project Anyway clears the tick with a bare ``set_value`` (``api._clear_product_sale``), so
+	  it never comes through here and is never gated.
+	"""
+	if (
+		row.get("status") != WON_STATUS
+		or row.get("custom_created_project")
+		or cint(row.get("custom_handoff_meeting_held"))
+	):
+		return {}
+	if ticked:
+		return {"custom_handoff_gate_applies": 0} if is_product else {}
+	if not row.get("custom_handoff_due_by"):
+		return {}
+	return {"custom_handoff_gate_applies": 1}
+
+
+def follow_product_sale_tick(doc, method=None):
+	"""Opportunity ``before_save``: a tick or untick on the form moves the gate as the button does.
+
+	Without it, ticking the field by hand left a won deal gated: Create Project Anyway was refused
+	with "Hand-Off Required", the tab hid the booking buttons, and the escalation kept calling the
+	deal overdue. Runs after :func:`stamp_handoff_gate`. Never raises.
+	"""
+	try:
+		meta = doc.meta
+		if not (meta.get_field(product_sale.MARKER) and meta.get_field("custom_handoff_gate_applies")):
+			return
+		before = doc.get_doc_before_save()
+		if before is None:
+			return
+		ticked = cint(doc.get(product_sale.MARKER))
+		if ticked == cint(before.get(product_sale.MARKER)):
+			return
+		row = {
+			"status": doc.status,
+			"custom_created_project": doc.get("custom_created_project"),
+			"custom_handoff_meeting_held": doc.get("custom_handoff_meeting_held"),
+			"custom_handoff_due_by": doc.get("custom_handoff_due_by"),
+		}
+		is_product = bool(ticked) and product_sale.is_product_sale_doc(doc)
+		for field, value in product_sale_gate_updates(ticked, row, is_product).items():
+			setattr(doc, field, value)
+	except Exception:
+		return
+
+
+def _tag_products_stream(opportunity):
+	"""The Products value stream on a deal a person has marked a product sale. Never raises.
+
+	The row goes in directly and the tags are refreshed the way the form's own
+	``sync_opportunity_tags_for_existing`` does it; the caller already checked write permission.
+	"""
+	try:
+		if not frappe.db.exists("Value Streams", "Products"):
+			return
+		rows = frappe.get_all(
+			"Value Stream",
+			filters={
+				"parent": opportunity,
+				"parenttype": "Opportunity",
+				"parentfield": "custom_value_stream",
+			},
+			fields=["value_stream", "value_streams", "idx"],
+		)
+		if any("Products" in (r.get("value_stream"), r.get("value_streams")) for r in rows):
+			return
+		frappe.db.savepoint("product_sale_tag")
+		frappe.get_doc(
+			{
+				"doctype": "Value Stream",
+				"parent": opportunity,
+				"parenttype": "Opportunity",
+				"parentfield": "custom_value_stream",
+				"idx": max([r.get("idx") or 0 for r in rows] + [0]) + 1,
+				"value_stream": "Products",
+			}
+		).db_insert()
+		from erpnext_enhancements.crm_enhancements.api import sync_opportunity_tags_for_existing
+
+		sync_opportunity_tags_for_existing(opportunity)
+	except Exception:
+		try:
+			frappe.db.rollback(save_point="product_sale_tag")
+		except Exception:
+			pass
+		frappe.log_error(title="Product sale: Products stream not tagged", message=frappe.get_traceback())
 
 
 # ---------------------------------------------------------------------------
@@ -1386,10 +1541,22 @@ def stamp_handoff_gate(doc, method=None):
 	empty ``custom_date_closed_won`` on the same transition (transition-only since
 	v1.629.0) — the deadlines are measured from the transition itself, so both
 	stamps describe the same moment.
+
+	Not for a Service Call's deal (v1.778.0; Nikolas, 2026-11-03): a one-off service client's
+	approval on the link wins the deal, and there is no hand-off meeting to hold for a pump swap.
+	The guard never raises (:func:`_is_service_call_deal`).
+
+	Not for a product sale either (v1.827.0; decision 2026-11-18): a deal a person has ticked
+	Product Sale (No Project), with nothing else on its linked quotes, has its Sales Order as the
+	record, so there is no project to hand off to (:mod:`.product_sale`, which never raises).
 	"""
 	if doc.status != WON_STATUS:
 		return
 	if not doc.meta.get_field("custom_handoff_gate_applies"):
+		return
+	if _is_service_call_deal(doc):
+		return
+	if _is_product_sale_deal(doc):
 		return
 
 	before = doc.get_doc_before_save()
@@ -1410,6 +1577,25 @@ def stamp_handoff_gate(doc, method=None):
 		doc.custom_launch_deadline = add_working_days(
 			now, LAUNCH_GOAL_BUSINESS_DAYS, holiday_list=holiday_list
 		)
+
+
+def _is_service_call_deal(doc):
+	"""A Service Call's Opportunity, or False; never raises (a before_save hook on every deal)."""
+	try:
+		from erpnext_enhancements.sapphire_maintenance.service_calls import belongs_to_service_call
+
+		return belongs_to_service_call(getattr(doc, "name", None) if not doc.is_new() else None)
+	except Exception:
+		return False
+
+
+def _is_product_sale_deal(doc):
+	"""A product sale's Opportunity (v1.827.0), or False; never raises, like the guard above.
+
+	The deal's own tick, as this save holds it, checked against its linked documents
+	(:func:`.product_sale.is_product_sale_doc`).
+	"""
+	return product_sale.is_product_sale_doc(doc)
 
 
 def launch_deadline_for_project(project_row):

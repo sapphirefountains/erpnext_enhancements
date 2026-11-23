@@ -52,8 +52,8 @@ class _Column:
 
 
 class _Board:
-    def __init__(self, columns, reference_doctype="Opportunity", field_name="status"):
-        self.name = "Opportunity"
+    def __init__(self, columns, reference_doctype="Opportunity", field_name="status", name="Opportunity"):
+        self.name = name
         self.reference_doctype = reference_doctype
         self.field_name = field_name
         self.columns = [_Column(name, order) for name, order in columns]
@@ -155,10 +155,10 @@ PROD_STORED = {
 }
 
 
-def _reset(columns=PROD_COLUMNS, stored=PROD_STORED, can_write=True, deny_board_read=False):
+def _reset(columns=PROD_COLUMNS, stored=PROD_STORED, can_write=True, deny_board_read=False, board_name="Opportunity"):
     STATE.clear()
     STATE.update(
-        board=_Board(columns),
+        board=_Board(columns, name=board_name),
         stored=dict(stored),
         can_write=can_write,
         deny_board_read=deny_board_read,
@@ -292,7 +292,30 @@ class TestFrappesChecksAndSideEffectsAreKept(unittest.TestCase):
         self.assertEqual(STATE["saves"], [])
         self.assertEqual(STATE["queries"], [])
         self.assertEqual(STATE["published"], [])
+
+    def test_a_reader_of_another_board_gets_its_saved_order_as_stored(self):
+        _reset(can_write=False, board_name="Some Other Board")
+        board, _ = kanban_order.update_order("Some Other Board", _client_order())
         self.assertIn("CRM-OPP-2026-00178", board.order_of("Needs Analysis"))
+
+    def test_a_reader_of_the_opportunity_board_is_handed_no_saved_order(self):
+        """v1.822.0: the 16.50+ client writes this return into its live store.columns, which
+        draw the column on the next "load more". Handing back the saved order (new deals last)
+        would undo the newest-first board for everyone without write on Opportunity."""
+        _reset(can_write=False)
+        board, updated = kanban_order.update_order("Opportunity", _client_order())
+        self.assertEqual(updated, [])
+        self.assertEqual([board.order_of(c.column_name) for c in board.columns], [[]] * len(PROD_COLUMNS))
+        # and it is only the in-memory copy: nothing is saved or published
+        self.assertEqual(STATE["saves"], [])
+        self.assertEqual(STATE["published"], [])
+
+    def test_the_hook_that_clears_it_is_the_registered_one(self):
+        self.assertEqual(kanban_order.NEWEST_FIRST_BOARDS, ("Opportunity",))
+        self.assertIn(
+            '"frappe.desk.doctype.kanban_board.kanban_board.update_order": "erpnext_enhancements.kanban_order.update_order"',
+            HOOKS.read_text(encoding="utf-8"),
+        )
 
     def test_the_board_is_saved_ignoring_permissions_and_published(self):
         """As frappe does: board write is if_owner, and teammates who are not the owner still

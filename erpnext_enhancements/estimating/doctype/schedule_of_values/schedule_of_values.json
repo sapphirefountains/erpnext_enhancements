@@ -1,0 +1,408 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-11-20 09:00:00.000000",
+ "description": "The contract broken into lines the customer signed. Pay applications bill against it. No cost and no markup.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "title",
+  "project",
+  "customer",
+  "column_break_header",
+  "status",
+  "basis",
+  "estimate",
+  "estimate_revision",
+  "project_contract",
+  "company",
+  "section_billing",
+  "billing_mode",
+  "contract_sum",
+  "column_break_retainage",
+  "retainage_applies",
+  "retainage_pct",
+  "stored_materials",
+  "stored_retainage_pct",
+  "section_steps",
+  "retainage_steps",
+  "section_milestones",
+  "milestones",
+  "section_lines",
+  "lines",
+  "section_reconcile",
+  "reconcile_html",
+  "scheduled_total",
+  "difference",
+  "column_break_reconcile",
+  "change_order_total",
+  "contract_sum_to_date",
+  "billed_to_date",
+  "section_lock",
+  "locked_on",
+  "locked_by",
+  "column_break_lock",
+  "notes"
+ ],
+ "fields": [
+  {
+   "default": "SOV-.YY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "options": "SOV-.YY.-.####",
+   "reqd": 1
+  },
+  {
+   "bold": 1,
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project",
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Account",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 0,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nLocked",
+   "read_only": 1
+  },
+  {
+   "default": "Manual",
+   "description": "Manual is a schedule typed by hand, the day-one path for jobs with no estimate.",
+   "fieldname": "basis",
+   "fieldtype": "Select",
+   "label": "Basis",
+   "options": "Manual\nEstimate"
+  },
+  {
+   "fieldname": "estimate",
+   "fieldtype": "Link",
+   "label": "From Estimate",
+   "no_copy": 1,
+   "options": "Estimate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "estimate_revision",
+   "fieldtype": "Int",
+   "label": "Estimate Revision",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "project_contract",
+   "fieldtype": "Link",
+   "label": "Project Contract",
+   "options": "Project Contract"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "section_billing",
+   "fieldtype": "Section Break",
+   "label": "How This Job Bills"
+  },
+  {
+   "default": "Progress",
+   "description": "Progress: one application a period, a percent per line. Milestones: each application bills a milestone's percent of every line.",
+   "fieldname": "billing_mode",
+   "fieldtype": "Select",
+   "label": "Billing Mode",
+   "options": "Progress\nMilestones"
+  },
+  {
+   "description": "The contract the customer signed. The lines must add up to it before the schedule locks.",
+   "fieldname": "contract_sum",
+   "fieldtype": "Currency",
+   "label": "Contract Sum",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_retainage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "retainage_applies",
+   "fieldtype": "Check",
+   "label": "Retainage Held"
+  },
+  {
+   "default": "5",
+   "depends_on": "retainage_applies",
+   "fieldname": "retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Work %"
+  },
+  {
+   "default": "0",
+   "description": "Off for most jobs. When on, a pay application can bill materials on hand before they are installed.",
+   "fieldname": "stored_materials",
+   "fieldtype": "Check",
+   "label": "Bill Stored Materials"
+  },
+  {
+   "default": "5",
+   "depends_on": "eval:doc.retainage_applies && doc.stored_materials",
+   "fieldname": "stored_retainage_pct",
+   "fieldtype": "Percent",
+   "label": "Retainage on Stored %"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "retainage_applies",
+   "description": "Optional. A rate that takes over at a percent complete, for example 10% until 50% complete, then 5%. The job's percent complete at the start of each period decides.",
+   "fieldname": "section_steps",
+   "fieldtype": "Section Break",
+   "label": "Retainage Step-Down"
+  },
+  {
+   "fieldname": "retainage_steps",
+   "fieldtype": "Table",
+   "label": "Steps",
+   "options": "Retainage Step"
+  },
+  {
+   "depends_on": "eval:doc.billing_mode=='Milestones'",
+   "fieldname": "section_milestones",
+   "fieldtype": "Section Break",
+   "label": "Milestones"
+  },
+  {
+   "fieldname": "milestones",
+   "fieldtype": "Table",
+   "label": "Milestones",
+   "options": "Contract Milestone"
+  },
+  {
+   "fieldname": "section_lines",
+   "fieldtype": "Section Break",
+   "label": "Lines the Customer Signed"
+  },
+  {
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Lines",
+   "options": "Schedule of Values Line"
+  },
+  {
+   "fieldname": "section_reconcile",
+   "fieldtype": "Section Break",
+   "label": "Reconciliation"
+  },
+  {
+   "fieldname": "reconcile_html",
+   "fieldtype": "HTML",
+   "label": "Reconciliation"
+  },
+  {
+   "fieldname": "scheduled_total",
+   "fieldtype": "Currency",
+   "label": "Sum of Scheduled Values",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Contract sum less the lines. The schedule cannot lock until this is 0.",
+   "fieldname": "difference",
+   "fieldtype": "Currency",
+   "label": "Difference",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_reconcile",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "change_order_total",
+   "fieldtype": "Currency",
+   "label": "Approved Change Orders",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "contract_sum_to_date",
+   "fieldtype": "Currency",
+   "label": "Contract Sum to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "billed_to_date",
+   "fieldtype": "Currency",
+   "label": "Billed to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_lock",
+   "fieldtype": "Section Break",
+   "label": "Lock"
+  },
+  {
+   "fieldname": "locked_on",
+   "fieldtype": "Datetime",
+   "label": "Locked On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "locked_by",
+   "fieldtype": "Link",
+   "label": "Locked By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lock",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-20 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Schedule of Values",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Project Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Estimator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Finance Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Executive Team",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1
+  }
+ ],
+ "search_fields": "title,project,customer,status",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

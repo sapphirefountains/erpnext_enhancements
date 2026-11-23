@@ -41,7 +41,17 @@ the bare marker string appears in two legitimate places here (a test fixture, an
 PEM block and `private_key_id` alongside it.
 
 A PEM private-key header is the one rule with no qualification. There is no benign reason
-for one to be in this repository.
+for one to be in this repository, and it is the one rule the fixture marker below cannot
+excuse: a test that needs PEM-shaped data assembles it at run time from fragments, the way
+this file does.
+
+Beside those, :data:`TOKEN_RULES` match credentials that carry their own shape wherever they
+appear (Stripe live and webhook keys, Google API keys, AWS access keys, GitHub and Slack
+tokens, JWTs, ``token key:secret`` pairs, ``user:pass@`` URLs, a Twilio auth token beside the
+word), and :data:`PASSWORD_RULES` match a ``password``-family assignment or command-line
+option with a literal value in documentation and configuration files (source code is left
+to review, where ``password = form.password`` is the normal shape). ``encryption_key`` is
+one more keyword rule in :data:`VALUE_RULES`.
 
 The known failure mode of a script like this is **passing because the pattern is wrong**, so:
 
@@ -67,15 +77,96 @@ header saying "fake" above a real key is the cheapest way to blind this script.
 ``ALLOWLISTED_PATHS`` exists for the case that mechanism cannot cover and ships empty;
 see the note there before adding to it.
 
+Reviewed historical blobs
+-------------------------
+
+A marker cannot be added to a blob that is already in history: nobody can edit it. So when a
+rule is added and old versions of a file match it, the full walk would be red for good, and a
+gate that cannot go green gets ignored. ``scripts/secret_scan_reviewed_blobs.txt`` lists such
+blobs by their full git hash, each with a note, after a person has read every finding in them.
+
+It is narrow on purpose:
+
+  * it is keyed on **content**, never on a path: a blob that differs by one byte is not on it,
+    so the current file and every future version are still read by every rule;
+  * it is read by the **full walk only**. The working tree, the staged files and the PR range
+    never consult it, so nothing a pull request adds can be excused by it;
+  * a listed blob that is also in ``HEAD``'s tree is **not** excused: the list covers history;
+  * an entry that excuses nothing (the blob is gone, or is clean under today's rules) **fails
+    the run**, so the list only ever holds what it needs;
+  * a listed blob is never recorded in the clean-blob cache. Take its line out and the next run
+    reports it again.
+
+Listing a blob says its findings were read. It does not say the values in it are harmless:
+where one was a real credential, rotating it is still the fix.
+
+Three modes, one set of rules
+-----------------------------
+
+**Full history** (no flag) reads every blob in the object database: every ref, plus loose
+objects no ref points at. It took ~22 s in August 2026 and 10-15 minutes by November,
+because ``CHANGELOG.md`` is a 3.7 MB file with 1,400+ versions and every PR adds one — about
+5 GB of text per run, nearly all of it read and found clean the day before.
+
+**PR range** (``--since <ref>``) reads the working tree plus only the blobs reachable from
+HEAD and not from ``<ref>`` (``git rev-list --objects <ref>..HEAD``). That is sound because
+``main``'s history was gated as it landed: what a PR can add to the repository is exactly
+what is in that range, intermediate commits included — a key committed and removed inside
+the PR is still in it. The full walk stays as the backstop, on every push to ``main`` and
+nightly. Both modes refuse a shallow clone, and the range mode refuses a ``<ref>`` it cannot
+resolve rather than scanning an empty range.
+
+The range deliberately leaves out **loose objects**, which the full walk reads. A push sends
+only objects reachable from what is pushed, so a loose object a PR could publish is already
+in the range; the rest are local leftovers (a reset, an amend) that never leave the machine,
+and on the server they are the full walk's business. They are not cheap to include either: a
+long-lived checkout here held ~13,000 loose objects (1.6 GB, mostly CHANGELOG versions), which
+made a local ``--since origin/main`` take over 5 minutes against ~35 s on a fresh clone, for
+no object a pull request could carry.
+
+**Staged** (``--staged``) reads the index versions of the files about to be committed, and
+nothing else. It is the pre-commit hook: the cheapest place to catch a key is before it is
+a blob anyone else has.
+
+The clean-blob cache
+--------------------
+
+``--cache [FILE]`` remembers the blobs already scanned clean and skips them next time. A
+blob is content-addressed, so "clean once" is "clean for ever" — **under the same rules**.
+The file therefore starts with a fingerprint of the rules (:func:`rules_fingerprint`: a hash
+of this whole file, so any change to a pattern, the marker, the window or the code that
+applies them invalidates it), and a file written under other rules is discarded whole.
+
+One fact about a blob is not content: whether it sits under ``tests/`` or ``fixtures/``,
+where a whole-file ``FAKE-DO-NOT-USE`` header is honoured. A blob found clean only there is
+recorded as clean *there*, and is read again if it turns up anywhere else.
+
+GitHub's own secret scanning
+----------------------------
+
+This script knows Sapphire's credentials; GitHub's secret scanning knows hundreds of
+providers' token formats, and **push protection** refuses a push carrying one before it
+reaches the remote at all, which nothing in CI can do. The repository is public, so both are
+free. Both are repository settings, not code, and no change to this file turns them on: a
+repository admin (Nikolas) enables them under Settings -> Advanced Security (called "Code
+security" on older UIs) -> Secret Protection, then Push protection. As of 2026-11-02 both
+were off. This script is not a substitute for them, nor they for it.
+
 Run: ``python scripts/check_no_committed_secrets.py``  (exit 1 on a hit)
+     ``python scripts/check_no_committed_secrets.py --since origin/main``  (what a PR adds)
+     ``python scripts/check_no_committed_secrets.py --staged``  (the pre-commit hook)
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
+import tempfile
+import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,10 +195,34 @@ FILE_LEVEL_MARKER_DIRS = frozenset({"tests", "test", "fixtures"})
 #: value attached — if so, the rule is what needs fixing.
 ALLOWLISTED_PATHS: dict[str, str] = {}
 
+#: Where the reviewed historical blobs are listed, relative to the repository being scanned.
+#: One per line: the blob's full 40-character hash, then a note. See the module docstring.
+REVIEWED_BLOBS_REL = "scripts/secret_scan_reviewed_blobs.txt"
+
+#: A line of that file: the hash, whitespace, and a note long enough to mean something.
+_REVIEWED_LINE_RE = re.compile(r"^([0-9a-f]{40})\s+(\S.{9,})$")
+
 #: Blobs larger than this are reported as skipped rather than scanned. A credential is a
-#: few kilobytes; the cap exists so one checked-in binary cannot turn a CI gate into a
-#: timeout. Skips are counted and printed — never silent.
-MAX_BLOB_BYTES = 4 * 1024 * 1024
+#: few kilobytes; the cap exists so one pathological text file cannot turn a CI gate into a
+#: timeout. Skips are counted and printed.
+#:
+#: **It was 4 MiB, and "printed" turned out to mean "unread".** ``CHANGELOG.md`` crossed
+#: 4 MiB at v1.734.0 (2026-10-23) and from then on was skipped whole — in the working tree,
+#: where the cap applies too, and in every later version in history — while the only trace
+#: was a ``note:`` line nobody reads on a green job. The file every PR edits was the one
+#: file this gate no longer examined. A binary is not the risk the cap guards against (it
+#: is dropped on its first NUL byte), GitHub refuses any file over 100 MB, and the clean-blob
+#: cache means a large blob is read once per rule set rather than on every run, so the cap
+#: is set where only a genuinely absurd file reaches it.
+MAX_BLOB_BYTES = 64 * 1024 * 1024
+
+#: Bump by hand only if the cache file's *layout* changes. The rules need no version number
+#: of their own: the fingerprint hashes this whole file (see :func:`rules_fingerprint`).
+CACHE_FORMAT = "1"
+
+#: Where ``--cache`` with no FILE keeps its list: inside the git directory, so it is never a
+#: working-tree file this script would then scan, and never something ``git add .`` picks up.
+DEFAULT_CACHE_NAME = "secret-scan-clean-blobs.txt"
 
 # The PEM header, in two pieces, so this file is not its own first finding. Covers the
 # flavours `openssl` and `ssh-keygen` actually emit.
@@ -164,7 +279,132 @@ VALUE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 		re.compile(r"""["']?[a-z0-9_]*client_secret["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
 		"an OAuth client secret. Field NAMES are fine; a value is not",
 	),
+	(
+		"encryption_key",
+		re.compile(r"""["']?[a-z0-9_]*encryption_key["']?\s*[:=]\s*""" + _VALUE, re.IGNORECASE),
+		"the key that decrypts every stored Password field. Field NAMES are fine; a value is not",
+	),
 )
+
+#: Credentials recognisable by their own shape, with no keyword needed beside them. Each is
+#: `(name, regex, why it matters)`; the whole match is the candidate value, and
+#: :func:`_is_placeholder` waves through the obvious stand-ins (a run of ``x``).
+#: The prefixes are the providers' published formats.
+TOKEN_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"stripe-live-key",
+		re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{16,}"),
+		"a live Stripe secret or restricted key",
+	),
+	(
+		"stripe-webhook-secret",
+		re.compile(r"\bwhsec_[A-Za-z0-9]{16,}"),
+		"a Stripe webhook signing secret",
+	),
+	(
+		"google-api-key",
+		re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+		"a Google API key",
+	),
+	(
+		"aws-access-key",
+		re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+		"an AWS access key id",
+	),
+	(
+		"github-token",
+		re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})"),
+		"a GitHub token",
+	),
+	(
+		"slack-token",
+		re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+		"a Slack token",
+	),
+	(
+		"jwt",
+		re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+		"a signed JWT",
+	),
+	(
+		"token-key-secret-pair",
+		re.compile(r"\btoken\s+[A-Za-z0-9]{12,}:[A-Za-z0-9]{12,}\b", re.IGNORECASE),
+		"an API key and secret in the `Authorization: token key:secret` form",
+	),
+	(
+		"url-with-password",
+		re.compile(r"""\b[a-z][a-z0-9+.\-]*://[^\s/:@"'<>\[\]{}$]+:([^\s/@"'<>\[\]{}$%]{3,})@[^\s/"'<>]+""", re.IGNORECASE),
+		"a URL with a literal password in its user:pass@ part",
+	),
+	(
+		"twilio-auth-token",
+		re.compile(r"twilio[^\n]{0,60}?(?<![0-9A-Za-z])[0-9a-f]{32}(?![0-9A-Za-z])", re.IGNORECASE),
+		"a 32-character hex string beside the word twilio, the shape of an auth token",
+	),
+)
+
+#: Words a documentation table or comment writes where a password would go. Compared whole and
+#: lower-cased, after :func:`_is_placeholder` has had its say.
+PASSWORD_STOPWORDS = frozenset(
+	{
+		"password", "passwd", "required", "optional", "secret", "hidden", "masked", "string",
+		"none", "null", "false", "true", "unset", "empty", "blank", "anything", "whatever",
+		"stored", "provided", "enabled", "disabled", "random", "generated", "automatic",
+	}
+)  # fmt: skip
+
+#: Characters that make a value an expression (a call, an interpolation, a template hole, a
+#: list) rather than a literal.
+_PASSWORD_NOT_LITERAL = r"""\s"'`$<>{}()\[\],;\\|&"""
+
+#: A password-sized literal: quoted or bare, six or more characters, in the named group ``pv1``
+#: (quoted) or ``pv2`` (bare); :func:`_password_value` reads whichever fired.
+_PASSWORD_VALUE = (
+	r"""(?:["'`](?P<pv1>[^""" + _PASSWORD_NOT_LITERAL + r"""]{6,})["'`]|"""
+	r"""(?P<pv2>[^""" + _PASSWORD_NOT_LITERAL + r"""*\-][^""" + _PASSWORD_NOT_LITERAL + r"""*]{5,}))"""
+)
+
+#: The name half of a password assignment: any identifier ending in ``password`` / ``passwd``
+#: (``db_password``, ``MYSQL_ROOT_PASSWORD``), as its own token. Group ``key``. Unquoted, it may not
+#: follow a quote, a colon or a slash (that is a sentence quoting a label, or ``user:password``);
+#: quoted, both quotes must be there (a JSON key).
+_PASSWORD_KEY = (
+	r"""(?:(?<![\w.\-:/"'])(?P<key>[A-Za-z0-9_.\-]*(?:password|passwd))\**"""
+	r"""|(?P<q>["'])(?P<qkey>[A-Za-z0-9_.\-]*(?:password|passwd))(?P=q))"""
+)
+
+#: ``password`` / ``passwd`` (with any prefix: ``db_password``, ``MYSQL_ROOT_PASSWORD``) assigned a
+#: literal with ``:`` or ``=``, the same in a Markdown table cell, the command-line option form
+#: (``--admin-password VALUE``), and a database client's ``-pVALUE``. Only applied outside
+#: source-code files: see :data:`CODE_SUFFIXES`. A bare ``password`` in running prose is judged
+#: by :func:`_is_prose_password`.
+PASSWORD_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+	(
+		"password-assignment",
+		re.compile(_PASSWORD_KEY + r"""\s*[:=]\**\s*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal. Say where it is stored instead",
+	),
+	(
+		"password-table-cell",
+		re.compile(r"""\|[^|\n]*?[A-Za-z][ \t]+(?P<key>(?:password|passwd))\**[ \t]*\|[ \t]*""" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password written out as a literal in a table row (a label cell, then the value). Say where it is stored instead",
+	),
+	(
+		"password-option",
+		re.compile(r"--[a-z0-9-]*(?:password|passwd)(?:=|\s+)" + _PASSWORD_VALUE, re.IGNORECASE),
+		"a password passed as a literal on a command line. Say where it is stored instead",
+	),
+	(
+		"database-client-password",
+		re.compile(r"""\b(?:mysql|mysqldump|mariadb|mariadb-dump)\b[^\n]*?\s-p["']?(?P<pv1>[^\s"'$<>]{4,})""", re.IGNORECASE),
+		"a database client password written into the command line",
+	),
+)
+
+#: Source-code files are left out of :data:`PASSWORD_RULES`: in code, ``password = form.password`` and
+#: ``password: str`` are the normal shapes, and a hard-coded one is a review comment. Documentation,
+#: configuration and scripts are where a pasted password actually lands.
+CODE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".cjs", ".ts", ".vue", ".html", ".jinja", ".css", ".scss"})
 
 #: A long unbroken base64 run — the shape of a key, a token or a signed blob.
 BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{64,}={0,2}")
@@ -189,6 +429,17 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 	"sample",
 )
 
+#: The digits and the alphabet in the orders people type them, for :func:`_is_typed_run`.
+TYPED_RUNS: tuple[str, ...] = (
+	"1234567890abcdefghijklmnopqrstuvwxyz",
+	"0123456789abcdefghijklmnopqrstuvwxyz",
+	"abcdefghijklmnopqrstuvwxyz1234567890",
+	"abcdefghijklmnopqrstuvwxyz0123456789",
+)
+
+#: How long a typed-out run must be before the value counts as a stand-in.
+TYPED_RUN_LENGTH = 20
+
 #: An expression that *refers* to a secret rather than being one: a dotted attribute
 #: chain, which is how HCL, Python and JS all reach for a value held somewhere else
 #: (``google_iap_client.iap_client.secret``, ``process.env.CLIENT_SECRET``). Only the
@@ -197,7 +448,7 @@ PLACEHOLDER_TOKENS: tuple[str, ...] = (
 #:
 #: Segments are length-capped because a JWT is dot-separated too, and a JWT is a
 #: credential. Its segments run to hundreds of characters; an identifier does not.
-_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_]{0,39})+$")
+_REFERENCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}(?:\.[A-Za-z_][A-Za-z0-9_-]{0,39})+$")
 
 #: Extensions whose contents are compiled or minified and produce base64-shaped noise.
 #:
@@ -239,10 +490,25 @@ class Finding:
 # --------------------------------------------------------------------------- scanning
 
 
+def _is_typed_run(lowered: str) -> bool:
+	"""Does this value hold the digits and the alphabet typed out in order?
+
+	``1234567890abcdefghijklmnopqrstuvwxyz`` behind a provider's prefix is what somebody types
+	where a token would go. :data:`TYPED_RUN_LENGTH` characters of it in a row is not something a
+	generated credential contains, so the value is a stand-in whatever surrounds the run.
+	"""
+	for start in range(len(lowered) - TYPED_RUN_LENGTH + 1):
+		piece = lowered[start : start + TYPED_RUN_LENGTH]
+		if any(piece in run for run in TYPED_RUNS):
+			return True
+	return False
+
+
 def _is_placeholder(value: str, key_name: str = "") -> bool:
 	"""Is this value a stand-in rather than a credential?
 
-	Five ways to be one, and the last two were learned from this repository's own contents:
+	Six ways to be one. The typed-out run is checked with the named tokens (see
+	:func:`_is_typed_run`), and the last two were learned from this repository's own contents:
 
 	1. it names itself a placeholder (:data:`PLACEHOLDER_TOKENS`);
 	2. it is an interpolation or a template hole (``${…}``, ``{{…}}``, ``<…>``);
@@ -266,6 +532,8 @@ def _is_placeholder(value: str, key_name: str = "") -> bool:
 		return True
 	if any(token in lowered for token in PLACEHOLDER_TOKENS):
 		return True
+	if _is_typed_run(lowered):
+		return True
 	if value.startswith(("${", "{{", "<", "$(")) or value.endswith(("}", ">")):
 		return True
 	if _REFERENCE_RE.match(value):
@@ -282,6 +550,112 @@ def _value_of(match: re.Match[str]) -> str:
 	to close.
 	"""
 	return match.group(1) or match.group(2) or ""
+
+
+#: A substring every match of a rule must contain (lower case). A line without one skips the
+#: rule's regex outright. The full walk reads gigabytes of text (every version of the
+#: changelog), and the provider and password rules doubled its time without this, which is
+#: longer than the CI job allowed. Each entry is a necessary part of its rule's pattern, so the
+#: findings are the same with or without it; ``test_secret_scan`` holds that for every rule.
+#: The three rules the walk had before are not listed and always run.
+_QUICK_TRIGGERS: dict[str, tuple[str, ...]] = {
+	"encryption_key": ("encryption_key",),
+	"stripe-live-key": ("_live_",),
+	"stripe-webhook-secret": ("whsec_",),
+	"google-api-key": ("aiza",),
+	"aws-access-key": ("akia", "asia"),
+	"github-token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+	"slack-token": ("xox",),
+	"jwt": ("eyj",),
+	"token-key-secret-pair": ("token",),
+	"url-with-password": ("://",),
+	"twilio-auth-token": ("twilio",),
+	"password-assignment": ("passw",),
+	"password-table-cell": ("passw",),
+	"password-option": ("passw",),
+	"database-client-password": ("mysql", "mariadb"),
+}
+
+
+def _active_rules(lowered_text: str) -> frozenset[str]:
+	"""The :data:`_QUICK_TRIGGERS` rules whose substring occurs anywhere in this file or blob."""
+	return frozenset(
+		rule
+		for rule, triggers in _QUICK_TRIGGERS.items()
+		if any(trigger in lowered_text for trigger in triggers)
+	)
+
+
+def _may_match(rule: str, lowered_line: str, active: frozenset[str]) -> bool:
+	"""False when the file or the line lacks the substring the rule needs, so its regex cannot match."""
+	triggers = _QUICK_TRIGGERS.get(rule)
+	if triggers is None:
+		return True
+	return rule in active and any(trigger in lowered_line for trigger in triggers)
+
+
+def _token_of(rule: str, match: re.Match[str]) -> str:
+	"""The candidate a :data:`TOKEN_RULES` match is judged on: the password part of a URL, else the match."""
+	if rule == "url-with-password":
+		password = match.group(1)
+		# A name where a password goes (``user:pass@``, ``user:password@``) is documentation.
+		return "placeholder" if password.lower() in PASSWORD_STOPWORDS | {"pass", "pwd"} else password
+	if rule == "jwt":
+		# Dotted like an attribute chain, which _is_placeholder reads as a reference; a JWT is not one.
+		return match.group(0).replace(".", "~")
+	if rule in ("stripe-live-key", "stripe-webhook-secret"):
+		# Judge the part after the prefix, so ``sk_live_`` plus a run of zeros reads as the stand-in it is.
+		return match.group(0).split("_", 2)[-1]
+	return match.group(0)
+
+
+def _is_password_placeholder(value: str) -> bool:
+	"""Is this password-rule value a stand-in? The usual placeholders, plus the words a table writes."""
+	lowered = value.lower().strip(".,:")
+	if lowered in PASSWORD_STOPWORDS or lowered.startswith("-"):
+		return True
+	return _is_placeholder(value)
+
+
+def _password_value(match: re.Match[str]) -> str:
+	"""The literal a :data:`PASSWORD_RULES` match found, quoted form or bare."""
+	return match.group("pv1") or match.group("pv2") or ""
+
+
+def _is_prose_password(line: str, match: re.Match[str]) -> bool:
+	"""Is this the English word "password" in a sentence, rather than a name in a config line?
+
+	A compound identifier (``db_password``, ``--admin-password``, a quoted JSON key) is a
+	configuration key wherever it stands. The bare word is ambiguous, so it counts as an
+	assignment only when it sits near the front of its line (a list item, a label, a table row:
+	at most three words before it), which is where ``Root password: value`` lives and
+	``the field stored behind the password: present`` does not.
+	"""
+	key = match.groupdict().get("key")
+	if not key or key.lower() not in ("password", "passwd"):
+		return False
+	before = line[: match.start("key")]
+	return len(re.findall(r"[A-Za-z]\w*", before)) > 3
+
+
+def _is_sudoers_tag(match: re.Match[str]) -> bool:
+	"""Is this the sudoers tag ``NOPASSWD:``, which is followed by a command and not a password?
+
+	``deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart …`` reads to the assignment rule as a
+	name ending in ``passwd`` with a value after the colon. The tag means the opposite of a
+	credential: no password is asked for. Upper case only, as sudoers writes it.
+	"""
+	return match.groupdict().get("key") == "NOPASSWD"
+
+
+def _is_code_path(where: str) -> bool:
+	"""Is this a source-code file, which :data:`PASSWORD_RULES` leave to review?
+
+	``where`` may carry a ``" (blob <sha>)"`` suffix; an unreachable blob has no path and is
+	read as configuration, which is the stricter reading.
+	"""
+	path = where.split(" (blob ", 1)[0].lower()
+	return any(path.endswith(suffix) for suffix in CODE_SUFFIXES)
 
 
 def _clip(text: str, width: int = 120) -> str:
@@ -346,26 +720,32 @@ def scan_text(where: str, text: str) -> list[Finding]:
 
 	findings: list[Finding] = []
 	lines = text.splitlines()
-	if _has_file_level_marker(where, lines):
-		return []
-	has_key_material = bool(KEY_MATERIAL_RE.search(text))
 
+	# The PEM rule runs first and answers to neither form of FAKE_MARKER: a header or a
+	# neighbouring comment saying "fake" cannot make a private-key block acceptable.
 	for index, line in enumerate(lines):
-		window = _window(lines, index)
-		if FAKE_MARKER in window:
-			continue
-		line_no = index + 1
-
 		if PEM_RE.search(line):
 			findings.append(
 				Finding(
 					"pem-private-key",
 					"a PEM private-key block. There is no benign reason for one to be here",
 					where,
-					line_no,
+					index + 1,
 					_clip(line),
 				)
 			)
+
+	if _has_file_level_marker(where, lines):
+		return findings
+	has_key_material = bool(KEY_MATERIAL_RE.search(text))
+	active = _active_rules(text.lower())
+	check_passwords = not _is_code_path(where)
+
+	for index, line in enumerate(lines):
+		window = _window(lines, index)
+		if FAKE_MARKER in window:
+			continue
+		line_no = index + 1
 
 		if SERVICE_ACCOUNT_RE.search(line) and has_key_material:
 			findings.append(
@@ -378,10 +758,34 @@ def scan_text(where: str, text: str) -> list[Finding]:
 				)
 			)
 
+		lowered = line.lower() if active else ""
+
 		for name, pattern, why in VALUE_RULES:
+			if not _may_match(name, lowered, active):
+				continue
 			match = pattern.search(line)
 			if match and not _is_placeholder(_value_of(match), name):
 				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		for name, pattern, why in TOKEN_RULES:
+			if not _may_match(name, lowered, active):
+				continue
+			match = pattern.search(line)
+			if match and not _is_placeholder(_token_of(name, match)):
+				findings.append(Finding(name, why, where, line_no, _clip(line)))
+
+		if check_passwords:
+			for name, pattern, why in PASSWORD_RULES:
+				if not _may_match(name, lowered, active):
+					continue
+				match = pattern.search(line)
+				if (
+					match
+					and not _is_password_placeholder(_password_value(match))
+					and not _is_prose_password(line, match)
+					and not _is_sudoers_tag(match)
+				):
+					findings.append(Finding(name, why, where, line_no, _clip(line)))
 
 		# A long base64 run next to a Google endpoint: a signed JWT, an access token or a
 		# raw key, pasted into a request example that was then committed.
@@ -442,65 +846,281 @@ def iter_working_tree() -> Iterator[tuple[str, str]]:
 		yield rel, data.decode("utf-8", errors="replace")
 
 
-def _blob_paths() -> dict[str, str]:
-	"""``{sha: path}`` for every blob reachable from any ref.
+def _blob_paths(*rev_list_args: str) -> dict[str, str]:
+	"""``{sha: path}`` for every object ``git rev-list --objects`` names for these arguments.
 
-	Only for reporting. A blob that appears at several paths over its life is attributed to
-	whichever git names first — good enough to send a human to the right file, and the sha
-	is printed alongside so `git cat-file -p <sha>` always resolves the ambiguity.
+	Only for reporting, and for the one path-dependent fact a scan has (test data or not). A
+	blob that appears at several paths over its life is attributed to whichever git names
+	first — good enough to send a human to the right file, and the sha is printed alongside
+	so `git cat-file -p <sha>` always resolves the ambiguity.
+
+	A blob found at a test-data path *and* somewhere else is attributed to the somewhere
+	else. Test data is the one place a whole-file ``FAKE-DO-NOT-USE`` header is honoured, so
+	a key that also sits under ``tests/`` must not borrow that excuse for its other copies.
 	"""
 	paths: dict[str, str] = {}
-	for line in _git("rev-list", "--objects", "--all").splitlines():
+	for line in _git("rev-list", "--objects", *rev_list_args).splitlines():
 		sha, _, rel = line.partition(" ")
-		if rel and sha not in paths:
+		if not rel:
+			continue
+		if sha not in paths or (_is_test_data_path(paths[sha]) and not _is_test_data_path(rel)):
 			paths[sha] = rel
 	return paths
 
 
-def iter_history_blobs() -> Iterator[tuple[str, str]]:
-	"""Every blob in the object database, decoded, with a best-effort path.
+def _batch_check(shas: Iterable[str] | None) -> Iterator[tuple[str, str, int]]:
+	"""``(sha, type, size)`` for each object named, or for every object when ``shas`` is None.
 
-	``--batch-all-objects`` rather than feeding shas back in: it needs no stdin, so there is
-	no writer-thread deadlock when git's output buffer fills, and it reaches loose objects
-	that no ref points at any more — the ones a force-push was supposed to erase.
+	Headers only: git reads no object contents to answer this, so filtering on it — by
+	type, by size, against the cache — costs nothing for the blobs it rules out.
 	"""
-	paths = _blob_paths()
-	proc = subprocess.Popen(
-		["git", "-C", str(REPO), "cat-file", "--batch-all-objects", "--batch", "--buffer", "--unordered"],
-		stdout=subprocess.PIPE,
-		stderr=subprocess.DEVNULL,
-	)
-	assert proc.stdout is not None
-	skipped = 0
+	for sha, kind, size, _ in _cat_file("--batch-check", shas):
+		yield sha, kind, size
+
+
+def _cat_file(batch: str, shas: Iterable[str] | None) -> Iterator[tuple[str, str, int, bytes]]:
+	"""Stream ``git cat-file`` over the named objects (or all of them), in the order given.
+
+	The object names go in through a **file**, not a pipe. Feeding a pipe while reading the
+	other one deadlocks the moment git's output buffer fills and it stops reading its input;
+	a file needs no writer at all. ``--batch-all-objects`` (``shas`` is None) reaches loose
+	objects that no ref points at any more — the ones a force-push was supposed to erase.
+	"""
+	with tempfile.TemporaryFile() as feed:
+		args = ["git", "-C", str(REPO), "cat-file", batch, "--buffer"]
+		if shas is None:
+			args += ["--batch-all-objects", "--unordered"]
+		else:
+			feed.write("".join(f"{sha}\n" for sha in shas).encode())
+			feed.seek(0)
+		proc = subprocess.Popen(args, stdin=feed, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+		assert proc.stdout is not None
+		finished = False
+		try:
+			while True:
+				header = proc.stdout.readline()
+				if not header:
+					break
+				parts = header.decode("utf-8", errors="replace").split()
+				if len(parts) != 3:
+					continue  # "<sha> missing"
+				sha, kind, size_text = parts
+				size = int(size_text)
+				payload = b""
+				if batch == "--batch":
+					payload = proc.stdout.read(size)
+					proc.stdout.read(1)  # the trailing newline git writes after each object
+				yield sha, kind, size, payload
+			finished = True
+		finally:
+			proc.stdout.close()
+			# A git that failed must never read as a clean scan of what it did not return.
+			# (Only checked on a full read: a consumer that stops early closes the pipe, and
+			# the SIGPIPE that follows is not an error.)
+			if proc.wait() != 0 and finished:
+				raise subprocess.CalledProcessError(proc.returncode, args)
+
+
+def rules_fingerprint(source: bytes | None = None) -> str:
+	"""The key a clean-blob cache is valid under: a hash of this whole file.
+
+	The whole file, not a list of the constants, because what makes a blob "clean" is the
+	patterns *and* the code that applies them. A change to :func:`scan_text`, to the
+	placeholder logic or to the window is as much a rule change as a new regex, and a
+	fingerprint built from the constants alone would carry a cache straight through it.
+	Over-invalidating costs one slow run; under-invalidating is a blob a stronger rule never
+	reads. Line endings are normalised so a Windows checkout agrees with CI.
+	"""
+	if source is None:
+		source = Path(__file__).read_bytes()
+	digest = hashlib.sha256(f"check_no_committed_secrets/cache-format-{CACHE_FORMAT}\n".encode())
+	digest.update(source.replace(b"\r\n", b"\n"))
+	return digest.hexdigest()[:16]
+
+
+class CleanBlobCache:
+	"""Blob shas already scanned clean under the current rules. See the module docstring.
+
+	One entry per line: ``<sha>`` when the blob was clean read from an ordinary path, or
+	``<sha> t`` when it was clean read from test data, where a whole-file marker is honoured.
+	The second kind only excuses the blob at a test-data path. The first line carries the
+	rules fingerprint, and a file whose first line does not match is ignored entirely.
+	"""
+
+	def __init__(self, path: Path | None, fingerprint: str) -> None:
+		self.path = path
+		self.fingerprint = fingerprint
+		self.entries: set[str] = set()
+		self.added: set[str] = set()
+		self.status = "off"
+
+	@property
+	def header(self) -> str:
+		return f"# check_no_committed_secrets clean blobs, rules {self.fingerprint}"
+
+	def load(self) -> None:
+		if self.path is None:
+			return
+		try:
+			lines = self.path.read_text(encoding="ascii").splitlines()
+		except FileNotFoundError:
+			self.status = f"{self.path}: none yet"
+			return
+		except (OSError, UnicodeDecodeError) as exc:
+			self.status = f"{self.path}: unreadable ({exc}), ignored"
+			return
+		if not lines or lines[0] != self.header:
+			self.status = f"{self.path}: written under different rules, ignored (rules {self.fingerprint})"
+			return
+		self.entries = {line.strip() for line in lines[1:] if line.strip()}
+		self.status = f"{self.path}: {len(self.entries)} clean blobs (rules {self.fingerprint})"
+
+	def is_clean(self, sha: str, rel: str) -> bool:
+		if sha in self.entries:
+			return True
+		return _is_test_data_path(rel) and f"{sha} t" in self.entries
+
+	def mark_clean(self, sha: str, rel: str) -> None:
+		if self.path is not None:
+			self.added.add(f"{sha} t" if _is_test_data_path(rel) else sha)
+
+	def save(self) -> int:
+		"""Write the list back, atomically. Returns how many entries are new."""
+		if self.path is None:
+			return 0
+		fresh = self.added - self.entries
+		self.path.parent.mkdir(parents=True, exist_ok=True)
+		tmp = self.path.with_name(self.path.name + ".tmp")
+		body = "\n".join([self.header, *sorted(self.entries | self.added)]) + "\n"
+		tmp.write_text(body, encoding="ascii", newline="\n")
+		tmp.replace(self.path)
+		return len(fresh)
+
+
+@dataclass
+class BlobCounts:
+	"""What the history half of a run actually did, printed so "0 findings" can be told
+	apart from "0 blobs"."""
+
+	scanned: int = 0
+	cached: int = 0
+	oversize: int = 0
+
+
+def iter_blobs(
+	objects: Iterable[tuple[str, str, int]],
+	paths: dict[str, str],
+	cache: CleanBlobCache,
+	counts: BlobCounts,
+) -> Iterator[tuple[str, str, str, str]]:
+	"""Decode the blobs among ``objects`` that need reading: ``(label, text, sha, rel)``.
+
+	Everything that can rule a blob out is decided from its header first — not a blob, a
+	noisy path, over the size cap, or already in the cache — so the contents of a skipped
+	blob are never read. That, not the regexes, is where the time went.
+	"""
+	wanted: list[str] = []
+	for sha, kind, size in objects:
+		if kind != "blob":
+			continue
+		rel = paths.get(sha, "")
+		if _is_noisy(rel):
+			continue
+		if size > MAX_BLOB_BYTES:
+			counts.oversize += 1
+			continue
+		if cache.is_clean(sha, rel):
+			counts.cached += 1
+			continue
+		wanted.append(sha)
+
+	for sha, _kind, _size, payload in _cat_file("--batch", wanted):
+		rel = paths.get(sha, "")
+		if b"\0" in payload:
+			cache.mark_clean(sha, rel)
+			continue
+		counts.scanned += 1
+		label = f"{rel} (blob {sha[:12]})" if rel else f"(unreachable blob {sha[:12]})"
+		yield label, payload.decode("utf-8", errors="replace"), sha, rel
+
+
+def history_objects() -> tuple[Iterable[tuple[str, str, int]], dict[str, str]]:
+	"""The full walk: every object in the database, named where any ref names it."""
+	return list(_batch_check(None)), _blob_paths("--all")
+
+
+def range_objects(since: str) -> tuple[Iterable[tuple[str, str, int]], dict[str, str]]:
+	"""The PR range: objects reachable from HEAD and not from ``since``. No loose objects (see
+	the module docstring): a push carries only what is reachable, and that is all in here."""
+	paths = _blob_paths(f"{since}..HEAD")
+	return list(_batch_check(paths)), paths
+
+
+class ReviewedListError(Exception):
+	"""The reviewed-blob list cannot be used as written."""
+
+
+def load_reviewed_blobs() -> dict[str, str]:
+	"""``{blob hash: note}`` from :data:`REVIEWED_BLOBS_REL` in the scanned repository.
+
+	No file means no entries. A line that is not a full hash and a note raises
+	:class:`ReviewedListError`: a list that half-parses would excuse less, or more, than its
+	reader thinks it does.
+	"""
+	path = REPO / REVIEWED_BLOBS_REL
 	try:
-		while True:
-			header = proc.stdout.readline()
-			if not header:
-				break
-			parts = header.decode("utf-8", errors="replace").split()
-			if len(parts) != 3:
-				continue
-			sha, kind, size_text = parts
-			size = int(size_text)
-			payload = proc.stdout.read(size)
-			proc.stdout.read(1)  # the trailing newline git writes after each object
-			if kind != "blob":
-				continue
-			rel = paths.get(sha, "")
-			if _is_noisy(rel):
-				continue
-			if size > MAX_BLOB_BYTES:
-				skipped += 1
-				continue
-			if b"\0" in payload:
-				continue
-			label = f"{rel} (blob {sha[:12]})" if rel else f"(unreachable blob {sha[:12]})"
-			yield label, payload.decode("utf-8", errors="replace")
-	finally:
-		proc.stdout.close()
-		proc.wait()
-	if skipped:
-		print(f"note: {skipped} blob(s) over {MAX_BLOB_BYTES} bytes were not scanned")
+		text = path.read_text(encoding="utf-8")
+	except FileNotFoundError:
+		return {}
+	reviewed: dict[str, str] = {}
+	for number, raw in enumerate(text.splitlines(), 1):
+		line = raw.strip()
+		if not line or line.startswith("#"):
+			continue
+		match = _REVIEWED_LINE_RE.match(line)
+		if not match:
+			raise ReviewedListError(
+				f"{REVIEWED_BLOBS_REL}:{number}: expected a full 40-character blob hash and a note"
+			)
+		if match.group(1) in reviewed:
+			raise ReviewedListError(f"{REVIEWED_BLOBS_REL}:{number}: {match.group(1)[:12]} is listed twice")
+		reviewed[match.group(1)] = match.group(2)
+	return reviewed
+
+
+def head_blobs() -> set[str]:
+	"""The hash of every blob in ``HEAD``'s tree: what the repository holds today."""
+	return {
+		fields[2]
+		for line in _git("ls-tree", "-r", "HEAD").splitlines()
+		if len(fields := line.split(None, 3)) >= 3 and fields[1] == "blob"
+	}
+
+
+def iter_staged() -> Iterator[tuple[str, str]]:
+	"""The index version of every file added or changed in the index, as it will be committed.
+
+	The index, not the working tree: ``git add -p`` can stage a key while the file on disk
+	no longer has it, and what is staged is what the commit will carry.
+	"""
+	raw = _git("diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames", "--diff-filter=d")
+	tokens = raw.split("\0")
+	staged: list[tuple[str, str]] = []
+	for meta, rel in zip(tokens[0::2], tokens[1::2], strict=False):
+		fields = meta.split()
+		if len(fields) < 5 or fields[1] == "160000":  # a submodule's entry names a commit
+			continue
+		if not _is_noisy(rel):
+			staged.append((fields[3], rel))
+	# One entry per *path*, not per blob: the same contents staged under tests/ and under
+	# src/ are two files to judge, and only one of them may honour a whole-file marker.
+	blobs = _cat_file("--batch", [sha for sha, _ in staged])
+	for (sha, rel), (got, _kind, size, payload) in zip(staged, blobs, strict=True):
+		if got != sha:
+			raise RuntimeError(f"git cat-file returned {got} for staged blob {sha} ({rel})")
+		if size > MAX_BLOB_BYTES or b"\0" in payload:
+			continue
+		yield rel, payload.decode("utf-8", errors="replace")
 
 
 def collapse(findings: list[Finding]) -> list[Finding]:
@@ -530,6 +1150,8 @@ def _refuse_shallow() -> str | None:
 
 	``actions/checkout`` clones at depth 1 by default. Scanning "history" there reads one
 	commit and reports success — the exact failure this script is supposed to be immune to.
+	The range mode refuses too: on a shallow clone ``<ref>..HEAD`` can stop at the graft
+	instead of at ``<ref>``, which is a range nobody asked for and nobody can check.
 	"""
 	if _git("rev-parse", "--is-shallow-repository").strip() == "true":
 		return (
@@ -541,48 +1163,191 @@ def _refuse_shallow() -> str | None:
 	return None
 
 
+def _refuse_unknown_ref(since: str) -> str | None:
+	"""The range mode needs its base. A ref that does not resolve is not an empty range."""
+	try:
+		_git("rev-parse", "--verify", "--quiet", f"{since}^{{commit}}")
+	except subprocess.CalledProcessError:
+		return (
+			f"`{since}` does not name a commit here, so there is no range to scan.\n"
+			"    In CI, fetch the base first: `git fetch --no-tags origin "
+			"+refs/heads/main:refs/remotes/origin/main`.\n"
+			"    Locally, run `git fetch origin`, or scan everything without `--since`."
+		)
+	return None
+
+
+def _short(ref: str) -> str:
+	return _git("rev-parse", "--short=12", f"{ref}^{{commit}}").strip()
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+	parser = argparse.ArgumentParser(
+		description="Fail when credential material is in this repository: the working tree, "
+		"its history, or the files staged for the next commit."
+	)
+	mode = parser.add_mutually_exclusive_group()
+	mode.add_argument(
+		"--since",
+		metavar="REF",
+		help="scan the working tree plus only the blobs reachable from HEAD and not from REF "
+		"(what a pull request adds). Default: every blob in history.",
+	)
+	mode.add_argument(
+		"--staged",
+		action="store_true",
+		help="scan only the staged versions of added or changed files (the pre-commit hook)",
+	)
+	parser.add_argument(
+		"--cache",
+		nargs="?",
+		const="",
+		metavar="FILE",
+		help="skip blobs this FILE lists as already scanned clean under the same rules, and add "
+		f"the ones found clean now. With no FILE: {DEFAULT_CACHE_NAME} in the git directory.",
+	)
+	parser.add_argument(
+		"--rules-hash",
+		action="store_true",
+		help="print the rules fingerprint a cache is keyed on, and exit (CI uses it as the cache key)",
+	)
+	# For the tests, which build throwaway repositories. Not for everyday use.
+	parser.add_argument("--repo", type=Path, help=argparse.SUPPRESS)
+	return parser.parse_args(argv)
+
+
+def _cache_path(arg: str | None) -> Path | None:
+	if arg is None:
+		return None
+	if arg:
+		return Path(arg).expanduser()
+	common = Path(_git("rev-parse", "--git-common-dir").strip())
+	return (common if common.is_absolute() else REPO / common) / DEFAULT_CACHE_NAME
+
+
+def _report(findings: list[Finding]) -> None:
+	print("\nCREDENTIAL MATERIAL FOUND IN THIS REPOSITORY:\n", file=sys.stderr)
+	for finding in collapse(findings):
+		print(finding.render(), file=sys.stderr)
+		print("", file=sys.stderr)
+	print(
+		"A hit inside `(blob ...)` means the credential is IN GIT HISTORY. Deleting the\n"
+		"file does not help - it is in every clone and on the remote. Treat it as a\n"
+		"ROTATION INCIDENT: revoke and re-issue the credential first, then decide what\n"
+		"to do about the history.\n"
+		"\n"
+		"A hit in the working tree with no blob suffix is not committed yet. Remove it\n"
+		"before committing. If it is a deliberately fake test fixture, put "
+		f"`{FAKE_MARKER}`\n"
+		"in the fixture itself.\n",
+		file=sys.stderr,
+	)
+
+
 # --------------------------------------------------------------------------- entrypoint
 
 
-def main() -> int:
-	shallow = _refuse_shallow()
-	if shallow:
-		print(f"\ncannot scan for committed secrets: {shallow}\n", file=sys.stderr)
+def main(argv: list[str] | None = None) -> int:
+	global REPO
+	args = _parse_args(argv)
+	if args.repo is not None:
+		REPO = args.repo.resolve()
+
+	fingerprint = rules_fingerprint()
+	if args.rules_hash:
+		print(fingerprint)
+		return 0
+
+	started = time.monotonic()
+	findings: list[Finding] = []
+
+	if args.staged:
+		staged_count = 0
+		for where, text in iter_staged():
+			staged_count += 1
+			findings.extend(scan_text(where, text))
+		if findings:
+			_report(findings)
+			return 1
+		print(f"no secrets staged ({staged_count} staged files scanned)")
+		return 0
+
+	refusal = _refuse_shallow() or (args.since and _refuse_unknown_ref(args.since))
+	if refusal:
+		print(f"\ncannot scan for committed secrets: {refusal}\n", file=sys.stderr)
 		return 1
 
-	findings: list[Finding] = []
+	cache = CleanBlobCache(_cache_path(args.cache), fingerprint)
+	cache.load()
+
+	# The reviewed list belongs to the full walk. The PR range never reads it, so nothing a
+	# pull request adds can be excused by it, and a listed blob still in the tree is not excused.
+	reviewed: dict[str, str] = {}
+	current: set[str] = set()
+	if not args.since:
+		try:
+			reviewed = load_reviewed_blobs()
+		except ReviewedListError as exc:
+			print(f"\ncannot scan for committed secrets: {exc}\n", file=sys.stderr)
+			return 1
+		if reviewed:
+			current = head_blobs()
+	excused: set[str] = set()
+
+	if args.since:
+		commits = _git("rev-list", "--count", f"{args.since}..HEAD").strip()
+		print(
+			f"mode: PR range {args.since}..HEAD ({_short(args.since)}..{_short('HEAD')}, "
+			f"{commits} commits) + working tree"
+		)
+		objects, paths = range_objects(args.since)
+	else:
+		print("mode: full history (every object in the database: all refs + loose) + working tree")
+		objects, paths = history_objects()
+	print(f"cache: {cache.status}")
 
 	tree_count = 0
 	for where, text in iter_working_tree():
 		tree_count += 1
 		findings.extend(scan_text(where, text))
 
-	blob_count = 0
-	for where, text in iter_history_blobs():
-		blob_count += 1
-		findings.extend(scan_text(where, text))
+	counts = BlobCounts()
+	for where, text, sha, rel in iter_blobs(objects, paths, cache, counts):
+		blob_findings = scan_text(where, text)
+		if not blob_findings:
+			cache.mark_clean(sha, rel)
+		elif sha in reviewed and sha not in current:
+			excused.add(sha)  # read and accepted; never recorded as clean
+		else:
+			findings.extend(blob_findings)
 
+	new_entries = cache.save()
+	if cache.path is not None:
+		print(f"cache: {new_entries} newly clean blobs recorded in {cache.path}")
+	if counts.oversize:
+		print(f"note: {counts.oversize} blob(s) over {MAX_BLOB_BYTES} bytes were not scanned")
+	if reviewed:
+		print(f"reviewed: {len(excused)} historical blob(s) with findings are listed in {REVIEWED_BLOBS_REL}")
+
+	elapsed = time.monotonic() - started
+	unused = sorted(set(reviewed) - excused)
 	if findings:
-		print("\nCREDENTIAL MATERIAL FOUND IN THIS REPOSITORY:\n", file=sys.stderr)
-		for finding in collapse(findings):
-			print(finding.render(), file=sys.stderr)
-			print("", file=sys.stderr)
-		print(
-			"A hit inside `(blob ...)` means the credential is IN GIT HISTORY. Deleting the\n"
-			"file does not help - it is in every clone and on the remote. Treat it as a\n"
-			"ROTATION INCIDENT: revoke and re-issue the credential first, then decide what\n"
-			"to do about the history.\n"
-			"\n"
-			"A hit in the working tree with no blob suffix is not committed yet. Remove it\n"
-			"before committing. If it is a deliberately fake test fixture, put "
-			f"`{FAKE_MARKER}`\n"
-			"in the fixture itself.\n",
-			file=sys.stderr,
-		)
+		_report(findings)
+	if unused:
+		print(f"\n{REVIEWED_BLOBS_REL} LISTS BLOBS IT DOES NOT NEED TO:\n", file=sys.stderr)
+		for sha in unused:
+			if sha in current:
+				why = "is in the current tree, and the list covers history only"
+			else:
+				why = "has no finding under the current rules, or is not in this repository"
+			print(f"  {sha}  {why}", file=sys.stderr)
+		print("\nRemove these lines. The list holds only what the full walk still needs.\n", file=sys.stderr)
+	if findings or unused:
 		return 1
 
 	print(
-		f"no committed secrets ({tree_count} working-tree files, {blob_count} history blobs scanned)"
+		f"no committed secrets ({tree_count} working-tree files, {counts.scanned} history blobs scanned, "
+		f"{counts.cached} skipped as already scanned clean; {elapsed:.1f}s)"
 	)
 	return 0
 

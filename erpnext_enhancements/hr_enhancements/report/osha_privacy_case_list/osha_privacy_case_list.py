@@ -10,8 +10,9 @@ the case can still be identified when it has to be.
 So this report exists because the law says it must, and everything about it is
 narrower than its siblings:
 
-* **the shortest role list in the app** — `System Manager` and `HR Manager`, and
-  not `HR User`, who can keep the posted log without ever needing the names;
+* **the shortest role list in the app** — `System Manager` and `HR Manager` only.
+  Since v1.826.8 the posted log and summary carry the same two roles; this list
+  must never carry more than they do;
 * **no year default that shows everything** — the year is required, because a
   screen that opens on every privacy case the company has ever had is a screen
   somebody leaves open on a shared desk;

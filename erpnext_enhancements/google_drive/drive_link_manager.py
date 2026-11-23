@@ -208,7 +208,7 @@ def _set_scan_status(state, **extra):
 	)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def scan_drive_links():
 	"""Kick off a Shared-Drive scan in the background and return immediately.
 	The work (list folders → fuzzy-rank → stage candidates) can take a while at
@@ -421,7 +421,7 @@ def _safe_json(text):
 		return []
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_decision(name, decision, chosen_folder_id=None, chosen_folder_label=None):
 	"""Persist one row's review decision (and chosen folder) from the dashboard."""
 	_require_admin()
@@ -444,7 +444,7 @@ def set_decision(name, decision, chosen_folder_id=None, chosen_folder_label=None
 	return {"ok": True}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def bulk_decision(names, decision):
 	"""Apply one decision to many candidates at once (the dashboard's
 	"Approve all suggested" / "Reject all" actions). ``names`` is a JSON list.
@@ -509,7 +509,7 @@ def search_folders(query, limit=20):
 # --------------------------------------------------------------- apply (robust)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def apply_links():
 	"""Link every Approve / Create New candidate that isn't already linked —
 	**one row at a time, each in its own try/except**, so a single failure is

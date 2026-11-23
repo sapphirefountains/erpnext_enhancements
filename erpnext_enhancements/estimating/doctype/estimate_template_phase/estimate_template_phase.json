@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-11-19 12:00:00.000000",
+ "description": "A phase an Estimate Template starts the estimate with.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "phase_number",
+  "label",
+  "scope_text"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "phase_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Phase",
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "columns": 6,
+   "fieldname": "scope_text",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Scope (Customer-Facing)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-19 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Estimating",
+ "name": "Estimate Template Phase",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

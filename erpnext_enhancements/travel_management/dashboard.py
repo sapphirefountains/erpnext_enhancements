@@ -29,7 +29,11 @@ def _add_travel_group(data, host_doctype):
 
 
 def get_opportunity_dashboard_data(data):
-	return _add_travel_group(data or {}, "Opportunity")
+	# v1.827.0: also the deal's configurator quotes and Product Configurations (one override per
+	# doctype, so it is added here). See crm_enhancements/product_sale.add_dashboard_links.
+	from erpnext_enhancements.crm_enhancements.product_sale import add_dashboard_links
+
+	return add_dashboard_links(_add_travel_group(data or {}, "Opportunity"))
 
 
 def get_lead_dashboard_data(data):

@@ -61,13 +61,19 @@ export function day_state(day) {
 	else if (capacity <= 0) state = { tone: "red", text: t("{0}, {1}h booked", [day.off ? t(day.off) : t("Off"), hours(booked)]) };
 	else if (booked - capacity > 0.01) state = { tone: "red", text: t("Over {0}h", [hours(booked - capacity)]) };
 	else {
+		// v1.788.0: a pencil that covers the free hours is the only figure said ("8h pencil"), as the planners'
+		// cells read (pp_hours_text); otherwise both, with no plus sign.
+		const pencil_only = soft > 0.01 && free > 0.01 && soft + 0.01 >= free;
 		state = {
 			tone: booked / capacity <= 0.75 ? "green" : "amber",
-			text: free > 0.01 ? t("{0}h free", [hours(free)]) : t("Full"),
+			text: pencil_only ? t("{0}h pencil", [hours(soft)]) : free > 0.01 ? t("{0}h free", [hours(free)]) : t("Full"),
 		};
+		if (soft > 0.01 && !pencil_only) state.text += ` · ${t("{0}h pencil", [hours(soft)])}`;
 		if (day.off) state.text += ` · ${t(day.off)}`;
+		state.pencil_said = true;
 	}
-	if (soft > 0.01) state.text += ` · ${t("+{0}h pencil", [hours(soft)])}`;
+	if (soft > 0.01 && !state.pencil_said) state.text += ` · ${t("{0}h pencil", [hours(soft)])}`;
+	delete state.pencil_said;
 	if ((day.conflicts || []).length) state.conflict = true;
 	return state;
 }

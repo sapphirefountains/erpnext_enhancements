@@ -4,7 +4,9 @@ Runs one Phase-1 calculation through the pure ``water_engineering.engine`` and
 returns the result WITH its math — value, formula, ordered steps, source
 citations, warnings, and any A/B/C options the user must still choose — so the
 assistant can show its work and the user can decide. No database writes; the
-exact same dispatch backs the desk wizard's run_calc endpoint.
+exact same dispatch (``water_engineering/calculator.py``, through ``api/designer._run_calc``) backs
+the Fountain Designer's Calculator drawer, which replaced the Water Engineering Wizard's quick
+calculator in v1.771.0.
 
 Only imported by frappe_assistant_core's tool loader via the assistant_tools
 hook; see the package docstring for the FAC-optional invariant.
@@ -17,55 +19,12 @@ from frappe import _
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._gate import annotations_for
+from erpnext_enhancements.water_engineering.calculator import CALCS
 
-_CALCS = (
-    "basin_volume",
-    "turnover_gpm",
-    "weir_flow",
-    "nozzle_array_flow",
-    "nozzle_flow",
-    "size_pipe",
-    "hazen_williams_loss",
-    "pipe_pressure_rating",
-    "pipe_pressure_check",
-    "total_dynamic_head",
-    "select_pump",
-    "chlorinator_feed",
-    "chemistry_targets",
-    "ozone_sidestream",
-    "manning_drain_flow",
-    "size_drain",
-    "surge_basin_volume",
-    "calc_lighting",
-    "calc_solenoid_relays",
-    "suction_outlet_vgb",
-    "npsh_available",
-    "water_hammer",
-    "electric_cost",
-    "vertical_pipe",
-    "open_channel_flow",
-    "lazy_river_hp",
-    "lighting_design",
-    "overflow_check",
-    "program_rules",
-    "jet_trajectory",
-    "lsi_index",
-    "evaporation_rate",
-    "make_up_water",
-    "heating_load",
-    "chemical_dose",
-    "uv_dose",
-    "filtration_area",
-    "turnover_time",
-    "minimum_flow_rate",
-    "bather_load",
-    "skimmer_sizing",
-    "main_drain_flow",
-    "electrical_load",
-    "total_connected_load",
-    "service_main_breaker",
-    "control_transformer_va",
-)
+# The calc names, in the order the Fountain Designer's Calculator drawer lists them: one list for the
+# drawer, this tool's enum and the dispatch, so none of the three can name a calc the others lack
+# (water_engineering/calculator.py, v1.771.0).
+_CALCS = CALCS
 
 
 class WaterCalc(BaseTool):
@@ -145,12 +104,14 @@ class WaterCalc(BaseTool):
             "(count = ceil(area / SF-each); spa 100 SF, pool 400 SF; each operates at 80% of "
             "rated GPM); main_drain_flow {open_area_in2, velocity_fps, drains} (reported drain "
             "open-area GPM at 1.5 ft/s; run suction_outlet_vgb for the anti-entrapment gate). "
-            "electrical_load {fla_amps, hp, phase, voltage} (branch breaker = next standard "
-            "size >= 1.25 * full-load amps; NEC 240.6 / 430.52 business rule); "
+            "electrical_load {fla_amps, hp, phase, voltage, is_motor, device} (motor branch breaker = "
+            "the NEC 430.52 maximum, 250% of FLA for an inverse-time breaker, next standard size up; "
+            "1.25 * FLA is the 430.22 conductor minimum, returned as conductor_min_a; is_motor=false "
+            "gives a non-motor continuous load's breaker at 125%); "
             "total_connected_load {loads:[{fla|hp, is_motor, continuous, qty, voltage, phase}]} "
             "(feeder connected amps, NEC 430.24: 125% largest motor + other motors + non-motor); "
-            "service_main_breaker {loads:[...]} (feeder/service OCPD, NEC 430.62 — rounds DOWN, "
-            "unlike a branch breaker); control_transformer_va {control_loads:[{device:contactor|"
+            "service_main_breaker {loads:[...]} (feeder/service OCPD, NEC 430.62/430.63: largest "
+            "430.52 branch breaker + other motors + other loads, rounds DOWN, never below the load); control_transformer_va {control_loads:[{device:contactor|"
             "relay|hmi|plc|pilot_light|solenoid, qty, va}]} (control-transformer VA, NEC Art. 450)."
         )
         self.category = "Water Engineering"
@@ -163,7 +124,7 @@ class WaterCalc(BaseTool):
                 "calc": {
                     "type": "string",
                     "enum": list(_CALCS),
-                    "description": "Which Phase-1 hydraulic calculation to run.",
+                    "description": "Which engine calculation to run (the Fountain Designer's Calculator drawer lists the same ones).",
                 },
                 "inputs": {
                     "type": "object",
@@ -181,7 +142,7 @@ class WaterCalc(BaseTool):
         if not frappe.has_permission("Water Feature Design", "read"):
             frappe.throw(_("You do not have access to Water Feature Designs."), frappe.PermissionError)
 
-        from erpnext_enhancements.water_engineering.api.water_design import _run_calc
+        from erpnext_enhancements.water_engineering.api.designer import _run_calc
 
         result = _run_calc(calc, args.get("inputs") or {})
         return {

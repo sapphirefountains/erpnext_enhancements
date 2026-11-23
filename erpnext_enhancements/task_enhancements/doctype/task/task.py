@@ -34,6 +34,11 @@ FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template
 #: ``task_enhancements.assignments.TASK_DEPENDENCY_DONE``, which My Work checks before Done.
 DEPENDENCY_DONE = ("Completed", "Cancelled", "Canceled")
 
+#: The most descendants ``get_child_tasks_html`` reads, and the deepest level it walks. A
+#: tree past either is drawn as far as the limit.
+MAX_TREE_NODES = 2000
+MAX_TREE_DEPTH = 50
+
 
 class Task(BaseTask):
     """ERPNext Task controller override (installed via override_doctype_class).
@@ -81,17 +86,25 @@ class Task(BaseTask):
         finally:
             self.depends_on = rows
 
-    def before_save(self):
-        """Promote the parent task to a group before saving.
+    def before_validate(self):
+        """Promote the parent task to a group before ERPNext's validate refuses this task.
 
-        Overrides the core hook. If this task points at a ``parent_task`` that
-        is not yet flagged ``is_group``, load the parent and set ``is_group = 1``
-        (saved with ``ignore_permissions`` so the cascade succeeds regardless
-        of the editing user's rights on the parent). This guarantees parents of
-        sub-tasks are valid tree groups.
+        If this task points at a ``parent_task`` that is not yet flagged ``is_group``,
+        load the parent and set ``is_group = 1`` (saved with ``ignore_permissions`` so
+        the cascade succeeds regardless of the editing user's rights on the parent).
+        This guarantees parents of sub-tasks are valid tree groups.
 
-        Note: the core ``before_save`` does not do meaningful work, so it is not
-        chained here; ``on_update`` is where the parent ``super()`` call lives.
+        ``before_validate``, not ``before_save`` (v1.787.0). frappe 16.53.0's
+        ``Document.run_before_save_methods`` runs ``before_validate``, then ``validate``,
+        then ``before_save``, and ERPNext's ``Task.validate`` (16.52.1) calls
+        ``validate_parent_is_group``, which throws ``ParentIsGroupError`` when the parent's
+        box is off. Promoting in ``before_save`` therefore ran one step too late: dropping a
+        task onto a leaf task on the Scope tab's Tasks Tree was refused with "Parent Task
+        ... must be a Group Task" every time, and the controller's own promotion never got
+        its turn. The controller's ``before_validate`` runs before the ``before_validate``
+        doc_events in hooks.py (``Document.hook`` composes the controller method first), so
+        the parent is a group by the time ``parent_dates.before_task_validate`` widens it.
+        The core controller defines no ``before_validate``, so nothing is chained.
         """
         if self.parent_task:
             if not frappe.db.get_value("Task", self.parent_task, "is_group"):
@@ -138,14 +151,18 @@ def get_child_tasks_html(task_name):
     ``custom_child_tasks_table`` HTML field.
 
     Returns an empty string when there are no descendants; on error it logs the
-    traceback and returns a short error ``<div>`` rather than raising.
+    traceback and returns a short error ``<div>`` rather than raising. Requires read
+    permission on the Task, checked before the ``try`` so a refusal is raised rather than
+    drawn; the walk stops at ``MAX_TREE_NODES`` descendants.
     """
     # Use a dedicated logger for debugging
     logger = frappe.logger("erpnext_enhancements")
     logger.debug(f"Executing get_child_tasks_html for task: {task_name}")
 
+    task = frappe.get_doc("Task", task_name)
+    task.check_permission("read")
+
     try:
-        task = frappe.get_doc("Task", task_name)
         descendants = _get_all_descendants("Task", task.name)
 
         logger.debug(f"Found {len(descendants)} descendants.")
@@ -231,31 +248,40 @@ def get_child_tasks_html(task_name):
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Task Enhancements Error")
-        return f"<div>An error occurred: {e}</div>"
+        return f"<div>An error occurred: {frappe.utils.escape_html(str(e))}</div>"
 
 
-def _get_all_descendants(doctype, parent):
+def _get_all_descendants(doctype, parent, _budget=None, _depth=0):
     """Recursively collect every descendant task under ``parent``.
 
     Performs a depth-first walk over ``parent_task`` links, returning a flat
     list of ``frappe._dict`` rows (each carrying the fields needed to render
     the tree). The dict wrapper enables dot-notation access by the
     tree-building logic. Note: one query is issued per node, so very deep/wide
-    trees fan out into many small queries.
+    trees fan out into many small queries. The walk stops after
+    ``MAX_TREE_NODES`` rows (``_budget`` is the count left, shared by every
+    level) and below ``MAX_TREE_DEPTH`` levels.
     """
+    if _budget is None:
+        _budget = [MAX_TREE_NODES]
     descendants = []
+    if _budget[0] <= 0 or _depth >= MAX_TREE_DEPTH:
+        return descendants
     fields = [
         "name", "subject", "parent_task", "status",
         "exp_start_date", "exp_end_date", "expected_time"
     ]
-    children = frappe.get_all(doctype, filters={'parent_task': parent}, fields=fields)
+    children = frappe.get_all(doctype, filters={'parent_task': parent}, fields=fields, limit=_budget[0])
 
     for child in children:
+        if _budget[0] <= 0:
+            break
+        _budget[0] -= 1
         # Convert the dictionary to a Frappe dict to allow dot notation access,
         # making it compatible with the existing tree-building logic.
         child_obj = frappe._dict(child)
         descendants.append(child_obj)
-        descendants.extend(_get_all_descendants(doctype, child_obj.name))
+        descendants.extend(_get_all_descendants(doctype, child_obj.name, _budget, _depth + 1))
 
     return descendants
 
@@ -276,8 +302,8 @@ def _build_task_tree_html(tasks, level=0):
         html += "<li>"
 
         # Use helper to avoid None display
-        status = task.status or ""
-        assigned_to = task.allocated_to or ""
+        status = frappe.utils.escape_html(task.status or "")
+        assigned_to = frappe.utils.escape_html(task.allocated_to or "")
         start_date = task.exp_start_date or ""
         end_date = task.exp_end_date or ""
         expected_time = task.expected_time or ""

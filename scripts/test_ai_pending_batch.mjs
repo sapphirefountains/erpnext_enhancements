@@ -295,6 +295,7 @@ function batch_answer(opts) {
 // ------------------------------------------------------------------ load the real script
 
 const HELPERS = [
+	"DEVICE_ACTION_TOOLS",
 	"starts_ticked",
 	"initial_selection",
 	"select_all",
@@ -406,6 +407,17 @@ test("High risk or hidden values never start ticked, whatever batch_default says
 	assert.equal(h.starts_ticked({ risk: "High", batch_default: true }), false);
 	assert.equal(h.starts_ticked({ risk: "Low", batch_default: true, has_hidden: true }), false);
 	assert.equal(h.starts_ticked(null), false);
+});
+
+test("a remote device action never starts ticked, whatever risk or batch_default say", () => {
+	for (const tool of ["remote_lock_device", "remote_wipe_device", "locate_device", "reboot_device", "run_device_script", "deploy_device_patch"]) {
+		const row = { name: "AI-PA-9", tool_name: tool, risk: "Medium", batch_default: true, has_hidden: false };
+		assert.equal(h.starts_ticked(row), false, tool);
+		assert.deepEqual([...h.initial_selection([row])], [], tool);
+		assert.match(h.untick_reason(row), /runs a remote device action/);
+		assert.equal(h.select_all([row]).size, 1); // ticking one by hand is still a choice
+	}
+	assert.equal(h.DEVICE_ACTION_TOOLS.size, 6);
 });
 
 test("an unticked row says why, in the server's words when it gave them", () => {

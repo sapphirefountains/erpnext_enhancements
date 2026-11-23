@@ -99,6 +99,8 @@ const PP = {
 		group: "ee_project_planner_group",
 		foreign: "ee_project_planner_foreign",
 		panel: "ee_project_planner_panel",
+		// v1.796.0: Display ▸ Show done work, remembered in this browser like the foreign toggle.
+		done: "ee_project_planner_done",
 	},
 	// The filters the address carries (S5c), in the order they are written: ?project=&pm=&group=.
 	// all_tasks (P2, D6) is a filter like the rest, "1" when "Show all tasks" is on and "" (the default,
@@ -153,6 +155,19 @@ const PP_ROUTE_COLORS = () => ({
 	line: pp_token_color("--sf-fresh-blue", "#00a0df"),
 });
 const pp_when = (ymd) => moment(ymd, "YYYY-MM-DD").format("ddd, MMM D");
+
+// The hours a free day shows beside its pencilled (tentative) hours. Nikolas, 2026-11-03: "Pencil should be
+// the only hours displayed when something is tentative" — when the pencil covers the free hours, the free
+// figure says nothing a scheduler can use, so only the pencil is shown ("8h pencil"); otherwise both,
+// without the old plus sign ("4h free · 4h pencil"). `free_text` is what the day reads with no pencil.
+function pp_hours_text(free, soft, free_text) {
+	const pencil = Math.max(0, Number(soft) || 0);
+	const open = Math.max(0, Number(free) || 0);
+	if (pencil <= 0.01) return free_text;
+	const pencil_text = __("{0}h pencil", [pp_hours(pencil)]);
+	if (open > 0.01 && pencil + 0.01 >= open) return pencil_text;
+	return `${free_text} · ${pencil_text}`;
+}
 // 70 -> "1h 10m", 25 -> "25m", 120 -> "2h": drive time as people say it.
 const pp_drive = (minutes) => {
 	const total = Math.max(0, Math.round(Number(minutes) || 0));
@@ -190,6 +205,7 @@ class ProjectPlanner {
 		this.pm = this.load_pref(PP.prefs.pm, "");
 		this.group = this.load_pref(PP.prefs.group, "");
 		this.show_foreign = this.load_pref(PP.prefs.foreign, "1") !== "0";
+		this.show_done = this.load_pref(PP.prefs.done, "0") === "1"; // v1.796.0, PPDW below
 		// "Show all tasks" (P2): a saved view's, not the browser's, so it follows the person to any device.
 		this.all_tasks = "";
 		this.panel_open = this.load_pref(PP.prefs.panel, "1") !== "0";
@@ -244,6 +260,7 @@ class ProjectPlanner {
 		this.init_phase8();
 		this.init_phase4();
 		this.init_phase5();
+		this.init_done_work(); // v1.796.0: done work onto old dates (PPDW)
 		this.init_phase6a();
 		this.init_phase6b();
 		this.init_phase6c();
@@ -380,7 +397,7 @@ class ProjectPlanner {
 	// ?group=, on every planner screen. The rules, in one place:
 	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
 	//     address wins over it. An address that names any of them is the whole filter: one it does not
-	//     name is All, so a link shows exactly what its sender saw. A form's "Open in Project Planner"
+	//     name is All, so a link shows exactly what its sender saw. A form's "Open in Planner"
 	//     (S5b) is such a link: ?project= alone, which also leaves the PM filter at All, where it
 	//     cannot hide the project's cards. An address that names none of them (the sidebar, another
 	//     page's path-only link) keeps the filters on screen.
@@ -776,6 +793,13 @@ class ProjectPlanner {
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
+		// Nikolas, 2026-11-03: "Float right for the side for the Lookahead, Gantt, Crew, Calendar, and Overview
+		// tabs." The tabs and the Calendar's Week/Month switch go last, after the tools, so they sit at the
+		// bar's right end (‹ Today › and the range stay left); the phone's "Filters and tools" button is
+		// appended after them by init_toolbar, so its compact row still ends on that button. The tablist
+		// (kit.toolbar.tabs, tb_ready) is wired on the element, wherever it sits.
+		$seg.appendTo($bar);
+		this.$cal_seg.appendTo($bar);
 		this.update_undo_button();
 
 		this.$panel = $('<div class="pp-section pp-res"></div>').appendTo(this.$body);
@@ -829,7 +853,8 @@ class ProjectPlanner {
 				this.ppl_call(start) || {
 					method: `${PP.api}.get_planner`,
 					// P4: always with the drafts, so a Draft schedule's (anyone's) and held changes show.
-					args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks ? { all_tasks: 1 } : {}),
+					// v1.796.0: Display ▸ Show done work adds done=1 (PPDW).
+					args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks ? { all_tasks: 1 } : {}, this.show_done ? { done: 1 } : {}),
 				}
 			)
 		)
@@ -953,6 +978,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
+		if (this.pph) this.pph.close(); // the hover card belongs to chips a redraw replaces (v1.788.0)
 		if (this.view === PPG.view) return this.ppg_render(); // P6: the chart
 		if (this.view === PPO.view) return this.ppo_render(); // P9: the Overview
 		if (this.view === PP.capacity_view) {
@@ -977,6 +1003,7 @@ class ProjectPlanner {
 				.text(__("No work for {0} in this range.", [(named && named.title) || this.project]))
 				.prependTo(this.$grid_wrap);
 		}
+		this.ppdw_note(); // v1.796.0: Show done work drew only the first of them
 		this.$hint.text(
 			lookahead
 				? __(
@@ -1021,8 +1048,9 @@ class ProjectPlanner {
 			const free = Math.max(0, Number(day.free != null ? day.free : capacity - booked));
 			state = {
 				cls: ratio <= 0.75 ? "pp-green" : "pp-amber",
-				text: free > 0.01 ? __("{0}h free", [pp_hours(free)]) : __("Full"),
+				text: pp_hours_text(free, soft, free > 0.01 ? __("{0}h free", [pp_hours(free)]) : __("Full")),
 				ratio,
+				pencil_said: soft > 0.01,
 			};
 			if (day.off) state.text += ` · ${__("½ day off")}`;
 		}
@@ -1031,7 +1059,9 @@ class ProjectPlanner {
 		state.soft = soft;
 		state.soft_ratio = capacity > 0 ? Math.min(Math.max(0, 1 - state.ratio), soft / capacity) : 0;
 		if (soft > 0.01) {
-			state.text += ` · ${__("+{0}h pencil", [pp_hours(soft)])}`;
+			// Over, Off and a day off keep the pencil after them (v1.788.0: no plus sign; a free day said it above).
+			if (!state.pencil_said) state.text += ` · ${__("{0}h pencil", [pp_hours(soft)])}`;
+			delete state.pencil_said;
 			if (capacity > 0 && booked + soft - capacity > 0.01) state.cls += " pp-softover";
 		}
 		return state;
@@ -1067,6 +1097,11 @@ class ProjectPlanner {
 		(day.bookings || []).forEach((booking) => {
 			// The drive is summarized above; it is only listed when the day carries no figure for it.
 			if (booking.kind === "drive" && Number(day.drive_minutes) > 0) return;
+			// v1.796.0: done work drawn on the day holds no hours of it (PPDW).
+			if (booking.done) {
+				lines.push(`• ${booking.label || booking.ref} (${__("done")})`);
+				return;
+			}
 			const parts = [`${pp_hours(booking.hours)}h`];
 			if (booking.slot) parts.push(booking.slot.join("–"));
 			if (booking.estimated) parts.push(__("estimated"));
@@ -1089,7 +1124,7 @@ class ProjectPlanner {
 	has_route(day) {
 		if (!day) return false;
 		if (Number(day.drive_minutes) > 0) return true;
-		return (day.bookings || []).some((b) => b.kind && b.kind !== "drive" && b.kind !== "travel");
+		return (day.bookings || []).some((b) => b.kind && b.kind !== "drive" && b.kind !== "travel" && !b.done);
 	}
 
 	// The drive line of a person-day: "1h 10m drive", a Long drive chip when it is long, and the
@@ -1303,7 +1338,10 @@ class ProjectPlanner {
 					</div>
 					${this.p6d_day_html(ymd, resources)}
 					${cards.map((card) => this.card_html(card, ymd)).join("")}
-					${(foreign_by_day[ymd] || []).map((item) => this.foreign_html(item)).join("")}
+					${(foreign_by_day[ymd] || [])
+						.sort((a, b) => this.booking_order(a, b))
+						.map((item) => this.foreign_html(item))
+						.join("")}
 				</div>`);
 		});
 		const $grid = $('<div class="pp-grid"></div>').html(html.join(""));
@@ -1331,6 +1369,8 @@ class ProjectPlanner {
 				const day = this.day_of(resource.name, ymd);
 				const state = this.avail_state(day);
 				const chips = ((day && day.bookings) || [])
+					.slice()
+					.sort((a, b) => this.booking_order(a, b))
 					.map((booking) =>
 						this.booking_html(resource.name, ymd, booking, this.crew_span_ctx(booked_on, resource.name, days, ymd, booking))
 					)
@@ -1503,6 +1543,7 @@ class ProjectPlanner {
 				if (span.next) classes.push("pp-span-next");
 			}
 			if (card.movable && this.data.can_edit) classes.push("pp-movable");
+			classes.push(...this.ppdw_classes(card)); // v1.796.0: done work (faded; a manager may drag it)
 			if (card.saving) classes.push("pp-saving");
 			if (!this.task_visible(card)) classes.push("pp-dim");
 			if (card.overdue) classes.push("pp-overdue");
@@ -1552,11 +1593,40 @@ class ProjectPlanner {
 			</div>`;
 	}
 
+	// A project's name for sorting and the hover card: its title, else the title the planner's own
+	// project list knows for that ID, else the ID (review of #1419: a trip's booking carries the ID only,
+	// and a day must not interleave "Riverwalk" with "PRO-0007").
+	project_name(item) {
+		const id = (item && item.project) || "";
+		if (item && item.project_title) return item.project_title;
+		const known = id && this.by_project ? this.by_project[id] : null;
+		return (known && known.title) || id;
+	}
+
 	compare(a, b) {
 		return (
-			String(a.project_title || a.project || "").localeCompare(String(b.project_title || b.project || "")) ||
+			String(this.project_name(a)).localeCompare(String(this.project_name(b))) ||
 			String(a.subject || "").localeCompare(String(b.subject || ""))
 		);
+	}
+
+	// The order of the chips in a person's day on the Crew board, and of another planner's items in a
+	// Calendar day (Nikolas, 2026-11-03: "events should go in order of Project Name, Task Name"). A drive
+	// and a personal block come first (the day's own padding and the person's own time), then every
+	// booking by its project's name and then its own, as compare() orders the Calendar's cards: a task's
+	// names from its card, another planner's from the booking it came with.
+	booking_order(a, b) {
+		const rank = (booking) => (booking.kind === "drive" ? 0 : booking.kind === "block" ? 1 : 2);
+		const names = (booking) => {
+			const card = booking.ref && this.by_task[booking.ref];
+			return card ? [this.project_name(card), card.subject || card.name || ""] : [this.project_name(booking), booking.label || booking.ref || ""];
+		};
+		if (rank(a) !== rank(b)) return rank(a) - rank(b);
+		const [pa, ta] = names(a);
+		const [pb, tb] = names(b);
+		// A booking with no project name goes after those with one.
+		if (!pa !== !pb) return pa ? -1 : 1;
+		return String(pa).localeCompare(String(pb)) || String(ta).localeCompare(String(tb));
 	}
 
 	// What is wrong on the days this task is booked: "Austin, Tue Oct 13: Over by 2h".
@@ -1648,7 +1718,9 @@ class ProjectPlanner {
 		else if (!(card.crew || []).length && this.needs_crew.has(card.name)) {
 			chips.push(`<span class="pp-chip pp-amber">${pp_esc(__("No crew"))}</span>`);
 		}
-		const conflicts = this.task_conflicts(card);
+		// v1.796.0: done work has no conflicts to show; it is history (PPDW).
+		const conflicts = card.finished ? [] : this.task_conflicts(card);
+		if (card.finished) chips.push(this.ppdw_chip(card));
 		if (conflicts.length) chips.push(red(__("Conflict")));
 		if (card.overdue) chips.push(red(__("Overdue")));
 		if (card.rental_kind) chips.push(plain(__(card.rental_kind)));
@@ -1677,6 +1749,7 @@ class ProjectPlanner {
 
 		const classes = ["pp-card"];
 		if (card.movable && this.data.can_edit) classes.push("pp-movable");
+		classes.push(...this.ppdw_classes(card)); // v1.796.0: done work (PPDW)
 		if (card.overdue) classes.push("pp-overdue");
 		if (card.tentative) classes.push("pp-tentative");
 		if (card.saving) classes.push("pp-saving");
@@ -1727,10 +1800,12 @@ class ProjectPlanner {
 		const kinds = { visit: __("Maintenance"), rental: __("Rental"), travel: __("Travel") };
 		const who = item.resource ? this.resource_label(item.resource) : "";
 		// v1.601.0: a pencilled maintenance visit is hatched and says so, like a pencil task.
+		// v1.788.0: the project and the time slot (get_planner's `foreign` carries them since the review of #1419).
 		const sub = [
 			kinds[item.kind] || item.kind,
+			this.project_name(item),
 			who,
-			item.hours ? `${pp_hours(item.hours)}h` : "",
+			item.slot && item.slot.length === 2 ? item.slot.join("–") : item.hours ? `${pp_hours(item.hours)}h` : "",
 			item.tentative ? __("Pencil") : "",
 		]
 			.filter(Boolean)
@@ -1794,7 +1869,18 @@ class ProjectPlanner {
 		});
 		root.addEventListener("keydown", (e) => {
 			if (e.key !== "Enter" && e.key !== " ") return;
-			if (!e.target.closest || !e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard, [data-ppr-task]")) return;
+			if (!e.target.closest) return;
+			// Ctrl+Enter (⌘Enter) on a focused card or project name: its record in a new tab (v1.788.0). A
+			// Ctrl-click stays the multi-select (p6b_modifier_click).
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				if (e.repeat) return; // a held key is one tab, not one a repeat
+				if (this.ppr_new_tab_for(e.target)) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+				return;
+			}
+			if (!e.target.closest(".pp-card, .pp-fcard, .pp-route, .pp-hm-cell, .pp-ecard, [data-ppr-task]")) return;
 			e.preventDefault();
 			this.activate(e.target);
 		});
@@ -1878,7 +1964,8 @@ class ProjectPlanner {
 		const card_el = el.closest(".pp-card[data-task]");
 		if (!card_el) return null;
 		const card = this.by_task[card_el.getAttribute("data-task")];
-		if (!card || !card.movable || card.saving) return null;
+		// v1.796.0: done work a manager may move onto old dates is picked up too (ppdw_drop takes the drop).
+		if (!card || !(card.movable || this.ppdw_can_move(card)) || card.saving) return null;
 		return {
 			kind: "card",
 			el: card_el,
@@ -2108,6 +2195,7 @@ class ProjectPlanner {
 
 	drop(source, target) {
 		if (this.p6b_drop(source, target)) return;
+		if (this.ppdw_drop(source, target)) return; // v1.796.0: done work onto an old date (PPDW)
 		if (source.kind === "overdue") {
 			this.drop_overdue(source.row, target);
 			return;
@@ -2271,6 +2359,7 @@ class ProjectPlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
+		if (this.ppdw_undo(snap)) return; // v1.796.0: a move of done work puts back exactly what was there
 		if (this.t1_undo(snap)) return;
 		if (this.p6b_undo(snap)) return;
 		if (this.ppg_undo(snap)) return; // P6: a link drawn or removed
@@ -3061,14 +3150,16 @@ class ProjectPlanner {
 		const over_days = Number(cell.over_days) || 0;
 		const off_days = Number(cell.off_days) || 0;
 		if (capacity <= 0 && booked <= 0) {
-			return { cls: "pp-idle pp-offday", pct: "", sub: soft > 0 ? __("+{0}h pencil", [pp_hours(soft)]) : __("Off"), ratio: 0, soft_ratio: 0, capacity, booked, soft, over_days, off_days };
+			return { cls: "pp-idle pp-offday", pct: "", sub: soft > 0 ? __("{0}h pencil", [pp_hours(soft)]) : __("Off"), ratio: 0, soft_ratio: 0, capacity, booked, soft, over_days, off_days };
 		}
 		const ratio = capacity > 0 ? booked / capacity : 2;
 		// The server's band (get_heatmap `level`) decides the color; the same rule is the fallback.
 		const level = ["green", "amber", "red"].includes(cell.level) ? cell.level : null;
 		const cls = level ? `pp-${level}` : ratio > 1.0001 ? "pp-red" : ratio <= 0.75 ? "pp-green" : "pp-amber";
-		const sub = [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
-		if (soft > 0.01) sub.push(__("+{0}h pencil", [pp_hours(soft)]));
+		// v1.788.0: a week with nothing firm on it reads as its pencil alone ("8h pencil"), the pencil-only rule
+		// of avail_state; with firm hours both are said, without the old plus sign.
+		const sub = booked <= 0.01 && soft > 0.01 ? [] : [__("{0}h of {1}h", [pp_hours(booked), pp_hours(capacity)])];
+		if (soft > 0.01) sub.push(__("{0}h pencil", [pp_hours(soft)]));
 		if (over_days > 0) sub.push(over_days === 1 ? __("1 day over") : __("{0} days over", [over_days]));
 		return {
 			cls,
@@ -4190,7 +4281,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // (ee_project_planner_gantt:<user>). A bare address with the Gantt remembered is replaced by
 // /gantt/<that project>. With no project stored, or one the server will not open (gone, or not the
 // person's to read), the device forgets it and the address is replaced by the Lookahead: never a dead
-// end, never an extra entry. The Project form's "Open in Project Planner" names /gantt/<project> itself,
+// end, never an extra entry. The Project form's "Open in Planner" names /gantt/<project> itself,
 // so none of this applies to it.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
@@ -5328,6 +5419,7 @@ const PP6A_METHODS = {
 		this.p6c_ready();
 		this.tb_ready();
 		this.pps_kit_ready(); // Simple mode draws with the kit
+		this.pph_ready(); // v1.788.0: the hover card on a chip
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -6474,6 +6566,7 @@ const PP6B_METHODS = {
 		const items = [
 			{ label: __("Quick edit"), on_click: () => this.open_card(card) },
 			fresh ? null : { label: __("Open task"), on_click: () => this.ppr_open_task(card.name) },
+			fresh ? null : { label: __("Open task in new tab"), hint: __("Ctrl+Enter"), on_click: () => this.ppr_open_new_tab("task", card) },
 			{
 				label: __("Assign to…"),
 				hint: editable ? "" : why,
@@ -6512,7 +6605,8 @@ const PP6B_METHODS = {
 					on_click: () =>
 						this.ppr_open("project", { project: card.project }) ||
 						this.ppr_leave(() => frappe.set_route("Form", "Project", card.project)),
-				}
+				},
+				{ label: __("Open project in new tab"), on_click: () => this.ppr_open_new_tab("project", { project: card.project }) }
 			);
 		}
 		return items;
@@ -7860,6 +7954,7 @@ const PP6B_METHODS = {
 					item(key("←") + key("→"), "The previous or next week (month, or four weeks on Capacity)."),
 					item(key("1") + key("2") + key("3"), "Week, month or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("Ctrl") + key("Enter"), "Open the focused task or project in a new tab (⌘Enter on a Mac)."),
 					item(key("/"), "Search tasks, projects and people."),
 					item(key("?"), "This help."),
 					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
@@ -11699,6 +11794,7 @@ const PPTB_METHODS = {
 				on_click: () => this.set_show_foreign(!this.show_foreign),
 			},
 			this.tb_all_tasks_item(),
+			this.ppdw_display_item(), // v1.796.0: Show done work
 		]);
 	},
 
@@ -12244,6 +12340,25 @@ const PPL_PURE = {
 		const start = PPL_PURE.week_start(ymd, first);
 		return { start, end: PP6B_PURE.ymd_add(start, 7 * PPL_PURE.weeks(weeks) - 1) };
 	},
+	// The months the window's days fall in, for the band over the day headings (Nikolas, 2026-11-03:
+	// "don't just show the weeks, but also the month"): each with its first day, its 0-based column and
+	// its days on screen. The year is said only when the window holds two.
+	month_bands(days) {
+		const out = [];
+		(days || []).forEach((ymd, index) => {
+			const key = String(ymd).slice(0, 7);
+			const last = out[out.length - 1];
+			if (last && last.key === key) last.span += 1;
+			else out.push({ key, ymd, at: index, span: 1 });
+		});
+		const years = new Set(out.map((month) => month.key.slice(0, 4)));
+		out.forEach((month) => {
+			const date = moment(month.ymd, "YYYY-MM-DD");
+			month.label = date.format(years.size > 1 ? "MMMM YYYY" : "MMMM");
+			month.short = date.format(years.size > 1 ? "MMM YYYY" : "MMM");
+		});
+		return out;
+	},
 	// Where a span sits in the window: 1-based day columns, and whether it runs on past either end.
 	// Null when it misses the window or has no days.
 	columns(start, end, first, last) {
@@ -12469,7 +12584,7 @@ const PPL_METHODS = {
 		if (state.collapsed.has(key)) state.collapsed.delete(key);
 		else state.collapsed.add(key);
 		this.ppl_save_collapsed();
-		this.render();
+		this.ppl_keep_scroll(() => this.render());
 	},
 
 	ppl_set_all(collapsed) {
@@ -12483,7 +12598,56 @@ const PPL_METHODS = {
 			(project.phases || []).forEach((phase) => state.collapsed.delete(`f:${project.name}|${phase.name || ""}`));
 		});
 		this.ppl_save_collapsed();
-		this.render();
+		this.ppl_keep_scroll(() => this.render());
+	},
+
+	// ------------------------------------------------------------------ keeping the scroll
+	//
+	// Nikolas, 2026-11-03: expanding a phase or a project "refreshes the view bringing you to the top".
+	// render() empties the grid and builds it again, so the board's own pane (.pp-scroll, the Lookahead's
+	// and the Crew board's) starts over at 0, and while the page is short the browser clamps the window's
+	// scroll, which the redraw does not undo. So the positions are taken before and put back after.
+
+	// The board's pane, every scrolling ancestor up to the document, and the window.
+	ppl_scroll_save() {
+		const wrap = this.$grid_wrap && this.$grid_wrap[0];
+		const pane = wrap && typeof wrap.querySelector === "function" ? wrap.querySelector(".pp-scroll") : null;
+		const ancestors = [];
+		for (let node = wrap ? wrap.parentNode : null; node && node.nodeType === 1; node = node.parentNode) {
+			if (node.scrollTop || node.scrollLeft) ancestors.push({ el: node, top: node.scrollTop, left: node.scrollLeft });
+		}
+		const win = typeof window !== "undefined" && typeof window.scrollTo === "function" ? window : null;
+		return {
+			pane: pane ? { top: pane.scrollTop || 0, left: pane.scrollLeft || 0 } : null,
+			ancestors,
+			win: win ? { x: win.pageXOffset || 0, y: win.pageYOffset || 0 } : null,
+		};
+	},
+
+	ppl_scroll_restore(saved) {
+		if (!saved) return;
+		const wrap = this.$grid_wrap && this.$grid_wrap[0];
+		const pane = saved.pane && wrap && typeof wrap.querySelector === "function" ? wrap.querySelector(".pp-scroll") : null;
+		if (pane) {
+			pane.scrollTop = saved.pane.top;
+			pane.scrollLeft = saved.pane.left;
+		}
+		(saved.ancestors || []).forEach(({ el, top, left }) => {
+			el.scrollTop = top;
+			el.scrollLeft = left;
+		});
+		if (saved.win && (saved.win.x || saved.win.y)) window.scrollTo(saved.win.x, saved.win.y);
+	},
+
+	// A redraw that leaves the reader where they were: collapsing or expanding a row, the Needs crew chip,
+	// "+N more", and the Overview's Expand all and its lines.
+	ppl_keep_scroll(fn) {
+		const saved = this.ppl_scroll_save();
+		try {
+			fn();
+		} finally {
+			this.ppl_scroll_restore(saved);
+		}
 	},
 
 	ppl_save_collapsed() {
@@ -12555,7 +12719,27 @@ const PPL_METHODS = {
 		if (ymd === this.today()) out.push("ppl-today");
 		if (weekday === 0 || weekday === 6) out.push("ppl-weekend");
 		if (weekday === this.first_weekday()) out.push("ppl-week-start");
+		if (ymd.slice(8, 10) === "01") out.push("ppl-month-start");
 		return out;
+	},
+
+	// The month band over the day headings (v1.788.0): one cell a month across its days, "November" (the
+	// short name where fewer than four of its days are on screen), sticky with the headings under it, the way
+	// the Gantt's timeline reads. A week start keeps its rule; the first of a month gets a firmer one.
+	ppl_monthband_html(days) {
+		const cells = PPL_PURE.month_bands(days)
+			.map(
+				(month) =>
+					`<div class="ppl-month${month.at ? "" : " ppl-month-first"}" role="columnheader" style="grid-column: ${
+						month.at + 2
+					} / span ${month.span}" title="${pp_esc(month.label)}"><span>${pp_esc(
+						month.span < 4 ? month.short : month.label
+					)}</span></div>`
+			)
+			.join("");
+		return `<div class="ppl-row ppl-months" role="row"><div class="ppl-label ppl-corner" role="columnheader" aria-label="${pp_esc(
+			__("Month")
+		)}"></div>${cells}</div>`;
 	},
 
 	// The day headings: a day note shows as a dot, and the heading opens the day peek, which reads it.
@@ -12597,9 +12781,9 @@ const PPL_METHODS = {
 			  )}</div>`;
 		return `<div class="ppl-scroll pp-scroll">
 			<div class="ppl-grid" role="grid" aria-label="${pp_esc(__("Lookahead"))}" style="--ppl-days: ${days.length}">
-				<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
-					__("Project · phase · task")
-				)}</div>${this.ppl_dayheads_html(days)}</div>
+				<div class="ppl-sticky">${this.ppl_monthband_html(days)}<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
+		__("Project · phase · task")
+	)}</div>${this.ppl_dayheads_html(days)}</div></div>
 				${rows.join("")}
 				<svg class="ppl-links" aria-hidden="true"></svg>
 			</div>
@@ -12891,13 +13075,13 @@ const PPL_METHODS = {
 		on("[data-ppl-weeks]", (el) => this.ppl_pick_weeks(el.getAttribute("data-ppl-weeks")));
 		on("[data-ppl-needs]", () => {
 			state.needs_only = !state.needs_only;
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppl-all]", (el) => this.ppl_set_all(el.getAttribute("data-ppl-all") === "collapse"));
 		on("[data-ppl-toggle]", (el) => this.ppl_toggle(el.getAttribute("data-ppl-toggle")));
 		on("[data-ppl-more]", (el) => {
 			state.shown_all.add(el.getAttribute("data-ppl-more"));
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppl-build]", (el) => this.t1_open_build_out(el.getAttribute("data-ppl-build")));
 		on("[data-ppl-publish]", (el) => this.ppl_publish(el.getAttribute("data-ppl-publish")));
@@ -13055,7 +13239,7 @@ Object.assign(ProjectPlanner.prototype, PPL_METHODS);
 // export menu (print, PNG, SVG, CSV, Excel, a date range) stays.
 //
 // A project is a screen: /gantt/<project> is a route, so Back and Forward step through the projects
-// opened, and the Project form's "Open in Project Planner" lands here. Collapsing a phase and the zoom
+// opened, and the Project form's "Open in Planner" lands here. Collapsing a phase and the zoom
 // are not screens. The project this device opened last is remembered (per signed-in user), so the Gantt
 // tab reopens it; the toolbar's Project filter, when set, wins. A bare /project-planner on a device whose
 // tab is the Gantt reopens that project (ppg_land; the rule is in the P8 block's comment). Leaving the
@@ -13132,7 +13316,8 @@ const PPG_PURE = {
 		if (card.tentative) out.push("ppg-pencil");
 		if (card.finished) out.push("ppg-finished");
 		else if (card.overdue) out.push("ppg-overdue");
-		if (!card.movable) out.push("ppg-locked");
+		// v1.796.0: done work a manager may move onto old dates is not locked (PPDW).
+		if (!card.movable && !card.backdate) out.push("ppg-locked");
 		return out.join(" ");
 	},
 	// One card as a widget row. `drawn` is the set of groups on the chart; `initials(card)` the crew.
@@ -13145,7 +13330,8 @@ const PPG_PURE = {
 			ref_doctype: "Task",
 			ref_name: card.name,
 			ee_modified: card.modified,
-			ee_readonly: !card.movable || !!card.finished,
+			// v1.796.0: a done task moves for a manager (`backdate`), by its dates, through PPDW.
+			ee_readonly: !(card.backdate || (card.movable && !card.finished)),
 			ee_days: card.start ? Number(card.span_days) || 1 : "",
 			ee_crew: initials ? initials(card) : "",
 			ee_class: PPG_PURE.bar_class(card),
@@ -13691,6 +13877,7 @@ const PPG_METHODS = {
 	// dropped while the planner asks (reason, "Notify crew?"); the reload after the write is the truth.
 	ppg_write(task, changes, info) {
 		const card = task && this.by_task[task.ref_name];
+		if (card && card.backdate && !card.movable) return this.ppdw_gantt_write(card, changes); // v1.796.0
 		if (!card || !card.movable || card.finished) {
 			return Promise.resolve({
 				status: "refused",
@@ -13745,6 +13932,11 @@ const PPG_METHODS = {
 		if (!card || !pred) return Promise.resolve(null);
 		if (card.new_task || pred.new_task) {
 			frappe.show_alert({ message: __("A task that is still a draft cannot be linked yet. Publish the schedule first."), indicator: "orange" }, 7);
+			return Promise.resolve(null);
+		}
+		// v1.796.0 (review of #1427): a done bar moves for a manager by its dates only; a link is a schedule gesture.
+		if (card.finished || pred.finished) {
+			frappe.show_alert({ message: __("A finished task cannot be linked."), indicator: "orange" }, 7);
 			return Promise.resolve(null);
 		}
 		if ((card.depends_on || []).includes(pred.name)) return Promise.resolve(null);
@@ -14397,14 +14589,15 @@ const PPO_METHODS = {
 		const on = (selector, fn) => root.querySelectorAll(selector).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
 		const state = this.ppo_state();
 		on("[data-ppo-months]", (el) => this.ppo_pick_months(el.getAttribute("data-ppo-months")));
+		// v1.788.0: both redraw in place (ppl_keep_scroll), so Expand all does not bring the reader to the top.
 		on("[data-ppo-expand]", (el) => {
 			state.expanded = el.getAttribute("data-ppo-expand") === "1";
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppo-print]", () => this.ppo_print_summary());
 		on("[data-ppo-lines]", () => {
 			state.lines_all = !state.lines_all;
-			this.render();
+			this.ppl_keep_scroll(() => this.render());
 		});
 		on("[data-ppo-line]", (el) => {
 			const line = this.ppo_lines()[Number(el.getAttribute("data-ppo-line"))];
@@ -15379,6 +15572,20 @@ const PPR_METHODS = {
 		if (card && !this.ppr_open("task", card)) this.open_card(card);
 	},
 
+	// What Ctrl+Enter opens in a new tab for the element under focus: a card's or a Lookahead name's task,
+	// else a project name's project. False when there is nothing of ours there.
+	ppr_new_tab_for(el) {
+		const card_el = el.closest(".pp-card[data-task], [data-ppr-task]");
+		if (card_el) {
+			const name = card_el.getAttribute("data-task") || card_el.getAttribute("data-ppr-task");
+			// A phase's name is a group Task off the board (ppr_open_task opens it by name the same way).
+			return this.ppr_open_new_tab("task", this.by_task[name] || { name });
+		}
+		const project_el = el.closest("[data-pk-project]");
+		if (project_el) return this.ppr_open_new_tab("project", { project: decodeURIComponent(project_el.getAttribute("data-pk-project")) });
+		return false;
+	},
+
 	// A task by name: its card when the board has it, else the Task (a group Task, one off the board),
 	// through the drawer either way, so an open drawer's history entry is replaced.
 	ppr_open_task(name) {
@@ -15398,6 +15605,15 @@ const PPR_METHODS = {
 
 	ppr_open_project(project) {
 		if (project && !this.ppr_open("project", { project })) this.p6a_open_project(project);
+	},
+
+	// The record in a new tab: the "Open … in new tab" menu items and Ctrl+Enter on a focused card or
+	// project name (Nikolas, 2026-11-03). The kit's window.open on the Desk address records.open would
+	// route to, so this page, its history and its held drafts stay as they are. False with nothing to
+	// open (a drafted new task, a record this person cannot read, no kit yet), and nothing happens then.
+	ppr_open_new_tab(kind, item) {
+		const kit = this.ppr_kit();
+		return !!(kit && kit.records.open_new_tab(kit.records.record_of(kind, item)));
 	},
 
 	// Who a resource is, from whichever answer is on screen: the planner's, Capacity's or the route's.
@@ -15457,6 +15673,7 @@ const PPR_METHODS = {
 	ppr_project_items(project) {
 		const items = [
 			{ label: __("Open project"), on_click: () => this.ppr_open_project(project) },
+			{ label: __("Open project in new tab"), hint: __("Ctrl+Enter"), on_click: () => this.ppr_open_new_tab("project", { project }) },
 			{ label: __("Project at a glance"), on_click: () => this.p6a_open_project(project) },
 		];
 		if (this.by_project[project] && PP.views.includes(this.view)) {
@@ -15468,6 +15685,354 @@ const PPR_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPR_METHODS);
+
+// ====================================================================== PPH: the hover card (v1.788.0)
+//
+// Nikolas, 2026-11-03: "on the popup when hovering have times and other details". The kit's popover
+// (planner_kit/popover.js) draws a card after a short delay over any chip of this page — a task's card on
+// the Calendar, the Crew board and the Lookahead (each is a .pp-card[data-task]) and another planner's
+// booking (.pp-fcard) — from pph_describe, which says what the chip's title= lists and more, as rows:
+// the task and its project, its days, its time slot or hours, the crew, its conflicts and warnings. The
+// title= stays as the accessible fallback (the kit holds it aside only while the card is up). Mouse and
+// pen only: a phone's hold-to-open quick look is unchanged.
+
+const PPH_METHODS = {
+	// From p6a_ready, once the kit is here.
+	pph_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.popover || this.pph) return;
+		this.pph = kit.popover.attach(this.$body[0], {
+			selector: ".pp-card[data-task], .pp-fcard",
+			describe: (el) => this.pph_describe(el),
+		});
+	},
+
+	// What the card says for the chip `el`, or null for one that is not ours.
+	pph_describe(el) {
+		const card_el = el.closest(".pp-card[data-task]");
+		if (card_el) {
+			const card = this.by_task[card_el.getAttribute("data-task")];
+			return card ? this.pph_task(card, card_el.getAttribute("data-date") || "", card_el.getAttribute("data-resource") || "") : null;
+		}
+		const foreign_el = el.closest(".pp-fcard");
+		return foreign_el ? this.pph_foreign(foreign_el) : null;
+	},
+
+	// The booking of `card` on this person's day, when the chip is one of the Crew board's.
+	pph_booking(card, ymd, resource) {
+		if (!ymd || !resource) return null;
+		const day = this.day_of(resource, ymd);
+		return ((day && day.bookings) || []).find((booking) => booking.ref === card.name && booking.kind !== "drive") || null;
+	},
+
+	pph_task(card, ymd, resource) {
+		const booking = this.pph_booking(card, ymd, resource);
+		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
+		const when = !card.start ? __("Not scheduled") : end > card.start ? `${pp_when(card.start)} – ${pp_when(end)}` : pp_when(card.start);
+		const slot = (booking && booking.slot) || card.slot;
+		const time = slot && slot.length === 2 ? slot.join("–") : Number(card.expected_time) > 0 ? "" : card.start ? __("Full day") : "";
+		const hours = [
+			booking && ymd ? __("{0}h on {1}", [pp_hours(booking.hours), pp_when(ymd)]) : "",
+			Number(card.expected_time) > 0 ? __("{0}h planned", [pp_hours(card.expected_time)]) : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		const crew = (card.crew || []).map((member) => {
+			const name = this.resource_label(member.resource, member.label);
+			return member.is_lead ? __("{0} (lead)", [name]) : name;
+		});
+		if (Number(card.short) > 0) crew.push(__("needs {0} more", [card.short]));
+		const tags = [];
+		if (card.tentative || (booking && booking.tentative)) tags.push(__("Pencil (tentative)"));
+		if (card.new_task) tags.push(__("Draft: not published yet"));
+		if (card.overdue) tags.push(__("Overdue"));
+		if (card.rental_kind) tags.push(__(card.rental_kind));
+		return {
+			title: card.subject || card.name,
+			subtitle: card.project_title || card.project || "",
+			tags,
+			rows: [
+				[__("When"), when],
+				[__("Time"), time],
+				[__("Hours"), hours],
+				[__("Crew"), crew.length ? crew.join(", ") : __("Nobody yet")],
+				[__("Task"), card.new_task ? "" : card.name],
+			],
+			warnings: [...this.task_conflicts(card), ...this.dependency_lines(card), ...this.gap_lines(card)],
+			notes: [...this.p4_tip_lines(card), ...(typeof this.weather_lines === "function" ? this.weather_lines(card) : [])],
+		};
+	},
+
+	// Another planner's booking: a Calendar day's item (data-fkey, from the answer's `foreign`) or a Crew
+	// board chip (its ref and kind, in the person-day's bookings).
+	pph_foreign(el) {
+		const kinds = { visit: __("Maintenance visit"), rental: __("Rental"), travel: __("Travel"), task: __("Task") };
+		const key = el.getAttribute("data-fkey");
+		let item = null;
+		if (key) item = ((this.data && this.data.foreign) || []).find((entry) => entry.key === key) || null;
+		else {
+			const cell = el.closest(".pp-cell[data-resource]");
+			const ref = el.getAttribute("data-ref") || "";
+			const kind = el.getAttribute("data-kind") || "";
+			const ymd = el.getAttribute("data-date") || "";
+			const resource = cell ? cell.getAttribute("data-resource") : "";
+			const day = resource ? this.day_of(resource, ymd) : null;
+			const booking = ((day && day.bookings) || []).find((entry) => entry.ref === ref && (entry.kind || "") === kind) || null;
+			if (booking) item = Object.assign({ resource, date: ymd }, booking);
+		}
+		if (!item) return null;
+		const time = item.slot && item.slot.length === 2 ? item.slot.join("–") : "";
+		return {
+			title: item.label || item.ref || "",
+			subtitle: kinds[item.kind] || item.kind || "",
+			tags: [item.tentative ? __("Pencil (tentative)") : "", item.projected ? __("Projected") : "", item.estimated ? __("Estimated") : ""].filter(Boolean),
+			rows: [
+				[__("When"), item.date ? pp_when(item.date) : ""],
+				[__("Time"), time],
+				[__("Hours"), Number(item.hours) > 0 ? __("{0}h", [pp_hours(item.hours)]) : ""],
+				[__("Who"), item.resource ? this.resource_label(item.resource) : ""],
+				[__("Project"), this.project_name(item)],
+			],
+			notes: [__("Read-only here: another planner's booking.")],
+		};
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPH_METHODS);
+
+// ====================================================================== PPDW: done work onto old dates (v1.796.0)
+//
+// Nik, 2026-11-04: "In the Maintenance Planner and Project Planner and such I need to be able to move
+// previously done tasks and such to old dates for historical reasons." His picks: the Gantt (a done task's
+// bar moves, and its Not scheduled list holds the done tasks that never had dates), the Calendar and Crew
+// grids behind Display ▸ Show done work, all of a task's dates moving together, managers only, and an
+// automatic note on the task. The server is api/planner_history.py.
+//
+// History, not schedule. A done card is never `movable`, so every schedule gesture (a crew drop, a
+// resize on the grid, Tap to move, multi-select, the side panel, Split, Copy week) stays locked for it.
+// `backdate`, which the server sets for a manager, lets it be dragged by its days, or given days from its
+// menu ("Move done work…", the only way to date one in Not scheduled), and nothing else. The move goes to
+// move_done_task, never save_task: no reason, no "Notify crew?", no draft, nothing that follows moves. The
+// new last day is today or earlier. Undo puts back exactly the dates it had (restore_done_task), so a done
+// task taken out of Not scheduled has no dates again.
+
+const PPDW = {
+	api: "erpnext_enhancements.api.planner_history",
+};
+
+const PPDW_PURE = {
+	// The last day of a done task moved to start on `start`: it keeps its length.
+	end_for(card, start) {
+		if (!card || !card.start || !card.end || card.end <= card.start) return start;
+		const days = moment(card.end, "YYYY-MM-DD").diff(moment(card.start, "YYYY-MM-DD"), "days");
+		return moment(start, "YYYY-MM-DD").add(days, "days").format("YYYY-MM-DD");
+	},
+	// Why a done task cannot go on these days, or null. Done work goes on today or an earlier day.
+	refusal(start, end, today) {
+		if (!start) return __("Pick the day it was done.");
+		const last = end || start;
+		if (last < start) return __("The end date is before the start date.");
+		if (last > today) return __("Done work goes on today or an earlier day.");
+		return null;
+	},
+};
+
+const PPDW_METHODS = {
+	init_done_work() {
+		// "Move done work…" on a done card's hold / right-click menu, on the grids and the Gantt alike.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.ppdw_menu_items(target));
+	},
+
+	// A done task this person may move onto old dates (the server says so: `backdate`).
+	ppdw_can_move(card) {
+		return !!(card && card.backdate && card.finished && !card.movable);
+	},
+
+	ppdw_classes(card) {
+		if (!card || !card.finished) return [];
+		return this.ppdw_can_move(card) ? ["pp-done", "pp-movable"] : ["pp-done"];
+	},
+
+	ppdw_chip(card) {
+		const tip = card.completed_on
+			? __("Completed on {0}", [frappe.datetime.str_to_user(card.completed_on)])
+			: __("Completed");
+		return `<span class="pp-chip pp-done-chip" title="${pp_esc(tip)}">${pp_esc(__("Done"))}</span>`;
+	},
+
+	ppdw_display_item() {
+		const shown = this.show_done && this.data ? Number(this.data.done_tasks) || 0 : 0;
+		return {
+			label: __("Show done work"),
+			checked: !!this.show_done,
+			hint: shown ? __("{0} shown", [shown]) : "",
+			title: __(
+				"Completed tasks, faded, on the days they were done. Projects Managers, Maintenance Supervisors and System Managers can drag one to an earlier day to correct when it was done."
+			),
+			on_click: () => this.set_show_done(!this.show_done),
+		};
+	},
+
+	// Past planner_history.DONE_LIMIT the server draws only the first done tasks (`done_truncated`): say so.
+	ppdw_note() {
+		if (!this.show_done || !this.data || !this.data.done_truncated) return;
+		$('<div class="pp-section pp-empty-note" role="status"></div>')
+			.text(__("This range has more done tasks than the planner draws at once, so some are not shown. Pick a project or a shorter range to see them all."))
+			.prependTo(this.$grid_wrap);
+	},
+
+	// Display ▸ Show done work: remembered in this browser; the server reads the done tasks, so it loads again.
+	set_show_done(on) {
+		this.show_done = !!on;
+		this.save_pref(PP.prefs.done, this.show_done ? "1" : "0");
+		this.load();
+	},
+
+	// A done card dropped on a day of the grid: a move of its days, and only that. True when it was one.
+	ppdw_drop(source, target) {
+		if (!source || source.kind !== "card" || !this.ppdw_can_move(source.card)) return false;
+		const card = source.card;
+		const subject = card.subject || card.name;
+		if (target.resource && source.from_resource && target.resource !== source.from_resource) {
+			frappe.show_alert(
+				{ message: __("{0} is done: only its days move here. Change who did it on the task.", [subject]), indicator: "orange" },
+				7
+			);
+			return true;
+		}
+		if (!target.date) return true;
+		const start = this.shifted_start(card, source.from_date, target.date);
+		if (start === card.start) return true;
+		const refusal = PPDW_PURE.refusal(start, PPDW_PURE.end_for(card, start), this.today());
+		if (refusal) {
+			frappe.show_alert({ message: refusal, indicator: "orange" }, 6);
+			return true;
+		}
+		this.ppdw_commit(card, { start }, __("{0} moved to {1}", [subject, pp_when(start)]));
+		return true;
+	},
+
+	// The Gantt moved or stretched a done task's bar: the widget's answer, as ppg_write gives it.
+	ppdw_gantt_write(card, changes) {
+		const args = PPG_PURE.args_from(card, changes);
+		if (!args) return Promise.resolve({ status: "success" });
+		const refusal = PPDW_PURE.refusal(args.start, args.end, this.today());
+		if (refusal) return Promise.resolve({ status: "refused", message: refusal });
+		const subject = card.subject || card.name;
+		const message =
+			args.start !== card.start
+				? __("{0} moved to {1}", [subject, pp_when(args.start)])
+				: __("{0} now ends {1}", [subject, pp_when(args.end)]);
+		return this.ppdw_commit(card, args, message).then((result) => (result ? { status: "success" } : { status: "cancelled" }));
+	},
+
+	ppdw_menu_items(target) {
+		if (!target || target.kind !== "card" || !this.ppdw_can_move(target.card)) return [];
+		return [
+			{
+				label: __("Move done work…"),
+				title: __("Put this done task on the days it was done"),
+				on_click: () => this.ppdw_dialog(target.card),
+			},
+		];
+	},
+
+	// The days a done task was done, typed: the way to date one that has none (the Gantt's Not scheduled).
+	ppdw_dialog(card) {
+		const today = this.today();
+		const subject = card.subject || card.name;
+		const first = card.start || card.completed_on || today;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Move done work"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "help",
+					options: `<p class="text-muted">${pp_esc(
+						__("When was {0} done? Its planned and actual dates and Completed On move together, and a note goes on the task.", [subject])
+					)}</p>`,
+				},
+				{ fieldtype: "Date", fieldname: "start", label: __("First day"), reqd: 1, default: first },
+				{ fieldtype: "Date", fieldname: "end", label: __("Last day"), reqd: 1, default: card.end || first },
+			],
+			primary_action_label: __("Move"),
+			primary_action: (values) => {
+				const start = values && values.start;
+				const end = (values && values.end) || start;
+				const refusal = PPDW_PURE.refusal(start, end, today);
+				if (refusal) {
+					frappe.msgprint(refusal);
+					return;
+				}
+				dialog.hide();
+				if (start === card.start && end === (card.end || card.start)) return;
+				this.ppdw_commit(card, { start, end }, __("{0} moved to {1}", [subject, pp_when(start)]));
+			},
+		});
+		dialog.show();
+	},
+
+	// Send a move of done work: fade the card, write it, offer Undo, reload (the reload is the truth). Resolves
+	// with the answer, or null when nothing was written (a refusal has shown the server's own message).
+	ppdw_commit(card, args, message) {
+		card.saving = true;
+		this.render();
+		const subject = card.subject || card.name;
+		// Held changes or a Draft schedule hold back schedule edits; this is history, so it saves now and
+		// says so, as the Maintenance Planner does (review of #1427).
+		if (this.draft_args(card.project).draft) message += ` (${__("saved now: done work is never drafted")})`;
+		return Promise.resolve(
+			frappe.call({
+				method: `${PPDW.api}.move_done_task`,
+				args: Object.assign({ task: card.name, modified: this.modified[card.name] || card.modified }, args),
+			})
+		)
+			.then((r) => {
+				const result = (r && r.message) || null;
+				if (!result || result.unchanged) return result;
+				if (result.name && result.modified) this.modified[result.name] = result.modified;
+				const toasted = this.push_undo({ ppdw: true, task: card.name, subject }, message);
+				if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
+				(result.warnings || []).forEach((warning) => frappe.show_alert({ message: warning, indicator: "orange" }, 10));
+				return result;
+			})
+			.catch(() => null)
+			.finally(() => {
+				card.saving = false;
+				this.load();
+			});
+	},
+
+	// Undo of a move of done work: exactly the dates it had, blanks included, which the server kept when it
+	// moved (it takes none from here). True when the snapshot was one.
+	ppdw_undo(snap) {
+		if (!snap || !snap.ppdw) return false;
+		const card = this.by_task[snap.task];
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		Promise.resolve(
+			frappe.call({
+				method: `${PPDW.api}.restore_done_task`,
+				args: { task: snap.task, modified: this.modified[snap.task] || (card && card.modified) || "" },
+			})
+		)
+			.then((r) => {
+				const result = r && r.message;
+				if (!result) return;
+				if (result.name && result.modified) this.modified[result.name] = result.modified;
+				frappe.show_alert({ message: __("Undone: {0}", [snap.subject]), indicator: "green" }, 5);
+			})
+			.catch(() => null)
+			.finally(() => this.load());
+		return true;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPDW_METHODS);
+
 
 // ====================================================================== P12: the first-visit tour, and "?" for the new tabs
 //
@@ -15951,7 +16516,7 @@ const PPTOUR_METHODS = {
 				note: __("Four views of one schedule, and a fifth for managers. Today is the phone's."),
 				items: [
 					chip(__("Lookahead"), __("Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published.")),
-					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, right-click a job in the Overview (Open in Gantt), or use the Project form's Open in Project Planner.")),
+					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, right-click a job in the Overview (Open in Gantt), or use the Project form's Open in Planner.")),
 					chip(__("Crew"), __("Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it.")),
 					chip(__("Calendar"), __("The week and month grids you know: cards, double-click to add, drag to move.")),
 					chip(__("Overview"), __("Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print.")),

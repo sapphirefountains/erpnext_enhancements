@@ -6,8 +6,9 @@
  *   scripts in that list (see also project_enhancements.js, project_merge.js,
  *   project_migrated_scripts.js, and the project_enhancements/* scripts).
  *
- * - Mirrors the saved Project name into the `custom_project_id` display field.
- *   (The former SMS button was removed.)
+ * - Mirrors the saved Project name into the `custom_project_id` display field, without
+ *   marking the form changed (v1.816.2; see the comment at the write). (The former SMS
+ *   button was removed.)
  * - Maintenance Contract access: saved projects get either a "Maintenance
  *   Contract" button jumping to the project's Active contract, or
  *   "Create > Maintenance Contract" mapping a new one — the entry point for
@@ -17,7 +18,17 @@
 frappe.ui.form.on("Project", {
     refresh: function (frm) {
         if (!frm.is_new()) {
-            frm.set_value('custom_project_id', frm.doc.name);
+            // Show the name WITHOUT marking the form changed. `frm.set_value` goes through
+            // frappe.model.set_value, which dirties the form whenever the stored value differs
+            // (empty on older Projects, stale after a rename): the form then opens as "Not Saved"
+            // with nothing touched, and reload / navigation asks "Leave site?". Writing the doc
+            // directly and redrawing the field does not dirty it, and the value still rides
+            // along on whatever save the person makes next (the field is read-only, so only
+            // this line ever sets it; read-only is a client-side flag, the server accepts it).
+            if (frm.doc.custom_project_id !== frm.doc.name) {
+                frm.doc.custom_project_id = frm.doc.name;
+                frm.refresh_field("custom_project_id");
+            }
 
             frappe.db
                 .get_value("Sapphire Maintenance Contract",

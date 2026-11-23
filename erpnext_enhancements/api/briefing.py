@@ -418,6 +418,11 @@ def generate_briefing_for_user(user, force=False, settings=None):
 
 	data = gather_briefing_data(user)
 	content, source, error = _generate_narrative(data, user, settings)
+	# Mondays, for whoever may open Marketing Performance: last week's marketing (v1.757.0). Added
+	# after the narrative like My Work, so it reads the same with or without Gemini.
+	from erpnext_enhancements.marketing.performance.digest import section_for
+
+	content = (content or "") + section_for(user)
 
 	doc = frappe.get_doc(
 		{

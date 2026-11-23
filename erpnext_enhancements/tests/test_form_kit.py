@@ -372,11 +372,6 @@ class FakeDoc:
         # A hook that changes a field nobody sent (Opportunity.map_fields, party_mirrors), per test.
         if STATE.get("on_validate"):
             STATE["on_validate"](self._d)
-        # script_migrations.opportunity.validate_ranks_on_won, reduced.
-        if self._d.get("status") == "Closed Won" and not all(
-            self._d.get(f) for f in ("custom_scope_rank", "custom_schedule_rank", "custom_budget_rank")
-        ):
-            raise FRAPPE.ValidationError("Please rank Scope, Schedule and Budget before Closed Won.")
 
     def _store(self):
         for table in self._tables:
@@ -1061,10 +1056,10 @@ class TestSteps(unittest.TestCase):
         self.assertEqual(_step(flow, "custom_survey_section")["title"], "Site Survey")
         self.assertEqual(_value_names(_step(flow, "custom_survey_section")), ["custom_survey_notes"])
 
-    def test_close_gathers_stage_and_ranks_and_keeps_the_lost_section_condition(self):
+    def test_close_gathers_the_stage_and_keeps_the_lost_section_condition(self):
         close = _step(self.flow, "close")
         names = _value_names(close)
-        self.assertEqual(names[:4], ["status", "custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"])
+        self.assertEqual(names[:2], ["status", "custom_date_closed_won"])
         self.assertIn("lost_reasons", names)
         lost = next(f for f in close["fields"] if f["fieldtype"] == "Section Break" and f["fieldname"] == "lost_detail_section")
         self.assertEqual(lost["depends_on"], 'eval:doc.status==="Lost"')
@@ -1223,9 +1218,9 @@ class TestSaveStep(unittest.TestCase):
         self.assertEqual(list(result["values"]), ["custom_opportunity_name"])
 
     def test_a_named_step_limits_the_save_to_its_fields(self):
-        self._save({"custom_opportunity_name": "Changed", "custom_scope_rank": "1"}, step="close")
+        self._save({"custom_opportunity_name": "Changed", "status": "Needs Analysis"}, step="close")
         stored = STATE["db"][self.name]
-        self.assertEqual(stored["custom_scope_rank"], "1")
+        self.assertEqual(stored["status"], "Needs Analysis")
         self.assertEqual(stored["custom_opportunity_name"], "Smith Residence - Backyard Pond Build")
 
     def test_child_rows_are_updated_appended_and_removed(self):
@@ -1282,8 +1277,17 @@ class TestSaveStep(unittest.TestCase):
             api.save_step("Opportunity", self.name, json.dumps({"website": "x.com"}), None)
 
     def test_validation_errors_propagate_and_nothing_is_stored(self):
-        with self.assertRaises(FRAPPE.ValidationError):
-            self._save({"status": "Closed Won"}, step="close")
+        # A DocType hook that refuses the save (on Opportunity: validate_close_reason on Lost).
+        def refuse(values):
+            if values.get("status") == "Lost":
+                raise FRAPPE.ValidationError("Please set at least one Lost Reason.")
+
+        STATE["on_validate"] = refuse
+        try:
+            with self.assertRaises(FRAPPE.ValidationError):
+                self._save({"status": "Lost"}, step="close")
+        finally:
+            STATE.pop("on_validate", None)
         self.assertEqual(STATE["db"][self.name]["status"], "Qualification")
 
     def test_without_write_permission_the_save_is_refused(self):
@@ -1653,9 +1657,7 @@ class TestDeclareLost(unittest.TestCase):
         )
         self.assertEqual(_field(steps.flow_steps("Opportunity", _doc(self.name)), "lost_reasons")["read_only"], 1)
         self.assertEqual(payload["clears"], {"opportunity_from": ["party_name"]})
-        self.assertEqual(
-            payload["distinct"][0]["fields"], ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"]
-        )
+        self.assertEqual(payload["distinct"], [], "no pair of fields must differ since v1.799.0")
 
     def test_the_configured_tables_and_columns_exist(self):
         lost = config.CONFIGS["Opportunity"]["lost"]
@@ -1664,7 +1666,7 @@ class TestDeclareLost(unittest.TestCase):
             with self.subTest(table=key):
                 self.assertEqual(meta.get_field(fieldname).options, lost[key]["doctype"])
                 self.assertIsNotNone(STATE["metas"][lost[key]["doctype"]].get_field(lost[key]["field"]))
-        for rule in config.CONFIGS["Opportunity"]["distinct"]:
+        for rule in config.CONFIGS["Opportunity"].get("distinct") or []:
             for fieldname in rule["fields"]:
                 self.assertIsNotNone(meta.get_field(fieldname))
         for fieldname, cleared in config.CONFIGS["Opportunity"]["clears"].items():
@@ -1861,11 +1863,14 @@ class TestCompleteness(unittest.TestCase):
         # The Billing Address is not a site (Nik, 2026-10-13).
         self.assertIn("A site address", self._missing(status="Proposal/Price Quote", customer_address="ADDR-2"))
 
-    def test_closed_won_wants_the_ranks(self):
+    def test_closed_won_wants_what_a_proposal_wants(self):
+        # v1.799.0: nothing beyond the Proposal list.
         result = self._measure(status="Closed Won")
-        self.assertEqual(result["total"], 14)
-        labels = [m["label"] for m in result["missing"]]
-        self.assertEqual(labels[-3:], ["Scope Rank", "Schedule Rank", "Budget Rank"])
+        self.assertEqual(result["total"], 11)
+        self.assertEqual(
+            [m["label"] for m in result["missing"]],
+            [m["label"] for m in self._measure(status="Proposal/Price Quote")["missing"]],
+        )
 
     def test_lost_wants_the_basics_and_a_reason(self):
         # Owner, 2026-10-13: "Basics + lost reason" -- the six Qualification items and the reason.
@@ -1943,14 +1948,20 @@ class TestTheInputsAreTheForms(unittest.TestCase):
             self.assertIn(key, steps.FIELD_KEYS)
         self.assertNotIn("fetch_from", steps.FIELD_KEYS, "the server fetches on save; save_step returns it")
 
-    def test_the_ranks_are_required_on_closed_won(self):
-        """opportunity_migrated_scripts.js makes the three ranks reqd while the status is Closed Won;
-        the flow says the same as their mandatory_depends_on, from the config's ``won``."""
-        flow = steps.flow_steps("Opportunity", _doc(_seed()))
-        for fieldname in ("custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"):
-            self.assertEqual(_field(flow, fieldname)["mandatory_depends_on"], 'eval:doc.status==="Closed Won"')
-        self.assertNotIn("mandatory_depends_on", _field(flow, "custom_opportunity_summary"))
+    def test_a_won_gate_makes_its_fields_required_and_opportunity_has_none(self):
+        """A config's ``won`` fields are required while the status is the won one, as the flow's
+        mandatory_depends_on. Opportunity declares no ``won`` (v1.799.0), so nothing on its Close
+        step is conditionally required."""
+        self.assertEqual(
+            steps.won_conditions({"won": {"status": "Done", "fields": ["alpha", "beta"]}}),
+            {"alpha": 'eval:doc.status==="Done"', "beta": 'eval:doc.status==="Done"'},
+        )
         self.assertEqual(steps.won_conditions({}), {})
+        self.assertNotIn("won", config.CONFIGS["Opportunity"])
+        flow = steps.flow_steps("Opportunity", _doc(_seed()))
+        for field in _step(flow, "close")["fields"]:
+            self.assertNotIn("mandatory_depends_on", field, field.get("fieldname"))
+        self.assertNotIn("mandatory_depends_on", _field(flow, "custom_opportunity_summary"))
 
     def test_get_flow_sends_the_queries_without_their_sources(self):
         payload = api.get_flow("Opportunity", _seed())
@@ -2031,8 +2042,7 @@ class TestEndpoints(unittest.TestCase):
                 "distinct",
                 "clears",
                 "lost",
-                # Form kit P6.6 (v1.675.0): what a move into Closed Won must carry.
-                "won",
+                # No "won" since v1.799.0: a move into Closed Won carries only the status.
                 # The statuses that close a record: the side panel offers no Undo across them.
                 "closed",
                 # v1.685.0: the form scripts' set_query as data, what they read, and party_name's
@@ -2059,16 +2069,14 @@ class TestEndpoints(unittest.TestCase):
         self.assertEqual(payload["steps"][0]["create"], 1)
 
     def test_the_moves_and_quick_add_the_side_panel_reads(self):
-        """Form kit P6.6 / P6.7 (v1.675.0): ``won`` names fields the flow offers on a saved record,
-        and ``quick`` (new records only) asks for fields step 1 shows, filling the rest itself."""
+        """Form kit P6.6 / P6.7 (v1.675.0): ``won`` would name fields the flow offers on a saved
+        record, and ``quick`` (new records only) asks for fields step 1 shows, filling the rest
+        itself. Opportunity sends no ``won`` since v1.799.0: a move into Closed Won carries only the
+        status, and the panel confirms it."""
         name = _seed()
         saved = api.get_flow("Opportunity", name)
-        won = saved["won"]
-        self.assertEqual(won["status"], "Closed Won")
-        self.assertEqual(won["status_field"], "status")
-        names = set(_all_values(saved["steps"]))
-        self.assertEqual(won["fields"], ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"])
-        self.assertTrue(set(won["fields"]) <= names, "every rank is in the flow")
+        self.assertNotIn("won", saved)
+        self.assertEqual(saved["closed"]["in"], ["Closed Won", "Lost", "Closed", "Converted"])
         new = api.get_flow("Opportunity")
         quick = new["quick"]
         step_one = next(step for step in new["steps"] if step["create"])
@@ -2305,11 +2313,6 @@ class TestFieldHelp(unittest.TestCase):
                 self.assertLessEqual(len(entry["hint"]), 90)
                 self.assertLessEqual(len(entry["help"]), 350)
                 self.assertNotIn("\u2014", entry["hint"] + entry["help"])
-
-    def test_the_ranks_say_which_end_is_the_top(self):
-        for kind in ("scope", "schedule", "budget"):
-            with self.subTest(kind=kind):
-                self.assertIn("1 is the customer's top priority", self.help["fields"][f"custom_{kind}_rank"]["hint"])
 
     def test_the_review_decisions_reach_the_form(self):
         meta = STATE["metas"]["Opportunity"]

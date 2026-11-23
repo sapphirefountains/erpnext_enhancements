@@ -22,8 +22,9 @@ class TestProjectEnhancements(unittest.TestCase):
 		"""get_project_comments returns [] when no project name is supplied."""
 		self.assertEqual(project_enhancements.get_project_comments(None), [])
 
+	@patch('frappe.has_permission')
 	@patch('frappe.get_all')
-	def test_get_project_comments_with_data(self, mock_get_all):
+	def test_get_project_comments_with_data(self, mock_get_all, mock_has_permission):
 		"""get_project_comments returns the project's comments enriched with author full_name."""
 		# Setup mocks
 		mock_comment = frappe._dict({"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"})
@@ -42,10 +43,12 @@ class TestProjectEnhancements(unittest.TestCase):
 		# Assertions
 		self.assertEqual(len(result), 1)
 		self.assertEqual(result[0]['full_name'], "Test User")
+		mock_has_permission.assert_called_once_with("Project", "read", doc="test_project", throw=True)
 
+	@patch('frappe.has_permission')
 	@patch('frappe.get_doc')
 	@patch('frappe.new_doc')
-	def test_add_project_comment_success(self, mock_new_doc, mock_get_doc):
+	def test_add_project_comment_success(self, mock_new_doc, mock_get_doc, mock_has_permission):
 		"""add_project_comment inserts a Comment referencing the Project and returns the author."""
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "new_comment"
@@ -70,6 +73,7 @@ class TestProjectEnhancements(unittest.TestCase):
 		mock_comment_doc.insert.assert_called_once_with(ignore_permissions=True)
 		self.assertEqual(mock_comment_doc.reference_doctype, "Project")
 		self.assertEqual(mock_comment_doc.reference_name, "test_project")
+		mock_has_permission.assert_called_once_with("Project", "read", doc="test_project", throw=True)
 
 	@patch('frappe.get_doc')
 	@patch('frappe.session')

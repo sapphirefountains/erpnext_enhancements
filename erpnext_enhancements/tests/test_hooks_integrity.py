@@ -192,7 +192,10 @@ class TestHandlersLookReal(unittest.TestCase):
             "erpnext_enhancements.script_migrations.task.sync_task_to_google_calendar",
             flat("Task", "after_insert"),
         )
-        self.assertIn("erpnext_enhancements.tasks.generate_next_task", flat("Task", "on_update"))
+        # The recurring-task clone was removed in v1.799.1 (UI field audit: custom_is_recurring
+        # was 0 on every task, so it never fired; its fields are hidden). Assert the absence so a
+        # stale merge cannot bring a hook back for a feature nobody can switch on.
+        self.assertNotIn("erpnext_enhancements.tasks.generate_next_task", flat("Task", "on_update"))
         self.assertIn(
             "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
             flat("Task", "on_update"),

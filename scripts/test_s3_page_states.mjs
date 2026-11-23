@@ -2,7 +2,8 @@
 /**
  * Custom pages S3.1 (v1.645.0): four Desk pages run against the REAL sf_kit (six since S3.2).
  *
- * The Maintenance Day Board, the Stripe and QuickBooks dashboards and the Water Engineering Wizard
+ * The Maintenance Day Board and the Stripe and QuickBooks dashboards (the Water Engineering Wizard
+ * until it was retired in v1.771.0)
  * are loaded into a vm context the way the Desk loads them: the global bundle's loader
  * (public/js/sf_kit_loader.js) is installed first, and frappe.require installs the real
  * sf_kit.bundle.js, so every state panel is drawn by the kit's own state.render and every quiet
@@ -20,8 +21,6 @@
  *     once in a toast) when a timer refresh fails, and stops its timer on a 403 or a lapsed session;
  *   - the QuickBooks resync poll retries a network or server failure, stops on a 4xx with a toast,
  *     and stops on a lapsed session with the signed-out panel;
- *   - the Water wizard drops a design's reply that lands after another design was picked, and puts
- *     a design name with a quote in it into the picker as one option with that exact value;
  *   - with no loader and no kit (an old Desk tab whose kit file is gone), each page still says what
  *     failed and retries; and the loader's own stand-in reads a lapsed session as the kit does.
  *
@@ -53,7 +52,6 @@ const PAGES = {
 	"maintenance-day-board": "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js",
 	"stripe-payments-dashboard": "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
 	"quickbooks-online-dashboard": "quickbooks_online/page/quickbooks_online_dashboard/quickbooks_online_dashboard.js",
-	"water-engineering-wizard": "water_engineering/page/water_engineering_wizard/water_engineering_wizard.js",
 	"integrations-health": "integration_hub/page/integrations_health/integrations_health.js",
 	"device-fleet-dashboard": "device_management/page/device_fleet_dashboard/device_fleet_dashboard.js",
 };
@@ -498,15 +496,6 @@ const FIRST = {
 		refused: "You do not have access to the QuickBooks Online dashboard.",
 		drawn: "sf-state--empty",
 	},
-	"water-engineering-wizard": {
-		method: "check_permission",
-		ok: true,
-		extra: { get_design_state: { designs: [] } },
-		host: (p) => p.body,
-		failed: "Could not open the Water Engineering Wizard.",
-		refused: "You do not have access to Water Feature Designs.",
-		drawn: "we-wrap",
-	},
 	// S3.2 (v1.651.0): the two health pages are drawn by the shared board. It has no no-loader
 	// fallback of the S3.1 kind (`board_only`): see "without the loader" below.
 	"integrations-health": {
@@ -677,66 +666,6 @@ test("QuickBooks: a lapsed session stops the resync poll with the signed-out pan
 	check("no retry", p.pending(3000), 0);
 	check("the signed-out panel where the logs go", list.innerHTML.includes("You have been signed out."), true);
 	check("and a toast", p.world.toasts.length, 1);
-});
-
-// ------------------------------------------------------------------ the Water wizard's designs
-
-test("Water: a design's reply that lands after another was picked is dropped", async () => {
-	const first = deferred();
-	const second = deferred();
-	const p = openPage("water-engineering-wizard", {
-		respond: {
-			check_permission: true,
-			get_design_state: { designs: [{ name: "WFD-1", status: "Draft" }, { name: "WFD-2", status: "Draft" }] },
-		},
-	});
-	await settle();
-	const pick = p.$(p.body).find("#we-design-pick");
-	const state = p.body.found["#we-design-state"];
-	p.world.respond.get_design_state = () => first.promise;
-	pick.val("WFD-1").trigger("change");
-	await settle();
-	p.world.respond.get_design_state = () => second.promise;
-	pick.val("WFD-2").trigger("change");
-	await settle();
-	second.answer({ design: "WFD-2", design_title: "Second", rollups: {} });
-	await settle();
-	check("the second design is drawn", state.innerHTML.includes("<b>WFD-2</b>"), true);
-	first.answer({ design: "WFD-1", design_title: "First", rollups: {} });
-	await settle();
-	check("the first reply did not paint over it", [state.innerHTML.includes("WFD-1"), state.innerHTML.includes("<b>WFD-2</b>")], [false, true]);
-});
-
-test("Water: a late failure for a design no longer picked draws no error", async () => {
-	const first = deferred();
-	const p = openPage("water-engineering-wizard", {
-		respond: { check_permission: true, get_design_state: { designs: [{ name: "WFD-1" }, { name: "WFD-2" }] } },
-	});
-	await settle();
-	const pick = p.$(p.body).find("#we-design-pick");
-	const state = p.body.found["#we-design-state"];
-	p.world.respond.get_design_state = () => first.promise;
-	pick.val("WFD-1").trigger("change");
-	await settle();
-	p.world.respond.get_design_state = { design: "WFD-2", rollups: {} };
-	pick.val("WFD-2").trigger("change");
-	await settle();
-	first.answer(SERVER_ERROR);
-	await settle();
-	check("no error panel", state.innerHTML.includes("sf-state--error"), false);
-	check("the second design stays", state.innerHTML.includes("<b>WFD-2</b>"), true);
-});
-
-test("Water: a design name with a quote is one option with that exact value", async () => {
-	const odd = 'WFD-"3" <b>';
-	const p = openPage("water-engineering-wizard", {
-		respond: { check_permission: true, get_design_state: { designs: [{ name: odd, status: "Draft" }] } },
-	});
-	await settle();
-	const pick = p.body.found["#we-design-pick"];
-	check("the placeholder, then the design", pick.children.map((o) => o.value), ["", odd]);
-	check("its label is text", pick.children[1].textContent.startsWith(odd), true);
-	check("no option written as markup", pick.innerHTML.includes("<option"), false);
 });
 
 // ------------------------------------------------------------------ without the kit

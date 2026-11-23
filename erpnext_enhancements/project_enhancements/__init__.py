@@ -8,6 +8,8 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements import procurement_overview
+from erpnext_enhancements import procurement_prices
 from erpnext_enhancements import procurement_quantities
 from erpnext_enhancements.utils import attachment_copies
 
@@ -30,6 +32,37 @@ def require_project_read(project_name):
 	frappe.get_doc("Project", project_name).check_permission("read")
 
 
+def _price_access():
+	"""What the person asking may see of prices: ``{"orders": bool, "quotes": bool}``, or ``None``
+	for nothing (v1.814.0).
+
+	**The tracker's endpoints ask only for Project read**, and so does the Project form: anyone who
+	can open a job can read its procurement feed. Prices are the Purchase Orders' own, so they are
+	shown to a person who may read **Purchase Orders**, decided here on the server and not by hiding
+	a column in the browser: for anybody else the price keys are not in the response at all. A quote
+	is a Supplier Quotation's, so a quote's rate also needs that doctype. On production 17 of the 18
+	enabled people who can open a Project can also read Purchase Orders (the one who cannot is an
+	HR-only account), so in practice the people who use the tracker see prices; the rule is for the
+	one who does not, and for an account added later.
+
+	It is the doctype-level right, like the rest of the feed (which ignores row-level user
+	permissions on the documents it lists).
+	"""
+	if not frappe.has_permission("Purchase Order", "read"):
+		return None
+	return {"orders": True, "quotes": bool(frappe.has_permission("Supplier Quotation", "read"))}
+
+
+def _company_currency(project_name):
+	"""The currency the amounts are in: the company's, which is what ``base_amount`` is in."""
+	try:
+		company = frappe.db.get_value("Project", project_name, "company")
+		currency = frappe.get_cached_value("Company", company, "default_currency") if company else None
+		return currency or frappe.db.get_default("currency")
+	except Exception:
+		return None
+
+
 @frappe.whitelist()
 def get_procurement_status(project_name):
 	"""
@@ -43,6 +76,21 @@ def get_procurement_status(project_name):
 
 	require_project_read(project_name)
 
+	access = _price_access()
+	result = _chain_rows(project_name, access)
+	# Each line's state and where its item is now (v1.811.0), so the assistant tool's default
+	# view carries them as the tracker does. Added keys only: nothing above is renamed.
+	_attach_overview(project_name, [row for rows in result.values() for row in rows], access)
+	return result
+
+
+def _chain_rows(project_name, prices=None):
+	"""The chain query behind :func:`get_procurement_status`, grouped by the latest stage each
+	line has reached. No permission check and no where-now: both callers add their own.
+
+	``prices`` is what the caller may see of prices (:func:`_price_access`). The query always
+	reads the price columns, so the two halves of its ``UNION`` stay one shape, but a row only
+	carries the price keys (``procurement_prices.PRICE_KEYS``) when ``prices`` is not ``None``."""
 	# Combined query for Material Request based flows and Direct Purchase Orders
 	sql = """
         SELECT
@@ -94,6 +142,34 @@ def get_procurement_status(project_name):
                     ELSE 'Draft'
                 END as se_status,
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
+                /* For the tracker's filters (v1.811.0): who it is bought from, and the date
+                   it is due. The order line's expected date once there is a live order, else
+                   the request line's required-by date. Both SELECTs of this UNION carry the
+                   same four columns in the same place. */
+                COALESCE(po.supplier, sq.supplier) as supplier,
+                COALESCE(IF(po.name IS NULL, NULL, po_item.schedule_date), mr_item.schedule_date) as expected_date,
+                po_item.conversion_factor as po_conversion_factor,
+                /* What the lines cost (v1.814.0), for procurement_prices. The order line's own rate and
+                   base amount (company currency), the receipt line, and the quotation line. They reach
+                   the response only for a person who may read Purchase Orders. */
+                po_item.rate as po_line_rate,
+                po_item.base_rate as po_line_base_rate,
+                po_item.base_amount as po_line_base_amount,
+                po_item.is_free_item as po_line_free,
+                po_item.uom as po_line_uom,
+                pr_item.name as pr_item_name,
+                pr_item.qty as pr_line_qty,
+                sq_item.name as sq_item_name,
+                sq_item.rate as sq_line_rate,
+                sq_item.base_rate as sq_line_base_rate,
+                sq_item.base_amount as sq_line_base_amount,
+                sq_item.conversion_factor as sq_line_conversion_factor,
+                /* The receipt's and the quotation's own docstatus: these two joins carry no docstatus
+                   filter (they never did), so a canceled document's line is in the rows. The listing
+                   is unchanged; only what is PRICED looks at these (a canceled quote or receipt has
+                   no price, a draft one is labeled a draft). */
+                pr.docstatus as pr_docstatus,
+                sq.docstatus as sq_docstatus,
                 /* The old `po_item.qty as ordered_qty` and
                    `COALESCE(pr_item.qty, sed.qty) as received_qty` are gone: both were
                    *one chain row's* quantities being read as the line's totals, so an
@@ -191,6 +267,23 @@ def get_procurement_status(project_name):
                 NULL as se_name,
                 NULL as se_status,
                 pr_item.warehouse as warehouse,
+                po.supplier as supplier,
+                po_item.schedule_date as expected_date,
+                po_item.conversion_factor as po_conversion_factor,
+                po_item.rate as po_line_rate,
+                po_item.base_rate as po_line_base_rate,
+                po_item.base_amount as po_line_base_amount,
+                po_item.is_free_item as po_line_free,
+                po_item.uom as po_line_uom,
+                pr_item.name as pr_item_name,
+                pr_item.qty as pr_line_qty,
+                NULL as sq_item_name,
+                NULL as sq_line_rate,
+                NULL as sq_line_base_rate,
+                NULL as sq_line_base_amount,
+                NULL as sq_line_conversion_factor,
+                pr.docstatus as pr_docstatus,
+                NULL as sq_docstatus,
                 pr.is_subcontracted as is_subcontracted
             FROM
                 `tabPurchase Order Item` po_item
@@ -311,7 +404,16 @@ def get_procurement_status(project_name):
 			"po_line_qty": row.get("po_line_qty"),
 			"po_line_received_qty": row.get("po_line_received_qty"),
 			"po_docstatus": row.get("po_docstatus"),
+			# For the filters and the by-item view (v1.811.0, procurement_overview).
+			"supplier": row.get("supplier"),
+			"expected_date": str(row.get("expected_date")) if row.get("expected_date") else None,
+			"conversion_factor": row.get("po_conversion_factor"),
 		}
+		if prices:
+			# Only for a person who may read Purchase Orders: the keys are absent otherwise.
+			item_row.update(
+				procurement_prices.price_keys(row, orders=prices["orders"], quotes=prices["quotes"])
+			)
 		# requested_qty / ordered_qty / received_qty / order_status / receive_status /
 		# completion_percentage, all computed from THIS line's own quantities. The
 		# item row no longer borrows its parent's answer.
@@ -408,10 +510,13 @@ def _docstatus_label(docstatus):
 _ORDER_STAGE_DOCTYPES = {"Purchase Order", "Purchase Receipt", "Purchase Invoice"}
 
 
-def _minimal_item_row(doctype, docname, status, item):
+def _minimal_item_row(doctype, docname, status, item, supplier=None, docstatus=None, prices=None, project=None):
 	"""Builds an item row (same shape the feed expects) for a document that was
 	not reached through the chain query. Only the document's own chain node is
-	populated; upstream/downstream nodes are left blank."""
+	populated; upstream/downstream nodes are left blank.
+
+	``prices`` (see :func:`_price_access`) adds the price keys, read from the line's own rate; a
+	line that names another job's project has none (``procurement_prices.minimal_price_keys``)."""
 	# All that is knowable here is the document's own line quantity — by definition
 	# this document is not in a chain, so there is no ordered-against-requested pair
 	# to compare. Which side of the fence that quantity falls on depends on the stage:
@@ -419,7 +524,19 @@ def _minimal_item_row(doctype, docname, status, item):
 	# code put it in `ordered_qty` for every doctype, so an untouched request rendered
 	# as fully ordered here too.
 	qty = item.get("qty") or 0
-	if doctype in _ORDER_STAGE_DOCTYPES:
+	if doctype in _ORDER_STAGE_DOCTYPES and docstatus == 0:
+		# A draft is an intention. Only a submitted order is ordered (procurement_quantities), and
+		# this was the one path where a draft still counted: a draft Purchase Order that never
+		# joined a chain read "Ordered" and was added to the item's ordered total. Its quantity is
+		# reported as draft, the way a chain row reports it, and the line reads To order.
+		progress = procurement_quantities.quantity_progress(
+			requested=None, ordered=0, received=0, draft_ordered=qty
+		)
+	elif doctype == "Purchase Receipt" and docstatus == 1:
+		# A submitted receipt with no order behind it (a store run): the goods are here. It used
+		# to read "Not Received" on the receipt that received it (v1.811.0).
+		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=qty)
+	elif doctype in _ORDER_STAGE_DOCTYPES:
 		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=0)
 	else:
 		progress = procurement_quantities.quantity_progress(requested=qty, ordered=0, received=0)
@@ -441,19 +558,28 @@ def _minimal_item_row(doctype, docname, status, item):
 		"warehouse": item.get("warehouse"),
 		"uom": item.get("uom"),
 		"stock_uom": item.get("stock_uom"),
+		"supplier": supplier,
+		"expected_date": str(item.get("schedule_date")) if item.get("schedule_date") else None,
+		"conversion_factor": item.get("conversion_factor"),
 		# This document never joined a chain, so the row has no mr_item/po_item to key
 		# on — but the child row it was built from has its own name, which is identity
 		# enough for the browser's row key.
 		"row_id": "{0}#{1}".format(doctype, item.get("name") or item.get("item_code")),
 	}
 	row.update(progress)
+	if prices:
+		row.update(
+			procurement_prices.minimal_price_keys(
+				doctype, docstatus, item, project=project, orders=prices["orders"], quotes=prices["quotes"]
+			)
+		)
 	field = _CHAIN_FIELD[doctype]
 	row[field] = docname
 	row[field + "_status"] = status
 	return row
 
 
-def _supplementary_documents(project_name, doctype, existing_names):
+def _supplementary_documents(project_name, doctype, existing_names, prices=None):
 	"""Finds documents of `doctype` linked to the project (via item.project or the
 	parent's project/custom_project field) that are not already present, and
 	returns {docname: [item_row, ...]} for them."""
@@ -479,10 +605,13 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	if not candidate_names:
 		return {}
 
+	header_fields = ["name", "status", "docstatus"]
+	if doctype in _HAS_SUPPLIER:
+		header_fields.append("supplier")
 	valid = frappe.get_all(
 		doctype,
 		filters={"name": ["in", list(candidate_names)], "docstatus": ["<", 2]},
-		fields=["name", "status", "docstatus"],
+		fields=header_fields,
 	)
 
 	item_fields = ["name", "parent", "item_code", "item_name", "qty"]
@@ -490,15 +619,28 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	# raises rather than degrades. `_supplementary_documents` is wrapped in a bare
 	# except upstream, so an unguarded read would silently drop a whole doctype group
 	# from the feed rather than erroring visibly.
-	for optional in ("warehouse", "uom", "stock_uom"):
+	for optional in ("warehouse", "uom", "stock_uom", "schedule_date", "conversion_factor"):
 		if item_meta.has_field(optional):
 			item_fields.append(optional)
+	if prices:
+		# The money, and the project the line names (another job's line is not this job's spend).
+		for optional in (
+			"rate", "base_rate", "base_amount", "is_free_item", "allow_zero_valuation_rate", "project"
+		):
+			if item_meta.has_field(optional):
+				item_fields.append(optional)
 
 	result = {}
 	for v in valid:
 		status = v.status or _docstatus_label(v.docstatus)
 		items = frappe.get_all(item_doctype, filters={"parent": v.name}, fields=item_fields)
-		result[v.name] = [_minimal_item_row(doctype, v.name, status, it) for it in items]
+		result[v.name] = [
+			_minimal_item_row(
+				doctype, v.name, status, it, supplier=v.get("supplier"), docstatus=v.docstatus,
+				prices=prices, project=project_name,
+			)
+			for it in items
+		]
 	return result
 
 
@@ -550,8 +692,9 @@ def _po_grain_row(row):
 	return adjusted
 
 
-def _fetch_doc_meta(doctype, names):
-	"""Bulk-fetches header metadata (date, supplier, status) for a set of documents."""
+def _fetch_doc_meta(doctype, names, prices=None):
+	"""Bulk-fetches header metadata (date, supplier, status) for a set of documents. With ``prices``,
+	an order's or a quotation's header total too (``base_total``, company currency)."""
 	if not names:
 		return {}
 	date_field = _DATE_FIELD[doctype]
@@ -562,8 +705,44 @@ def _fetch_doc_meta(doctype, names):
 	# outstanding is a question about the number, not the status label.
 	if doctype == "Purchase Order":
 		fields.append("per_received")
+	if prices and doctype in ("Purchase Order", "Supplier Quotation"):
+		fields.append("base_total")
 	rows = frappe.get_all(doctype, filters={"name": ["in", list(names)]}, fields=fields)
 	return {r.name: r for r in rows}
+
+
+_PRICED_DOCTYPES = ("Purchase Order", "Purchase Receipt", "Supplier Quotation")
+
+
+def _line_counts(doctype, names):
+	"""``{document: number of lines}`` for a few documents, in one query: how many lines each
+	document has in all, so a total for *this job's* lines can say when it is not the whole."""
+	names = list(names or ())
+	if not names:
+		return {}
+	rows = frappe.db.sql(
+		"select parent, count(*) as n from `tab{0} Item` where parent in %(names)s group by parent".format(doctype),
+		{"names": tuple(names)},
+		as_dict=True,
+	)
+	return {r["parent"]: r["n"] for r in rows}
+
+
+def _price_total(doctype, rows, meta, line_count):
+	"""A document's price total for this job's lines (``procurement_prices.document_total``), with
+	whether it is only part of the document: an order can span several jobs, and the lines this job
+	holds are then not the order. ``doc_total`` is the whole order's (or quotation's) own total, only
+	when it differs."""
+	total = procurement_prices.document_total(doctype, rows)
+	if not total:
+		return None
+	partial = bool(line_count) and total["job_lines"] < line_count
+	total["partial"] = partial
+	total["doc_lines"] = line_count
+	total["doc_total"] = None
+	if partial and meta.get("base_total") is not None and doctype != "Purchase Receipt":
+		total["doc_total"] = float(meta.get("base_total") or 0)
+	return total
 
 
 @frappe.whitelist()
@@ -588,14 +767,27 @@ def get_procurement_documents(project_name):
 	Each item row keeps the full Doc Chain fields (mr/rfq/sq/po/pr/pi + statuses).
 	``is_open`` / ``open_rule`` come from ``procurement_quantities.document_is_open`` and
 	drive the tracker's Print → Open choice; both are ``None`` for a doctype with no "open".
+
+	Since v1.811.0 each item row also says what it is waiting on (``line_state`` and friends)
+	and where its item is now (``where_now``, ``where_now_text``); see
+	:func:`get_procurement_overview` and ``procurement_overview``.
 	"""
 	if not project_name:
 		return []
 
 	require_project_read(project_name)
+	output, _rows, _items, _located = _documents_and_overview(project_name, _price_access())
+	return output
 
+
+def _documents_and_overview(project_name, prices=None):
+	"""``(groups, rows, items, located)``: the document tree, its distinct item rows with their
+	state and where-now attached, the by-item rows, and whether the where-now lookup worked.
+
+	``prices`` is what the caller may see of prices (:func:`_price_access`); ``None`` leaves every
+	price key out of every row and every document."""
 	# 1. Flatten the chain rows (each already carries every doc name in its chain).
-	status = get_procurement_status(project_name)
+	status = _chain_rows(project_name, prices)
 	chain_rows = [item for items in status.values() for item in items]
 
 	# 2. Group every chain row under each document it belongs to.
@@ -609,7 +801,7 @@ def get_procurement_documents(project_name):
 	# 3. Add documents linked to the project that never appeared in a chain.
 	for dt in PROCUREMENT_DOCTYPE_ORDER:
 		try:
-			supplementary = _supplementary_documents(project_name, dt, doc_items[dt].keys())
+			supplementary = _supplementary_documents(project_name, dt, doc_items[dt].keys(), prices)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Procurement feed: supplementary {dt} failed")
 			supplementary = {}
@@ -622,7 +814,8 @@ def get_procurement_documents(project_name):
 		names = list(doc_items[dt].keys())
 		if not names:
 			continue
-		meta = _fetch_doc_meta(dt, names)
+		meta = _fetch_doc_meta(dt, names, prices)
+		line_counts = _line_counts(dt, names) if prices and dt in _PRICED_DOCTYPES else {}
 		documents = []
 		for name in names:
 			m = meta.get(name) or {}
@@ -650,6 +843,9 @@ def get_procurement_documents(project_name):
 					"rollup": _document_rollup(items, dt),
 				}
 			)
+			if prices and dt in _PRICED_DOCTYPES:
+				# This document's total for the job's lines (v1.814.0). Absent without price access.
+				documents[-1]["price_total"] = _price_total(dt, items, m, line_counts.get(name))
 		# Newest documents first.
 		documents.sort(key=lambda d: (d["date"] or "", d["name"]), reverse=True)
 		output.append(
@@ -661,7 +857,85 @@ def get_procurement_documents(project_name):
 			}
 		)
 
-	return output
+	# 5. Each line's state and where its item is now: one pass over the distinct rows (the same
+	#    dict sits under every document its chain touches), one lookup for the whole project.
+	rows, seen = [], set()
+	for dt in PROCUREMENT_DOCTYPE_ORDER:
+		for doc_rows in doc_items[dt].values():
+			for row in doc_rows:
+				if id(row) not in seen:
+					seen.add(id(row))
+					rows.append(row)
+	items, located = _attach_overview(project_name, rows, prices)
+	return output, rows, items, located
+
+
+def _today():
+	from frappe.utils import nowdate
+
+	return nowdate()
+
+
+def _attach_overview(project_name, rows, prices=None):
+	"""Attach each line's state and where-now (``procurement_overview.attach``) and return
+	``(by-item rows, located)``.
+
+	The where-now is a second opinion on top of the feed, read from the stock ledger
+	(``inventory_enhancements.project_stock``): a fixed handful of queries for the whole
+	project. If it fails, the feed still answers, every line still has its state, and
+	``located`` is False so the tracker can say the locations could not be read instead of
+	showing blanks that look like "nowhere". The failure goes to the Error Log.
+	"""
+	found = None
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_stock
+
+		codes = {row.get("item_code") for row in rows if row.get("item_code")}
+		found = project_stock.places_for(project_name, codes)["items"]
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Procurement feed: where-now lookup failed")
+	items = procurement_overview.attach(rows, found, _today(), prices=bool(prices))
+	return items, found is not None
+
+
+@frappe.whitelist()
+def get_procurement_overview(project_name):
+	"""Everything the Project form's Procurement Tracker draws (v1.811.0).
+
+	``{"groups", "items", "filters", "located", "today"}``:
+
+	* ``groups`` -- :func:`get_procurement_documents`, unchanged in shape.
+	* ``items`` -- the tracker by item: one row per item for the project, with requested,
+	  ordered and received across every document, its suppliers and documents, and where it is
+	  now (``procurement_overview.by_item``).
+	* ``filters`` -- the suppliers, states and locations at least one line is in, so the tracker
+	  offers no filter that matches nothing.
+	* ``located`` -- False when the where-now lookup failed; the tracker says so.
+
+	Gated on Project read like every tracker endpoint.
+	"""
+	if not project_name:
+		return {"groups": [], "items": [], "filters": {}, "located": True, "today": _today()}
+
+	require_project_read(project_name)
+	access = _price_access()
+	output, rows, items, located = _documents_and_overview(project_name, access)
+	overview = {
+		"groups": output,
+		"items": items,
+		"filters": procurement_overview.filter_options(rows, items),
+		"located": located,
+		"today": _today(),
+	}
+	if access:
+		# Only for a person who may read Purchase Orders: without it there is no ``prices`` key, and
+		# no price anywhere else in the response.
+		overview["prices"] = dict(
+			procurement_prices.spent_total(items),
+			currency=_company_currency(project_name),
+			quotes=access["quotes"],
+		)
+	return overview
 
 
 def sync_attachments_from_opportunity(doc, method):
@@ -804,16 +1078,37 @@ def get_dashboard_data(data):
 		{"label": _("Travel"), "items": ["Travel Trip"]}
 	)
 
+	# The job's site warehouse (v1.801.0, inventory_enhancements/job_sites.py): a Warehouse
+	# whose custom_job_site_project is this Project. From there, the Warehouse form's "Open
+	# Stock Scan" shows what is on site. Only once the field exists: the dashboard counts
+	# with a query on that column, and before the patch has run the Project form would fail
+	# to load its connections over a column that is not there.
+	if _job_sites_ready():
+		data["non_standard_fieldnames"]["Warehouse"] = "custom_job_site_project"
+		data["transactions"].append({"label": _("Job Site"), "items": ["Warehouse"]})
+
 	return data
+
+
+def _job_sites_ready():
+	"""Whether Warehouse.custom_job_site_project exists. Never raises: this runs on every
+	Project form load."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import job_sites
+
+		return job_sites.ready()
+	except Exception:
+		return False
 
 
 @frappe.whitelist()
 def get_project_comments(project_name):
 	"""
-	Retrieves standard comments for a given project.
+	Retrieves standard comments for a given project. Requires read permission on the Project.
 	"""
 	if not project_name:
 		return []
+	frappe.has_permission("Project", "read", doc=project_name, throw=True)
 
 	# Fetch standard comments linked to the project
 	comments = frappe.get_all(
@@ -856,13 +1151,16 @@ def get_project_comments(project_name):
 	return comments
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def add_project_comment(project_name, comment_text):
 	"""
-	Adds a standard comment to a project.
+	Adds a standard comment to a project. Requires read permission on the Project, the same
+	right the Desk's own comment box asks for; the Comment row itself is then inserted with
+	``ignore_permissions``.
 	"""
 	if not project_name or not comment_text:
 		frappe.throw(_("Project name and comment text are required."))
+	frappe.has_permission("Project", "read", doc=project_name, throw=True)
 
 	doc = frappe.new_doc("Comment")
 	doc.comment_type = "Comment"
@@ -884,7 +1182,7 @@ def add_project_comment(project_name, comment_text):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_project_comment(project_name, comment_name):
 	"""
 	Deletes a comment if the user is the owner.
@@ -907,7 +1205,7 @@ def delete_project_comment(project_name, comment_name):
 		return {"success": False, "error": str(e)}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def update_project_comment(project_name, comment_name, comment_text):
 	if not comment_name or not comment_text:
 		frappe.throw(_("Comment name and comment text are required."))

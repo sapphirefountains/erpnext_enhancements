@@ -140,7 +140,8 @@ KEPT_STYLE = {"text-align": frozenset({"left", "right", "center", "justify", "st
 
 #: Presentation attributes, dropped from every tag. v16's ``sanitize_html`` keeps the ``font``
 #: element and every one of these (frappe ``origin/version-16`` ``utils/html_utils.py``: ``font``
-#: at :269, ``bgcolor`` :415, ``color`` :434, ``face`` :455, ``hidden`` :464, ``size`` :518), and
+#: is in ``acceptable_elements`` and all five are in ``acceptable_attributes``; cited by name, not
+#: by line, because the file's lines move without its rules changing, as they did in 16.53.0), and
 #: a REST write stores the body as sent, so ``<font color="#ffffff">`` is white-on-white text and
 #: ``<p hidden>`` is not displayed at all. The Desk editor would turn a ``<font>`` into a coloured
 #: ``<span>`` (its ``CustomColor`` blot, ``text_editor.js``), but only if someone opens the draft.
@@ -227,8 +228,8 @@ KEPT_ELEMENTS = frozenset(
 )
 
 #: Elements that go together with what they hold: they hold code, not text, and v16's own list of
-#: tags whose content is removed with them is exactly these two (``REMOVE_CONTENT_TAGS``, frappe
-#: ``origin/version-16`` ``utils/html_utils.py:21``).
+#: tags whose content is removed with them is exactly these two (``REMOVE_CONTENT_TAGS`` in frappe
+#: ``origin/version-16`` ``utils/html_utils.py``).
 DROPPED_WITH_CONTENT = frozenset({"script", "style"})
 
 #: An end tag with nothing in it but its name, which is kept byte for byte (``</P>`` stays ``</P>``).

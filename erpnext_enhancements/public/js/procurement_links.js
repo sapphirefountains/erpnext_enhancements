@@ -11,9 +11,35 @@
  * the row's virtual `purchase_links` HTML field, plus an add/edit affordance that
  * saves through erpnext_enhancements.api.procurement.save_item_link. On a PO the
  * links are filtered to the PO's supplier; on a Material Request all suppliers
- * are shown. edit_link is exposed globally for the inline onclick handlers.
+ * are shown. The add/edit buttons carry their values in data- attributes and one delegated
+ * click handler reads them; edit_link stays exposed for anything that calls it directly.
+ * Supplier, item code and address are record values: escaped, and an address is a link only
+ * when it is an http(s) address.
  */
 frappe.provide('erpnext_enhancements.procurement');
+
+// The address unchanged when it is an http(s) address, "" otherwise.
+erpnext_enhancements.procurement.safe_href = function(url) {
+    const value = String(url == null ? '' : url).trim();
+    return /^https?:\/\//i.test(value) ? value : '';
+};
+
+// One delegated handler for the add/edit buttons, bound once per page load. It listens in the
+// capture phase, so it runs before the grid's own row handlers, as an inline handler would.
+erpnext_enhancements.procurement.bind_link_buttons = function() {
+    if (erpnext_enhancements.procurement._link_buttons_bound) return;
+    erpnext_enhancements.procurement._link_buttons_bound = true;
+    document.addEventListener('click', function(e) {
+        const btn = e.target && e.target.closest ? e.target.closest('.purchase-links .btn-purchase-link') : null;
+        if (!btn) return;
+        e.preventDefault();
+        erpnext_enhancements.procurement.edit_link(
+            btn.getAttribute('data-item-code') || '',
+            btn.getAttribute('data-supplier') || '',
+            btn.getAttribute('data-url') || ''
+        );
+    }, true);
+};
 
 erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {
     constructor(frm) {
@@ -54,15 +80,20 @@ erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {
     }
 
     update_row_html(row) {
+        erpnext_enhancements.procurement.bind_link_buttons();
+        const esc = frappe.utils.escape_html;
         const links = this.cache[row.item_code] || [];
         let html = '<div class="purchase-links" style="display:flex; flex-wrap:wrap; gap:4px;">';
 
         // 1. Render Supplier Buttons
         links.forEach(link => {
             // Friendly Name: Supplier Name
-            html += `<a href="${link.url}" target="_blank" class="btn btn-xs btn-default" style="font-size: 10px; padding: 2px 6px;">
-                ${link.supplier} ↗
-            </a>`;
+            const href = erpnext_enhancements.procurement.safe_href(link.url);
+            const tag = href ? 'a' : 'span';
+            const link_attrs = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : '';
+            html += `<${tag}${link_attrs} class="btn btn-xs btn-default" style="font-size: 10px; padding: 2px 6px;">
+                ${esc(link.supplier)} ↗
+            </${tag}>`;
         });
 
         // 2. Render Add/Edit Button (Maintenance Option B)
@@ -78,13 +109,13 @@ erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {
             const has_link = links.find(l => l.supplier === this.frm.doc.supplier);
             
             if (has_link) {
-                 html += `<button class="btn btn-xs btn-default btn-edit-link" onclick="erpnext_enhancements.procurement.edit_link('${row.item_code}', '${this.frm.doc.supplier}', '${has_link.url}')" title="Edit Link">✎</button>`;
+                 html += `<button class="btn btn-xs btn-default btn-edit-link btn-purchase-link" data-item-code="${esc(row.item_code)}" data-supplier="${esc(this.frm.doc.supplier)}" data-url="${esc(has_link.url)}" title="Edit Link">✎</button>`;
                  show_add = false;
             }
         }
 
         if (show_add && this.frm.doc.supplier) {
-             html += `<button class="btn btn-xs btn-primary" onclick="erpnext_enhancements.procurement.edit_link('${row.item_code}', '${this.frm.doc.supplier}', '')" title="Add Link for ${this.frm.doc.supplier}">+</button>`;
+             html += `<button class="btn btn-xs btn-primary btn-purchase-link" data-item-code="${esc(row.item_code)}" data-supplier="${esc(this.frm.doc.supplier)}" data-url="" title="Add Link for ${esc(this.frm.doc.supplier)}">+</button>`;
         }
 
         html += '</div>';
@@ -94,7 +125,7 @@ erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {
     }
 };
 
-// Global helper for the onclick events in HTML
+// Opens the "Update Purchase Link" prompt; called by the delegated button handler above.
 erpnext_enhancements.procurement.edit_link = function(item_code, supplier, current_url) {
     if(!supplier || supplier === 'undefined') {
         frappe.msgprint("Please select a Supplier on the form first.");

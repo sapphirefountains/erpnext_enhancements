@@ -16,9 +16,15 @@ import frappe
 from frappe import _
 
 from erpnext_enhancements.accounting_intake.audit import log_intake
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
 
 _ITEM_ROLES = {"Stock Manager", "System Manager"}
 _APPROVE_ROLES = {"Accounts Manager", "System Manager"}
+# Once a document is Posting or Posted (or names the record it created) its state is final:
+# reject and re-extract refuse it. Re-extraction is offered only while a document is still
+# being worked up, and it runs a paid extraction each time, so it is also rate limited.
+_POSTED_STATES = ("Posting", "Posted")
+_REPROCESS_STATES = ("Received", "Extracting", "Needs Item Review", "Needs Review", "Failed")
 _PARTY_ACTIONS = {"Create Purchase Invoice", "Create Purchase Receipt", "Create Payment Entry"}
 
 
@@ -27,7 +33,7 @@ def _require(roles):
 		frappe.throw(_("You are not permitted to perform this action."), frappe.PermissionError)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_items(docname):
 	"""Inventory clerk: create Items for rows marked Approved, then advance the
 	document to Needs Review once no proposed Item is still Pending."""
@@ -229,7 +235,7 @@ def _reimbursement_issues(doc):
 	return []
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_document(docname):
 	"""Accountant: approve the proposed action and move to Approved, then enqueue
 	``actions.base.post_document`` to create the draft ERPNext record."""
@@ -257,10 +263,12 @@ def approve_document(docname):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reject_document(docname, reason=None):
 	_require(_APPROVE_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
+	if doc.created_docname or doc.status in _POSTED_STATES:
+		frappe.throw(_("This document has already been posted and can no longer be rejected."))
 	doc.status = "Rejected"
 	if reason:
 		doc.review_notes = reason
@@ -271,11 +279,18 @@ def reject_document(docname, reason=None):
 	return {"status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=30, seconds=3600)
 def reprocess(docname):
-	"""Re-run extraction for a stuck/failed/changed document."""
+	"""Re-run extraction for a stuck/failed/changed document.
+
+	Only while the document is still being worked up (``_REPROCESS_STATES``); one that is
+	approved, posting, posted, rejected or a duplicate, or that already names the record it
+	created, is not reset."""
 	_require(_APPROVE_ROLES | _ITEM_ROLES)
 	doc = frappe.get_doc("Document Intake", docname)
+	if doc.created_docname or doc.status not in _REPROCESS_STATES:
+		frappe.throw(_("A document with status {0} cannot be re-extracted.").format(doc.status))
 	doc.db_set("status", "Received", update_modified=False)
 	frappe.enqueue(
 		"erpnext_enhancements.accounting_intake.intake.run_extraction",

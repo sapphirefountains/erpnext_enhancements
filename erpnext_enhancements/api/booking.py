@@ -20,7 +20,7 @@ from frappe import _
 from frappe.utils import add_to_date, get_datetime
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_composite_booking(asset, rental_start, rental_end, location=None):
     """Create linked Travel + Rental + Maintenance Asset Bookings for an asset.
 
@@ -189,7 +189,7 @@ def _rows_from_pre_shipping(inspection):
     ]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_inspection(booking, direction):
     """Create (or return) the draft Rental Inspection for a booking and direction.
 

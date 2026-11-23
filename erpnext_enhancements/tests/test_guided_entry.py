@@ -469,7 +469,7 @@ const q = {};
 	h.queue.change("b", 1);
 	const flushing = h.queue.flush().then(() => "resolved", (e) => e);
 	h.queue.change("a", 2);
-	h.calls[0].d.reject({ status: 417, message: "Ranks are required", exc_type: "ValidationError" });
+	h.calls[0].d.reject({ status: 417, message: "A lost reason is required", exc_type: "ValidationError" });
 	q.error_flush = await flushing;
 	q.error = shape(h);
 	q.error_message = h.queue.error && h.queue.error.message;
@@ -1011,7 +1011,7 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(q["error"]["state"], "error")
 		self.assertEqual(q["error"]["pending"], {"a": 2, "b": 1}, "put back, the newer typing on top")
 		self.assertTrue(q["error"]["unsaved"])
-		self.assertEqual(q["error_message"], "Ranks are required")
+		self.assertEqual(q["error_message"], "A lost reason is required")
 		self.assertEqual(q["error_retry_scheduled"], [2500])
 		self.assertEqual(q["error_retry"]["calls"][1]["values"], {"a": 2, "b": 1, "c": 3})
 

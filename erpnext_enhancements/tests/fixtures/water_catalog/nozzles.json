@@ -1,0 +1,30 @@
+{
+ "_comment": "INVENTED TEST DATA for tests/test_water_catalog.py. Fixtureco and every FIXTURE- model are made up; none is a real product or a real table.",
+ "nozzles": [
+  {
+   "manufacturer": "Fixtureco",
+   "model": "FIXTURE-N10",
+   "type": "Foam jet",
+   "inlet_size": "1 in NPT",
+   "rows": [
+    {"pressure_psi": 10, "flow_gpm": 14, "height_ft": 4.5, "spread_ft": 1.2},
+    {"pressure_psi": 5, "flow_gpm": 10, "height_ft": 2.5, "spread_ft": 1.0},
+    {"pressure_psi": 15, "flow_gpm": 17, "height_ft": 6.0}
+   ],
+   "source": {"url": "https://example.invalid/fixture-n10.pdf", "document": "FIXTURE nozzle catalog 2026", "page": 12},
+   "confidence": "table"
+  },
+  {
+   "manufacturer": "Fixtureco",
+   "model": "FIXTURE-N20",
+   "type": "Laminar",
+   "inlet_size": "0.75 in",
+   "rows": [
+    {"pressure_psi": 8, "flow_gpm": 3, "height_ft": 6},
+    {"pressure_psi": 12, "flow_gpm": 3.7, "height_ft": 9}
+   ],
+   "source": {"url": "https://example.invalid/fixture-n20.pdf"},
+   "confidence": "table"
+  }
+ ]
+}

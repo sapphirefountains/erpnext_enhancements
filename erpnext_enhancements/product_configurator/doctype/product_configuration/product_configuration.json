@@ -9,7 +9,9 @@
   "config_title",
   "status",
   "column_break_head",
+  "opportunity",
   "customer",
+  "lead",
   "project",
   "company",
   "section_options",
@@ -40,6 +42,7 @@
   "bom",
   "column_break_generated",
   "item_price",
+  "quotation",
   "generated_on"
  ],
  "fields": [
@@ -70,11 +73,27 @@
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity",
+   "search_index": 1,
+   "description": "The deal this configuration quotes. Its Quotation is linked to it, and a deal whose quotes are all configured products gets no project when it is won."
+  },
+  {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
    "options": "Customer",
-   "description": "Optional — for quotes tied to a customer."
+   "description": "Who the Quotation is for. Filled from the Opportunity when it is an Account's deal."
+  },
+  {
+   "fieldname": "lead",
+   "fieldtype": "Link",
+   "label": "Lead",
+   "options": "Lead",
+   "depends_on": "eval:!doc.customer",
+   "description": "Who the Quotation is for while the deal is still on a Lead. An Account set above wins."
   },
   {
    "fieldname": "project",
@@ -262,6 +281,15 @@
    "read_only": 1
   },
   {
+   "fieldname": "quotation",
+   "fieldtype": "Link",
+   "label": "Quotation",
+   "options": "Quotation",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Made by Create Quotation. Its line links back to this configuration."
+  },
+  {
    "fieldname": "generated_on",
    "fieldtype": "Datetime",
    "label": "Generated On",
@@ -269,7 +297,7 @@
   }
  ],
  "links": [],
- "modified": "2026-07-02 12:00:00.000000",
+ "modified": "2026-11-18 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Product Configurator",
  "name": "Product Configuration",

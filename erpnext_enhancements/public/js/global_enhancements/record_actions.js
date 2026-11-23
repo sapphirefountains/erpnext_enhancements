@@ -12,6 +12,9 @@
  *   contract_types(doctype)                 contracts.js's "Generate Contract": the agreements a
  *   can_generate_contract(doctype)          record of this DocType generates, and whether the suite
  *   open_generate_contract(doctype, name)   is on; then its dialog
+ *   can_quote_product(doctype, values)      v1.827.0, the Opportunity's "Quote <product>": whether
+ *   quote_product_label()                   it is offered, what it is called, and the start of a
+ *   open_quote_product(opportunity)         Product Configuration for the deal (opened when made)
  *
  * erpnext_enhancements.bundle.js installs them as erpnext_enhancements.record_actions for the form
  * scripts (which cannot import); the guided page's bundle imports them. Each function returns the
@@ -20,6 +23,7 @@
  */
 
 const CONTRACT_METHODS = "erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract";
+const CONFIGURATOR_API = "erpnext_enhancements.product_configurator.api.configurator.";
 
 // ------------------------------------------------------------------ Drive folder
 
@@ -133,30 +137,64 @@ export function open_reminder(opts) {
 
 // ------------------------------------------------------------------ Generate Contract
 
-// Customer agreements (Owner / Rental / Maintenance) generate from Opportunity or Project;
-// subcontractor agreements (MSA / SOW / NDA) generate from Supplier. An SOW can also be generated from
-// a Project/Opportunity by picking the subcontractor in the dialog, which prefills the scope of work
+// Customer agreements (Owner / Events / Maintenance) generate from Opportunity or Project;
+// subcontractor agreements (MSA / SOW) generate from Supplier. An SOW can also be generated from a
+// Project/Opportunity by picking the subcontractor in the dialog, which prefills the scope of work
 // from the source's request/deliverable tables.
+//
+// v1.783.0 (Nikolas, 2026-11-03: "Architect Agreement" is now "Design Agreement", "Rental Agreement"
+// is "Events Agreement", and the Employee-Contractor Agreement and the NDA are hidden): the dialog
+// offers only the Contract Templates that are *enabled* on the site, under the title each has there
+// (contract_builder.get_contract_types — the Builder's start screen reads the same list). This
+// static list is the order and the hints; the server's answer decides which of it is offered, and
+// the labels here are only the fallback for a tab whose call failed. The template_key is the
+// contract: the keys (architect, rental) did not change with the titles. The Design Agreement is
+// deliberately NOT here: create_contract prefills the party from the project's customer, and the
+// other side of a Design Agreement is the architect, which only the Builder's start dialog asks for.
 const CONTRACT_SOURCES = { Opportunity: "customer", Project: "customer", Supplier: "supplier" };
+const CB_API = "erpnext_enhancements.project_enhancements.contract_builder";
 
 export function contract_types(doctype) {
 	const kind = CONTRACT_SOURCES[doctype];
 	if (kind === "customer") {
-		return [
-			{ value: "owner", label: __("Owner Contract (Design / Build / Maintain)") },
-			{ value: "rental", label: __("Rental Agreement") },
+		const types = [
+			{ value: "owner", label: __("Owner Contract"), hint: __("Design / Build / Maintain") },
+			{ value: "rental", label: __("Events Agreement") },
 			{ value: "maintenance", label: __("Maintenance Services Agreement") },
-			{ value: "sow", label: __("Statement of Work (subcontractor — requires signed MSA)") },
+			{ value: "sow", label: __("Statement of Work"), hint: __("subcontractor — requires signed MSA") },
 		];
+		// v1.808.0: the one-year Certificate of Warranty, from a Project only. It is about finished
+		// work, and its project name, site address and number all come from the project; an
+		// Opportunity has none of that yet.
+		if (doctype === "Project") {
+			types.push({ value: "warranty", label: __("Certificate of Warranty (One Year)"), hint: __("signed by Sapphire only") });
+		}
+		return types;
 	}
 	if (kind === "supplier") {
 		return [
 			{ value: "msa", label: __("Master Subcontractor Agreement") },
-			{ value: "sow", label: __("Statement of Work (requires signed MSA)") },
-			{ value: "nda", label: __("Mutual Non-Disclosure Agreement") },
+			{ value: "sow", label: __("Statement of Work"), hint: __("requires signed MSA") },
 		];
 	}
 	return [];
+}
+
+// The dialog's options: the static list narrowed to the templates enabled on the site, each under
+// its live title. A failed call keeps the static list, so the button still works on a bad day.
+function enabled_contract_types(doctype) {
+	const types = contract_types(doctype);
+	const label = (t, title) => (t.hint ? `${title || t.label} (${t.hint})` : title || t.label);
+	return frappe
+		.xcall(`${CB_API}.get_contract_types`)
+		.then((rows) => {
+			const live = {};
+			(rows || []).forEach((row) => {
+				live[row.template_key] = row.title;
+			});
+			return types.filter((t) => t.value in live).map((t) => ({ value: t.value, label: label(t, live[t.value]) }));
+		})
+		.catch(() => types.map((t) => ({ value: t.value, label: label(t) })));
 }
 
 // Master switch: the suite is dormant until enabled in ERPNext Enhancements Settings (a boot flag;
@@ -197,8 +235,17 @@ export function create_sow_with_gate(supplier, source_doctype, source_name) {
 }
 
 export function open_generate_contract(source_doctype, source_name) {
-	const types = contract_types(source_doctype);
-	if (!types.length || !source_name) return null;
+	if (!contract_types(source_doctype).length || !source_name) return null;
+	return enabled_contract_types(source_doctype).then((types) => {
+		if (!types.length) {
+			frappe.msgprint(__("No contract type is enabled for a {0}.", [__(source_doctype)]));
+			return null;
+		}
+		return generate_contract_dialog(source_doctype, source_name, types);
+	});
+}
+
+function generate_contract_dialog(source_doctype, source_name, types) {
 	const d = new frappe.ui.Dialog({
 		title: __("Generate Contract"),
 		fields: [
@@ -237,6 +284,79 @@ export function open_generate_contract(source_doctype, source_name) {
 		d.set_df_property("supplier", "hidden", 1);
 		d.set_df_property("supplier", "mandatory_depends_on", "");
 	}
+	d.show();
+	return d;
+}
+
+// ------------------------------------------------------------------ Quote a product (v1.827.0)
+
+// The Opportunity's "Quote <product>" (decision 2026-11-18: a sale starts from the deal). It makes a
+// Product Configuration for the deal, with its Account or Lead and the deal filled in, and opens it;
+// the configuration's own "Create Quotation" is the next step. Offered on a deal that is not Lost,
+// while the configurator is on and has a product (frappe.boot.ee_configurable_products, a boot list
+// so the label is right on first paint). Not narrowed to people holding the Product Engineer role:
+// the server refuses everyone else in plain words, which tells them what to ask for, where a missing
+// button would tell them nothing.
+
+export function quotable_products() {
+	const products = frappe.boot && frappe.boot.ee_configurable_products;
+	return Array.isArray(products) ? products : [];
+}
+
+export function can_quote_product(doctype, values) {
+	if (doctype !== "Opportunity") return false;
+	if (!(frappe.boot && frappe.boot.ee_product_configurator)) return false;
+	if ((values || {}).status === "Lost") return false;
+	return quotable_products().length > 0;
+}
+
+// "Quote STILLWATER E-Stop" while one product is enabled; "Quote a Product" once there are several.
+export function quote_product_label() {
+	const products = quotable_products();
+	if (products.length === 1) return __("Quote {0}", [products[0].product_name || products[0].name]);
+	return __("Quote a Product");
+}
+
+function start_product_configuration(opportunity, product) {
+	return frappe
+		.call({
+			method: CONFIGURATOR_API + "start_configuration",
+			args: { opportunity: opportunity, product: product },
+			freeze: true,
+			freeze_message: __("Starting the configuration…"),
+		})
+		.then((r) => {
+			const made = r && r.message;
+			if (made && made.configuration) frappe.set_route("Form", "Product Configuration", made.configuration);
+		});
+}
+
+// Returns the product choice dialog when there is more than one product, else null (the
+// configuration is started at once and opens on its own).
+export function open_quote_product(opportunity) {
+	const products = quotable_products();
+	if (!opportunity || !products.length) return null;
+	if (products.length === 1) {
+		start_product_configuration(opportunity, products[0].name);
+		return null;
+	}
+	const d = new frappe.ui.Dialog({
+		title: __("Quote a Product"),
+		fields: [
+			{
+				fieldname: "product",
+				fieldtype: "Select",
+				label: __("Product"),
+				reqd: 1,
+				options: products.map((p) => ({ value: p.name, label: p.product_name || p.name })),
+			},
+		],
+		primary_action_label: __("Start"),
+		primary_action(values) {
+			d.hide();
+			start_product_configuration(opportunity, values.product);
+		},
+	});
 	d.show();
 	return d;
 }

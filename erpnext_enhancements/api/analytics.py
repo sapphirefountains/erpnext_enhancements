@@ -1,8 +1,11 @@
 """Marketing analytics endpoints (Google Analytics 4 + Google Search Console).
 
-Whitelisted API that powers the GA4 Dashboard Desk page
-(``enhancements_core/page/ga4_dashboard/ga4_dashboard.js``), which calls
-``get_ga4_data`` and ``get_gsc_data``.
+Since v1.756.0 nothing calls Google from a page load: the GA4 Dashboard page redirects to
+Marketing Performance, which reads the daily rows ``marketing/performance/web_sync.py`` stores.
+``get_ga4_data`` and ``get_gsc_data`` remain for the nightly 30-day snapshot
+(``kpi_dashboards/snapshots.snapshot_marketing_web``), and their credential and Search Console
+helpers (``_ga4_client``, ``_gsc_service``, ``_gsc_execute``, ``_gsc_query_first_site``) are what
+the daily pull uses.
 
 External services:
         - Google Analytics 4 Data API (``BetaAnalyticsDataClient``).
@@ -17,8 +20,9 @@ Console runs its queries one at a time, each on a connection of its own, and
 retries a network failure (see ``_gsc_execute``). Both return
 Frappe-Charts-shaped dicts (or an ``{"error": ...}`` dict on failure).
 
-Security: requires an authenticated session (default whitelist). Errors are
-logged to the Error Log and returned as a plain ``{"error": ...}`` message.
+Security: since v1.756.1 neither getter is whitelisted: nothing in a browser calls them any more,
+and a whitelisted method with no role check is open to every signed-in user. Errors are logged to the Error Log and returned
+as a plain ``{"error": ...}`` message.
 """
 
 import concurrent.futures
@@ -47,7 +51,34 @@ from erpnext_enhancements.utils.error_throttle import log_error_throttled
 from erpnext_enhancements.utils.search_console import rolling_sums, site_candidates, window_for
 
 
-@frappe.whitelist()
+def _ga4_client(ga4_settings):
+	"""``(client, property_id, error)`` for the configured GA4 property.
+
+	Shared by ``get_ga4_data`` (the nightly snapshot) and the daily pull in
+	``marketing/performance/web_sync.py``.
+	"""
+	if not ga4_settings.ga4_property_id:
+		return None, None, "GA4 Property ID is missing in GA4 Settings."
+
+	if not ga4_settings.credentials_json:
+		return None, None, "Credentials JSON file is missing in GA4 Settings."
+
+	credentials_url = ga4_settings.credentials_json
+	if not credentials_url.startswith('/private/files/'):
+		return None, None, "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."
+
+	# Extract filename correctly
+	credentials_file = credentials_url.split('/')[-1]
+	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
+
+	if not os.path.exists(credentials_path):
+		return None, None, f"Credentials file not found at: {credentials_path}"
+
+	# Use service account credentials explicitly to avoid modifying os.environ
+	credentials = service_account.Credentials.from_service_account_file(credentials_path)
+	return BetaAnalyticsDataClient(credentials=credentials), ga4_settings.ga4_property_id, None
+
+
 def get_ga4_data():
 	"""
 	Retrieves Google Analytics 4 (GA4) 'activeUsers' and 'sessions' for Traffic Timeline,
@@ -63,29 +94,10 @@ def get_ga4_data():
 	"""
 	ga4_settings = frappe.get_doc("GA4 Settings")
 
-	if not ga4_settings.ga4_property_id:
-		return {"error": "GA4 Property ID is missing in GA4 Settings."}
-
-	if not ga4_settings.credentials_json:
-		return {"error": "Credentials JSON file is missing in GA4 Settings."}
-
-	credentials_url = ga4_settings.credentials_json
-	if not credentials_url.startswith('/private/files/'):
-		return {"error": "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."}
-
-	# Extract filename correctly
-	credentials_file = credentials_url.split('/')[-1]
-	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
-
-	if not os.path.exists(credentials_path):
-		return {"error": f"Credentials file not found at: {credentials_path}"}
-
 	try:
-		# Use service account credentials explicitly to avoid modifying os.environ
-		credentials = service_account.Credentials.from_service_account_file(credentials_path)
-		client = BetaAnalyticsDataClient(credentials=credentials)
-
-		property_id = ga4_settings.ga4_property_id
+		client, property_id, error = _ga4_client(ga4_settings)
+		if error:
+			return {"error": error}
 		date_range = DateRange(start_date="30daysAgo", end_date="today")
 
 		def fetch_traffic():
@@ -107,10 +119,12 @@ def get_ga4_data():
 			return client.run_report(req)
 
 		def fetch_conversions():
+			# keyEvents: Google renamed conversions to key events in 2024 and the old metric name
+			# is deprecated in the Data API (v1.756.0).
 			req = RunReportRequest(
 				property=f"properties/{property_id}",
 				dimensions=[Dimension(name="eventName")],
-				metrics=[Metric(name="conversions")],
+				metrics=[Metric(name="keyEvents")],
 				date_ranges=[date_range],
 			)
 			return client.run_report(req)
@@ -196,7 +210,7 @@ def get_ga4_data():
 		conv_conversions = []
 		for row in res_conv.rows:
 			conv_labels.append(row.dimension_values[0].value)
-			conv_conversions.append(int(row.metric_values[0].value))
+			conv_conversions.append(int(float(row.metric_values[0].value or 0)))
 
 		# Process 4. Top Pages
 		top_pages = []
@@ -268,6 +282,12 @@ GSC_HTTP_TIMEOUT = 30
 GSC_ATTEMPTS = 3
 #: Seconds before the first retry, doubled before each retry after it.
 GSC_BACKOFF_SECONDS = 2
+#: Google answering "busy": rate-limited, or a server error. Retried only when the caller asks
+#: (``busy=True``, the daily pull and the history backfill, which read hundreds of windows in a row
+#: and would otherwise fail a whole backfill on one), after ``GSC_BUSY_BACKOFF_SECONDS`` and then
+#: twice that. The nightly snapshot keeps failing fast on them, as it always has.
+GSC_BUSY = frozenset({429, 500, 502, 503, 504})
+GSC_BUSY_BACKOFF_SECONDS = 15
 #: The OAuth scope the Search Console credentials are loaded with. ``searchanalytics.query``
 #: is the only call made, and read-only is enough for it. The scope has to be set on the
 #: credentials themselves: ``_gsc_http`` authorizes with the object ``_gsc_service`` returns,
@@ -332,7 +352,7 @@ def _gsc_transient(error):
 	return isinstance(error, (ssl.SSLError, TimeoutError))
 
 
-def _gsc_execute(request, credentials, label):
+def _gsc_execute(request, credentials, label, busy=False):
 	"""Execute one Search Console ``request`` on a transport of its own, retrying a transient failure.
 
 	Each attempt gets a fresh connection (``_gsc_http``), never the one the service was built
@@ -343,27 +363,31 @@ def _gsc_execute(request, credentials, label):
 	``GSC_BACKOFF_SECONDS`` and then twice that between tries. After the last one this raises
 	``GscUnavailable`` with a one-line message and no chained exception: the chain would be
 	about 4 KB of httplib2 and ssl frames that say only "the network failed". Anything else,
-	an ``HttpError`` included, raises at once and is never retried.
+	an ``HttpError`` included, raises at once and is never retried -- unless ``busy`` is set and
+	the status is a 429 or a 5xx (``GSC_BUSY``), which is retried the same way on a longer backoff.
 	"""
 	for attempt in range(1, GSC_ATTEMPTS + 1):
 		http = _gsc_http(credentials)
+		backoff = GSC_BACKOFF_SECONDS
 		try:
 			return request.execute(http=http)
 		except Exception as e:
-			if not _gsc_transient(e):
+			if busy and isinstance(e, HttpError) and _http_status(e) in GSC_BUSY:
+				backoff = GSC_BUSY_BACKOFF_SECONDS
+			elif not _gsc_transient(e):
 				raise
 			last = f"{type(e).__name__}: {e}"
 		finally:
 			http.close()
 		if attempt < GSC_ATTEMPTS:
-			time.sleep(GSC_BACKOFF_SECONDS * 2 ** (attempt - 1))
+			time.sleep(backoff * 2 ** (attempt - 1))
 	raise GscUnavailable(
 		f"Search Console did not answer the '{label}' query after {GSC_ATTEMPTS} attempts "
-		f"(last: {last}). A network failure, not a permission one; the next run tries again."
+		f"(last: {last}). Not a permission failure; the next run tries again."
 	) from None
 
 
-def _gsc_query_first_site(service, credentials, stored, body):
+def _gsc_query_first_site(service, credentials, stored, body, busy=False):
 	"""Run ``body`` against the first property form Search Console accepts.
 
 	Returns ``(site, response, refusals)``; ``site`` is None when every form was refused,
@@ -380,7 +404,7 @@ def _gsc_query_first_site(service, credentials, stored, body):
 	for site in candidates:
 		try:
 			response = _gsc_execute(
-				service.searchanalytics().query(siteUrl=site, body=body), credentials, label
+				service.searchanalytics().query(siteUrl=site, body=body), credentials, label, busy=busy
 			)
 		except HttpError as e:
 			status = _http_status(e)
@@ -402,7 +426,6 @@ def _gsc_refused_message(stored, refusals, account):
 	)
 
 
-@frappe.whitelist()
 def get_gsc_data():
 	"""
 	Retrieves Google Search Console (GSC) 'clicks' and 'impressions' for Search Performance Timeline,

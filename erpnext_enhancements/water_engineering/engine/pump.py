@@ -7,21 +7,21 @@ rule, or VFD-vs-starter logic in the sheets. So:
 * :func:`select_pump` is a catalog lookup. Candidates come from the caller
   (ERPNext Items, ``item_group`` "Pumps"); the engine stays pure and never
   queries the DB.
-* :func:`electrical_load` applies the 125%-FLA continuous-duty rule
-  (NEC 430.52). This is a business rule, not a source-document formula — it is
-  flagged in ``warnings`` for the engineer to confirm.
+* :func:`electrical_load` sizes the pump's branch breaker. Since v1.763.0 it is
+  the NEC 430.52 / Table 430.52(C)(1) maximum (250% of FLC for an inverse-time
+  breaker, next standard size up), computed by ``electrical.ocpd``; 125% of FLA,
+  which this function used to call the breaker, is the 430.22 *conductor*
+  minimum and is reported beside it. A non-motor load (``is_motor=False``) gets
+  the 210.20(A) continuous-load breaker at 125%.
 """
 
 from __future__ import annotations
 
-import math
 from itertools import pairwise
 
 from .constants import BREAKER_CONTINUOUS_FACTOR
+from .electrical.ocpd import continuous_ocpd, motor_branch_ocpd
 from .envelope import CalcOption, CalcResult, make_input
-
-# Standard inverse-time breaker ampere ratings (NEC 240.6) for rounding up.
-_STD_BREAKERS = [15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200]
 
 
 def head_at_flow(curve, flow_gpm):
@@ -151,12 +151,37 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
     )
 
 
-def electrical_load(fla_amps: float, hp: float = 0.0, phase: int = 1, voltage: int = 0) -> CalcResult:
-    """Branch-circuit breaker sizing from full-load amps (125% FLA, rounded up to
-    the next standard breaker). Flagged as a business rule, not a source formula."""
+def electrical_load(
+    fla_amps: float,
+    hp: float = 0.0,
+    phase: int = 1,
+    voltage: int = 0,
+    *,
+    is_motor: bool = True,
+    device: str = "inverse_time_breaker",
+) -> CalcResult:
+    """Branch-circuit breaker for a pump (or, with ``is_motor=False``, any other
+    load) from its full-load amps.
+
+    Motor: the NEC 430.52(C)(1) maximum for ``device`` (inverse-time breaker by
+    default: 250% of FLA, next standard size up per Exception 1), from
+    ``electrical.ocpd.motor_branch_ocpd``. ``inputs['conductor_min_a']`` is the
+    430.22 conductor figure, 125% of FLA. Non-motor: noncontinuous + 125% of the
+    continuous load, next standard size (210.20(A)). Same ``CalcResult`` shape
+    as before v1.763.0; only the motor ``value`` changed (it was the 125% figure).
+    """
     fla_amps = float(fla_amps or 0)
-    target = fla_amps * BREAKER_CONTINUOUS_FACTOR
-    breaker = next((b for b in _STD_BREAKERS if b >= target), math.ceil(target))
+    conductor_a = fla_amps * BREAKER_CONTINUOUS_FACTOR
+    if is_motor:
+        oc = motor_branch_ocpd(fla_amps, device=device, phase=phase or 1, hp=hp, voltage=voltage)
+        formula = "breaker = Table 430.52(C)(1) % x FLA, next standard size up ; conductors >= 1.25 x FLA (430.22)"
+    else:
+        oc = continuous_ocpd(fla_amps, continuous=True)
+        formula = "breaker = next standard size >= 1.25 x FLA (210.20(A), continuous load)"
+    breaker = oc.value if oc.value is not None else 0
+    steps = list(oc.steps)
+    if is_motor:
+        steps.append(f"conductor minimum = 1.25 * {fla_amps} = {conductor_a:.2f} A (NEC 430.22)")
     return CalcResult(
         calc="electrical_load",
         value=breaker,
@@ -166,16 +191,16 @@ def electrical_load(fla_amps: float, hp: float = 0.0, phase: int = 1, voltage: i
             "hp": make_input(hp, "HP", "lookup", "pump nameplate"),
             "phase": make_input(phase, "", "user"),
             "voltage": make_input(voltage, "V", "user"),
+            "is_motor": make_input(bool(is_motor), "", "user"),
+            "device": make_input(device, "", "user"),
+            "conductor_min_a": make_input(round(conductor_a, 2), "A", "prior_calc", "NEC 430.22 / 210.19(A)"),
         },
-        formula="breaker = next standard size >= 1.25 * FLA",
-        steps=[
-            f"target = 1.25 * {fla_amps} = {target:.2f} A",
-            f"breaker = {breaker} A (next standard size, NEC 240.6)",
-        ],
-        citations=["NEC 430.52 / 240.6 (business rule)"],
+        formula=formula,
+        steps=steps,
+        citations=oc.citations,
         warnings=[
-            "Breaker sizing (125% FLA) and VFD-vs-motor-starter choice are not in "
-            "the Sapphire source documents; confirm against the pump nameplate and "
-            "local code with the engineer."
+            *oc.warnings,
+            "VFD-vs-motor-starter choice is not in the Sapphire source documents; confirm against the pump "
+            "nameplate and local code with the engineer.",
         ],
     )

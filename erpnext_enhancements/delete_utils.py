@@ -193,6 +193,7 @@ def discover_references(doctype, name, include_cancelled=True, respect_ignore_ho
 def get_blocking_links(doctype, name):
 	"""
 	Returns a detailed list of documents blocking the deletion of the target document.
+	Requires read permission on the target document.
 	"""
 	# The frontend extracts the doctype from a desk URL, so it arrives as the
 	# route slug (e.g. 'sapphire-maintenance-contract'). Resolve it to the real
@@ -200,16 +201,23 @@ def get_blocking_links(doctype, name):
 	doctype = _resolve_doctype(doctype)
 
 	try:
-		frappe.get_doc(doctype, name)
+		doc = frappe.get_doc(doctype, name)
 	except frappe.DoesNotExistError:
 		return []
+	doc.check_permission("read")
 
+	return _blocking_links(doctype, name)
+
+
+def _blocking_links(doctype, name):
+	"""The references :func:`get_blocking_links` reports, with no permission check: for
+	:func:`unlink_and_delete`, which has already checked delete permission."""
 	# The delete flow must not offer to unlink cancelled docs and must honour the
 	# ignore_links_on_delete hook — see discover_references for why merge differs.
 	return discover_references(doctype, name, include_cancelled=False, respect_ignore_hook=True)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def unlink_and_delete(doctype, name):
 	"""Clear every reference returned by :func:`get_blocking_links`, then delete.
 
@@ -229,7 +237,7 @@ def unlink_and_delete(doctype, name):
 	if not frappe.has_permission(doctype, "delete", name):
 		frappe.throw(_("You do not have permission to delete {0} {1}").format(doctype, name))
 
-	links = get_blocking_links(doctype, name)
+	links = _blocking_links(doctype, name)
 
 	for link in links:
 		try:

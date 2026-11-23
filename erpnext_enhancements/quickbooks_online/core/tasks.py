@@ -2,7 +2,7 @@
 
 Three are wired to the hourly scheduler via ``hooks.py``:
 ``refresh_token_if_needed`` (keep OAuth alive), ``cdc_poll`` (pull QBO changes)
-and ``retry_failed_syncs`` (re-run failed sync logs); ``sync_attachments_scheduled``
+and ``retry_failed_syncs`` (re-run a failed CDC poll); ``sync_attachments_scheduled``
 runs daily (mirror new QBO attachments). They are intentionally thin -- guard clauses
 and cursor checks here, real work in ``client.py``, ``sync.py`` and ``attachments.py``.
 """
@@ -70,9 +70,12 @@ def cdc_poll():
 
 
 def retry_failed_syncs():
-	"""Hourly scheduler hook: re-run sync logs left in the Failed state.
+	"""Hourly scheduler hook: fail orphaned runs, and re-run a failed CDC poll once.
 
-	Delegates to ``sync.retry_failed`` (which respects Settings.retry_limit).
+	Delegates to ``sync.retry_failed`` (which respects Settings.retry_limit). It never
+	starts an Import All or a Run Resync (v1.800.0): a failed one waits for a person to
+	start it again from the dashboard. This job runs on the default queue, where RQ ends
+	it after 300 seconds -- a budget a CDC poll fits and a full import never did.
 	"""
 	retry_failed()
 

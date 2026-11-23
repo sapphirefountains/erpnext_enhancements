@@ -22,6 +22,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `party_naming.py` | The reads behind it, plus the whitelisted entry point the three forms call | `read_rows`, `attach_customer_labels`, `attach_address_parties`, `audit_doctype`, `check_record` (whitelisted) | `public/js/party_naming_advisor.js` on all three forms; `report/party_naming_audit/`; `assistant_tools/party_naming_check.py`; `project_naming_compliance_pct` (Operations) and `opportunity_naming_compliance_pct` / `address_naming_compliance_pct` (Sales) on the nightly snapshot |
 | `lead_triage.py` | Inbound Lead ownership and the speed-to-lead SLA (v1.502.0, TASK-2026-01473): named owner or `Sales Team` rotation, a working-time first-response deadline, a ToDo, remind-then-escalate once each, and the one "has this Lead been answered" rule the Speed-to-Lead widget shares. See [`docs/lead-triage-runbook.md`](../../docs/lead-triage-runbook.md) | `prepare_inbound_lead` / `assign_inbound_lead` (called by `web_lead.py`), `stamp_first_response`, `sweep_first_response_sla`, `backfill_first_responses`, `RESPONSE_EXISTS_SQL` | `Communication` `on_update`; `scheduler_events.cron` `*/10`; `after_migrate` |
 | `website_cleanup.py` | Accept a bare domain in any URL field (v1.324.0) — prefixes `https://` before frappe's URL validation reads it. Shared with the QuickBooks sync, which met the same defect first | `normalize_website` (the whole rule, pure), `heal_url_fields`, `add_missing_scheme` | `before_validate` on Lead / Customer / Opportunity / **Supplier / Company** (the last two are not CRM — they are here because they carry the same Property Setter); `quickbooks_online.core.mapping._heal_invalid_urls` delegates to it |
+| `product_sale.py` | Is this deal a product sale? (v1.827.0; decision 2026-11-18 pick 1, "the Sales Order is the record"). Only when **a person ticked** `Opportunity.custom_product_sale` ("Product Sale (No Project)", on the Hand-Off Process tab) **and nothing linked disagrees**: every live Quotation linked to the deal (by `custom_source_opportunity`, how the configurator links, or ERPNext's `opportunity`) is a product document (every line a standard product per `product_orders`, the item rule the Products tab shares, or incidental freight/shipping; control-panel lines keep the project). A configured quote alone never decides it: QuickBooks quotes never link to the deal, so the deal's real quote may be invisible. The configurator only *suggests* the tick (`suggests_product_sale`); the Closed Won prompt, the Hand-Off tab and Create Quotation ask. Unclear means a job. The escape: untick it, or **Create Project Anyway** (`api.enqueue_project_creation(create_anyway=1)`). A product sale gets no hand-off SLA stamp, no "Create project now?", only the escape button, and stays out of the won-without-project nag, the Sales Dashboard's hand-off backlog and the Hand-Off Backlog KPI. Also the Project Type the hand-off gives a deal's project: **Products** when its linked quote lines are a control-panel product order (`classify_lines` `needs_project`), else the value-stream choice (Design, Build, Service, Events). Pure rule, batch read (three reads for any list); never raises | `is_product_sale`, `suggests_product_sale`, `document_skips_project`, `project_type_for` (pure); `deal_facts`, `product_sale_names`, `is_product_opportunity`, `is_product_sale_doc`, `deal_state`, `project_type_for_deal`; `mirror_deal_link` (Quotation `validate`: a quote linked ERPNext's way also fills `custom_source_opportunity`) and `add_dashboard_links` (the Opportunity's Connections: Quotations through that field, and Product Configurations) | `handoff.stamp_handoff_gate` / `handoff_state` / `mark_product_sale` / `follow_product_sale_tick` (the gate follows the tick from the button or the form), `project_prompt.prompt_create_project_on_won`, `api.enqueue_project_creation`, `status_alerts.nag_unconverted_opportunities`, `api/sales_dashboard.get_handoff_backlog`, `kpi_dashboards/snapshots.py`, `product_configurator/quoting.create_quotation` (the suggestion), `api.create_project_from_opportunity_background` (the Project Type), `travel_management/dashboard.get_opportunity_dashboard_data` (the Connections) |
 | `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
@@ -91,11 +92,23 @@ job, into a linked **Customer → Address → Contact → Lead → Opportunity**
 | `__init__.py` | constants: `INTAKE_FIELD_MAP` (the guest allowlist), `CT_LOCATIONS`, `HONEYPOT_FIELD_NAME`, store-location lookup |
 | `intake.py` | the three guest endpoints — `begin_intake`, `upload_intake_photo`, `submit_intake` — plus `gc_orphan_intake_files` |
 | `matching.py` | duplicate resolution: which existing party does this belong to? |
-| `conversion.py` | the staging-row → five-records engine |
+| `conversion.py` | the staging-row → five-records engine; holds a public-form match for staff (`is_staff_started`, `holds_for_confirmation`) and finishes a confirmed one (`_convert_confirmed`) |
 | `photos.py` | File fan-out onto Lead/Customer/Opportunity + Drive mirroring |
 | `notify.py` | new / failed / duplicate-review alerts + the daily stuck digest |
 | `invites.py` | the desk "Send Intake Link" flow and token attribution |
-| `api.py` | desk triage RPC (retry, mark spam, not spam) |
+| `api.py` | desk triage RPC (retry, confirm match, mark spam, not spam) |
+
+**A public-form match waits for staff (v1.833.0, Nik's decision of 2026-11-19).** When a request
+from the public form matches an existing Customer, Contact or Lead, the conversion records the match
+as a suggestion in `match_candidates` (`held_for_confirmation: 1`), parks the request in Duplicate
+Review and creates, attaches and writes nothing. **Confirm Match** on the request
+(`api.confirm_match`, POST, `TRIAGE_ROLES`) stamps `match_confirmed_by` / `match_confirmed_on`, sets
+`created_customer` to the Customer the staff member picked and queues the conversion, which then
+creates only the Opportunity under it (submitted name, email and phone in its scope notes, photos on
+the Opportunity alone) and never writes onto an existing Customer, Contact or Address. A public
+request that matches nobody, a Desk entry (owned by a desk user) and the first request through a
+staff member's emailed link convert as before; that test reads `owner` and the server-resolved
+`invite`, never anything the submitter sent.
 
 **Why a staging doctype rather than writing the five records inline:** spam never
 reaches CRM; a partial failure is resumable rather than duplicating master data
@@ -331,8 +344,8 @@ under Guided Entry.
   has a **Move** button that opens the same panel, the keyboard's way in. A move between open
   stages or to On Hold saves the status with `form_kit.api.save_step`, carrying the card's
   `modified`; a conflict puts the card back, names who changed the deal and reloads the board, and
-  nothing is overwritten. A drop on **Closed Won or Lost saves nothing by itself**: those need the
-  ranks or the lost reasons, which the side panel collects first (part C, below). Since part C a
+  nothing is overwritten. A drop on **Closed Won or Lost saves nothing by itself**: Lost needs its
+  reasons, which the side panel collects first, and Closed Won is confirmed there (part C, below). Since part C a
   tap on a card opens the deal in the side panel, on a phone too; the Move button opens the move
   panel.
 - **History.** Each view is a route: `/desk/opportunity-board/<stages|streams>`, the phone's
@@ -459,8 +472,9 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   the deal for editing. Closing an edit that saved something offers Undo, except when the edit moved
   the deal into or out of a closing status (Closed Won, Lost, ...): those are undone the way they
   are made (the Closed-Won prompt's No, which refuses once a project exists).
-- **Required fields on a drop** (P6.6): Closed Won asks for the three ranks, Lost for the lost
-  reasons, competitors and detail (the Set as Lost dialog's fields). The move is saved only when the
+- **Required fields on a drop** (P6.6): Lost asks for the lost reasons, competitors and detail (the
+  Set as Lost dialog's fields); Closed Won asks for nothing more since v1.799.0 and the panel only
+  confirms it. The move is saved only when the
   person commits, together with those fields and locked on the card's `modified`; until then the
   card stays put, marked "Moving to …". Cancel, Esc or Back drop what was typed. A refusal keeps the
   panel open with the reason; a conflict asks, with the guided page's chooser. The Closed-Won
@@ -479,11 +493,11 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   The answer is deal by deal; what did not change stays selected, with its reason. The selection
   is kept for the tab (`sessionStorage`, guarded), so a reload on a bulk address finds it.
   - **Closed Won is not a bulk move**, a deliberate departure from P6.7's text (review of #1286). It
-    is not offered, and `bulk_update` refuses it: "Win deals one at a time: each needs its own ranks
-    and hand-off." Each win sends its own "Schedule the hand-off meeting now?" prompt, so twenty would
+    is not offered, and `bulk_update` refuses it: "Win deals one at a time: each needs its own
+    hand-off." Each win sends its own "Schedule the hand-off meeting now?" prompt, so twenty would
     stack with none naming its deal, and v16 treats a prompt closed with Esc or × as No, which
-    un-wins that deal (`project_prompt.revert_won_status`). One set of ranks for many deals is wrong
-    too. Win from the card (a drop, or the move panel), one deal at a time.
+    un-wins that deal (`project_prompt.revert_won_status`). Win from the card (a drop, or the move
+    panel), one deal at a time.
 
 ### Needs attention check
 

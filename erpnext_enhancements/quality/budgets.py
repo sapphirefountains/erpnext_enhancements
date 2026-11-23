@@ -432,18 +432,40 @@ def reallocation_errors(from_category, to_category, amount, lines, protected=PRO
 	return errors
 
 
+def first_approval_errors(requested_by, approver, second_approved_by=None):
+	"""Why *approver* may not record the project manager approval. An empty list means they may.
+
+	The person who requested the reallocation does not also approve it, and the project manager
+	approval and the second approval come from two different people. ``approve_reallocation`` asks
+	this before it stamps, and :func:`approval_errors` repeats the requester half at submit.
+	"""
+	errors = []
+	if not approver:
+		return errors
+	if requested_by and approver == requested_by:
+		errors.append("The project manager approval cannot come from the person who requested it.")
+	if second_approved_by and approver == second_approved_by:
+		errors.append(
+			"The project manager approval cannot come from the person who gave the second approval."
+		)
+	return errors
+
+
 def approval_errors(requested_by, pm_approved_by, second_approved_by, needs_second):
 	"""Why this reallocation is not yet cleared to submit.
 
 	The segregation rule is the point: a second signature from the same hand is not a second
-	signature. An additional approver who is also the requester, or who is the project manager who
-	already approved it, is refused -- which is what stops the protected-category control from
-	being satisfiable by one person clicking twice.
+	signature. A project manager approval recorded by the requester is refused, and so is an
+	additional approver who is also the requester or the project manager who already approved it
+	-- which is what stops the protected-category control from being satisfiable by one person
+	clicking twice.
 	"""
 	errors = []
 
 	if not pm_approved_by:
 		errors.append("Awaiting project manager approval.")
+	else:
+		errors.extend(first_approval_errors(requested_by, pm_approved_by))
 
 	if needs_second:
 		if not second_approved_by:

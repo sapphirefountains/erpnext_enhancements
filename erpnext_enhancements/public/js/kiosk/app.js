@@ -451,11 +451,11 @@
 
   /**
    * Full-screen project picker: Recent / Nearest / All, with a search box that
-   * matches title or PRJ-#. opts.selected (docname), opts.title, opts.onPick(p).
+   * matches title or job number (PRJ-, SRV- or EVT-#). opts.selected (docname), opts.title, opts.onPick(p).
    */
   function openProjectPicker(opts) {
     opts = opts || {};
-    var search = h('input', { type: 'search', class: 'tk-input', placeholder: 'Search project name or PRJ-#', 'aria-label': 'Search projects', autocomplete: 'off' });
+    var search = h('input', { type: 'search', class: 'tk-input', placeholder: 'Search project name or number', 'aria-label': 'Search projects', autocomplete: 'off' });
     var list = h('div', { class: 'tk-stack' });
     var body = h('div', { class: 'tk-stack' }, [h('div', { class: 'tk-search' }, [search]), list]);
     var handle = null;

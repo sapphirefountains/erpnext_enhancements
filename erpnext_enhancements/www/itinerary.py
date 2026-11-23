@@ -64,6 +64,7 @@ import frappe
 
 from erpnext_enhancements.api.travel import get_itinerary_bootstrap
 from erpnext_enhancements.travel_management.itinerary_offline import set_marker
+from erpnext_enhancements.utils.script_json import script_json
 from erpnext_enhancements.www.kiosk import get_deploy_version
 
 # Always render fresh per-user; never cache the authenticated shell on the server. (The copy
@@ -104,18 +105,6 @@ def get_context(context):
 	context.csrf_token = boot.get("csrf_token") or ""
 	context.deploy_version = get_deploy_version()
 	return context
-
-
-def script_json(value):
-	"""``frappe.as_json`` made safe to print inside an inline ``<script>``.
-
-	``itinerary.html`` prints the boot with ``| safe``, and ``as_json`` leaves ``<`` alone, so
-	a trip purpose containing ``</script>`` would end the block early. The boot now carries
-	every trip the person owns as well as the ones they are on, so it is escaped here: ``<``,
-	``>`` and ``&`` become ``\\u`` escapes, which read back as the same characters. Outside a
-	string JSON has none of the three, so nothing else changes.
-	"""
-	return frappe.as_json(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def login_redirect(full_path):

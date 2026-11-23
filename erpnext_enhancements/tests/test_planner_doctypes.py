@@ -747,7 +747,8 @@ class TestRegistration(unittest.TestCase):
 	def test_crew_sync_is_on_update(self):
 		on_update = self.task_events["on_update"]
 		self.assertEqual(on_update[-1], "erpnext_enhancements.project_enhancements.crew_sync.on_task_update")
-		self.assertIn("erpnext_enhancements.tasks.generate_next_task", on_update)
+		# Gone since v1.799.1 (UI field audit): the recurring-task fields are hidden.
+		self.assertNotIn("erpnext_enhancements.tasks.generate_next_task", on_update)
 
 	def test_seed_patch_is_registered_after_model_sync(self):
 		text = (APP / "patches.txt").read_text(encoding="utf-8")

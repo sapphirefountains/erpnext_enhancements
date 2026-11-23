@@ -10,7 +10,8 @@
  *  - "Import All": calls the `import_all` RPC (freezing the UI) and reports the
  *    resulting sync log.
  *  - "Preview Resync": calls `preview_resync` and opens the generated preview
- *    Sync Log so the user can review changes before running an overwrite resync.
+ *    Sync Log so the user can review it before running the resync (which, since
+ *    v1.800.0, flags linked records that differ and never saves over them).
  *
  * All buttons delegate to whitelisted methods under
  * erpnext_enhancements.quickbooks_online.core.api.

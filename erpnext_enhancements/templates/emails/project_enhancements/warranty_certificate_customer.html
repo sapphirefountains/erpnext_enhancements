@@ -1,0 +1,27 @@
+{# A Certificate of Warranty, emailed to the customer. The PDF rides along as an attachment.
+
+   Sent only by contract_builder.email_certificate, which runs only when a Contract Manager
+   presses "Email it to the customer" in the Contract Builder and confirms the address.
+
+   A FRAGMENT: the letterhead, heading and footer come from email_style.render(). Do not add a
+   container here; the shell owns the measure.
+
+   NOTE: frappe's Jinja env has NO autoescape. The macros below escape their own text
+   arguments, so values passed into them need no second `|e`. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Hi " ~ recipient_name ~ "," if recipient_name else "Hello,") }}
+
+{{ ee.p("Your " ~ certificate ~ " from Sapphire Fountains is attached to this email as a PDF.") }}
+
+{% if work_completed %}
+{{ ee.kv([("Certificate", number), ("Project", project or "-"), ("Work completed", work_completed)]) }}
+{% else %}
+{{ ee.kv([("Certificate", number), ("Project", project or "-")]) }}
+{% endif %}
+
+{% if note %}
+{{ ee.callout(note, "info") }}
+{% endif %}
+
+{{ ee.note("Please keep the attached PDF with your project records. To report a warranty issue, or if you have any questions, just reply to this email.") }}

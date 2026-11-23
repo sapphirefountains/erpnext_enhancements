@@ -5,7 +5,7 @@
 
 Nik's design (2026-09-29): customers reach the portal (``/rentals``, ``/pay``) through Frappe's
 **Login with Email Link**. Sign-up stays disabled: an account is created only when a customer
-signs a Rental Agreement (:func:`ensure_portal_user`), or when staff invite a contact to the portal.
+signs an Events Agreement (:func:`ensure_portal_user`), or when staff invite a contact to the portal.
 A random visitor typing a real customer's email only sends a link to that customer's inbox, and an
 email with no account gets nothing (frappe's own ``_generate_temporary_login_link`` refuses it).
 

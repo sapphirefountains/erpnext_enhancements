@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "destination",
+  "campaign",
+  "column_break_main",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "link_section",
+  "tagged_url",
+  "qr_svg",
+  "qr_html",
+  "notes"
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Tracked Link",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:TL-{#####}",
+ "title_field": "title",
+ "description": "A tagged link to Sapphire's own site, with a printable QR code: for a flyer, a truck, a trade-show banner. Results come from GA4's campaign figures and, once the website capture is installed, from inquiries. The QR code holds the tagged sapphirefountains.com address itself, so nothing here needs a public endpoint.",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Marketing Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1
+  },
+  {
+   "role": "Marketing Team",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "report": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "report": 1
+  }
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1,
+   "description": "What the link is for, e.g. 'Fall flyer, Parade of Homes'."
+  },
+  {
+   "fieldname": "destination",
+   "fieldtype": "Data",
+   "label": "Destination",
+   "options": "URL",
+   "reqd": 1,
+   "description": "A page on sapphirefountains.com."
+  },
+  {
+   "fieldname": "campaign",
+   "fieldtype": "Link",
+   "label": "Campaign",
+   "options": "Campaign"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "utm_source",
+   "fieldtype": "Data",
+   "label": "Source",
+   "reqd": 1,
+   "description": "Where people find it, e.g. flyer, truck, trade-show."
+  },
+  {
+   "fieldname": "utm_medium",
+   "fieldtype": "Data",
+   "label": "Medium",
+   "reqd": 1,
+   "default": "qr",
+   "description": "How it reaches them, e.g. qr, print, email."
+  },
+  {
+   "fieldname": "utm_campaign",
+   "fieldtype": "Data",
+   "label": "Campaign Tag",
+   "reqd": 1,
+   "description": "The campaign name GA4 groups it under. Lower case, letters, numbers and dashes."
+  },
+  {
+   "fieldname": "link_section",
+   "fieldtype": "Section Break",
+   "label": "The link"
+  },
+  {
+   "fieldname": "tagged_url",
+   "fieldtype": "Small Text",
+   "label": "Tagged Link",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "Built from the fields above on save. Never utm_id: that marks paid traffic."
+  },
+  {
+   "fieldname": "qr_svg",
+   "fieldtype": "Long Text",
+   "label": "QR Code",
+   "hidden": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "qr_html",
+   "fieldtype": "HTML",
+   "label": "QR Code"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ]
+}

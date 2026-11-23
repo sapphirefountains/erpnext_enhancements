@@ -91,7 +91,7 @@ def _resolve_expense_type(settings, settings_field):
 # ------------------------------------------------------------- expense claims
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_expense_claim(trip: str, traveler: str):
 	"""Create (or extend) the draft Expense Claim for one traveler row,
 	pulling in every unclaimed employee-paid cost, mileage row and the per
@@ -107,7 +107,7 @@ def create_expense_claim(trip: str, traveler: str):
 	return claim
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_expense_claims(trip: str):
 	"""Create/extend draft Expense Claims for every traveler with claimable
 	material. Returns ``{employee: claim_name}``."""
@@ -307,7 +307,7 @@ def _create_claim_for_traveler(doc, row):
 # ----------------------------------------------------------------- advances
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_employee_advance(trip: str, traveler: str, amount, mode_of_payment: str | None = None):
 	"""Create a draft Employee Advance for one traveler and link it to the
 	trip. HR submits and pays it natively; status flows back via doc_events."""
@@ -361,7 +361,7 @@ def create_employee_advance(trip: str, traveler: str, amount, mode_of_payment: s
 # ----------------------------------------------------------------- outcomes
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_outcome_from_stop(trip: str, agenda_row: str, target_doctype: str, values=None):
 	"""Quick-create a Lead or Opportunity from an itinerary stop and link it
 	back (``outcome_doctype`` / ``outcome_name`` on the row, plus the
@@ -403,7 +403,7 @@ def create_outcome_from_stop(trip: str, agenda_row: str, target_doctype: str, va
 # -------------------------------------------------------------- vehicle log
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_vehicle_log(trip: str, ground_row: str, odometer, date: str | None = None, employee: str | None = None):
 	"""Create a draft Vehicle Log for a Company Fleet ground-transport row.
 	Left as draft on purpose — HRMS validates odometer continuity on submit."""
@@ -443,7 +443,7 @@ def create_vehicle_log(trip: str, ground_row: str, odometer, date: str | None = 
 # ------------------------------------------------------------------ lifecycle
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def reopen_trip(trip: str):
 	"""Coordinator escape hatch: Closed -> Completed (late receipts, fixes)."""
 	if not user_is_travel_coordinator():

@@ -1,0 +1,121 @@
+/*
+ * The Estimate lines editor (public/js/estimating/editor.js), after the v2 "Estimate2" mockup.
+ * Desk's own colour variables, so it follows light and dark mode. Below 720px of the editor's own
+ * width (a container query, not the window) the line grid turns into labelled cards and the action bar
+ * sticks to the bottom: every screen fully usable on a phone (Nik, 2026-11-06).
+ */
+.sf-est {
+	container-type: inline-size;
+	--est-accent: var(--primary, #00609c);
+	--est-line: var(--border-color, #dadbdd);
+	--est-muted: var(--text-muted, #5c6066);
+	--est-bad: var(--red-600, #bd2e2b);
+	--est-good: var(--green-600, #1e7e51);
+	--est-warn: var(--yellow-600, #b7791f);
+	color: var(--text-color);
+	font-size: 14px;
+}
+.sf-est .cols { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.sf-est .main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; container-type: inline-size; }
+.sf-est .side { flex: 1 1 280px; min-width: 0; max-width: 360px; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 72px; }
+.sf-est .card { background: var(--card-bg, #fff); border: 1px solid var(--est-line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sf-est .lines-card { gap: 0; }
+.sf-est h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--est-accent); }
+.sf-est .cardhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-bottom: 8px; }
+.sf-est .cardhead .tools { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.sf-est .muted { color: var(--est-muted); font-size: 12.5px; }
+.sf-est .btn, .sf-est .btn-fill, .sf-est .btn-more {
+	display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px;
+	border-radius: 8px; font-weight: 700; font-size: 12.5px; letter-spacing: .03em; cursor: pointer;
+	border: 1px solid var(--est-accent); background: var(--card-bg, #fff); color: var(--est-accent);
+}
+.sf-est .btn.primary { background: var(--est-accent); color: #fff; }
+.sf-est .btn.sm { min-height: 34px; padding: 0 10px; font-size: 11.5px; }
+.sf-est .btn.danger { border-color: var(--est-bad); color: var(--est-bad); }
+.sf-est .btn.amber, .sf-est .btn-fill { border-color: var(--est-warn); color: var(--est-warn); }
+.sf-est .btn-fill { min-height: 30px; padding: 0 8px; font-size: 10.5px; }
+.sf-est .btn-more { min-height: 32px; padding: 0 8px; font-size: 10.5px; border-color: var(--est-line); color: var(--est-muted); }
+.sf-est [hidden] { display: none !important; }
+.sf-est .banner { border: 1px solid var(--est-line); background: var(--subtle-fg, #f6f7f8); border-radius: 8px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 13px; }
+.sf-est .banner.warn, .sf-est .banner.fillall { border-color: var(--est-warn); }
+.sf-est .ph { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 0; background: transparent; border: 0; border-top: 1px solid var(--est-line); font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.sf-est .phase.nested .ph { padding-left: 22px; min-height: 42px; }
+.sf-est .phase.nested .ph .t { font-weight: 600; }
+.sf-est .ph .t { font-weight: 700; color: var(--est-accent); flex: 1 1 140px; min-width: 0; }
+.sf-est .ph .s { font-size: 12.5px; color: var(--est-muted); white-space: nowrap; }
+.sf-est .ph .a { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 90px; text-align: right; }
+.sf-est .ph svg { width: 18px; height: 18px; flex: none; color: var(--est-accent); }
+.sf-est .ph.total { cursor: default; border-top: 2px solid var(--est-muted); }
+.sf-est .ph.total .t { color: inherit; }
+.sf-est .ph .sp { width: 18px; flex: none; }
+.sf-est .row { display: grid; grid-template-columns: minmax(170px, 2.4fr) 92px 104px 58px 88px 100px 56px 52px; gap: 6px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--est-line); font-variant-numeric: tabular-nums; }
+.sf-est.nocost .row { grid-template-columns: minmax(170px, 2.4fr) 92px 88px 100px 52px; }
+.sf-est .row.hd { padding: 4px 0; border-bottom-color: var(--est-muted); }
+.sf-est .row.hd span { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--est-muted); font-weight: 700; text-align: right; }
+.sf-est .row.hd span.l { text-align: left; }
+.sf-est .row .n { text-align: right; }
+.sf-est .row .lab { display: none; }
+.sf-est .row.oth { color: var(--est-muted); font-style: italic; }
+.sf-est .row.design { background: color-mix(in srgb, var(--purple-500, #8e44ad) 6%, transparent); }
+.sf-est .row .desc { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sf-est .row .sub { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 11px; color: var(--est-muted); }
+.sf-est .row .sub select, .sf-est .row .sub input.code { height: 30px; font-size: 12px; padding: 0 4px; border: 1px solid var(--est-line); border-radius: 4px; background: var(--control-bg, transparent); color: inherit; max-width: 130px; }
+.sf-est .row .sub input.code { width: 110px; }
+.sf-est .row .flag { font-style: italic; }
+.sf-est .row input.desc-in { width: 100%; box-sizing: border-box; height: 38px; font-size: 15px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; padding: 0 6px; }
+.sf-est .row input.desc-in:hover, .sf-est .row input.desc-in:focus { border-color: var(--est-line); background: var(--control-bg, #fff); }
+.sf-est .row .q { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.sf-est .row .q small { font-size: 11px; color: var(--est-muted); }
+.sf-est .row .q input, .sf-est .row .cst input { width: 100%; max-width: 96px; height: 40px; box-sizing: border-box; border: 1px solid var(--est-muted); border-radius: 4px; background: var(--control-bg, #fff); color: inherit; font: inherit; font-size: 16px; text-align: right; padding: 0 6px; }
+.sf-est .row .cst { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.sf-est .row input.need { border: 1px dashed var(--est-bad); background: color-mix(in srgb, var(--est-bad) 6%, transparent); }
+.sf-est .row input:focus, .sf-est .row select:focus { outline: 2px solid var(--est-accent); outline-offset: 1px; }
+.sf-est .row .act { text-align: right; }
+.sf-est .row .more { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 12px; padding: 8px 0 4px; }
+.sf-est .row .more label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--est-muted); margin: 0; }
+.sf-est .row .more input[type=text], .sf-est .row .more input[type=number] { box-sizing: border-box; width: 100%; height: 38px; font-size: 15px; border: 1px solid var(--est-line); border-radius: 4px; padding: 0 6px; background: var(--control-bg, #fff); color: var(--text-color); }
+.sf-est .row .more label.chk { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: inherit; }
+.sf-est .row .more .btn { align-self: end; }
+.sf-est .tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 1px 6px; border: 1px solid var(--est-line); border-radius: 3px; font-style: normal; }
+.sf-est .tag.t-material, .sf-est .tag.t-equipment { border-color: var(--est-accent); color: var(--est-accent); }
+.sf-est .tag.t-labor { border-color: var(--purple-600, #55265f); color: var(--purple-600, #55265f); }
+.sf-est .tag.t-subcontract { border-color: var(--green-700, #316564); color: var(--green-700, #316564); }
+.sf-est .tag.t-oth { border-color: var(--est-muted); color: var(--est-muted); }
+.sf-est .addrow { padding: 8px 0 12px; }
+.sf-est .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; }
+.sf-est .kv .k { color: var(--est-muted); }
+.sf-est .kv .v { text-align: right; font-variant-numeric: tabular-nums; }
+.sf-est .kv .big { font-size: 20px; font-weight: 700; }
+.sf-est .kv .bad { color: var(--est-bad); font-weight: 700; }
+.sf-est .kv .good { color: var(--est-good); font-weight: 700; }
+.sf-est .chk { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.sf-est .chk i { width: 10px; height: 10px; margin-top: 5px; flex: none; border-radius: 50%; display: inline-block; }
+.sf-est .chk i.good { background: var(--est-good); }
+.sf-est .chk i.bad { background: var(--est-bad); }
+.sf-est .chk i.warn { background: var(--est-warn); }
+.sf-est .bar { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; align-items: center; position: sticky; bottom: 0; z-index: 3; margin-top: 12px; padding: 10px 0 6px; background: var(--bg-color, #f8f8f8); border-top: 1px solid var(--est-line); }
+.sf-est .bar-total { margin-right: auto; font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+
+/* The line grid follows the width of the lines column (.main is its container). */
+@container (max-width: 820px) {
+	.sf-est .row, .sf-est.nocost .row { grid-template-columns: 1fr 1fr 1fr; gap: 8px 10px; padding: 12px 0; }
+	.sf-est .row.hd { display: none; }
+	.sf-est .row .desc { grid-column: 1 / -1; }
+	.sf-est .row .lab { display: block; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--est-muted); font-weight: 700; }
+	.sf-est .row .n { text-align: left; }
+	.sf-est .row .q { justify-content: flex-start; flex-wrap: wrap; }
+	.sf-est .row .cst { align-items: stretch; }
+	.sf-est .row .q input, .sf-est .row .cst input { max-width: none; height: 44px; text-align: left; }
+	.sf-est .row input.desc-in { height: 44px; font-size: 16px; border-color: var(--est-line); }
+	.sf-est .row .sub select, .sf-est .row .sub input.code { height: 40px; font-size: 16px; max-width: none; }
+	.sf-est .row .more input[type=text], .sf-est .row .more input[type=number] { height: 44px; font-size: 16px; }
+	.sf-est .row .act { grid-column: 1 / -1; text-align: left; }
+	.sf-est .ph .s { display: none; }
+}
+
+/* The side panel and the action bar follow the editor's own width. */
+@container (max-width: 720px) {
+	.sf-est .side { max-width: none; position: static; }
+	.sf-est .card { padding: 12px 10px; }
+	.sf-est .bar .btn { flex: 1 1 auto; min-height: 44px; }
+}

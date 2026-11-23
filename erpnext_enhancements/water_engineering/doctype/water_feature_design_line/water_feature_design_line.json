@@ -1,0 +1,115 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 18:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "section",
+  "item",
+  "description",
+  "qty",
+  "uom",
+  "rate",
+  "amount",
+  "cb_line",
+  "source",
+  "catalog_source",
+  "line_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "section",
+   "fieldtype": "Data",
+   "label": "Section",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Piping, Valves, Nozzles, Equipment, Electrical, Controls, Structural, Consumables or Labor."
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Blank when no Item is picked yet: the line goes to a Quotation as a text line."
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "As the engine counts it (ea, ft, hr, Cubic Yard); mapped to the Item's UOM on a push."
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "label": "Rate",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "cb_line",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Auto\nManual",
+   "default": "Manual",
+   "description": "Auto lines are rewritten from the design on every save. Manual lines are yours and stay."
+  },
+  {
+   "fieldname": "catalog_source",
+   "fieldtype": "Data",
+   "label": "Catalog Source",
+   "read_only": 1,
+   "description": "Where the line's pick came from: datasheet, digitized, rep-supplied or generic estimate."
+  },
+  {
+   "fieldname": "line_key",
+   "fieldtype": "Data",
+   "label": "Line Key",
+   "read_only": 1,
+   "hidden": 1,
+   "length": 250,
+   "description": "The engine's stable key for an Auto line."
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-01 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Design Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

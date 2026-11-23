@@ -109,7 +109,7 @@ class MessageTest(unittest.TestCase):
 	def test_names_every_line_the_cost_and_the_rule(self):
 		msg = check.warning_message([{"idx": 2, "item_code": "22-1044", "qty": 2.0, "uom": "Nos"}])
 		self.assertIn("Row 2: 22-1044, qty 2 Nos", msg)
-		self.assertIn("comes in at $0", msg)
+		self.assertIn("comes in at the price on the order", msg)
 		self.assertIn("POL-0602 section 4.6", msg)
 		self.assertIn("a line with no price", msg)
 

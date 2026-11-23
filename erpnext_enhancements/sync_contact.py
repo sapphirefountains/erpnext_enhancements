@@ -171,7 +171,7 @@ def _assert_account(account_doctype, account_name):
     return account_name
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_primary_contact(account_doctype, account_name, contact_name):
     """Mark one Contact as primary for an account, unsetting the others.
 
@@ -210,7 +210,7 @@ def set_primary_contact(account_doctype, account_name, contact_name):
     # Check the new one
     frappe.db.set_value("Contact", contact_name, "is_primary_contact", 1)
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_primary_address(account_doctype, account_name, address_name):
     """Mark one Address as primary for an account, unsetting the others.
 
@@ -573,7 +573,7 @@ def _requested_links(link_doctype, link_name, links):
     return pairs
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def link_existing_record(doctype, docname, link_doctype=None, link_name=None, links=None):
     """Link an existing Contact or Address to ONE document: the one the user is viewing.
 
@@ -638,7 +638,7 @@ def link_existing_record(doctype, docname, link_doctype=None, link_name=None, li
     _remove_exclusion(link_dt, link_nm, doctype, docname)
     return True
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def unlink_record(doctype, docname, link_doctype, link_name):
     """Unlinks a Contact or Address from a specific document's directory.
 
@@ -794,7 +794,7 @@ def get_importable_contacts(target_doctype, target_name, sources=None):
     return [c for c in contacts if c.get("name") not in already_linked]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def import_contacts(target_doctype, target_name, contacts):
     """Link exactly the chosen Contacts to one document, and no others.
 

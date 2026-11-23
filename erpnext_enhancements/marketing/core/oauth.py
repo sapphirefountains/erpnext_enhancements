@@ -18,7 +18,7 @@ Token lifetimes differ and so does the refresh:
 
 | Platform | Stored | Refresh |
 |---|---|---|
-| Google Ads | refresh token (no expiry) | a fresh access token every run |
+| Google Ads, Business Profile | refresh token (no expiry) | a fresh access token every run |
 | Meta | long-lived user token (~60 days) | none without the user: reconnect before expiry; the form warns |
 | LinkedIn | access token (60 days) + refresh token (365 days) | refreshed when inside 7 days of expiry |
 
@@ -59,17 +59,26 @@ def _state_key(state):
 
 
 def spec_for(name):
-	"""The OAuth spec for an ad platform or a publishing connection."""
+	"""The OAuth spec for an ad platform, Google Business Profile or a publishing connection."""
+	from erpnext_enhancements.marketing.gbp import constants as G
 	from erpnext_enhancements.marketing.publish import constants as P
 
-	return C.OAUTH.get(name) or P.PUBLISH_OAUTH[name]
+	return C.OAUTH.get(name) or G.OAUTH.get(name) or P.PUBLISH_OAUTH[name]
 
 
 def known_connections():
-	"""Every name a Connect flow may be started for: the ad platforms, then publishing."""
+	"""Every name a Connect flow may be started for: the ad platforms, Business Profile, publishing."""
+	from erpnext_enhancements.marketing.gbp import constants as G
 	from erpnext_enhancements.marketing.publish import constants as P
 
-	return C.PLATFORMS + P.PUBLISH_CONNECTIONS
+	return (*C.PLATFORMS, G.PLATFORM_GBP, *P.PUBLISH_CONNECTIONS)
+
+
+def is_google_refresh(platform):
+	"""Google Ads and Business Profile: a refresh token kept, a fresh access token every run."""
+	from erpnext_enhancements.marketing.gbp import constants as G
+
+	return platform in (C.PLATFORM_GOOGLE, G.PLATFORM_GBP)
 
 
 def authorization_url(platform, client_id, state):
@@ -183,7 +192,7 @@ def exchange_code(platform, code, creds, http=None):
 		"code": code,
 	}
 
-	if platform == C.PLATFORM_GOOGLE:
+	if is_google_refresh(platform):
 		body = _token_request(platform, "POST", data={**base, "grant_type": "authorization_code"}, http=http)
 		if not body.get("refresh_token"):
 			raise MarketingAPIError(
@@ -230,7 +239,7 @@ def access_token(platform, creds=None, http=None):
 
 	creds = creds or get_credentials()
 
-	if platform == C.PLATFORM_GOOGLE:
+	if is_google_refresh(platform):
 		refresh = get_secret(creds, field(platform, "refresh_token"))
 		if not refresh:
 			raise MarketingAPIError(platform, "not connected", status=401)

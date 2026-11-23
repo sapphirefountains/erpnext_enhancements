@@ -43,9 +43,10 @@ def field(platform, name):
 	resolves to exactly one set of fields and an ad token can never be read as a publishing
 	one or the reverse.
 	"""
+	from erpnext_enhancements.marketing.gbp import constants as G
 	from erpnext_enhancements.marketing.publish import constants as P
 
-	prefix = C.CREDENTIAL_PREFIX.get(platform) or P.CREDENTIAL_PREFIX[platform]
+	prefix = C.CREDENTIAL_PREFIX.get(platform) or G.CREDENTIAL_PREFIX.get(platform) or P.CREDENTIAL_PREFIX[platform]
 	return f"{prefix}_{name}"
 
 

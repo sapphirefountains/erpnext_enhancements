@@ -7,7 +7,7 @@
  * Desk, presses each "Open in ..." button, and checks that the target page lands in the right
  * state:
  *
- *   Project                      View > Open in Project Planner   the planner's Project filter
+ *   Project                      Open in Planner (its own button)  the planner's Project filter
  *   Project Quality Inspection   Open in Inspection Wizard        that inspection, section 0
  *   Rental Booking               View > Open in Rental Planner    the board from the booking's
  *                                                                 first day (?start=, S5a)
@@ -453,15 +453,15 @@ const project = (fields) => Object.assign({}, JOB, fields);
 // The person's own filters, remembered before they ever followed a link.
 const MINE = { ee_project_planner_project: "PRJ-MINE", ee_project_planner_pm: "me@example.com" };
 
-test("Project: View > Open in Project Planner opens the planner on that project", () => {
+test("Project: Open in Planner opens the planner on that project", () => {
 	const desk = projectDesk();
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk, { project: "PRJ-MINE", pm: "me@example.com" });
 	const form = openForm(desk, "Project", project({ name: "PRJ-00001" }));
-	check("the button is under View", form.buttons.map((b) => [b.label, b.group]), [["Open in Project Planner", "View"]]);
+	check("the button stands on its own in the page head, not under View (v1.779.0)", form.buttons.map((b) => [b.label, b.group]), [["Open in Planner", null]]);
 	// An options object replaces whatever an earlier page left in route_options.
 	desk.frappe.route_options = { stale: "1" };
-	form.press("Open in Project Planner");
+	form.press("Open in Planner");
 	check("the page saw the project in route_options", desk.shows.slice(-1)[0].options, { project: "PRJ-00001" });
 	check("the planner filters to it", pp.project, "PRJ-00001");
 	check("the PM filter is cleared, so it cannot hide the project's cards", pp.pm, "");
@@ -491,7 +491,7 @@ test("Project: the link is a one-off and leaves the person's own filters alone",
 		view: "week",
 		p6c: { loaded: true, restored: true, last: { view: "week", project: "PRJ-MINE", pm: "me@example.com" } },
 	});
-	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
+	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Planner");
 	check("the planner shows the form's project", pp.project, "PRJ-00001");
 	// The device remembers the Gantt's project (the tab's own, not a filter); the filters are untouched.
 	check(
@@ -520,7 +520,7 @@ test("Project: the link is a one-off and leaves the person's own filters alone",
 test("Project: Back after switching to All does not snap the filter back", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk);
-	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
+	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Planner");
 	check("arrived filtered", pp.project, "PRJ-00001");
 	// "All projects" in the select, then a task opened from the calendar. The pick rewrites the
 	// entry's address in place (S5c), so the entry Back lands on says All.
@@ -540,7 +540,7 @@ test("Project: every project opens its Gantt, whenever it starts", () => {
 	const pp = projectPlanner(desk);
 	// P6: the Gantt runs from the project's first task to its last, so a later start needs no week.
 	openForm(desk, "Project", project({ name: "PRJ-00002", expected_start_date: "2026-11-02" })).press(
-		"Open in Project Planner"
+		"Open in Planner"
 	);
 	check("its Gantt, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "gantt", "PRJ-00002"]);
 	check("its address keeps the project", desk.here(), "/desk/project-planner/gantt/PRJ-00002?project=PRJ-00002");
@@ -551,7 +551,7 @@ test("Project: every project opens its Gantt, whenever it starts", () => {
 		pm: "",
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00003", expected_start_date: "2026-09-01" })).press(
-		"Open in Project Planner"
+		"Open in Planner"
 	);
 	check("one under way opens its Gantt too", desk.here(), "/desk/project-planner/gantt/PRJ-00003?project=PRJ-00003");
 	check("filtered to it", pp.project, "PRJ-00003");
@@ -565,7 +565,7 @@ test("Project: the link names the Gantt, so this device's last tab does not appl
 	const pp = projectPlanner(desk, {
 		p6c: { loaded: true, restored: false, last: { project: "PRJ-OLD", pm: "pm@example.com" } },
 	});
-	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
+	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Planner");
 	check("the Gantt, not the last-used Month view", desk.here(), "/desk/project-planner/gantt/PRJ-00001?project=PRJ-00001");
 	check("one entry past the form", desk.entries.length, 2);
 	check("the form's project, not the remembered one", pp.project, "PRJ-00001");
@@ -576,7 +576,7 @@ test("Project: the link names the Gantt, so this device's last tab does not appl
 test("Project: a name that needs escaping arrives whole, and other options are left alone", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk);
-	openForm(desk, "Project", project({ name: "PRJ 7/8 & co" })).press("Open in Project Planner");
+	openForm(desk, "Project", project({ name: "PRJ 7/8 & co" })).press("Open in Planner");
 	check("pushed encoded", desk.entries.length, 2);
 	check("decoded for the filter", pp.project, "PRJ 7/8 & co");
 	// Another page's key in the same options is not the planner's to take.
@@ -591,7 +591,7 @@ test("Project: a linked project the planner does not list stays the filter, name
 	const made = [];
 	const $ = makeJQuery(made);
 	const pp = projectPlanner(desk, {}, { $ });
-	openForm(desk, "Project", project({ name: "PRJ-00004" })).press("Open in Project Planner");
+	openForm(desk, "Project", project({ name: "PRJ-00004" })).press("Open in Planner");
 	Object.assign(pp, { $project: $(), $pm: $(), data: { projects: [{ name: "PRJ-00001", title: "Other" }] } });
 	pp.by_project = { "PRJ-00001": pp.data.projects[0] };
 	pp.fill_filters();

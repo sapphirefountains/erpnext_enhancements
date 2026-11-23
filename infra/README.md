@@ -341,7 +341,7 @@ reuse_existing_disks = false
 | [cloudbuild_deploy_yaml_path](variables.tf#L489) | The file path inside the repo pointing to cloudbuild-deploy.yaml. | <code>string</code> |  | <code>&#34;infra&#47;cloudbuild-deploy.yaml&#34;</code> |
 | [cloudbuild_upstream_yaml_path](variables.tf#L495) | The file path inside the repo pointing to cloudbuild-upstream.yaml. | <code>string</code> |  | <code>&#34;infra&#47;cloudbuild-upstream.yaml&#34;</code> |
 | [cloudbuild_yaml_path](variables.tf#L483) | The file path inside the repo pointing to the infra cloudbuild.yaml. | <code>string</code> |  | <code>&#34;infra&#47;cloudbuild.yaml&#34;</code> |
-| [cloud_build_github_token](variables.tf#L35) | The GitHub Personal Access Token (PAT) for Cloud Build connection. | <code>string</code> |  | <code>&#34;ghp_1234567890abcdefghijklmnopqrstuvwxyz&#34;</code> |
+| [cloud_build_github_token](variables.tf#L35) | The GitHub Personal Access Token (PAT) for Cloud Build connection. The default is a placeholder (FAKE-DO-NOT-USE). | <code>string</code> |  | <code>&#34;ghp_1234567890abcdefghijklmnopqrstuvwxyz&#34;</code> |
 | [cloud_build_installation_id](variables.tf#L41) | The GitHub App installation ID on the repo. | <code>number</code> |  | <code>12345678</code> |
 | [cloud_build_repo_uri](variables.tf#L47) | The remote URI of the repository for Cloud Build connection. | <code>string</code> |  | <code>&#34;https:&#47;&#47;github.com&#47;example-org&#47;example-repo.git&#34;</code> |
 | [cloud_function_bucket](variables.tf#L53) | Bucket name where Cloud Function source archives are uploaded. | <code>string</code> |  | <code>&#34;demo-function-deploy-bucket&#34;</code> |

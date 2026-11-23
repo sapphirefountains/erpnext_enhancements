@@ -19,7 +19,8 @@ What a Save posts, by what the person did:
   item's current cost, and the log row is flagged ``needs_review`` for a Stock Manager.
 * **Move** (put-away) → a submitted **Stock Entry, Material Transfer** from wherever the
   stock is recorded into the scanned location. On the day this shipped every bin on
-  production was empty and all stock sat in ``Stores - SF``, so this is how the bins fill.
+  production was empty and all stock sat in ``Stores - SF`` (since v1.817.0 the Project
+  Shelf), so this is how the bins fill.
 * **Store Run** (+, "Bought on a store run", v1.536.0) → a submitted **Purchase Receipt**
   with no purchase order, one per line, from a Supplier ticked *Store-Run Vendor*, at the
   price on the paper receipt, flagged ``needs_review`` for Purchasing. Every receipt of one
@@ -29,6 +30,14 @@ What a Save posts, by what the person did:
 
 Each save also writes a ``Stock Scan Log`` row: the page's history, its Undo, and the
 review queue.
+
+**The Project Shelf** (v1.817.0, ``inventory_enhancements/project_shelf.py``) is the one
+warehouse where parts bought for a job wait. Here it is an ordinary location that can be
+received to, counted and moved from, with four differences: its stock is left out of what
+the shop has and named apart (:func:`search_items`, :func:`_elsewhere`); it is never an
+item's bin; a take there must name a job; and a move onto it or off it carries the job
+(:func:`_transfer_project`), because whose stock is on the shelf is read from the project on
+each ledger row.
 
 **Bin assignments** (v1.689.0) live in ``inventory_enhancements/bin_assignments.py``: putting
 an item on a bin or taking it off (an ERPNext Putaway Rule), pushing stock out of a bin
@@ -94,6 +103,10 @@ from frappe.utils import (
 	strip_html,
 )
 
+from erpnext_enhancements.inventory_enhancements import job_site_rules as site_rules
+from erpnext_enhancements.inventory_enhancements import job_sites
+from erpnext_enhancements.inventory_enhancements import project_shelf
+from erpnext_enhancements.inventory_enhancements import project_shelf_rules as shelf_rules
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as rules
 from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
 	get_settings,
@@ -108,7 +121,7 @@ RECENT_LIMIT = 12
 #: Rows a search returns. The page is a phone screen; past this people type more letters.
 SEARCH_LIMIT = 25
 
-#: Items a location lists. A shelf bin holds a handful; ``Stores - SF`` holds more, and a
+#: Items a location lists. A shelf bin holds a handful; the Project Shelf holds more, and a
 #: page past this is not something anyone scrolls on a phone. ``truncated`` says so.
 LOCATION_ITEM_LIMIT = 150
 
@@ -188,15 +201,35 @@ def _warehouse(name):
 	name = cstr(name).strip()
 	if not name:
 		return None
-	return frappe.db.get_value("Warehouse", name, _WAREHOUSE_FIELDS, as_dict=True)
+	row = frappe.db.get_value("Warehouse", name, _WAREHOUSE_FIELDS, as_dict=True)
+	if not row and name == project_shelf.former_name():
+		# A label printed while the Project Shelf was still called Stores (v1.817.0) carries the
+		# old name. It opens the shelf instead of "there is no location called Stores".
+		row = frappe.db.get_value("Warehouse", project_shelf.warehouse(), _WAREHOUSE_FIELDS, as_dict=True)
+	return row
 
 
-def _location_problem(row, name=""):
-	"""Why ``row`` cannot be scanned as a location, or ``None``."""
+def _location_problem(row, name="", scanned=False):
+	"""Why ``row`` cannot be scanned as a location, or ``None``.
+
+	``scanned`` is for the scan path only: :func:`_resolve` and the page's ``?w=`` boot
+	(:func:`boot_payload`). There, a group means the label just scanned is out of date, and the
+	sentence says to print a new one. The Bin Manager and the Count Desk ask here too, where nothing
+	was scanned, and get the sentence without that hint."""
 	if not row:
 		return _("There is no location called {0}.").format(name or _("that"))
 	label = row.warehouse_name or row.name
 	if row.is_group:
+		if scanned:
+			# A label is printed only for a place that holds stock (warehouse_labels.py), so a label
+			# that opens a group is out of date: its place was renamed, or made a group, after it was
+			# printed. The room's label opened the shop's group once v1.823.0 swapped the two names
+			# (patches/swap_inventory_room_names.py).
+			return _(
+				"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it. "
+				"If you scanned a label stuck on a shelf or a room, the label is out of date: print a new one "
+				"from Warehouse Labels."
+			).format(label)
 		return _(
 			"{0} is a group of locations, not a shelf or bin. Scan the label on one of the locations inside it."
 		).format(label)
@@ -246,6 +279,16 @@ def _can_manage():
 	return bool(rules.SCAN_ROLES.intersection(frappe.get_roles()) and frappe.has_permission("Item", "read"))
 
 
+def _can_return():
+	"""Whether the caller may start a Supplier Return (v1.807.0): create on that DocType. The item
+	sheet hides "Return to supplier" without it; ``api.supplier_returns`` checks again on every
+	call. False, never an exception, on a site where the DocType is not installed yet."""
+	try:
+		return bool(frappe.db.exists("DocType", "Supplier Return") and frappe.has_permission("Supplier Return", "create"))
+	except Exception:
+		return False
+
+
 def _location_payload(row):
 	items, truncated = _items_at(row)
 	return {
@@ -256,7 +299,19 @@ def _location_payload(row):
 		"items": items,
 		"truncated": truncated,
 		"can_manage": _can_manage(),
+		# A job's site (v1.801.0): ``{project, project_name}``, else None. The page says whose
+		# site it is, and that parts taken here are charged to that job.
+		"job_site": job_sites.site_info(row.name),
+		# The Project Shelf (v1.817.0): parts here wait for a job. The page says so, asks for
+		# the job on a take, and shows each item's jobs (``jobs`` on its row).
+		"project_shelf": project_shelf.is_shelf(row.name),
 	}
+
+
+def _shelf_jobs(stock, item_code):
+	"""The jobs that hold one item on the Project Shelf, most first, from a
+	``project_shelf.shelf_stock`` answer: ``[{project, project_name, qty}]``."""
+	return project_shelf.holders(item_code, stock)
 
 
 def _items_at(row, limit=LOCATION_ITEM_LIMIT):
@@ -291,16 +346,23 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	``is_default``, ``on_order``, ``undecided``), so the page can say why an item stays after it
 	was taken off.
 
-	One query, filtered to stock items in SQL: ``Stores - SF`` is the default warehouse of
-	741 Items on production, almost all of them non-stock, so capping the defaults before
-	filtering them would drop real stock items off the end. The rules and the defaults are
+	One query, filtered to stock items in SQL: the warehouse ERPNext installed as ``Stores``
+	(the Project Shelf since v1.817.0) is the default warehouse of 774 Items on production,
+	almost all of them non-stock, so capping the defaults before filtering them would drop
+	real stock items off the end. The rules and the defaults are
 	joined as small derived tables (one location's worth each) rather than as a correlated
 	``exists`` per Item, and ``distinct`` keeps a duplicate rule from listing an item twice
 	(ERPNext refuses one in ``validate``, but there is no unique index behind it).
 
 	Capped at ``limit`` for a phone (``truncated`` says so). The Count Desk passes ``limit=None``
 	(v1.737.0): a count sheet that silently stopped at 150 items would leave the rest of
-	``Stores - SF`` uncounted with nothing on screen to say so.
+	a large location uncounted with nothing on screen to say so.
+
+	**The Project Shelf** (v1.817.0) is nobody's bin, like a job site: it lists what is there
+	now or on its way, and nothing else. The Item Defaults and Putaway Rules that name it are
+	left over from when it was ``Stores``, the warehouse every item defaulted to; read as
+	"kept here" they would list hundreds of items that have never been on it. Each row there
+	carries ``jobs``, the jobs that hold the item (``project_shelf.shelf_stock``).
 	"""
 	items = frappe.db.sql(
 		"""
@@ -353,6 +415,18 @@ def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 		}
 		for item in items
 	]
+	shelf = project_shelf.is_shelf(row.name)
+	if shelf or job_sites.site_project(row.name):
+		# A job site (v1.801.0) is nobody's bin: it lists what is there now, or on its way. The
+		# "nobody has decided yet" clause above would keep every item ever sent to the job on its
+		# list for good, since nothing is ever assigned to a site or taken off one. The Project
+		# Shelf (v1.817.0) is the same, and its leftover defaults and rules are not assignments.
+		rows = [r for r in rows if r["on_hand"] > 0 or r["on_order"] > 0]
+	if shelf:
+		stock = project_shelf.shelf_stock()
+		for r in rows:
+			r.update({"assigned": False, "is_default": False, "undecided": False})
+			r["jobs"] = _shelf_jobs(stock, r["item_code"])
 	rows.sort(key=lambda r: (r["on_hand"] <= 0, rules.natural_key(r["item_name"])))
 	if limit is None:
 		return rows, False
@@ -416,7 +490,15 @@ def _available(item_code, warehouse):
 
 
 def _elsewhere(item_code, company, exclude=None):
-	"""Where else the item is on hand, most first — the sources a Move can draw from."""
+	"""Where else the item is on hand, most first — the sources a Move can draw from.
+
+	A job site (v1.801.0) is marked ``job_site`` and listed after every shop location: stock
+	there can be brought back, so it is a source, but it is not stock the shop has. The page
+	names it apart ("On job sites") and never counts it as somewhere to look before buying.
+
+	The Project Shelf (v1.817.0) is marked ``project_shelf`` and listed between the two, with
+	``jobs``, the jobs that hold the item there: it is in the building, and it is spoken for.
+	"""
 	bins = frappe.get_all(
 		"Bin",
 		filters={"item_code": item_code, "actual_qty": [">", 0]},
@@ -433,20 +515,36 @@ def _elsewhere(item_code, company, exclude=None):
 			fields=["name", "warehouse_name", "company", "is_group", "disabled"],
 		)
 	}
+	sites = job_sites.site_warehouses()
+	shelf = project_shelf.warehouse()
 	out = []
 	for row in bins:
 		wh = meta.get(row.warehouse)
 		if not wh or wh.is_group or wh.disabled or (company and wh.company != company):
 			continue
+		on_shelf = bool(shelf) and row.warehouse == shelf
+		held = project_shelf.holding(item_code) if on_shelf else {"jobs": [], "exact": True}
 		out.append(
 			{
 				"warehouse": row.warehouse,
 				"warehouse_name": wh.warehouse_name or row.warehouse,
 				"on_hand": flt(row.actual_qty),
 				"available": flt(row.actual_qty) - flt(row.reserved_stock),
+				"job_site": row.warehouse in sites,
+				"project_shelf": on_shelf,
+				"jobs": held["jobs"],
+				# Whether those jobs account for every unit there. False: the page lists
+				# them and picks none for the person.
+				"jobs_exact": bool(held["exact"]),
 			}
 		)
-	out.sort(key=lambda r: (-r["on_hand"], rules.natural_key(r["warehouse_name"])))
+	out.sort(
+		key=lambda r: (
+			2 if r["job_site"] else 1 if r["project_shelf"] else 0,
+			-r["on_hand"],
+			rules.natural_key(r["warehouse_name"]),
+		)
+	)
 	return out
 
 
@@ -487,6 +585,8 @@ def _open_order_lines(item_code, company):
 			poi.conversion_factor,
 			poi.schedule_date,
 			poi.expected_delivery_date,
+			poi.project,
+			poi.warehouse,
 			po.transaction_date,
 			po.supplier,
 			po.supplier_name,
@@ -505,12 +605,26 @@ def _open_order_lines(item_code, company):
 	).run(as_dict=True)
 
 	lines = []
+	shelf = project_shelf.warehouse()
+	shelf_name = project_shelf.label()
+	job_names = {}
 	for row in rows:
 		pending = flt(row.qty) - flt(row.received_qty)
 		if pending <= TOLERANCE:
 			continue
+		if row.project and row.project not in job_names:
+			job_names[row.project] = (
+				frappe.db.get_value("Project", row.project, "project_name") or row.project
+			)
 		lines.append(
 			{
+				# The job the line was ordered for, and whether it was ordered for the Project
+				# Shelf (v1.817.0). The page says both, so the receiver knows where it belongs;
+				# the bin that was scanned still decides where this receipt goes.
+				"project": row.project or None,
+				"project_name": job_names.get(row.project) if row.project else None,
+				"for_project_shelf": bool(shelf) and row.warehouse == shelf,
+				"project_shelf_name": shelf_name if shelf and row.warehouse == shelf else None,
 				"purchase_order": row.purchase_order,
 				"purchase_order_item": row.purchase_order_item,
 				"idx": row.idx,
@@ -602,6 +716,14 @@ def _item_payload(item_code, location=None):
 		"assigned": None,
 		"is_default": None,
 		"undecided": None,
+		# The job whose site this location is (v1.801.0), or None for an ordinary location.
+		"job_site": None,
+		# Whether this location is the Project Shelf (v1.817.0), the jobs that hold the item
+		# there, most first (``[{project, project_name, qty}]``, each no more than is there),
+		# and whether those jobs account for every unit of it.
+		"project_shelf": False,
+		"shelf_jobs": [],
+		"shelf_jobs_exact": True,
 		"elsewhere": [],
 		"open_orders": [],
 	}
@@ -614,6 +736,7 @@ def _item_payload(item_code, location=None):
 				"warehouse_name": location.warehouse_name or location.name,
 				"on_hand": on_hand,
 				"available": on_hand - reserved,
+				"job_site": job_sites.site_info(location.name),
 				# Whether the item is on this bin (an enabled Putaway Rule): the page offers
 				# "Take off this bin" or "Put on this bin" by it (v1.689.0).
 				"assigned": bool(
@@ -645,6 +768,20 @@ def _item_payload(item_code, location=None):
 				),
 			}
 		)
+		if project_shelf.is_shelf(location.name):
+			# Nothing is kept on the Project Shelf as its bin (v1.817.0): the Item Defaults and
+			# Putaway Rules that name it are left over from when it was Stores.
+			held = project_shelf.holding(item.name)
+			payload.update(
+				{
+					"project_shelf": True,
+					"shelf_jobs": held["jobs"],
+					"shelf_jobs_exact": bool(held["exact"]),
+					"assigned": False,
+					"is_default": False,
+					"undecided": False,
+				}
+			)
 	# A non-stock item gets its open order lines too: a store run for something already on a
 	# purchase order at that store is the pickup, and the page says so before it is bought twice.
 	if not payload["blocked"] or payload["store_run_ok"]:
@@ -841,6 +978,54 @@ def _receipt_cost(item, location, entered, qty):
 	)
 
 
+def _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge, no_charge_reason=None):
+	"""The question the page asks when the order line being received has no price, or ``None``.
+
+	``None`` when the line needs no price, when the caller can't read the order
+	(``receive_items`` refuses that in its own words), and when a usable answer came with the
+	save from a person who may give it: a price from one who may price the order, or "no charge"
+	with its reason from one who may mark a line free.
+
+	For a person who may do neither, the question is the answer: nothing can be received, so
+	purchasing's ToDo is made here (this returns normally, so it is kept) and the payload says who
+	was asked. An answer such a person sends anyway is ignored, not obeyed.
+	"""
+	if not purchase_order:
+		return None
+	from erpnext_enhancements.inventory_enhancements import receipt_price, receipt_price_rules
+
+	if not frappe.has_permission("Purchase Order", "read", doc=purchase_order):
+		return None
+	po = frappe.get_doc("Purchase Order", purchase_order)
+	needing = receipt_price.needing_price(po, wanted={line})
+	if not needing:
+		return None
+	block = receipt_price.price_block(po)
+	can_mark_free = receipt_price.may_mark_free(po)
+	reason_required = bool(receipt_price_rules.NO_CHARGE_NEEDS_REASON)
+	if cint(no_charge) and can_mark_free and (cstr(no_charge_reason).strip() or not reason_required):
+		return None
+	if not cint(no_charge) and order_rate not in (None, "") and block is None:
+		return None
+	row = needing[0]
+	stuck = block is not None and not can_mark_free
+	return {
+		"needs_order_price": True,
+		"item_code": item.name,
+		"item_name": item.item_name or item.name,
+		"uom": row.get("uom") or item.stock_uom,
+		"purchase_order": po.name,
+		"row": row.get("idx"),
+		"can_price": block is None,
+		"can_mark_free": can_mark_free,
+		"reason_required": reason_required,
+		"why": receipt_price_rules.block_sentence(block, po.name) if block else "",
+		"asked": receipt_price.ask_purchasing(po, needing) if stuck else [],
+		"qty": qty,
+		"max_rate": receipt_price_rules.MAX_UNIT_PRICE,
+	}
+
+
 def _project(project, company, required=False):
 	"""The job a take is charged to, checked; ``None`` when none was picked."""
 	project = cstr(project).strip()
@@ -956,7 +1141,14 @@ def _post(se):
 
 @frappe.whitelist(methods=["POST"])
 def take(item_code, warehouse, qty, client_ref, project=None, scanned_code=None):
-	"""Take parts from a location: a submitted Material Issue, optionally charged to a job."""
+	"""Take parts from a location: a submitted Material Issue, optionally charged to a job.
+
+	At a job site (v1.801.0) the take is charged to that site's job whatever job the page sent
+	(``job_site_rules.site_take_project``): this is where the material's cost reaches the job.
+
+	At the Project Shelf (v1.817.0) a take must name a job, whatever the setting says: every
+	unit there belongs to one, and the job on this entry is what takes it off that job's count.
+	"""
 	_check_access()
 	ref = _client_ref(client_ref)
 	done = _already_saved(ref)
@@ -967,7 +1159,19 @@ def take(item_code, warehouse, qty, client_ref, project=None, scanned_code=None)
 	item = _stock_item(item_code)
 	qty = _checked_qty(qty, item)
 	settings = get_settings()
-	project = _project(project, location.company, required=cint(settings.get("require_project_for_take")))
+	project = site_rules.site_take_project(job_sites.site_project(location.name), project)
+	at_shelf = project_shelf.is_shelf(location.name)
+	if at_shelf and not cstr(project).strip():
+		frappe.throw(
+			_("Pick the job these parts are for. Everything on {0} belongs to a job.").format(
+				location.warehouse_name or location.name
+			)
+		)
+	project = _project(
+		project,
+		location.company,
+		required=shelf_rules.take_needs_job(at_shelf, cint(settings.get("require_project_for_take"))),
+	)
 	problem = rules.check_take(
 		qty, _available(item.name, location.name), location.warehouse_name or location.name
 	)
@@ -1010,6 +1214,9 @@ def add(
 	project=None,
 	scanned_code=None,
 	rate=None,
+	order_rate=None,
+	no_charge=0,
+	no_charge_reason=None,
 ):
 	"""Add stock to a location: received against an open order line, or added without one.
 
@@ -1036,6 +1243,19 @@ def add(
 	own mapper (``procurement.receive_order_line``) builds the receipt, and ERPNext posts no
 	stock and no GL for a non-stock line (84 of 103 submitted receipts on production are
 	non-stock only). Every other path keeps ``_stock_item``'s refusal.
+
+	**A stock item's order line with no price** (v1.809.0; ``receipt_price_rules`` has the rule):
+	the receipt would be refused, so nothing is posted and the answer is a payload,
+	``{needs_order_price: True, item_code, item_name, uom, purchase_order, row, can_price,
+	can_mark_free, reason_required, why, asked, qty, max_rate}``. A person who may price the
+	order is asked what one cost and sends the same save again with ``order_rate`` (per unit of
+	the **order line's** UOM, the unit the order is priced in), or with ``no_charge=1`` and
+	``no_charge_reason`` for a free sample or a warranty replacement, or stops. The price goes
+	on the order line through ERPNext's Update Items. A person who may not (no write on the
+	order, or they raised the request it fills: ``why`` says which, and who can) gets no price
+	box: nothing is received, and purchasing gets a ToDo on the order (``asked`` names them),
+	made here, when the question is answered, so it is kept. No log row is written for the
+	question.
 	"""
 	_check_access()
 	ref = _client_ref(client_ref)
@@ -1054,6 +1274,9 @@ def add(
 
 		line = cstr(purchase_order_item).strip()
 		purchase_order = frappe.db.get_value("Purchase Order Item", line, "parent")
+		prompt = _order_price_prompt(purchase_order, line, item, qty, order_rate, no_charge, no_charge_reason)
+		if prompt:
+			return prompt
 		log = _begin_log(
 			ref,
 			rules.ACTION_RECEIVE,
@@ -1072,6 +1295,9 @@ def add(
 			remarks=rules.remark(
 				rules.ACTION_RECEIVE, who, location.name, qty, item.stock_uom, purchase_order=purchase_order
 			),
+			rate=order_rate,
+			no_charge=cint(no_charge),
+			no_charge_reason=no_charge_reason,
 		)
 		_finish_log(log, "Purchase Receipt", result.get("purchase_receipt"))
 		return _result(log.name)
@@ -1082,6 +1308,14 @@ def add(
 		)
 
 	settings = get_settings()
+	if project_shelf.is_shelf(location.name) and not cstr(project).strip():
+		# Everything on the Project Shelf belongs to a job (v1.817.0), so stock added there with
+		# no order says which.
+		frappe.throw(
+			_("Pick the job these are for. Everything on {0} belongs to a job.").format(
+				location.warehouse_name or location.name
+			)
+		)
 	project = _project(project, location.company)
 	# With a job, this is parts coming BACK from that job: the credit goes to the account a
 	# take charges (the Parts Taken chain), so the job's cost nets in the ledger — the take
@@ -1090,7 +1324,16 @@ def add(
 	# ERPNext's Project.total_consumed_material_cost counts Material Issue rows only and is
 	# not reduced by a receipt; that figure is hidden on this site's Project form and read by
 	# nothing here, and the ledger by project is right.
-	offset_setting = settings.get("take_expense_account") if project else settings.get("add_offset_account")
+	#
+	# At the Project Shelf (v1.817.0) the job is not where the parts came back FROM: it is the
+	# job they are being set aside FOR, and the page requires one. Crediting the job's Parts
+	# Taken account there would net that job's later take to nothing, so the job would carry no
+	# cost for parts it used, and the Added Without PO account a stock manager reviews would
+	# never see them. So an add at the shelf offsets like found stock, and keeps the job on
+	# the entry, which is what puts it on that job's count on the shelf.
+	offset_setting = settings.get(
+		shelf_rules.add_offset_setting(bool(project), project_shelf.is_shelf(location.name))
+	)
 	_require("Stock Entry", "create", "submit")
 	rate, prompt, typed_cost = _receipt_cost(item, location, rate, qty)
 	if prompt:
@@ -1132,8 +1375,13 @@ def add(
 
 
 @frappe.whitelist(methods=["POST"])
-def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_code=None):
-	"""Put stock away: a submitted Material Transfer from where it is recorded into this location."""
+def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_code=None, project=None):
+	"""Put stock away: a submitted Material Transfer from where it is recorded into this location.
+
+	``project`` (v1.817.0) is the job the stock belongs to when one end of the move is the
+	Project Shelf and the other is not a job site (:func:`_transfer_project`). It is ignored
+	for every other move.
+	"""
 	_check_access()
 	ref = _client_ref(client_ref)
 	done = _already_saved(ref)
@@ -1144,10 +1392,20 @@ def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_cod
 	item = _stock_item(item_code)
 	qty = _checked_qty(qty, item)
 	source = _transfer_source(from_warehouse, location, item, qty)
+	job = _transfer_project(source, location, item, project)
 	_require("Stock Entry", "create", "submit")
 
-	log = _begin_log(ref, rules.ACTION_MOVE, item, qty, location, scanned_code, from_warehouse=source.name)
-	se = _transfer_entry(rules.ACTION_MOVE, item, qty, source, location)
+	log = _begin_log(
+		ref,
+		rules.ACTION_MOVE,
+		item,
+		qty,
+		location,
+		scanned_code,
+		from_warehouse=source.name,
+		project=job,
+	)
+	se = _transfer_entry(rules.ACTION_MOVE, item, qty, source, location, project=job)
 	_post(se)
 	_finish_log(log, "Stock Entry", se.name)
 	return _result(log.name)
@@ -1164,6 +1422,8 @@ def _transfer_source(from_warehouse, location, item, qty):
 		frappe.throw(_("That is this location. Pick where the stock is recorded now."))
 	if source.company != location.company:
 		frappe.throw(_("{0} belongs to {1}, not {2}.").format(source.name, source.company, location.company))
+	# Nothing more goes to the site of a finished job (v1.801.0); coming back from one is fine.
+	job_sites.refuse_send(location)
 	available = _available(item.name, source.name)
 	if qty > available + rules.TOLERANCE:
 		frappe.throw(
@@ -1177,15 +1437,85 @@ def _transfer_source(from_warehouse, location, item, qty):
 	return source
 
 
-def _transfer_entry(action, item, qty, source, location):
+#: "Work the job out": what :func:`_transfer_entry` is told when its caller has not already.
+_UNRESOLVED = object()
+
+
+def _shelf_job(project, company, leaving):
+	"""The job a move onto or off the Project Shelf names, checked; ``None`` when none was sent.
+
+	A job that has finished is accepted for stock **leaving** the shelf: releasing a finished
+	job's leftovers to the shop is the main reason to move anything off it. Stock set aside
+	**onto** the shelf is held to a job still in progress, as a take is.
+	"""
+	project = cstr(project).strip()
+	if not project:
+		return None
+	if not leaving:
+		return _project(project, company)
+	row = frappe.db.get_value("Project", project, ["name", "company", "project_name"], as_dict=True)
+	if not row:
+		frappe.throw(_("There is no job {0}.").format(project))
+	if row.company and company and row.company != company:
+		frappe.throw(
+			_("{0} belongs to {1}, not {2}.").format(row.project_name or row.name, row.company, company)
+		)
+	return row.name
+
+
+def _transfer_project(source, location, item=None, given=None):
+	"""The job a transfer between ``source`` and ``location`` belongs to (v1.801.0): the job
+	whose site the stock is going to, else the one it is coming back from, else ``None`` for a
+	move between two shop locations. On the stock entry it puts the Project on both ledger
+	rows, so the ledger can be read by job; the log row carries the same job.
+
+	**With the Project Shelf at either end** (v1.817.0) the transfer always carries a job,
+	because whose stock is on the shelf is read from these rows
+	(``project_shelf_rules.move_project``): to a job site it is that site's job; released to
+	a bin or the boneyard it is the job the page named (``given``), or the one job that holds
+	``item`` on the shelf when the page named none; set aside onto the shelf it is the job
+	named. With none to be had it is refused with a sentence, before anything is posted.
+	"""
+	source_shelf = project_shelf.is_shelf(source.name)
+	destination_shelf = project_shelf.is_shelf(location.name)
+	source_site = job_sites.site_project(source.name)
+	destination_site = job_sites.site_project(location.name)
+	if not source_shelf and not destination_shelf:
+		return site_rules.transfer_project(source_site, destination_site)
+	named = _shelf_job(given, location.company, leaving=source_shelf)
+	holders = []
+	if source_shelf and not destination_site and not named and item:
+		# The only job that holds the item is used without asking only when the tags account
+		# for every unit of it. Where they do not (a count, an untagged move), part of what is
+		# there has no job on record, and hanging it on the one job that has a tag is a guess.
+		held = project_shelf.holding(item.name)
+		if held["exact"]:
+			holders = [(job["project"], job["qty"]) for job in held["jobs"]]
+	project, problem = shelf_rules.move_project(
+		source_shelf, destination_shelf, source_site, destination_site, named, holders
+	)
+	if problem:
+		frappe.throw(problem)
+	return project
+
+
+def _transfer_entry(action, item, qty, source, location, project=_UNRESOLVED):
 	"""The unsaved Material Transfer of ``qty`` from ``source`` into ``location``: the one
 	transfer this app's scan pages build (*Move here*, and *Move To* in ``bin_assignments``).
-	The caller inserts its log row first and then posts it, like every other save."""
+	The caller inserts its log row first and then posts it, like every other save.
+
+	``project`` is the job :func:`_transfer_project` answered, when the caller has already
+	asked (it needs the same job for its log row). Left out, it is worked out here."""
 	settings = get_settings()
+	if project is _UNRESOLVED:
+		project = _transfer_project(source, location, item)
 	se = _stock_entry(
 		"Material Transfer",
 		location.company,
-		remarks=rules.remark(action, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name),
+		project=project,
+		remarks=rules.remark(
+			action, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name, project=project
+		),
 	)
 	se.from_warehouse = source.name
 	se.to_warehouse = location.name
@@ -1466,10 +1796,12 @@ def _quick_item(spec, location):
 	the Desk (from 2026-10-01 it refuses a duplicate code or a name that is just the code). If
 	the receipt then fails, the request rolls back and the Item goes with it.
 
-	``is_stock_item`` is set because the site's Property Setter defaults it to 0. The Item
+	``is_stock_item`` is set here whatever the site's default is (a Property Setter kept it at 0
+	until v1.809.0, and 1 since): a part bought on a store run always keeps stock. The Item
 	Default is the bin it was bought into, for this company: without one, ERPNext copies the
-	Item Group's defaults or the global default warehouse (``Stores - SF``), and the item would
-	list at Stores with nothing there. No leaf group carries defaults on production.
+	Item Group's defaults or the Company's default warehouse (``Stores - SF`` then; the Project
+	Shelf since v1.817.0), and the item would be on record as kept in a place it has never
+	been. No leaf group carries defaults on production.
 	"""
 	item = frappe.new_doc("Item")
 	item.item_code = spec["item_code"]
@@ -1478,7 +1810,12 @@ def _quick_item(spec, location):
 	item.stock_uom = spec["stock_uom"]
 	item.is_stock_item = 1
 	item.is_purchase_item = 1
-	item.append("item_defaults", {"company": location.company, "default_warehouse": location.name})
+	# Never the Project Shelf or a job site (v1.817.0): neither is anybody's bin. Both callers
+	# refuse those locations before they get here; this keeps a third caller from making the
+	# shelf a new item's home. The row is still added, with the company and no warehouse, so
+	# ERPNext does not copy a default of its own into it.
+	home = None if location.name in project_shelf.not_shop_warehouses() else location.name
+	item.append("item_defaults", {"company": location.company, "default_warehouse": home})
 	item.insert()
 	return item
 
@@ -1658,6 +1995,14 @@ def store_run(
 	elif not no_job:
 		frappe.throw(_("Pick the job these were bought for, or choose No job (safety or shop)."))
 	project = _project(project, location.company)
+	if project_shelf.is_shelf(location.name):
+		# A store run's receipt carries no project on purpose (``_store_run_receipt``), and
+		# everything on the Project Shelf belongs to a job (v1.817.0).
+		frappe.throw(
+			_(
+				"A store run is not recorded on {0}: its receipt names no job, and everything there belongs to one. Record it at the item's bin, then move it to {0} for its job."
+			).format(location.warehouse_name or location.name)
+		)
 	photo = _receipt_photo(receipt_photo, run)
 
 	spec = None
@@ -2251,7 +2596,7 @@ def _resolve(code, context=None):
 	if kind in ("warehouse", "storage_location"):
 		name = value if kind == "warehouse" else _storage_location_warehouse(value)
 		row = _warehouse(name)
-		problem = _location_problem(row, value)
+		problem = _location_problem(row, value, scanned=True)
 		if problem:
 			return {"kind": "unknown", "message": problem}
 		return {"kind": "location", "location": _location_payload(row)}
@@ -2279,7 +2624,7 @@ def _resolve(code, context=None):
 	if item_code:
 		return {"kind": "item", "item": _item_payload(item_code, context_row)}
 	if row:
-		return {"kind": "unknown", "message": _location_problem(row, value)}
+		return {"kind": "unknown", "message": _location_problem(row, value, scanned=True)}
 	return {"kind": "unknown", "message": _("Nothing matches {0}. Try searching instead.").format(value[:60])}
 
 
@@ -2317,7 +2662,14 @@ def search_items(query, warehouse=None):
 	"""Items whose code or name contains every word typed, or whose barcode is exactly it.
 
 	Stock items first (they are the ones the page can move), then by name. Each carries its
-	quantity at ``warehouse`` when given, and its total on hand across the company.
+	quantity at ``warehouse`` when given, and its total on hand **in the shop**: stock on a job
+	site (v1.801.0) is that job's, so it is left out of ``on_hand_total`` and given apart as
+	``on_job_sites`` (``job_site_rules.shop_and_site_totals``). A person looking for a part
+	must not be told the shop has four when all four are across town.
+
+	Stock on the Project Shelf (v1.817.0) is left out the same way and given as
+	``on_project_shelf`` (``project_shelf_rules.split_totals``): it is in the building, and it
+	was bought for a job.
 	"""
 	_check_access()
 	words = _search_words(query)
@@ -2351,13 +2703,17 @@ def search_items(query, warehouse=None):
 
 	codes = [row.item_code for row in rows]
 	location = _warehouse(warehouse) if cstr(warehouse).strip() else None
-	totals, here = {}, {}
+	sites = job_sites.site_warehouses()
+	shelf = project_shelf.warehouse()
+	by_item, here = {}, {}
 	for bin_row in frappe.get_all(
 		"Bin", filters={"item_code": ["in", codes]}, fields=["item_code", "warehouse", "actual_qty"]
 	):
-		totals[bin_row.item_code] = totals.get(bin_row.item_code, 0.0) + flt(bin_row.actual_qty)
+		by_item.setdefault(bin_row.item_code, []).append((bin_row.warehouse, flt(bin_row.actual_qty)))
 		if location and bin_row.warehouse == location.name:
 			here[bin_row.item_code] = flt(bin_row.actual_qty)
+	totals = {code: shelf_rules.split_totals(bins, sites, shelf) for code, bins in by_item.items()}
+	nothing = (0.0, 0.0, 0.0)
 	return [
 		{
 			"item_code": row.item_code,
@@ -2365,7 +2721,9 @@ def search_items(query, warehouse=None):
 			"image": row.image or None,
 			"stock_uom": row.stock_uom,
 			"is_stock_item": cint(row.is_stock_item),
-			"on_hand_total": totals.get(row.item_code, 0.0),
+			"on_hand_total": totals.get(row.item_code, nothing)[0],
+			"on_job_sites": totals.get(row.item_code, nothing)[1],
+			"on_project_shelf": totals.get(row.item_code, nothing)[2],
 			"on_hand_here": here.get(row.item_code, 0.0) if location else None,
 		}
 		for row in rows
@@ -2388,19 +2746,30 @@ def search_locations(query):
 	)
 	rows = [row for row in rows if (row.warehouse_type or "") != "Transit"]
 	rows.sort(key=lambda row: rules.natural_key(row.warehouse_name or row.name))
+	# A job's site found by name is still a job site (v1.801.0): Move to… must not offer to make
+	# it the item's bin, which the server would refuse.
+	sites = job_sites.site_warehouses()
+	shelf = project_shelf.warehouse()
 	return [
 		{
 			"warehouse": row.name,
 			"warehouse_name": row.warehouse_name or row.name,
 			"trail": rules.location_trail(_ancestor_names(row)),
+			"job_site": row.name in sites,
+			# Nor the Project Shelf (v1.817.0): it is never an item's bin either.
+			"project_shelf": bool(shelf) and row.name == shelf,
 		}
 		for row in rows[:SEARCH_LIMIT]
 	]
 
 
 @frappe.whitelist(methods=["POST"])
-def search_projects(query=None):
+def search_projects(query=None, job_sites_only=0):
 	"""Jobs still in progress that the caller can see, for the take's job picker.
+
+	``job_sites_only`` (v1.801.0) is the Move to… sheet's *A job site*: only jobs of a type that
+	keeps material on site (Inventory Scanner Settings; Build when blank), so the list is the
+	handful of open builds rather than every service visit.
 
 	Every status but the closed ones (``stock_scan_rules.CLOSED_JOB_STATUSES``) — this
 	site's projects are ``Active``, not ERPNext's ``Open``. Active jobs first, then the
@@ -2416,6 +2785,8 @@ def search_projects(query=None):
 	_check_access()
 	words = _search_words(query)
 	filters = [["status", "not in", sorted(rules.CLOSED_JOB_STATUSES)]]
+	if cint(job_sites_only):
+		filters.append(["project_type", "in", list(job_sites.allowed_types())])
 	or_filters = None
 	if words:
 		like = f"%{' '.join(words)}%"
@@ -2440,6 +2811,33 @@ def search_projects(query=None):
 		}
 		for row in rows[:SEARCH_LIMIT]
 	]
+
+
+@frappe.whitelist(methods=["POST"])
+def job_site(project):
+	"""The location a job's material is sent to (v1.801.0): that job's own site warehouse,
+	opened here the first time anyone sends something to the job.
+
+	The Move to… sheet's *A job site* calls this once a job is picked and then moves the stock
+	with the same ``bin_assignments.move_to`` every other destination uses, so the transfer,
+	its log row and its Undo are the ones the page already has. Needs what a move needs (Stock
+	Entry create and submit): somebody who could not post the transfer does not open a site.
+	Refusals are sentences (``job_sites.ensure_site``).
+	"""
+	_check_access()
+	_require("Stock Entry", "create", "submit")
+	site, created = job_sites.ensure_site(project)
+	row = _location(site.name)
+	info = job_sites.site_info(row.name) or {}
+	return {
+		"warehouse": row.name,
+		"warehouse_name": row.warehouse_name or row.name,
+		"trail": rules.location_trail(_ancestor_names(row)),
+		"job_site": True,
+		"project": info.get("project"),
+		"project_name": info.get("project_name"),
+		"created": bool(created),
+	}
 
 
 # ---------------------------------------------------------------------------
@@ -2471,7 +2869,7 @@ def boot_payload(args=None):
 		else:
 			name = value if kind == "warehouse" else _storage_location_warehouse(value)
 			row = _warehouse(name)
-			problem = _location_problem(row, value)
+			problem = _location_problem(row, value, scanned=True)
 			initial = (
 				{"kind": "unknown", "message": problem}
 				if problem
@@ -2486,6 +2884,8 @@ def boot_payload(args=None):
 		"is_supervisor": _is_supervisor(),
 		# May put items on bins and take them off (v1.689.0, ``bin_assignments``).
 		"can_manage": _can_manage(),
+		# May start a Supplier Return from an item (v1.807.0, ``api/supplier_returns``).
+		"can_return": _can_return(),
 		"settings": {
 			"require_project_for_take": cint(settings.get("require_project_for_take")),
 			"undo_window_minutes": cint(settings.get("undo_window_minutes")),
@@ -2493,6 +2893,16 @@ def boot_payload(args=None):
 			"browser_history": 0 if cint(settings.get("stock_scan_disable_browser_back")) else 1,
 			# Where "Send to boneyard" moves stock (v1.689.0); None hides the button.
 			"boneyard_warehouse": settings.get("boneyard_warehouse") or None,
+			# Whether Move to… offers "A job site" (v1.801.0): the group is chosen and the
+			# Warehouse field exists. 0 hides it, and the page is as it was.
+			"job_sites": 1 if job_sites.enabled() else 0,
+			# The Project Shelf (v1.817.0): its warehouse and what to call it, or None when
+			# there is none and the page is as it was.
+			"project_shelf_warehouse": project_shelf.warehouse(),
+			"project_shelf_name": project_shelf.label(),
+			# Whether "Show on map" is offered (v1.818.0): a Warehouse Floor Map that is not hidden
+			# exists. 0 hides the link, and the page is as it was.
+			"warehouse_map": 1 if _has_warehouse_map() else 0,
 		},
 		"recent": _recent(),
 		"initial": initial,
@@ -2503,6 +2913,16 @@ def boot_payload(args=None):
 		"now": str(now_datetime()),
 		"store_run": _store_run_boot(),
 	}
+
+
+def _has_warehouse_map():
+	"""Whether there is a Warehouse Floor Map to show (v1.818.0, ``api/warehouse_map.py``). **Never
+	raises**, for the reason ``_store_run_boot`` gives: this runs inside the page's own boot, and
+	between a deploy's code and its migrate the table is not there yet."""
+	try:
+		return bool(frappe.db.exists("Warehouse Floor Map", {"disabled": 0}))
+	except Exception:
+		return False
 
 
 def _store_run_boot():

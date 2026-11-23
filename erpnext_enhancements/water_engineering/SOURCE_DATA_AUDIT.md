@@ -8,6 +8,42 @@ Status legend: ✅ done · ▶ recommended next · ◇ needs a product/engineeri
 
 ---
 
+## Closed out in v1.771.0 (Fountain Designer rebuild, phase H)
+
+This audit was written against the schema-1 engine and its child tables. The rebuild of 2026-11-01
+(`docs/fountain-designer/PLAN.md`, [ADR 0018](../../decisions/adr/0018-fountain-designer-rebuild.md))
+replaced both, so every item that was still open below is closed here: **done** (with the phase that
+did it), **dropped** (with why), or **moved to the backlog**. The tables further down are kept as
+the record of the audit; read this section for where each item stands.
+
+**Backlog**: `docs/fountain-designer/PLAN.md` section 6, "Open items for the designers (Logan,
+Nathan)". The items moved there are tagged *(backlog)*.
+
+| Item | Outcome |
+|---|---|
+| Pipe pressure as a per-segment status | ✅ done, phase B (v1.767.0): `autosize.pick_pipe` checks each segment's rating against its pressure at the real operating flow and fails it as `pipe_pressure`; the derive raises it as a `DesignIssue` on that segment (phase E) |
+| Slot-channel circular-crest weir (DOC-0049 M, C=3.70) | ◇ *(backlog)*: still needs exact-cell verification before it is coded; no family uses it yet |
+| Low-velocity (<0.5 FPS) settling band | ✅ done before the rebuild: `pipe.velocity_status` bands below the self-cleaning velocity (`constants.py`), and the Piping Schedule prints it (phase G) |
+| Aggregated Fitting Schedule | ✅ done, phases B and G: `engine.bom.fitting_counts` and the cut list, printed on Water Feature Design - Schedules (v1.770.0) |
+| O&M manual print (DOC-0123) | Split. The design's own O&M (cost a year, water plan, maintenance schedule, winterization and start-up) is ✅ done in phase G's Operations and Winterization print. The DOC-0123 control-panel O&M manual (parties, fuses, screen tree) is ⏳ *(backlog)* |
+| Structural / concrete / rebar (DOC-0119) | ✅ done, phase S (v1.765.0 and v1.766.0): `engine/structural/`, the rebar schedule and quantities on the Schedules print |
+| Catalog Item seeds (DOC-0028 part numbers) | Split. Pumps, nozzles and lights from manufacturer data are ✅ done, phase D (v1.758.0, `catalog_seed.py`, only approved rows). The Splash Wizard controllers, expansions and the WP-40 enclosure are ✅ named by part number in phase L's panel BOM (`engine/controls/controller.py`); seeding them as Items is ◇ *(backlog)* |
+| `FT_PER_PSI` = 2.308966 | ✅ done, phase A (v1.760.0), with the golden refresh |
+| DOC-0049 #7 equivalent-length minor-loss model | Dropped: Darcy-Weisbach with Darby 3-K fittings governs (decision 8, phase A); the Hazen-Williams figure stays only as the workbook cross-check |
+| DOC-0049 #9 Stenner feed-pump GPD table | Dropped as a calc: the electrical load list carries the Stenner 45M class current (phase L); the feed rate comes from the Item's `custom_feed_rate_gpd` |
+| DOC-0119 #2 drain-capacity divergence | ✅ done before the rebuild: `drainage.size_drain` carries the full-pipe note beside its conservative half-full figure |
+| DOC-0119 #3 jet height to basin setback and freeboard | ✅ done, phases B and C: `families/jets.splash_setback_ft` and `hydraulics/basin_checks` (level rise against freeboard) |
+| DOC-0119 #6 Schedules output | ✅ done, phase G (Equipment, Piping and Fitting Schedules) |
+| DOC-0119 #7 package completeness checklist | ✅ done, phase E: `issues.model_readiness` and the `issue_ready` gate that submission requires |
+| DOC-0028 #2 `controller_hardware` (Nextion vs LCD) | ◇ *(backlog, decision)*: phase L selects the Splash Wizard family from DOC-0062 (4-button UI and LCD), but the Control Panel Design field still defaults to Nextion; which screen the shipping panel uses is the designers' call |
+| DOC-0028 #3 enclosure part number | ✅ done, phase L: the WP-40 box 500615 and lid 500616 in the panel design |
+| DOC-0028 #4 valve-channel option (6 / 9) | ✅ done, phase L: the controller and its expansions are chosen by valve count (500624 to 500631) |
+| DOC-0062 Splash Wizard MAX labeled FCA002 | ◇ *(backlog, upstream data)*: still to confirm with engineering; phase L records the mislabel |
+| DOC-0025 #7 I/O point voltage and output fields | Split. Phase L (v1.764.0) generates the I/O list from the design, with each point's signal and device, and the pumps' phase, HP and control topology. A per-point voltage field on Control IO Point is ◇ *(backlog)* |
+| DOC-0123 #9 O&M generator, #10 screen tree | ⏳ *(backlog)*, with the control-panel O&M manual above |
+
+---
+
 ## Done in this pass (v1.106–1.113)
 - ✅ Pipe fittings/components picked from a catalog dropdown (no hand-typed JSON); catalog = engine's
   `FITTING_K` / `COMPONENT_COEFF`.

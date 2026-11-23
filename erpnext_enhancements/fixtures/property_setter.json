@@ -1324,6 +1324,51 @@
   "doc_type": "Delivery Note",
   "docstatus": 0,
   "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "lr_date",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-lr_date-label",
+  "property": "label",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "Ship Date"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "lr_no",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-lr_no-description",
+  "property": "description",
+  "property_type": "Small Text",
+  "row_name": null,
+  "value": "For Carrier shipping: the carrier's tracking number. Spaces and dashes are removed on save."
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "lr_no",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-lr_no-label",
+  "property": "label",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "Tracking Number"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
   "doctype_or_field": "DocType",
   "field_name": null,
   "is_system_generated": 0,
@@ -1333,6 +1378,66 @@
   "property_type": "Data",
   "row_name": null,
   "value": "[\"naming_series\", \"customer\", \"tax_id\", \"customer_name\", \"column_break1\", \"posting_date\", \"posting_time\", \"set_posting_time\", \"column_break_10\", \"company\", \"amended_from\", \"is_return\", \"issue_credit_note\", \"return_against\", \"accounting_dimensions_section\", \"cost_center\", \"column_break_18\", \"project\", \"dimension_col_break\", \"currency_and_price_list\", \"currency\", \"conversion_rate\", \"col_break23\", \"selling_price_list\", \"price_list_currency\", \"plc_conversion_rate\", \"ignore_pricing_rule\", \"items_section\", \"scan_barcode\", \"last_scanned_warehouse\", \"col_break_warehouse\", \"set_warehouse\", \"set_target_warehouse\", \"section_break_30\", \"items\", \"section_break_31\", \"total_qty\", \"total_net_weight\", \"column_break_35\", \"base_total\", \"base_net_total\", \"column_break_33\", \"total\", \"net_total\", \"taxes_section\", \"tax_category\", \"taxes_and_charges\", \"column_break_43\", \"shipping_rule\", \"column_break_39\", \"incoterm\", \"named_place\", \"section_break_41\", \"taxes\", \"section_break_44\", \"base_total_taxes_and_charges\", \"column_break_47\", \"total_taxes_and_charges\", \"totals\", \"base_grand_total\", \"base_rounding_adjustment\", \"base_rounded_total\", \"base_in_words\", \"column_break3\", \"grand_total\", \"rounding_adjustment\", \"rounded_total\", \"in_words\", \"disable_rounded_total\", \"section_break_49\", \"apply_discount_on\", \"base_discount_amount\", \"column_break_51\", \"additional_discount_percentage\", \"discount_amount\", \"sec_tax_breakup\", \"other_charges_calculation\", \"item_wise_tax_details\", \"packing_list\", \"packed_items\", \"product_bundle_help\", \"pricing_rule_details\", \"pricing_rules\", \"address_and_contact_tab\", \"contact_info\", \"customer_address\", \"address_display\", \"col_break21\", \"contact_person\", \"contact_display\", \"contact_mobile\", \"contact_email\", \"shipping_address_section\", \"shipping_address_name\", \"shipping_address\", \"column_break_95\", \"dispatch_address_name\", \"dispatch_address\", \"company_address_section\", \"company_address\", \"company_address_display\", \"column_break_101\", \"company_contact_person\", \"terms_tab\", \"tc_name\", \"terms\", \"more_info_tab\", \"section_break_83\", \"per_billed\", \"status\", \"column_break_112\", \"per_installed\", \"installation_status\", \"column_break_89\", \"per_returned\", \"transporter_info\", \"transporter\", \"driver\", \"lr_no\", \"delivery_trip\", \"vehicle_no\", \"col_break34\", \"transporter_name\", \"driver_name\", \"lr_date\", \"customer_po_details\", \"po_no\", \"column_break_17\", \"po_date\", \"sales_team_section_break\", \"sales_partner\", \"amount_eligible_for_commission\", \"column_break7\", \"commission_rate\", \"total_commission\", \"section_break1\", \"sales_team\", \"subscription_section\", \"auto_repeat\", \"printing_details\", \"letter_head\", \"print_without_amount\", \"group_same_items\", \"column_break_88\", \"select_print_heading\", \"language\", \"more_info\", \"is_internal_customer\", \"represents_company\", \"inter_company_reference\", \"customer_group\", \"territory\", \"column_break_pxls\", \"utm_source\", \"utm_campaign\", \"utm_medium\", \"utm_content\", \"column_break5\", \"excise_page\", \"instructions\", \"connections_tab\", \"custom_comments\", \"custom_comments_field\"]"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "transporter",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-transporter-label",
+  "property": "label",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "Carrier"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "transporter_info",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-transporter_info-collapsible_depends_on",
+  "property": "collapsible_depends_on",
+  "property_type": "Code",
+  "row_name": null,
+  "value": "eval:doc.transporter || doc.custom_fulfillment_method"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "transporter_info",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-transporter_info-label",
+  "property": "label",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "Fulfillment"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Delivery Note",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "transporter_name",
+  "is_system_generated": 0,
+  "module": "Product Fulfillment",
+  "name": "Delivery Note-transporter_name-label",
+  "property": "label",
+  "property_type": "Data",
+  "row_name": null,
+  "value": "Carrier Name"
  },
  {
   "default_value": null,
@@ -1662,7 +1767,7 @@
   "property": "default",
   "property_type": "Text",
   "row_name": null,
-  "value": "0"
+  "value": "1"
  },
  {
   "default_value": null,
@@ -1782,7 +1887,7 @@
   "property": "field_order",
   "property_type": "Data",
   "row_name": null,
-  "value": "[\"details\", \"naming_series\", \"item_code\", \"custom_sku\", \"custom_item_identifier\", \"custom_guided_client_id\", \"item_name\", \"item_group\", \"stock_uom\", \"image\", \"column_break0\", \"disabled\", \"is_stock_item\", \"is_fixed_asset\", \"auto_create_assets\", \"is_grouped_asset\", \"asset_category\", \"asset_naming_series\", \"custom_sds_section\", \"custom_is_chemical\", \"custom_sds_document\", \"custom_hazard_summary\", \"custom_sds_reviewed_on\", \"custom_maintenance_billing_section\", \"custom_maintenance_billing\", \"custom_price_per_dose\", \"custom_size_family\", \"custom_size\", \"section_break_zlmj\", \"is_sales_item\", \"allow_alternative_item\", \"has_variants\", \"column_break_kpmi\", \"is_purchase_item\", \"is_customer_provided_item\", \"section_break_gjns\", \"standard_rate\", \"custom_purchase_link\", \"column_break_ixrh\", \"opening_stock\", \"section_break_11\", \"brand\", \"description\", \"custom_source_configuration\", \"custom_pump_section\", \"custom_rated_gpm\", \"custom_rated_tdh_ft\", \"custom_pump_hp\", \"custom_pump_phase\", \"custom_pump_voltage\", \"custom_pump_fla_amps\", \"custom_pump_cut_sheet\", \"custom_pump_curve\", \"custom_pump_curve_chart\", \"custom_aquatic_section\", \"custom_equipment_class\", \"custom_model_no\", \"custom_nsf_listing\", \"custom_iapmo_listing\", \"custom_spec_cut_sheet\", \"custom_equipment_elec_cb\", \"custom_elec_voltage\", \"custom_elec_phase\", \"custom_elec_hz\", \"custom_elec_fla_amps\", \"custom_elec_watts\", \"custom_elec_hp\", \"custom_requires_gfci\", \"custom_nec680_bond\", \"custom_filter_area_sqft\", \"custom_filter_max_flow_gpm\", \"custom_filter_media\", \"custom_heater_fuel\", \"custom_heater_kw\", \"custom_heater_btu_hr\", \"custom_vgb_open_area_sqin\", \"custom_vgb_max_flow_gpm\", \"custom_vgb_rated\", \"custom_jet_flow_gpm\", \"custom_jet_pressure_psi\", \"custom_skimmer_max_flow_gpm\", \"custom_meter_kind\", \"custom_meter_range\", \"custom_feed_rate_gpd\", \"custom_controller_channels\", \"section_break_znra\", \"over_delivery_receipt_allowance\", \"column_break_wugd\", \"over_billing_allowance\", \"inventory_section\", \"stock_levels_section\", \"stock_levels_html\", \"inventory_valuation_section\", \"valuation_method\", \"column_break_cqdk\", \"valuation_rate\", \"inventory_settings_section\", \"end_of_life\", \"default_material_request_type\", \"column_break1\", \"warranty_period\", \"weight_per_unit\", \"weight_uom\", \"allow_negative_stock\", \"sb_barcodes\", \"barcodes\", \"reorder_section\", \"reorder_levels\", \"serial_nos_and_batches\", \"has_batch_no\", \"create_new_batch\", \"batch_number_series\", \"has_expiry_date\", \"shelf_life_in_days\", \"retain_sample\", \"sample_quantity\", \"column_break_37\", \"has_serial_no\", \"serial_no_series\", \"use_serial_no_wise_valuation\", \"purchasing_tab\", \"purchase_uom\", \"min_order_qty\", \"safety_stock\", \"purchase_details_cb\", \"lead_time_days\", \"last_purchase_rate\", \"supplier_details\", \"delivered_by_supplier\", \"section_break_ylma\", \"supplier_items\", \"foreign_trade_details\", \"country_of_origin\", \"column_break_59\", \"customs_tariff_number\", \"sales_details\", \"sales_uom\", \"grant_commission\", \"column_break3\", \"max_discount\", \"customer_details\", \"customer_items\", \"uom_tab\", \"unit_of_measure_conversion\", \"uom_conversion_details_column\", \"uom_help_html\", \"uoms\", \"item_tax_section_break\", \"section_break_oilf\", \"column_break_aytr\", \"taxes\", \"section_break_fxqz\", \"purchase_tax_withholding_category\", \"column_break_ltlb\", \"sales_tax_withholding_category\", \"accounting\", \"section_break_wfkx\", \"item_defaults\", \"deferred_accounting_section\", \"enable_deferred_expense\", \"no_of_months_exp\", \"column_break_9s9o\", \"enable_deferred_revenue\", \"no_of_months\", \"manufacturing\", \"include_item_in_manufacturing\", \"is_sub_contracted_item\", \"default_bom\", \"column_break_74\", \"production_capacity\", \"total_projected_qty\", \"section_break_xili\", \"default_manufacturer_part_no\", \"default_item_manufacturer\", \"column_break_vipt\", \"customer_code\", \"quality_tab\", \"inspection_required_before_purchase\", \"inspection_required_before_delivery\", \"column_break_pxjh\", \"quality_inspection_template\", \"variants_section\", \"variant_of\", \"variant_based_on\", \"attributes\", \"pricing_tab\", \"prices_html\", \"item_prices_column\", \"dashboard_tab\", \"custom_comments\", \"custom_comments_field\"]"
+  "value": "[\"details\", \"naming_series\", \"item_code\", \"custom_sku\", \"custom_item_identifier\", \"custom_guided_client_id\", \"item_name\", \"item_group\", \"stock_uom\", \"image\", \"column_break0\", \"disabled\", \"is_stock_item\", \"is_fixed_asset\", \"auto_create_assets\", \"is_grouped_asset\", \"asset_category\", \"asset_naming_series\", \"custom_sds_section\", \"custom_is_chemical\", \"custom_sds_document\", \"custom_hazard_summary\", \"custom_sds_reviewed_on\", \"custom_maintenance_billing_section\", \"custom_maintenance_billing\", \"custom_price_per_dose\", \"custom_size_family\", \"custom_size\", \"section_break_zlmj\", \"is_sales_item\", \"allow_alternative_item\", \"has_variants\", \"column_break_kpmi\", \"is_purchase_item\", \"is_customer_provided_item\", \"section_break_gjns\", \"standard_rate\", \"custom_purchase_link\", \"column_break_ixrh\", \"opening_stock\", \"section_break_11\", \"brand\", \"description\", \"custom_source_configuration\", \"custom_pump_section\", \"custom_rated_gpm\", \"custom_rated_tdh_ft\", \"custom_pump_hp\", \"custom_pump_phase\", \"custom_pump_voltage\", \"custom_pump_fla_amps\", \"custom_pump_cut_sheet\", \"custom_pump_curve\", \"custom_pump_curve_chart\", \"custom_pump_curves_html\", \"custom_aquatic_section\", \"custom_equipment_class\", \"custom_model_no\", \"custom_nsf_listing\", \"custom_iapmo_listing\", \"custom_ul_listing\", \"custom_spec_cut_sheet\", \"custom_equipment_elec_cb\", \"custom_elec_voltage\", \"custom_elec_phase\", \"custom_elec_hz\", \"custom_elec_fla_amps\", \"custom_elec_watts\", \"custom_elec_hp\", \"custom_requires_gfci\", \"custom_nec680_bond\", \"custom_filter_area_sqft\", \"custom_filter_max_flow_gpm\", \"custom_filter_media\", \"custom_filter_design_rate_gpm_sqft\", \"custom_filter_backwash_gpm\", \"custom_heater_fuel\", \"custom_heater_kw\", \"custom_heater_btu_hr\", \"custom_vgb_open_area_sqin\", \"custom_vgb_max_flow_gpm\", \"custom_vgb_rated\", \"custom_jet_flow_gpm\", \"custom_jet_pressure_psi\", \"custom_skimmer_max_flow_gpm\", \"custom_meter_kind\", \"custom_meter_range\", \"custom_feed_rate_gpd\", \"custom_controller_channels\", \"custom_lumens\", \"custom_beam_deg\", \"custom_light_control\", \"custom_max_depth_ft\", \"custom_ip_rating\", \"custom_aerator_pattern_height_ft\", \"custom_aerator_pattern_diameter_ft\", \"custom_aerator_min_depth_ft\", \"custom_aerator_cord_lengths\", \"custom_spec_source_section\", \"custom_spec_source_url\", \"custom_spec_revision\", \"custom_generic_estimate\", \"custom_spec_source_cb\", \"custom_spec_verified_by\", \"custom_spec_verified_on\", \"custom_catalog_id\", \"custom_spec_confidence\", \"custom_spec_method\", \"custom_spec_error_band_pct\", \"section_break_znra\", \"over_delivery_receipt_allowance\", \"column_break_wugd\", \"over_billing_allowance\", \"inventory_section\", \"stock_levels_section\", \"stock_levels_html\", \"inventory_valuation_section\", \"valuation_method\", \"column_break_cqdk\", \"valuation_rate\", \"inventory_settings_section\", \"end_of_life\", \"default_material_request_type\", \"column_break1\", \"warranty_period\", \"weight_per_unit\", \"weight_uom\", \"allow_negative_stock\", \"sb_barcodes\", \"barcodes\", \"reorder_section\", \"reorder_levels\", \"serial_nos_and_batches\", \"has_batch_no\", \"create_new_batch\", \"batch_number_series\", \"has_expiry_date\", \"shelf_life_in_days\", \"retain_sample\", \"sample_quantity\", \"column_break_37\", \"has_serial_no\", \"serial_no_series\", \"use_serial_no_wise_valuation\", \"purchasing_tab\", \"purchase_uom\", \"min_order_qty\", \"safety_stock\", \"purchase_details_cb\", \"lead_time_days\", \"last_purchase_rate\", \"supplier_details\", \"delivered_by_supplier\", \"section_break_ylma\", \"supplier_items\", \"foreign_trade_details\", \"country_of_origin\", \"column_break_59\", \"customs_tariff_number\", \"sales_details\", \"sales_uom\", \"grant_commission\", \"column_break3\", \"max_discount\", \"customer_details\", \"customer_items\", \"uom_tab\", \"unit_of_measure_conversion\", \"uom_conversion_details_column\", \"uom_help_html\", \"uoms\", \"item_tax_section_break\", \"section_break_oilf\", \"column_break_aytr\", \"taxes\", \"section_break_fxqz\", \"purchase_tax_withholding_category\", \"column_break_ltlb\", \"sales_tax_withholding_category\", \"accounting\", \"section_break_wfkx\", \"item_defaults\", \"deferred_accounting_section\", \"enable_deferred_expense\", \"no_of_months_exp\", \"column_break_9s9o\", \"enable_deferred_revenue\", \"no_of_months\", \"manufacturing\", \"include_item_in_manufacturing\", \"is_sub_contracted_item\", \"default_bom\", \"column_break_74\", \"production_capacity\", \"total_projected_qty\", \"section_break_xili\", \"default_manufacturer_part_no\", \"default_item_manufacturer\", \"column_break_vipt\", \"customer_code\", \"quality_tab\", \"inspection_required_before_purchase\", \"inspection_required_before_delivery\", \"column_break_pxjh\", \"quality_inspection_template\", \"variants_section\", \"variant_of\", \"variant_based_on\", \"attributes\", \"pricing_tab\", \"prices_html\", \"item_prices_column\", \"dashboard_tab\", \"custom_comments\", \"custom_comments_field\"]"
  },
  {
   "default_value": null,
@@ -4798,7 +4903,7 @@
   "property": "field_order",
   "property_type": "Data",
   "row_name": null,
-  "value": "[\"custom_section_break_s5jqn\", \"naming_series\", \"project_name\", \"customer\", \"custom_project_id\", \"status\", \"project_type\", \"custom_value_stream\", \"column_break_5\", \"custom_project_description\", \"priority\", \"custom_project_priority\", \"custom_company_priority\", \"custom_project_owner\", \"custom_technical_lead\", \"department\", \"custom_column_break_l026q\", \"custom_master_project\", \"project_template\", \"is_active\", \"custom_scope_rank\", \"custom_schedule_rank\", \"custom_budget_rank\", \"custom_drive_folder_id\", \"percent_complete_method\", \"percent_complete\", \"custom_reminder_action\", \"custom_contacts__addresses\", \"primary_contact_section\", \"primary_contact\", \"primary_contact_job_title\", \"primary_contact_col_break\", \"primary_contact_phone\", \"primary_contact_email\", \"address_and_contact\", \"section_break_contacts\", \"contact_list_html\", \"section_break_map\", \"primary_address\", \"custom_billing_address\", \"location_map_col_break\", \"location_map_html\", \"section_break_address_list\", \"address_list_html\", \"custom_primary_contact_field\", \"custom_primary_first_name\", \"custom_primary_role\", \"custom_column_break_k8xix\", \"custom_primary_phone\", \"custom_primary_email_address\", \"custom_contacts__address\", \"custom_contacts__address_table\", \"custom_address__contact\", \"custom_address_html\", \"custom_customer__lead_address\", \"custom_address_display\", \"custom_column_break_em6sv\", \"custom_contact_html\", \"custom_contact_display\", \"users_section\", \"users\", \"copied_from\", \"customer_details\", \"custom_opportunity\", \"column_break_14\", \"sales_order\", \"custom_scope\", \"custom_section_break_w4acr\", \"custom_general_scope_description\", \"custom_scope_contributors\", \"custom_design_scope\", \"custom_design_customer_requests\", \"custom_column_break_qbuwv\", \"custom_design_deliverables\", \"custom_build_scope\", \"custom_build_customer_requests\", \"custom_column_break_w4xqd\", \"custom_build_deliverables\", \"custom_service_scope\", \"custom_service_customer_requests\", \"custom_column_break_xu1wk\", \"custom_service_deliverables\", \"custom_rent_scope\", \"custom_rent_customer_requests\", \"custom_column_break_tbqyo\", \"custom_rent_deliverables\", \"custom_tasks_section\", \"custom_tasks_html\", \"custom_schedule\", \"section_break_18\", \"custom_project_start_date\", \"column_break_20\", \"custom_project_end_date\", \"custom_column_break_aukmw\", \"expected_start_date\", \"actual_start_date\", \"custom_column_break_dyph7\", \"expected_end_date\", \"actual_end_date\", \"custom_rent_schedule\", \"custom_delivery_date_time\", \"custom_delivery_date_time_notes\", \"custom_column_break_iuiqz\", \"custom_setup_date_time\", \"custom_setup_date_time_notes\", \"custom_column_break_ujl7w\", \"custom_event_date_time\", \"custom_event_date_time_notes\", \"custom_column_break_bhtot\", \"custom_take_down_date_time\", \"custom_take_down_date_time_notes\", \"custom_gantt_chart_section\", \"custom_gantt_chart_html\", \"custom_section_break_nyo2c\", \"custom_notes_for_scheduling\", \"custom_budget\", \"custom_section_break_kyvkd\", \"custom_quickbooks_jobcode_id\", \"custom_customer_payment_section\", \"custom_payment_received\", \"custom_payment_column_break\", \"custom_payment_received_on\", \"custom_payment_method\", \"custom_project_estimated_amount\", \"custom_project_dollar_amount\", \"actual_time\", \"custom_column_break_dgj8s\", \"custom_project_spend\", \"custom_total_time_elapsed\", \"custom_project_estimated_cost\", \"custom_materials_budget\", \"custom_column_break_z8y1h\", \"custom_time_budget_in_hours\", \"custom_column_break_chnxt\", \"custom_time__materials\", \"project_details\", \"estimated_costing\", \"total_costing_amount\", \"total_expense_claim\", \"total_purchase_cost\", \"company\", \"column_break_28\", \"total_sales_amount\", \"total_billable_amount\", \"total_billed_amount\", \"total_consumed_material_cost\", \"cost_center\", \"margin\", \"gross_margin\", \"column_break_37\", \"per_gross_margin\", \"custom_section_break_xbww4\", \"custom_material_request_feed\", \"custom_procurement_section\", \"custom_btn_material_request\", \"custom_btn_purchase_order\", \"custom_col_break_1\", \"custom_btn_request_quote\", \"custom_btn_purchase_receipt\", \"custom_col_break_2\", \"custom_btn_supplier_quotation\", \"custom_btn_purchase_invoice\", \"custom_budget_notes\", \"custom_notes_relating_to_budget\", \"costing_tab\", \"custom_process_tab\", \"custom_process_progress\", \"custom_process_steps\", \"monitor_progress_tab\", \"custom_misc\", \"collect_progress\", \"holiday_list\", \"frequency\", \"from_time\", \"to_time\", \"first_email\", \"second_email\", \"daily_time_to_send\", \"day_to_send\", \"weekly_time_to_send\", \"column_break_45\", \"subject\", \"message\", \"more_info_tab\", \"custom_comments\", \"custom_comments_field\", \"custom_project_notes\", \"custom_zoho_data\", \"custom_section_break_unn4x\", \"custom_project_address\", \"custom_customer_name\", \"custom_customer_phone\", \"custom_customer_email\", \"custom_contact_phone\", \"custom_zoho_creation_date\", \"custom_column_break_vp5qd\", \"custom_deliverable1\", \"custom_deliverable2\", \"custom_deliverable3\", \"custom_deliverable4\", \"custom_deliverable5\", \"custom_column_break_8lbte\", \"custom_zoho_projects_id\", \"custom_notes_html\", \"custom_comments_table\", \"section_break0\", \"notes\", \"connections_tab\"]"
+  "value": "[\"custom_section_break_s5jqn\", \"naming_series\", \"project_name\", \"customer\", \"custom_project_id\", \"status\", \"project_type\", \"custom_value_stream\", \"column_break_5\", \"custom_project_description\", \"priority\", \"custom_project_priority\", \"custom_company_priority\", \"custom_project_owner\", \"custom_technical_lead\", \"department\", \"custom_column_break_l026q\", \"custom_master_project\", \"project_template\", \"is_active\", \"custom_scope_rank\", \"custom_schedule_rank\", \"custom_budget_rank\", \"custom_drive_folder_id\", \"percent_complete_method\", \"percent_complete\", \"custom_reminder_action\", \"custom_contacts__addresses\", \"primary_contact_section\", \"primary_contact\", \"primary_contact_job_title\", \"primary_contact_col_break\", \"primary_contact_phone\", \"primary_contact_email\", \"address_and_contact\", \"section_break_contacts\", \"contact_list_html\", \"section_break_map\", \"primary_address\", \"custom_billing_address\", \"location_map_col_break\", \"location_map_html\", \"section_break_address_list\", \"address_list_html\", \"custom_primary_contact_field\", \"custom_primary_first_name\", \"custom_primary_role\", \"custom_column_break_k8xix\", \"custom_primary_phone\", \"custom_primary_email_address\", \"custom_contacts__address\", \"custom_contacts__address_table\", \"custom_address__contact\", \"custom_address_html\", \"custom_customer__lead_address\", \"custom_address_display\", \"custom_column_break_em6sv\", \"custom_contact_html\", \"custom_contact_display\", \"users_section\", \"users\", \"copied_from\", \"customer_details\", \"custom_opportunity\", \"column_break_14\", \"sales_order\", \"custom_scope\", \"custom_tasks_section\", \"custom_tasks_html\", \"custom_section_break_w4acr\", \"custom_general_scope_description\", \"custom_scope_contributors\", \"custom_design_scope\", \"custom_design_customer_requests\", \"custom_column_break_qbuwv\", \"custom_design_deliverables\", \"custom_build_scope\", \"custom_build_customer_requests\", \"custom_column_break_w4xqd\", \"custom_build_deliverables\", \"custom_service_scope\", \"custom_service_customer_requests\", \"custom_column_break_xu1wk\", \"custom_service_deliverables\", \"custom_rent_scope\", \"custom_rent_customer_requests\", \"custom_column_break_tbqyo\", \"custom_rent_deliverables\", \"custom_schedule\", \"section_break_18\", \"custom_project_start_date\", \"column_break_20\", \"custom_project_end_date\", \"custom_column_break_aukmw\", \"expected_start_date\", \"actual_start_date\", \"custom_column_break_dyph7\", \"expected_end_date\", \"actual_end_date\", \"custom_rent_schedule\", \"custom_delivery_date_time\", \"custom_delivery_date_time_notes\", \"custom_column_break_iuiqz\", \"custom_setup_date_time\", \"custom_setup_date_time_notes\", \"custom_column_break_ujl7w\", \"custom_event_date_time\", \"custom_event_date_time_notes\", \"custom_column_break_bhtot\", \"custom_take_down_date_time\", \"custom_take_down_date_time_notes\", \"custom_gantt_chart_section\", \"custom_gantt_chart_html\", \"custom_section_break_nyo2c\", \"custom_notes_for_scheduling\", \"custom_budget\", \"custom_section_break_kyvkd\", \"custom_quickbooks_jobcode_id\", \"custom_customer_payment_section\", \"custom_payment_received\", \"custom_payment_column_break\", \"custom_payment_received_on\", \"custom_payment_method\", \"custom_project_estimated_amount\", \"custom_project_dollar_amount\", \"actual_time\", \"custom_column_break_dgj8s\", \"custom_project_spend\", \"custom_total_time_elapsed\", \"custom_project_estimated_cost\", \"custom_materials_budget\", \"custom_column_break_z8y1h\", \"custom_time_budget_in_hours\", \"custom_column_break_chnxt\", \"custom_time__materials\", \"project_details\", \"estimated_costing\", \"total_costing_amount\", \"total_expense_claim\", \"total_purchase_cost\", \"company\", \"column_break_28\", \"total_sales_amount\", \"total_billable_amount\", \"total_billed_amount\", \"total_consumed_material_cost\", \"cost_center\", \"margin\", \"gross_margin\", \"column_break_37\", \"per_gross_margin\", \"custom_section_break_xbww4\", \"custom_material_request_feed\", \"custom_procurement_section\", \"custom_btn_material_request\", \"custom_btn_purchase_order\", \"custom_col_break_1\", \"custom_btn_request_quote\", \"custom_btn_purchase_receipt\", \"custom_col_break_2\", \"custom_btn_supplier_quotation\", \"custom_btn_purchase_invoice\", \"custom_budget_notes\", \"custom_notes_relating_to_budget\", \"costing_tab\", \"custom_process_tab\", \"custom_process_progress\", \"custom_process_steps\", \"monitor_progress_tab\", \"custom_misc\", \"collect_progress\", \"holiday_list\", \"frequency\", \"from_time\", \"to_time\", \"first_email\", \"second_email\", \"daily_time_to_send\", \"day_to_send\", \"weekly_time_to_send\", \"column_break_45\", \"subject\", \"message\", \"more_info_tab\", \"custom_comments\", \"custom_comments_field\", \"custom_project_notes\", \"custom_zoho_data\", \"custom_section_break_unn4x\", \"custom_project_address\", \"custom_customer_name\", \"custom_customer_phone\", \"custom_customer_email\", \"custom_contact_phone\", \"custom_zoho_creation_date\", \"custom_column_break_vp5qd\", \"custom_deliverable1\", \"custom_deliverable2\", \"custom_deliverable3\", \"custom_deliverable4\", \"custom_deliverable5\", \"custom_column_break_8lbte\", \"custom_zoho_projects_id\", \"custom_notes_html\", \"custom_comments_table\", \"section_break0\", \"notes\", \"connections_tab\"]"
  },
  {
   "default_value": null,
@@ -7498,7 +7603,7 @@
   "property": "description",
   "property_type": "Text",
   "row_name": null,
-  "value": "Tick for parts we keep on a shelf and count; not for services or assets"
+  "value": "On for parts and materials, so receipts add to stock; off for labor, fees and assets"
  },
  {
   "default_value": null,

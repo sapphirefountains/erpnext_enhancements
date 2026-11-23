@@ -332,11 +332,10 @@ def _tidy(items):
 def won_conditions(config):
 	"""``{fieldname: mandatory_depends_on}`` for the config's ``won`` fields.
 
-	What a move into the won status must carry is required while the record has that status: the
-	Desk's own rule (``opportunity_migrated_scripts.js`` ``set_rank_fields_mandatory`` sets the three
-	ranks ``reqd`` while the status is Closed Won, and ``validate_ranks_on_won`` refuses the save
-	without them). The form says it with ``set_df_property``, which the page cannot run, so the flow
-	carries it as the docfield's own condition and the page shows the asterisk the form shows.
+	What a move into the won status must carry is required while the record has that status. A
+	form says that with ``set_df_property``, which the page cannot run, so the flow carries it as
+	the docfield's own condition and the page shows the asterisk the form shows. Empty for a config
+	with no ``won`` (Opportunity's, since v1.799.0: a move into Closed Won carries only the status).
 	"""
 	won = config.get("won") or {}
 	status = won.get("status")

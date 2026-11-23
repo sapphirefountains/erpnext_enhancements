@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_funnel_cascade\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Funnel Cascade\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_channel_spend\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Channel Spend\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_unsourced_leads\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Unsourced Leads\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_source_health\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Source Health\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}, {\"id\": \"ee_mkp_header\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Marketing performance</b></span>\", \"col\": 12}}, {\"id\": \"ee_mkp_shortcut\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Marketing Performance\", \"col\": 4}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
   {
@@ -11,22 +11,6 @@
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"
-  },
-  {
-   "custom_block_name": "Marketing Funnel Cascade",
-   "label": "Marketing Funnel Cascade"
-  },
-  {
-   "custom_block_name": "Marketing Channel Spend",
-   "label": "Marketing Channel Spend"
-  },
-  {
-   "custom_block_name": "Marketing Unsourced Leads",
-   "label": "Marketing Unsourced Leads"
-  },
-  {
-   "custom_block_name": "Marketing Source Health",
-   "label": "Marketing Source Health"
   }
  ],
  "doctype": "Workspace",
@@ -37,7 +21,7 @@
  "is_standard": 1,
  "label": "Marketing Dashboard",
  "links": [],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Marketing Dashboard",
@@ -57,7 +41,14 @@
   }
  ],
  "sequence_id": 55,
- "shortcuts": [],
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "label": "Marketing Performance",
+   "link_to": "marketing-performance",
+   "type": "Page"
+  }
+ ],
  "title": "Marketing Dashboard",
  "type": "Workspace"
 }

@@ -209,6 +209,12 @@ def test_master_sheet_row_flags_conflicts_missing_records_and_absent_payloads():
 		)
 	)
 	assert row["status"] == "Created (conflict)"
+	# v1.800.0: the flag a sync raises instead of saving shows in the sheet too, and the
+	# export dialog offers it as a filter.
+	changed = matching_excel.master_sheet_row(_master_row(conflict_status="QuickBooks Changed"))
+	assert changed["status"] == "Created (QuickBooks changed)"
+	assert "QuickBooks Changed" in matching_excel.EXPORT_STATUSES
+	assert any("(QuickBooks changed)" in line for line in matching_excel.instructions({}))
 	assert row["linked_title"] == "Gone (no longer exists)"
 	assert "QBO job" in row["qbo_detail"] and "inactive in QBO" in row["qbo_detail"]
 	assert "no payload stored" in row["qbo_detail"]

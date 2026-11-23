@@ -412,6 +412,161 @@ for (const { fn, destructive } of MUST_GUARD) {
 	}
 }
 
+// ---- the model pick is not kept across page loads (v1.802.2) -----------------
+//
+// The pick used to live in localStorage["triton_model"] for good. One choice of
+// "Flash" was then the model of every later chat in that browser, long after
+// Triton's default moved on, and nothing on screen said why. The Triton site
+// does not keep the pick, and the widget must open the way the site does: on
+// Auto, or on the pinned Default Model.
+//
+// Unlike the rest of this file these RUN the code. applyModels(), setModel()
+// and forgetStoredModel() touch only `state`, one <select> and localStorage,
+// so they are lifted out of the source and called against stand-ins.
+{
+	const parts = ['applyModels', 'setModel', 'forgetStoredModel'].map(bodyOf);
+	if (parts.includes(null)) {
+		console.error(
+			'MARKERS NOT FOUND: applyModels(), setModel() or forgetStoredModel() is gone from ' +
+				path.relative(process.cwd(), TARGET) +
+				'. Re-derive these checks: the rule is that the model pick is never stored.'
+		);
+		process.exit(2);
+	}
+	const build = new Function(
+		'state',
+		'document',
+		'localStorage',
+		'LS_MODEL',
+		parts.join('\n') + '\nreturn { applyModels, setModel, forgetStoredModel };'
+	);
+	const LIST = [
+		{ value: '', label: 'Auto' },
+		{ value: 'gemini-4-argon', label: '4 Argon' },
+		{ value: 'gemini-3.8-flash', label: '3.8 Flash' },
+	];
+
+	const widget = ({ stored, defaultModel = '' } = {}) => {
+		const store = new Map(stored === undefined ? [] : [['triton_model', stored]]);
+		const touched = [];
+		const storage = {
+			getItem(k) {
+				touched.push('get ' + k);
+				return store.has(k) ? store.get(k) : null;
+			},
+			setItem(k, v) {
+				touched.push('set ' + k);
+				store.set(k, String(v));
+			},
+			removeItem(k) {
+				touched.push('remove ' + k);
+				store.delete(k);
+			},
+		};
+		const select = {
+			options: [],
+			value: null,
+			set innerHTML(_) {
+				this.options = [];
+			},
+			appendChild(o) {
+				this.options.push(o);
+			},
+		};
+		const state = {
+			model: '',
+			picked: false,
+			config: { default_model: defaultModel, models: [] },
+			els: { modelSelect: select },
+		};
+		const fns = build(state, { createElement: () => ({}) }, storage, 'triton_model');
+		return { state, select, store, touched, ...fns };
+	};
+
+	const check = (ok, good, bad) => {
+		if (ok) pass(good);
+		else fail(bad);
+	};
+
+	// 1. The case that was reported: an old stored pick, no pinned default.
+	let w = widget({ stored: 'gemini-3.8-flash' });
+	w.applyModels(LIST);
+	check(
+		w.state.model === '' && w.select.value === '' && !w.touched.includes('get triton_model'),
+		'a pick stored by an earlier release is not read: the widget opens on Auto',
+		'the widget opened on "' + w.state.model + '" with an old pick in storage; it must open on Auto ' +
+			'and must not read localStorage["triton_model"] at all'
+	);
+	check(
+		w.select.options.length === LIST.length,
+		'the picker lists every model it was given',
+		'the picker holds ' + w.select.options.length + ' options for a list of ' + LIST.length
+	);
+	w.forgetStoredModel();
+	check(
+		!w.store.has('triton_model'),
+		'the old stored pick is removed',
+		'forgetStoredModel() left localStorage["triton_model"] in place'
+	);
+	check(
+		/\n\t\tforgetStoredModel\(\);/.test(SOURCE),
+		'and the widget calls that clean-up as it builds',
+		'nothing calls forgetStoredModel(): the old pick would sit in every browser for good'
+	);
+
+	// 2. A pick lasts for the page, through the live list replacing the fallback.
+	w = widget();
+	w.applyModels(LIST);
+	w.setModel('gemini-4-argon');
+	w.applyModels(LIST.slice());
+	check(
+		w.state.model === 'gemini-4-argon' && w.select.value === 'gemini-4-argon',
+		'a pick survives the live list arriving',
+		'a pick of gemini-4-argon became "' + w.state.model + '" when the live list arrived'
+	);
+	check(
+		!w.touched.some((t) => t.startsWith('set ')),
+		'and is not written to localStorage',
+		'setModel() wrote to localStorage (' + w.touched.join(', ') + '); the pick must not outlive the page'
+	);
+
+	// 3. Auto is the empty string. With a pinned default, choosing Auto must hold.
+	w = widget({ defaultModel: 'gemini-3.8-flash' });
+	w.applyModels(LIST);
+	const openedOnPin = w.state.model === 'gemini-3.8-flash';
+	w.setModel('');
+	w.applyModels(LIST.slice());
+	check(
+		openedOnPin && w.state.model === '' && w.select.value === '',
+		'with a pinned Default Model the widget opens on it, and a deliberate Auto holds',
+		openedOnPin
+			? 'a deliberate Auto was pushed back onto the pinned default when the live list arrived'
+			: 'a pinned Default Model was not what the widget opened on'
+	);
+
+	// 4. A pick the live list no longer offers falls back to Auto.
+	w = widget();
+	w.applyModels(LIST);
+	w.setModel('gemini-3.8-flash');
+	w.applyModels(LIST.slice(0, 2));
+	check(
+		w.state.model === '' && w.select.value === '',
+		'a pick Triton stops offering falls back to Auto',
+		'a pick the list no longer holds stayed selected as "' + w.state.model + '"'
+	);
+
+	// 5. Nothing else in the file reads or writes the key. Comments are stripped
+	// first: the explanation above applyModels describes the old behaviour.
+	const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/^\s*\/\/.*$/gm, '')
+		.replace('const LS_MODEL = "triton_model";', '');
+	check(
+		!/(getItem|setItem)\(\s*LS_MODEL/.test(code) && !/["']triton_model["']/.test(code),
+		'no code reads or writes the stored model pick',
+		'something reads or writes localStorage["triton_model"] again; the pick must last only for the page'
+	);
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');

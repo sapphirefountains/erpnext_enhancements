@@ -4,6 +4,9 @@
  * Retry / Mark as Spam are role-gated server-side but NOT feature-flag gated —
  * a backlog must stay workable with the public form switched off, so these
  * buttons deliberately appear regardless of frappe.boot.ee_fountain_move.
+ *
+ * Confirm Match (Duplicate Review only): a staff member picks the existing Customer a
+ * held request belongs to; the server links it and creates the Opportunity under it.
  */
 
 frappe.ui.form.on("Fountain Move Request", {
@@ -20,7 +23,7 @@ function show_status_banner(frm) {
 	const banners = {
 		"Duplicate Review": [
 			__(
-				"This submission matches more than one existing account, so nothing was created. Decide which account it belongs to, then press Retry Conversion."
+				"This submission matches an existing record, so nothing was created and nothing was added to that record. Check the match below, then press Confirm Match to link it to the right Customer."
 			),
 			"orange",
 		],
@@ -43,8 +46,62 @@ function show_status_banner(frm) {
 	}
 }
 
+function suggested_customer(frm) {
+	// match_candidates is the JSON the conversion recorded when it held the request.
+	let match = {};
+	try {
+		match = JSON.parse(frm.doc.match_candidates || "{}") || {};
+	} catch (e) {
+		match = {};
+	}
+	if (match.customer) return match.customer;
+	const first = (match.candidates || []).find((candidate) => candidate.type === "Customer");
+	return first ? first.name : "";
+}
+
+function add_confirm_match_button(frm) {
+	frm.add_custom_button(__("Confirm Match"), () => {
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Link",
+					fieldname: "customer",
+					label: __("Customer"),
+					options: "Customer",
+					reqd: 1,
+					default: suggested_customer(frm),
+					description: __(
+						"Links this request to the Customer and creates the Opportunity under it. Nothing on the Customer, its contacts or its addresses is changed; the details on this request are copied into the Opportunity's notes for you to copy across by hand."
+					),
+				},
+			],
+			(values) => {
+				frappe.call({
+					method: "erpnext_enhancements.crm_enhancements.fountain_move.api.confirm_match",
+					args: { docname: frm.doc.name, customer: values.customer },
+					freeze: true,
+					freeze_message: __("Queueing conversion…"),
+					callback() {
+						frappe.show_alert(
+							{ message: __("Match confirmed. Conversion queued."), indicator: "green" },
+							5
+						);
+						setTimeout(() => frm.reload_doc(), 1500);
+					},
+				});
+			},
+			__("Confirm match"),
+			__("Confirm")
+		);
+	});
+}
+
 function add_triage_buttons(frm) {
 	const status = frm.doc.status;
+
+	if (status === "Duplicate Review") {
+		add_confirm_match_button(frm);
+	}
 
 	if (status !== "Converted" && status !== "Converting" && status !== "Spam") {
 		frm.add_custom_button(__("Retry Conversion"), () => {

@@ -150,6 +150,10 @@ SOURCE_DESIGN_REVIEW = "Design Review"
 FILING_RATE_LIMIT = 10
 FILING_RATE_WINDOW_SECONDS = 60
 
+#: "Expand with AI" per person per hour, counted the same way as filing (`_enforce_draft_rate`).
+DRAFT_RATE_LIMIT = 30
+DRAFT_RATE_WINDOW_SECONDS = 3600
+
 #: The capture widget's snapshot (page state, console errors, failed requests) is a private
 #: JSON File on the request, never a field: Triton's bulk sync reads the request's fields.
 #: The recorder's rings are 20 + 20 + 10 entries, so a real snapshot is a few KB; this cap is
@@ -197,8 +201,9 @@ def get_bootstrap():
         "paused": settings["paused"],
         # Whether the "Expand with AI" button is offered at all. A button that cannot work is
         # worse than no button: it looks like a bug in the feature rather than a missing
-        # setting, which is exactly how this one was reported.
-        "ai_drafting": _ai_drafting_configured(),
+        # setting, which is exactly how this one was reported. draft_description is for
+        # System Users, so nobody else is offered it.
+        "ai_drafting": _ai_drafting_configured() and _is_system_user(),
         "request_types": list(VALID_REQUEST_TYPES),
         "impacts": list(VALID_IMPACTS),
         "my_requests": _my_requests(),
@@ -417,8 +422,11 @@ def draft_description(title=None, description=None, request_type=None):
     Runs on this app's own Vertex client rather than through Triton. It is a one-shot drafting
     call with no need of the codebase, the boards or a session — routing it through the
     planning endpoint would add a hop and an identity exchange to produce a paragraph.
+
+    System Users only, and at most ``DRAFT_RATE_LIMIT`` drafts per person per hour
+    (:func:`_enforce_draft_rate`, counted just before the model is asked).
     """
-    _require_session()
+    _require_system_user()
     if get_settings()["paused"]:
         frappe.throw(_("New requests are paused right now."), frappe.ValidationError)
 
@@ -443,6 +451,7 @@ def draft_description(title=None, description=None, request_type=None):
 
     from erpnext_enhancements.product_feedback import triton_client
 
+    _enforce_draft_rate(frappe.session.user)
     try:
         result = triton_client.request_description_draft(
             user=frappe.session.user,
@@ -610,16 +619,32 @@ def _enforce_filing_rate(user):
 
     Counted before validation, so a script cannot probe forever with payloads that are
     refused. ``make_key`` gives the counter the site's prefix — ``incrby`` is raw redis — and
-    the expiry is set on the first hit only, so the window is fixed rather than sliding
-    forever under a steady trickle. The deploy's FLUSHDB resets it, which is harmless.
+    the expiry is set on the first hit, and again whenever the counter is found without one,
+    so the window is fixed rather than sliding forever under a steady trickle. The deploy's
+    FLUSHDB resets it, which is harmless.
     """
     key = frappe.cache.make_key(f"ee_feedback_filing:{user}")
     count = frappe.cache.incrby(key, 1)
-    if count == 1:
+    if count == 1 or frappe.cache.ttl(key) < 0:
         frappe.cache.expire(key, FILING_RATE_WINDOW_SECONDS)
     if count > FILING_RATE_LIMIT:
         frappe.throw(
             _("You've sent several reports in the last minute. Wait a moment and try again."),
+            frappe.RateLimitExceededError,
+        )
+
+
+def _enforce_draft_rate(user):
+    """``DRAFT_RATE_LIMIT`` drafts an hour per person, then a 429. Same counter shape as
+    :func:`_enforce_filing_rate`: a site-prefixed key, the expiry set on the first hit and again
+    whenever the counter is found without one, so the window is fixed."""
+    key = frappe.cache.make_key(f"ee_feedback_draft:{user}")
+    count = frappe.cache.incrby(key, 1)
+    if count == 1 or frappe.cache.ttl(key) < 0:
+        frappe.cache.expire(key, DRAFT_RATE_WINDOW_SECONDS)
+    if count > DRAFT_RATE_LIMIT:
+        frappe.throw(
+            _("You've asked for several drafts in the last hour. Write this one yourself, or try again later."),
             frappe.RateLimitExceededError,
         )
 
@@ -1230,10 +1255,14 @@ def _require_system_user():
     """A signed-in **System User**. Website Users can reach an allowlisted web page, and the
     ``system_user`` cookie that hides the launcher from them is only a hint."""
     _require_session()
+    if not _is_system_user():
+        frappe.throw(_("Only staff accounts can send reports from here."), frappe.PermissionError)
+
+
+def _is_system_user():
     from frappe.permissions import is_system_user
 
-    if not is_system_user(frappe.session.user):
-        frappe.throw(_("Only staff accounts can send reports from here."), frappe.PermissionError)
+    return bool(is_system_user(frappe.session.user))
 
 
 def _is_reviewer():

@@ -137,7 +137,7 @@ def _row_fla(load):
 def we_panel_schedule(doc):
 	"""Panel-schedule rows + service totals for the Control Panel Design print
 	format. The NEC math can't run in the Jinja print sandbox, so it is computed
-	here (registered as a jinja method in hooks.py, like we_fitting_schedule)."""
+	here (registered as a jinja method in hooks.py, like we_design_issues)."""
 	if isinstance(doc, str):
 		doc = frappe.get_doc("Control Panel Design", doc)
 	loads = _panel_loads(doc)
@@ -151,6 +151,7 @@ def we_panel_schedule(doc):
 			"voltage": ld["voltage"],
 			"phase": ld["phase"],
 			"control_method": ld.get("control_method") or "",
+			# The NEC 430.52 maximum (printed as "Max breaker"), not a chosen device size.
 			"breaker_a": electrical_load(fla).value if fla else None,
 		})
 	tcl = total_connected_load(loads) if loads else None

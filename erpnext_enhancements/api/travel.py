@@ -1366,7 +1366,7 @@ def get_trip_map_data(trip):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cache_poi_geocode(poi, lat, lng):
 	"""Persist a client-geocoded point onto a Travel POI's ``geolocation`` so a
 	linked Address isn't re-geocoded on every map load.
@@ -1614,9 +1614,12 @@ def _opportunity_contact(record):
 #: (``project_contract._prefill_from_project``) and the Primary Contact section for the person.
 _PROJECT_SITE_ADDRESS = "custom_project_address"
 _PROJECT_SITE_ADDRESS_LINK = "custom_customer__lead_address"
-_PROJECT_SITE_NAME = ("custom_primary_first_name", "custom_customer_name")
-_PROJECT_SITE_PHONE = ("custom_primary_phone", "custom_contact_phone", "custom_customer_phone")
-_PROJECT_SITE_EMAIL = ("custom_primary_email_address", "custom_customer_email")
+#: Project's own ``custom_primary_first_name`` / ``custom_primary_phone`` /
+#: ``custom_primary_email_address`` led these tuples until v1.799.1: the UI field audit hid
+#: them (0 of 668 projects ever held one; the unified Contacts & Addresses tab replaced them).
+_PROJECT_SITE_NAME = ("custom_customer_name",)
+_PROJECT_SITE_PHONE = ("custom_contact_phone", "custom_customer_phone")
+_PROJECT_SITE_EMAIL = ("custom_customer_email",)
 
 
 def _project_contact(record):
@@ -1968,7 +1971,7 @@ def ee_trip_sheet(doc):
 # -------------------------------------------------------------------- email
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def send_itinerary_email(trip, employee=None):
 	"""Send the itinerary email (with ICS attachment) to one traveler, or to
 	every traveler when ``employee`` is omitted. Coordinators can send to

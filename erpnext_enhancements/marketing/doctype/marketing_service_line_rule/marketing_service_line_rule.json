@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "match_type",
+  "match_value",
+  "service_line"
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Marketing Service Line Rule",
+ "owner": "Administrator",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1,
+ "description": "One rule of the service-line mapping on Marketing Settings. Rules are tried in order and the first match wins.",
+ "permissions": [],
+ "fields": [
+  {
+   "fieldname": "match_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Match",
+   "options": "URL Prefix\nURL Contains\nQuery Keyword\nValue Stream\nOpportunity Keyword",
+   "reqd": 1,
+   "description": "URL Prefix / URL Contains: a landing page's path. Query Keyword: a Search Console query. Value Stream: an Opportunity's value stream, exactly. Opportunity Keyword: words in an Opportunity's title."
+  },
+  {
+   "fieldname": "match_value",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Value",
+   "reqd": 1
+  },
+  {
+   "fieldname": "service_line",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Service Line",
+   "options": "Design-Build\nService & Maintenance\nRentals\nSplash Pads\nParts & Products",
+   "reqd": 1
+  }
+ ]
+}

@@ -1,4 +1,9 @@
-"""AwesomeBar global-search augmentation endpoint.
+"""AwesomeBar global-search augmentation endpoint. NO LONGER CALLED since v1.795.0.
+
+``api/desk_search.py`` and ``public/js/global_enhancements/desk_search.js`` replaced this for the
+Desk search box: this endpoint's hits all carried index 150, under frappe's fuzzy DocType scores
+(up to ~200), so a customer's first name listed sixteen screen names above their Contact. It stays so a tab
+opened before that release, still running the old bundle, does not error until it reloads.
 
 Whitelisted API called from ``public/js/erpnext_enhancements.js`` to inject
 ``__global_search`` matches into the Desk AwesomeBar dropdown.

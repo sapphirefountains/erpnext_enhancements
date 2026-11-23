@@ -1,0 +1,14 @@
+{
+ "_comment": "INVENTED TEST DATA for tests/test_water_catalog.py: the approval list's shape, with made-up keys and a made-up approver.",
+ "approved_by": "fixture.approver@example.invalid",
+ "approved_on": "2026-11-01",
+ "pumps": [
+  "Fixtureco|FIXTURE-P100",
+  "fixtureco | fixture-p200vs",
+  "Fixtureco|FIXTURE-BAD",
+  {"key": "Fixtureco|FIXTURE-EXISTING", "item_code": "500999"},
+  "Fixtureco|FIXTURE-GHOST"
+ ],
+ "nozzles": ["Fixtureco|FIXTURE-N10", {"key": "Fixtureco|FIXTURE-N20", "item_name": "NOZZLE, LAMINAR, FIXTURE N20"}],
+ "lights": ["Fixtureco|FIXTURE-L12", "Fixtureco|FIXTURE-L0"]
+}

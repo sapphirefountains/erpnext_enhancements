@@ -27,10 +27,27 @@ model, the pure rules and the label reads.
 | `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
 | `page/supplier_finder/` | Find a Supplier (v1.726.0, `/desk/supplier-finder`): one search box for a kind of item, a model or a part number; suppliers ranked by what we bought from them, whatever Supplier Group they are in, with an optional AI broaden step. `?q=`, `?item=` and `?supplier=` screens, each its own history entry. Opened from the Inventory Enhancements workspace (Purchasing) and the Find suppliers button on Item and Purchase Order. See `docs/supplier-finder.md` |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
+| `bin_views.py` | The Bin Manager's views beyond one bin (v1.812.0), all reads: `decorate` (each bin's kind, a job site's project and customer, and the counts behind the picker's quick filters, added to `manager_boot`), `item_locations` (where an item is on hand or assigned), `project_index` / `project_view` (a job's Project Shelf and job site), `problems` (assigned but empty, stock with no assignment, stock still held for a finished job). See *The Bin Manager page* below |
+| `doctype/warehouse_floor_map/`, `doctype/warehouse_floor_map_shape/` | The **Warehouse Map**'s records, DocTypes *Warehouse Floor Map* and *Warehouse Floor Map Shape* (v1.818.0): one floor of the building as a floor plan picture (a private file) with boxes over it, each box a Warehouse. Edited on the Warehouse Map page by the Warehouse Map Editor role; a map never writes stock, and since v1.820.0 its editor can make a bay, a shelf or a bin (a Warehouse, through the document). See *The Warehouse Map* below |
+| `warehouse_map_rules.py` | Every judgement the map makes: what a box may be, a box's front view (the shelves and bins under its warehouse, numbers and position words in the order a person sees them, or the box's own order), the boxes worth placing, which map and box show a warehouse, and a bin's color. No Frappe, no I/O; the endpoints are `api/warehouse_map.py` |
+| `warehouse_map_files.py` | The map's two doc_events on other DocTypes, and its boot flag: `refuse_public_file` (`File` `validate`: a File attached to a map is never public), `follow_warehouse_rename` (`Warehouse` `after_rename`: a box's own order follows a rename; cannot raise), `has_visible_map` (`frappe.boot.ee_warehouse_map`) and `clear_boot_cache` (drops the Desk's cached boot data when a map's visibility changes; cannot raise). Imports nothing but Frappe at load |
+| `page/warehouse_map/` | The Warehouse Map page (`/desk/warehouse-map`, v1.818.0): a floor, a floor with one box open, and the editor, each its own history entry; item search; print. v1.820.0: making a bay, shelf or bin from the editor. v1.821.0: the Free space view and the walk for a count |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
+| `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
+| `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
+| `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.817.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
+| `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger), `refuse_as_bin`. Nothing here raises to answer a question |
+| `project_stock_rules.py` | Where a project's material is now (v1.811.0), worked out from the stock ledger rows that name the job: the kinds of place (Project Shelf, the job's site, a shop bin, a vehicle, taken to the job, returned to the supplier, place not recorded), `item_places` (never more at a place than its Bin row holds; everything at the job's own site is the job's; a Supplier Return and the ledger's return rows never added together), `capped_shelf_rows`, `return_summary`, `shelf_rows`. No Frappe, no I/O |
+| `project_stock.py` | The reads behind it: `places_for(project, item_codes)` for the Procurement Tracker (one ledger query and three reads whatever the number of lines), `shelf_stock(project)` and `shelf_by_project()` (the one door for "what is on the Project Shelf for this job": `project_shelf.shelf_stock`, cut to what the shelf holds, with a ledger fallback until that module is installed), `shelf_warehouse()` (`project_shelf.warehouse()`, else the setting read with `Document.get`, so a site without the field has no shelf). The job's Supplier Returns come from `supplier_returns.returned_lines`. Both sibling modules are imported where they are used, so the releases can merge in any order. Writes nothing |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `maintain_stock_rules.py` | Turning on Maintain Stock for an Item ERPNext's form refuses to switch (v1.754.0): every safety check, ERPNext's lock list read from the installed `Item._get_linked_submitted_documents` and refused when it names a doctype the checks don't know, who may switch (`SWITCH_ROLES`, never a service account), the receipts' guard decisions and every message. Why bypassing `cant_change` is safe under these checks is its docstring. No Frappe, no I/O; the endpoints are `api/maintain_stock.py` |
 | `maintain_stock.py` | Its reads (documents counted, up to three named), the switch (row lock, checks again, `db.set_value`, Comment, cache clear, next steps) and the guards on the switched item's old non-stock receipts: `Purchase Receipt` `before_cancel` and `validate` (returns), `Purchase Invoice` `validate`, and `Landed Cost Voucher` (`validate`, `before_cancel`), `Repost Item Valuation` and `Repost Accounting Ledger` (`validate`), which would rebuild the receipt's ledger from today's flag. A stock item's receipt line with no stock ledger entry may not be canceled, returned, billed or re-costed in ERPNext |
+| `maintain_stock_bulk_rules.py` | Which existing items get Maintain Stock turned on together (v1.809.0): the name-and-group rule that tells a part from labor, a fee, rent, freight, a deposit, an old QuickBooks line or an asset, in a fixed order and with the reason in words; a person's choice that beats it; the three outcomes; what an apply queues; and the before-and-after list as CSV. No Frappe, no I/O. See *Maintain Stock for every physical item* below |
+| `maintain_stock_bulk.py` | The page's reads and its run: the same facts as the single switch read for every item at once (`bulk_facts`, held equal to `maintain_stock.gather_facts` by a test), the preview, a person's choice, the queue, the background job (`process_queue`, one commit an item, each through `maintain_stock.turn_on`) and `resume_queue`, which the scheduler calls every ten minutes so a run outlives a deploy |
+| `doctype/maintain_stock_decision/` | One row for an item the page has a choice or a result for (v1.809.0): a person's choice, Queued / Switched / Refused and why, and what the Delivery Note guard reads. Found by its `item_code` Link and named by a hash, so the Item can still be renamed or merged; the Item's `on_trash` removes its rows, so it can still be deleted. Written by the page and its job only |
+| `page/maintain_stock_switch/` | **Switch Items to Maintain Stock** (v1.809.0, `/desk/maintain-stock-switch`): Will switch, Stays non-stock, Can't switch yet and Results, each its own history entry. Item Manager, Stock Manager, System Manager |
+| `receipt_price_rules.py` | A price is required when a stock item is received (v1.809.0): which line is unpriced, which documents are judged, ERPNext's own *Allow Zero Valuation Rate* as the mark for a free sample or a warranty replacement, the words of the refusal, and the rows for ERPNext's *Update Items*. No Frappe, no I/O. See *A price at receipt* below |
+| `receipt_price.py` | Its hooks: `Purchase Receipt` and `Purchase Invoice` `before_submit` refuse, `validate` warns on a draft and never raises. And the reads the two receiving screens use to ask for the price first and put it on the order line through ERPNext's own `update_child_qty_rate` |
 | `qr_svg.py` | QR codes as one compact inline `<path>` SVG, encoded with the `pyqrcode` Frappe already depends on. No Frappe |
 | `warehouse_labels.py` | The reads behind `/warehouse-labels`: which warehouses get a label, their breadcrumbs, their QR codes |
 | `item_naming_rules.py` | The Item naming schema as executable rules. No Frappe, no I/O |
@@ -40,13 +57,29 @@ model, the pure rules and the label reads.
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
-| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
+| `rack_sheet_rules.py` | The printable rack QR sheet (v1.831.0): which racks a choice prints (a Room box prints each rack in it), a rack's shelves top to bottom with their codes left to right, the map box's shelf and bin direction, and how big the codes are. No Frappe. See *The rack QR sheet* below |
+| `reorder_suggest_rules.py` | Suggested reorder levels (v1.831.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
+| `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
+| `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
+| `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, where the item's stock is against the rule's scope (`stock_places`, v1.833.1), each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
 | `page/reorder_board/` | The Reorder Board (v1.730.0, `/desk/reorder-board`): Needs reorder, On order and Snoozed, each its own history entry |
 | `page/stock_scan/` | `/desk/stock-scan` (v1.751.0): only sends the browser on to the Stock Scan web page at `/stock-scan`, with `location.replace` so Back is not trapped on it. It exists for the Dock rail, whose rows open through `frappe.set_route` and so need a desk route (the field technicians' rail, `setup/dock_profiles.py`). Same roles as the page it leads to (`stock_scan_rules.SCAN_ROLES`), same shape as `workforce/page/time_kiosk/` |
 | `supplier_search_rules.py` | Find a Supplier (v1.726.0): query terms (filler dropped, plurals folded, sizes and units joined), item matching (word starts, squashed model/part numbers, synonyms, strict then partial), Supplier Group matching, duplicate suppliers folded by `supplier_key`, evidence ranking (bought > quoted/listed > group or name only, recency-scaled) and the AI query-expansion prompt and reply check. No Frappe, no I/O; the endpoint is `api/supplier_search.py`; design in `docs/supplier-finder.md` |
+| `doctype/supplier_return/`, `doctype/supplier_return_item/`, `doctype/supplier_return_payment/` | **Supplier Return** (v1.807.0), its lines, and its refunds and credits: something we bought going back to the supplier. The request we emailed, the supplier's return number, how it went back, and whether the money came back. A tracking record: it links ERPNext's own Purchase Return, Debit Note and Payment Entry and never moves stock or money itself. Not submittable; the status is set by the form's step buttons. See *Supplier Returns* below |
+| `supplier_return_rules.py` | Every judgement of the return process: the steps and who may take each, the quantity limit, the three kinds of line (stock, non-stock, record only) and which stock document each gets, the standard return cut to this return's lines, the money rule (typed by hand until a document is linked), the bill notice, the email's words and recipients, the report's rows, and the contract other modules read. No Frappe, no I/O |
+| `supplier_returns.py` | Its reads (what a receipt line has left to return), `validate`, the steps, the drafts of ERPNext's Purchase Return and Debit Note, the sync from linked documents (doc_events on Purchase Receipt, Purchase Invoice and Payment Entry, and a daily job), the bill notice, the one email sender, and `returned_lines` for other modules' reports. The endpoints are `api/supplier_returns.py` |
+| `setup_supplier_return_print_format.py` | **Supplier Return - Sapphire**, the PDF attached to a return request and the paper that goes in the box, built from `print_style` and the buying formats' fragments. `after_migrate` upsert |
+| `report/supplier_returns_money_outstanding/` | **Supplier Returns: Money Outstanding** (v1.807.0): returns that went back and were not paid for, by supplier and age, with expected, received, difference, where the amount comes from, and where the bill stands |
 | `report/item_naming_audit/` | The naming work list, worst-first |
+| `report/warehouse_transactions/` | Warehouse Transactions (v1.797.0): every stock movement and the person who made it. See *Warehouse Transactions* below |
+| `report/location_contents/` | Location Contents (v1.805.0): what is at a bin or a group of bins, and what should be, with a plain status per item. See *Inventory reports* below |
+| `report/where_is_this_item/` | Where Is This Item (v1.805.0): every place an item is, split into shop bins, the Project Shelf by job, job sites by job, vehicles and the Boneyard |
+| `report/project_materials/` | Project Materials (v1.805.0): what was ordered and received for a job and where each item stands; with no Project, what each job holds now |
+| `report/job_site_contents/` | Job Site Contents (v1.805.0): what is at each job site, by job, with value, when it arrived and how long it has been there |
+| `inventory_report_rules.py` | Every judgement the four reports make: a location's status for an item, the kind of place a warehouse is, the Project Shelf's shares by job, one project's item roll-up, how long stock has been at a site. No Frappe |
+| `inventory_report_data.py` | What the four reports read in common: the Project Shelf (read so a missing field never raises), the Boneyard, vehicles, job sites, the by-project shelf adapter, the Supplier Return lines |
 
 ## The count flow
 
@@ -324,9 +357,43 @@ a shelf in that order puts two labels on the wrong bins.
 The Warehouse form carries the doors (`public/js/warehouse_stock_scan.js`): **QR Label** and
 **Open Stock Scan** on a location, **Print QR Labels** on a group for everything beneath it.
 
+### The rack QR sheet (v1.831.0)
+
+The 2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+too thin, for a sticker. `/rack-qr-sheet?w=<rack>` (`www/rack-qr-sheet.html`, controller
+`www/rack_qr_sheet.py`) prints **one Letter page per rack**: every shelf's code with its position, to
+laminate and hang low beside the rack. The Warehouse form's **Rack QR Sheet** button opens it on any
+group. Every judgement is `rack_sheet_rules.py` (no Frappe); the read is
+`warehouse_labels.rack_sheets`.
+
+- **The codes are the labels'**: `<site>/stock-scan?w=<warehouse>`, drawn by `qr_svg`.
+- **The rows** are the rack's children in the order a person sees them
+  (`warehouse_map_rules.children_index`), top to bottom, Shelf 1 at the top. A location child is one
+  shelf with one code (the Atrium's `Shelf NLR1-1`, the Build Room's `Shelf BR-NR1-1`). A group child
+  is one shelf with a code for each location under it, left to right (a bay's `Shelf B1-2`), and an
+  empty one is printed with no code. **A shelf's number is the one its name ends in**
+  (`shelf_number`: `Shelf NLR1-3` is 3), so a disabled shelf leaves a gap rather than renumbering the
+  ones below it beside codes captioned with their real names; a name with no number takes its place
+  in the order.
+- **The Warehouse Map's box decides** when the rack has one, as its front view does
+  (`warehouse_map_rules.rows_as_seen`): *Shelf 1 is at the* Bottom, *Bin 1 is at the* Right, and the
+  box's own order. A group whose box is a **Room** prints one page for each group inside it that
+  holds a location, after a page named after the room for any shelves standing in it directly
+  (`racks_for` returns `{"rack", "loose"}`; a loose page lists only those shelves). Production's
+  Atrium and Build Room are Room boxes and their racks Rack boxes
+  (2026-11-19). The boxes are read once with `get_all`; without the map's doctype every group is a
+  rack.
+- **Sizes** (`layout`): codes up to 1.8 in and never below 0.8 in. As many share a line as fit at the
+  smallest size, then the codes grow to fill the page. A rack that does not fit runs onto a second
+  page and no shelf is split. Each page is a table, so its header (the rack's name, its room, how to
+  read it) and footer are its `thead` and `tfoot`, which browsers print on every sheet a table spans;
+  the screen says when a rack will not fit (`layout()["fits"]`). The page is US Letter, 0.4 in margins, set by the page's own `@page`
+  rule, which also overrides Bootstrap's print `min-width` as `/warehouse-labels` does.
+- **Who**: `LABEL_ROLES`, and a signed-out visitor is sent to log in and back.
+
 ### Day one: the bins are empty
 
-On the day this shipped all stock sat in `Stores - SF` and `Inventory Room - SF`; the bins under
+On the day this shipped all stock sat in `Stores - SF` (renamed the Project Shelf in v1.817.0) and `Inventory Room - SF`; the bins under
 Inventory → Row → Bay → Shelf — most of the site's 176 leaf warehouses — held nothing. So a
 technician who scans a bin and
 presses − gets "The system shows none on hand here … use Move here", and that is correct: the
@@ -557,7 +624,15 @@ is `release_if_empty(item_code, warehouse)` (v1.692.1): when the flow moves an i
 bin is taken off as a *Move to* that empties its source does, and stock still there keeps it
 (the answer is what is left; `None` when nothing claimed the pair).
 
-**The Boneyard** is a leaf warehouse `Boneyard` under `Inventory - SF`, created by
+**The shop's group is the Inventory Room** (v1.823.0, `patches/swap_inventory_room_names`). The group
+that holds Row 1 to Row 5, the Boneyard and the receiving room was `Inventory - SF` until then, and the
+receiving room was the leaf `Inventory Room - SF`. The owner wanted the bays to read as being in the
+Inventory Room, and a warehouse with stock cannot become a group, so the two names were swapped with
+Frappe's rename: the leaf is `Receiving - SF` and the group is `Inventory Room - SF`. Nothing moved in the
+tree, and every Link followed its warehouse, so whatever read the group as the shop's stock still does. A
+QR label printed for the old room opens the group now; Stock Scan says it is out of date.
+
+**The Boneyard** is a leaf warehouse `Boneyard` under the shop's group (`Inventory Room - SF`; `Inventory - SF` until v1.823.0), created by
 `patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
 once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
 QR label like any location.
@@ -575,6 +650,332 @@ without `can_manage` rather than fail. A save that takes the item off the bin re
 list without adding a history entry. The list's rows say why an empty item still lists: an
 **on order** or **not assigned** (undecided) badge.
 
+### Job sites (v1.801.0)
+
+Material that leaves the shop for a Build job and waits at the site is **moved, not issued**: a
+Material Transfer from the shop bin into that job's own leaf Warehouse. Nik's decision of
+2026-11-11, one warehouse per project rather than one generic "Job Site", for two measured reasons:
+
+- ERPNext keeps on-hand by item and warehouse (`tabBin`) and has no project there. One shared
+  warehouse could never say what is at which site, and a return from one job would hide a shortage
+  on another. Negative stock stays refused per site, so nobody can "use" what was never sent.
+- The count is small: about ten Build projects start a year.
+
+**What a site is.** A Warehouse whose `custom_job_site_project` names a Project. Not its name and
+not its place in the tree: a Stock Manager may rename or move one in the Desk and it stays that
+job's site. Sites are created under the group in `Inventory Scanner Settings.job_sites_warehouse`
+(`Job Sites`, beside the shop's group `Inventory Room - SF`), named `Job Site <project id> <project name>`. Everything
+else under that group, at any depth, also counts as on a job site (`site_warehouses`): production's
+hand-made `Job Site - SF`, and any sub-group somebody adds later. It is found through each
+warehouse's parent, not the tree's left and right numbers.
+
+| On the phone | What happens | Voucher |
+|---|---|---|
+| A bin's item → **Move to…** → **A job site** → pick the job | The job's site is opened if it has none (`api.stock_scan.job_site` → `job_sites.ensure_site`), then the ordinary `bin_assignments.move_to` | Material Transfer, the Project on the entry and on both ledger rows; log action `Move To`, its Job filled |
+| The site's own screen (search "Job Site", or the Project's *Job Site* connection → *Open Stock Scan*) | Lists what is there now, or on order to it | none |
+| An item at the site → **−** (take) | Parts used on the job. Always charged to the site's job, whatever job the chip at the top says | Material Issue with that Project: **this is where the cost reaches the job** |
+| An item at the site → **Move to…** → a shelf, or a shelf's item → **Move here from…** the site | Leftovers come back | Material Transfer carrying the job it came back from |
+
+**Why the site may be created by someone who cannot create a Warehouse.** ERPNext gives Warehouse
+create to Stock Manager and Item Manager; the people loading a truck hold Stock User. `ensure_site`
+inserts with `ignore_permissions` after the page's role gate and after checking the caller can
+create and submit a Stock Entry, and leaves an Info comment on the Project naming who opened it.
+Nothing else here is written that way.
+
+**Two phones at once.** `ensure_site` locks the Project's row (`for_update`) and then reads the site
+with a locking read. Without the lock both requests find no site and both insert, and the loser
+cannot recover by re-reading: under MariaDB's default REPEATABLE READ a plain read still looks at
+the snapshot the request began with. A locking read sees committed rows whatever the snapshot.
+
+**A finished job.** Nothing more is sent to its site, by any door: `job_site` refuses the job, and
+every transfer asks its destination (`job_sites.refuse_send`, in `api.stock_scan._transfer_source`),
+because a site that exists is also reached by name, by its label and from "where it is already". A
+take at the site is refused as well (its cost has nowhere to go). What is there **can still be moved
+back to a shelf**: the check is on the destination only. A job on hold still receives.
+
+**Who gets one.** Jobs whose Project Type is in *Job Site Project Types* (blank means Build). A
+service visit or a small job takes parts with the job picked instead, as before; the refusal says
+so in a sentence. A finished job is refused, and so is a site somebody disabled.
+
+**A site is never an item's bin.** `assign`, *Make … this item's bin* and the Bin Manager's put-on
+are refused for one (`job_sites.refuse_as_bin`), as they are for the Boneyard. That is asked of
+`site_warehouses()`, so it covers the warehouses under the group that have no job. `_items_at` lists a
+site's items only while they are on hand or on order: the bin list's "nobody has decided yet"
+clause would keep every item ever sent to a job on its list for good.
+
+**Stock on a job site is not shop stock, on this app's own screens.** Three readings summed across
+every warehouse:
+
+| Reading | Now |
+|---|---|
+| Stock Scan search, "on hand" | The shop's total (`on_hand_total`); what is out on jobs beside it (`on_job_sites`) |
+| Item card, "Also at" | Shop locations only; job sites on their own line, "On job sites, not in the shop". The store-run "check there before buying more" never names a site |
+| Reorder Board, its daily digest and hourly sync | `job_site_rules.without_sites` takes site stock, and orders headed to a site, out of every group above a site. Many of production's rules roll up at the company's root. The rules are not changed |
+
+**ERPNext's own screens are not changed, and still count job-site stock unless filtered to
+`Inventory Room - SF`:**
+
+- Stock Balance and Stock Projected Qty, when run for a group above the sites (or for none);
+- the Item form's stock levels: a site shows as its own line, and the total includes it;
+- the availability figures on Material Request, Production Plan and Work Order;
+- ERPNext's nightly reorder job (switched off here since v1.730.0).
+
+**The ledger.** A transfer moves no value. With no account on the group, a site shares `1410 -
+Stock In Hand` with the shop, so nothing posts until the take. Giving the `Job Sites` group its own
+inventory account would make each transfer post between the two asset accounts; that is an
+accounting choice and is not made here. ERPNext's Project "consumed material cost" sums ledger value
+by project over Stock Entries (not Material Receipts): a transfer's two rows cancel, a take counts.
+
+**Not built yet:** the account a job take posts to, a closeout step (use everything left, then
+disable the site), and non-stock items, which never enter stock and so never reach a site.
+
+Before the Warehouse field exists (a fresh bench, a deploy between code and patch) `job_sites.ready()`
+is false, nothing is a job site, and every caller behaves exactly as it did before v1.801.0.
+
+**If the setup patch did not finish.** `patches/add_job_sites_warehouse` cannot raise (that would
+abort the deploy), so it is recorded as run whatever happened. Each of its five steps answers done,
+already, skipped or failed; the list is in the migrate output, and when any step did not finish,
+one Error Log row, "Job sites patch (add_job_sites_warehouse): finish these steps by hand", lists
+all five with what to do. By hand: create a group Warehouse "Job Sites" under the company's root;
+choose it in Inventory Scanner Settings → *Job Sites Warehouse*; or run the patch again, which is
+safe twice.
+
+### The Project Shelf (v1.817.0)
+
+The owner's decision of 2026-11-12: "everything is received for Project Shelf by default but
+Parker can then change what location the item is going to", "everything but overhead items should
+default to Project Shelf", and "when it hits the project shelf it should be removed from QTY in
+inventory". Every judgement is in `project_shelf_rules.py` (no Frappe, tested bench-free);
+`project_shelf.py` reads the database.
+
+**What it is.** One warehouse where parts bought for a job wait until the job uses them. It is the
+warehouse ERPNext installed as `Stores`, renamed by `patches/rename_stores_to_project_shelf`, and it
+is named by one setting, `Inventory Scanner Settings.project_shelf_warehouse`: not by its name and
+not by its place in the tree. Blank switches the whole feature off and every caller behaves as it
+did before v1.817.0. It is an ordinary location in every other way: it has a QR label, it can be
+received to, counted and moved from.
+
+**Where it sits.** Directly under the company's root group, beside the shop's group (`Inventory Room - SF`,
+`Inventory - SF` until v1.823.0) and `Job Sites - SF`, where `Stores` already was. Not under `Job Sites`: that group refuses bins and
+everything in it reads as a job site. Not under the shop's group: ERPNext's own reports and 23 of
+production's reorder rules read that group as the shop's stock, no code of ours runs inside them,
+and a shelf placed there would count as shop stock in exactly the places this app cannot correct.
+
+**It is one warehouse, not one per job, so whose stock is on it is derived.** ERPNext keeps
+on-hand by item and warehouse and has no project there. Which job a part on the shelf belongs to
+is read from **the project on each Stock Ledger row** at the shelf:
+
+| Movement | The project on its ledger row |
+|---|---|
+| A receipt against a purchase order | The order line's project (ERPNext copies it from the receipt line; checked in `stock_controller.py` at v16.54.0) |
+| Stock added without an order, at the shelf | The job picked. Refused without one. **It offsets to the Added Without PO account, never to the job's Parts Taken account**: at the shelf the job is who the parts are set aside for, not where they came back from, and crediting it would cancel the charge its later take makes (`project_shelf_rules.add_offset_setting`) |
+| A take at the shelf | The job picked. Refused without one, whatever *Require a Job for Every Take* says |
+| Shelf → a job site | That site's job |
+| Shelf → a bin or the Boneyard (released to the shop) | The job it was bought for: the one the page names, or the only job that holds the item there **when the tags account for every unit of it**. Refused when none is named and several or none hold it, or the item's tags are not exact |
+| A bin → the shelf (set aside) | The job named. Refused without one, and for a finished job |
+| A job site → the shelf | The site's job |
+| A store run | Refused at the shelf: its receipt carries no project on purpose |
+| A count | None. A Stock Reconciliation has no project in ERPNext |
+
+`project_shelf.shelf_stock(project=None, item_code=None)` adds those rows up, and is **the one
+function that answers both "what is on the shelf for project X" and "which projects have stock on
+the shelf"**. The new reports and the Procurement Tracker call it; its signature and return shape
+are pinned by `tests/test_project_shelf.py`. It returns `rows` (job × item: `qty`, `tagged`,
+`over_tagged`, `qty_in`, `qty_out`, `last_movement`), `projects`, `untagged`, `untagged_movements`
+and `exact`.
+
+**A job's figure is never more than is physically on the shelf.** A tag is a claim, and a claim on
+stock that has left is not stock. `rows[].qty` is the job's tag balance **capped by what is on
+hand** (`project_shelf_rules.allocate`): never negative, and an item's rows never add up to more
+than its on-hand. The uncapped balance is `rows[].tagged`, and what the cap took off is
+`over_tagged`. When the tags claim more than is there, what remains is given to the jobs that
+received most recently first: the newest delivery is the one most likely still there. That is a
+rule for sharing out a shortfall nobody recorded, which is why the uncapped number is always
+beside it.
+
+**Its limits, which every screen that shows the numbers must say.** A movement with no project (a
+count, a transfer made by hand in the Desk) changes what is on the shelf without changing any
+job's tag. That drift is reported, never hidden: `untagged` is, per item, what is on hand minus
+what the tags add up to (and `over_tagged`, the claimed stock that is not there);
+`untagged_movements` lists each such ledger row, a count's change worked out from the balance
+before it; a job that has had more taken than it received keeps a **negative** `tagged` (usually
+parts bought for one job and used on another); and `exact` is true only when none of that is
+there.
+
+**The 13 units production started with.** Two items, 6 and 7 units, were received into `Stores`
+for a Design job on 2026-09-09 and 09-15, put away to two shelf bins on 2026-09-23 by a Material
+Transfer made in the Desk with no project on it, and have since been used up: neither item has
+any stock anywhere. The ledger at the shelf still shows 13 in for that job and 13 out for nobody.
+So the function reports `tagged` 13, `qty` 0, `over_tagged` 13 for that job, and both items under
+`untagged`. Nothing is wrong with the stock; nothing is on the shelf. Because the job holds
+nothing, it is never offered as "the only job that holds it".
+
+**Receiving defaults** (`procurement_project.default_line_warehouse`; the rule is
+`project_shelf_rules.line_warehouse`):
+
+| The line's project | Where it is received by default |
+|---|---|
+| Any project that is not an Overhead project | The Project Shelf |
+| An Overhead project | The item's own bin: the bin it is assigned to (an enabled Putaway Rule; with several, the one holding the most), else its Item Default, else the warehouse a reorder rule asks for. Never the shelf, a job site or the Boneyard |
+| An Overhead project, and the item has no bin yet | `Inventory Scanner Settings.overhead_receiving_warehouse` (`Receiving` on production, called `Inventory Room` until v1.823.0) |
+| No project yet, or no shelf set up | Nothing is decided; the line keeps what it has |
+
+It is a default at the moment a line first has both its item and its project. **One thing is not
+a default but a rule the server holds: an Overhead line never sits on the Project Shelf.** ERPNext
+puts it there by itself, because the Company's default warehouse is the shelf since the rename and
+so are hundreds of Item Defaults; shop supplies received there would leave the shop's stock under
+a project that is not a job, and a take would then demand one. So wherever an Overhead line names
+the shelf and the item has somewhere better to go, it is moved, on every path:
+
+- **Every save of a draft order** (`procurement_project.default_line_warehouses`,
+  `before_validate`): a line with no warehouse gets the default, and an Overhead line on the shelf
+  goes to the item's own bin. That covers what the form's script never sees: a duplicated order,
+  one mapped from a Supplier Quotation or a Material Request, a REST or import save that sends a
+  warehouse. Any other warehouse that is already there is left alone. `cascade_project_to_items`
+  also defaults a line whose project it has just filled, when its warehouse is one nobody chose.
+- **A row added to a submitted order with Update Items**
+  (`procurement_project.default_new_order_line`, `before_insert` on Purchase Order Item). ERPNext
+  inserts that row on its own, with no project (mandatory here) and the Company's default
+  warehouse; the hook gives it the header's project and its place by the rule. It is the second
+  of two rules on that hook: `procurement_line_project.fill_new_line_project` (v1.816.3) runs
+  first and owns the project (the header's, else the one the order's lines share, else a refusal
+  in words), so this one places the row by whichever project that rule filled. `hooks.py` holds
+  both in one `"Purchase Order Item"` entry, as a list; a second entry would silently drop the
+  first.
+  **The row never arrives blank, so "by the rule" needs one more case.** The dialog pre-fills the
+  warehouse when the item is picked, and ERPNext fills the same value for a row sent without one
+  (`accounts_controller.get_new_child_item_warehouse` at v16.54.0): the order's own target
+  warehouse, else the item's, its item group's or its brand's default, else the Company's. For a
+  stock item with a bin of its own that is the bin, so a job's part was ordered into shop stock
+  (found on the production mirror, 2026-11-13). A **job's** row whose location is exactly what
+  ERPNext fills for the item goes to the shelf (`project_shelf_rules.added_row_may_default`;
+  ERPNext's own `get_item_warehouse_` is asked, so its four defaults are covered in its own
+  order, and only the Item Default and the Company's default where that function cannot be
+  called). A location typed in the dialog stays, and so does the order's own target warehouse.
+  An Overhead row off the shelf keeps the location it arrives with. *Known limit:* a person who
+  picks the item's own default bin on purpose for a job's line in that dialog cannot be told
+  apart from ERPNext's default, and that row goes to the shelf; the location can still be
+  changed when the line is received.
+- **A receipt saved for the first time** (`procurement_project.default_receipt_warehouses`,
+  `before_validate` on Purchase Receipt): the Desk's Create > Purchase Receipt copies the order
+  line's warehouse. First save only, so a place the receiver picks afterwards stays; never a
+  return; and never when a person has just said where the lines go (the Receive Items dialog and
+  a scan at a bin set `flags.receiving_places_chosen`).
+- **The Purchase Order form** (`public/js/purchase_order_project.js`) shows the default sooner, as
+  the line is filled in, and nothing depends on it being in time. It asks the server when a
+  line's item or project changes and sets the answer **unless the server says the line's
+  warehouse is a person's pick** (`keep`, `project_shelf_rules.form_may_default`). When a line
+  gets its item, ERPNext has just filled the warehouse itself, so only ERPNext's own values (the
+  shelf, the item's default, the Company's default) are replaced. When only the project changes,
+  only the rule's own earlier value is replaced; a warehouse picked by hand stays, even when it
+  equals the item's default bin. The warehouse field's own change event cannot tell the two apart:
+  ERPNext fires it itself after its item lookup. A line from a Material Request keeps its
+  warehouse.
+- **The order's Receive Items dialog** (`public/js/po_receive_items.js`): a *Put in* column per
+  line, opening on `procurement_project.receiving_defaults` and editable. It is the order line's
+  own warehouse, except that **an Overhead line that names the shelf is offered the item's own bin
+  instead**, with a sentence saying so. That is what handles the order lines that were open when
+  `Stores` became the shelf: every one of them named Stores, Overhead ones included, and nothing
+  rewrites them.
+- **Stock Scan receiving**: unchanged. A scan at a bin means "put it here" and still wins. Each
+  open order line now says which job it is for, and when it was ordered for the shelf it says
+  that receiving it here puts it on this bin instead.
+- **The document-intake drafts** (`accounting_intake/actions/packing_slip.py`, `vendor_bill.py`):
+  `procurement_project.apply_receiving_defaults`, the same rule as the dialog.
+
+**Shelf stock is not shop stock, on this app's own screens.** `project_shelf.not_shop_warehouses()`
+is every job site plus the shelf, the one set every total reads:
+
+| Where | What it shows |
+|---|---|
+| Stock Scan search, "on hand" | The shop's total (`on_hand_total`); `on_project_shelf` beside it as "N for jobs", and `on_job_sites` as before |
+| Item card, "Also at" | Shop locations only; the shelf on its own line with its jobs, "On Project Shelf, bought for a job: 5 (Water Wall (3), Lobby (2))"; job sites on theirs |
+| The shelf's own screen and an item opened there | A note saying what the shelf is, and each item's jobs |
+| Reorder Board | A rule's projected quantity leaves out stock on the shelf and orders on their way to it, at every group above it (`job_site_rules.without_sites`, given the shared set). No rule is rewritten |
+
+**The 29 reorder rules that roll up at `All Warehouses - SF`.** They are left as they are, as the
+job-site work left them, and the shelf is taken out of their reading the same way a job site is.
+That is the right outcome for them: an order for a job no longer makes the board think the shop is
+covered. The 23 rules that roll up at `Inventory - SF` never saw `Stores` in the first place. A
+replenishment order placed on an Overhead project now defaults to the item's own bin, inside
+`Inventory - SF`, so both kinds of rule count it; before v1.817.0 it defaulted to `Stores` and the
+23 did not. ERPNext's own Projected Quantity report and its automatic reorder (switched off here)
+are not corrected: no code of ours runs inside them.
+
+**It is never an item's bin** (`project_shelf.refuse_as_bin`), as the Boneyard and a job site are
+not: *Put on this bin*, *New item here* and *Make … this item's bin* are refused there. On the day
+of the rename 774 Item Defaults and 54 enabled Putaway Rules named it, left by ERPNext's company
+default and by the v1.689.0 backfill. The rules, and the defaults of items that maintain stock, are
+not deleted and not rewritten (the next paragraph has the rest): the listing
+(`api.stock_scan._items_at`) lists the shelf by what is there or on its way and nothing else, and
+`item_own_bin` skips the shelf wherever it appears. A leftover rule or default goes away by itself
+when its stock is moved off the shelf with *Make … this item's bin* ticked, the same release a
+move out of any bin does.
+
+**Items that do not maintain stock no longer name it** (Nikolas, 2026-11-12: "Blank the 705"). The
+patch's sixth step blanks `default_warehouse` on each Item Default row that names the shelf where
+the item has Maintain Stock off, a disabled item included. The rule is read when the step runs, so
+an item switched to Maintain Stock before the deploy keeps its row, and no count is expected. Only
+that field is written: the row and its other defaults stay, so ERPNext adds no new row at the next
+save. The rows on items that maintain stock are left for the owner to sort by hand, and the patch
+prints how many. Nothing reads a blank as a place. ERPNext 16.54.0 does not require the field, and
+for a new line it goes on down its own order (`get_item_details.get_item_warehouse_`): the
+document's own warehouse, the item's default, its item group's, its brand's, the row's own, and
+last the Company's default, which is the shelf. None of these items is in a group or brand with a
+default, so ERPNext's forms offer what they did. Every reader in this app asks for a set value or
+an exact warehouse (`tests/test_project_shelf.py`, `TestAnItemWithNoDefaultWarehouse`). The one
+that did depend on the default was Maintain Stock's switch, which gives a warehouse-less open order
+line a warehouse: it read the item's default and then Stock Settings', and would have refused a
+blanked item. It now asks ERPNext what a new line would get (`maintain_stock._fill_warehouses`), so
+such a line gets the Company's default, as it would from ERPNext itself.
+
+**An item's first count never opens there** (`maintain_stock.first_count_warehouse`, rule in
+`project_shelf_rules.first_count_warehouse`). After Maintain Stock is switched on for one item,
+*Open a Stock Reconciliation* opens a count with the item and a location on its row. That location
+was the item's Item Default, which on most items the switch is for is the shelf (over 700 of the 774
+defaults naming it were on non-stock items). It is now the item's own bin, else the Overhead
+receiving warehouse, else empty, and an empty one has to be chosen by the person: ERPNext's form
+fills a row's warehouse only from its own *Default Warehouse*. The message after the switch says
+which location the form opens on and that the shelf is only for parts bought for a job
+(`maintain_stock_rules.next_steps`). With no shelf set up the suggestion is the item's default, as
+before, but never a job site. The bulk switch page opens no count, so it suggests no place.
+
+**A label printed for `Stores` still opens the shelf** (`project_shelf.former_name`,
+`api.stock_scan._warehouse`), unless a warehouse of that name exists again.
+
+**People's saved list filters.** Frappe's rename means to rewrite a saved filter that names the
+renamed record, but at v16.56.0 it looks for them with `LIKE` and no wildcards and finds none, so
+a list somebody last filtered to `Stores - SF` would open empty. The patch rewrites the quoted old
+name in `__UserSettings` and drops the cached copies. Its report says how many rows and how many
+people, never who: the migrate output lands in the build log.
+
+**If the patch did not finish.** `patches/rename_stores_to_project_shelf` cannot raise (that would
+abort the deploy), so it is recorded as run whatever happened. Each of its six steps answers done,
+already, skipped or failed; the list and the counts of what still points at the shelf are in the
+migrate output, and when any step did not finish, one Error Log row, "Project Shelf patch
+(rename_stores_to_project_shelf): finish these steps by hand", lists them with what to do. It is
+safe to run again, and a later run applies its rules again rather than doing nothing: a non-stock
+item pointed at the shelf on purpose since the deploy is blanked again. It moves no stock, rewrites no order line, disables no Putaway Rule and changes
+no Item Default of an item that maintains stock. On a site that never had the warehouse (no
+`Inventory - SF`, or no `Stores` and no `Project Shelf`) every step answers "not needed here" and no Error Log row is written.
+
+**The stock KPIs** (`kpi_dashboards/snapshots.py`): *Stocked Items Below Reorder*, *Stocked Items
+Out of Stock* and *Out-of-Stock Sellable Items* mean **shop stock** and leave out job sites and the
+shelf; *Inventory Stock Value* and *Stock at Placeholder Cost* mean **all stock**.
+
+**The Bin Manager and the job.** `bin_assignments.move_to` and `send_to_boneyard` take `project`.
+A page that moves stock off the shelf sends the job it was bought for; the choices and whether one
+may be assumed come from `api.stock_scan.get_item(item_code, warehouse=<the shelf>)`:
+`shelf_jobs` (`[{project, project_name, qty}]`) and `shelf_jobs_exact`. With `project` left out,
+the server uses the only job that holds the item when the tags are exact, and otherwise refuses
+with a sentence that says to name one. A move onto the shelf sends the job it is set aside for
+(any open job from `api.stock_scan.search_projects`). The Bin Manager page asks for the job on
+those moves since its views of v1.812.0 (`bin_views.shelf_job_moves`), which switch the question
+on when this module is installed and `move_to` takes `project`: both are true from this release.
+
+**Not built:** a way to move a part on the shelf from one job to another without it leaving the
+shelf; and non-stock items, which never enter stock and so never reach the shelf.
+
 ### The Bin Manager page (v1.693.0)
 
 ER-2026-1320545: a Desk page for a PC, no scanning, separate from `/stock-scan` and calling the
@@ -584,6 +985,67 @@ grouped under its parent, with how many items are on hand and assigned there, an
 `set_route`, Back returns to the picker, Forward to the bin, and dialogs push nothing (the router
 closes an open one on Back). `?warehouse=<name>` is read from `frappe.route_options` and opens that
 bin in place of the picker; `?q=` fills the filter.
+
+**Filters and views (v1.812.0).** Nik, 2026-11-12: "having more filters and different views
+would be good. So for example I want to be able to see by Project which items are at the Job
+Site."
+
+| Route | What it shows |
+|---|---|
+| `/desk/bin-manager` | The picker, now with filters: what is typed, the kind of place (shop bins, Project Shelf, job sites, Boneyard, vehicles), a job, an item (the places that hold it or have it assigned), and one quick filter (has stock, empty, assigned items missing, unassigned stock) |
+| `/desk/bin-manager/by-project` | The jobs with material on the Project Shelf or at a job site |
+| `/desk/bin-manager/by-project/<project>` | One job: what is on the Project Shelf for it and what is at its site, with **Send to job site** and **Bring back to the shelf** on each row |
+| `/desk/bin-manager/job-sites` | Every job site with its job, customer, item count and value |
+| `/desk/bin-manager/problems` | Assigned but empty; stock with no assignment; stock on the Project Shelf for a finished job; stock still at a finished job's site |
+
+- **The four tabs are routes**, so each is one history entry. **The picker's filters are not**:
+  they are written into the picker's own address in place (`?kind=job_site&project=PRJ-00597`,
+  `history.replaceState`), so a filter never adds an entry, Back from a bin lands on the picker as
+  it was left, and a link carries the filters. They come back in through `frappe.route_options`,
+  like the old `?warehouse=` link, which still opens its bin.
+- **A warehouse cannot be named like a view.** `by-project`, `job-sites` and `problems` are the
+  only reserved second segments; a warehouse's docname ends in its company's abbreviation.
+- **Kinds are the server's** (`bin_views.decorate`, called by `manager_boot`):
+  `project_stock_rules.warehouse_kind` with the Project Shelf from
+  `Inventory Scanner Settings.project_shelf_warehouse`, the sites from `job_sites`, the boneyard
+  the boot already chose, and vehicles from `Employee.custom_default_vehicle_warehouse` (anything
+  under a warehouse named there, or whose name reads as a truck or van). A site without the
+  Project Shelf field or the job-site field simply has none of that kind. If the extras cannot be
+  read at all, the page is the one it was before v1.812.0.
+- **"Unassigned stock" is only ever a shop bin's or a vehicle's.** Nothing is assigned to a job
+  site, the boneyard or the Project Shelf by design, so stock there is never counted or listed as
+  unassigned.
+- **The moves are the page's ordinary Move** (`bin_assignments.move_to`, never `make_home`): a
+  logged Material Transfer that carries the job and can be undone. A job with no site has it
+  opened first by `api.stock_scan.job_site`, which refuses what the move itself would refuse. The
+  page asks why nothing can be sent before it offers the button (`project_view.send_refusal`).
+  Only the job's own share of the shelf can be sent from this view.
+- **The Project Shelf's numbers come through `project_stock.shelf_stock` and
+  `shelf_by_project`**, the one door, which answer from `project_shelf.shelf_stock` once that
+  module is installed (and from the ledger by the same rule until then). A job's balance there is
+  by the job on each ledger row and can exceed what the shelf holds; a row is cut to what the
+  shelf can hand over and shows "of N on record" when the two differ. `bin_views.py` has no shelf
+  query of its own.
+- **A move onto or off the Project Shelf names its job** (with the Project Shelf's v1.804.0).
+  `logic.shelf_move` says when: off the shelf to a bin or the boneyard ("Which job were these
+  bought for?"), or onto it from a bin ("Which job are these being set aside for?"); never
+  between the shelf and a job site, whose job the site names. The Move and Send to boneyard
+  dialogs list the jobs that hold the item (`api.stock_scan.get_item`: `shelf_jobs`), start on the
+  only one only when `shelf_jobs_exact` is true, and otherwise make the person choose, by name
+  through `search_projects` if need be. The job is sent as `project` to `move_to` /
+  `send_to_boneyard`. The page asks only when the boot says `shelf_job_moves`
+  (`bin_views.shelf_job_moves`: the Project Shelf module is installed and the installed `move_to`
+  takes a `project`); otherwise it moves stock exactly as before.
+- **Nothing is assigned at the shelf, a job site or the boneyard**, so `assigned_items` and
+  `missing_items` are 0 there and Problems leaves their leftover Putaway Rules out.
+- **Who sees what.** Every read is behind the Stock Scan role gate. A job's customer is added only
+  for a caller who can read Projects; stock value only for one who can read the Stock Ledger.
+  `project_view` takes a project's name from the caller, so it checks that one Project
+  (`frappe.has_permission("Project", "read", doc=...)`): without it the answer carries the id,
+  the name the job's site already shows, and the stock, with no status, type, customer or
+  "finished" sentence, and reads the same for an unreadable job as for one that does not exist.
+- The pure decisions are `public/js/bin_manager/views.js`; the routes and saves stay in
+  `logic.js`. Tested by `scripts/test_bin_manager.mjs` and `tests/test_bin_views.py`.
 
 A bin shows the rows `api/stock_scan.get_location` returns, each with why it is listed, and these
 actions, shown only to people who can do them (from `bin_assignments.manager_boot`, never a role
@@ -655,7 +1117,7 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
   neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
-  ignored): `Inventory - SF` for a bin, `All Warehouses - SF` for the Inventory Room. Existing rules are
+  ignored): `Inventory Room - SF` (the shop's group) for a bin, `All Warehouses - SF` for Receiving. Existing rules are
   never changed. (`api.item_flow.save_stock` still writes the bin as its own group: a follow-up.)
 * **Endpoints** (`api/reorder_levels.py`, POST): `get_reorder_levels(warehouse, item_codes)` (the Stock
   Scan roles; `can_edit` is Item write), `set_reorder_level(item_code, warehouse, modified, level, qty,
@@ -689,9 +1151,30 @@ TASK-2026-02922 to -02926.
   the rules and projected quantities ERPNext's own `get_items_for_reorder` and
   `get_item_warehouse_projected_qty` return: Item enabled, stock item, not past end of life, the warehouse
   enabled, variants inheriting their template's rules, projected read at the rule's `warehouse_group` and
-  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for the Inventory Room,
-  `Inventory - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
+  a missing Bin as 0. Every production rule has a group (`All Warehouses - SF` for Receiving,
+  `Inventory Room - SF` for bins), so "below" means across the group, as it always did. Level 0 with a quantity is
   a real rule. Only `Purchase` rules are listed (all of production's are).
+* **Where it is (v1.833.1, TASK-2026-03279).** A rule's warehouse is where its request delivers, not where the
+  stock is.
+  * **The line lists the stock first:** every bin the rule counts that holds the item, with its quantity
+    (`reorder_rules.stock_places` over `reorder_board.read_stock`, the Bin Manager item filter's read of
+    `tabBin`).
+    * A negative row is kept and shown as negative, because the projected quantity counts it.
+    * "Counts" means the rule's scope (`in_scope`) less job sites and the Project Shelf. The rule's own
+      warehouse is always counted, as `without_sites` keeps its figure.
+  * **Then the delivery bin:** "Reorder into" names the rule's warehouse.
+  * **A warning** when the rule's bin is empty while the stock is in another bin, or when the rule's bin is
+    not one of the item's bins in the Bin Manager (an enabled Putaway Rule, `read_assigned`). The board
+    never decides which bin is right.
+    * No warning for a rule that delivers to the receiving place
+      (`Inventory Scanner Settings.overhead_receiving_warehouse`, `project_shelf.fallback_warehouse`). Stock
+      is put away from there, so receiving holding none is normal. 29 of production's rules deliver to
+      `Receiving - SF`.
+  * **"Not counted by this rule"** lists stock outside the scope, with job stock "held for jobs".
+  * **On hand** is what the rule counts, across the same scope as Projected.
+  * **Why:** production's 406-020 had its rule on an empty B2-3-4 while its stock was in B1-3-12, and the board
+    showed only B2-3-4.
+  * **Storage Location is not involved:** it has no rows on production, and the board does not read it.
 * **Covered** means a request or order line for that item, in the rule's scope, with **something still to
   come** (`reorder_rules.still_to_come`): the part of a Material Request line not yet on a submitted Purchase
   Order, plus what its submitted orders that are not Closed, Completed or Delivered have not delivered. So:
@@ -704,7 +1187,7 @@ TASK-2026-02922 to -02926.
   * Stopped, Cancelled and Closed requests never cover;
   * the **scope** (`in_scope`) is the rule's warehouse and, for a rule with a `warehouse_group`, every warehouse
     under that group, which is where ERPNext reads the rule's projected qty. A Draft for a sibling bin covers a
-    bin rule grouped on `Inventory - SF`, as a submitted one would by raising that group's projected qty.
+    bin rule grouped on the shop's group, as a submitted one would by raising that group's projected qty.
 
   A covered item is on **On order**, at its stage from the documents' own links (MR Item ← PO Item
   `material_request_item` ← PR Item `purchase_order_item`): Draft request, Requested, PO in draft, Partially
@@ -734,10 +1217,50 @@ TASK-2026-02922 to -02926.
   `Inventory Scanner Settings.reorder_alert_role` (default Purchase Manager; Administrator, Guest and
   `triton@` excluded), with one bell notification each linking the board, and stamps them in the same
   transaction. Nothing new, nothing sent. The rows are the memory, so a deploy's FLUSHDB loses nothing. The
-  email's table is four columns (item and name, warehouse, projected / reorder at, suggested buy) so it reads
-  on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
+  email's table is four columns (item and name, the rule's warehouse headed "Reorder into", projected / reorder
+  at, suggested buy) so it reads on a phone. The first digest after the deploy names everything already short, since none of it has a row yet.
 * **Endpoints** (`api/reorder_board.py`): `get_board`, `create_material_requests`, `snooze_line`,
-  `unsnooze_line`. Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+  `unsnooze_line`, and since v1.831.0 `get_reorder_suggestions` and `apply_reorder_suggestion` (below). Tests: `tests/test_reorder_board.py` (its own CI step; the page logic runs under node).
+
+### Suggested reorder levels (v1.831.0)
+
+The 2026-11-19 operations review: set reorder points from real usage, approved item by item. The
+board's fourth tab, **Reorder levels** (`/desk/reorder-board/levels`, a route like the others), lists
+every Purchase rule the board reads with its current numbers, a suggested pair and the basis. Every
+judgement is `reorder_suggest_rules.py` (no Frappe); `reorder_suggestions.py` reads and writes.
+
+| | |
+|---|---|
+| **Used** | Stock that left the shop for a job or a customer, in the rule's scope (its `warehouse_group` and everything under it, else its warehouse; `reorder_rules.in_scope`): takes (Material Issue), deliveries (Delivery Note, Sales Invoice, POS Invoice taking stock out), and moves out to a job site or the Project Shelf; less stock added with a job picked (Material Receipt carrying a Project: Stock Scan's + with a job), in full, and moves back from a job site or the Project Shelf, **up to what the shop sent out to them in the same period** (the shelf also holds parts bought straight for a job, and a site can be stocked from the shelf; those were never the shop's to have used). The shop is everything but the job sites and the Project Shelf |
+| **Not used** | Count corrections (shown beside the suggestion, derived as ERPNext's Stock Ledger report does, never counted), moves between shop places, receipts, returns to a supplier |
+| **Basis** | One period for the uses and the days (`measure`): from the latest of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site recorded, and the item's first day in the shop, through today |
+| **Enough** | At least `MIN_USES` (3) uses over at least `MIN_DAYS` (14) days, and something used on balance. Otherwise the rule is listed under "too little history" with its basis and its one reason: not in the shop, not used, as much came back as went out, too few uses, too few days |
+| **Reorder at** | daily use × (lead time + `SAFETY_DAYS`, 7), rounded up |
+| **Buy** | daily use × `COVER_DAYS` (30), rounded up, never below one unit |
+| **Lead time** | The Item's `lead_time_days`; 7 days (`DEFAULT_LEAD_DAYS`) assumed when it is 0, and the page says so. On production on 2026-11-19 no rule item had one |
+
+- **Apply** (`api.reorder_board.apply_reorder_suggestion`, POST): Purchase Manager, Stock Manager or
+  System Manager (`APPLY_ROLES`), **and** the Item's own write permission (`item.check_permission("write")`).
+  ERPNext gives Item write to Item Manager alone, and production's Custom DocPerms keep it so (Stock
+  Manager has write 0), so Apply is in practice for people with Item Manager and an apply role: 14
+  on 2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+  without Apply and a sentence naming the role. One `Item.save()` as the person, on the rule the row
+  showed only (never a new rule), with the Item's `modified` from the read: a stale page writes
+  nothing. The dialog starts on the suggestion and the numbers can be changed before saving; Reorder
+  at may be 0, Buy must be more than 0, both at most 100,000, whole for a whole-number unit.
+- **Read** (`api.reorder_board.get_reorder_suggestions`, GET, the board's roles): the board's own
+  `read_rules`, then one SQL read of the ledger per item code (the rule items' whole ledger, because a
+  count's change needs the balance before it), the first recorded take, and the items with a possible
+  use in the window. It is made only when someone opens the tab.
+- **A variant's rule from its template.** ERPNext's reorder job gives a variant with no rule of its
+  own its template's rules (`get_reorder_levels_for_variants`, v16.54.0), and the board lists them
+  under the variant. Changing one changes it for every variant, which is not an item-by-item
+  approval: the line is marked "Rule set on its template" (`inherited_from`, from the item's
+  `variant_of` and the rules it holds itself), has no Apply, and the endpoint refuses it in those words.
+- **Items used with no rule** are listed under the tab, read-only, with the same basis and
+  suggestion; a rule is given from the Bin Manager's Reorder column.
+- **What production showed on 2026-11-19:** 53 rules, and no rule item with more than one recorded
+  take, so every rule was under "too little history". Suggestions appear as takes are scanned.
 
 ### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
 
@@ -912,6 +1435,630 @@ Inventory Enhancements workspace (a shortcut beside Stock Scan, and first in its
 linked by `patches/count_desk_hub_links`, and an *Open in the Count Desk* button on the Inventory
 Count Session form.
 
+## The Warehouse Map (v1.818.0)
+
+Nik, 2026-11-12: "we need a map for the location bins and a way to edit and create the map for
+our warehouse locations at our office. I'll provide the floor plan layout and you help me create
+the map from that." `/desk/warehouse-map`, drawn with the Bin Manager's tabs so it reads as one
+more of its views (the Bin Manager has a **Map** tab that opens it).
+
+**A map is a floor plan picture with boxes over it, and what is inside a box is never drawn by
+hand.** A box stands for a Warehouse: a bay, a row of alcoves, a room. Tapping a bay opens its
+**front view**, the shelves and bins a person sees standing in front of it, built from the
+Warehouse tree (`warehouse_map_rules.levels`). So a person places about thirty boxes and the map
+shows more than two hundred bins, and a bin made in ERPNext later appears inside its bay with
+nobody touching the map. The decisions that shaped it (Nik's answers the same day):
+
+| Asked | Decided |
+|---|---|
+| What it covers | The shop rows and rooms, upstairs, the other rooms; vehicles and job sites as a list beside the map, because they are not in the building |
+| Shelf levels on a flat plan | Tap a bay, see its front. Shelf 1 is at the **top** and bin 1 at the **left**; a box can say otherwise (`shelves_from`, `bins_from`) |
+| Who edits | A new role, **Warehouse Map Editor** (and System Manager). Everyone with a Stock Scan role looks |
+| Where it opens | The Bin Manager's Map tab, a bin's *Show on map*, the Item and Warehouse forms, the Where Is This Item and Location Contents reports, Stock Scan on the phone, and a printed sheet |
+| The floor plan file | On the site only. It is a real building's layout and this repository is public |
+| Creating bins from the map | Nik: "Editor can also create bins". Built in v1.820.0 (slice 2): see *Making a bay, a shelf or a bin* |
+
+### Routes
+
+| Route | What it shows |
+|---|---|
+| `/desk/warehouse-map` | The first map (replaced by its own address) |
+| `/desk/warehouse-map/<map>` | One floor |
+| `/desk/warehouse-map/<map>/<warehouse>` | That floor with one box open: its front view, and a picked bin's items |
+| `/desk/warehouse-map/<map>/edit` | The editor |
+
+Each is its own history entry. What is being looked for rides in the address's query and is
+carried from screen to screen: `?item=<code>` lights up where an item is, `?bin=<warehouse>` is
+the bin picked in the open box. Picking a bin or an item rewrites the query in place
+(`history.replaceState`): it is not a screen. `?w=<warehouse>` is the *Show on map* link from
+everywhere else; the server answers which map and box show it (`locate`) and that screen
+**replaces** the link's entry, so Back from the map returns to where the link was pressed.
+
+### What the colors mean
+
+A bin is **has stock**, **empty** or **has a problem**, from the same counts the Bin Manager
+shows (`api/warehouse_map._bin_rows` calls `bin_assignments._bin_rows` and `bin_views.decorate`,
+never a query of its own, so the two pages cannot disagree). A problem is what the Bin Manager's
+Problems view lists for a bin: an assigned item with none on hand, or stock on hand that nobody
+assigned there. A box takes the worst color inside it, so a problem can be seen from the floor
+view. An item being looked for is outlined on top of that, on every floor it is on.
+
+### The stored map
+
+| | |
+|---|---|
+| `doctype/warehouse_floor_map/` | DocType **Warehouse Floor Map**, one floor: `map_name` (its docname, and one part of the page's address), `sort_order`, `disabled` (left off the page for everyone but editors while it is being drawn), `background` (the floor plan picture; read-only in the Desk form, uploaded on the page), `width` / `height` (the drawing's size; with a picture, the picture's pixels) and `shapes` |
+| `doctype/warehouse_floor_map_shape/` | DocType **Warehouse Floor Map Shape**, one box (a child row): `shape_type` (Rack, Room or Label), `warehouse` (a **Link**, so a rename follows by itself; `ignore_user_permissions`, so a User Permission on Warehouse cannot make a whole map unreadable), `label`, `x` `y` `w` `h`, `rotation`, `shelves_from`, `bins_from`, `bin_order` (the box's own order, when the automatic one is wrong) |
+| `warehouse_map_rules.py` | Every judgement, no Frappe: what a box may be, the front view, the boxes worth placing, which box shows a warehouse, the colors |
+| `api/warehouse_map.py` | The endpoints (see [`api/README.md`](../api/README.md)) |
+| `page/warehouse_map/` | The page script (draws and wires) and its CSS, every selector under `.wm-` |
+| `public/js/warehouse_map/logic.js` | The page's pure decisions, in `warehouse_map.bundle.js` (`window.sf_warehouse_map`) |
+
+- **The DocType is not called "Warehouse Map", on purpose.** Frappe's router makes a route out of
+  every DocType a user can read by slugging its name, and asks "is this a DocType?" before "is
+  this a page?" (`router.js` `segment_kind`, read at v16.56.0). A DocType named `Warehouse Map`
+  slugs to `warehouse-map`, the page's own address, so everyone who can read it (everyone the page
+  is for) would get its list view and never the page. Hence `Warehouse Floor Map`. A test holds
+  every Page in this app against every DocType in this app.
+- **The rules run in the DocType's `validate`**, not in the endpoint, so the Desk form (the plain
+  way in) is held to them too: a box is the named fields only, finite and inside the drawing; a
+  rack is tied to a warehouse and a label has words; **one warehouse is on one box and one map**,
+  so "show this bin on the map" has one answer.
+- **The floor plan picture is a private file or nothing, on the map and on the site.** It is
+  attached to the map's own record, so Frappe serves it to exactly the people who can read the
+  map (`File.has_permission`, read at v16.56.0). Four things hold that, because the first alone
+  did not (review of PR #1453):
+  - the map refuses an address that is not `/private/files/...` (`background_problem`);
+  - the map refuses an address unless a File with it exists, is private and is attached to
+    **this** map (`WarehouseFloorMap._background_file_problem`); an address alone proves nothing
+    about the file behind it;
+  - **a public File attached to a map is refused, whoever makes it and however**
+    (`warehouse_map_files.refuse_public_file`, a `File` `validate` doc_event). Without this the
+    map only declined to *store* a public address while the public file stayed on the site,
+    readable without signing in. The refusal leaves nothing behind: the throw rolls the request
+    back and `File.on_rollback` deletes the blob the insert wrote. Production does not restrict
+    public uploads (System Settings, read 2026-11-12), so nothing else would have;
+  - the page uploads the picture itself (a file chooser and one POST to `upload_file` with
+    `is_private=1`), **not** through `frappe.ui.FileUploader`. That dialog offers a Private switch
+    and a web-link tab, and it ticks *Optimize* for any image over 200 KB, after which the server
+    shrinks the picture to at most 1024 by 768 (`frappe/utils/image.py` `optimize_image`): a
+    floor plan at that size is a blur once the map is zoomed. The Desk form's own field is
+    read-only for the same reason.
+- **A map reads warehouses and never writes one.** `Warehouse Floor Map` and
+  `Warehouse Floor Map Shape` are in `ignore_links_on_delete` (`hooks.py`), so a map is never the
+  reason an empty bin cannot be deleted. What happens to the box depends on what happened to the
+  warehouse (`warehouse_map_rules.missing_reason`):
+  - **deleted**: the box is drawn dashed in red, the editor says "deleted", and the map's next
+    save is refused, in the app's own sentence, until the box is removed or tied to another
+    warehouse. (`save_map` cleans the boxes before the rows exist, because Frappe checks a row's
+    Links *before* `validate`, and would say "Could not find Row #3: Warehouse".)
+  - **disabled**, or made a **Transit** warehouse: the box is kept and still saves. It is drawn
+    dashed, cannot be opened, and comes back by itself when the warehouse is enabled again.
+- **A map's name can be part of an address, and of a jQuery selector.** Refused: `/ \ ? # % &`
+  (they split an address), `"`, `<`, `>`, control characters, and a name that is only `.` or `..`.
+  The double quote is not about the address: on every route change the Desk builds a selector out
+  of the first two parts of the address (`container.js` `has_sidebar`, read at v16.56.0), a quote
+  in it makes jQuery throw before the page is told it is on show, and the page then sits on
+  "Loading" for everyone. The rule also runs on a rename (`before_rename`), which runs no
+  `validate`.
+- **A disabled or Transit warehouse is never drawn**, as on the labels page.
+- **Shelf order is the names', not the tree's, and a position word is a position.** The tree's
+  own order is creation order (production reads `Bin C2-3-6` before `Bin C2-3-5`), so it is never
+  used. Siblings are sorted with `warehouse_map_rules.position_key`: numbers count (bin 9 before
+  bin 10), and Left / Center / Right, Top / Middle / Bottom, Front / Back sort by the place they
+  name. Plain sorting put a row of Left, Center and Right bins on screen as Center, Left, Right,
+  and turning the row around (*Bin 1 is at the Right*) only gave Right, Left, Center (review of
+  PR #1453). Production's tree, read on 2026-11-12, uses Left, Center, Right and Top and no other
+  position word.
+- **Where no rule can know, a box carries its own order.** Rows named for colors have no order a
+  rule could find. The editor's *Order as you face it* moves a shelf up or down and a bin left
+  or right, and the box then stores its whole order (`bin_order`, one warehouse per line). What
+  the box lists comes first, in its order; anything it does not list (a bin made later) follows
+  in the automatic order. A warehouse renamed later is rewritten in every box's order by
+  `warehouse_map_files.follow_warehouse_rename`, since Frappe's rename reaches Link fields and
+  not text; one deleted leaves the order on the map's next save.
+
+### The editor
+
+*Edit map* is shown to people who may write and create a Warehouse Map. *Not on a map yet* lists
+the boxes worth placing (`warehouse_map_rules.units`: the highest group at most two steps above
+its bins, and every bin that hangs higher than that; vehicles and job sites left out), each one
+click to add. A box is dragged to move it, dragged by its corner square to size it, nudged with
+the arrow keys, turned 90° by swapping its sides (a rack is a rectangle; `rotation` is for a box
+that really sits at an angle), and tied to any warehouse through the picker.
+
+- **Save sends the whole list of boxes** with the `modified` stamp the editor opened with; a map
+  changed since is refused rather than overwritten, and the stamp is required (a save without it
+  is refused, so the check cannot be skipped). *Refresh* in the editor loads the stored map
+  again, after asking about boxes not saved.
+- **Leaving with unsaved boxes is not blocked**, because blocking a route change breaks Back. The
+  boxes are kept while the Desk stays open, the page says so when you leave, and the browser asks
+  before the tab is closed.
+- **A new picture of another size** makes the drawing take the picture's size and scales every
+  box with it, so the boxes stay over the same spots.
+- **Who.** The role is created by `patches/seed_warehouse_map_editor_role` (pre-model-sync, so it
+  exists before the DocType names it) with a one-role Role Profile, and is granted to nobody: who
+  holds it is decided in the Desk. The role adds editing to someone who already works the
+  inventory; by itself it does not open the page.
+
+### Making a bay, a shelf or a bin (v1.820.0, slice 2)
+
+The editor can make the places a map shows: **New bay** on the editor's bar, and in the picked
+box's *Order as you face it* a **+** at the end of each shelf (a bin) and **Add a shelf**. Each
+opens a dialog that shows the name before anything is made, says the place is made in ERPNext at
+once, and has *Make it* as its only way on. A new bay and a new shelf can be made with their
+shelves or bins in the same step (up to 30).
+
+| Asked (the manager's defaults, 2026-11-16) | Built |
+|---|---|
+| Who may make one | Whoever may edit the map (the Warehouse Map Editor role, or System Manager), **without** create on Warehouse, which on production only Item Manager has. That is what Nik's pick means. The endpoint also asks read on the place it is made inside |
+| How | `api.warehouse_map.create_location` inserts through the Warehouse document, `frappe.get_doc({...}).insert(ignore_permissions=True)`: the permission is the only thing skipped. ERPNext's `Warehouse.validate` (the parent is a group of the same company; the stock account resolves), its nested-set update, every `doc_event` of this app and every Link check run. No raw SQL, no background job (a deploy empties the queue), nothing on migrate |
+| What it may do | Make, only. Nothing renames, moves, disables or deletes a warehouse. A place made by mistake is deleted in the Desk (Warehouse list, the place, Delete) by an **Item Manager**, which ERPNext allows while nothing has ever been kept there |
+| The name | Follows the places already there (`warehouse_map_rules.suggest_name`): the stem most of them share and **the highest number plus one**, never the last name in text order (`Bin C2-3-17` after sixteen bins). A note in brackets is not part of the number. With nothing there yet, the kind and the parent's code: `Shelf A3-1` in `Bay A3`, `Bin A3-1-1` on `Shelf A3-1`. Where the places have no number to follow (`Alcove 1 Left`), the dialog says so and the person types it. The person can change any suggestion |
+| Refused, in the app's own sentence, before anything is made | A name the map's own rule refuses (the characters that would break an address); a name any warehouse already has, disabled ones included, without regard to case; anything inside **one place** (a room that is one bin, the Project Shelf, the boneyard), a disabled or Transit warehouse, a vehicle or a job site |
+| Where each kind may go (review round 1) | By the shape of the tree, never by names (`warehouse_map_rules.placement_problem`). A **bin** is refused in a group whose children are all groups (a row of bays, a bay of shelves, an upstairs area of areas). A **bay or shelf** is refused in a group whose children are all bins (a shelf of bins), except in **a group directly under the top of the tree** (its parent is the root group, read from the tree): that is a room or an area, and a rack can always go in it, whatever it holds today. That is the Lagoon, which holds only the Cage and the Equipment Room. An empty group, and one that already mixes groups and bins, take either. The editor offers only what this allows (`editor_data`'s `takes_group` / `takes_bin`, refreshed after each make) |
+| Inside one place | Refused, not converted: ERPNext refuses turning a place into a group once it has ever held stock, and doing it from a map would leave every item assigned there without a bin. An Item Manager can do it in ERPNext |
+| A new bay's box | Placed in the middle of the map, in the same step, as the editor's other boxes are: it needs *Save*. The dialog says, before anything is made, that a bay made and then left unsaved still exists and waits under *Not on a map yet* |
+| A new shelf or bin | Shows in the box's *Order as you face it* at once (read back in the box's own order, so a bin made in a box with its own order lands at the end of its shelf, as the floor shows it), and on the floor's front view: the stored maps are read again |
+| The Bin Manager and Stock Scan | Nothing on the server caches the tree, so both read a new bin on their next request. The Bin Manager keeps its list of bins while it stays open; the map sends `sf-warehouses-changed` and the Bin Manager reads its list again the next time it is shown, as after one of its own saves. Stock Scan is a page of its own and reads everything fresh |
+| A tab open across the deploy | The page asks for the second copy of its bundle (`sf_warehouse_map.version >= 2`) before it offers any of this, so a tab holding the older copy shows the editor as it was until it is reloaded |
+
+What a new place does not get: a printed label (Warehouse Labels prints it like any other), an
+assigned item (the Bin Manager's door), or a stock account of its own (ERPNext finds the nearest
+one above it).
+
+### Free space, and the walk for a count (v1.821.0, slice 3)
+
+Nik's purposes for these, 2026-11-12: "plan where stock goes" and "walk a count or train".
+
+**Free space is a view of the map, not a page.** *Stock* and *Free space* sit beside the floors;
+each is its own address (`?view=free`), so Back returns to the other.
+
+| Asked (the manager's defaults, 2026-11-16) | Built |
+|---|---|
+| What free means | A bin is **free** when nothing is on hand, nothing is on order to it, its balance is not negative and no enabled Putaway Rule points at it; **kept for an item** when an item is assigned or on order to it and none is on hand; otherwise **in use**, a negative balance included (`warehouse_map_rules.space_state`). Read from the Bin Manager's own two reads (`bin_assignments._bin_rows` and `bin_views.decorate`), the same counts its *Empty* and *Assigned items missing* filters use, plus two reads of Bin for on order (`ordered_qty > 0`) and below zero (`actual_qty < 0`). The Bin Manager has no word for "free", so the map's words are new and its numbers are not |
+| When free space is not worked out | When the kinds cannot be trusted (`decorate` failed; the Project Shelf the settings name came back as a shop bin; a place under the job-sites group came back as a shop bin) or the on-order and below-zero reads fail, no bin is called free and the page says so |
+| What is never free | Only a **shop bin** is space to fill. The Project Shelf, the boneyard, a vehicle and a job site never show as free, whatever their counts (`decorate` sets assigned items to 0 at the shelf, which alone would make an empty shelf look free; the kind is asked first). A bin whose kind could not be read is not counted, and the page says so |
+| Boxes | Roll up: "6 of 14 bins free · 3 kept for an item", colored by whether any bin inside is free |
+| The list | *Free bins on this floor* beside the map, in walk order, each a link to its box with the bin picked |
+| Assigning an item | From a free or kept bin, *Assign an item in the Bin Manager*: the Bin Manager's own door. There is no second way to assign |
+| Follow-up R3-1 | Not touched. Free space does not read `bin_views.item_locations`, and the walk lists Stock Scan's `_items_at`, which already marks nothing as assigned at the Project Shelf. No shared function decides both |
+
+**The walk for a count** is a screen: `/desk/warehouse-map/<map>/walk` (*Walk for a count* on the
+floor). It lists that floor's bins in walk order with the items expected in each, for a phone,
+and *Print* gives the same as a sheet with blank *Counted* and *Note* columns. *Hide quantities*
+(`?blind=1`) asks the server for the walk without any quantity and with the items by name (Stock
+Scan's own order, what is on hand first, would give it away). It keeps a number from leading the
+counter; it is not a control, since the same people can open Stock Scan. A *Next floor* button goes
+on in the floors' order. The walk is read again once it is a minute old, on Refresh, after Save and
+after a place is made.
+
+| Asked | Built |
+|---|---|
+| The order | Floors by their sort order, then boxes, then each box as a person facing it reads it: top shelf first, left bin first (or as the box says, `shelves_from` / `bins_from`). A bin shown by two boxes is walked once |
+| The boxes' default order | From where they stand (`warehouse_map_rules.auto_walk`): rows of boxes top to bottom, **each row the other way** from the one before, so nobody walks back down an aisle empty. A row is the boxes whose middles are within half the boxes' usual (median) height. **A box more than twice the usual height forms no row** (review S2): it joins the row nearest its middle, at its place along it, so a big room beside rows of racks never turns the walk round. **A room's box holds what is drawn inside it**: a box whose middle is inside a bigger room box belongs to the smallest such room, the room is one stop, and the racks inside it are walked as their own snake before the walk leaves the room. A room box with no warehouse is not walked, but what is inside it is walked where it stands |
+| A box over boxes for places inside it | Each box holds only the bins no box drawn for a warehouse inside it shows (`warehouse_map_rules.owned_leaves`, review R2-S1): a room box over the bays inside it keeps what is directly its own (and has no stop if that is nothing), and each bay takes its bins at its own stop, wherever it is drawn. The free-space sums count a bin once on the same rule. A turned room holds what is inside its turned shape. The Free space view's list and a box's panel there use the same bins (`get_map` sends them as `owned`); the stock view's front view still shows everything under a box |
+| An editor's order | *Walk order for counts* in the editor's side panel: the boxes as they will be walked, with arrows. Moving one stores every box's place (`Warehouse Floor Map Shape.walk_order`, Int, from 1); a box added later is walked last; *Use where the boxes stand* puts them all back to 0 |
+| The new field | `walk_order` defaults to 0 on a normal (child) table, so the `ALTER` that adds it writes 0 into every existing row, and 0 means "by where it stands". The maps already drawn on production need nothing and get no patch |
+| The items | Stock Scan's own list for a bin, uncapped (`api.stock_scan._items_at(limit=None)`), the one the Count Desk's sheet is made from |
+| Counting | The walk counts nothing, creates no Stock Reconciliation and posts nothing. A count is recorded in the Count Desk or on the phone, as before |
+
+**Why the walk stops at a list and a sheet.** The Count Desk cannot take an order without a
+wider change: `count_desk_rules.expand_scope` sorts a count's bins by name, and the sheet sorts
+its lines by bin name (`count_desk_rules`, the line `rows.sort` by `warehouse_name`). Feeding the
+walk into it would take (1) a `walk_order` on the Count Session (one warehouse a line), written
+by `start_count` when a count is started from the map; (2) `expand_scope` keeping that order
+when given; (3) the sheet sorting by position in it; and (4) a *Start a count in this order*
+button on the walk, with the Count Desk reading the bins from the route. That is a change to
+another module's DocType and rules, so it is left for its own piece of work.
+
+### The doors, and a page that is every screen a route
+
+Every *Show on map* door waits for a map: the Bin Manager's button, the Item and Warehouse
+forms and the two reports read `frappe.boot.ee_warehouse_map` (`boot.py`, 1 when a map that is
+not hidden exists), and Stock Scan reads the same fact in its own boot. The Bin Manager's *Map*
+tab is also shown to someone who may create a map, so there is a way to draw the first one.
+Frappe caches each person's boot payload in Redis until they sign in again, so the DocType drops
+those cached payloads whenever a map's visibility changes: a map is created, deleted, hidden or
+shown (`warehouse_map_files.clear_boot_cache`, the same call Triton Assistant Settings makes on
+save; it cannot raise). A door then appears, or goes, on each person's next page load. Saving
+boxes clears nothing.
+
+The page sets `disable_scroll_to_top` on its wrapper, as the Opportunity Board does: the Desk
+ends every route change by scrolling to the top, and here opening a bay is a route, so a tap far
+down a phone's screen would jump away from the front view that just opened. It scrolls to the top
+itself only when it is come to from another page.
+
+**A hidden map is hidden on the page, not from the DocType.** *Leave this map off the page* keeps
+a half-drawn map out of the page's floors, its search and its *Show on map* answers for everyone
+but editors. The stock roles can read the DocType, so its list in the Desk and the REST API still
+show a disabled map and its picture to them. That is deliberate: a half-drawn map is not a secret
+(the same people see it the day it is finished), and closing it would take a `has_permission`
+hook and a permission query that could not be run on a bench when this was written.
+
+### Print
+
+*Print* opens one sheet per floor in a new window: the drawing with every box's name, then what
+is in each rack as a list of shelves and bin positions.
+
+### Not built yet
+
+Slices 2 and 3 are above. Also not here: starting a Count Desk count in walk order (see *Why
+the walk stops at a list and a sheet*), a shortcut in the Operations Hub (the Bin
+Manager's Map tab is the door), a real scale (feet), and which side of a rack is its front.
+
+### Loading a site's real map
+
+A map is site data. On a new site it is drawn in the editor; nothing ships in fixtures, and the
+floor plan file is never committed here.
+
+## Warehouse Transactions (v1.797.0)
+
+A report of every Stock Ledger Entry: item, Qty Change (positive added, negative taken out),
+Balance After, warehouse, date and time, voucher, and the person, with their full name. Filter by
+From/To date (the last 30 days by default), Item, Warehouse and User. Pick a person and it is their
+history of additions and removals. Pick a store and it includes every bin under it.
+TASK-2026-03136 and -03137.
+
+- **A count's change is derived.** ERPNext 16.52.1 stores a Stock Reconciliation's entries with
+  `actual_qty = 0` and the counted balance in `qty_after_transaction`. So, as ERPNext's own Stock
+  Ledger report does, the change is the count's balance minus the previous live entry's, for the
+  same item and warehouse, in `posting_datetime`, `creation` order (0 before a first count). That
+  previous entry can sit before From Date or belong to someone the User filter hides, so
+  `count_changes` reads the earlier ledger of the counted items and warehouses in one `get_list`.
+  On 2026-11-05, reconciliations were 667 of the 819 live entries.
+- **A Script Report, though the task asked for a Query Report.** Frappe 16.53's report view sends
+  only the filters that hold a value. A Query Report passes that dict straight to
+  `frappe.db.sql`, so a `%(item_code)s` placeholder with Item left blank is a missing key and the
+  run fails. Item, Warehouse and User are optional, so the conditions are built in Python.
+- **The person is the entry's `owner`**, the user who submitted the voucher. On production on
+  2026-11-05, every live entry's owner was also the voucher's creator. The Stock Scan and the Count
+  Desk submit as the signed-in user.
+- **Canceled entries are left out**, both the original rows and their reversals, as in ERPNext's
+  Stock Ledger.
+- **Lines, not movements.** A transfer or a repack is two entries, one out and one in, so the cards
+  count ledger lines.
+- **Who.** Every ledger read goes through `frappe.get_list`, so Stock Ledger Entry permissions and
+  User Permissions apply. The roles are Stock User and Accounts Manager, as on ERPNext's Stock
+  Ledger report. The User column is plain text: Desk User holds only `select` on User, so a link
+  would open onto a permission error.
+- **Where.** A shortcut and a Reports-card link on the Inventory Enhancements workspace (the
+  Inventory hub's landing page), and the Operations Hub's Inventory card. Both are linked by
+  `patches/warehouse_transactions_hub_links`, which imports each workspace in its own savepoint
+  (frappe's `import_doc` deletes the stored row before it inserts) and rolls back a failure. The
+  site-made Inventory Enhancements sidebar is not in the repo and is unchanged.
+- **Tests:** `tests/test_warehouse_transactions.py`, its own CI step.
+
+### A job, a room or rack, kinds, and totals (v1.831.0)
+
+The 2026-11-19 operations review: before setting reorder points, see what is taken and by whom,
+"all of one person's movements", and who made none. The kinds and totals are pure rules in
+`stock_movement_rules.py` (no Frappe); the report reads, the rules decide.
+
+| Filter or view | What it does |
+|---|---|
+| **Location (room, rack or bin)** | A group warehouse includes every shelf and bin under it (`Atrium`, `North Large Rack 1`), as since v1.797.0. The **Room / Rack** column names the groups above each row's warehouse, the root left out (`group_trail`) |
+| **Project** | Rows carrying the job, OR rows at the job's job-site warehouse (`Warehouse.custom_job_site_project`, and anything under it), as one `or_filters` group that the other filters still narrow. A job with no site is a plain condition. Before the site field exists, no sites |
+| **Kind** | Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other (`movement_kind`), from the voucher type, the Stock Entry's purpose and the sign of the change |
+| **View: By person** | Per person: saves (vouchers), ledger lines, takes, receipts, moves, counts, other, items, days active, last movement. Plus every person who keeps stock with zeros (`stock_people`) |
+| **View: By item** | Per item, in its stock unit: taken, takes, received, moved, count corrections, returned, net change, people, lines |
+
+- **What counts as taken.** A Take (Material Issue) or a Delivered line (Delivery Note, Sales Invoice
+  or POS Invoice taking stock out): stock that left for a job or a customer. A count correction is
+  never taken, a move only changes where stock is, and a return went back to the supplier. Not called
+  *Used*: the Reorder Board's suggested reorder levels count use from the shop's side, which also
+  counts moves out to a job site or the Project Shelf and takes returns off. The two figures answer
+  different questions, so they carry different names.
+- **A move is counted once.** A transfer is two ledger lines, and a location filter may show only
+  one. Takes, receipts, moves and counts are counted per voucher and item, and how much moved is
+  the larger of the two sides shown.
+- **The purposes.** The ledger stores no Stock Entry purpose. One `frappe.get_list("Stock Entry")`
+  reads the purposes of the report's Stock Entries, with the reader's permissions: one the reader
+  may not see reads as Other.
+- **Who is listed with zeros.** Enabled System Users holding Stock User, Stock Manager or Inventory
+  Clerk, without Administrator, Guest and the service account (`reorder_rules.EXCLUDED_RECIPIENTS`),
+  read through `get_all` on Has Role and User (names only). With the User filter set, that person
+  alone. The other filters narrow the counts, not the list: "nobody in the Atrium this week" shows
+  everyone at zero. Someone outside the list who made movements is listed too.
+- **From the Bin Manager.** A **Movements** button on a bin, on one job (By project) and on the
+  picker. `public/js/bin_manager/logic.js` `transactions_route` decides the filters: the bin, the
+  job, or the picker's job and item, and every other filter sent blank, because the report keeps
+  its filters while the tab is open and sets only the ones a route names. On one job the report
+  opens from the day the job's first stock moved to today (`bin_views.project_view` returns
+  `movements_since`, from `project_stock.first_movement`: the earliest live ledger row carrying the
+  job or at its site), so parts moved weeks ago are not hidden behind the default 30 days; the
+  Project's own dates are not used, because a Stock Scan role may not read the Project and parts are
+  often bought before a job starts. A bin, the picker, and a job with nothing moved leave the dates
+  as they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
+  function (`bin_manager.bundle.js` version 3).
+
+## Inventory reports (v1.805.0)
+
+Nik, 2026-11-12: "We need to create reports for Inventory, where a user can query what's at each
+location and see what items should be in there ... I want to keep a historical record of each
+projects items and what was ordered for them. I want to be able to view what's at the Job Site,
+and have it be useful so it filters by project as well." Four Script Reports, every filter
+optional, each opening on a useful list with nothing chosen.
+
+| Report | Answers | Opens on |
+|---|---|---|
+| **Location Contents** | What is at this bin, shelf, bay, row or the whole inventory, and what should be | every location's problems ("Only problems" ticked) |
+| **Where Is This Item** | Every place an item is, and whose it is | every item on hand or on order anywhere |
+| **Project Materials** | What was ordered and received for a job, and where each item stands | what each job holds now, on the shelf and at its site |
+| **Job Site Contents** | What is at each job site, by job, customer and item | everything out on every job |
+
+### What ERPNext's own reports already do, and what these add
+
+Read at ERPNext v16.54.0 (production), so nothing here rebuilds them.
+
+| ERPNext report | Gives | Does not give |
+|---|---|---|
+| Stock Balance | opening, in, out, balance and value per item and warehouse over a period | whether the item belongs in that bin; any job |
+| Stock Projected Qty | actual, ordered, requested, reserved and projected per item and warehouse | the same two |
+| Stock Ledger | every movement, filterable by Project | a roll-up; what was ordered; where it is now |
+| Warehouse Wise Item Balance Age and Value | one column per warehouse with age and value | a status; a job; the shelf by job |
+| Purchase Order Analysis, Procurement Tracker | ordered, received, pending and billed per order line | stock on the shelf or at the site; what was used |
+| Project wise Stock Tracking | cost purchased, issued and delivered per project, one row a project | items; quantities; where anything is |
+
+What these four add: **expected against actual** per bin (Putaway Rules and Item Defaults beside
+on-hand), **the job** behind stock on the shared Project Shelf, **one project's whole record**
+from order to use in one row per item, and **job sites as places with an age**.
+
+### Location Contents
+
+For each location the report calls `api.stock_scan._items_at` (the function behind the Bin Manager
+and Stock Scan's location screen) with no row cap and reads what it returns. It carries no copy of
+the listing rule, so the report and the Bin Manager cannot disagree about which items belong to a
+bin. What it adds is a status (`inventory_report_rules.location_status`):
+
+| Status | Means | A problem |
+|---|---|---|
+| As expected | on hand here, and assigned here (Putaway Rule or Item Default) | |
+| Assigned here, none on hand | this is the item's bin and it is empty | yes |
+| Here, not assigned | on hand here, and no bin is the item's | yes |
+| Here, assigned to another bin | on hand here, and its bin is elsewhere; *Assigned To* names it | yes |
+| On order to here | none on hand, and an order is on its way to this location | |
+| Empty, not decided | it was here, is gone, and nobody kept it on the bin or took it off | yes |
+| Held here | on hand at the Project Shelf, a job site or the Boneyard | |
+| Nothing here | listed at one of those three with none on hand | |
+
+- **The three places that are never an item's bin** hold stock without assigning it, so stock there
+  is never a problem. They are also never the "other bin": production has Putaway Rules and Item
+  Defaults that name the warehouse becoming the Project Shelf, and "assigned to the Project Shelf"
+  would send somebody to put shop stock on it.
+- **The cards count every row** at the chosen locations. "Only problems" and Status narrow the
+  table and leave the cards alone, so a short list still says how big the picture is.
+- **Cost.** `_items_at` is one query per location. Locations with no Bin row, no enabled Putaway
+  Rule and no Item Default are skipped first (none of that function's clauses can list anything
+  there); on production on 2026-11-12 that left 141 of 222 locations. With an Item chosen, only
+  that item's locations are asked. Each call is a pass over the stock items, about 6 ms at 484;
+  if the item list grows a hundredfold the place to batch is `_items_at` itself.
+
+### Where Is This Item
+
+One row per place, in this order: shop bins, the Project Shelf, job sites, vehicles, the Boneyard
+(`inventory_report_rules.place_kind`, a job site winning over everything). Each has on hand, on
+order, value, whether the place is one of the item's bins, the item's bins by name, and the last
+movement there with its voucher. The item's assigned bins list even when empty.
+
+The Project Shelf is one warehouse, so `tabBin` has one figure per item there. Its rows are split
+by job, one per job with a share and a last row under no job for what no job's ledger rows account
+for, which also carries what is on order to the shelf. A search is capped at 500 items and the unfiltered list at 5,000
+rows, and the note says when either cut something.
+
+### Project Materials
+
+**With a Project:** one row per item ordered or received for it.
+
+| Column | From |
+|---|---|
+| Ordered | the job's submitted Purchase Order lines (the line's own Project, else its order's) |
+| Received | the job's submitted Purchase Receipt lines, so a store run with no order counts |
+| On Project Shelf, At Job Site | the shelf adapter, and `tabBin` at the job's site |
+| Used on Job | the job's ledger: Material Issues, Delivery Notes, Sales Invoices, less parts brought back |
+| Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
+| Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
+| Still to Come / Order Closed, Not Received | what order lines are short, on open orders and on Closed or Delivered ones |
+| Not Located | received and kept, but not on the shelf, at the site or used |
+| Purchase Orders, Receipts, Supplier Returns | the documents behind the row; each name opens its document |
+
+**Not Located is the honest column.** Most of what was bought for past jobs never entered stock,
+so ordered and received are the whole record and the note says "Not a stock item: where it is was
+never recorded". For a stock item it is stock received into a shop bin, where stock is not kept by
+job (*Received Into* names the bin, read from the stock ledger), or received before Maintain Stock
+was on. *Stock Item* is the item's flag today. Nothing in this view reads the job's status, so a
+finished job reads the same: it is the record of what was bought for it.
+
+**Without a Project:** one row per job that holds stock now, on the shelf and at its site, with
+quantity and value. Shelf stock no job claims is counted in the note over the table.
+
+Not read: a Purchase Invoice that receives stock itself (none on production), rejected quantities,
+drafts and canceled documents.
+
+### Job Site Contents
+
+One row per item at a job's site warehouse: on hand, on order, value, *Arrived*, *Last Arrival*
+and *Days There*. What a job site is comes from `job_sites.py` (the field, and everything under the
+Job Sites group); a place under that group with no job lists with a blank Project. A finished job's
+site still lists. *Arrived* is the day the balance last rose from nothing
+(`inventory_report_rules.stay`), so parts all used and sent again are not counted from the first
+delivery; a count is read from its balance, as in Warehouse Transactions. Non-stock items never
+enter stock and so are never here.
+
+### The Project Shelf, before and after it is set up
+
+One shared shelf (Nik, 2026-11-12), named in `Inventory Scanner Settings.project_shelf_warehouse`,
+a field added by a separate change. `inventory_report_data.project_shelf` reads it from the
+settings document with `.get`, so before the field exists (or while it is blank, or names a group
+or a disabled warehouse) the answer is `None`. Then nothing is the Project Shelf, the warehouse
+that will become it is treated as an ordinary shop location, every "on the shelf" figure is 0, and
+each report says "No Project Shelf is set" over its table.
+
+Whose stock is on the shelf comes through **one adapter**,
+`inventory_report_data.shelf_stock_by_project(shelf, item_codes=None, projects=None)`, returning
+`[{item_code, project, qty, value}]`. Two facts, two sources:
+
+- **How many there are** is `tabBin` at the shelf.
+- **Whose they are** is the stock ledger: what came onto the shelf under each job, less what left
+  under it. The Project Shelf change ships `inventory_enhancements/project_shelf.py`; when that
+  module is installed the adapter asks its `shelf_stock()` for those nets (and its `warehouse()`
+  for which warehouse is the shelf), so these reports and the shelf's own screens read one answer.
+  Before it is installed, or if it is there and fails to import, the adapter reads the same ledger
+  rows itself. Both paths do the same
+  arithmetic, so the swap changes no number, and an answer that is not for this shelf or not in the
+  agreed shape falls back to the adapter's own reading.
+
+`inventory_report_rules.shelf_shares` puts the two side by side without changing either. A job's
+share is its ledger net. The no-job share is what is on hand less every job's share, so the rows
+always add up to what is on the shelf. A count carries no job, so when somebody counts the shelf
+lower than the jobs' rows add up to, the no-job share is negative by the difference: Where Is This
+Item shows that row and says what it means, and Project Materials says for how many items *On
+Project Shelf* can be more than is there. On production's would-be shelf on 2026-11-12 the two
+agreed item for item (one item: four jobs' 10, 18, 31 and 12 against 71 on hand).
+
+**Returns to a supplier** come through the same kind of seam,
+`inventory_report_data.supplier_return_lines(project)`. The Supplier Return change ships
+`inventory_enhancements/supplier_returns.py` and settles `returned_lines(purchase_order_items=None,
+project=None)` for other modules; the seam imports it inside a guard, so either change can merge
+first, and answers nothing before it is installed.
+
+A Supplier Return moves its stock through ERPNext's own return receipt (a Purchase Receipt with
+*Is Return*), which Project Materials already reads. So the same goods can show twice: as a return
+receipt's line, and as a Supplier Return line whose goods have left. Both name the receipt line the
+goods came in on, and `inventory_report_rules.returned_by_item` takes the larger of the two per
+receipt line. A record-only return (no return receipt) counts, a return made by hand in the Desk
+counts, and one that is both is not doubled. A Supplier Return that was asked for and has not been
+sent back is *Return Requested*: those goods are still here.
+
+### Who, where, print
+
+- **Roles.** Location Contents and Where Is This Item: Stock User, Stock Manager, Inventory Clerk,
+  Item Manager, System Manager. Project Materials and Job Site Contents add Projects User,
+  Projects Manager, Purchase User and Purchase Manager. Frappe also asks for report permission on
+  the reference doctype (Warehouse; Purchase Order for Project Materials), which Stock User holds
+  for both. Every Inventory Clerk and every Projects or Purchase user on production holds Stock
+  User (2026-11-12), so nobody the roles admit is then refused.
+- **Permissions.** The reads are SQL behind those gates, like `_items_at`; they do not apply User
+  Permissions. Every report says so over its own table: "This report shows everything its filters
+  match. User Permissions do not narrow it." (`inventory_report_data.message`).
+- **What the stock ledger reads cost.** At ERPNext 16.54.0 Stock Ledger Entry has one compound index that helps,
+  `item_code, warehouse, posting_datetime, creation`, and none on `project` or leading with
+  `warehouse`. A read
+  that starts from item codes uses it (Where Is This Item with an item or a search). Three reads do
+  not: a job's ledger rows (Project Materials), the ledger at the job sites (Job Site Contents) and
+  the whole shelf's rows by job (the adapter's own reading, and Where Is This Item with nothing
+  chosen). Each looks at every ledger row, so its cost grows with the whole ledger, not with the
+  job, the sites or the shelf. Production had 832 ledger rows on 2026-11-12. No index is added here;
+  when the ledger is large, an index on `project` and one leading with `warehouse` are the fix.
+- **Where.** All four in the Reports card of the Inventory Enhancements workspace (the Inventory
+  hub's landing page). On the Operations Hub, three in its Inventory card and Project Materials in
+  its Reports card. `patches/inventory_reports_hub_links` force-imports both workspaces, each in
+  its own savepoint. A force-import replaces the stored workspace with the file, so an edit made to
+  either one in the Desk would be lost. On production on 2026-11-12 both stored workspaces were
+  identical to the repo's files (content, links, shortcuts, quick lists and roles compared), so
+  nothing is lost there unless one is edited before the merge.
+- **Print and export** use Frappe's own grid print, PDF, CSV and Excel. A row holds plain values
+  under declared fieldnames; the status colors and the document links are added on screen by each
+  report's formatter. There is no report `.html` of our own.
+- **Tests:** `tests/test_inventory_reports.py`, its own CI step.
+
+## Supplier Returns (v1.807.0)
+
+Nik, 2026-11-12: "a return process that is simple and tracked", using ERPNext's own pieces where
+they exist. The whole process, each accounting case, the rehearsal steps and the open questions
+are in [`docs/supplier-returns.md`](../../docs/supplier-returns.md). In short:
+
+**ERPNext already returns goods, lowers a bill and takes a refund.** A Purchase Receipt with
+`is_return` takes stock out and reverses the receipt's ledger entry. A Purchase Invoice with
+`is_return` (the Debit Note) lowers what we owe. A Payment Entry of type Receive is the refund.
+What it has no record of is the request: what we emailed the supplier, the return number they
+gave, the tracking number, and whether the money ever came back. A **Supplier Return** is that
+record, and nothing more. It never writes a stock or ledger entry.
+
+**Why this module.** The Purchasing card lives on this module's workspace, Stock Scan and the
+receipts' Maintain Stock guard are here, and the goods are stock. A return is a stock event first
+and a money event second.
+
+**It starts from a receipt, so nobody retypes a line.** Create > Return to Supplier on a Purchase
+Receipt (ticked rows, or everything that can still go back) or a Purchase Order, the Return
+buttons in the Project form's Procurement Tracker, and Return to supplier on an item in Stock
+Scan (which saves a Draft for purchasing to send). A line may not return more than its receipt
+line received, less what other returns hold and what was returned with ERPNext's own button.
+
+**Each step is a button.** Draft, Requested (the email went, or the supplier was asked another
+way), Approved by Supplier or Denied, Sent Back, then Refund Received, Credit Received,
+Replacement Received or Closed Without Credit; Canceled before the items go. The status is never
+typed: a save that changes it is put back. The headline says who the return waits on and for how
+many days.
+
+**Three kinds of line.** *Stock*: the Purchase Return takes it out of stock. *Non-stock*: nothing
+is in stock, but the Purchase Return lowers the order's received quantity, which lets a
+replacement be received and makes ERPNext bill the receipt for less; it posts nothing. *Record
+only*: the item keeps stock now but this receipt line never wrote a stock ledger entry (it was
+received before the item kept stock). ERPNext would take out stock that was never put in, and
+`maintain_stock.refuse_unstocked_receipt_return` refuses that. Such a line is left off the
+Purchase Return, the return is recorded anyway, and the record says why. The guard is not
+touched, and its `ignore_maintain_stock_guard` flag is never set here (a test fails the build if
+it is).
+
+**The standard documents are drafted, never submitted.** `make_purchase_return` and
+`make_debit_note` call ERPNext's own mappers, cut the result to this return's lines and
+quantities, and save a draft for the person to check and submit. The Debit Note is drafted with
+Update Stock off, because the Purchase Return moves the stock. The refund is ERPNext's
+`get_payment_entry`, opened unsaved.
+
+**The Debit Note lowers the bill when the bill can take it.** ERPNext 16.54.0 books a debit note
+against itself by default (*Update Outstanding for Self*, on), which leaves the bill fully unpaid
+until Payment Reconciliation. `make_debit_note` turns that box off when the bill's outstanding
+amount covers the note, so we pay the bill for less and the return reads Credit Received at once;
+it leaves the box on when the bill is paid, so the note carries what the supplier owes us for the
+refund payment. The reasons are in the function's docstring and in `docs/supplier-returns.md`.
+
+**A fixed-amount charge on a partial return** is reversed in full by ERPNext's own return. The
+figure is left as ERPNext made it, and the draft says so (Remarks, timeline, and a message).
+
+**The quantity limit is re-run when a return comes back into play** (reopened from Denied or
+Canceled), counts a linked Purchase Return's excess over its record, and compares in the receipt
+line's unit. A Purchase Return made with ERPNext's own button is linked only when it returns the
+same lines at the same quantities.
+
+**A canceled receipt never traps its return.** The ways out stay open (cancel, deny, close,
+record what came back) and everything else says why.
+
+**No Custom Field on the standard doctypes.** The links (`purchase_return`, `debit_note`,
+`replacement_receipt`, and the Payment Entries in the `payments` table) live on the Supplier
+Return. Purchase Receipt, Purchase
+Invoice and Payment Entry find their return by asking (`api/supplier_returns.linked`) and say so
+at the top of the form. A submitted Receive payment from the supplier that names a return's Debit
+Note is linked as its refund by that reference.
+
+**Money typed by hand says so.** While bills are entered outside ERPNext, a refund or credit is
+an amount, a date and a reference typed by an Accounts role or a Purchase Manager, and
+`money_source` reads "Typed by hand": the form, the timeline and the report say it is not backed
+by an ERPNext payment. Once a submitted Debit Note or Payment Entry backs the money, the outcome
+and the amount are read from it on every sync and cannot be typed.
+
+**Each refund or credit is a row of `payments`, and a payment is counted once.** A row with a
+Payment Entry holds this return's share of it (`supplier_return_rules.split_payment`,
+`by_hand_share`), so a payment covering two returns is never its full amount on each. A refund
+that arrives in parts is several rows: a typed part can be marked "more is still expected", and
+*No More Is Coming* finishes a return at what came back. Fees, tracking and the request lock at a
+final status (`LOCKED_WHEN_FINAL`); Reopen is how a manager changes one.
+
+**The email goes only from the Send button.** `supplier_returns.send_request` is the module's
+only caller of `frappe.sendmail`, reached only from the POST endpoint, which also refuses an API
+key, a token and a job. The wording is the Desk Email Template *Supplier Return Request*; the
+items table is built on the server from the return's own lines and put where the marker line
+stands in the message the person edits.
+
+**For other modules:** `supplier_returns.returned_lines(purchase_order_items=None, project=None)`.
+One dict per Supplier Return line, keys in `supplier_return_rules.RETURNED_LINE_KEYS`; Canceled
+and Denied left out; never raises; `[]` before the DocType is installed. The keys are a contract
+with the Project Materials report: added to, never renamed.
+
+**The doc_events never raise.** `on_document_change` (Purchase Receipt, Purchase Invoice, Payment
+Entry: submit, cancel, delete) syncs inside a savepoint and logs a failure. A stale label on a
+Supplier Return must not be the reason a receipt or a payment cannot be submitted.
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -1062,6 +2209,139 @@ makes `item_name <> TRIM(item_name)` always false**, so the SQL form of the trai
 check returns 0 on a corpus with three offenders. Compared by length, in Python, where a
 trailing space is still a character. Use `BINARY` if you must write it in SQL.
 
+## Maintain Stock for every physical item (v1.809.0)
+
+Nik's decisions of 2026-11-12, so that stock shows what is at each location and what belongs to
+each project. On that day 1,102 of 1,586 enabled items kept no stock, so most purchase receipts
+added nothing to it.
+
+**New items start with Maintain Stock ticked.** The `Item-is_stock_item-default` Property Setter
+(`fixtures/property_setter.json`) went from 0 to 1, and its description now says it is on for
+parts and materials and off for labor, fees and assets (the guided Item flow's hint is the same
+sentence, `form_kit/help_text/item.json`). Every place in this app that creates an Item sets
+the box itself and is unchanged: store-run and Bin Manager items and the configurator's parts are
+stock; the QuickBooks import, the water catalog loaders and the pump and equipment seeds are
+non-stock; the document intake copies the reviewer's tick. Only a new Item form, the guided Item
+flow and an assistant's `create_document` take the default.
+
+**An item on an open Purchase Order can be switched.** `maintain_stock_rules` no longer refuses an
+open Purchase Order or Material Request line. The switch recounts the Bin with ERPNext's own
+`stock_balance.get_ordered_qty`, `get_indented_qty` and `update_bin_qty` for each warehouse an
+open line names, gives a line with no warehouse the one ERPNext would give a new line for the
+item (its default, its group's, its brand's, then the Company's default; v1.817.0, it read Stock
+Settings' default before, which ERPNext never does) and says so on the order, and refuses only when there is no warehouse to give. What was already
+received on a partly received line stays out of stock and guarded; what is left goes into stock
+when it is received. The module docstring has each case as read from ERPNext v16.54.0. An open
+Sales Order still refuses.
+
+**The existing physical items are switched from a list a person approves**, never by a patch.
+`/desk/maintain-stock-switch` lists every enabled non-stock item with one of three outcomes and
+why:
+
+| Outcome | Which items |
+|---|---|
+| Will switch | A physical item by its name and group, and every safety check of the single switch passes |
+| Stays non-stock | A fixed asset; a name ending in `(deleted)` (an old QuickBooks line); an item this app keeps non-stock on purpose; a placeholder, a copy, or an item with no name of its own; the Service item group; the Office item group (Nik's decision of 2026-11-12; `CONSUMABLE_GROUPS`); a code starting `SRV-`; a name starting with a value stream and a dash (`BUILD - ...`, `Rent - ...`); a whole word such as labor, fee, rent, travel, mileage, freight, delivery, deposit, consulting, service, tax, expense, installation, permit, warranty, discount; a line in All Item Groups with no `PDT-` product code |
+| Can't switch yet | A physical item one check refuses, with that check's words |
+
+The rule is a guess from the name, and the page says so: any line can be changed with *Your
+choice* (switch it, or keep it non-stock), which is kept on a `Maintain Stock Decision` row and
+beats the rule. Only a fixed asset cannot be chosen, because ERPNext refuses one that keeps stock.
+
+**The rule refuses to guess.** A switch can't be undone from the form once the item has a
+submitted document, and a consumable switched by mistake then needs a price on every receipt and
+shows up in Stock Scan and on the Reorder Board. So nothing whose name does not say what it is
+switches by rule, and in the QuickBooks catch-all group only a `PDT-` product code does. A part
+the rule keeps back is one click on the page. Words left out of the service list on purpose,
+each for a real part on production: "tips" (nozzle tips), "repair" (a repair coupling),
+"winterizing" (a winterizing plug), "charge" (a charge controller), "shipping" (a label).
+*Switch N items* queues the rows and a background job switches each through
+`maintain_stock.turn_on` (the row lock, every check again, the Comment on the item), committing
+after each. The queue is the rows, not the job, so a deploy that flushes the job queue loses
+nothing: `resume_queue` starts the job again within ten minutes. A job that runs out of time
+leaves its item Queued, not Refused. *Download this list* is the
+before-and-after list to approve; *Download results* is what a run switched or refused.
+
+**Sales Invoices, behind a tick box.** A submitted Sales Invoice refuses the single switch. On
+production every one has Update Stock off, and about 90 physical items are held back by nothing
+else. For such an invoice, read from ERPNext v16.54.0: a cancel touches the stock ledger only when
+Update Stock is on; a credit note against it may not turn Update Stock on; its ledger entries do
+not depend on the item's flag. So the page's box lets those items switch. One thing is left, and
+it is guarded: *Create > Delivery Note* on such an invoice would take the goods out of stock a
+second time, so `maintain_stock.refuse_delivering_old_invoices` refuses a Delivery Note line
+against an invoice posted on or before the day its item was switched that way.
+
+**The Bin, and a receipt at the same moment.** The switch recounts what is on order inside its
+own transaction, and once more straight after it commits (`maintain_stock._recount_after_commit`),
+so a receipt that committed while the switch ran is counted. One case is left: a receipt that
+began before the switch committed and commits after that second recount. It still carries the old
+flag, so it posts no stock (and its line is guarded like any other old receipt line), and the
+Bin's on-order figure stays too high by what it received until the next order or receipt for that
+item and warehouse is saved, which recounts it. Nothing in ERPNext offers a lock that would close
+this without locking every transaction table.
+
+**What only production can show.** The bench-free tests run the checks and the queue on SQLite and
+on stand-ins for ERPNext. That ERPNext's `update_bin_qty` writes the Bin as expected, that the
+job runs under the real worker, and how long 500 items take are seen only on the site.
+
+## A price at receipt (v1.809.0)
+
+Stock comes in at the price on its receipt line. A $0 line puts the part on the shelf valued at
+nothing, and every job it is issued to is charged nothing for it. 373 of 543 Purchase Order lines
+in the 180 days before 2026-11-12 had a rate of 0.
+
+* **The rule.** A Purchase Receipt line (or a Purchase Invoice line when the invoice updates
+  stock) for an item that keeps stock, with a rate under half a cent, refuses the **submit**. The
+  message names the row and says what to do. A draft still saves, with an orange warning.
+* **Free on purpose** is ERPNext's own tick on the row, *Allow Zero Valuation Rate*: a free
+  sample, a warranty replacement. No new field.
+* **Where the price goes.** Buying Settings keeps *Maintain Same Rate* on with the action Stop, so
+  a receipt's rate must equal its order's. The price therefore goes on the order line, through
+  ERPNext's *Update Items*, which also re-runs this app's approval and requester gates.
+* **Who may do what on the two receiving screens** (`receipt_price.price_block`):
+
+  | Person | Price the line | Mark it no charge | Otherwise |
+  |---|---|---|---|
+  | May edit the order, and did not raise the request it fills | Yes | Yes, with a reason | Asked again until one or the other is given |
+  | Cannot edit the order | No | No | The line is left unreceived; the rest is received; purchasing gets a ToDo |
+  | Raised the Material Request the order fills | No (*Update Items* would refuse them: separation of duties) | No | The same, and they are told why in their own words |
+
+  "No charge only for a person who may price, and with a reason" is **Nik's decision of
+  2026-11-12**. The two constants that hold it are `NO_CHARGE_NEEDS_ORDER_WRITE` and
+  `NO_CHARGE_NEEDS_REASON` in `receipt_price_rules.py`.
+* **The same two questions are asked at the submit, on the server, however the document was
+  made** (`receipt_price._refuse_ticks`). A stock row at $0 with *Allow Zero Valuation Rate*
+  ticked by a person needs: the person submitting to be allowed to price that row's order (with
+  no order on the row, a receipt made by hand or a Material Receipt, to edit purchase orders at
+  all); and a line in the document's Remarks starting `No charge:` that says why. So the
+  Purchase Receipt form and an intake draft are not a way around the two screens, which write
+  that Remarks line themselves. Left alone, because ERPNext frees them itself: a
+  customer-provided item (the Item's flag) and a pricing rule's free item (`is_free_item` with
+  the rule's name in `pricing_rules`). The rule named must be real: it exists, is enabled, is for
+  buying, gives a product, and gives that row's item. The two fields are read-only on the form
+  only, so a made-up rule name proves nothing.
+* **The ToDo** goes to the order's author when they can still price it, otherwise to the people
+  the Reorder Board alerts (`Inventory Scanner Settings.reorder_alert_role`, Purchase Manager by
+  default; `reorder_board.recipients()`), never the asker or a service account. It sits on the
+  order and starts "Price needed". There is one open ToDo a person for an order, and every held
+  line is named in it exactly once: a line held later is added, a row priced since drops out.
+* **A Stock Entry of type Material Receipt** is judged on its Basic Rate. ERPNext swaps a typed $0
+  for the item's last valuation and refuses when there is none, but takes a last valuation of
+  exactly 0 in silence; that row is refused at submit. A Stock Reconciliation is not judged.
+* **Each way a receipt is made:**
+
+| Path | What a person sees |
+|---|---|
+| Purchase Receipt form | The submit is refused; the draft is kept. Ticking *Allow Zero Valuation Rate* is refused too, unless the person may price the order and Remarks says `No charge: ...` |
+| Purchase Order > Receive Items | For a person who may price: *Price each*, *No charge* and *Why no charge*, and the price is put on the order before it receives. For anyone else: no extra column; the note says those rows will be left for purchasing, and the answer names who was asked |
+| Stock Scan, and the store-run sheet's *Receive on PO* | Nothing is posted. A person who may price gets "What did one cost?" with *Receive at this price*, *It was free* (with a reason) and *Stop*. Anyone else gets "This one can't be received yet", why, who was asked, and *OK* |
+| Stock Entry > Material Receipt | The submit is refused for a row that would come in at $0 |
+| Packing-slip and vendor-bill intake | They make drafts, so the warning speaks when the draft is saved and the refusal when a person submits it. Who submits is who is judged, and the intake's own remark is not a reason |
+| The order itself | Still only warns at submit (`po_price_check`), now saying the receipt will ask |
+
+Left alone: returns, internal transfers, non-stock lines, and every document already submitted.
+Accounting's way past it in a console is `doc.flags.ignore_receipt_price_guard`.
+
 ## Tests
 
 Needs a bench (a `FrappeTestCase`; not in CI):
@@ -1083,8 +2363,18 @@ python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Acco
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
+python -m unittest erpnext_enhancements.tests.test_maintain_stock -v      # the single switch, open orders, the bulk page and its job; SQLite; runs two node harnesses
+python -m unittest erpnext_enhancements.tests.test_receipt_price -v       # a price at receipt: the rule, the hooks, every receiving path
+python -m unittest erpnext_enhancements.tests.test_supplier_return_rules -v  # Supplier Returns: every rule, no stub
+python -m unittest erpnext_enhancements.tests.test_supplier_returns -v       # frappe stub on SQLite: each accounting case's documents, the money rule, the email
+python -m unittest erpnext_enhancements.tests.test_job_sites -v           # job_site_rules; sites, moves, takes and totals on test_bin_assignments' stub; the setup patch
+python -m unittest erpnext_enhancements.tests.test_project_shelf -v       # project_shelf_rules; the shelf, by-job stock, moves, takes, totals and purchase-line defaults on the same stub; the rename patch
 python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 python -m unittest erpnext_enhancements.tests.test_count_desk -v          # count_desk_rules, api/count_desk on a frappe stub, and the page under node (scripts/test_count_desk.mjs)
+python -m unittest erpnext_enhancements.tests.test_warehouse_transactions -v  # the report, its kinds, Project filter, rooms, By person and By item views, hub links
+python -m unittest erpnext_enhancements.tests.test_inventory_reports -v   # the four inventory reports: status rules, shelf and site split, project roll-up, queries, export, hub links
+python -m unittest erpnext_enhancements.tests.test_rack_qr_sheet -v         # the rack QR sheet: rows, racks, sizes, the read, the page and its template (needs PyQRCode and Jinja2)
+python -m unittest erpnext_enhancements.tests.test_warehouse_map -v       # the Warehouse Map: rules, endpoints, the DocType, the File and rename hooks and the role patch on a frappe stub, and the page logic under node (scripts/test_warehouse_map.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
 

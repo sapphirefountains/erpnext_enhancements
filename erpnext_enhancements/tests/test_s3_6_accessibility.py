@@ -34,6 +34,7 @@ SCANNER = APP / "inventory_enhancements/page/inventory_scanner_audit/inventory_s
 CONSOLE = APP / "device_management/page/device_console/device_console.js"
 INSPECTION = APP / "quality/page/inspection_wizard/inspection_wizard.js"
 GA4 = APP / "integration_hub/page/ga4_dashboard/ga4_dashboard.js"
+PERFORMANCE = APP / "marketing/page/marketing_performance/marketing_performance.js"
 BLOCKS = APP / "custom_html_blocks"
 
 
@@ -315,17 +316,21 @@ class TestStatusesCarryTheirWord(unittest.TestCase):
 
 
 class TestTheGa4DashboardIsTranslated(unittest.TestCase):
+	"""The GA4 Dashboard became a redirect to Marketing Performance in v1.756.0, so the check moved
+	with its strings: the new page's titles are translated, and the old one only replaces itself."""
+
 	def test_visible_strings_go_through_translation(self):
-		code = _code(GA4)
-		self.assertIn("title: __('GA4 Dashboard'),", code)
-		for tag in ("th", "h4", "p"):
-			for text in re.findall(rf"<{tag}\b[^>]*>([^<]*)</{tag}>", code):
-				self.assertRegex(text.strip(), r"^\$\{__\(", f"<{tag}>{text}</{tag}>")
+		code = _code(PERFORMANCE)
+		self.assertIn('title: __("Marketing Performance"),', code)
 		for title in re.findall(r"\btitle: ([^,\n]+),", code):
 			self.assertTrue(title.startswith("__("), title)
-		self.assertIn('${__("GA4 Error:")}', code)
-		self.assertIn('${__("GSC Error:")}', code)
-		self.assertNotIn('"Unknown GA4 error"', code.replace('__("Unknown GA4 error")', ""))
+		for heading in re.findall(r"this\.section\(([^,]+),", code):
+			self.assertTrue(heading.startswith("__("), heading)
+
+	def test_the_old_page_replaces_itself_with_the_new_one(self):
+		code = _code(GA4)
+		self.assertIn("frappe.route_flags.replace_route = true;", code)
+		self.assertIn('frappe.set_route("marketing-performance");', code)
 
 
 if __name__ == "__main__":

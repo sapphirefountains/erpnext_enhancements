@@ -1618,7 +1618,13 @@ class TestKeptElements(unittest.TestCase):
 				self.assertEqual(_derive_kept_elements((("x", "x", 1, text),)), expected)
 
 	def test_sanitize_html_tags_and_removed_content_are_v16s(self):
-		"""Skipped where there is no frappe checkout beside this repo, CI included."""
+		"""Skipped where there is no frappe checkout beside this repo, CI included.
+
+		Every set is found by its name, never by a line number. Until v1.802.1 the last assertion
+		read line 21 of the file, and frappe 16.53.0 put five lines above ``REMOVE_CONTENT_TAGS``
+		without changing a rule, so this failed wherever the checkout was current and no rule had
+		changed. A failure now means a rule changed: re-read ``sanitize_html`` at the tag production
+		runs before touching ``content.py``."""
 		checkout = _frappe_checkout()
 		if checkout is None:
 			self.skipTest("no frappe checkout beside this repo")
@@ -1640,7 +1646,10 @@ class TestKeptElements(unittest.TestCase):
 		allowed = sets["acceptable_elements"] | sets["svg_elements"] | sets["mathml_elements"]
 		self.assertEqual(allowed | set(ast.literal_eval(added.group(1))), SANITIZE_HTML_TAGS)
 		self.assertEqual(sets["REMOVE_CONTENT_TAGS"], C.DROPPED_WITH_CONTENT)
-		self.assertEqual(result.stdout.splitlines()[20], 'REMOVE_CONTENT_TAGS = {"script", "style"}')
+		# What content.PRESENTATION_ATTRIBUTES says v16 keeps. If v16 stops keeping one, the strip is
+		# no weaker (it drops them itself); only that comment and the README are out of date.
+		self.assertIn("font", sets["acceptable_elements"])
+		self.assertEqual(C.PRESENTATION_ATTRIBUTES - sets["acceptable_attributes"], set())
 
 
 # ------------------------------------------------------------------ secrets

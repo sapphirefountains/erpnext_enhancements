@@ -14,6 +14,9 @@
  * is a frappe.ui.Dialog, not a Form — so the widget lives here, globally, and
  * both surfaces attach to it. That is also why this is in the global bundle
  * rather than in `doctype_js["Address"]`: the dialog opens from any doctype.
+ * Other pages attach to it as well: Plan a Trip, and the Fountain Designer's
+ * Site step, which has no Address fields and takes the pick through
+ * `on_place` (the formatted address, the point and the state code) instead.
  *
  * WHICH GOOGLE API, and why not something simpler:
  *  - `places.Autocomplete` (the old widget that attached itself to an input) is
@@ -213,6 +216,26 @@
 			// is deliberately not joined on.
 			pincode: parts.postal_code ? parts.postal_code.long : "",
 			country_code: parts.country ? (parts.country.short || "").toLowerCase() : "",
+		};
+	}
+
+	/**
+	 * What an `on_place` caller gets for a pick: the place as one line, its point,
+	 * and its region codes — no Frappe Address fields, no Country lookup. The
+	 * Fountain Designer puts a design in a state from `state` ("UT"), so only the
+	 * short form is any use: a long name ("Utah") would match no jurisdiction,
+	 * and it is "" rather than guessed when Google gives no short form.
+	 * `lat`/`lng` arrive as numbers (see `coord`), null when Google gave none.
+	 */
+	function place_details(components, formatted_address, lat, lng) {
+		var parts = index_components(components);
+		var admin1 = parts.administrative_area_level_1;
+		return {
+			address: String(formatted_address || ""),
+			lat: typeof lat === "number" && isFinite(lat) ? lat : null,
+			lng: typeof lng === "number" && isFinite(lng) ? lng : null,
+			state: admin1 && admin1.short ? String(admin1.short).toUpperCase() : "",
+			country_code: parts.country && parts.country.short ? String(parts.country.short).toUpperCase() : "",
 		};
 	}
 
@@ -526,6 +549,20 @@
 
 	function apply(state, place, prediction) {
 		var components = place.addressComponents || [];
+		// A caller with no Address form to fill (the Fountain Designer) takes the
+		// place as it came: no field mapping and no Country round trip.
+		if (state.options.on_place && !state.destroyed) {
+			var details = place_details(
+				components,
+				place.formattedAddress,
+				coord(place.location, "lat"),
+				coord(place.location, "lng")
+			);
+			details.place_id = place.id || "";
+			details.label = prediction_text(prediction && prediction.text);
+			if (details.address || details.lat !== null) state.options.on_place(details);
+		}
+		if (!state.options.on_pick) return Promise.resolve();
 		// Nothing to apply, and blanking fields off an empty response would be
 		// pure loss.
 		if (!components.length) return Promise.resolve();
@@ -607,6 +644,9 @@
 	 * @param {Function} [options.on_pick] - (values, meta) => void. `values` is the
 	 *        Address fields to write; `meta` is {place_id, formatted_address,
 	 *        latitude, longitude} for callers that have somewhere to keep it
+	 * @param {Function} [options.on_place] - (details) => void, for a caller with no
+	 *        Address fields: {address, lat, lng, state, country_code, place_id,
+	 *        label} (`place_details`). Called before `on_pick` when both are given
 	 * @returns {Object|null} controller: { input, reset(), destroy() }
 	 */
 	function attach(input, options) {
@@ -767,6 +807,7 @@
 	erpnext_enhancements.address_autocomplete = {
 		attach: attach,
 		map_address_components: map_address_components,
+		place_details: place_details,
 		usable_point: usable_point,
 		point_survives_text_edit: point_survives_text_edit,
 		parse_point_paste: parse_point_paste,

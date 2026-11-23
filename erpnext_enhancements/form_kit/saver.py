@@ -31,8 +31,8 @@ What both are careful about:
   on a conflict it keeps the local copy and asks, rather than overwriting. A conflict is an
   expected outcome, not an error, which is why it is a return value.
 * **The normal save runs.** ``doc.insert()`` / ``doc.save()``: validation, the ``"*"`` value
-  normalization (phones, emails, websites), and the DocType's own hooks (on Opportunity: ranks
-  on Closed Won, the lost reason, attribution, the hand-off stamps). Their errors are raised as
+  normalization (phones, emails, websites), and the DocType's own hooks (on Opportunity: the
+  lost reason, attribution, the hand-off stamps). Their errors are raised as
   they are everywhere else in the Desk (``frappe.ValidationError`` and friends: HTTP 417 with
   the message in ``_server_messages``, which ``frappe.call`` shows), the same as the Contract
   Builder's ``save_builder`` and the Visit Wizard's ``save_visit``; nothing is half-saved. A

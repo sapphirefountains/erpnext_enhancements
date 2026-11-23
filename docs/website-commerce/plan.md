@@ -1,7 +1,8 @@
 # Website commerce plan: SEO, Google listings, and buying online
 
-**Status:** a plan for Nik to decide from, written 2026-10-28. **Nothing here is built.** No
-code, plugin or setting changes until Nik picks from [the decisions](#10-decisions-for-nik).
+**Status:** a plan for Nik to decide from, written 2026-10-28 and merged 2026-11-23. Counts and
+findings are as of October. **Nothing here is built.** No code, plugin or setting changes until
+Nik picks from [the decisions](#10-decisions-for-nik).
 
 Nik asked for three things on `www.sapphirefountains.com`:
 
@@ -69,11 +70,11 @@ source and a date in [§11](#11-sources).
     the order.
   - Order status, shipping and tracking, invoices, history and support all live in this app's own
     portal pages, beside the existing `/pay` and `/rentals`.
-  - ERPNext's stock portal pages are switched off: they show customers more than they should, and
-    have no tracking.
+  - ERPNext's stock portal pages are switched off in favor of this app's own pages, which also
+    carry tracking.
   - QuickBooks history is shown only from a cut-off Accounts has reconciled: 162 old invoices still
     show as overdue.
-  - The portal opens only after the gunicorn cutover (PR #1379).
+  - The portal opens only after the controls in [§6.6](#66-security) are in place.
 - **Re-weighed, the recommendation holds.** Checking out on ERPNext would keep customer data in
   fewer places. But Google flags a checkout on another domain from the product pages, and an
   ERPNext checkout goes down with every deploy.
@@ -196,13 +197,11 @@ Payment Entry per charge, into clearing, keyed on the charge.
 
 ERPNext already serves guest pages on `erp.sapphirefountains.com`: `/rent-a-fountain` (Turnstile,
 honeypot, the session's own CSRF token), `/fountain-move`, `/pay`, `/pay-card` and
-`/stripe-return`. So a public page on ERPNext is a known pattern. Two facts weigh against putting
+`/stripe-return`. So a public page on ERPNext is a known pattern. One fact weighs against putting
 **checkout** there now:
 
 - **Every merge to `main` restarts the bench and flushes both Redis instances.** This repo
   ships several releases a day, so a checkout on ERPNext would blink out several times a day.
-- **Production's web tier is mid-change.** PR #1379 moves it to gunicorn under systemd, and that
-  cutover is Nik's. A public checkout should not depend on it until that has settled.
 
 ---
 
@@ -613,8 +612,7 @@ Checked read-only on production and in this repo on 2026-10-28.
 **New pages in this app's portal, not ERPNext's stock ones.** Reasons:
 
 - this app's pages already share one look, nav and ownership rule;
-- the stock pages show more than a customer should see (6.5);
-- the stock pages bring their own way to pay, outside the shared payment guard (6.5).
+- the stock pages are built for other kinds of portal users and show no tracking (6.5).
 
 | Page | Shows | Source |
 |---|---|---|
@@ -675,14 +673,12 @@ fill `Customer.portal_users`, because ERPNext's stock pages are switched off (6.
 
 ### 6.5 Portal settings and ERPNext's stock pages
 
-**Why not ERPNext's stock pages.** The source review at v16.52.1 found that, for this business,
-they show customers more than they should and give them more than they should:
+**Why not ERPNext's stock pages.** The source review at v16.52.1 found that they don't fit this
+business:
 
-- **Projects:** every internal task, with staff names and photos.
-- **Timesheets and Material Requests:** built for other kinds of portal users, and not scoped
-  tightly enough for ours.
-- **The order page's Pay button** goes through Payment Request, outside the shared payment guard.
-  It fails for a portal customer anyway, because creating a Payment Request needs Desk permissions.
+- **Projects, Timesheets and Material Requests** are built for other kinds of portal users, so
+  they are switched off rather than tuned.
+- **Paying** stays on this app's `/pay` and `/pay-card`, not the stock order page.
 - **The shipment page shows no carrier or tracking at all.**
 - **The list "More" button** points at a method that no longer exists at this frappe version, so
   older history may not page.
@@ -722,31 +718,23 @@ Read at the production tags. These are the controls the portal needs before a re
 an account. The detailed findings went to Nik directly instead of this public document, per this
 repository's rule on unfixed gaps.
 
-- **Opening gate.** No customer portal invitations until the production web tier runs under
-  gunicorn (PR #1379) and the items below are done.
+- **Opening gate.** No customer portal invitations until the items below are done.
 - **Sign-in.**
-  - Email link only (already the case).
-  - Staff refused (already the case).
+  - Email link only.
+  - Staff refused.
   - Links last 10 minutes, are used once, and live in the Redis cache. So a deploy's flush voids
     any link in flight, and the customer simply asks for another.
-  - frappe allows 5 link requests and 5 link sign-ins per hour per client IP. Production's setting
-    is 0, which frappe reads as 5.
-  - **Add at Cloudflare:** a rate limit on the sign-in and link endpoints. Make sure the origin's
-    client IP comes from Cloudflare's own header, so the per-IP limit can be neither spoofed nor
-    shared by every visitor.
+  - **Add at Cloudflare:** a rate limit on the sign-in and link endpoints.
 - **Mail scanners.** Some corporate mail filters open every link in a message, and the sign-in
   link is single-use. The emailed link should therefore open a page with a "Sign in" button, which
   then spends the key. Otherwise a scanner spends it first.
-- **Enumeration.** frappe answers the same for a known and an unknown email, and our override
-  answers the same for staff. Remaining gap: a known address takes longer to answer because the
-  mail is sent before replying. The fix is to queue the email.
+- **The same answer for every address.** Sign-in answers alike, and just as quickly, for a known
+  address, an unknown one and a staff one. The sign-in email goes out from the queue.
 - **What a Website User can reach.**
   - **Desk** refuses Website Users.
-  - **REST and RPC** (`/api/resource`, `frappe.client`) are not blocked for Website Users. They are
-    limited only by DocPerms. Before the first customer account:
+  - **REST and RPC** follow DocPerms. Before the first customer account:
     - audit every DocPerm and Custom DocPerm held by the All, Guest and Customer roles;
-    - confirm row scoping on each (production's Customer DocPerm today is one custom DocType,
-      which has row-level permission hooks);
+    - confirm row scoping on each;
     - remove what a customer has no business calling.
 - **Print and PDF.** Our "View invoice (PDF)" is the only print path a customer is given, and it
   pins the customer print format. Stock `/printview` is general-purpose, so the route guard covers
@@ -767,7 +755,7 @@ repository's rule on unfixed gaps.
 | **Accounts on the website** | None (guest checkout) | None |
 | **One sign-in for everything** | Yes, the ERPNext portal | Yes, and a signed-in customer could check out with their details already filled |
 | **Merchant Center** | Cart and checkout on `www.`, the same host as the product pages | Google flags a checkout that renders on another domain from the product page as "mismatched checkout URL domains" and asks for them to match. Its help does not say whether a subdomain of the same site counts as matching. B therefore needs the product pages on `erp.` too, which gives up WordPress for the pages Google ranks, or it risks the warning |
-| **Up while ERPNext deploys** | Yes | No: several restarts a day, behind the web-tier cutover (PR #1379) |
+| **Up while ERPNext deploys** | Yes | No: several restarts a day |
 | **Build** | The sync, plus the portal pages | Cart, checkout, rates, emails and feed, plus the portal pages |
 
 **B holds less customer data in two places**: only ERPNext and Stripe ever have it. A keeps a
@@ -820,7 +808,7 @@ separately in people's time where the work is not code. Phases 1 and 2 can run s
 | **2. Catalog ready in ERPNext** | Pilot Items switched to Maintain Stock (PR #1378's button); a `Website` selling Price List; weights, photos, brand (our own = Sapphire Fountains) and GTINs for resold parts; a "listed on website" flag and safety stock per Item; WooCommerce SKUs changed to ERPNext item codes; prices confirmed by a person | Item Manager in ERPNext; 1 PR for the custom fields and a "Web catalog" readiness report | 1 to 2 days build; the data work depends on the list | The readiness report shows every pilot Item complete |
 | **3. The sync** | A `web_store` module in this app: WooCommerce REST client on `requests` (no SDK, like Stripe and QuickBooks); settings Single with encrypted keys; ERPNext → WooCommerce price, stock and publish pushes; `Web Order` DocType; signed webhook; hourly poll; 15-minute re-drive sweep; Customer, Sales Order and `Stripe Payment` + `finalize_payment`; shipment and tracking back to WooCommerce; the `invoice_payment_block` extension. Bench-free tests in CI | Work sessions, draft PRs, reviewed and merged by the Sapphire Manager | About 4 PRs, 6 to 10 days | A test order on staging produces the full ERPNext trail, twice delivered, once recorded |
 | **3b. The customer portal** ([§6](#6-the-customers-account-lives-in-erpnext)) | `ensure_portal_user` at the first order; "Track your order" and "Your order has shipped" emails; `/my-orders` with order detail, shipments and tracking, invoices (paying stays on `/pay-card`), history from the cut-off, and "Ask about this order"; carrier and tracking on the Delivery Note; Portal Settings patch (menu off, home); a route guard for the stock portal routes; a sign-in page that a mail scanner cannot spend; the DocPerm audit for All, Guest and Customer. Ownership tests pinned bench-free. Shipped in v1.755.0 (#1383): the three stock web forms unpublished; the Voice Call Settings permissions; the wider staff sign-in guard | Work sessions, draft PRs | About 3 PRs, 5 to 8 days | A test customer signs in by email link, sees only their own order with tracking, cannot reach any stock portal route, and every ownership test passes |
-| **4. Open the store** | **Gate:** the web tier runs under gunicorn (PR #1379), Cloudflare rate-limits the sign-in endpoints, and 3b is live. WooCommerce settings: guest checkout only (no accounts, `/my-account/` off), personal-data retention, the Stripe gateway on our account, WooCommerce Tax, shipping zones (weight table, local pickup), add-to-cart and a cart icon on the Bricks templates, WooCommerce's receipt kept and its completed and account emails off, the policy pages linked, a "My orders" link in the header; freight items set to "Request a quote" | WordPress administrator; Nik connects Stripe | 1 to 2 days | **One small live order** paid on a phone, tracked in the portal, shipped and recorded, verified from the records (Nik's Stripe rollout rule) |
+| **4. Open the store** | **Gate:** the [§6.6](#66-security) controls are in place, Cloudflare rate-limits the sign-in endpoints, and 3b is live. WooCommerce settings: guest checkout only (no accounts, `/my-account/` off), personal-data retention, the Stripe gateway on our account, WooCommerce Tax, shipping zones (weight table, local pickup), add-to-cart and a cart icon on the Bricks templates, WooCommerce's receipt kept and its completed and account emails off, the policy pages linked, a "My orders" link in the header; freight items set to "Request a quote" | WordPress administrator; Nik connects Stripe | 1 to 2 days | **One small live order** paid on a phone, tracked in the portal, shipped and recorded, verified from the records (Nik's Stripe rollout rule) |
 | **5. Google listings** | Merchant Center linked through Google for WooCommerce; shipping and return settings; Product markup fixed on product pages; Search Console merchant-listings report clean | Nik (accounts); WordPress administrator; AI checks the feed diagnostics | 1 to 3 days, then Google's review | Pilot products approved for free listings |
 | **6. Later** | Shopping ads (spend, Nik's call); Business Agent once 50 listings are approved; UCP when WooCommerce supports it; location landing pages; the Search Console tool in ERPNext's MCP (SEO phase 3) | — | — | — |
 
@@ -865,9 +853,8 @@ Accounts, policies and anything that signs in. Nothing here needs a password in 
 8. **Guest checkout and data retention.** In WooCommerce's Accounts & Privacy settings: guest
    checkout on, account creation off, and completed orders anonymized after 90 days (D19). Add a
    "My orders" link to the Bricks header and footer.
-9. **Cloudflare.** A rate-limiting rule on the ERPNext sign-in and email-link endpoints, and a
-   check that the origin reads the client IP from Cloudflare's header (§6.6).
-10. **The gunicorn cutover** (PR #1379) before the portal opens to customers.
+9. **Cloudflare.** A rate-limiting rule on the ERPNext sign-in and email-link endpoints (§6.6).
+10. **Sign off §6.6** before the portal opens to customers.
 11. **The SEO settings checklist** from phase 1, or hand it to whoever administers WordPress.
 12. **Still open from 2026-10-27:** switch `seo-agent` to Contributor and install the SEO abilities
    mu-plugin (TASK-2026-02988).

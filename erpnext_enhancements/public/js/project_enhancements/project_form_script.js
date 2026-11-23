@@ -109,8 +109,19 @@ frappe.ui.form.on("Project", {
 						if (this.$wrapper && this.$wrapper.find(".task-tree-container").length === 0) {
 							const docName = frm.doc.name;
 
-							frappe
-								.require("/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js")
+							// The class ships in erpnext_enhancements.bundle.js (app_include_js), which
+							// is content-hashed. The raw /assets path below is the fallback for a
+							// session whose bundle is missing it, and ONLY a fallback: that path is
+							// served immutable for a year, so requiring it unconditionally would let a
+							// stale cached copy redefine the class over the bundle's fresh one
+							// (v1.777.0).
+							const ready =
+								window.erpnext_enhancements && erpnext_enhancements.TaskTreeManager
+									? Promise.resolve()
+									: frappe.require(
+											"/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js"
+									  );
+							ready
 								.then(() => {
 									if (
 										window.erpnext_enhancements &&

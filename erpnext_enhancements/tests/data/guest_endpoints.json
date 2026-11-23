@@ -1,0 +1,146 @@
+{
+	"erpnext_enhancements.api.call_intelligence.process_call_intelligence": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.append_call_transcript": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.get_call_transcript": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.get_caller_info": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.get_gateway_config": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.get_telephony_routing": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.notify_incoming_call": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.process_unified_recording": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.process_unified_sms": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.api.telephony.receive_mms": {
+		"caller": "Twilio MMS webhook",
+		"check": "Twilio request signature"
+	},
+	"erpnext_enhancements.api.telephony.update_caller_info": {
+		"caller": "Triton call gateway",
+		"check": "API key (token scheme, no longer Guest)"
+	},
+	"erpnext_enhancements.asset_management.rental_calendar.feed": {
+		"caller": "calendar subscription clients",
+		"check": "feed key compared in constant time, rate limit"
+	},
+	"erpnext_enhancements.asset_management.rental_requests.submit_request": {
+		"caller": "public rental request form",
+		"check": "bot check, honeypot, rate limit"
+	},
+	"erpnext_enhancements.crm_enhancements.fountain_move.intake.begin_intake": {
+		"caller": "public Fountain Move intake form",
+		"check": "bot check, rate limit"
+	},
+	"erpnext_enhancements.crm_enhancements.fountain_move.intake.submit_intake": {
+		"caller": "public Fountain Move intake form",
+		"check": "intake session (bot check passed), honeypot, rate limit"
+	},
+	"erpnext_enhancements.crm_enhancements.fountain_move.intake.upload_intake_photo": {
+		"caller": "public Fountain Move intake form",
+		"check": "intake session (bot check passed), rate limit"
+	},
+	"erpnext_enhancements.crm_enhancements.web_lead.submit_web_lead": {
+		"caller": "website contact form relay",
+		"check": "shared secret header, honeypot, rate limit"
+	},
+	"erpnext_enhancements.mdm_integration.webhooks.handle_webhook": {
+		"caller": "device management provider webhook",
+		"check": "shared secret header, rate limit"
+	},
+	"erpnext_enhancements.po_pdf_filename.download_pdf": {
+		"caller": "portal and notification print links",
+		"check": "none here: print permission is checked on the document inside frappe's own download_pdf"
+	},
+	"erpnext_enhancements.portal_login.send_login_link": {
+		"caller": "customer portal sign-in page",
+		"check": "customer accounts only, frappe's own rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.begin_signing": {
+		"caller": "customer signing page",
+		"check": "link token, bot check decided by the server's own settings, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.decline_autopay": {
+		"caller": "customer signing page",
+		"check": "signing session that already signed, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.decline_contract": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, verified emailed code, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.request_fresh_link": {
+		"caller": "customer signing page",
+		"check": "link token, uniform response, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.send_signing_code": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, accepted bot check, sends only to the address on the request, 3 sends per 15 minutes per request, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.sign_contract": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, verified emailed code, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.start_autopay": {
+		"caller": "customer signing page",
+		"check": "signing session that already signed, rate limit"
+	},
+	"erpnext_enhancements.project_enhancements.esign.portal.verify_signing_code": {
+		"caller": "customer signing page",
+		"check": "signing session bound to the live link token, accepted bot check, hashed single-use code with 5 tries, per-request entry limits persisted on the request, rate limit"
+	},
+	"erpnext_enhancements.quickbooks_online.core.api.oauth_callback": {
+		"caller": "Intuit OAuth redirect",
+		"check": "one-time state token minted at connect"
+	},
+	"erpnext_enhancements.quickbooks_online.core.api.quickbooks_webhook": {
+		"caller": "Intuit webhook",
+		"check": "signature header (HMAC)"
+	},
+	"erpnext_enhancements.quickbooks_time.api.qb_timesheet_webhook": {
+		"caller": "QuickBooks Time webhook",
+		"check": "shared secret token, refused while none is configured"
+	},
+	"erpnext_enhancements.sapphire_maintenance.service_call_approval.approve_service_call": {
+		"caller": "client approval page",
+		"check": "link token, rate limit"
+	},
+	"erpnext_enhancements.sapphire_maintenance.service_call_approval.decline_service_call": {
+		"caller": "client approval page",
+		"check": "link token, rate limit"
+	},
+	"erpnext_enhancements.sapphire_maintenance.sign_off.sign_visit": {
+		"caller": "client visit sign-off page",
+		"check": "link token, rate limit"
+	},
+	"erpnext_enhancements.stripe_payments.core.api.stripe_webhook": {
+		"caller": "Stripe webhook",
+		"check": "signature header"
+	},
+	"erpnext_enhancements.training.certificates.verify_certificate": {
+		"caller": "public certificate verification page",
+		"check": "none: public lookup, rate limit"
+	}
+}

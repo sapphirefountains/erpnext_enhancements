@@ -1550,8 +1550,9 @@ class TestWiring(unittest.TestCase):
 		functions = _functions(API_PATH)
 		for name in ("get_planner", "save_task", "add_crew", "swap_crew"):
 			args = functions[name].args
-			# get_planner's all_tasks (P2) and google (P5) come after draft, so a positional draft still works.
-			last = -3 if name == "get_planner" else -1
+			# get_planner's all_tasks (P2), google (P5) and done (v1.796.0) come after draft, so a positional
+			# draft still works.
+			last = -4 if name == "get_planner" else -1
 			self.assertEqual(args.args[last].arg, "draft", name)
 			# v1.742.0: the writes take draft unset, which reads as "auto" (project_planner.unset_auto);
 			# the read still defaults to 0.

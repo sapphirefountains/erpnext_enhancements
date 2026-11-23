@@ -79,7 +79,13 @@ class State:
 		self.notified = []
 		self.paused = False
 		self.cache = {}
+		self.expiries = {}
+		self.expire_calls = []
+		self.drop_expires = 0
 		self.after_commit = []
+
+	def ttl_of(self, key):
+		return self.expiries.get(key, -1)
 
 
 class FakeRequest:
@@ -141,7 +147,16 @@ def _install():
 			return STATE.counters[key]
 
 		def expire(self, key, ttl):
-			pass
+			if STATE.drop_expires:
+				STATE.drop_expires -= 1
+				return
+			STATE.expiries[key] = ttl
+			STATE.expire_calls.append(key)
+
+		def ttl(self, key):
+			if key not in STATE.counters:
+				return -2
+			return STATE.expiries.get(key, -1)
 
 		# Like RedisWrapper, these add the site prefix themselves.
 		def get_value(self, key, *a, **k):
@@ -330,6 +345,23 @@ class TestFilingLimit(Base):
 		(key,) = STATE.counters
 		self.assertTrue(key.startswith("site1|"), key)
 
+	def test_the_window_is_set_once_on_the_first_filing(self):
+		for _ in range(3):
+			feedback.submit_request(payload=dict(VALID))
+		(key,) = STATE.counters
+		self.assertEqual(STATE.expiries[key], feedback.FILING_RATE_WINDOW_SECONDS)
+		self.assertEqual(STATE.expire_calls, [key])
+
+	def test_a_counter_found_without_a_window_gets_one(self):
+		STATE.drop_expires = 1
+		feedback.submit_request(payload=dict(VALID))
+		(key,) = STATE.counters
+		self.assertEqual(STATE.ttl_of(key), -1)
+		feedback.submit_request(payload=dict(VALID))
+		self.assertEqual(STATE.ttl_of(key), feedback.FILING_RATE_WINDOW_SECONDS)
+		feedback.submit_request(payload=dict(VALID))
+		self.assertEqual(STATE.expire_calls, [key])
+
 
 class TestCaptureGate(Base):
 	def test_a_website_user_cannot_file_a_capture(self):
@@ -446,6 +478,84 @@ class TestResendIsNotASecondReport(Base):
 		self._commit()
 		STATE.paused = True
 		self.assertEqual(feedback.submit_capture(payload=dict(VALID), context={}, client_id=self.ID)["name"], first["name"])
+
+
+class TestDraftDescriptionAccess(Base):
+	"""``draft_description`` is for System Users, and capped per person per hour."""
+
+	PACKAGE = "erpnext_enhancements.product_feedback"
+	CLIENT = "erpnext_enhancements.product_feedback.triton_client"
+
+	def setUp(self):
+		super().setUp()
+		import importlib
+
+		package = importlib.import_module(self.PACKAGE)
+		self._pkg = package
+		self._saved_client = (sys.modules.get(self.CLIENT), package.__dict__.get("triton_client"))
+		self.calls = []
+		client = types.ModuleType(self.CLIENT)
+		client.TritonUnavailable = type("TritonUnavailable", (Exception,), {})
+
+		def request_description_draft(user, payload):
+			self.calls.append(user)
+			return {"description": "A fuller description."}
+
+		client.request_description_draft = request_description_draft
+		sys.modules[self.CLIENT] = client
+		package.triton_client = client
+		self._configured = feedback._ai_drafting_configured
+		feedback._ai_drafting_configured = lambda: True
+
+	def tearDown(self):
+		feedback._ai_drafting_configured = self._configured
+		module, attr = self._saved_client
+		if module is None:
+			sys.modules.pop(self.CLIENT, None)
+		else:
+			sys.modules[self.CLIENT] = module
+		if attr is None:
+			self._pkg.__dict__.pop("triton_client", None)
+		else:
+			self._pkg.triton_client = attr
+		super().tearDown()
+
+	def _draft(self):
+		return feedback.draft_description(title="Save button does nothing", request_type="Bug")
+
+	def test_a_system_user_gets_a_draft(self):
+		self.assertEqual(self._draft(), {"description": "A fuller description."})
+		self.assertEqual(self.calls, ["nik@example.com"])
+
+	def test_a_website_user_is_refused_before_the_model_is_asked(self):
+		STATE.user = "customer@example.com"
+		with self.assertRaises(PermissionError_):
+			self._draft()
+		self.assertEqual((self.calls, STATE.counters), ([], {}))
+
+	def test_the_hourly_cap_is_per_person(self):
+		for _ in range(feedback.DRAFT_RATE_LIMIT):
+			self._draft()
+		with self.assertRaises(RateLimitExceededError):
+			self._draft()
+		self.assertEqual(len(self.calls), feedback.DRAFT_RATE_LIMIT)
+		STATE.user = "Administrator"
+		self._draft()
+		self.assertEqual(len(self.calls), feedback.DRAFT_RATE_LIMIT + 1)
+
+	def test_a_draft_counter_found_without_a_window_gets_one(self):
+		STATE.drop_expires = 1
+		self._draft()
+		(key,) = STATE.counters
+		self.assertEqual(STATE.ttl_of(key), -1)
+		self._draft()
+		self.assertEqual(STATE.ttl_of(key), feedback.DRAFT_RATE_WINDOW_SECONDS)
+		self._draft()
+		self.assertEqual(STATE.expire_calls, [key])
+
+	def test_the_draft_counter_is_not_the_filing_counter(self):
+		self._draft()
+		self.assertEqual(list(STATE.counters), ["site1|ee_feedback_draft:nik@example.com"])
 
 
 if __name__ == "__main__":

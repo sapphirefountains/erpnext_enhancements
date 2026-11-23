@@ -41,7 +41,7 @@ INVITE_TEMPLATE = (
 )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def send_for_signature(project_contract, recipient_email=None, message=None):
 	"""Email a signing link for a submitted contract.
@@ -123,7 +123,7 @@ def send_for_signature(project_contract, recipient_email=None, message=None):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def resend_for_signature(request_name, recipient_email=None, message=None, reset_attempts=True):
 	"""Issue a fresh link, retiring the previous one.
@@ -208,16 +208,16 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
 def start_in_person_signing(project_contract, signer_email=None):
 	"""Open the signing page on this device, for a client who is here to sign now.
 
 	Everything that makes an emailed signature trustworthy still applies, because it is
 	the same request, the same single-use token and the same /contract-sign page: the
-	client re-types their own address, the bot check runs, the snapshot is frozen and
-	hashed, and the executed copy is emailed to them afterwards. Only the delivery
-	differs. Nothing is emailed now; the link comes back once, to the staff member who
+	client enters the code the page emails to their own address, the bot check runs, the
+	snapshot is frozen and hashed, and the executed copy is emailed to them afterwards.
+	Only the delivery differs. No link is emailed now; it comes back once, to the staff member who
 	asked (who could equally have sent it to themselves); and the request records that it
 	was signed in person and who presented it, which the completion certificate prints.
 
@@ -323,7 +323,7 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	The client initials each clause in the builder's live preview as it is completed and
 	signs at the end, on the staff member's own signed-in device. This is the same
 	evidence path as the signing page, minus the two checks that exist because the signer
-	is somewhere else: the re-typed email address (the address here is where the signed
+	is somewhere else: the emailed code (the address here is where the signed
 	copy goes, entered at the table) and the bot check (the session is a staff login).
 	What replaces them is the request recording that it was signed in person and who
 	presented it, which the completion certificate prints, as it does for the in-person tab.
@@ -403,7 +403,7 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	return {"ok": True, "request": request.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def void_signature_request(request_name, reason=None):
 	"""Kill a live signing link (wrong address, superseded terms, changed mind)."""
 	throw_if_contract_esign_disabled()
@@ -463,6 +463,16 @@ def get_signature_state(project_contract):
 
 
 def _assert_sendable(contract):
+	# A document only Sapphire signs (a Certificate of Warranty) has no customer signature to
+	# ask for. Said plainly here, before the "template has no e-signature block" check below
+	# tells someone to add one.
+	from erpnext_enhancements.project_enhancements.warranty_certificate import is_one_sided
+
+	if is_one_sided(contract.get("template_key")):
+		frappe.throw(
+			_("Only Sapphire signs this document, so it is not sent for a customer's signature."),
+			title=_("Signed by Sapphire Only"),
+		)
 	if contract.docstatus != 1:
 		frappe.throw(
 			_("Submit the contract before sending it for signature."), title=_("Not Submitted")

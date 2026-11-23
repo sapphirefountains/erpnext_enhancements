@@ -170,7 +170,7 @@ Two screens sit outside the tabs, as they do today:
 
 **Old addresses keep working.** `/week/<date>` and `/month/<date>` redirect with `replace_route` to
 `/calendar/week|month/<date>`, and `/heatmap/<date>` and `/utilization/<date>` to `/crew/<date>?capacity=…`,
-so bookmarks, the Project form's "Open in Project Planner" link and the digest links all land on
+so bookmarks, the Project form's "Open in Planner" link and the digest links all land on
 the same content. A bare `/project-planner` opens the person's last-used tab. With none, it opens
 **Lookahead** on a desktop, **Today** on a phone for someone who is not a scheduler, and **Overview** for the
 Executive Team.
@@ -438,7 +438,7 @@ Every current feature, and where it goes. **Kept**: same place and behavior. **M
 | Hover glow | Every tab | Kept |
 | Sticky headers, edge scroll | Lookahead, Crew, Calendar | Kept |
 | Filters in the address (`?project=&pm=&group=`) | Every tab, same rules | Kept |
-| Open in Project Planner (from a Project) | Opens the **Gantt** for that project; the Lookahead filtered to it is one tab away | Moved |
+| Open in Planner (from a Project) | Opens the **Gantt** for that project; the Lookahead filtered to it is one tab away | Moved |
 
 ### 5.4 Big picture, print and preferences
 
@@ -531,7 +531,7 @@ mechanical work, Sonnet for medium, Opus for cross-cutting.
 | P3 | **Schedule state, baseline, per-project publish (back end)** | The fields and patch, `publish_project_schedule`, `reset_baseline`, project filters on publish/discard, shared drafts for Draft projects, the `notify` argument on live writes | fixtures (custom fields), `patches/`, `api/project_planner.py`, `api/maintenance_planner.py`, `planner_notices.py`, `doctype/planner_draft_change`, tests | — (parallel with P1/P2) | Opus | Built in #1320 (v1.702.0). |
 | P4 | **Auto-shift + Notify prompt (page side)** | Drags move successors by working days with Ctrl/⌘ opt-out (one Undo), replacing the offer. A Draft project's writes auto-draft. The *Notify crew?* prompt after publish. Applies to Calendar and Crew today and becomes the shared write path for P5/P6 | `project_planner.js` (commit/send, 3A successor block), `maintenance_planner.js` (notify only), tests | P1, P3 | Opus | Built in #1323 (v1.705.0). |
 | P5 | **Lookahead tab (new home)** | `get_lookahead` + the tab: project/phase/task rows, bars in days, baseline ghost, chips, *Not scheduled* rows, *No tasks yet · Build out* rows, project schedule chips with Publish…, drag/resize via P4, phone list. Landing-screen rules and old-URL redirects | `api/project_planner.py` (or `api/planner_lookahead.py`), `project_planner.js` (new PPL block), CSS, tests | P2, P3, P4 | Opus | Built in #1327 (v1.708.0). |
-| P6 | **Gantt tab (one project)** | Widget write hook, planner task feed, link-by-drag (`add_dependency`/`remove_dependency`), baseline layer, Reset baseline, Build out ▾ docked, Publish. "Open in Project Planner" lands here | `public/js/gantt_widget/gantt_widget.js`, `api/gantt.py` (feed shape only if needed), `api/planner_actions.py`, `project_planner.js` (new PPG block), `project_planner_link.js`, `tests/test_gantt_api.py` + new tests | P3, P4 | Opus | Built in #1330 (v1.709.0). |
+| P6 | **Gantt tab (one project)** | Widget write hook, planner task feed, link-by-drag (`add_dependency`/`remove_dependency`), baseline layer, Reset baseline, Build out ▾ docked, Publish. "Open in Planner" lands here | `public/js/gantt_widget/gantt_widget.js`, `api/gantt.py` (feed shape only if needed), `api/planner_actions.py`, `project_planner.js` (new PPG block), `project_planner_link.js`, `tests/test_gantt_api.py` + new tests | P3, P4 | Opus | Built in #1330 (v1.709.0). |
 | P7 | **Crew board in days + Capacity** | Crew bars in days, side tray (Not scheduled, Needs crew), *Board / Capacity* switch merging Heatmap + Utilization, redirects from `/heatmap` and `/utilization` | `project_planner.js` (crew, PP3A heatmap, PPU blocks), CSS, `tests/test_planner_url_filters.py` | P1, P2 | Sonnet | Built in #1325 (v1.713.0). |
 | P8 | **Today (phone)** | Today + tomorrow list, inline route map, Block my time, This week link, landing rule on phones; covers project tasks and visits | `api/project_planner.get_my_week` (read the same shape; maybe a `get_today`), `project_planner.js` (PP3B my-week block), CSS, tests | P1 | Sonnet | Built in #1326 (v1.707.0). |
 | P9 | **Overview + weekly summary** | Portfolio timeline (widget, read-only), exception list, weekly summary print, Monday email behind an OFF switch, landing rule for Executive Team | `api/project_planner.py` (`get_overview`, `weekly_summary_html`), `project_planner_settings` (one Check + backfill patch, per the Singles rule), `project_planner.js` (PPO block), tests | P3, P6 (widget hook not needed, shared feed helpers) | Sonnet | Built in #1332 (v1.715.0), stacked: merges before P12. |

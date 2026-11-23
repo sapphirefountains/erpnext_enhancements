@@ -13,17 +13,23 @@
  * A bundle rather than a raw /assets path because raw paths are served immutable for a year with
  * no hash (the "fix works on desktop, phones still broken" trap in CLAUDE.md).
  *
- * It installs `window.sf_bin_manager`: every export of logic.js, and `Controller`.
+ * It installs `window.sf_bin_manager`: every export of logic.js, `Controller`, and (v1.812.0)
+ * `views`, the filters and the views beyond one bin (bin_manager/views.js).
  */
 
 import * as logic from "./bin_manager/logic.js";
+import * as views from "./bin_manager/views.js";
 import { Controller } from "./bin_manager/controller.js";
 
-const VERSION = 1;
+// 2 since v1.812.0: a page that asks for the views must not be handed a copy without them.
+// 3 since v1.831.0 (transactions_route): a newer copy replaces an older one already installed in the tab.
+// The page shows its Movements link only when the copy it got has the function, so an old copy in a tab
+// open across the deploy draws the page without the link instead of throwing on the click.
+const VERSION = 3;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_bin_manager && window.sf_bin_manager.version >= VERSION)) {
-		window.sf_bin_manager = Object.assign({ version: VERSION, Controller }, logic);
+		window.sf_bin_manager = Object.assign({ version: VERSION, Controller, views }, logic);
 	}
 } catch (e) {
 	if (typeof window !== "undefined" && window.console) window.console.warn("sf_bin_manager failed to start", e);

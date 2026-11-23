@@ -76,11 +76,27 @@
 	color: var(--sf-text-strong);
 }
 
+/* The view tabs sit at the bar's right end, after the tools (v1.788.0). */
 .pp-seg {
 	display: inline-flex;
 	border: var(--sf-border-hairline) solid var(--sf-field-border);
 	border-radius: var(--sf-radius-control);
 	overflow: hidden;
+}
+
+/* And they stay there when the bar wraps (v1.792.0). On a laptop-width window (about 1470px) the
+ * toolbar's flex-wrap puts the tabs on a second line, and a wrapped line has no spacer, so the tabs
+ * sat at its left. An auto margin takes a line's slack on the tabs' left: while the bar fits on one
+ * line the spacer grows into the slack first (flexible lengths before auto margins), so nothing
+ * moves; on a line of their own the tabs sit at the right end. The Calendar's Week/Month switch
+ * (the segment right after the tabs, .ppl-cal-seg; this section names only pp- classes) keeps no
+ * margin, so it stays beside the tabs rather than sharing the slack with them. */
+.pp-toolbar > .pp-seg {
+	margin-left: auto;
+}
+
+.pp-toolbar > .pp-seg + .pp-seg {
+	margin-left: 0;
 }
 
 .pp-seg button {
@@ -746,6 +762,23 @@
 	background: color-mix(in srgb, var(--sf-text-muted) 20%, var(--sf-surface));
 	color: var(--sf-text);
 	font-style: italic;
+}
+
+/* v1.796.0: done work (Display ▸ Show done work): faded like the Gantt's finished bars, with a Done chip.
+   A manager may drag it to an earlier day (pp-movable), so it fades less while it is picked up. */
+.pp-card.pp-done {
+	opacity: 0.6;
+}
+
+.pp-card.pp-done.pp-dragging,
+.pp-card.pp-done:hover,
+.pp-card.pp-done:focus-visible {
+	opacity: 0.85;
+}
+
+.pp-chip.pp-done-chip {
+	background: color-mix(in srgb, var(--sf-green) 16%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-green) 55%, var(--sf-text-strong));
 }
 
 /* A pencilled (tentative) task: dashed and hatched, its chip says "Pencil". */
@@ -1750,10 +1783,12 @@ body.pp-drag-active * {
 		align-items: center;
 	}
 
-	/* Five views on a narrow screen: the switcher scrolls sideways rather than wrapping. */
-	.pp-seg {
+	/* Five views on a narrow screen: the switcher scrolls sideways rather than wrapping. It keeps
+	 * its place in the compact row (no auto margin, v1.792.0). */
+	.pp-toolbar > .pp-seg {
 		max-width: 100%;
 		overflow-x: auto;
+		margin-left: 0;
 	}
 
 	.pp-seg button {
@@ -3534,9 +3569,54 @@ body.p6b-resizing * {
 	overflow: hidden;
 }
 
-.ppl-heads {
+/* The month band and the day headings (v1.788.0) stick to the top as ONE block, so neither needs the
+ * other's height as an offset: on a tablet the coarse-pointer rule below makes every row 40px, and a
+ * hard-coded offset put the headings over the band (review of #1419). */
+.ppl-sticky {
 	position: sticky;
 	top: 0;
+	z-index: 4;
+	background: var(--sf-surface);
+}
+
+/* The band: one cell a month across its days. Its own height, whatever the rows' is. */
+.ppl-row.ppl-months {
+	grid-auto-rows: 22px;
+	border-top: 0;
+}
+
+/* A month cell clips (never scrolls: `clip` makes no scroll container, so the name inside can stick
+ * to the board's left edge while the board is scrolled sideways). */
+.ppl-month {
+	grid-row: 1;
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	padding: 0 6px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 22px;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: clip;
+	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
+}
+
+/* The name stays in view past the sticky label column (260px and its edge) as the board scrolls. */
+.ppl-month > span {
+	position: sticky;
+	left: 266px;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ppl-month-first {
+	border-left: 0;
+}
+
+.ppl-heads {
+	position: relative;
 	z-index: 4;
 	background: var(--sf-surface);
 }
@@ -3588,6 +3668,11 @@ body.p6b-resizing * {
 
 .ppl-week-start {
 	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+/* The first of a month, under the band's own edge: a firmer rule than a week start's. */
+.ppl-month-start {
+	border-left: var(--sf-border-hairline) solid var(--sf-text-muted);
 }
 
 .ppl-day.ppl-today,

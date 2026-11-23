@@ -34,6 +34,26 @@ The **Reorder Board** section (v1.730.0) holds ``reorder_alert_role``, whose ena
 It was added to a Single that already existed, so its ``Purchase Manager`` default reaches the
 stored row only through ``patches/backfill_reorder_alert_role``; ``DEFAULTS`` and
 ``reorder_board.alert_role`` fall back to it as well, so blank always means Purchase Manager.
+
+``job_sites_warehouse`` and ``job_site_project_types`` (v1.801.0) are job-site warehouses
+(``inventory_enhancements/job_sites.py``): the group each job's site is created under, and
+which Project Types get one. Neither declares a default. The group's name is per site, so
+``patches/add_job_sites_warehouse`` creates ``Job Sites`` beside ``Inventory - SF`` and writes
+it here once, only where ``tabSingles`` has no row for the field; blank switches job sites off.
+A blank list of types means Build (``job_site_rules.DEFAULT_PROJECT_TYPES``), so there is
+nothing to backfill and no stored value to drift from the code.
+
+``project_shelf_warehouse`` and ``overhead_receiving_warehouse`` (v1.817.0) are the Project
+Shelf (``inventory_enhancements/project_shelf.py``): the one warehouse where parts bought for a
+job wait, and where an Overhead purchase lands when its item has no bin yet. Neither declares a
+default, because a warehouse's name is per site. ``patches/rename_stores_to_project_shelf``
+renames ``Stores`` and writes both once, only where ``tabSingles`` has no row for the field. A
+blank shelf switches the Project Shelf off: nothing defaults to it and nothing is left out of
+shop stock on its account.
+
+``Inventory - SF``, named above as the patches knew it, is ``Inventory Room - SF`` since v1.823.0
+(``patches/swap_inventory_room_names``), and the room ``overhead_receiving_warehouse`` was filled
+with is ``Receiving - SF``. Frappe's rename carried the stored value with it.
 """
 
 import frappe
@@ -64,6 +84,16 @@ DEFAULTS = {
 	# declared default: a Link's value differs per site. patches/add_boneyard_warehouse creates
 	# the warehouse and fills this once, only where tabSingles has no row for it. Blank = off.
 	"boneyard_warehouse": None,
+	# Job-site warehouses (v1.801.0, inventory_enhancements/job_sites.py). No declared defaults:
+	# the group is per site (patches/add_job_sites_warehouse fills it once; blank = off), and a
+	# blank list of project types means Build.
+	"job_sites_warehouse": None,
+	"job_site_project_types": None,
+	# The Project Shelf (v1.817.0, inventory_enhancements/project_shelf.py). No declared defaults:
+	# both are warehouses, named per site (patches/rename_stores_to_project_shelf fills them once).
+	# A blank shelf = off; a blank fallback = an Overhead line with no bin keeps the order's place.
+	"project_shelf_warehouse": None,
+	"overhead_receiving_warehouse": None,
 	# Item naming digest. None: no recipients, no email.
 	"naming_digest_recipients": None,
 	# Reorder Board digest recipients (v1.730.0): this role's enabled users. Blank = the default.

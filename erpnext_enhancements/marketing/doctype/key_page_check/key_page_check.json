@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "check_date",
+  "url",
+  "url_key",
+  "column_break_main",
+  "verdict",
+  "coverage_state",
+  "last_crawl_time",
+  "error"
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Marketing",
+ "name": "Key Page Check",
+ "owner": "Administrator",
+ "sort_field": "check_date",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:KPC-{check_date}-{url_key}",
+ "in_create": 1,
+ "description": "One key page's Google index status on one day, from Search Console's URL Inspection. Kept, so the history of when a page fell out of Google survives. Written only by the nightly alerts (marketing/performance/alerts.py).",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "delete": 1
+  },
+  {
+   "role": "Sales Manager",
+   "read": 1,
+   "report": 1
+  },
+  {
+   "role": "Marketing Manager",
+   "read": 1,
+   "report": 1
+  }
+ ],
+ "fields": [
+  {
+   "fieldname": "check_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "reqd": 1,
+   "read_only": 1,
+   "set_only_once": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "url",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Page",
+   "read_only": 1
+  },
+  {
+   "fieldname": "url_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Page Key",
+   "reqd": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "verdict",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Verdict",
+   "read_only": 1,
+   "description": "PASS, NEUTRAL or FAIL, as Search Console's indexStatusResult reports it."
+  },
+  {
+   "fieldname": "coverage_state",
+   "fieldtype": "Data",
+   "label": "Coverage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_crawl_time",
+   "fieldtype": "Datetime",
+   "label": "Last Crawled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ]
+}

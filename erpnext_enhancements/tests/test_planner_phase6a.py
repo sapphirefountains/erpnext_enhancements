@@ -1689,7 +1689,8 @@ console.log(JSON.stringify(ctx.kit));
 			[(s["tone"], s["text"]) for s in self.out["states"]],
 			[
 				("green", "6h free"),
-				("amber", "1h free · +2h pencil"),
+				# v1.788.0: a pencil that covers the free hours is the only figure said.
+				("amber", "2h pencil"),
 				("red", "Over 2h"),
 				("off", "Holiday"),
 				("red", "Off, 3h booked"),

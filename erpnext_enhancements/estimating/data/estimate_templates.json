@@ -1,0 +1,135 @@
+{
+ "_comment": "Seeded insert-only by patches/seed_estimate_templates.py and edited in the Desk afterwards. No prices: this repository is public and the numbers are Sapphire's to type. Quantities are placeholders the estimator sets. tests/test_estimating_rules.py checks every cost code against the catalog.",
+ "templates": [
+  {
+   "template_name": "Design-Build",
+   "job_kind": "Design-Build",
+   "description": "A fountain Sapphire designs and builds. Phase 100 holds the four design stages (110 to 140, the Design Project template's stages), then construction phases 200 to 700.",
+   "phases": [
+    [100, "Design and planning", "Design, planning and project management through construction documents."],
+    [110, "Predesign", "Site visit, program and budget confirmation."],
+    [120, "Schematic design", "Concept layout and effects for approval."],
+    [130, "Design development", "Hydraulics, equipment selection and layout developed for pricing."],
+    [140, "Construction documents", "Drawings and specifications for construction and permit."],
+    [200, "Groundwork and prep", "Site preparation, excavation and coordination."],
+    [300, "Rough-in", "Underground and in-wall piping, sleeves and pressure tests."],
+    [400, "Structural vessel", "Basin structure and waterproofing."],
+    [500, "Mechanical room", "Pumps, filtration, treatment and equipment room piping."],
+    [600, "Controls and electrical", "Control panel, wiring and integration."],
+    [700, "Features and finishes", "Nozzles, finishes, start-up, commissioning and owner training."]
+   ],
+   "lines": [
+    [100, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [110, 1, "Site visit, program and budget", "Labor", "LAB-DESIGN", "h"],
+    [120, 1, "Schematic design", "Labor", "LAB-DESIGN", "h"],
+    [120, 0, "Renderings", "Labor", "LAB-DESIGN-ASSIST", "h"],
+    [130, 1, "Design development", "Labor", "LAB-DESIGN", "h"],
+    [130, 1, "Hydraulic and equipment sizing", "Labor", "LAB-DESIGN-ASSIST", "h"],
+    [140, 1, "Construction documents", "Labor", "LAB-DESIGN", "h"],
+    [140, 0, "Engineering review and stamp", "Subcontract", "", "LS"],
+    [200, 1, "Excavation and fill", "Subcontract", "31 2300", "LS"],
+    [200, 0, "Core drilling", "Subcontract", "", "LS"],
+    [200, 1, "Preparation labor", "Labor", "LAB-DIRECT", "h"],
+    [200, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [300, 1, "Rough fountain piping", "Material", "22 5213.13", "LS"],
+    [300, 1, "Rough-in labor", "Labor", "LAB-DIRECT", "h"],
+    [300, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [400, 1, "Cast-in-place concrete", "Subcontract", "03 3000", "LS"],
+    [400, 1, "Waterproofing", "Subcontract", "07 1000", "LS"],
+    [400, 1, "Structural vessel labor", "Labor", "LAB-DIRECT", "h"],
+    [400, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [500, 1, "Fountain pumps", "Equipment", "22 5216", "ea"],
+    [500, 1, "Water treatment equipment", "Equipment", "22 5219", "ea"],
+    [500, 0, "Chemical controller", "Equipment", "22 5223.13", "ea"],
+    [500, 1, "Equipment room piping", "Material", "22 5213.16", "LS"],
+    [500, 1, "Equipment room labor", "Labor", "LAB-DIRECT", "h"],
+    [500, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [600, 1, "Control panel enclosure", "Equipment", "26 2716", "ea"],
+    [600, 1, "Control panel build and programming", "Labor", "26 0900.16", "h"],
+    [600, 1, "Wiring connections", "Labor", "26 0583", "h"],
+    [600, 0, "Underwater lighting", "Material", "26 5529", "ea"],
+    [600, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [700, 1, "Fountain nozzles", "Material", "22 5213.29", "ea"],
+    [700, 1, "Manifold materials", "Material", "22 5213.26", "LS"],
+    [700, 0, "Tiling", "Subcontract", "09 3000", "LS"],
+    [700, 1, "Commissioning", "Labor", "13 0812", "h"],
+    [700, 1, "Owner training and hand-off", "Labor", "01 7900", "h"],
+    [700, 1, "Finishes labor", "Labor", "LAB-DIRECT", "h"],
+    [700, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [700, 0, "Travel", "Expense", "OH-TRAVEL", "LS"]
+   ]
+  },
+  {
+   "template_name": "Build",
+   "job_kind": "Build",
+   "description": "A fountain Sapphire builds to someone else's design. Phase 100 still exists for plan check, organization and resource scoping.",
+   "phases": [
+    [100, "Design and planning", "Plan check, submittals, organization and resource scoping."],
+    [200, "Groundwork and prep", "Site preparation, excavation and coordination."],
+    [300, "Rough-in", "Underground and in-wall piping, sleeves and pressure tests."],
+    [400, "Structural vessel", "Basin structure and waterproofing."],
+    [500, "Mechanical room", "Pumps, filtration, treatment and equipment room piping."],
+    [600, "Controls and electrical", "Control panel, wiring and integration."],
+    [700, "Features and finishes", "Nozzles, finishes, start-up, commissioning and owner training."]
+   ],
+   "lines": [
+    [100, 1, "Plan check and submittals", "Labor", "LAB-PM", "h"],
+    [100, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [200, 1, "Excavation and fill", "Subcontract", "31 2300", "LS"],
+    [200, 1, "Preparation labor", "Labor", "LAB-DIRECT", "h"],
+    [300, 1, "Rough fountain piping", "Material", "22 5213.13", "LS"],
+    [300, 1, "Rough-in labor", "Labor", "LAB-DIRECT", "h"],
+    [400, 1, "Waterproofing", "Subcontract", "07 1000", "LS"],
+    [400, 1, "Structural vessel labor", "Labor", "LAB-DIRECT", "h"],
+    [500, 1, "Fountain pumps", "Equipment", "22 5216", "ea"],
+    [500, 1, "Water treatment equipment", "Equipment", "22 5219", "ea"],
+    [500, 1, "Equipment room piping", "Material", "22 5213.16", "LS"],
+    [500, 1, "Equipment room labor", "Labor", "LAB-DIRECT", "h"],
+    [600, 1, "Control panel enclosure", "Equipment", "26 2716", "ea"],
+    [600, 1, "Control panel build and programming", "Labor", "26 0900.16", "h"],
+    [600, 1, "Wiring connections", "Labor", "26 0583", "h"],
+    [700, 1, "Fountain nozzles", "Material", "22 5213.29", "ea"],
+    [700, 1, "Commissioning", "Labor", "13 0812", "h"],
+    [700, 1, "Owner training and hand-off", "Labor", "01 7900", "h"],
+    [700, 1, "Finishes labor", "Labor", "LAB-DIRECT", "h"]
+   ]
+  },
+  {
+   "template_name": "Event",
+   "job_kind": "Event",
+   "description": "An event or rental. No phases: each line is its own line on the quotation.",
+   "phases": [],
+   "lines": [
+    [0, 1, "Fountain rental", "Equipment", "", "ea"],
+    [0, 1, "Delivery and setup labor", "Labor", "LAB-DIRECT", "h"],
+    [0, 1, "Teardown and pickup labor", "Labor", "LAB-DIRECT", "h"],
+    [0, 1, "Travel", "Expense", "OH-TRAVEL", "LS"],
+    [0, 0, "Event attendant", "Labor", "LAB-DIRECT", "h"],
+    [0, 0, "Water and treatment", "Material", "", "LS"],
+    [0, 0, "Power distribution", "Equipment", "", "LS"]
+   ]
+  },
+  {
+   "template_name": "Custom Panel",
+   "job_kind": "Custom Panel",
+   "description": "Control panels built in the shop, with no rough-in or vessel. Set the quantity to the number of panels.",
+   "phases": [
+    [100, "Design and planning", "Panel design, drawings and project management."],
+    [600, "Panel build", "Enclosures, devices, wiring, programming and shop testing."],
+    [700, "Delivery and start-up", "Crating, delivery, start-up and training."]
+   ],
+   "lines": [
+    [100, 1, "Panel design and drawings", "Labor", "LAB-DESIGN", "h"],
+    [100, 1, "Project management", "Labor", "LAB-PM", "h"],
+    [600, 1, "Electrical cabinet and enclosure", "Equipment", "26 2716", "ea"],
+    [600, 1, "Panel electrical devices", "Material", "26 0900", "ea"],
+    [600, 1, "Control panel build and programming", "Labor", "26 0900.16", "h"],
+    [600, 0, "Low-voltage conductors and cables", "Material", "26 0519", "LS"],
+    [700, 0, "Crating and shipping", "Expense", "", "LS"],
+    [700, 0, "Start-up and commissioning", "Labor", "13 0812", "h"],
+    [700, 0, "Owner training", "Labor", "01 7900", "h"],
+    [700, 0, "Travel", "Expense", "OH-TRAVEL", "LS"]
+   ]
+  }
+ ]
+}

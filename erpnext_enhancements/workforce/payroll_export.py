@@ -51,6 +51,15 @@ Built with ``openpyxl`` rather than ``frappe.utils.xlsxutils.make_xlsx``: on v16
 that helper writes ONE sheet through ``xlsxwriter`` (read from
 ``origin/version-16``), and the workbook needs two. openpyxl ships with frappe.
 
+## Edits waiting for approval
+
+An interval an employee changed or entered by hand waits for a reviewer's approval
+(``workforce/time_edits.py``). Until it is approved, or while it is sent back, it is
+left out of every figure here, the overtime split included, and listed on a third
+sheet, **Waiting for Approval** (employee, day, hours, what changed), so the person
+running payroll sees what is still outstanding. The Desk report lists the same
+entries above its table.
+
 ## Salaried employees
 
 Report a flat ``SALARIED_PERIOD_HOURS`` (86.67 = 2080 / 24) rather than clocked
@@ -85,7 +94,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, flt, get_datetime, get_last_day, getdate, nowdate
 
-from erpnext_enhancements.workforce import costing, overtime
+from erpnext_enhancements.workforce import costing, overtime, time_edits
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
 	get_settings,
 )
@@ -128,6 +137,17 @@ COSTING_NOTICE = "INTERNAL COSTING - not part of the payroll submission. Do not 
 COSTING_HEADER = (
 	"Emp Num", "Employee", "Position", "Tier", "Pay Type", "Hourly Rate", "Regular Hours",
 	"OT Hours", "Straight-time Gross", "Burden %", "Burdened Labor Cost",
+)
+
+#: The third sheet: Completed intervals whose hand edit is waiting for approval or was
+#: sent back (``workforce/time_edits.py``). They are in no total on the other two sheets.
+WAITING_SHEET_NAME = "Waiting for Approval"
+WAITING_NOTICE = (
+	"WAITING FOR APPROVAL - not part of the payroll submission. These entries are left out of "
+	"every total until a manager approves them."
+)
+WAITING_HEADER = (
+	"Emp Num", "Employee", "Day", "Hours", "Status", "What changed", "Reason", "Edited by", "Entry",
 )
 
 #: Excel refuses these in a sheet name, and caps it at 31 characters.
@@ -177,6 +197,59 @@ def sheet_name(from_date, to_date):
 # -------------------------------------------------------------------- hours
 
 
+#: The approval columns ``completed_intervals`` reads (``workforce/time_edits.py``).
+EDIT_COLUMNS = ("edit_approval", "edit_previous_start", "edit_previous_end", "edited_by",
+                "time_edit_reason", "manual_start_reason")
+
+
+def _job_interval_has(column):
+	"""``has_column`` RAISES on an unknown table, hence the guard."""
+	try:
+		return frappe.db.has_column("Job Interval", column)
+	except Exception:
+		return False
+
+
+def completed_intervals(from_dt, to_dt, employee=None):
+	"""Completed Job Intervals starting in ``[from_dt, to_dt)``, one row each, with
+	the approval columns ``time_edits`` judges them by. A column the site does not
+	have yet reads as NULL, which is blank: counted, as before."""
+	edit_columns = ", ".join(
+		f"ji.{column}" if _job_interval_has(column) else f"NULL AS {column}" for column in EDIT_COLUMNS
+	)
+	conditions = ["ji.status = 'Completed'", "ji.end_time IS NOT NULL",
+	              "ji.start_time >= %(from_dt)s", "ji.start_time < %(to_dt)s"]
+	values = {"from_dt": from_dt, "to_dt": to_dt}
+	if employee:
+		conditions.append("ji.employee = %(employee)s")
+		values["employee"] = employee
+
+	return frappe.db.sql(
+		f"""
+		SELECT ji.name, ji.employee, ji.project, ji.start_time, ji.end_time, ji.total_paused_seconds,
+			e.employee_name, e.employee_number, {edit_columns}
+		FROM `tabJob Interval` ji
+		LEFT JOIN `tabEmployee` e ON e.name = ji.employee
+		WHERE {" AND ".join(conditions)}
+		ORDER BY ji.employee, ji.start_time
+		""",
+		values,
+		as_dict=True,
+	)
+
+
+def _period_bounds(from_date, to_date):
+	"""``[from 00:00, day after to 00:00)``: every interval that starts on a day of the period."""
+	return f"{getdate(from_date)} 00:00:00", f"{add_days(getdate(to_date), 1)} 00:00:00"
+
+
+def net_hours(row):
+	"""Worked hours of one interval row: the span less ``total_paused_seconds``, never
+	below zero, whole seconds (as ``TIMESTAMPDIFF(SECOND, ...)`` counted them)."""
+	span = int((get_datetime(row.end_time) - get_datetime(row.start_time)).total_seconds())
+	return max(span - flt(row.total_paused_seconds), 0) / 3600.0
+
+
 def worked_hours(from_date, to_date, employee=None):
 	"""Net worked hours per (employee, project) from Completed Job Intervals.
 
@@ -188,31 +261,42 @@ def worked_hours(from_date, to_date, employee=None):
 	how the manual sheet has always treated an overnight callout. Splitting it
 	would be defensible but would silently disagree with history, and this module
 	has to reconcile against history before anything else.
-	"""
-	conditions = ["ji.status = 'Completed'", "ji.start_time >= %(from_date)s",
-	              "DATE(ji.start_time) <= %(to_date)s", "ji.end_time IS NOT NULL"]
-	values = {"from_date": from_date, "to_date": to_date}
-	if employee:
-		conditions.append("ji.employee = %(employee)s")
-		values["employee"] = employee
 
-	return frappe.db.sql(
-		f"""
-		SELECT
-			ji.employee,
-			ji.project,
-			SUM(GREATEST(
-				TIMESTAMPDIFF(SECOND, ji.start_time, ji.end_time)
-					- COALESCE(ji.total_paused_seconds, 0),
-				0
-			)) / 3600.0 AS hours
-		FROM `tabJob Interval` ji
-		WHERE {" AND ".join(conditions)}
-		GROUP BY ji.employee, ji.project
-		""",
-		values,
-		as_dict=True,
-	)
+	An interval whose hand edit is waiting for approval, or was sent back, is left
+	out (``time_edits.is_held``); ``held_entries`` lists it instead.
+	"""
+	buckets = {}
+	for row in completed_intervals(*_period_bounds(from_date, to_date), employee=employee):
+		if time_edits.is_held(row):
+			continue
+		key = (row.employee, row.project)
+		if key not in buckets:
+			buckets[key] = frappe._dict({"employee": row.employee, "project": row.project, "hours": 0.0})
+		buckets[key].hours += net_hours(row)
+	return list(buckets.values())
+
+
+def held_entries(from_date, to_date):
+	"""The period's Completed intervals left out of every total because a hand edit
+	is waiting for approval or was sent back: one dict each, for the person running
+	payroll to see what is still waiting."""
+	out = []
+	for row in completed_intervals(*_period_bounds(from_date, to_date)):
+		if not time_edits.is_held(row):
+			continue
+		out.append({
+			"interval": row.name,
+			"employee": row.employee,
+			"emp_num": row.employee_number or "",
+			"employee_name": row.employee_name or row.employee,
+			"day": str(getdate(row.start_time)),
+			"hours": round(net_hours(row), 2),
+			"status": time_edits.state(row),
+			"change": time_edits.describe_change(row),
+			"reason": row.time_edit_reason or row.manual_start_reason or "",
+			"edited_by": row.edited_by or "",
+		})
+	return out
 
 
 def overtime_settings():
@@ -230,27 +314,18 @@ def overtime_split(from_date, to_date):
 	Reads the WHOLE overlapping workweeks — the period is semi-monthly, the
 	workweek is not — and hands each employee's intervals to ``overtime.split_hours``,
 	which counts only the ones that start inside the period. Same "credited to the
-	day it starts" rule as ``worked_hours``.
+	day it starts" rule as ``worked_hours``, and the same exclusion of held edits:
+	an interval nobody has approved pushes nobody past the overtime threshold either.
 	"""
 	week_start, weekly_hours = overtime_settings()
 	first = overtime.workweek_start(getdate(from_date), week_start)
 	last = overtime.workweek_start(getdate(to_date), week_start) + timedelta(days=6)
 
-	rows = frappe.db.sql(
-		"""
-		SELECT ji.employee, ji.start_time, ji.end_time, ji.total_paused_seconds
-		FROM `tabJob Interval` ji
-		WHERE ji.status = 'Completed'
-		  AND ji.end_time IS NOT NULL
-		  AND ji.start_time >= %(from_dt)s
-		  AND ji.start_time < %(to_dt)s
-		ORDER BY ji.employee, ji.start_time
-		""",
-		{"from_dt": f"{first} 00:00:00", "to_dt": f"{add_days(last, 1)} 00:00:00"},
-		as_dict=True,
-	)
+	rows = completed_intervals(*_period_bounds(first, last))
 	by_employee = {}
 	for row in rows:
+		if time_edits.is_held(row):
+			continue
 		by_employee.setdefault(row.employee, []).append({
 			"start": get_datetime(row.start_time),
 			"end": get_datetime(row.end_time),
@@ -469,6 +544,29 @@ def costing_rows(from_date, to_date, data=None):
 	return rows
 
 
+def waiting_rows(from_date, to_date, held=None):
+	"""The Waiting for Approval sheet: a notice, the period, a header, one line per
+	entry ``held_entries`` found, and the hours they add up to. Never sent to the firm."""
+	if held is None:
+		held = held_entries(from_date, to_date)
+	rows = [
+		[WAITING_NOTICE],
+		["Pay Period:", period_label(from_date, to_date)],
+		[],
+		list(WAITING_HEADER),
+	]
+	for entry in held:
+		rows.append([
+			entry["emp_num"], entry["employee_name"], entry["day"], entry["hours"], entry["status"],
+			entry["change"], entry["reason"], entry["edited_by"], entry["interval"],
+		])
+	if held:
+		rows.append(["", "Total left out", "", round(sum(flt(e["hours"]) for e in held), 2)])
+	else:
+		rows.append(["", "Nothing in this period is waiting for approval."])
+	return rows
+
+
 def safe_sheet_name(name):
 	return _INVALID_SHEET_CHARS.sub("", str(name))[:31] or "Sheet"
 
@@ -509,8 +607,8 @@ def _cell(value):
 
 @frappe.whitelist()
 def download_payroll_workbook(from_date=None, to_date=None, pay_date=None, include_projects=0):
-	"""Whitelisted: stream the period's workbook as .xlsx — the provider sheet
-	plus the Internal Costing sheet.
+	"""Whitelisted: stream the period's workbook as .xlsx — the provider sheet,
+	the Internal Costing sheet, and the Waiting for Approval sheet.
 
 	Role-gated rather than permission-gated on a doctype: the file contains every
 	employee's hours and, on the second sheet, their pay rates, which is not
@@ -527,6 +625,7 @@ def download_payroll_workbook(from_date=None, to_date=None, pay_date=None, inclu
 	xlsx = write_workbook([
 		(name, workbook_rows(from_date, to_date, pay_date=pay_date, data=data)),
 		(COSTING_SHEET_NAME, costing_rows(from_date, to_date, data=[r for r in data if r["is_employee_row"]])),
+		(WAITING_SHEET_NAME, waiting_rows(from_date, to_date)),
 	])
 	frappe.response["filename"] = f"{name}.xlsx"
 	frappe.response["filecontent"] = xlsx.getvalue()

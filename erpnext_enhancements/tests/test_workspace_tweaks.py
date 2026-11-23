@@ -132,8 +132,15 @@ class TestSidebar1650(unittest.TestCase):
 	def test_production_on_2026_10_07(self):
 		db = _Db(_production_rows(), {"Sidebar", "Workspace Sidebar"})
 		fake = _run(db)
-		# Only ERPNext's own "Project" DocType row, flagged in place without a new modified.
-		self.assertEqual(db.writes, [("Sidebar Item", "k1ak5cmb0s", "hidden", 1, False)])
+		# Only ERPNext's own "Project" DocType row and, since v1.779.0, its "Dashboard" row
+		# (the stock Project dashboard), flagged in place without a new modified.
+		self.assertEqual(
+			db.writes,
+			[
+				("Sidebar Item", "k1ak5cmb0s", "hidden", 1, False),
+				("Sidebar Item", "k1aehnenis", "hidden", 1, False),
+			],
+		)
 		self.assertEqual(fake.cache.deleted, ["bootinfo"])
 		self.assertEqual(fake.errors, [])
 
@@ -141,9 +148,9 @@ class TestSidebar1650(unittest.TestCase):
 		db = _Db(_production_rows(), {"Sidebar", "Workspace Sidebar"})
 		_run(db)
 		hidden = {r["name"] for r in db.rows if r["hidden"]}
-		# Not the Dashboard link (also link_to Project), not the site's layer, not another
-		# module's sidebar, and no row is removed.
-		self.assertEqual(hidden, {"k1ak5cmb0s"})
+		# Not the site's layer, not another module's sidebar, and no row is removed. The
+		# Dashboard row (also link_to Project) is hidden on purpose since v1.779.0.
+		self.assertEqual(hidden, {"k1ak5cmb0s", "k1aehnenis"})
 		self.assertEqual(len(db.rows), len(_production_rows()))
 
 	def test_the_whole_identity_must_match(self):
@@ -156,7 +163,7 @@ class TestSidebar1650(unittest.TestCase):
 		]
 		db = _Db(rows, {"Sidebar", "Workspace Sidebar"})
 		_run(db)
-		self.assertEqual([w[1] for w in db.writes], ["k1ak5cmb0s"])
+		self.assertEqual([w[1] for w in db.writes], ["k1ak5cmb0s", "k1aehnenis"])
 
 	def test_second_migrate_changes_nothing(self):
 		db = _Db(_production_rows(), {"Sidebar", "Workspace Sidebar"})
@@ -174,7 +181,13 @@ class TestSidebar1650(unittest.TestCase):
 		db.rows = _production_rows()
 		db.writes.clear()
 		_run(db)
-		self.assertEqual(db.writes, [("Sidebar Item", "k1ak5cmb0s", "hidden", 1, False)])
+		self.assertEqual(
+			db.writes,
+			[
+				("Sidebar Item", "k1ak5cmb0s", "hidden", 1, False),
+				("Sidebar Item", "k1aehnenis", "hidden", 1, False),
+			],
+		)
 
 	def test_before_16_50_the_sidebar_step_does_nothing(self):
 		db = _Db(_production_rows(), {"Workspace Sidebar"})
@@ -208,7 +221,6 @@ class TestWorkspaceSidebarBefore1650(unittest.TestCase):
 					"Projects",
 					[
 						("Workspace", "Projects", "Home"),
-						("Dashboard", "Project", "Dashboard"),
 						("DocType", "Task", "Task"),
 					],
 				)
@@ -612,16 +624,17 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 
 	def test_production_on_2026_10_23(self):
 		db, fake = self._migrate()
+		# Since v1.793.0 the Customer row sits right under the Kanban, relabelled Accounts.
 		self.assertEqual(
 			_labels(db, "CRM")[:8],
 			[
 				"Opportunity Kanban",
+				"Accounts",
 				"Dashboard",
 				"Lead",
 				"Opportunity",
 				"Guided Entry",
 				"Opportunity Board",
-				"Customer",
 				"Reports",
 			],
 		)
@@ -651,8 +664,29 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 	def test_the_dashboard_row_is_renamed_not_moved_or_lost(self):
 		db, _ = self._migrate()
 		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("Dashboard", "CRM"))
-		self.assertEqual((row["label"], row["idx"]), ("Dashboard", 2))
+		self.assertEqual((row["label"], row["idx"]), ("Dashboard", 3))
 		self.assertIn((row["name"], "label", "Dashboard"), db.writes)
+
+	def test_the_customer_row_moves_under_the_kanban_as_accounts(self):
+		"""v1.793.0: Kanban to Customer list and back was the busiest two-step on the Desk."""
+		db, _ = self._migrate()
+		row = next(r for r in db.rows if (r["link_type"], r["link_to"]) == ("DocType", "Customer"))
+		self.assertEqual((row["label"], row["idx"]), ("Accounts", 2))
+		self.assertIn((row["name"], "label", "Accounts"), db.writes)
+		# Moved, not copied: one Customer row, and the rows after it only shifted.
+		self.assertEqual(sum(1 for r in db.rows if r["link_to"] == "Customer"), 1)
+		self.assertEqual(_labels(db, "CRM")[7:], [label for *_, label in _CRM_2026_10_23[6:]])
+		_contiguous(self, db, "CRM")
+
+	def test_a_crm_without_the_customer_row_keeps_its_order(self):
+		rows = [r for r in _crm_rows() if r["link_to"] != "Customer"]
+		for idx, row in enumerate(rows, start=1):
+			row["idx"] = idx
+		db = _AddDb(rows, sidebars=("CRM",))
+		fake = _run_migrate(db)
+		self.assertEqual(_labels(db, "CRM")[:3], ["Opportunity Kanban", "Dashboard", "Lead"])
+		self.assertEqual(fake.errors, [])
+		_contiguous(self, db, "CRM")
 
 	def test_second_migrate_changes_nothing(self):
 		db, _ = self._migrate()
@@ -667,7 +701,7 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 		db.inserted.clear()
 		_run_migrate(db)
 		self.assertEqual([r["url"] for r in db.inserted], [KANBAN])
-		self.assertEqual(_labels(db, "CRM")[:2], ["Opportunity Kanban", "Dashboard"])
+		self.assertEqual(_labels(db, "CRM")[:3], ["Opportunity Kanban", "Accounts", "Dashboard"])
 
 	def test_a_kanban_row_already_there_is_left_alone(self):
 		# A Workspace Manager moved it down and hid it in the base; it is still the same link.
@@ -713,8 +747,9 @@ class TestCrmOpensOnTheKanban(unittest.TestCase):
 		rows[0]["label"] = "Sales Dashboard"
 		db = _AddDb(rows, sidebars=("CRM",))
 		_run_migrate(db)
-		self.assertEqual(_labels(db, "CRM")[1], "Sales Dashboard")
-		self.assertFalse([w for w in db.writes if len(w) == 3])
+		self.assertEqual(_labels(db, "CRM")[2], "Sales Dashboard")
+		# No label write for the dashboard row; the Customer row's own relabel still happens.
+		self.assertFalse([w for w in db.writes if len(w) == 3 and w[0] == rows[0]["name"]])
 
 
 class TestBuyingOrder(unittest.TestCase):
@@ -795,6 +830,77 @@ class TestBuyingOrder(unittest.TestCase):
 		self.assertEqual(len(fake.errors), 1)
 		self.assertEqual(fake.errors[0][0], "Core sidebar items not arranged")
 		self.assertIn("\n", fake.errors[0][1])
+
+
+# ------------------------------------------- AI Governance opens on Pending Confirmations (v1.779.0)
+#
+# Nik, 2026-11-03, from the route audit (90 days of Route History): the AI Governance workspace to
+# its Pending Confirmations list 80 times, eleven of them a bounce straight back within a minute.
+# The rows are production's "AI Governance" Sidebar, read on 2026-11-03, in idx order. It is this
+# app's module, written by frappe's workspace-to-sidebar conversion (`app` is empty); no Custom
+# Sidebar layer existed.
+
+_AI_GOVERNANCE_2026_11_03 = [
+	("Link", "Workspace", "AI Governance", "Home"),
+	("Link", "DocType", "AI Pending Action", "Pending Confirmations"),
+	("Link", "DocType", "AI Action Log", "Action Log"),
+	("Link", "DocType", "Triton Settings", "Triton Settings"),
+]
+
+
+def _ai_rows():
+	return _rows("AI Governance", _AI_GOVERNANCE_2026_11_03, "aig")
+
+
+class TestAiGovernanceOpensOnPendingConfirmations(unittest.TestCase):
+	def test_production_on_2026_11_03(self):
+		db = _AddDb(_ai_rows(), sidebars=("AI Governance",))
+		fake = _run_migrate(db)
+		self.assertEqual(
+			_labels(db, "AI Governance"), ["Pending Confirmations", "Home", "Action Log", "Triton Settings"]
+		)
+		# frappe 16.50 opens the module on its first row that leads anywhere.
+		self.assertEqual(_landing(db, "AI Governance"), ("DocType", "AI Pending Action"))
+		# Two rows swapped, in place, without a new `modified`; nothing inserted.
+		self.assertEqual(sorted(db.writes), sorted([("aig02", 1), ("aig01", 2)]))
+		self.assertEqual(db.inserted, [])
+		_contiguous(self, db, "AI Governance")
+		self.assertEqual(fake.cache.deleted, ["bootinfo"])
+		self.assertEqual(fake.errors, [])
+
+	def test_second_migrate_changes_nothing(self):
+		db = _AddDb(_ai_rows(), sidebars=("AI Governance",))
+		_run_migrate(db)
+		db.writes.clear()
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, fake.cache.deleted), ([], []))
+
+	def test_a_reimport_is_put_back(self):
+		db = _AddDb(_ai_rows(), sidebars=("AI Governance",))
+		_run_migrate(db)
+		db.rows = _ai_rows()
+		_run_migrate(db)
+		self.assertEqual(_labels(db, "AI Governance")[0], "Pending Confirmations")
+
+	def test_a_sidebar_without_the_row_is_left_alone(self):
+		rows = [r for r in _ai_rows() if r["link_to"] != "AI Pending Action"]
+		for idx, row in enumerate(rows, start=1):
+			row["idx"] = idx
+		db = _AddDb(rows, sidebars=("AI Governance",))
+		_run_migrate(db)
+		self.assertEqual(db.writes, [])
+
+	def test_no_such_sidebar_nothing_happens(self):
+		db = _AddDb(_ai_rows(), sidebars=())
+		fake = _run_migrate(db)
+		self.assertEqual((db.writes, fake.errors), ([], []))
+
+	def test_the_other_sidebars_keep_their_order(self):
+		"""The first-row table names AI Governance only: Buying still opens on its workspace."""
+		db = _AddDb(_buying_rows() + _ai_rows(), sidebars=("Buying", "AI Governance"))
+		_run_migrate(db)
+		self.assertEqual(_landing(db, "Buying"), ("Workspace", "Buying"))
+		self.assertEqual(_landing(db, "AI Governance"), ("DocType", "AI Pending Action"))
 
 
 class TestWiring(unittest.TestCase):

@@ -70,14 +70,19 @@ def get_secret(settings, fieldname: str) -> str | None:
 	"""Read an encrypted Password field from Settings, decrypting it.
 
 	Used for ``access_token``/``refresh_token``/``client_secret``/
-	``webhook_verifier_token``. Falls back to the raw field value if decryption
-	is unavailable (e.g. value not yet stored as a password), returning None when
-	absent.
+	``webhook_verifier_token``. A value set in memory and not yet saved is
+	returned by ``get_password`` itself. Returns None -- "not configured" -- when
+	nothing is stored, when the stored value cannot be decrypted, or when the
+	value is empty or only the ``*`` placeholder, so every caller (the webhook
+	signature check among them) refuses rather than proceeds.
 	"""
 	try:
-		return settings.get_password(fieldname)
+		value = settings.get_password(fieldname, raise_exception=False)
 	except Exception:
-		return settings.get(fieldname)
+		return None
+	if not isinstance(value, str) or not value.strip() or not value.strip("*"):
+		return None
+	return value
 
 
 def set_secret(settings, fieldname: str, value: str | None):
@@ -136,6 +141,26 @@ def parse_qbo_datetime(value):
 	if getattr(parsed, "tzinfo", None):
 		parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
 	return parsed
+
+
+def is_rq_job_timeout(exc) -> bool:
+	"""True when ``exc`` is RQ's job-timeout exception, which a batch must never swallow.
+
+	RQ ends an over-long job by raising ``JobTimeoutException`` into it from a one-shot
+	alarm. It subclasses ``Exception``, so a per-record ``except Exception`` catches it
+	like any bad record -- and because the alarm is not re-armed, the rest of the run then
+	has no time limit at all (see ``sync.safe_upsert``). Matched by class when ``rq`` is
+	importable and by name otherwise, so the bench-free suites can raise a stand-in.
+	``core/attachments.py`` carries its own copy for the same reason, written first.
+	"""
+	try:
+		from rq.timeouts import BaseTimeoutException
+
+		if isinstance(exc, BaseTimeoutException):
+			return True
+	except Exception:
+		pass
+	return type(exc).__name__ in ("JobTimeoutException", "BaseTimeoutException")
 
 
 def is_token_expiring(settings, buffer_minutes=5) -> bool:

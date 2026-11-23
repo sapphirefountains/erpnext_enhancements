@@ -81,7 +81,8 @@ def pick_signed_file(request_document, attachments, contract_name, downloadable)
 def signed_copy(contract):
 	"""What the Signed copy button opens for ``contract``, a Project Contract document.
 
-	Keys: ``signed``; ``route`` ("esign" when a Signature Request executed it, else "paper");
+	Keys: ``signed``; ``route`` ("esign" when a Signature Request executed it, "issued" for a
+	Certificate of Warranty signed for Sapphire as it was issued, else "paper");
 	``file_url``/``file_name``/``source`` when there is a file to open; ``executed`` when there
 	is no file but an executed copy to read; ``can_attach`` when this reader may file a scan;
 	``attachments``, the other PDFs and pictures already attached, when a scan could be one of
@@ -118,6 +119,10 @@ def signed_copy(contract):
 			return result
 
 		result["executed"] = 1 if _has_executed_copy(name) else 0
+		if result["route"] == "paper" and (contract.get("warranty_signer") or "").strip():
+			# A Certificate of Warranty signed for Sapphire when it was issued (v1.808.0): there
+			# never was paper, so no scan to ask for. The copy frozen at issue is the record.
+			result["route"] = "issued"
 		if result["route"] == "paper" and _may_file_scan(contract):
 			result["can_attach"] = 1
 			result["attachments"] = [

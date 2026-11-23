@@ -19,8 +19,10 @@ ERPNext **Time Log** documents.
 
 ## Gotchas
 
-- **No signature verification** yet — unlike the QBO webhook, this path does not
-  verify an Intuit signature (flagged with an inline `SECURITY:` comment). Add an
-  HMAC check before treating it as production-trusted.
+- **Shared secret, not a signature.** Unlike the QBO webhook, this path does not
+  verify an Intuit signature. It requires `qb_time_webhook_secret` from
+  site_config, sent in the `X-QB-Time-Webhook-Secret` header or as `?token=` on
+  the webhook URL, and refuses every request (fixed 401 body, no Error Log row)
+  while that key is unset. WI-046 retires the endpoint at cutover.
 - The payload shape in the handler is an **example**; adjust it to the actual
   QuickBooks Time payload.

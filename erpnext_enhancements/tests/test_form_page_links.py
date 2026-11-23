@@ -2,7 +2,8 @@
 
 Each form opens the page that works on the same record, in the right state:
 
-* Project — View > Open in Project Planner, on an open customer job (a planner project type):
+* Project — Open in Planner, its own button in the page head (v1.779.0; it was under View), on an
+  open customer job (a planner project type):
   the planner with that project as its Project filter (``?project=``, read from
   ``frappe.route_options`` and consumed by the planner), on the Lookahead from the week the project
   starts when that is still ahead (P5 of the planner UX redesign; the old ``/week`` address would
@@ -80,8 +81,11 @@ class TestTheButtons(unittest.TestCase):
 	def test_project_opens_the_planner_with_its_project(self):
 		code = _code(PROJECT_LINK)
 		self.assertIn('frappe.ui.form.on("Project"', code)
-		self.assertIn('__("Open in Project Planner")', code)
-		self.assertIn('__("View")', code)
+		self.assertIn('__("Open in Planner")', code)
+		# Its own button in the page head since v1.779.0, not a View menu entry: a grouped
+		# add_custom_button is a dropdown item, an ungrouped one a button beside the trail.
+		self.assertNotIn('__("View")', code)
+		self.assertRegex(code, r'add_custom_button\(__\("Open in Planner"\),\s*\(\) =>')
 		# P6: the project's Gantt, with the project as the filter too (the Lookahead is a tab away).
 		self.assertIn(
 			'frappe.set_route("project-planner", "gantt", frm.doc.name, { project: frm.doc.name })', code
@@ -106,6 +110,18 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn("planned.includes(frm.doc.project_type)", code)
 		self.assertIn('const closed = ["Completed", "Canceled", "Cancelled"];', code)
 		self.assertIn("closed.includes(frm.doc.status)", code)
+		# v1.796.0: a Completed job keeps the button for the managers who may move its done work onto old
+		# dates (planner_history.BACKDATE_ROLES, the same three roles); a Canceled one never has it.
+		self.assertIn(
+			'const history = frm.doc.status === "Completed" && frappe.user.has_role(["System Manager", "Projects Manager", "Maintenance Supervisor"]);',
+			code,
+		)
+		self.assertIn("(closed.includes(frm.doc.status) && !history)", code)
+		history_api = (APP / "api" / "planner_history.py").read_text(encoding="utf-8")
+		roles = re.search(r"BACKDATE_ROLES = frozenset\(\{([^}]*)\}\)", history_api).group(1)
+		self.assertEqual(
+			sorted(re.findall(r'"([^"]+)"', roles)), ["Maintenance Supervisor", "Projects Manager", "System Manager"]
+		)
 
 	def test_project_script_is_loaded_and_declares_nothing_at_the_top_level(self):
 		"""doctype_js concatenates every Project script into one: a top-level const or function

@@ -329,7 +329,7 @@ class TestProjectDashboard(unittest.TestCase):
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
 	)
 	@patch(
-		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_list"
 	)
 	def test_get_all_projects_for_gantt_filters_to_client_facing_types(
 		self, mock_get_all, mock_check_permission
@@ -370,7 +370,7 @@ class TestProjectDashboard(unittest.TestCase):
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
 	)
 	@patch(
-		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_list"
 	)
 	def test_get_all_projects_for_gantt_fetches_parent_task_for_detailed_view(
 		self, mock_get_all, mock_check_permission
@@ -422,9 +422,10 @@ class TestProjectDashboard(unittest.TestCase):
 		)
 		mock_log_error.assert_called_once()
 
+	@patch("erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard._require_project_read")
 	@patch("erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_meta")
 	@patch("erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all")
-	def test_get_gantt_tasks_no_baseline_fields(self, mock_get_all, mock_get_meta):
+	def test_get_gantt_tasks_no_baseline_fields(self, mock_get_all, mock_get_meta, mock_require_read):
 		"""Test fetching Gantt tasks when baseline fields are missing from Task DocType."""
 		from erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard import (
 			get_gantt_tasks_for_project,

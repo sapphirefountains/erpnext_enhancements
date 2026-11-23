@@ -883,7 +883,8 @@ const onKit = fs
 console.log("\nevery block on the kit (" + onKit.length + "), drawn with the real sf_kit");
 
 await test("the blocks on the kit are found", () => {
-	assert.ok(onKit.length >= 40, "only " + onKit.length + " blocks use blocks.kit");
+	assert.ok(onKit.length >= 36, // 40 until v1.756.0 moved the four Marketing widgets onto Marketing Performance
+		"only " + onKit.length + " blocks use blocks.kit");
 	assert.ok(onKit.includes("sales_stalled_deals.js") && onKit.includes("finance_whos_working.js"));
 });
 
@@ -913,7 +914,7 @@ const KIT_SPECS = {
 		jquery: true,
 		empties: [[]],
 		offMessage: [],
-		off: /No active client projects/,
+		off: /No active projects/,
 	},
 	// My Priority Tasks (v1.681.0): the viewer's own tasks, so an empty answer is "none for you".
 	"my_priority_tasks.js": { off: /No open tasks/ },

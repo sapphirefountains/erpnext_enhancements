@@ -46,7 +46,7 @@ From the same review:
 - **Hidden:** No of Employees, Annual Revenue, Market Segment, City, State, Country, Company, Amended
   From, Time & Materials and Created from Travel Trip.
 - **Read-only:** the website attribution fields (UTM, click ID, landing page, first referrer).
-- **Ranks:** 1 is the customer's top priority.
+- **Ranks:** hidden since v1.799.0 (nothing read them; the audit in `docs/audits/` says why).
 - **Deliverables:** the PM and Design fill them in before the hand-off.
 
 ## Estimates / quotes — revision naming (QuickBooks, for now)

@@ -170,7 +170,7 @@ def _change_order_criteria(project):
     return out
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def generate_inspection(project, milestone):
     """Create a draft inspection for ``project`` at ``milestone``. Returns a summary dict.
 

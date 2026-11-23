@@ -13,6 +13,7 @@ way (imports dropped, a fake database passed in as ``frappe``), so nothing is pu
 import ast
 import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -362,6 +363,104 @@ class TestPlaceProjectsLayout(unittest.TestCase):
 					if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
 						guarded.add(call.func.id)
 		self.assertIn("_place_projects_layout", guarded)
+
+
+BLOCKS_DIR = Path(__file__).resolve().parent.parent / "custom_html_blocks"
+
+
+def _strip_comments(text):
+	text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+	text = re.sub(r"<!--[\s\S]*?-->", "", text)
+	return re.sub(r"(^|[^:\"'\\])//[^\n]*", r"\1", text)
+
+
+class TestProjectsDashboardFiles(unittest.TestCase):
+	"""The three files the seeder upserts for the Projects Dashboard (Mock B, v1.781.0; slimmed
+	in v1.785.0).
+
+	The seeder copies them whole, so what matters is that the shell, the script and the
+	stylesheet it ships still say what they should: six tabs always in the bar (Products since v1.824.0), no "View
+	More", the saved view read through try/catch, no hue-scale priority colour, a one-row
+	band with the tiles on the Summary tab and the Columns button on the chips row.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.html = _strip_comments((BLOCKS_DIR / "projects_dashboard.html").read_text(encoding="utf-8"))
+		cls.js = _strip_comments((BLOCKS_DIR / "projects_dashboard.js").read_text(encoding="utf-8"))
+		cls.css = _strip_comments((BLOCKS_DIR / "projects_dashboard.css").read_text(encoding="utf-8"))
+
+	def test_the_block_is_seeded_from_these_files(self):
+		names = {name for name, _prefix in _load()["BLOCKS"]}
+		self.assertIn("Projects Dashboard", names)
+
+	def test_the_six_tab_routes_are_in_the_markup(self):
+		routes = re.findall(r'class="pd-tab[^"]*"[^>]*data-route="([^"]+)"', self.html)
+		self.assertEqual(
+			routes,
+			[
+				"priority-overview",
+				"portfolio-gantt",
+				"active-internal-projects",
+				"completed-projects",
+				"summary",
+				"products",
+			],
+		)
+		for route in routes:
+			self.assertNotRegex(self.html, rf'data-route="{route}"[^>]*\bhidden\b')
+
+	def test_no_view_more_control_remains(self):
+		for text in (self.html, self.js, self.css):
+			self.assertNotIn("View More", text)
+			self.assertNotIn("btn-view-more", text)
+			self.assertNotIn("pg-more-tab", text)
+		self.assertNotIn("chb_projects_dashboard_more_v1", self.js)
+
+	def test_the_saved_view_keys_are_read_through_try_catch(self):
+		keys = ("chb_projects_dashboard_tab_v1", "chb_projects_dashboard_sort_v1", "chb_projects_dashboard_overview_v1")
+		for key in keys:
+			self.assertIn(f'"{key}"', self.js, key)
+		# the one reader and the one writer, each wrapped
+		read = self.js[self.js.index("function read_saved(") :]
+		read = read[: read.index("\n    }\n")]
+		self.assertIn("try {", read)
+		self.assertIn("localStorage.getItem(key)", read)
+		write = self.js[self.js.index("function write_saved(") :]
+		write = write[: write.index("\n    }\n")]
+		self.assertIn("try {", write)
+		self.assertIn("localStorage.setItem(key", write)
+		# every key goes through them (the Gantt's own saved view keeps its own pair)
+		self.assertEqual(self.js.count("localStorage.getItem("), 2)
+		self.assertEqual(self.js.count("localStorage.setItem("), 2)
+		self.assertNotIn("user_settings", self.js)
+
+	def test_no_hue_scale_priority_colour_remains(self):
+		self.assertNotIn("hsl(", self.js)
+		self.assertNotIn("hsl(", self.css)
+		self.assertNotIn("badge-", self.js)
+
+	def test_the_tiles_and_chips_the_script_fills_are_in_the_markup(self):
+		for key in ("active", "past-due", "due-30", "unranked"):
+			self.assertIn(f'data-tile-count="{key}"', self.html, key)
+			self.assertIn(f'<button type="button" class="pd-tile" data-tile="{key}"', self.html, key)
+		for stream in ("", "Design", "Build", "Service", "Events", "Internal"):
+			self.assertIn(f'data-stream-count="{stream}"', self.html, stream or "All")
+
+	def test_the_band_is_one_row_and_the_tiles_and_columns_button_left_it(self):
+		# v1.785.0: the eyebrow is gone, the tiles are in the controls (shown on the Summary
+		# tab), and the Columns button has a slot on the chips row and on a slim strip.
+		band = self.html[self.html.index('class="pd-band"') : self.html.index('class="pd-tabs')]
+		self.assertNotIn("pd-eyebrow", band)
+		self.assertNotIn("pd-tile", band)
+		self.assertIn('<h2 class="pd-title">Projects Dashboard</h2>', band)
+		controls = self.html[self.html.index('class="pd-controls') : self.html.index('id="dashboard-content"')]
+		self.assertIn('id="pd-tiles"', controls)
+		self.assertIn('id="pd-overview-tools"', controls)
+		self.assertIn('id="pd-list-tools"', controls)
+		self.assertIn('id="pd-tile-filter"', controls)
+		self.assertNotIn("dashboard-list-toolbar", self.js)
+		self.assertIn("function tools_slot()", self.js)
 
 
 if __name__ == "__main__":

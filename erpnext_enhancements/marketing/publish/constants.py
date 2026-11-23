@@ -137,7 +137,13 @@ PUBLISH_OAUTH = {
 		"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
 		"token_url": "https://oauth2.googleapis.com/token",
 		"revoke_url": "https://oauth2.googleapis.com/revoke",
-		"scopes": (f"{GOOGLE_SCOPE_BASE}/youtube.force-ssl", f"{GOOGLE_SCOPE_BASE}/yt-analytics.readonly"),
+		# youtube.readonly since v1.756.0: Google's Analytics reference now says reports.query needs it
+		# beside yt-analytics.readonly. Read-only; no connection exists yet, so no one reconnects.
+		"scopes": (
+			f"{GOOGLE_SCOPE_BASE}/youtube.force-ssl",
+			f"{GOOGLE_SCOPE_BASE}/youtube.readonly",
+			f"{GOOGLE_SCOPE_BASE}/yt-analytics.readonly",
+		),
 		"scope_separator": " ",
 		# As for Google Ads: offline + consent is what returns a refresh token on every connect.
 		"extra_authorize_params": {"access_type": "offline", "prompt": "consent"},
@@ -217,6 +223,19 @@ PUBLISH_ALLOWLIST = tuple(
 		(CONNECTION_META, "GET", GRAPH_HOST, rf"^/{_V}/\d+/video_insights$"),
 		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationalEntityShareStatistics$"),
 		(CONNECTION_YOUTUBE, "GET", "youtubeanalytics.googleapis.com", r"^/v2/reports$"),
+		# Page-level stats for the Marketing Performance page (v1.756.0): reads only. A Facebook
+		# Page's and an Instagram account's followers go through the GET on an ID above, their
+		# daily reach and views through the insights path above; LinkedIn's share statistics and
+		# YouTube's channel read and Analytics report are already here. The one new read is
+		# LinkedIn's follower total, which no statistics call returns any more, and its daily gains.
+		(
+			CONNECTION_LINKEDIN,
+			"GET",
+			LINKEDIN_HOST,
+			r"^/rest/networkSizes/urn%3Ali%3Aorganization%3A\d+$",
+		),
+		# And its daily follower gains (v1.756.0, for the kept history): 12 months back, by day.
+		(CONNECTION_LINKEDIN, "GET", LINKEDIN_HOST, r"^/rest/organizationalEntityFollowerStatistics$"),
 	)
 )
 

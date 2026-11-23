@@ -4,12 +4,20 @@ This is the engine that drives data from QBO into ERPNext. It coordinates the
 ``client`` (fetch), ``mapping`` (transform/upsert) and the logging/audit
 doctypes, exposing the high-level operations the UI and scheduler call:
 
-  * ``import_all``     -- full one-way import of every selected entity (UI/Retry).
-  * ``preview_resync`` -- dry run that records what an overwrite resync *would* do.
-  * ``run_resync``     -- replay a preview, overwriting QBO-owned fields.
+  * ``import_all``     -- full one-way import of every selected entity. Started by a
+    person from the dashboard, and by nothing else (v1.800.0).
+  * ``preview_resync`` -- dry run that records what a resync *would* do.
+  * ``run_resync``     -- replay a preview: refresh mapping cursors, flag differences.
   * ``sync_entity``    -- fetch + upsert one entity (webhook/manual single sync).
   * ``run_cdc``        -- poll Change Data Capture for incremental updates/deletes.
-  * ``retry_failed``   -- re-run logs left Failed (scheduler), honouring retry_limit.
+  * ``retry_failed``   -- re-run a failed CDC poll (scheduler), honouring retry_limit.
+    Never an Import All or a Run Resync.
+
+**The sync links, it never overwrites (v1.800.0).** None of these operations saves over
+an ERPNext record a mapping already links -- not the hourly CDC, not a webhook, not Import
+All and not Run Resync. A linked record whose QuickBooks side has moved on is flagged
+``QuickBooks Changed`` on its mapping for a person to review on the Record Matching page
+(see ``mapping._review_linked_record`` and ``core/matching.py``).
 
 Every operation opens a ``QuickBooks Sync Log`` (run lifecycle + per-action
 counters), archives each fetched record as a ``QuickBooks Raw Payload``, and
@@ -38,7 +46,11 @@ from erpnext_enhancements.quickbooks_online.core.mapping import (
 	mark_deleted,
 	upsert_entity,
 )
-from erpnext_enhancements.quickbooks_online.core.utils import get_settings, json_dumps
+from erpnext_enhancements.quickbooks_online.core.utils import (
+	get_settings,
+	is_rq_job_timeout,
+	json_dumps,
+)
 
 # A QuickBooks Sync Log left Running/Queued longer than this is treated as orphaned
 # (its worker stopped, restarted or OOM'd) so it neither blocks a new run forever nor
@@ -64,6 +76,12 @@ DEFAULT_STALE_RUN_SECONDS = 2 * 60 * 60
 # seconds while keeping commit overhead negligible.
 QBO_COMMIT_EVERY = 100
 
+# Failed runs of these types are restarted by a person from the dashboard and by nothing
+# else -- see ``retry_failed``. A full import or resync belongs on the long queue with its
+# 10-hour budget (``api.QBO_JOB_TIMEOUT``); the scheduler's retry runs on the default
+# queue, where RQ ends a job after 300 seconds.
+RESTART_BY_HAND_TYPES = frozenset({"Import All", "Run Resync", "Preview Resync"})
+
 
 def import_all(entity_types=None):
 	"""Full one-way import of all (or selected) QBO entities into ERPNext.
@@ -73,9 +91,12 @@ def import_all(entity_types=None):
 	"Import All" sync log; on success stamps ``last_full_import`` and sets
 	Settings status to Connected/Failed based on whether any record failed.
 
-	Triggered from the Settings form / dashboard "Import All" action and from the
-	scheduler ``retry_failed`` path. Side effects: many QBO GETs, DB writes, two
-	commits. Returns the sync log name. Re-raises after logging on hard failure.
+	Triggered from the Settings form / dashboard "Import All" action, and from nowhere
+	else: until v1.800.0 the scheduler's ``retry_failed`` restarted it after every failed
+	run, which is how a full import ran 2 to 6 times a day on the 300-second default queue.
+	Side effects: many QBO GETs, DB writes, a commit per batch. It creates and links
+	records; it never saves over a record a mapping already links (``upsert_entity``).
+	Returns the sync log name. Re-raises after logging on hard failure.
 	"""
 	settings = get_settings()
 	ensure_connected(settings)
@@ -133,8 +154,10 @@ def preview_resync(entity_types=None, log_name=None):
 	Mirrors ``import_all`` but calls ``safe_upsert(..., preview=True)`` so no
 	ERPNext records are created/updated; the per-record planned actions are
 	collected and stored on the log's ``preview_payload``. The returned
-	``preview_id`` is then passed to ``run_resync`` to actually apply the
-	overwrite. Raw payloads ARE stored (so ``run_resync`` can replay them).
+	``preview_id`` is then passed to ``run_resync`` to run it for real. A linked
+	record that differs is reported as ``would_flag`` (v1.800.0), compared whether or
+	not QuickBooks moved, exactly as the run will. Raw payloads ARE stored (so
+	``run_resync`` can replay them).
 	Returns ``{preview_id, summary, changes}``.
 
 	When ``log_name`` is supplied (the API pre-creates a Queued log so the
@@ -156,7 +179,8 @@ def preview_resync(entity_types=None, log_name=None):
 					sync_log=log.name,
 					realm_id=settings.realm_id,
 				)
-				result = safe_upsert(entity_type, payload, settings, preview=True)
+				# recheck, as run_resync will: the preview must count what the run would flag.
+				result = safe_upsert(entity_type, payload, settings, preview=True, recheck=True)
 				_track_result(log, result)
 				preview.append({"entity_type": entity_type, "qbo_id": payload.get("Id"), **result})
 				processed += 1
@@ -179,16 +203,25 @@ def preview_resync(entity_types=None, log_name=None):
 
 
 def run_resync(preview_id):
-	"""Apply a previously generated preview, overwriting QBO-owned fields.
+	"""Apply a previously generated preview: create, link, and flag what differs.
 
 	Replays the raw payloads captured under the given preview log (in creation
-	order) through ``safe_upsert(..., overwrite=True)`` so conflicts are resolved
-	in QBO's favour rather than flagged. Re-fetches nothing from QBO -- it works
-	purely from the stored payloads. Raises if ``preview_id`` is not a valid log.
+	order) through ``safe_upsert``. Re-fetches nothing from QBO -- it works purely
+	from the stored payloads. Raises if ``preview_id`` is not a valid log.
 	Returns ``{sync_log, summary}``.
+
+	Until v1.800.0 this passed ``overwrite=True`` and QuickBooks' values were saved over
+	every linked record. ``upsert_entity`` no longer saves over a linked record, whatever
+	it is passed. A resync creates what is missing, refreshes mapping cursors and flags
+	the linked records QuickBooks changed (``QuickBooks Changed``). It passes ``recheck=True``,
+	so a linked record is compared even when QuickBooks has not moved since its last
+	sync: a resync is how a person asks for the full comparison, for example after a
+	mapper fix changes what the existing drafts should hold. The one way QuickBooks
+	values then reach a linked record is a person's *Use QuickBooks values* or *Refresh
+	draft* on the Record Matching page.
 	"""
 	if not preview_id or not frappe.db.exists("QuickBooks Sync Log", preview_id):
-		frappe.throw("A valid Preview Resync log is required before running overwrite resync.")
+		frappe.throw("A valid Preview Resync log is required before running a resync.")
 	settings = get_settings()
 	ensure_connected(settings)
 	log = start_log("Run Resync")
@@ -201,7 +234,7 @@ def run_resync(preview_id):
 			order_by="creation asc",
 		):
 			payload = json.loads(raw.payload)
-			result = safe_upsert(raw.qbo_entity_type, payload, settings, overwrite=True)
+			result = safe_upsert(raw.qbo_entity_type, payload, settings, recheck=True)
 			_track_result(log, result)
 			processed += 1
 			# Commit in batches so a large replay holds the shared naming-series lock for
@@ -261,7 +294,8 @@ def run_cdc():
 	unless sync is enabled and connected. Uses ``last_cdc_sync`` as the
 	"changedSince" cursor (defaulting to 24h ago on first run), walks the nested
 	CDCResponse->QueryResponse structure, archives each payload, and either marks
-	the mapping deleted (status == "Deleted") or upserts it. The cursor is only
+	the mapping deleted (status == "Deleted") or upserts it -- which creates and links
+	new records and flags, never saves, a record a mapping already links. The cursor is only
 	advanced to "now" if the run completed without failures, so a failed batch is
 	retried against the same window next time. Returns the sync log name.
 	"""
@@ -328,48 +362,61 @@ def run_cdc():
 
 
 def retry_failed(log_name=None):
-	"""Re-run sync logs left in the Failed state, capped by ``retry_limit``.
+	"""Re-run a failed CDC poll, capped by ``retry_limit``. Never an Import All.
 
 	Called by the ``tasks.retry_failed_syncs`` scheduler hook (all failed logs)
 	or with a specific ``log_name`` from the dashboard "Retry Failed" action.
-	Each eligible failed log has its ``retry_count`` incremented (skipped once it
-	hits Settings.retry_limit, default 3) to record the attempt, but the originating
-	operation is then re-run **at most once per call**: CDC re-runs ``run_cdc`` once
-	and Import All / Run Resync re-run ``import_all`` once, no matter how many logs
-	of that type are failed.
+	Each eligible failed **CDC** log has its ``retry_count`` incremented (skipped once
+	it hits Settings.retry_limit, default 3) to record the attempt, and ``run_cdc`` is
+	then re-run **at most once per call**, no matter how many CDC logs are failed.
 
-	Running the global operation once per *log* (the previous behaviour) amplified
+	**A failed Import All or Run Resync is never re-run from here (v1.800.0).** Until
+	then this function ended by calling the full import whenever one of those logs was
+	Failed, so the hourly scheduler ran a full Import All inline on the 300-second
+	default queue after every failed one -- and a full import cannot finish in 300
+	seconds, so each run failed and earned the next: 2 to 6 full imports a day, each
+	re-saving every linked record it reached. Those logs are now left exactly as they
+	are (no ``retry_count`` bump, since nothing is attempted) and their names come back
+	in ``restart_by_hand`` so the dashboard can say what to do: start the run again from
+	the dashboard, where it goes to the long queue with a 10-hour budget.
+	``RESTART_BY_HAND_TYPES`` names the types; ``tests/test_quickbooks_link_only.py``
+	holds this function to it, and checks this module's source for any other caller.
+
+	Running the global operation once per *log* (the behaviour before v1.36) amplified
 	catastrophically: every failed run creates another failed log, so N failed logs
 	spawned N re-runs that each spawned more, all racing on the same mapping rows
 	(``TimestampMismatchError``) and never converging -- the observed runaway of
 	hundreds of failed CDC runs. Orphaned Running/Queued logs are reaped first so a
-	crashed run can't keep the failed list (and the storm) alive. Always returns True.
+	crashed run can't keep the failed list (and the storm) alive.
+
+	Returns ``{"cdc": <True when a CDC poll was re-run>, "restart_by_hand": [log names]}``.
 	"""
 	reap_stale_runs()
 	limit = get_settings().retry_limit or 3
 	filters = {"status": "Failed"}
 	if log_name:
 		filters["name"] = log_name
-	pending = set()
+	retry_cdc = False
+	restart_by_hand = []
 	for log in frappe.get_all(
 		"QuickBooks Sync Log", filters=filters, fields=["name", "sync_type", "retry_count"]
 	):
+		if log.sync_type in RESTART_BY_HAND_TYPES:
+			restart_by_hand.append(log.name)
+			continue
+		if log.sync_type != "CDC":
+			continue
 		# Stop retrying a log once it has hit the configured attempt ceiling.
 		if (log.retry_count or 0) >= limit:
 			continue
 		doc = frappe.get_doc("QuickBooks Sync Log", log.name)
 		doc.retry_count = (doc.retry_count or 0) + 1
 		doc.save(ignore_permissions=True)
-		if doc.sync_type == "CDC":
-			pending.add("cdc")
-		elif doc.sync_type in {"Import All", "Run Resync"}:
-			pending.add("import")
-	# Re-run each global operation a single time for the whole batch of failed logs.
-	if "cdc" in pending:
+		retry_cdc = True
+	# One CDC poll for the whole batch of failed CDC logs.
+	if retry_cdc:
 		run_cdc()
-	if "import" in pending:
-		import_all()
-	return True
+	return {"cdc": retry_cdc, "restart_by_hand": restart_by_hand}
 
 
 def run_in_progress(sync_type):
@@ -523,12 +570,22 @@ def safe_upsert(entity_type, payload, settings, **kwargs):
 
 	Used by batch operations (import/resync/CDC) so one malformed record logs an
 	Error and returns ``{"action": "failed", ...}`` instead of aborting the whole
-	run. ``kwargs`` forward flags like ``preview`` / ``overwrite``.
+	run. ``kwargs`` forward flags like ``preview`` / ``recheck``.
 
 	A ``TimestampMismatchError`` (another worker touched the same mapping/record
 	between our read and write) is retried once: ``upsert_entity`` re-reads both the
 	mapping and the target doc on entry, so a single retry clears the transient race
 	rather than parking a perfectly good record as Failed.
+
+	**RQ's job timeout is never one of the swallowed exceptions (v1.800.0).**
+	``JobTimeoutException`` subclasses ``Exception``, so the ``except Exception`` below
+	used to catch it like any bad record: the run counted one "failed" record and
+	carried on. RQ's alarm is one-shot, so from then on the run had no time limit at
+	all, until the worker's own watchdog killed the process without a word -- leaving
+	a Sync Log stuck in Running until ``reap_stale_runs`` failed it 11 hours later, and
+	blocking every Import All in between. Production still holds one such log from
+	2026-10-06. The timeout is re-raised after the savepoint rollback, so the run
+	wrapper's ``fail_log`` ends the run as Failed, with the traceback, at once.
 	"""
 	# Savepoint per record: upsert_entity's create path is doc.insert() THEN save_mapping().
 	# If save_mapping raises, the inserted doc is left in the open transaction and the next
@@ -544,11 +601,15 @@ def safe_upsert(entity_type, payload, settings, **kwargs):
 		frappe.db.savepoint("qbo_upsert")
 		try:
 			return upsert_entity(entity_type, payload, settings, **kwargs)
-		except Exception:
+		except Exception as exc:
 			frappe.db.rollback(save_point="qbo_upsert")
+			if is_rq_job_timeout(exc):
+				raise
 			return _failed_result(entity_type, payload)
-	except Exception:
+	except Exception as exc:
 		frappe.db.rollback(save_point="qbo_upsert")
+		if is_rq_job_timeout(exc):
+			raise
 		return _failed_result(entity_type, payload)
 
 
@@ -733,6 +794,11 @@ def _track_result(log, result):
 	identically. Failures additionally append a human-readable line via
 	``_append_failure_message``.
 
+	``flagged`` (and a preview's ``would_flag``) is a linked record whose QuickBooks side
+	moved on and now differs from ERPNext (v1.800.0). It counts under ``conflict_count``,
+	the counter the pre-v1.800.0 ``conflict`` action used: both mean "QuickBooks and
+	ERPNext disagree and a person has to look", and the dashboard already shows it.
+
 	``ignored`` is counted so records a human closed out stay visible as a category
 	in every run's summary rather than just being absent from it.
 	"""
@@ -749,7 +815,7 @@ def _track_result(log, result):
 		log.manual_review_count = (log.manual_review_count or 0) + 1
 	elif action == "ignored":
 		log.ignored_count = (log.ignored_count or 0) + 1
-	elif action == "conflict":
+	elif action in ("flagged", "would_flag", "conflict"):
 		log.conflict_count = (log.conflict_count or 0) + 1
 	elif action == "failed":
 		log.failed_count = (log.failed_count or 0) + 1

@@ -29,7 +29,12 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.utils.user_rate_limit import user_rate_limit
+
 DOCTYPE = "Safety Incident"
+
+#: Who may file without an Employee row: the people the report is sent to.
+LOG_KEEPER_ROLES = {"HR Manager", "System Manager"}
 
 
 def _me():
@@ -39,7 +44,18 @@ def _me():
 	return user
 
 
-@frappe.whitelist()
+def _require_staff(me):
+	"""An active Employee, or a log keeper. By employment, as `timeoff.who_is_out`
+	checks it: an incident report is filed by somebody who works here."""
+	if frappe.db.exists("Employee", {"user_id": me, "status": "Active"}):
+		return
+	if LOG_KEEPER_ROLES & set(frappe.get_roles(me)):
+		return
+	frappe.throw(_("Only staff can file an incident report."), frappe.PermissionError)
+
+
+@frappe.whitelist(methods=["POST"])
+@user_rate_limit(limit=20, seconds=3600)
 def report_incident(
 	what_happened,
 	location_text,
@@ -65,6 +81,7 @@ def report_incident(
 	passes it explicitly.
 	"""
 	me = _me()
+	_require_staff(me)
 	if not (what_happened or "").strip():
 		frappe.throw(_("Say what happened."))
 	if not (location_text or "").strip():
@@ -159,7 +176,7 @@ def _log_keepers():
 	return [u for u in users if u and u not in ("Administrator", "Guest")]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def raise_action(incident, row, kind="Task"):
 	"""Turn one corrective action into work that exists outside this form.
 
@@ -171,10 +188,18 @@ def raise_action(incident, row, kind="Task"):
 	Refuses to raise the same row twice — `raised_reference` is the guard — because
 	a corrective action raised three times is three people doing it once between
 	them.
+
+	Who may raise one: anybody with write on the incident (HR Manager, System
+	Manager), and the supervisor of the person it names -- the `reports_to` arm of
+	`permissions.incident_has_permission`. Nobody else, whatever else they can read.
 	"""
 	me = _me()
 	doc = frappe.get_doc(DOCTYPE, incident)
-	doc.check_permission("write")
+	if not _may_raise(doc, me):
+		frappe.throw(
+			_("Only HR or the supervisor of the person named on this incident can raise its actions."),
+			frappe.PermissionError,
+		)
 
 	line = next((r for r in doc.actions if r.name == row), None)
 	if not line:
@@ -190,6 +215,18 @@ def raise_action(incident, row, kind="Task"):
 	line.db_set("raised_reference", reference, update_modified=False)
 	doc.add_comment("Comment", _("Corrective action raised as {0} by {1}.").format(reference, me))
 	return {"reference": reference}
+
+
+def _may_raise(doc, user):
+	"""Write on the incident, or supervising the person it names."""
+	if doc.has_permission("write"):
+		return True
+	if not doc.get("employee"):
+		return False
+	manager = frappe.db.get_value("Employee", {"user_id": user}, "name")
+	if not manager:
+		return False
+	return frappe.db.get_value("Employee", doc.get("employee"), "reports_to") == manager
 
 
 def _raise_task(doc, line):

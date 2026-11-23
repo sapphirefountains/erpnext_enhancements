@@ -1,0 +1,141 @@
+{
+ "pump": [
+  {
+   "item": "PNT-WFXF-15",
+   "item_name": "Pentair WhisperFlo XF 1.5 HP",
+   "description": "Commercial self-priming, 230 V 1 ph",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "PNT-VST-30",
+   "item_name": "Pentair SuperFlo VST 3 HP",
+   "description": "Variable speed, 230 V 1 ph",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "GLD-3656-5",
+   "item_name": "Goulds 3656 5 HP end-suction",
+   "description": "1.5x2-8, 3450 rpm, 208-230/460 V 3 ph",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "GEN-ES-75",
+   "item_name": "Generic end-suction 7.5 HP",
+   "description": "Sizing estimate until a model is picked",
+   "generic": true,
+   "source": "generic estimate"
+  }
+ ],
+ "nozzle": [
+  {
+   "item": "OAS-GJ-1",
+   "item_name": "Oase Geyser Jet 1 in",
+   "description": "Aerated jet, 1 in NPT",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "CRY-IJ-075",
+   "item_name": "Crystal Fountains in-ground jet 3/4 in",
+   "description": "Stainless, smooth bore",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "weir": [
+  {
+   "item": "SS-WEIR-8",
+   "item_name": "Stainless sheet weir, 8 ft",
+   "description": "Square lip, ±1/16 in",
+   "generic": false,
+   "source": "rep-supplied"
+  }
+ ],
+ "filter": [
+  {
+   "item": "PNT-CCP520",
+   "item_name": "Pentair Clean & Clear Plus 520",
+   "description": "Cartridge, 520 sq ft",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "PNT-TR100",
+   "item_name": "Pentair Triton II TR100",
+   "description": "Sand, 30 in",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "uv": [
+  {
+   "item": "DEL-UV-ECO",
+   "item_name": "Delta UV E-Series 150 gpm",
+   "description": "Interactive-rated UV",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "light": [
+  {
+   "item": "PNT-MCL-12",
+   "item_name": "Pentair MicroBrite 12 V LED",
+   "description": "White, 7 W",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "HYD-RGBW-24",
+   "item_name": "Hydrel RGBW 24 V DMX",
+   "description": "Color, 18 W",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "aerator": [
+  {
+   "item": "KAS-3400-1",
+   "item_name": "Kasco 3400JF 1 HP",
+   "description": "Floating fountain, 240 V",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "valve": [
+  {
+   "item": "WAT-ABV-1",
+   "item_name": "Watts 1 in autofill valve",
+   "description": "Float-operated, brass",
+   "generic": false,
+   "source": "datasheet"
+  },
+  {
+   "item": "GEN-PRV-2",
+   "item_name": "Generic 2 in PRV",
+   "description": "Sizing estimate until a model is picked",
+   "generic": true,
+   "source": "generic estimate"
+  }
+ ],
+ "chemical": [
+  {
+   "item": "PNT-RC-CTRL",
+   "item_name": "Pentair chlorine feeder and controller",
+   "description": "ORP and pH control",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ],
+ "drive": [
+  {
+   "item": "ABB-ACH580-5",
+   "item_name": "ABB ACH580 VFD, 5 HP",
+   "description": "208 V 3 ph",
+   "generic": false,
+   "source": "datasheet"
+  }
+ ]
+}

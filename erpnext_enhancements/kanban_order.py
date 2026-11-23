@@ -39,6 +39,15 @@ loop body itself: pre-filtering the list and then calling frappe's ``update_orde
 write any card whose value changed between the two reads. The permission checks, the board save
 and the realtime publish mirror frappe's v16.50.0 function line for line.
 
+**Newest first (v1.822.0).** ``public/js/kanban_customization.js`` makes the Opportunity board
+ignore its saved card order, so a new deal is drawn on top. One path would put it back: a user
+without write on Opportunity gets the board "back from the db" below, and the 16.50+ client writes
+that board's columns -- saved order and all -- straight into its live ``store.columns``, which
+draw the column on the next "load more" or card change. So for the boards in
+:data:`NEWEST_FIRST_BOARDS` that return carries an empty order per column. It is an in-memory
+copy that is never saved. A user with write gets the board they just saved, whose order is the
+list the (cleared) client sent: the first page of each column, newest first.
+
 Read from ``frappe/desk/doctype/kanban_board/kanban_board.py`` and
 ``frappe/public/js/frappe/views/kanban/kanban_board.bundle.js`` at tags v16.49.0 and v16.50.0
 (``git show v16.50.0:<path>`` -- the sibling ``../frappe`` checkout is on ``develop``).
@@ -49,8 +58,12 @@ import json
 
 import frappe
 
+# Kanban Board names whose saved card order the client ignores (see "NEWEST FIRST" in
+# public/js/kanban_customization.js). The read-only return below hands these an empty order.
+NEWEST_FIRST_BOARDS = ("Opportunity",)
 
-@frappe.whitelist()
+
+@frappe.whitelist(methods=["POST"])
 def update_order(board_name: str, order: str | dict):
 	"""frappe's ``update_order``, minus the ``set_value`` on every card in the wrong column.
 
@@ -64,7 +77,7 @@ def update_order(board_name: str, order: str | dict):
 	doctype = board.reference_doctype
 
 	if not frappe.has_permission(doctype, "write"):
-		return board, []
+		return _without_saved_order(board), []
 
 	order_dict = frappe.parse_json(order) or {}
 	stored = stored_columns(doctype, board.field_name, order_dict)
@@ -77,6 +90,17 @@ def update_order(board_name: str, order: str | dict):
 	saved = board.save(ignore_permissions=True)
 	_publish_board_update(saved)
 	return saved, []
+
+
+def _without_saved_order(board):
+	"""``board`` as the client should store it: for a newest-first board, no saved card order.
+
+	Only the in-memory document is changed; nothing here saves it.
+	"""
+	if board.name in NEWEST_FIRST_BOARDS:
+		for column in board.columns:
+			column.order = "[]"
+	return board
 
 
 def cards_in_column(cards, col_name, stored):

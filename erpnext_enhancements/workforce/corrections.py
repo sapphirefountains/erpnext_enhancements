@@ -7,7 +7,9 @@ A Job Interval is what payroll is built from, so nobody edits one by hand. A tec
 files a ``Time Correction Request`` from the kiosk (``api.time_kiosk.submit_correction_request``)
 and somebody who is allowed to decide — HR Manager, Projects Manager, System Manager, or
 the employee's own ``reports_to`` user, who need hold none of those roles — approves or
-declines it here. The desk form's buttons call the two whitelisted functions below.
+declines it here. Never the employee the request is for, or the person who filed it,
+whatever their roles (``permissions.is_party_to_request``). The desk form's buttons call
+the two whitelisted functions below.
 
 What an approval does, in order:
 
@@ -56,6 +58,14 @@ def _require_reviewer(doc):
 			),
 			frappe.PermissionError,
 		)
+	# Who may review is unchanged; a reviewer still never decides a request that changes
+	# their own hours or that they filed (v1.833.0). The controller holds a status change
+	# saved any other way to the same rule (TimeCorrectionRequest._check_decider).
+	if permissions.is_party_to_request(doc.employee, doc.owner, frappe.session.user):
+		frappe.throw(
+			_("A time correction request cannot be decided by the employee it is for or by the person who filed it."),
+			frappe.PermissionError,
+		)
 
 
 def _refuse_if_timesheet_submitted(interval):
@@ -74,7 +84,7 @@ def _refuse_if_timesheet_submitted(interval):
 # ------------------------------------------------------------------ endpoints
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_request(name, note=None):
 	"""Approve and apply. Returns ``{"status", "applied_interval"}``."""
 	doc = _load(name)
@@ -94,7 +104,7 @@ def approve_request(name, note=None):
 	return {"status": doc.status, "applied_interval": interval.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def decline_request(name, note=None):
 	"""Decline. Same gate; nothing on the interval changes."""
 	doc = _load(name)

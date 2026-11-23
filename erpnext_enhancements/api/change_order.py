@@ -4,7 +4,8 @@
 """Approving a change order — WI-075 sub-phase K.
 
 The approval stamps are read-only on the form and are written only here, from the **server
-clock** and the **session user**. That is not ceremony: the old client path on
+clock** and the **session user**. Each endpoint sets ``APPROVAL_FLAG`` on the document it saves,
+and the controller refuses a stamp changed by any save without it. That is not ceremony: the old client path on
 `process_steps.complete_step` let the browser propose its own timestamp, and the audit that
 followed found retroactive box-ticking. On a commercial instrument the date somebody agreed to
 pay more is the fact most worth being able to defend.
@@ -28,6 +29,7 @@ Indentation note: this file is 4-space, matching the rest of ``api/``. See ``api
 import frappe
 from frappe import _
 
+from erpnext_enhancements.project_enhancements.doctype.change_order.change_order import APPROVAL_FLAG
 from erpnext_enhancements.quality import change_orders
 
 
@@ -41,7 +43,7 @@ def _editable(name):
     return doc
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_change_order(change_order, note=None):
     """Record the project manager's approval. Returns the change order's derived state.
 
@@ -66,11 +68,12 @@ def approve_change_order(change_order, note=None):
     doc.pm_approved_on = frappe.utils.now_datetime()
     if note:
         doc.notes = f"{doc.notes}\n{note}" if doc.notes else note
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def record_customer_approval(change_order, how):
     """Record that the customer has agreed, and **how**.
 
@@ -92,11 +95,12 @@ def record_customer_approval(change_order, how):
     doc.customer_approved = 1
     doc.customer_approved_on = frappe.utils.now_datetime()
     doc.customer_approval_note = how
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def revoke_approval(change_order, which):
     """Undo an approval that was recorded in error. ``which`` is ``pm`` or ``customer``.
 
@@ -118,6 +122,7 @@ def revoke_approval(change_order, which):
     else:
         frappe.throw(_("Approval to revoke must be 'pm' or 'customer'."))
 
+    doc.flags[APPROVAL_FLAG] = True
     doc.save()
     return _state(doc)
 
@@ -133,6 +138,8 @@ def get_project_change_orders(project):
     frappe.has_permission("Project", "read", doc=project, throw=True)
     if not frappe.db.exists("DocType", "Change Order"):
         return {"change_orders": [], "totals": change_orders.totals([])}
+    # The rows are Change Orders, so reading them needs Change Order read as well.
+    frappe.has_permission("Change Order", "read", throw=True)
 
     rows = frappe.get_all(
         "Change Order",

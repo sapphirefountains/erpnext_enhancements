@@ -331,10 +331,10 @@ const SALES = "erpnext_enhancements.asset_management.rental_sales";
 function add_sales_buttons(frm) {
 	const live = ["Tentative", "Confirmed", "Out", "Returned"].includes(frm.doc.status);
 	if (frm.doc.rental_agreement) {
-		frm.add_custom_button(__("Rental Agreement"), () =>
+		frm.add_custom_button(__("Events Agreement"), () =>
 			frappe.set_route("Form", "Project Contract", frm.doc.rental_agreement), __("View"));
 	} else if (["Tentative", "Confirmed"].includes(frm.doc.status)) {
-		frm.add_custom_button(__("Rental Agreement"), () => {
+		frm.add_custom_button(__("Events Agreement"), () => {
 			if (frm.is_dirty()) {
 				frappe.msgprint(__("Save your changes first."));
 				return;

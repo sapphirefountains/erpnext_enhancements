@@ -20,6 +20,7 @@ from erpnext_enhancements.workforce.kiosk_offline import set_marker
 # re-exported here because kiosk docs/tooling historically reference it from
 # this module).
 from erpnext_enhancements.utils.deploy import get_deploy_version
+from erpnext_enhancements.utils.script_json import script_json
 
 # Always render fresh per-user; never cache the authenticated shell.
 no_cache = 1
@@ -66,7 +67,7 @@ def get_context(context):
 	boot["offline_key"] = set_marker(frappe.session.user)
 
 	context.no_cache = 1
-	context.boot_json = frappe.as_json(boot)
+	context.boot_json = script_json(boot)
 	context.csrf_token = boot.get("csrf_token") or ""
 	# Time Kiosk Settings.disable_browser_back also keeps the report panel out of the history.
 	context.capture_history = not frappe.utils.cint((boot.get("settings") or {}).get("disable_browser_back"))

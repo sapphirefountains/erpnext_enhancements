@@ -1,0 +1,3154 @@
+{
+ "schema": 2,
+ "units": "US",
+ "can": {
+  "read": true,
+  "write": true,
+  "create": true,
+  "push_quotation": true,
+  "push_material_request": true,
+  "email": true
+ },
+ "kits": [
+  {
+   "key": "lobby-sheet-wall-8ft",
+   "label": "Hotel lobby sheet wall, 8 ft",
+   "family": "weir",
+   "venue_type": "Decorative Fountain",
+   "desc": "An indoor sheet of water down a feature wall into a stainless trough. Pump in a vault below.",
+   "headline": [
+    {
+     "path": "features.0.inputs.length_ft",
+     "label": "Sheet width",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 40,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.inputs.fall_ft",
+     "label": "Height of the fall",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 30,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Look",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "light",
+       "label": "Light",
+       "desc": "A thin, glassy sheet. 10 gpm per foot."
+      },
+      {
+       "value": "average",
+       "label": "Average",
+       "desc": "The usual lobby sheet. 15 gpm per foot."
+      },
+      {
+       "value": "heavy",
+       "label": "Heavy",
+       "desc": "A full, loud sheet. 22 gpm per foot."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "lobby-sheet-wall-8ft",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Decorative Fountain",
+     "regulated": false
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "weir",
+      "type": "Waterwall (sheet)",
+      "label": "Lobby wall",
+      "inputs": {
+       "length_ft": 8,
+       "fall_ft": 10,
+       "lip": "square",
+       "tolerance_in": 0.0625
+      },
+      "effect": {
+       "look": "average"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Trough",
+      "shape": "rectangular",
+      "length_in": 120,
+      "width_in": 24,
+      "depth_in": 14,
+      "freeboard_in": null,
+      "volume_gal_override": null,
+      "elevation_ft": 0
+     }
+    ],
+    "pump_room": {
+     "location": "vault",
+     "distance_ft": 25,
+     "elevation_ft": 0,
+     "route_template": "weir-header",
+     "material": "SCH40 PVC"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "chlorine",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "switched"
+    },
+    "electrical": {
+     "service_v": 240,
+     "phase": 1,
+     "panel_distance_ft": 60
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  },
+  {
+   "key": "plaza-interactive-24jet",
+   "label": "Plaza interactive, 24 jets",
+   "family": "interactive",
+   "venue_type": "Interactive Water Feature",
+   "desc": "In-ground jets on a walkable plaza with a surge tank, filtration and UV. A regulated venue in Utah.",
+   "headline": [
+    {
+     "path": "features.0.inputs.play_features.0.count",
+     "label": "Number of jets",
+     "kind": "int",
+     "unit": "",
+     "min": 4,
+     "max": 96,
+     "step": 1
+    },
+    {
+     "path": "features.0.inputs.play_features.0.gpm",
+     "label": "Flow per jet",
+     "kind": "number",
+     "unit": "gpm",
+     "min": 2,
+     "max": 30,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Show",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "chase",
+       "label": "Chase",
+       "desc": "Rows of jets in turn. Sized on the busiest step."
+      },
+      {
+       "value": "all_on",
+       "label": "All on",
+       "desc": "Every jet at once. The largest pump."
+      },
+      {
+       "value": "random",
+       "label": "Random",
+       "desc": "A third of the jets at a time."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "plaza-interactive-24jet",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Interactive Water Feature",
+     "regulated": true
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "interactive",
+      "type": "Splash pad (in-ground jets)",
+      "label": "Plaza jets",
+      "inputs": {
+       "play_features": [
+        {
+         "label": "Ground jets",
+         "gpm": 8,
+         "count": 24
+        }
+       ],
+       "sequence": [
+        {
+         "open": "Ground jets"
+        }
+       ],
+       "inlet_count": 4
+      },
+      "effect": {
+       "look": "chase"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Surge tank",
+      "shape": "rectangular",
+      "length_in": 96,
+      "width_in": 72,
+      "depth_in": 24,
+      "freeboard_in": null,
+      "volume_gal_override": null,
+      "elevation_ft": -6
+     }
+    ],
+    "pump_room": {
+     "location": "room",
+     "distance_ft": 60,
+     "elevation_ft": -6,
+     "route_template": "interactive-manifold",
+     "material": "SCH80 PVC"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "chlorine",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "dmx"
+    },
+    "electrical": {
+     "service_v": 208,
+     "phase": 3,
+     "panel_distance_ft": 90
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  },
+  {
+   "key": "pond-aerator-1ac",
+   "label": "Pond aerator, 1 acre",
+   "family": "aerator",
+   "venue_type": "Pond / Lake",
+   "desc": "A floating fountain aerator for a one-acre pond, with lights and a timer.",
+   "headline": [
+    {
+     "path": "features.0.inputs.surface_acres",
+     "label": "Pond size",
+     "kind": "number",
+     "unit": "acres",
+     "min": 0.1,
+     "max": 20,
+     "step": 0.1
+    },
+    {
+     "path": "features.0.inputs.depth_ft",
+     "label": "Average depth",
+     "kind": "number",
+     "unit": "ft",
+     "min": 2,
+     "max": 30,
+     "step": 0.5
+    },
+    {
+     "path": "features.0.effect.look",
+     "label": "Pattern",
+     "kind": "tiles",
+     "options": [
+      {
+       "value": "v_shape",
+       "label": "V-shape",
+       "desc": "A tall V. The most aeration per horsepower."
+      },
+      {
+       "value": "crown",
+       "label": "Crown",
+       "desc": "A broad crown of spray."
+      },
+      {
+       "value": "geyser",
+       "label": "Geyser",
+       "desc": "One tall column."
+      }
+     ]
+    }
+   ],
+   "model": {
+    "schema": 2,
+    "mode": "quick",
+    "kit": "pond-aerator-1ac",
+    "site": {
+     "address": "",
+     "lat": null,
+     "lng": null,
+     "elevation_ft": null,
+     "air_temp_f": null,
+     "water_temp_f": null,
+     "frost_depth_in": null,
+     "hardness_ppm": null,
+     "kwh_rate": null,
+     "water_rate_per_ccf": null,
+     "jurisdiction": "UT",
+     "venue_type": "Pond / Lake",
+     "regulated": false
+    },
+    "setup": {
+     "basin": "auto",
+     "piping": "auto",
+     "pump": "auto",
+     "control": "auto",
+     "bypass": "auto",
+     "surge": "auto",
+     "treatment": "auto",
+     "lighting": "auto",
+     "electrical": "auto",
+     "winterization": "auto",
+     "features": "custom"
+    },
+    "presets": {},
+    "features": [
+     {
+      "id": "f1",
+      "family": "aerator",
+      "type": "Floating fountain aerator",
+      "label": "Pond aerator",
+      "inputs": {
+       "surface_acres": 1,
+       "depth_ft": 6,
+       "purpose": "aeration",
+       "shore_power_ft": 300
+      },
+      "effect": {
+       "look": "crown"
+      },
+      "product": {
+       "item": null,
+       "generic": true
+      },
+      "count": 1,
+      "basin": "b1",
+      "node": "t1"
+     }
+    ],
+    "basins": [
+     {
+      "id": "b1",
+      "label": "Pond",
+      "shape": "irregular",
+      "length_in": null,
+      "width_in": null,
+      "depth_in": 72,
+      "freeboard_in": null,
+      "volume_gal_override": 1955000,
+      "elevation_ft": 0
+     }
+    ],
+    "pump_room": {
+     "location": "submersible",
+     "distance_ft": 300,
+     "elevation_ft": 0,
+     "route_template": "floating-unit",
+     "material": "None"
+    },
+    "network": {
+     "nodes": [],
+     "pumps": [],
+     "segments": [],
+     "terminals": []
+    },
+    "equipment": [],
+    "treatment": {
+     "sanitizer": "none",
+     "uv": false
+    },
+    "lighting": {
+     "fixtures": [],
+     "control": "timer"
+    },
+    "electrical": {
+     "service_v": 240,
+     "phase": 1,
+     "panel_distance_ft": 300
+    },
+    "winterization": {},
+    "acks": [],
+    "notes": ""
+   }
+  }
+ ],
+ "families": [
+  {
+   "key": "weir",
+   "label": "Weir / sheet",
+   "product_class": "weir",
+   "types": [
+    "Waterwall (sheet)",
+    "Spillway",
+    "Rain edge",
+    "Infinity edge"
+   ],
+   "inputs": [
+    {
+     "key": "length_ft",
+     "label": "Weir length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "fall_ft",
+     "label": "Height of the fall",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "lip",
+     "label": "Lip",
+     "kind": "select",
+     "options": [
+      "square",
+      "rounded",
+      "knife"
+     ],
+     "advanced": true
+    },
+    {
+     "key": "tolerance_in",
+     "label": "Edge tolerance",
+     "kind": "number",
+     "unit": "in",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "light",
+     "label": "Light"
+    },
+    {
+     "value": "average",
+     "label": "Average"
+    },
+    {
+     "value": "heavy",
+     "label": "Heavy"
+    }
+   ]
+  },
+  {
+   "key": "jets",
+   "label": "Display jets",
+   "product_class": "nozzle",
+   "types": [
+    "Aerated jet",
+    "Smooth bore",
+    "Foam jet",
+    "Cascade jet"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "jet_height_ft",
+     "label": "Jet height",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "submergence_in",
+     "label": "Submergence",
+     "kind": "number",
+     "unit": "in",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "steady",
+     "label": "Steady"
+    },
+    {
+     "value": "sequenced",
+     "label": "Sequenced"
+    }
+   ]
+  },
+  {
+   "key": "interactive",
+   "label": "Interactive / splash pad",
+   "product_class": "nozzle",
+   "types": [
+    "Splash pad (in-ground jets)",
+    "Play feature",
+    "Water table"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "jet_height_ft",
+     "label": "Jet height",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "pad_area_sqft",
+     "label": "Pad area",
+     "kind": "number",
+     "unit": "sq ft"
+    },
+    {
+     "key": "tank_minutes",
+     "label": "Tank holding time",
+     "kind": "number",
+     "unit": "min",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "chase",
+     "label": "Chase"
+    },
+    {
+     "value": "all_on",
+     "label": "All on"
+    },
+    {
+     "value": "random",
+     "label": "Random"
+    }
+   ]
+  },
+  {
+   "key": "cascade",
+   "label": "Cascade / tiers",
+   "product_class": "weir",
+   "types": [
+    "Tiered fountain",
+    "Stream cascade"
+   ],
+   "inputs": [
+    {
+     "key": "tier_count",
+     "label": "Tiers",
+     "kind": "int"
+    },
+    {
+     "key": "widest_lip_ft",
+     "label": "Widest lip",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "trickle",
+     "label": "Trickle"
+    },
+    {
+     "value": "average",
+     "label": "Average"
+    },
+    {
+     "value": "full",
+     "label": "Full"
+    }
+   ]
+  },
+  {
+   "key": "laminar",
+   "label": "Laminar",
+   "product_class": "nozzle",
+   "types": [
+    "Laminar jet"
+   ],
+   "inputs": [
+    {
+     "key": "jet_count",
+     "label": "Number of jets",
+     "kind": "int"
+    },
+    {
+     "key": "arc_ft",
+     "label": "Arc length",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "arc",
+     "label": "Arc"
+    }
+   ]
+  },
+  {
+   "key": "pondless",
+   "label": "Pondless",
+   "product_class": "pump",
+   "types": [
+    "Pondless waterfall"
+   ],
+   "inputs": [
+    {
+     "key": "stream_ft",
+     "label": "Stream length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "spill_ft",
+     "label": "Spillway width",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "average",
+     "label": "Average"
+    }
+   ]
+  },
+  {
+   "key": "curtain",
+   "label": "Rain curtain",
+   "product_class": "nozzle",
+   "types": [
+    "Passive rain curtain",
+    "Digital rain curtain"
+   ],
+   "inputs": [
+    {
+     "key": "length_ft",
+     "label": "Curtain length",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "fall_ft",
+     "label": "Drop",
+     "kind": "number",
+     "unit": "ft"
+    }
+   ],
+   "looks": [
+    {
+     "value": "strands",
+     "label": "Strands"
+    }
+   ]
+  },
+  {
+   "key": "mist",
+   "label": "Mist / fog",
+   "product_class": "nozzle",
+   "types": [
+    "Fog system"
+   ],
+   "inputs": [
+    {
+     "key": "nozzle_count",
+     "label": "Mist nozzles",
+     "kind": "int"
+    }
+   ],
+   "looks": [
+    {
+     "value": "low",
+     "label": "Low fog"
+    }
+   ]
+  },
+  {
+   "key": "aerator",
+   "label": "Aerator",
+   "product_class": "aerator",
+   "types": [
+    "Floating fountain aerator",
+    "Diffused aeration"
+   ],
+   "inputs": [
+    {
+     "key": "pond_acres",
+     "label": "Pond size",
+     "kind": "number",
+     "unit": "acres"
+    },
+    {
+     "key": "pond_depth_ft",
+     "label": "Average depth",
+     "kind": "number",
+     "unit": "ft"
+    },
+    {
+     "key": "cable_ft",
+     "label": "Power cable",
+     "kind": "number",
+     "unit": "ft",
+     "advanced": true
+    }
+   ],
+   "looks": [
+    {
+     "value": "v_shape",
+     "label": "V-shape"
+    },
+    {
+     "value": "crown",
+     "label": "Crown"
+    },
+    {
+     "value": "geyser",
+     "label": "Geyser"
+    }
+   ]
+  }
+ ],
+ "sections": [
+  {
+   "key": "features",
+   "label": "Features",
+   "presets": []
+  },
+  {
+   "key": "basin",
+   "label": "Basins",
+   "presets": []
+  },
+  {
+   "key": "piping",
+   "label": "Piping",
+   "presets": [
+    {
+     "key": "sch40",
+     "label": "SCH40 PVC",
+     "desc": "Discharge to 6 ft/s, suction to 4 ft/s (DOC-0049).",
+     "values": {
+      "pump_room.material": "SCH40 PVC"
+     }
+    },
+    {
+     "key": "sch80",
+     "label": "SCH80 PVC",
+     "desc": "Heavier wall for buried or high-pressure runs.",
+     "values": {
+      "pump_room.material": "SCH80 PVC"
+     }
+    }
+   ]
+  },
+  {
+   "key": "pump",
+   "label": "Pump",
+   "presets": []
+  },
+  {
+   "key": "control",
+   "label": "Control",
+   "presets": [
+    {
+     "key": "across_line",
+     "label": "Across the line",
+     "desc": "On and off with the timer. No speed control.",
+     "values": {
+      "network.pumps.0.control": "none"
+     }
+    },
+    {
+     "key": "vfd",
+     "label": "Variable speed (VFD)",
+     "desc": "Trims the flow to the look and soft-starts the pump.",
+     "values": {
+      "network.pumps.0.control": "vfd"
+     }
+    }
+   ]
+  },
+  {
+   "key": "bypass",
+   "label": "Bypass",
+   "presets": []
+  },
+  {
+   "key": "surge",
+   "label": "Surge",
+   "presets": []
+  },
+  {
+   "key": "treatment",
+   "label": "Treatment",
+   "presets": [
+    {
+     "key": "chlorine_cartridge",
+     "label": "Chlorine and cartridge filter",
+     "desc": "Decorative features.",
+     "values": {
+      "treatment.sanitizer": "chlorine",
+      "treatment.uv": false
+     }
+    },
+    {
+     "key": "chlorine_uv",
+     "label": "Chlorine, UV and sand filter",
+     "desc": "Interactive features (R392-302-41).",
+     "values": {
+      "treatment.sanitizer": "chlorine",
+      "treatment.uv": true
+     }
+    }
+   ]
+  },
+  {
+   "key": "lighting",
+   "label": "Lighting",
+   "presets": [
+    {
+     "key": "white_switched",
+     "label": "White LED, switched",
+     "desc": "On with the pump.",
+     "values": {
+      "lighting.control": "switched"
+     }
+    },
+    {
+     "key": "rgbw_dmx",
+     "label": "RGBW LED on DMX",
+     "desc": "Color shows from a DMX controller.",
+     "values": {
+      "lighting.control": "dmx"
+     }
+    }
+   ]
+  },
+  {
+   "key": "electrical",
+   "label": "Electrical",
+   "presets": [
+    {
+     "key": "240_1",
+     "label": "240 V single phase",
+     "desc": "Most small features.",
+     "values": {
+      "electrical.service_v": 240,
+      "electrical.phase": 1
+     }
+    },
+    {
+     "key": "208_3",
+     "label": "208 V three phase",
+     "desc": "Commercial buildings.",
+     "values": {
+      "electrical.service_v": 208,
+      "electrical.phase": 3
+     }
+    },
+    {
+     "key": "480_3",
+     "label": "480 V three phase",
+     "desc": "Large pumps.",
+     "values": {
+      "electrical.service_v": 480,
+      "electrical.phase": 3
+     }
+    }
+   ]
+  },
+  {
+   "key": "winterization",
+   "label": "Winterization",
+   "presets": []
+  }
+ ],
+ "options": {
+  "venue_types": [
+   "Decorative Fountain",
+   "Interactive Water Feature",
+   "Pond / Lake",
+   "Spa",
+   "Pool",
+   "Rental"
+  ],
+  "jurisdictions": [
+   {
+    "value": "UT",
+    "label": "Utah (UT)"
+   },
+   {
+    "value": "AL",
+    "label": "Alabama (AL)"
+   },
+   {
+    "value": "AZ",
+    "label": "Arizona (AZ)"
+   },
+   {
+    "value": "AR",
+    "label": "Arkansas (AR)"
+   },
+   {
+    "value": "CA",
+    "label": "California (CA)"
+   },
+   {
+    "value": "CO",
+    "label": "Colorado (CO)"
+   },
+   {
+    "value": "CT",
+    "label": "Connecticut (CT)"
+   },
+   {
+    "value": "DE",
+    "label": "Delaware (DE)"
+   },
+   {
+    "value": "FL",
+    "label": "Florida (FL)"
+   },
+   {
+    "value": "GA",
+    "label": "Georgia (GA)"
+   },
+   {
+    "value": "ID",
+    "label": "Idaho (ID)"
+   },
+   {
+    "value": "IL",
+    "label": "Illinois (IL)"
+   },
+   {
+    "value": "IN",
+    "label": "Indiana (IN)"
+   },
+   {
+    "value": "IA",
+    "label": "Iowa (IA)"
+   },
+   {
+    "value": "KS",
+    "label": "Kansas (KS)"
+   },
+   {
+    "value": "KY",
+    "label": "Kentucky (KY)"
+   },
+   {
+    "value": "LA",
+    "label": "Louisiana (LA)"
+   },
+   {
+    "value": "ME",
+    "label": "Maine (ME)"
+   },
+   {
+    "value": "MD",
+    "label": "Maryland (MD)"
+   },
+   {
+    "value": "MA",
+    "label": "Massachusetts (MA)"
+   },
+   {
+    "value": "MI",
+    "label": "Michigan (MI)"
+   },
+   {
+    "value": "MN",
+    "label": "Minnesota (MN)"
+   },
+   {
+    "value": "MS",
+    "label": "Mississippi (MS)"
+   },
+   {
+    "value": "MO",
+    "label": "Missouri (MO)"
+   },
+   {
+    "value": "MT",
+    "label": "Montana (MT)"
+   },
+   {
+    "value": "NE",
+    "label": "Nebraska (NE)"
+   },
+   {
+    "value": "NV",
+    "label": "Nevada (NV)"
+   },
+   {
+    "value": "NH",
+    "label": "New Hampshire (NH)"
+   },
+   {
+    "value": "NJ",
+    "label": "New Jersey (NJ)"
+   },
+   {
+    "value": "NM",
+    "label": "New Mexico (NM)"
+   },
+   {
+    "value": "NY",
+    "label": "New York (NY)"
+   },
+   {
+    "value": "NC",
+    "label": "North Carolina (NC)"
+   },
+   {
+    "value": "ND",
+    "label": "North Dakota (ND)"
+   },
+   {
+    "value": "OH",
+    "label": "Ohio (OH)"
+   },
+   {
+    "value": "OK",
+    "label": "Oklahoma (OK)"
+   },
+   {
+    "value": "OR",
+    "label": "Oregon (OR)"
+   },
+   {
+    "value": "PA",
+    "label": "Pennsylvania (PA)"
+   },
+   {
+    "value": "RI",
+    "label": "Rhode Island (RI)"
+   },
+   {
+    "value": "SC",
+    "label": "South Carolina (SC)"
+   },
+   {
+    "value": "SD",
+    "label": "South Dakota (SD)"
+   },
+   {
+    "value": "TN",
+    "label": "Tennessee (TN)"
+   },
+   {
+    "value": "TX",
+    "label": "Texas (TX)"
+   },
+   {
+    "value": "VT",
+    "label": "Vermont (VT)"
+   },
+   {
+    "value": "VA",
+    "label": "Virginia (VA)"
+   },
+   {
+    "value": "WA",
+    "label": "Washington (WA)"
+   },
+   {
+    "value": "WV",
+    "label": "West Virginia (WV)"
+   },
+   {
+    "value": "WI",
+    "label": "Wisconsin (WI)"
+   },
+   {
+    "value": "WY",
+    "label": "Wyoming (WY)"
+   }
+  ],
+  "basin_shapes": [
+   "rectangular",
+   "circular",
+   "irregular"
+  ],
+  "pump_locations": [
+   {
+    "value": "vault",
+    "label": "Vault"
+   },
+   {
+    "value": "room",
+    "label": "Pump room"
+   },
+   {
+    "value": "submersible",
+    "label": "Submersible"
+   }
+  ],
+  "materials": [
+   "SCH40 PVC",
+   "SCH80 PVC",
+   "Type K Copper",
+   "HDPE"
+  ],
+  "controls": [
+   {
+    "value": "none",
+    "label": "None"
+   },
+   {
+    "value": "vfd",
+    "label": "VFD"
+   },
+   {
+    "value": "prv",
+    "label": "PRV"
+   }
+  ],
+  "pump_classes": [
+   "end-suction",
+   "self-priming",
+   "submersible",
+   "vertical turbine"
+  ],
+  "sanitizers": [
+   "chlorine",
+   "bromine",
+   "ozone",
+   "none"
+  ],
+  "lighting_controls": [
+   "switched",
+   "timer",
+   "dmx"
+  ],
+  "service_voltages": [
+   120,
+   208,
+   240,
+   480
+  ],
+  "lines": [
+   "suction",
+   "discharge",
+   "return"
+  ]
+ },
+ "catalogs": {
+  "equipment_classes": [
+   {
+    "key": "pump",
+    "label": "Pumps"
+   },
+   {
+    "key": "nozzle",
+    "label": "Nozzles"
+   },
+   {
+    "key": "weir",
+    "label": "Weirs and sheet falls"
+   },
+   {
+    "key": "filter",
+    "label": "Filters"
+   },
+   {
+    "key": "uv",
+    "label": "UV"
+   },
+   {
+    "key": "light",
+    "label": "Lights"
+   },
+   {
+    "key": "aerator",
+    "label": "Aerators"
+   },
+   {
+    "key": "valve",
+    "label": "Valves"
+   },
+   {
+    "key": "chemical",
+    "label": "Chemical feed"
+   },
+   {
+    "key": "drive",
+    "label": "Drives"
+   }
+  ],
+  "slot_classes": {
+   "filter": "filter",
+   "uv": "uv",
+   "chlorinator": "chemical",
+   "light": "light",
+   "transformer": "light",
+   "bypass": "valve",
+   "surge_arrestor": "valve",
+   "autofill": "valve",
+   "prv": "valve",
+   "vfd": "drive"
+  }
+ },
+ "house_rules": [
+  {
+   "key": "freeboard_multiplier",
+   "label": "Freeboard over surge",
+   "value": 1.25,
+   "unit": "×",
+   "citation": "Sapphire standard, 2026-11-01"
+  },
+  {
+   "key": "liner_allowance_in",
+   "label": "Liner allowance",
+   "value": 2,
+   "unit": "in",
+   "citation": "Sapphire standard, 2026-11-01"
+  },
+  {
+   "key": "spray_loss_pct",
+   "label": "Spray loss",
+   "value": 1.5,
+   "unit": "% of flow per day",
+   "citation": "Sapphire standard, 2026-11-01"
+  }
+ ],
+ "prints": [
+  {
+   "key": "report",
+   "label": "Design report",
+   "print_format": "Water Feature Design - Design Report"
+  },
+  {
+   "key": "schedules",
+   "label": "Schedules: equipment, piping, fittings, structural, electrical, controls",
+   "print_format": "Water Feature Design - Schedules"
+  },
+  {
+   "key": "drawings",
+   "label": "Design drawings",
+   "print_format": "Water Feature Design - Design Drawings"
+  },
+  {
+   "key": "calcs",
+   "label": "Engineering calculations and plan check",
+   "print_format": "Water Feature Design - Engineering Calculations"
+  },
+  {
+   "key": "budget",
+   "label": "Budget proposal",
+   "print_format": "Water Feature Design - Budget Proposal"
+  },
+  {
+   "key": "om",
+   "label": "Operations, maintenance and winterization",
+   "print_format": "Water Feature Design - Operations and Winterization"
+  },
+  {
+   "key": "packet",
+   "label": "Submittal packet",
+   "print_format": "Water Feature Design - Submittal Packet"
+  }
+ ],
+ "calculator": [
+  {
+   "key": "basin_volume",
+   "label": "Basin volume",
+   "group": "Flow and basins",
+   "note": "",
+   "inputs": [
+    {
+     "key": "shape",
+     "label": "Shape",
+     "kind": "select",
+     "unit": "",
+     "default": "rectangular",
+     "options": [
+      "rectangular",
+      "cylindrical"
+     ]
+    },
+    {
+     "key": "length_in",
+     "label": "Length",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "width_in",
+     "label": "Width",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "height_in",
+     "label": "Water depth",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "diameter_in",
+     "label": "Diameter (round)",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "turnover_gpm",
+   "label": "Turnover flow",
+   "group": "Flow and basins",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "turnovers_per_hr",
+     "label": "Turnovers per hour",
+     "kind": "number",
+     "unit": "",
+     "default": 2
+    }
+   ]
+  },
+  {
+   "key": "weir_flow",
+   "label": "Weir flow",
+   "group": "Flow and basins",
+   "note": "",
+   "inputs": [
+    {
+     "key": "length_ft",
+     "label": "Weir length",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "head_in",
+     "label": "Head over the weir",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "contractions",
+     "label": "End contractions",
+     "kind": "int",
+     "unit": "",
+     "default": 2
+    }
+   ]
+  },
+  {
+   "key": "nozzle_array_flow",
+   "label": "Nozzle array flow",
+   "group": "Flow and basins",
+   "note": "",
+   "inputs": [
+    {
+     "key": "nozzle_count",
+     "label": "Nozzles",
+     "kind": "int",
+     "unit": "",
+     "default": 0
+    },
+    {
+     "key": "gpm_each",
+     "label": "Flow each",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "nozzle_flow",
+   "label": "Orifice nozzle flow",
+   "group": "Flow and basins",
+   "note": "Q = Cd x A x sqrt(2gh) from the Nozzle Profile's coefficients, or its rated flow at head.",
+   "inputs": [
+    {
+     "key": "nozzle_profile",
+     "label": "Nozzle Profile",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    },
+    {
+     "key": "supply_head_ft",
+     "label": "Supply head",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "jet_trajectory",
+   "label": "Jet height and pressure",
+   "group": "Flow and basins",
+   "note": "Give a target height for the pressure it needs, or a head or pressure for the height it reaches.",
+   "inputs": [
+    {
+     "key": "target_height_ft",
+     "label": "Target height",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "supply_head_ft",
+     "label": "Supply head",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "supply_psi",
+     "label": "Supply pressure",
+     "kind": "number",
+     "unit": "psi",
+     "default": 0
+    },
+    {
+     "key": "nozzle_type",
+     "label": "Nozzle",
+     "kind": "select",
+     "unit": "",
+     "default": "smooth",
+     "options": [
+      "smooth",
+      "aerated"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "size_pipe",
+   "label": "Size a pipe",
+   "group": "Piping and pumps",
+   "note": "Every size, with its velocity and status, comes back in the options.",
+   "inputs": [
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "length_ft",
+     "label": "Length",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "material",
+     "label": "Material",
+     "kind": "select",
+     "unit": "",
+     "default": "SCH40 PVC",
+     "options": [
+      "SCH40 PVC",
+      "SCH80 PVC",
+      "Type K Copper"
+     ]
+    },
+    {
+     "key": "line",
+     "label": "Line",
+     "kind": "select",
+     "unit": "",
+     "default": "discharge",
+     "options": [
+      "discharge",
+      "suction"
+     ]
+    },
+    {
+     "key": "c",
+     "label": "Hazen-Williams C",
+     "kind": "number",
+     "unit": "",
+     "default": 130
+    }
+   ]
+  },
+  {
+   "key": "hazen_williams_loss",
+   "label": "Hazen-Williams friction loss",
+   "group": "Piping and pumps",
+   "note": "",
+   "inputs": [
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "length_ft",
+     "label": "Length",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "id_in",
+     "label": "Inside diameter",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "c",
+     "label": "Hazen-Williams C",
+     "kind": "number",
+     "unit": "",
+     "default": 130
+    }
+   ]
+  },
+  {
+   "key": "pipe_pressure_rating",
+   "label": "Pipe pressure rating",
+   "group": "Piping and pumps",
+   "note": "PVC derates from 73 to 110 °F to half its rating.",
+   "inputs": [
+    {
+     "key": "material",
+     "label": "Material",
+     "kind": "select",
+     "unit": "",
+     "default": "SCH40 PVC",
+     "options": [
+      "SCH40 PVC",
+      "SCH80 PVC",
+      "Type K Copper"
+     ]
+    },
+    {
+     "key": "nominal_size",
+     "label": "Nominal size",
+     "kind": "text",
+     "unit": "",
+     "default": "2\""
+    },
+    {
+     "key": "temp_f",
+     "label": "Water temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 73
+    }
+   ]
+  },
+  {
+   "key": "pipe_pressure_check",
+   "label": "Pipe pressure check",
+   "group": "Piping and pumps",
+   "note": "",
+   "inputs": [
+    {
+     "key": "material",
+     "label": "Material",
+     "kind": "select",
+     "unit": "",
+     "default": "SCH40 PVC",
+     "options": [
+      "SCH40 PVC",
+      "SCH80 PVC",
+      "Type K Copper"
+     ]
+    },
+    {
+     "key": "nominal_size",
+     "label": "Nominal size",
+     "kind": "text",
+     "unit": "",
+     "default": "2\""
+    },
+    {
+     "key": "system_psi",
+     "label": "System pressure",
+     "kind": "number",
+     "unit": "psi",
+     "default": 0
+    },
+    {
+     "key": "temp_f",
+     "label": "Water temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 73
+    }
+   ]
+  },
+  {
+   "key": "total_dynamic_head",
+   "label": "Total dynamic head",
+   "group": "Piping and pumps",
+   "note": "",
+   "inputs": [
+    {
+     "key": "segments",
+     "label": "Pipe segments",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "label": "Discharge",
+       "flow_gpm": 100,
+       "nominal_size": "3\"",
+       "material": "SCH40 PVC",
+       "length_ft": 50,
+       "line_type": "Discharge",
+       "fittings": [
+        {
+         "type": "ELL 90",
+         "qty": 4
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "static_lift_ft",
+     "label": "Static lift",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "c",
+     "label": "Hazen-Williams C",
+     "kind": "number",
+     "unit": "",
+     "default": 130
+    }
+   ]
+  },
+  {
+   "key": "select_pump",
+   "label": "Select a pump",
+   "group": "Piping and pumps",
+   "note": "",
+   "inputs": [
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "tdh_ft",
+     "label": "Total dynamic head",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "candidates",
+     "label": "Candidates",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "item_code": "PUMP-1",
+       "rated_gpm": 120,
+       "rated_tdh_ft": 60
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "npsh_available",
+   "label": "NPSH available",
+   "group": "Safety checks",
+   "note": "",
+   "inputs": [
+    {
+     "key": "suction_static_ft",
+     "label": "Suction static (+ flooded, - lift)",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "suction_friction_ft",
+     "label": "Suction friction",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "elevation_ft",
+     "label": "Site elevation",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "water_temp_f",
+     "label": "Water temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 70
+    },
+    {
+     "key": "npshr_ft",
+     "label": "Pump NPSHr",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "margin_ft",
+     "label": "Margin",
+     "kind": "number",
+     "unit": "ft",
+     "default": 3.0
+    }
+   ]
+  },
+  {
+   "key": "suction_outlet_vgb",
+   "label": "Suction outlet (VGB)",
+   "group": "Safety checks",
+   "note": "Anti-entrapment cover flow and the dual-drain flag (ANSI/APSP-16).",
+   "inputs": [
+    {
+     "key": "system_gpm",
+     "label": "System flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "cover_length_in",
+     "label": "Cover length",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "cover_width_in",
+     "label": "Cover width",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "open_area_fraction",
+     "label": "Open area fraction",
+     "kind": "number",
+     "unit": "",
+     "default": 0
+    },
+    {
+     "key": "outlets",
+     "label": "Outlets",
+     "kind": "int",
+     "unit": "",
+     "default": 1
+    },
+    {
+     "key": "vmax_fps",
+     "label": "Maximum velocity",
+     "kind": "number",
+     "unit": "ft/s",
+     "default": 1.5
+    }
+   ]
+  },
+  {
+   "key": "water_hammer",
+   "label": "Water hammer",
+   "group": "Safety checks",
+   "note": "",
+   "inputs": [
+    {
+     "key": "velocity_fps",
+     "label": "Velocity",
+     "kind": "number",
+     "unit": "ft/s",
+     "default": 0
+    },
+    {
+     "key": "length_ft",
+     "label": "Pipe length",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "closure_time_s",
+     "label": "Valve closure time",
+     "kind": "number",
+     "unit": "s",
+     "default": 0
+    },
+    {
+     "key": "material",
+     "label": "Material",
+     "kind": "select",
+     "unit": "",
+     "default": "SCH40 PVC",
+     "options": [
+      "SCH40 PVC",
+      "SCH80 PVC",
+      "Type K Copper"
+     ]
+    },
+    {
+     "key": "wave_speed_fps",
+     "label": "Wave speed (blank: by material)",
+     "kind": "number",
+     "unit": "ft/s",
+     "default": 0
+    },
+    {
+     "key": "static_psi",
+     "label": "Static pressure",
+     "kind": "number",
+     "unit": "psi",
+     "default": 0
+    },
+    {
+     "key": "pipe_rating_psi",
+     "label": "Pipe rating",
+     "kind": "number",
+     "unit": "psi",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "chlorinator_feed",
+   "label": "Chlorinator feed",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "chlorine_pct",
+     "label": "Chlorine strength",
+     "kind": "number",
+     "unit": "%",
+     "default": 10
+    }
+   ]
+  },
+  {
+   "key": "chemistry_targets",
+   "label": "Chemistry targets",
+   "group": "Water treatment",
+   "note": "With CYA and free chlorine, checks the DOC-0119 floor: the larger of 2.0 ppm and 7.5% of CYA.",
+   "inputs": [
+    {
+     "key": "water_type",
+     "label": "Water",
+     "kind": "select",
+     "unit": "",
+     "default": "outdoor",
+     "options": [
+      "outdoor",
+      "indoor",
+      "saltwater"
+     ]
+    },
+    {
+     "key": "cya_ppm",
+     "label": "Cyanuric acid",
+     "kind": "number",
+     "unit": "ppm",
+     "default": null
+    },
+    {
+     "key": "free_cl_ppm",
+     "label": "Free chlorine",
+     "kind": "number",
+     "unit": "ppm",
+     "default": null
+    }
+   ]
+  },
+  {
+   "key": "ozone_sidestream",
+   "label": "Ozone sidestream",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "turnover_min",
+     "label": "Turnover",
+     "kind": "number",
+     "unit": "min",
+     "default": 0
+    },
+    {
+     "key": "sidestream_pct",
+     "label": "Sidestream share",
+     "kind": "number",
+     "unit": "",
+     "default": 0.25
+    },
+    {
+     "key": "contact_tank",
+     "label": "Contact tank",
+     "kind": "select",
+     "unit": "",
+     "default": "CNT120",
+     "options": [
+      {
+       "value": "CNC15",
+       "label": "CNC15, 10 GAL Column, 2\" Ports"
+      },
+      {
+       "value": "CNT30",
+       "label": "CNT30, 30 GAL Tank, 1.25\" Ports"
+      },
+      {
+       "value": "CNT40",
+       "label": "CNT40, 40 GAL Tank, 1.25\" Ports"
+      },
+      {
+       "value": "CNT80",
+       "label": "CNT80, 80 GAL Tank, 1.25\" Ports"
+      },
+      {
+       "value": "CNT120",
+       "label": "CNT120, 120 GAL Tank, 1.25\" Ports"
+      },
+      {
+       "value": "CNT264",
+       "label": "CNT264, 264 GAL Tank, 3\" Ports"
+      },
+      {
+       "value": "CNT463",
+       "label": "CNT463, 463 GAL Tank, 3\" Ports"
+      },
+      {
+       "value": "CNT850",
+       "label": "CNT850, 850 GAL Tank, 4\" Ports"
+      }
+     ]
+    },
+    {
+     "key": "tank_qty",
+     "label": "Tanks",
+     "kind": "int",
+     "unit": "",
+     "default": 1
+    },
+    {
+     "key": "log_reduction",
+     "label": "Log reduction",
+     "kind": "select",
+     "unit": "",
+     "default": "2-log",
+     "options": [
+      "2-log",
+      "3-log"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "lsi_index",
+   "label": "Langelier saturation index",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "ph",
+     "label": "pH",
+     "kind": "number",
+     "unit": "",
+     "default": 0
+    },
+    {
+     "key": "temp_f",
+     "label": "Water temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 0
+    },
+    {
+     "key": "calcium_hardness_ppm",
+     "label": "Calcium hardness",
+     "kind": "number",
+     "unit": "ppm",
+     "default": 0
+    },
+    {
+     "key": "total_alkalinity_ppm",
+     "label": "Total alkalinity",
+     "kind": "number",
+     "unit": "ppm",
+     "default": 0
+    },
+    {
+     "key": "tds_ppm",
+     "label": "TDS",
+     "kind": "number",
+     "unit": "ppm",
+     "default": 1000
+    }
+   ]
+  },
+  {
+   "key": "chemical_dose",
+   "label": "Chemical dose",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "chemical",
+     "label": "Chemical",
+     "kind": "select",
+     "unit": "",
+     "default": "ph_down",
+     "options": [
+      "ph_down",
+      "alkalinity_up",
+      "cya_up",
+      "salt_up"
+     ]
+    },
+    {
+     "key": "current",
+     "label": "Current reading",
+     "kind": "number",
+     "unit": "",
+     "default": 0
+    },
+    {
+     "key": "target",
+     "label": "Target",
+     "kind": "number",
+     "unit": "",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "uv_dose",
+   "label": "UV dose",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "target_red_mj",
+     "label": "Target dose",
+     "kind": "number",
+     "unit": "mJ/cm²",
+     "default": 60
+    }
+   ]
+  },
+  {
+   "key": "filtration_area",
+   "label": "Filter area",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "design_gpm",
+     "label": "Design flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "media",
+     "label": "Media",
+     "kind": "select",
+     "unit": "",
+     "default": "sand",
+     "options": [
+      "sand",
+      "high-rate sand",
+      "cartridge",
+      "de"
+     ]
+    },
+    {
+     "key": "rate_gpm_sf",
+     "label": "Filtration rate (blank: by media)",
+     "kind": "number",
+     "unit": "gpm/sf",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "evaporation_rate",
+   "label": "Evaporation",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Water surface",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "water_temp_f",
+     "label": "Water temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 0
+    },
+    {
+     "key": "air_temp_f",
+     "label": "Air temperature",
+     "kind": "number",
+     "unit": "°F",
+     "default": 0
+    },
+    {
+     "key": "rh_pct",
+     "label": "Relative humidity",
+     "kind": "number",
+     "unit": "%",
+     "default": 0
+    },
+    {
+     "key": "activity",
+     "label": "Activity",
+     "kind": "select",
+     "unit": "",
+     "default": "residential",
+     "options": [
+      "residential",
+      "hotel",
+      "public",
+      "wavepool"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "make_up_water",
+   "label": "Make-up water",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "evaporation_gpd",
+     "label": "Evaporation",
+     "kind": "number",
+     "unit": "gal/day",
+     "default": 0
+    },
+    {
+     "key": "splash_gpd",
+     "label": "Splash",
+     "kind": "number",
+     "unit": "gal/day",
+     "default": 0
+    },
+    {
+     "key": "backwash_gpd",
+     "label": "Backwash",
+     "kind": "number",
+     "unit": "gal/day",
+     "default": 0
+    },
+    {
+     "key": "fill_window_min",
+     "label": "Fill window",
+     "kind": "number",
+     "unit": "min",
+     "default": 20
+    }
+   ]
+  },
+  {
+   "key": "heating_load",
+   "label": "Heating load",
+   "group": "Water treatment",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "delta_f",
+     "label": "Temperature rise",
+     "kind": "number",
+     "unit": "°F",
+     "default": 0
+    },
+    {
+     "key": "cover",
+     "label": "Cover",
+     "kind": "select",
+     "unit": "",
+     "default": "none",
+     "options": [
+      "none",
+      "solid",
+      "liquid"
+     ]
+    },
+    {
+     "key": "wind",
+     "label": "Windy site",
+     "kind": "check",
+     "unit": "",
+     "default": true
+    },
+    {
+     "key": "gas_rate",
+     "label": "Gas rate",
+     "kind": "number",
+     "unit": "$/therm",
+     "default": 1.4
+    },
+    {
+     "key": "heater_eff",
+     "label": "Heater efficiency",
+     "kind": "number",
+     "unit": "",
+     "default": 0.92
+    },
+    {
+     "key": "warmup_hours",
+     "label": "Warm-up time",
+     "kind": "number",
+     "unit": "hr",
+     "default": 24
+    }
+   ]
+  },
+  {
+   "key": "manning_drain_flow",
+   "label": "Gravity drain flow",
+   "group": "Drainage and overflow",
+   "note": "",
+   "inputs": [
+    {
+     "key": "nominal_size",
+     "label": "Drain size",
+     "kind": "text",
+     "unit": "",
+     "default": "3\""
+    },
+    {
+     "key": "slope_in_per_ft",
+     "label": "Slope",
+     "kind": "number",
+     "unit": "in/ft",
+     "default": 0.25
+    }
+   ]
+  },
+  {
+   "key": "size_drain",
+   "label": "Size a drain",
+   "group": "Drainage and overflow",
+   "note": "",
+   "inputs": [
+    {
+     "key": "required_gpm",
+     "label": "Required flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "slope_in_per_ft",
+     "label": "Slope",
+     "kind": "number",
+     "unit": "in/ft",
+     "default": 0.25
+    }
+   ]
+  },
+  {
+   "key": "surge_basin_volume",
+   "label": "Surge basin volume",
+   "group": "Drainage and overflow",
+   "note": "",
+   "inputs": [
+    {
+     "key": "pool_area_sf",
+     "label": "Pool area",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "basin_area_sf",
+     "label": "Surge basin area",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "evap_in_day",
+     "label": "Evaporation",
+     "kind": "number",
+     "unit": "in/day",
+     "default": 0.25
+    },
+    {
+     "key": "precip_in",
+     "label": "Rain",
+     "kind": "number",
+     "unit": "in",
+     "default": 1.0
+    },
+    {
+     "key": "vortex_in",
+     "label": "Vortex allowance",
+     "kind": "number",
+     "unit": "in",
+     "default": 12
+    },
+    {
+     "key": "freeboard_in",
+     "label": "Freeboard",
+     "kind": "number",
+     "unit": "in",
+     "default": 3
+    },
+    {
+     "key": "overflow_in",
+     "label": "Overflow",
+     "kind": "number",
+     "unit": "in",
+     "default": 3
+    },
+    {
+     "key": "swimmers",
+     "label": "Swimmers",
+     "kind": "int",
+     "unit": "",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "overflow_check",
+   "label": "Rain overflow",
+   "group": "Drainage and overflow",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Surface area",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "pipe_size",
+     "label": "Standpipe size",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    },
+    {
+     "key": "rain_in_hr",
+     "label": "Design rain",
+     "kind": "number",
+     "unit": "in/hr",
+     "default": 7.9
+    },
+    {
+     "key": "runoff_fraction",
+     "label": "Runoff fraction",
+     "kind": "number",
+     "unit": "",
+     "default": 1.0
+    }
+   ]
+  },
+  {
+   "key": "electrical_load",
+   "label": "Motor branch circuit",
+   "group": "Electrical and controls",
+   "note": "The NEC 430.52 breaker maximum, with the 430.22 conductor minimum (125% of FLA).",
+   "inputs": [
+    {
+     "key": "fla_amps",
+     "label": "Full-load amps",
+     "kind": "number",
+     "unit": "A",
+     "default": 0
+    },
+    {
+     "key": "hp",
+     "label": "Horsepower",
+     "kind": "number",
+     "unit": "hp",
+     "default": 0
+    },
+    {
+     "key": "phase",
+     "label": "Phase",
+     "kind": "int",
+     "unit": "",
+     "default": 1
+    },
+    {
+     "key": "voltage",
+     "label": "Voltage",
+     "kind": "number",
+     "unit": "V",
+     "default": 0
+    },
+    {
+     "key": "is_motor",
+     "label": "A motor",
+     "kind": "check",
+     "unit": "",
+     "default": true
+    },
+    {
+     "key": "device",
+     "label": "Protective device",
+     "kind": "select",
+     "unit": "",
+     "default": "inverse_time_breaker",
+     "options": [
+      {
+       "value": "nontime_delay_fuse",
+       "label": "Nontime-delay fuse"
+      },
+      {
+       "value": "dual_element_fuse",
+       "label": "Dual-element (time-delay) fuse"
+      },
+      {
+       "value": "instantaneous_trip",
+       "label": "Instantaneous-trip breaker"
+      },
+      {
+       "value": "inverse_time_breaker",
+       "label": "Inverse-time breaker"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "total_connected_load",
+   "label": "Feeder connected load",
+   "group": "Electrical and controls",
+   "note": "NEC 430.24: 125% of the largest motor, plus the other motors, plus the other loads.",
+   "inputs": [
+    {
+     "key": "loads",
+     "label": "Loads",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "fla": 12,
+       "is_motor": true,
+       "qty": 1,
+       "voltage": 240,
+       "phase": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "service_main_breaker",
+   "label": "Service main breaker",
+   "group": "Electrical and controls",
+   "note": "NEC 430.62/430.63, rounded down and never below the load.",
+   "inputs": [
+    {
+     "key": "loads",
+     "label": "Loads",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "fla": 12,
+       "is_motor": true,
+       "qty": 1,
+       "voltage": 240,
+       "phase": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "control_transformer_va",
+   "label": "Control transformer",
+   "group": "Electrical and controls",
+   "note": "",
+   "inputs": [
+    {
+     "key": "control_loads",
+     "label": "Control loads",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "device": "contactor",
+       "qty": 2
+      },
+      {
+       "device": "plc",
+       "qty": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "calc_lighting",
+   "label": "Lighting circuit",
+   "group": "Electrical and controls",
+   "note": "",
+   "inputs": [
+    {
+     "key": "lights",
+     "label": "Lights",
+     "kind": "json",
+     "unit": "",
+     "default": [
+      {
+       "qty": 4,
+       "watts_each": 25
+      }
+     ]
+    },
+    {
+     "key": "lighting_voltage",
+     "label": "Voltage",
+     "kind": "number",
+     "unit": "V",
+     "default": 12
+    },
+    {
+     "key": "per_relay_watts",
+     "label": "Watts per relay",
+     "kind": "number",
+     "unit": "W",
+     "default": 60
+    }
+   ]
+  },
+  {
+   "key": "calc_solenoid_relays",
+   "label": "Solenoid relays",
+   "group": "Electrical and controls",
+   "note": "",
+   "inputs": [
+    {
+     "key": "valve_qty",
+     "label": "Valves",
+     "kind": "int",
+     "unit": "",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "electric_cost",
+   "label": "Pump running cost",
+   "group": "Electrical and controls",
+   "note": "",
+   "inputs": [
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "tdh_ft",
+     "label": "Total dynamic head",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "hours_per_day",
+     "label": "Hours a day",
+     "kind": "number",
+     "unit": "hr",
+     "default": 6
+    },
+    {
+     "key": "rate_per_kwh",
+     "label": "Rate",
+     "kind": "number",
+     "unit": "$/kWh",
+     "default": 0.17
+    },
+    {
+     "key": "sg",
+     "label": "Specific gravity",
+     "kind": "number",
+     "unit": "",
+     "default": 1.0
+    },
+    {
+     "key": "pump_eff",
+     "label": "Pump efficiency",
+     "kind": "number",
+     "unit": "",
+     "default": 0.7
+    },
+    {
+     "key": "motor_eff",
+     "label": "Motor efficiency",
+     "kind": "number",
+     "unit": "",
+     "default": 0.9
+    },
+    {
+     "key": "pump_qty",
+     "label": "Pumps",
+     "kind": "int",
+     "unit": "",
+     "default": 1
+    }
+   ]
+  },
+  {
+   "key": "turnover_time",
+   "label": "Turnover time",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "minimum_flow_rate",
+   "label": "Code minimum flow",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "volume_gal",
+     "label": "Volume",
+     "kind": "number",
+     "unit": "gal",
+     "default": 0
+    },
+    {
+     "key": "max_turnover_min",
+     "label": "Maximum turnover",
+     "kind": "number",
+     "unit": "min",
+     "default": 0
+    },
+    {
+     "key": "venue",
+     "label": "Venue",
+     "kind": "select",
+     "unit": "",
+     "default": "spa",
+     "options": [
+      "spa",
+      "pool",
+      "wading",
+      "therapy"
+     ]
+    },
+    {
+     "key": "governing_code",
+     "label": "Governing code",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    }
+   ]
+  },
+  {
+   "key": "bather_load",
+   "label": "Bather load",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Water surface",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "sf_per_person",
+     "label": "Square feet a bather",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "rounding",
+     "label": "Rounding",
+     "kind": "select",
+     "unit": "",
+     "default": "floor",
+     "options": [
+      "floor",
+      "nearest",
+      "ceil"
+     ]
+    },
+    {
+     "key": "venue",
+     "label": "Venue",
+     "kind": "select",
+     "unit": "",
+     "default": "spa",
+     "options": [
+      "spa",
+      "pool",
+      "wading",
+      "therapy"
+     ]
+    },
+    {
+     "key": "governing_code",
+     "label": "Governing code",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    }
+   ]
+  },
+  {
+   "key": "skimmer_sizing",
+   "label": "Skimmers",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Water surface",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "sf_each",
+     "label": "Square feet a skimmer",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "rated_gpm",
+     "label": "Rated flow each",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    },
+    {
+     "key": "derate",
+     "label": "Derate",
+     "kind": "number",
+     "unit": "",
+     "default": 0.8
+    },
+    {
+     "key": "venue",
+     "label": "Venue",
+     "kind": "select",
+     "unit": "",
+     "default": "spa",
+     "options": [
+      "spa",
+      "pool",
+      "wading",
+      "therapy"
+     ]
+    },
+    {
+     "key": "governing_code",
+     "label": "Governing code",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    }
+   ]
+  },
+  {
+   "key": "main_drain_flow",
+   "label": "Main drain flow",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "open_area_in2",
+     "label": "Open area",
+     "kind": "number",
+     "unit": "in²",
+     "default": 0
+    },
+    {
+     "key": "velocity_fps",
+     "label": "Velocity",
+     "kind": "number",
+     "unit": "ft/s",
+     "default": 1.5
+    },
+    {
+     "key": "drains",
+     "label": "Drains",
+     "kind": "int",
+     "unit": "",
+     "default": 2
+    },
+    {
+     "key": "governing_code",
+     "label": "Governing code",
+     "kind": "text",
+     "unit": "",
+     "default": ""
+    }
+   ]
+  },
+  {
+   "key": "program_rules",
+   "label": "Program rules",
+   "group": "Regulated pools and spas",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Water surface",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "pool_class",
+     "label": "Class",
+     "kind": "select",
+     "unit": "",
+     "default": "pool",
+     "options": [
+      "pool",
+      "spa"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "lighting_design",
+   "label": "Underwater lighting",
+   "group": "Workbook sheets",
+   "note": "",
+   "inputs": [
+    {
+     "key": "surface_area_sf",
+     "label": "Water surface",
+     "kind": "number",
+     "unit": "sf",
+     "default": 0
+    },
+    {
+     "key": "pool_class",
+     "label": "Class",
+     "kind": "select",
+     "unit": "",
+     "default": "residential",
+     "options": [
+      "shallow_pond",
+      "residential",
+      "public",
+      "diving_shallow",
+      "diving_deep",
+      "competition"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "vertical_pipe",
+   "label": "Standpipe discharge",
+   "group": "Workbook sheets",
+   "note": "Give two of head, diameter and flow for the third.",
+   "inputs": [
+    {
+     "key": "head_in",
+     "label": "Head",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "id_in",
+     "label": "Inside diameter",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "flow_gpm",
+     "label": "Flow",
+     "kind": "number",
+     "unit": "gpm",
+     "default": 0
+    }
+   ]
+  },
+  {
+   "key": "open_channel_flow",
+   "label": "Open channel flow",
+   "group": "Workbook sheets",
+   "note": "",
+   "inputs": [
+    {
+     "key": "width_in",
+     "label": "Width",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "depth_in",
+     "label": "Depth",
+     "kind": "number",
+     "unit": "in",
+     "default": 0
+    },
+    {
+     "key": "slope",
+     "label": "Slope",
+     "kind": "number",
+     "unit": "",
+     "default": 0
+    },
+    {
+     "key": "n",
+     "label": "Manning n",
+     "kind": "number",
+     "unit": "",
+     "default": 0.015
+    }
+   ]
+  },
+  {
+   "key": "lazy_river_hp",
+   "label": "Lazy river power",
+   "group": "Workbook sheets",
+   "note": "",
+   "inputs": [
+    {
+     "key": "width_ft",
+     "label": "Width",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "depth_ft",
+     "label": "Depth",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "length_ft",
+     "label": "Length",
+     "kind": "number",
+     "unit": "ft",
+     "default": 0
+    },
+    {
+     "key": "velocity_fps",
+     "label": "Current",
+     "kind": "number",
+     "unit": "ft/s",
+     "default": 5.0
+    },
+    {
+     "key": "n",
+     "label": "Manning n",
+     "kind": "number",
+     "unit": "",
+     "default": 0.0155
+    },
+    {
+     "key": "sg",
+     "label": "Specific gravity",
+     "kind": "number",
+     "unit": "",
+     "default": 1.0
+    },
+    {
+     "key": "safety_factor",
+     "label": "Safety factor",
+     "kind": "number",
+     "unit": "",
+     "default": 2.0
+    }
+   ]
+  }
+ ]
+}

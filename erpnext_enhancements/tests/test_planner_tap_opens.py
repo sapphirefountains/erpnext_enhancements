@@ -167,9 +167,14 @@ class TestTheKit(unittest.TestCase):
 		self.assertIn("if (it.open_as === DOCTYPES.employee) return pick(DOCTYPES.employee, it.employee);", records)
 		# An Undo toast belongs to the planner: closed before the Form opens.
 		self.assertIn('if (env.toast && typeof env.toast.close === "function") env.toast.close();', records)
-		# Same tab, always: nothing opens a window.
+		# A tap: the same tab, always. The one window.open in the file is open_new_tab (v1.788.0), the
+		# "Open … in new tab" menu items' and Ctrl+Enter's, and never on the tap's path.
 		self.assertNotIn("window.open", records)
-		self.assertNotIn("_blank", records)
+		tap = records[records.index("function open(record) {") : records.index("const slug = ")]
+		self.assertNotIn("_blank", tap)
+		self.assertNotIn("win.open", tap)
+		self.assertEqual(records.count("_blank"), 1)
+		self.assertIn('env.win.open(url, "_blank", "noopener");', records)
 
 	def test_the_panel_counts_only_the_persons_own_edits(self):
 		panel = _strip_comments(_read(KIT / "panel.js"))
@@ -287,7 +292,16 @@ class TestThePages(unittest.TestCase):
 		self.assertIn("this.ppr_drop_stale_undo();", _method(self.pp, "\tindex() {"))
 		self.assertIn("this.mpr_stamp_undo(snapshot);", _method(self.mp, "\tpush_undo(snapshot, message) {"))
 		self.assertIn("this.mpr_drop_stale_undo(fresh);", _method(self.mp, "\tindex() {"))
-		self.assertEqual(self.mp_code.count("this.modified[result.name] = result.modified"), 1)
+		# send() is the one write path that stamps it, plus v1.796.0's MPDW (a visit onto a past day), whose
+		# move and Undo go to planner_history and stamp it the same way, before push_undo.
+		mpdw_start = self.mp_code.index("const MPDW_METHODS = {")
+		mpdw = self.mp_code[mpdw_start : self.mp_code.index("Object.assign(MaintenancePlanner.prototype, MPDW_METHODS);")]
+		rest = self.mp_code[:mpdw_start] + self.mp_code[mpdw_start + len(mpdw) :]
+		self.assertEqual(rest.count("this.modified[result.name] = result.modified"), 1)
+		commit = _method(mpdw, "\tmpdw_commit(card, ymd) {")
+		self.assertLess(
+			commit.index("this.modified[result.name] = result.modified"), commit.index("this.push_undo(")
+		)
 
 	def test_a_trip_this_person_may_not_open_is_never_routed(self):
 		self.assertIn('data-open="${booking.open === false ? "0" : "1"}"', self.pp)

@@ -266,6 +266,8 @@ def setUpModule():
 	record_module = types.ModuleType(RECORD_MODULE)
 	record_module.get_dashboard_context = lambda *a, **k: {}
 	record_module.get_visit_payload = lambda *a, **k: {}
+	record_module.build_dashboard_context = lambda *a, **k: {}
+	record_module.build_visit_payload = lambda *a, **k: {}
 	record_module.resolve_template = lambda *a, **k: None
 	contract_module = types.ModuleType(CONTRACT_MODULE)
 	contract_module.iter_seasonal_visits = lambda contract: iter(())
@@ -784,6 +786,7 @@ class TestKiosk(unittest.TestCase):
 			{"name": "SMR-1", "project": "PRJ-1", "serial_no": None, "visit_label": None}
 		]
 		frappe.tables["Project"] = [{"name": "PRJ-1", "project_name": "Highlands"}]
+		frappe.tables["Employee"] = [{"name": "HR-EMP-KORBEN", "user_id": KORBEN}]
 
 		def sql(query, values):
 			if "tabSapphire Visit Crew Member" in query and values.get("user") == KORBEN:
@@ -801,6 +804,13 @@ class TestKiosk(unittest.TestCase):
 		sql = next(q for q in frappe.queries if q[0] == "sql")
 		self.assertEqual(sql[2]["docstatus"], 0)
 		self.assertIn("LIMIT %(limit)s", sql[1])
+
+	def test_a_login_with_no_employee_gets_an_empty_list(self):
+		"""Staff only, and empty rather than an error: the Visit Wizard's picker asks for
+		this beside other lists and must still draw."""
+		frappe.tables["Employee"] = []
+		self.assertEqual(kiosk.get_my_visits_today(), [])
+		self.assertFalse([q for q in frappe.queries if q[0] == RECORD])
 
 	def test_a_crew_lookup_failure_leaves_the_list_standing(self):
 		frappe.sql_handler = lambda query, values: (_ for _ in ()).throw(RuntimeError("no table"))
@@ -1349,6 +1359,55 @@ class TestFillingInAnEarlierDay(unittest.TestCase):
 		for bad in ("2026-10-13", TODAY - datetime.timedelta(days=visit.MAX_BACKFILL_DAYS + 1)):
 			with self.subTest(day=bad), self.assertRaises(_Throw):
 				visit.checked_visit_date(bad)
+
+	# Nik, 2026-11-02: PRJ-00744-2026-V002 was scheduled for 2026-07-29, 96 days back, and the
+	# wizard would not date it to that day. A scheduled visit may go back to its own day.
+	LONG_AGO = TODAY - datetime.timedelta(days=96)
+
+	def test_a_visit_scheduled_long_ago_may_be_dated_back_to_its_scheduled_day(self):
+		self.assertEqual(visit.checked_visit_date(self.LONG_AGO, self.LONG_AGO), self.LONG_AGO)
+		later = self.LONG_AGO + datetime.timedelta(days=5)
+		self.assertEqual(visit.checked_visit_date(str(later), str(self.LONG_AGO)), later)
+		with self.assertRaises(_Throw) as caught:
+			visit.checked_visit_date(self.LONG_AGO - datetime.timedelta(days=1), self.LONG_AGO)
+		self.assertIn("scheduled for", str(caught.exception))
+		with self.assertRaises(_Throw):
+			visit.checked_visit_date("2026-10-13", self.LONG_AGO)
+
+	def test_an_unscheduled_visit_keeps_the_sixty_day_window(self):
+		day_61 = TODAY - datetime.timedelta(days=visit.MAX_BACKFILL_DAYS + 1)
+		recent = TODAY - datetime.timedelta(days=10)
+		for scheduled in (None, recent):
+			with self.subTest(scheduled=scheduled), self.assertRaises(_Throw) as caught:
+				visit.checked_visit_date(day_61, scheduled)
+			self.assertIn("backdated", str(caught.exception))
+
+	def test_a_maintenance_reviewer_has_no_window_but_no_future(self):
+		"""The desk form already lets a reviewer set any date; the wizard agrees with it."""
+		frappe.roles = ["Maintenance User", "Maintenance Reviewer"]
+		long_ago = TODAY - datetime.timedelta(days=400)
+		self.assertEqual(visit.checked_visit_date(long_ago), long_ago)
+		with self.assertRaises(_Throw):
+			visit.checked_visit_date("2026-10-13")
+
+	def test_the_wizard_dates_a_long_ago_visit_to_its_scheduled_day(self):
+		self._save(str(self.LONG_AGO), scheduled_visit_date=self.LONG_AGO)
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["visit_date"], self.LONG_AGO)
+		with self.assertRaises(_Throw):
+			self._save(str(self.LONG_AGO - datetime.timedelta(days=1)), scheduled_visit_date=self.LONG_AGO)
+
+	def test_log_a_visit_uses_the_open_drafts_scheduled_day(self):
+		self._contract()
+		self._open_draft(scheduled_visit_date=self.LONG_AGO)
+		self.assertEqual(visit.create_visit("SMC-1", serial_no="SN-1", visit_date=str(self.LONG_AGO)), "SMR-1")
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["visit_date"], self.LONG_AGO)
+
+	def test_log_a_visit_with_no_open_draft_keeps_the_window(self):
+		self._contract()
+		frappe.tables[RECORD] = []
+		with self.assertRaises(_Throw):
+			visit.create_visit("SMC-1", serial_no="SN-1", visit_date=str(self.LONG_AGO))
+		self.assertEqual(frappe.saved, [])
 
 	def test_the_wizard_can_date_a_draft_to_an_earlier_day(self):
 		state = self._save("2026-10-06")
