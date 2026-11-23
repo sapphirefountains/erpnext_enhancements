@@ -3727,6 +3727,24 @@ jobs:
       # such as frappe.email.inbox.set_value cannot serve them unscrubbed.
       - name: Field-level read on version history and write responses
         run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_read -v
+      # Its own step: this suite installs a frappe stub in setUpModule (v1.835.0). Pins that
+      # each override_whitelisted_methods wrapper in fieldlevel_filters.py restates frappe
+      # 16.56.0's parameters and HTTP methods and calls frappe's own function once, that the
+      # seal covers exactly the overridden routes, and that the after_request REST check is
+      # registered. Runs the rule over stand-in metadata: a field the caller cannot read is
+      # refused in filters, or_filters, order_by, group_by and aggregates, in child-table and
+      # backtick notation and on a child table read through its parent; malformed input is
+      # refused for such a caller; a caller who reads everything is untouched. Ordinary Desk and
+      # ERPNext requests (ERPNext's item, supplier and customer searches with their custom query,
+      # lists, reports, sidebar, next/previous, cards, charts, REST lists, the Create Project
+      # dialog's list of desk users by User.user_type) must pass for a caller with hidden fields.
+      # A child table whose table field the caller cannot read is refused in every reference,
+      # standard columns included, and through its parent. A field named in another case is that
+      # field; a list of filters is read with and without its None entries; fields and filters are
+      # read either way round; on frappe.client.get a field named in another doctype is held to
+      # that doctype's levels.
+      - name: Field-level read on the field names a read request carries
+        run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the
       # rate in force is the latest effective-from on or before the day worked (a rate
       # dated tomorrow must not price today), salaried -> hourly via 2080, the burden

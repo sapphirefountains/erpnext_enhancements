@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.0] - 2026-11-23
+
+### Changed
+
+- **Read requests are held to field-level read on the field names they carry (hardening).** A
+  request that names a field the caller cannot read at its permlevel, in `filters`, `or_filters`,
+  `order_by`, `group_by`, an aggregate or another `fields` expression, is now refused with a plain
+  permission message. The message says how to get out of it: a saved list or report that uses such a
+  field keeps being refused until the filter, sort or column is removed (in a report, Menu > Pick
+  Columns).
+  A field of a child table answers to the parent doctype's levels, the rule `fieldlevel_read.py`
+  already applies to documents. New `fieldlevel_filters.py`; nothing changes for a caller who can
+  read every field of the doctype and its child tables (Administrator included), and server-side
+  code never passes through it.
+  - **Where.** Twenty frappe read routes, through `override_whitelisted_methods` wrappers that
+    check the request and then call frappe's own function unchanged: the report view (`get`,
+    `get_list`, `get_count`, `export_query`, sidebar stats, filter dashboard), the list sidebar's
+    group-by counts, `frappe.client.get_list`, `get_count`, `get`, `get_value` and
+    `get_single_value`, link search (`search_link`, `search_widget`), the form's next/previous
+    record, Number Card results, Dashboard Chart data and calendar events (their filters, sort and
+    the two date fields the request names). The REST list routes (`GET` or `HEAD` on
+    `/api/resource/<doctype>`, `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`)
+    answer 403 in place of their body by the same rule, from `after_request`.
+  - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
+    doctype; the wrappers hold every route above to it in one way. A child table's fields answer to
+    the parent's levels in every notation, and a document looked up by filters, a value read from
+    a Single and the next-record sort field follow the same levels. On a Single that hides fields
+    from the caller, `get_value` accepts only readable field names, and the whole-record dict a
+    lookup by filters answers with leaves without the fields the caller cannot read. Plain field
+    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read,
+    except an entry that names a child table the caller cannot read (below).
+  - **A child table the caller cannot read is closed.** When the user cannot read the table field
+    that holds a child table, or reads no level of the doctype at all, every reference to that child
+    table is refused, whatever the column, its standard columns (`name`, `owner`, `creation`,
+    `modified`, `parent` and the rest) included: in filters (`table_field.column`,
+    `` `tabChild`.`column` ``, `[child doctype, column, operator, value]`), sort, grouping, an
+    aggregate, a `fields` entry and a child query. A list, count, value, report, card or chart
+    request on the child doctype itself, read through such a parent (`parent`, `parent_doctype`,
+    `parent_document_type`), is refused whole. A child table whose table field the user can read is
+    unchanged: its standard columns stay open and only its own columns above the user's level are
+    refused.
+  - **A name the doctype does not have is read the way frappe reads it.** frappe's query engine
+    looks a plain filter name its doctype lacks up in the doctype's child tables, using the first
+    table, in field order, that has a field of that name, so in filters that reach the engine such
+    a name answers to that child field's level. Everywhere else (a sort, a grouping, an aggregate, a
+    search field, a Single's filters, a filter that names its own doctype) a name the doctype lacks
+    is not one of its fields and is not refused, and the doctype's own standard columns (`name`,
+    `owner`, `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the
+    rest) never are. Ordinary searches and lists, such as item search on sales and buying documents,
+    keep working for a user who cannot read a table like `allowed_companies`.
+  - **A name is matched as the database matches it.** MariaDB reads a column name in any case and
+    frappe's own lookups do not, so a field named in another case is treated as that field, in
+    every position and for child tables too.
+  - **A request is read every way frappe may read it.** A list of filters is read as given and
+    without its empty entries, which frappe drops on one path. `fields` and `filters` are read
+    either way round on the routes that reach `frappe.get_list`, which accepts them in either
+    order. A child table's column is recognised in every spelling frappe accepts (`tabChild.column`
+    with a backtick, a double quote or nothing around either part), and an alias after a dotted
+    name is set aside as frappe sets it aside.
+  - **Another doctype's fields, where frappe makes no check of its own.** Almost everywhere,
+    frappe's query engine applies the caller's permissions to a field named in a linked doctype
+    (`link_field.field`), and nothing changes there. On the one route that reads its filters with
+    no permission applied, the filters are now read for every caller, and a field named in another
+    doctype, through a Link field or by table, is held exactly as frappe's query engine holds it
+    elsewhere: to that doctype's read levels, to its level-0 fields for a caller who holds only
+    `select` on it, and to its standard columns for a caller with no access to it.
+  - **A Count Number Card is judged on what it counts.** frappe counts rows for a Count card and
+    never reads the aggregate field the card may still carry from an earlier setting, so that
+    leftover field no longer causes a refusal.
+  - **Link search follows frappe's choice of path.** With a custom query (the request's `query`,
+    or a query the doctype registers through the `standard_queries` hook), the filters are that
+    query's arguments and are not read as field names. Without one they are checked as frappe's
+    query engine reads them. The search field is checked on both paths.
+  - **One named exception: `User.user_type`.** It says only whether an account is a desk account or
+    a website account; the Desk and this app list staff by it (frappe's Users workspace cards, the
+    Create Project dialog's list of users to notify), and frappe's query engine already lets any
+    caller filter, sort and group by it. A filter, sort, grouping or aggregate on it is accepted for
+    every Desk user, on every route. Every other field of User above level 0 is still refused for a
+    user who cannot read it, and a user who holds only `select` on a doctype is not exempt in general.
+  - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
+    frappe reads a bare value as a document name.
+  - **Three wrappers call frappe's function by keyword** (link search and the two sidebar-stats
+    routes): those functions sit behind a decorator of frappe's own, and its argument type check
+    only sees keyword arguments through one, so a wrongly typed argument is answered with frappe's
+    type error as before.
+  - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
+    `fieldlevel_read.seal_wrapped_originals`), so no other dotted name for frappe's function
+    answers HTTP.
+  - What a user may notice: a list, report, chart or search that filters, sorts or totals by a
+    field above the user's permission level shows the permission message instead of results.
+- **New `tests/test_fieldlevel_filters.py`** (bench-free, `frappe` stub, its own CI step): the
+  wiring against frappe 16.56.0's signatures and methods, the seal, both hooks, and the rule run
+  over stand-in metadata in every position and notation, for a caller with hidden fields and one
+  without. A set of ordinary Desk and ERPNext requests (the item, supplier and customer searches
+  ERPNext v16.54.0 sets up, list view, Kanban, report view group-by, sidebar counts and tags,
+  next/previous, number cards, charts, REST lists, standard columns) runs for a caller who cannot
+  read Item, Customer and Supplier's `allowed_companies` table and must pass; the same routes
+  naming a hidden field must still be refused. The Create Project dialog's list of desk users, over
+  stand-in User metadata shaped like frappe 16.56.0's, passes for a user with `select` only on
+  User, while every other level-1 field of User stays refused for that user. Closed child tables are
+  refused in every reference and through their parent, for a user below the table field's level
+  and for one with no read on the parent, and answered for a user at the level; a readable table
+  (Timesheet's `time_logs`) keeps its standard columns. Names in another case, lists with empty
+  entries, `fields` and `filters` either way round, another doctype's fields on the unchecked
+  route, every spelling of a child table's column, a table field whose name starts with `tab`, a
+  Count card's leftover field, `HEAD` on the REST lists and calendar events each have their own
+  cases, with the ordinary requests beside them that must keep passing.
+
 ## [1.834.1] - 2026-11-23
 
 ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).

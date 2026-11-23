@@ -3564,6 +3564,34 @@ override_whitelisted_methods = {
 	# frappe does for an unknown email. Sealed in before_request (portal_login.seal_original),
 	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
 	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
+	# Field references in read requests (v1.835.0): a list, count, value, search, next-record,
+	# number-card, chart or calendar request that names a field the caller cannot read at its permlevel, in
+	# filters / or_filters / order_by / group_by / an aggregate, is refused with a plain permission
+	# message; a child table's field answers to the parent's levels. A caller who reads every field
+	# of the doctype leaves on the first check, and in-process calls never come through here. Each
+	# wrapper checks the request and then calls frappe's own function unchanged; signatures and HTTP
+	# methods mirror frappe 16.56.0 and tests/test_fieldlevel_filters.py pins them. The REST list
+	# routes are not methods: see `after_request` below. See fieldlevel_filters.py.
+	"frappe.desk.reportview.get": "erpnext_enhancements.fieldlevel_filters.reportview_get",
+	"frappe.desk.reportview.get_list": "erpnext_enhancements.fieldlevel_filters.reportview_get_list",
+	"frappe.desk.reportview.get_count": "erpnext_enhancements.fieldlevel_filters.reportview_get_count",
+	"frappe.desk.reportview.export_query": "erpnext_enhancements.fieldlevel_filters.reportview_export_query",
+	"frappe.desk.reportview.get_sidebar_stats": "erpnext_enhancements.fieldlevel_filters.reportview_get_sidebar_stats",
+	"frappe.desk.reportview.get_stats": "erpnext_enhancements.fieldlevel_filters.reportview_get_stats",
+	"frappe.desk.reportview.get_filter_dashboard_data": "erpnext_enhancements.fieldlevel_filters.reportview_get_filter_dashboard_data",
+	"frappe.desk.listview.get_group_by_count": "erpnext_enhancements.fieldlevel_filters.listview_get_group_by_count",
+	"frappe.client.get_list": "erpnext_enhancements.fieldlevel_filters.client_get_list",
+	"frappe.client.get_count": "erpnext_enhancements.fieldlevel_filters.client_get_count",
+	"frappe.client.get": "erpnext_enhancements.fieldlevel_filters.client_get",
+	"frappe.client.get_value": "erpnext_enhancements.fieldlevel_filters.client_get_value",
+	"frappe.client.get_single_value": "erpnext_enhancements.fieldlevel_filters.client_get_single_value",
+	"frappe.desk.search.search_link": "erpnext_enhancements.fieldlevel_filters.search_link",
+	"frappe.desk.search.search_widget": "erpnext_enhancements.fieldlevel_filters.search_widget",
+	"frappe.desk.form.utils.get_next": "erpnext_enhancements.fieldlevel_filters.form_get_next",
+	"frappe.desk.doctype.number_card.number_card.get_result": "erpnext_enhancements.fieldlevel_filters.number_card_get_result",
+	"frappe.desk.doctype.number_card.number_card.get_percentage_difference": "erpnext_enhancements.fieldlevel_filters.number_card_get_percentage_difference",
+	"frappe.desk.doctype.dashboard_chart.dashboard_chart.get": "erpnext_enhancements.fieldlevel_filters.dashboard_chart_get",
+	"frappe.desk.calendar.get_events": "erpnext_enhancements.fieldlevel_filters.calendar_get_events",
 }
 
 # POST/PUT /api/resource and /api/v2/document return the saved document unstripped, and they
@@ -3576,9 +3604,18 @@ override_whitelisted_methods = {
 # with the marker of the session that answered (empty for Guest), and kiosk-sw.js keeps an answer
 # offline only when that matches the key the page claimed. Every other request leaves on a method
 # + path check; it never raises. See workforce/kiosk_offline.stamp_response.
+#
+# Field references in REST list requests (v1.835.0): GET or HEAD /api/resource/<doctype> (and /api/v1),
+# /api/v2/document/<doctype> and /api/v2/doctype/<doctype>/count get a 403 in place of their body
+# when they name a field the caller cannot read, by the rule of the fieldlevel_filters overrides
+# above. after_request rather than before_request because frappe runs before_request hooks before
+# it reads an API key or token, when a keyed request is still Guest; these routes only read. Every
+# other request leaves on a method + path check; it never raises. See
+# fieldlevel_filters.refuse_rest_list_references.
 after_request = [
 	"erpnext_enhancements.fieldlevel_read.scrub_rest_write_response",
 	"erpnext_enhancements.workforce.kiosk_offline.stamp_response",
+	"erpnext_enhancements.fieldlevel_filters.refuse_rest_list_references",
 ]
 
 # The overrides above match a method *name*, but frappe's whitelist check matches the function
@@ -3608,6 +3645,11 @@ before_request = [
 	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
 	# and a string test and never raises. See oauth_registration.py.
 	"erpnext_enhancements.oauth_registration.guard_registration",
+	# Field references in read requests (v1.835.0): the same seal for the twenty read routes the
+	# fieldlevel_filters overrides replace (frappe.client imports search_widget, for one), so no other
+	# dotted name for frappe's function answers HTTP. Never raises. See
+	# fieldlevel_filters.seal_filter_originals.
+	"erpnext_enhancements.fieldlevel_filters.seal_filter_originals",
 ]
 
 # The same for every background job (Auto Repeat, the email queue's print attachments, scheduled
