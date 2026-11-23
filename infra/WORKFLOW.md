@@ -240,9 +240,19 @@ Triggers are managed in **shared** state but target VMs in test/prod:
 # Deploy app to test VM
 gcloud builds triggers run app-deploy-test --region=us-east1 --branch=main
 
-# Update upstream apps on prod VM
-gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main
+# Update Frappe and ERPNext on the prod VM: both release tags are required
+gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
 ```
+
+Every app deploy checks that both Redis instances answer and takes a database backup before
+`bench migrate`, and an upstream update moves
+Frappe and ERPNext only to the two release tags it is given, after it has checked that both
+Redis instances answer. One run at a time holds the bench's lock, so a burst of merges deploys
+one after the other. The tags above are production's releases on 2026-11-23: name the pair you
+mean to install. A lower one is refused unless a person sets `ALLOW_DOWNGRADE=1` in a shell on
+the VM. How to choose the tags, run the update by hand, find the backups and restore one: [README.md, section 13](README.md#13-cicd--cloud-build-deploy--upstream-triggers),
+"Runbook: pre-migrate backups and upstream updates".
 
 ### One-time: adding deploy SSH key to project metadata
 

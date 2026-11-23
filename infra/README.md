@@ -107,8 +107,8 @@ gcloud compute project-info add-metadata \
 **Cloud Build YAML files (set `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` if you move them):**
 | File | Purpose |
 |------|---------|
-| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, runs `bench migrate && bench build`, restarts service |
-| `infra/cloudbuild-upstream.yaml` | Pulls all upstream Frappe apps (`bench update --pull`), restarts service |
+| `infra/cloudbuild-deploy.yaml` | Pulls only `erpnext_enhancements`, checks that Redis answers (`infra/bench_update.sh redis`), takes a pre-migrate database backup (`infra/bench_update.sh backup`), runs `bench migrate && bench build`, restarts service |
+| `infra/cloudbuild-upstream.yaml` | Moves `frappe` and `erpnext` to two named release tags (`infra/bench_update.sh upstream`), behind the same backup, restarts service |
 
 **Substitutions used by the YAML files:**
 | Substitution | Purpose |
@@ -116,6 +116,325 @@ gcloud compute project-info add-metadata \
 | `_VM_NAME` | Target VM name |
 | `_VM_ZONE` | Target VM zone |
 | `_ALLOW_SKIP` | When `true`, skips gracefully if VM is not RUNNING (e.g. preempted spot VM) |
+| `_FRAPPE_TAG`, `_ERPNEXT_TAG` | Upstream trigger only, both required: the release tags to install, like `v16.60.2`. Blank or anything else, and the run stops before it connects |
+
+#### Runbook: pre-migrate backups and upstream updates
+
+Since v1.839.0, nothing changes the production database without a backup first, and Frappe and
+ERPNext move only to a release chosen on purpose. Both go through one script,
+[`bench_update.sh`](bench_update.sh), run as the `frappe` user from the bench. Each deploy takes
+a few minutes longer for the backup.
+
+**Where the backups are.** `/home/frappe/frappe-bench/pre-migrate-backups/<UTC time>/`, one
+directory per run (for example `20261119T201500Z`), readable only by `frappe`. Each holds one
+`<time>-<site>-database.sql.gz` per site (`-database-enc.sql.gz` when backup encryption is on, as
+it is on production) and bench's copy of the site config. The script keeps the newest three runs
+and deletes older ones from that directory only; it never deletes the scheduled backups in
+`sites/<site>/private/backups` or the offsite backup's files itself, but bench's own `backup`
+command does delete some of the former on every run (see below). Before it starts, it checks that
+the disk has free at least twice the newest kept backup plus a 5 GB margin
+(`PRE_MIGRATE_MIN_FREE_MB`, default 5120), or the margin alone when no backup is kept yet.
+
+**A site is a folder under `sites/` with a `site_config.json`.** That is bench's own rule
+(`frappe.utils.get_sites`), and the script counts sites the same way. `sites/assets/` is not a
+site, and neither is `sites/flow-server/`, which frappe 16.60 adds: neither is backed up, and the
+script does not wait for a dump from either. Production has one site.
+
+**How it was sized, and what to do when the disk runs short.** Measured on production on
+2026-11-23, as `frappe` in the bench:
+
+| | |
+|---|---|
+| One backup (the database, encrypted) | 681 MiB |
+| Time for one backup | 2 min 50 s |
+| Free on the bench's disk | 14 GB of 49 GB |
+| The database before compression | about 5.8 GB |
+
+- Three kept runs are about 2 GB.
+- The check wants twice the newest backup plus the margin free before each backup: about 6.4 GB.
+- That leaves about 5.6 GB of room before deploys begin to refuse. Free space fell by about 4 GB
+  on the day of the 16.60 upgrade alone, so watch it.
+- **When a deploy refuses for disk, grow the VM's disk or lower `KEEP` in the script. Never skip
+  the backup** and never remove the step: the refusal is the backup doing its job.
+- To measure again once the script is live: `time bash apps/erpnext_enhancements/infra/bench_update.sh backup`
+  as `frappe` in the bench. It prints each file's size, keeps the backup among the three, and writes
+  only into its own private directory. Do not point `bench backup` at `/tmp` or another shared
+  directory to measure: see the next paragraph for what a backup holds.
+
+**What a run holds, and why it is private.** Beside the dump bench puts a copy of
+`site_config.json` (`<time>-<site>-site_config_backup.json`, with `-enc` in the name when
+encryption is on). That copy is plain text in every case: bench encrypts the dump and the file
+archives, not the config (`frappe/utils/backups.py:235` and `:371`-`:376` at v16.60.2). It holds
+the database password and the backup encryption key the dump beside it was encrypted with, so a
+run directory is as sensitive as `site_config.json` itself. Leave the runs where they are, owned by
+`frappe`, and never copy one to a place more people can read.
+
+**One run at a time.** Two locks, both `flock` (it ships in util-linux):
+
+- **The bench's lock, `<bench>/.deploy.lock`.** An app deploy holds it as `frappe` for its whole
+  chain, from before the fetch to after the redis flush, and `bench_update.sh upstream` holds it
+  from before its first check until it ends. So one run's backup is never taken while another run
+  is migrating, two migrates never overlap, and a deploy waits for an update a person is running
+  by hand. It is taken before the fetch because the fetch replaces `bench_update.sh`, which a run
+  already in progress is still reading.
+- **The deploy user's lock, `~/.frappe-bench-deploy.lock` in the deploy user's home.** Both
+  triggers' remote commands hold it from their first command until the restart has run, so two
+  triggered runs never overlap anywhere. It is a second file because the `frappe` user cannot
+  restart the bench, and the deploy user is not assumed able to open a file inside it.
+- A run waits up to 900 seconds for each lock, and the build log says which way it went:
+  `flock: getting lock took ... seconds`, or `flock: timeout while waiting to get lock`, after
+  which the run stops with nothing changed. In a burst of merges a later deploy can time out
+  this way. The run ahead of it fetches `main` when its own turn comes, so it has usually
+  deployed that commit already: check the version on the site before you re-run. The build
+  timeouts cover one wait (deploy 2100 s, upstream 3300 s).
+- Nothing a run starts is handed either lock, so a process that outlives it (git's background
+  gc, something a hook starts) cannot keep the next run waiting.
+- A third lock, `pre-migrate-backups/.bench_update.lock`, lets one backup run at a time, also
+  one taken by hand. `PRE_MIGRATE_LOCK_WAIT_S` (default 900) is the script's wait for it and for
+  the bench's lock. No lock file is ever deleted.
+- The restart a person runs after an update by hand is outside every lock. Hold merges until it
+  is done.
+
+**Who can read what.** The backups are readable by `frappe` only: the backup directory and each
+run are 0700 and every file 0600. Everything else a run writes (the code it checks out, the
+packages it installs, the assets it builds) is created under umask 022 whatever mask the caller
+had, because nginx serves `/assets` and each app's public files from disk as `www-data`. A file
+written 0600 there answers 403, and a later build overwrites it in place and keeps the mode.
+
+**A backup gets its name only when it is whole.** bench writes into
+`pre-migrate-backups/.partial-<UTC time>/`. The script renames that to `<UTC time>/` only after
+bench has exited cleanly, every site has a database file, and each `.sql.gz` passes `gzip -t`
+(an encrypted `-enc.sql.gz` is not gzip data and cannot be tested without its key, so on
+production only its size is checked, and the log says so). So a run that
+is stopped or killed partway (a build timeout, a dropped connection, Ctrl-C) never leaves a
+cut-off dump under a name that looks like a backup. The script removes the unfinished directory
+as it ends; when it was killed outright and could not, the next backup removes it. A directory
+whose name starts with `.partial-` is never a restore source, and plain `ls` does not show it.
+
+**What bench's own `backup` command deletes.** Verified in frappe v16.60.2. For each site,
+`bench backup` (`frappe/commands/site.py:881`) calls `scheduled_backup()` and so `new_backup()`
+(`frappe/utils/backups.py:569`, `:608`), whose first step (`:625`) is `delete_temp_backups()`
+(`:651`-`:662`). That deletes every file in `sites/<site>/private/backups` whose ctime is at least
+N hours old, where N is the site's `keep_backups_for_hours` config value, or **23** when it is
+unset or 0 (`:655`). The folder is `get_backup_path()` (`:686`): `private/backups`, or the site's
+`backup_path` config key. `--backup-path` does not change it, so the cleanup runs even though this
+script writes elsewhere, and the CLI has no option to skip it. What that means:
+
+- Every deploy now deletes the scheduled backups that are 23 hours old or older. Right after a
+  deploy, only the last 23 hours of scheduled backups are left in `private/backups` (N hours when
+  `keep_backups_for_hours` is set). Every scheduled `bench backup` already ran the same cleanup, so
+  a deploy only brings it forward.
+- Separately, Frappe's `hourly_maintenance` job `delete_downloadable_backups`
+  (`frappe/hooks.py:327`, `frappe/desk/page/backups/backups.py:64`) keeps only the newest
+  `backup_limit` sets there (System Settings, "Number of Backups", default 3).
+- To keep scheduled backups longer, set `keep_backups_for_hours` in the site config, and copy any
+  you want to keep out of `private/backups`. Do not make a folder inside `private/backups`: the
+  cleanup tries to delete it like a file and fails, and that site's backup fails with it.
+- The pre-migrate backups are outside `private/backups`, so neither cleanup touches them.
+
+**What a failed backup looks like.** The deploy's build log ends with:
+
+```
+bench_update.sh: PRE-MIGRATE BACKUP FAILED: <reason>
+bench_update.sh: this run migrated nothing and switched no app; stopping here.
+```
+
+and the build fails without the `✅ ... updated` line. Nothing after the backup ran: no code
+reset, no migrate, no build, no redis flush, no restart. The deploy's order is fetch, Redis
+check, backup, reset, so the site keeps running the release it had: the app's code, the database and the
+running processes are unchanged, and only `infra/bench_update.sh` itself was taken from the new
+commit. The reasons it names are not enough free disk, another backup still holding the lock
+after the wait, `flock` not installed, `bench backup` exiting with an error, a site left
+without a database file, and a dump that is not a whole gzip file. Fix the cause, then re-run the deploy
+(`gcloud builds triggers run app-deploy-prod --branch=main`).
+
+**Choosing the tags.** Pick a published release of each:
+[frappe releases](https://github.com/frappe/frappe/releases) and
+[erpnext releases](https://github.com/frappe/erpnext/releases), or
+`git ls-remote --tags --refs https://github.com/frappe/frappe 'v16.*'`. Read the release notes
+between the installed version and the new one. Production's current versions are in
+`` SELECT app_name, app_version FROM `tabInstalled Application` ``, or on the VM in
+`git -C apps/frappe describe --tags`. ERPNext declares the Frappe versions it supports in its
+`pyproject.toml` (`[tool.bench.frappe-dependencies]`); a pair released the same week is the usual
+choice. Only `v16.MINOR.PATCH` is accepted: no branch names, no betas, no other major version.
+
+**Running the update.** Hold merges, update beta first, then production. The tags in these
+examples are production's releases on 2026-11-23 (frappe v16.60.2, erpnext v16.60.0): name the
+pair you chose above.
+
+**A lower tag is refused.** The script installs exactly the pair it is given, so an example from
+this page pasted after a later upgrade would take the apps back. It compares each tag with the
+version the app declares now (`__version__` in `apps/<app>/<app>/__init__.py`), as versions and
+not as text, and stops before anything changes when a tag is lower:
+`<tag> is lower than the <app> that is installed (<version>); nothing was changed`.
+
+- To go back on purpose, a person runs it in a shell on the VM with `ALLOW_DOWNGRADE=1` in front
+  of the command. Neither trigger can allow it.
+- The same version is not a downgrade, so the same command run again after a failure goes
+  through.
+- One thing the check cannot see: a bench on a branch head past its last release still declares
+  that release's version, and installing that release's tag takes the later commits away. The
+  run says so and goes on: `note: frappe declares 16.60.2, the same version as v16.60.2, but is
+  at another commit (...); the checkout moves it to the tag`. Read that line before you let an
+  update on such a bench continue.
+- When the version cannot be read, the run stops and says how to go on without the check.
+
+The two commands:
+
+```bash
+gcloud builds triggers run app-upstream-test --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
+gcloud builds triggers run app-upstream-prod --branch=main \
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
+```
+
+By hand on the VM it is the same script, and this is the only supported way to update by hand
+too (never `bench update`, `bench switch-to-branch` or a `git pull` in `apps/frappe`):
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.60.2 v16.60.0
+exit
+sudo systemctl restart frappe-bench
+```
+
+It takes the bench's lock, checks both tags, that `apps/frappe` and `apps/erpnext` have no
+changes to tracked files, fetches both tags, checks that neither is a downgrade and that both
+Redis instances answer, all before it changes anything;
+then it takes the backup, checks out the two tags (a detached checkout, so no later command
+follows a branch), and runs `bench setup requirements`, the Redis check again, `bench --site all
+migrate` and `bench build`. It prints each app's previous commit. If a step after the checkout
+fails, it says so, names the backup directory and the previous commits, and leaves the bench
+unrestarted.
+
+**Redis must be running before a migrate.** Frappe reads a cache that is down as an empty one
+instead of stopping, so a migrate started then fails partway through, after it has already changed
+the database (on 2026-11-23 two migrates in a row stopped that way, at fixture sync). The script
+therefore asks both instances the bench is configured for, `redis_cache` and `redis_queue`, the
+way frappe finds them (`frappe/config.py:123`-`:129` at v16.60.2: an environment override, then
+`sites/common_site_config.json`, then frappe's default), with the bench's own Python and Redis
+client. To ask by hand, at any time, without changing anything:
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+bash apps/erpnext_enhancements/infra/bench_update.sh redis
+```
+
+It prints one line for each instance and exits non-zero when either is not ready:
+
+```
+bench_update.sh: redis_cache at redis://127.0.0.1:13000 did not answer: ConnectionError: ...
+bench_update.sh: redis_queue at redis://127.0.0.1:11000 answers
+bench_update.sh: Redis is not ready, and a migrate started now would stop partway; nothing was changed. Start Redis (sudo systemctl start frappe-bench starts both instances), then run the same command again
+```
+
+- **Do not stop the bench before an update or a migrate.** Stopping `frappe-bench` stops both
+  Redis instances with it, on a VM cut over to gunicorn (they are `PartOf` the umbrella unit) and
+  on one still on the development Procfile alike.
+- When the check fails before the backup, nothing was changed. When it fails just before the
+  migrate, the code is already at the new tags and nothing was migrated: start Redis and run the
+  same `upstream` command again.
+- **Every app deploy asks first too.** `infra/cloudbuild-deploy.yaml` runs the check after the
+  fetch and before its backup, with the script it has just fetched. When it fails, the build
+  log ends with the lines above and no `✅ ... updated` line, and nothing else ran: no backup,
+  no code reset, no migrate, no build, no redis flush, no restart. Start Redis, then re-run
+  the deploy (`gcloud builds triggers run app-deploy-prod --branch=main`).
+- A queue instance that asks for a sign-in counts as up (frappe signs in to it with a user of
+  its own); a cache instance that refuses the sign-in does not. An instance reached through
+  Redis Sentinel is not checked, and the output says so.
+
+**What an update installs and builds.** Read in frappe at v16.60.2, the release that added the
+Studio and Flow frontends:
+
+- `bench setup requirements` installs each app's Python packages and the JavaScript packages of
+  each app's root `package.json`.
+- `bench build` installs and builds everything else itself, on every run: frappe's
+  `studio/frontend` and `flow` apps (`esbuild/esbuild.js:143`-`:149`, `:567`-`:581`) and its island
+  toolchain (`frappe/commands/utils.py:100`, `ui/vite/island/toolchain.js`). No separate step is
+  needed, and the first build after such a release takes longer than usual.
+- Neither installs operating-system packages. A release that needs new ones lists them in its
+  `pyproject.toml` under `[deploy.dependencies.apt]`: v16.60.2 lists `libgl1` and `libglib2.0-0`
+  ([the file at that tag](https://github.com/frappe/frappe/blob/v16.60.2/pyproject.toml)). Read
+  that list for the release you are moving to, and install anything new as root
+  (`sudo apt-get install <package>`) before you run the update.
+
+**The other apps on the bench (not moved by this path).** `upstream` moves only `frappe` and
+`erpnext`. The bench's other apps that `bench update` used to move (`payments`, `telephony`,
+`newsletter`, `frappe_assistant_core`) are not moved by either trigger. A person updates each one,
+to a named tag or commit, with the pre-migrate backup first:
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+# Hold the bench's lock in this shell, so no deploy or update runs meanwhile. It is released
+# when you leave the shell with `exit` below. If it times out, another run is going: stop here.
+exec 9>>.deploy.lock && flock --verbose -w 900 9
+# Both Redis instances must answer; if it says Redis is not ready, stop here.
+bash apps/erpnext_enhancements/infra/bench_update.sh redis
+# Take the pre-migrate backup; if it prints PRE-MIGRATE BACKUP FAILED, stop here.
+bash apps/erpnext_enhancements/infra/bench_update.sh backup
+# Note the commit the app is on now, to go back to.
+git -C apps/<app> rev-parse HEAD
+# Fetch from the app's remote (bench names it upstream; `git -C apps/<app> remote` lists them).
+git -C apps/<app> fetch --tags upstream
+# Check out exactly the named tag or commit, detached, so nothing follows a branch.
+git -C apps/<app> checkout --detach <tag-or-commit>
+# Install the app's Python and JavaScript requirements for that version.
+bench setup requirements
+# Apply the app's schema changes and patches to every site.
+bench --site all migrate
+# Rebuild the asset bundles.
+bench build
+exit
+# Restart every bench process.
+sudo systemctl restart frappe-bench
+```
+
+**Restoring a pre-migrate backup.** This replaces the whole database with the copy taken just
+before that migrate: everything written since is lost. Hold merges first, and pause deploys.
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+ls pre-migrate-backups/                      # newest last; a .partial-* one is never a backup
+ls -l pre-migrate-backups/<run>/
+# Put the code back to what the backup was taken under, when it changed:
+#   upstream update: git -C apps/frappe checkout <previous commit>   (and the same for erpnext;
+#                    the failed run printed both), then: bench setup requirements
+#   app deploy:      git -C apps/erpnext_enhancements reset --hard <previous commit>
+# The file name ends -database-enc.sql.gz when backup encryption is on (it is on production).
+bench --site <site> restore /home/frappe/frappe-bench/pre-migrate-backups/<run>/<time>-<site>-database-enc.sql.gz
+bench build
+bench --site <site> clear-cache
+exit
+sudo systemctl restart frappe-bench
+```
+
+`restore` asks for the database root password. The next merge to `main` deploys again, so revert
+the change on `main` before you lift the hold.
+
+**Restoring an encrypted backup.** Production's backups are encrypted, so a restore needs the
+site's backup encryption key (read at frappe v16.60.2, `frappe/commands/site.py:257`-`:274`):
+
+- **On the same site, nothing extra.** `restore` sees that the file is encrypted and reads the key
+  from that site's `site_config.json` (`backup_encryption_key`). It says
+  `Encrypted backup file detected. Decrypting using site config.` It needs `gpg` and `file`
+  installed, and it decrypts beside the file, so the backup directory needs room for the file once
+  more.
+- **On another machine, or after the site's config was replaced,** pass the key:
+  `bench --site <site> restore <file> --encryption-key <key>`. The key that fits a dump is the
+  `backup_encryption_key` in the config copy that sits beside it in the same run directory.
+- **A wrong or missing key** ends with `Decryption failed. Please provide a valid key and try
+  again.` before the database is touched. When the site's config has no key at all, frappe makes a
+  new one and writes it there, and that key does not fit: take the right one from the run's copy.
+- **Never print the key, paste it into a ticket or a chat, or let it reach a build log.** Read it
+  on the VM, as `frappe`, and type it where it is needed. A key typed on a command line stays in
+  the shell's history: remove that line afterwards (`history -d <number>`).
+- Without the key an encrypted dump cannot be read by anyone. The copies beside the dumps are the
+  only ones on the VM, so the same holds for a copy of a backup kept elsewhere: keep its config
+  copy with it, as protected as the dump.
 
 **IAM**: Cloud Build SA is granted `iap.tunnelResourceAccessor` role for IAP SSH. Trigger configs reference YAML paths via `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` variables.
 
