@@ -116,11 +116,11 @@ gcloud compute project-info add-metadata \
 | `_VM_NAME` | Target VM name |
 | `_VM_ZONE` | Target VM zone |
 | `_ALLOW_SKIP` | When `true`, skips gracefully if VM is not RUNNING (e.g. preempted spot VM) |
-| `_FRAPPE_TAG`, `_ERPNEXT_TAG` | Upstream trigger only, both required: the release tags to install, like `v16.56.0`. Blank or anything else, and the run stops before it connects |
+| `_FRAPPE_TAG`, `_ERPNEXT_TAG` | Upstream trigger only, both required: the release tags to install, like `v16.60.2`. Blank or anything else, and the run stops before it connects |
 
 #### Runbook: pre-migrate backups and upstream updates
 
-Since v1.836.7, nothing changes the production database without a backup first, and Frappe and
+Since v1.837.0, nothing changes the production database without a backup first, and Frappe and
 ERPNext move only to a release chosen on purpose. Both go through one script,
 [`bench_update.sh`](bench_update.sh), run as the `frappe` user from the bench. Each deploy takes
 a few minutes longer for the backup.
@@ -144,7 +144,7 @@ with a clear message when it is missing. The build timeouts include that wait (d
 upstream 3300 s). The lock covers the backup only: it does not stop two deploys from running their
 migrates at the same time.
 
-**What bench's own `backup` command deletes.** Verified in frappe v16.56.0. For each site,
+**What bench's own `backup` command deletes.** Verified in frappe v16.60.2. For each site,
 `bench backup` (`frappe/commands/site.py:881`) calls `scheduled_backup()` and so `new_backup()`
 (`frappe/utils/backups.py:569`, `:608`), whose first step (`:625`) is `delete_temp_backups()`
 (`:651`-`:662`). That deletes every file in `sites/<site>/private/backups` whose ctime is at least
@@ -158,7 +158,7 @@ script writes elsewhere, and the CLI has no option to skip it. What that means:
   `keep_backups_for_hours` is set). Every scheduled `bench backup` already ran the same cleanup, so
   a deploy only brings it forward.
 - Separately, Frappe's `hourly_maintenance` job `delete_downloadable_backups`
-  (`frappe/hooks.py:278`, `frappe/desk/page/backups/backups.py:64`) keeps only the newest
+  (`frappe/hooks.py:327`, `frappe/desk/page/backups/backups.py:64`) keeps only the newest
   `backup_limit` sets there (System Settings, "Number of Backups", default 3).
 - To keep scheduled backups longer, set `keep_backups_for_hours` in the site config, and copy any
   you want to keep out of `private/backups`. Do not make a folder inside `private/backups`: the
@@ -191,13 +191,16 @@ between the installed version and the new one. Production's current versions are
 `pyproject.toml` (`[tool.bench.frappe-dependencies]`); a pair released the same week is the usual
 choice. Only `v16.MINOR.PATCH` is accepted: no branch names, no betas, no other major version.
 
-**Running the update.** Hold merges, update beta first, then production:
+**Running the update.** Hold merges, update beta first, then production. The tags in these
+examples are production's releases on 2026-11-23 (frappe v16.60.2, erpnext v16.60.0): name the
+pair you chose above, never an older one, because the script installs exactly what it is
+given and an older pair is a downgrade.
 
 ```bash
 gcloud builds triggers run app-upstream-test --branch=main \
-  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
 gcloud builds triggers run app-upstream-prod --branch=main \
-  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
 ```
 
 By hand on the VM it is the same script, and this is the only supported way to update by hand
@@ -206,17 +209,65 @@ too (never `bench update`, `bench switch-to-branch` or a `git pull` in `apps/fra
 ```bash
 sudo -iu frappe
 cd ~/frappe-bench
-bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.56.0 v16.54.0
+bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.60.2 v16.60.0
 exit
 sudo systemctl restart frappe-bench
 ```
 
-It checks both tags, that `apps/frappe` and `apps/erpnext` have no changes to tracked files, and
-fetches both tags, all before it changes anything; then it takes the backup, checks out the two
-tags (a detached checkout, so no later command follows a branch), and runs `bench setup
-requirements`, `bench --site all migrate` and `bench build`. It prints each app's previous commit.
-If a step after the checkout fails, it says so, names the backup directory and the previous
-commits, and leaves the bench unrestarted.
+It checks both tags, that `apps/frappe` and `apps/erpnext` have no changes to tracked files,
+fetches both tags, and checks that both Redis instances answer, all before it changes anything;
+then it takes the backup, checks out the two tags (a detached checkout, so no later command
+follows a branch), and runs `bench setup requirements`, the Redis check again, `bench --site all
+migrate` and `bench build`. It prints each app's previous commit. If a step after the checkout
+fails, it says so, names the backup directory and the previous commits, and leaves the bench
+unrestarted.
+
+**Redis must be running before a migrate.** Frappe reads a cache that is down as an empty one
+instead of stopping, so a migrate started then fails partway through, after it has already changed
+the database (on 2026-11-23 two migrates in a row stopped that way, at fixture sync). The script
+therefore asks both instances the bench is configured for, `redis_cache` and `redis_queue`, the
+way frappe finds them (`frappe/config.py:123`-`:129` at v16.60.2: an environment override, then
+`sites/common_site_config.json`, then frappe's default), with the bench's own Python and Redis
+client. To ask by hand, at any time, without changing anything:
+
+```bash
+sudo -iu frappe
+cd ~/frappe-bench
+bash apps/erpnext_enhancements/infra/bench_update.sh redis
+```
+
+It prints one line for each instance and exits non-zero when either is not ready:
+
+```
+bench_update.sh: redis_cache at redis://127.0.0.1:13000 did not answer: ConnectionError: ...
+bench_update.sh: redis_queue at redis://127.0.0.1:11000 answers
+bench_update.sh: Redis is not ready, and a migrate started now would stop partway; nothing was changed. Start Redis (sudo systemctl start frappe-bench starts both instances), then run the same command again
+```
+
+- **Do not stop the bench before an update or a migrate.** Stopping `frappe-bench` stops both
+  Redis instances with it, on a VM cut over to gunicorn (they are `PartOf` the umbrella unit) and
+  on one still on the development Procfile alike.
+- When the check fails before the backup, nothing was changed. When it fails just before the
+  migrate, the code is already at the new tags and nothing was migrated: start Redis and run the
+  same `upstream` command again.
+- A queue instance that asks for a sign-in counts as up (frappe signs in to it with a user of
+  its own); a cache instance that refuses the sign-in does not. An instance reached through
+  Redis Sentinel is not checked, and the output says so.
+
+**What an update installs and builds.** Read in frappe at v16.60.2, the release that added the
+Studio and Flow frontends:
+
+- `bench setup requirements` installs each app's Python packages and the JavaScript packages of
+  each app's root `package.json`.
+- `bench build` installs and builds everything else itself, on every run: frappe's
+  `studio/frontend` and `flow` apps (`esbuild/esbuild.js:143`-`:149`, `:567`-`:581`) and its island
+  toolchain (`frappe/commands/utils.py:100`, `ui/vite/island/toolchain.js`). No separate step is
+  needed, and the first build after such a release takes longer than usual.
+- Neither installs operating-system packages. A release that needs new ones lists them in its
+  `pyproject.toml` under `[deploy.dependencies.apt]`: v16.60.2 lists `libgl1` and `libglib2.0-0`
+  ([the file at that tag](https://github.com/frappe/frappe/blob/v16.60.2/pyproject.toml)). Read
+  that list for the release you are moving to, and install anything new as root
+  (`sudo apt-get install <package>`) before you run the update.
 
 **The other apps on the bench (not moved by this path).** `upstream` moves only `frappe` and
 `erpnext`. The bench's other apps that `bench update` used to move (`payments`, `telephony`,
@@ -226,6 +277,8 @@ to a named tag or commit, with the pre-migrate backup first:
 ```bash
 sudo -iu frappe
 cd ~/frappe-bench
+# Both Redis instances must answer; if it says Redis is not ready, stop here.
+bash apps/erpnext_enhancements/infra/bench_update.sh redis
 # Take the pre-migrate backup; if it prints PRE-MIGRATE BACKUP FAILED, stop here.
 bash apps/erpnext_enhancements/infra/bench_update.sh backup
 # Note the commit the app is on now, to go back to.

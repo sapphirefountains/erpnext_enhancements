@@ -242,11 +242,13 @@ gcloud builds triggers run app-deploy-test --region=us-east1 --branch=main
 
 # Update Frappe and ERPNext on the prod VM: both release tags are required
 gcloud builds triggers run app-upstream-prod --region=us-east1 --branch=main \
-  --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
+  --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
 ```
 
 Every app deploy takes a database backup before `bench migrate`, and an upstream update moves
-Frappe and ERPNext only to the two release tags it is given. How to choose the tags, run the
+Frappe and ERPNext only to the two release tags it is given, after it has checked that both
+Redis instances answer. The tags above are production's releases on 2026-11-23: name the pair
+you mean to install, because an older pair is a downgrade. How to choose the tags, run the
 update by hand, find the backups and restore one: [README.md, section 13](README.md#13-cicd--cloud-build-deploy--upstream-triggers),
 "Runbook: pre-migrate backups and upstream updates".
 

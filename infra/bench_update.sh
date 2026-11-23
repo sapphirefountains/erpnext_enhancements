@@ -14,6 +14,12 @@
 #       exactly this, and so does a person in a shell. Restart afterwards with
 #       `sudo systemctl restart frappe-bench` (the trigger does that itself).
 #
+#   bash bench_update.sh redis
+#       Checks that both Redis instances the bench is configured for answer, and changes
+#       nothing. A migrate started while one is down stops partway, with part of its work
+#       already in the database. `upstream` runs this check before its backup and again just
+#       before its migrate.
+#
 # Run it as the bench's owner (sudo -iu frappe), never with sudo. The bench is the directory
 # three levels above this file (<bench>/apps/erpnext_enhancements/infra/). Runbook:
 # infra/README.md, section 13.
@@ -30,7 +36,15 @@
 #                            in util-linux). A run that cannot get it in time fails and deletes
 #                            nothing. The lock file itself is never deleted.
 #
-# What bench's backup command does (frappe at v16.56.0): one `<time>-<site>-database[-enc].sql.gz`
+# What the update's own steps install and build (frappe at v16.60.2): `bench setup requirements`
+# installs each app's Python packages and the JavaScript packages of each app's root
+# package.json. `bench build` installs and builds the rest itself, on every run: frappe's
+# studio/frontend and flow apps (esbuild/esbuild.js:143-149, :567-581) and its island toolchain
+# (frappe/commands/utils.py:100, ui/vite/island/toolchain.js). Neither installs operating-system
+# packages: a release that needs new ones lists them in its pyproject.toml under
+# [deploy.dependencies.apt], and a person installs those as root before the update.
+#
+# What bench's backup command does (frappe at v16.60.2): one `<time>-<site>-database[-enc].sql.gz`
 # and one copy of site_config.json per site into --backup-path, and a non-zero exit when any site
 # fails. --ignore-backup-conf makes the dump whole even where site config narrows the scheduled
 # one. It also deletes files, and not in --backup-path:
@@ -68,7 +82,8 @@ die() {
 usage() {
 	cat >&2 <<EOF
 usage: bash $PROG backup
-       bash $PROG upstream <frappe-tag> <erpnext-tag>    (release tags, for example v16.56.0)
+       bash $PROG upstream <frappe-tag> <erpnext-tag>    (release tags, for example v16.60.2 v16.60.0)
+       bash $PROG redis
 EOF
 	exit 2
 }
@@ -90,7 +105,7 @@ check_bench() {
 }
 
 # The sites `bench --site all` means: directories under sites/ with a site_config.json, not
-# symlinks (frappe.utils.get_sites at v16.56.0).
+# symlinks (frappe.utils.get_sites, frappe/utils/__init__.py:702-718 at v16.60.2).
 list_sites() {
 	local path
 	for path in "$BENCH_DIR"/sites/*/; do
@@ -221,7 +236,86 @@ take_backup() {
 
 check_tag() {
 	[[ $1 =~ $TAG_RE ]] ||
-		die "the $2 tag '$1' is not a release tag like v16.56.0 (it must match $TAG_RE); nothing was changed"
+		die "the $2 tag '$1' is not a release tag like v16.60.2 (it must match $TAG_RE); nothing was changed"
+}
+
+# Both Redis instances must answer before a migrate starts. frappe reads a cache that is down
+# as an empty one instead of stopping, so a migrate started then fails partway through, after
+# it has already changed the database. The addresses are the ones frappe itself uses: the
+# redis_cache and redis_queue keys of sites/common_site_config.json, behind frappe's two
+# environment overrides and before its two defaults (frappe/config.py:123-129 at v16.60.2).
+# They are asked with the bench's own Python and Redis client, so a URL with TLS, a socket path
+# or a password works as it does for frappe; a password is never printed. $1 says what state
+# the bench is in when the check fails.
+check_redis() {
+	local python=$BENCH_DIR/env/bin/python status=0
+	[ -x "$python" ] || die "cannot check Redis: the bench has no env/bin/python; $1"
+	"$python" - "$BENCH_DIR/sites/common_site_config.json" "$PROG" <<'PY' || status=$?
+import json
+import os
+import sys
+from urllib.parse import urlsplit
+
+path, prog = sys.argv[1:3]
+INSTANCES = (
+	("redis_cache", "FRAPPE_REDIS_CACHE", "redis://127.0.0.1:13311"),
+	("redis_queue", "FRAPPE_REDIS_QUEUE", "redis://127.0.0.1:11311"),
+)
+
+
+def shown(url):
+	parts = urlsplit(url)
+	if parts.scheme == "unix":
+		return f"unix://{parts.path}"
+	return f"{parts.scheme}://{parts.hostname}:{parts.port or 6379}"
+
+
+try:
+	with open(path, encoding="utf-8") as handle:
+		conf = json.load(handle)
+	import redis
+except Exception as exc:
+	print(f"{prog}: could not check Redis: {type(exc).__name__}: {exc}", file=sys.stderr)
+	sys.exit(2)
+
+down = 0
+for key, env, default in INSTANCES:
+	if conf.get(f"{key}_sentinel_enabled"):
+		print(f"{prog}: {key} is reached through Redis Sentinel; not checked here")
+		continue
+	url = os.environ.get(env) or conf.get(key) or default
+	if not isinstance(url, str):
+		down += 1
+		print(f"{prog}: {key} in {path} is not a URL", file=sys.stderr)
+		continue
+	where, secret, refused = key, None, None
+	try:
+		where, secret = f"{key} at {shown(url)}", urlsplit(url).password
+		redis.Redis.from_url(url, socket_connect_timeout=5, socket_timeout=5).ping()
+	except (redis.exceptions.AuthenticationError, redis.exceptions.ResponseError) as exc:
+		refused = exc
+	except Exception as exc:
+		down += 1
+		reason = str(exc).replace(secret, "***") if secret else str(exc)
+		print(f"{prog}: {where} did not answer: {type(exc).__name__}: {reason}", file=sys.stderr)
+		continue
+	if refused is None:
+		print(f"{prog}: {where} answers")
+	elif key == "redis_queue":
+		# frappe can sign in to the queue with a user of its own (use_rq_auth), which this
+		# check does not have: the instance is up, and that is all this can say.
+		print(f"{prog}: {where} answers (it asks for a sign-in, which this check does not send)")
+	else:
+		# frappe has only this URL for the cache, so it would be refused the same way.
+		down += 1
+		print(f"{prog}: {where} refused the sign-in: {type(refused).__name__}", file=sys.stderr)
+sys.exit(1 if down else 0)
+PY
+	case $status in
+	0) ;;
+	1) die "Redis is not ready, and a migrate started now would stop partway; $1. Start Redis (sudo systemctl start frappe-bench starts both instances), then run the same command again" ;;
+	*) die "Redis could not be checked (the reason is above); $1" ;;
+	esac
 }
 
 # The remote bench itself pulls from: `upstream` when there is one, else the first
@@ -260,7 +354,8 @@ upstream() {
 	TAGS=([frappe]=$1 [erpnext]=$2)
 	check_bench
 
-	# Every check before anything changes: a clean checkout, and the tag fetched and found.
+	# Every check before anything changes: a clean checkout, the tag fetched and found, and
+	# both Redis instances answering.
 	for app in "${UPSTREAM_APPS[@]}"; do
 		dir=apps/$app
 		tag=${TAGS[$app]}
@@ -276,6 +371,7 @@ upstream() {
 			die "the tag $tag of $app does not name a commit; nothing was changed"
 		WAS[$app]=$(git -C "$dir" rev-parse HEAD)
 	done
+	check_redis "nothing was changed"
 
 	take_backup
 
@@ -286,6 +382,8 @@ upstream() {
 		say "$app is now at $tag (was ${WAS[$app]})"
 	done
 	bench setup requirements
+	# Again, now that the backup and the installs have taken their time.
+	check_redis "the code was switched but nothing was migrated"
 	bench --site all migrate
 	bench build
 	trap - EXIT
@@ -303,6 +401,11 @@ main() {
 	upstream)
 		shift
 		upstream "$@"
+		;;
+	redis)
+		[ "$#" -eq 1 ] || usage
+		check_bench
+		check_redis "nothing was changed"
 		;;
 	*) usage ;;
 	esac

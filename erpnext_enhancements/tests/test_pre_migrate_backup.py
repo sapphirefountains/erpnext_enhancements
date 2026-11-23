@@ -1,4 +1,4 @@
-"""Bench-free tests for the pre-migrate backup and the pinned upstream update (v1.836.7).
+"""Bench-free tests for the pre-migrate backup and the pinned upstream update (v1.837.0).
 
 Two rules, both enforced by files that run nowhere but on a VM:
 
@@ -12,22 +12,28 @@ for their one block scalar, cross-checked with PyYAML where it is installed), ru
 upstream file's tag check with `sh`, and run the script itself against a scratch bench with
 a stub `bench` (and a stub `df` that can report a chosen free figure) on PATH and real git
 repositories standing in for frappe and erpnext. They also cover the rule that only one backup
-runs at a time (an flock on the backup directory's lock file) and the free-space rule (twice
-the newest kept backup plus a margin). The script tests need bash, git, gzip and flock, so they
-run on Linux; CI sets REQUIRE_DEPLOY_SCRIPT_TOOLS so that a missing tool fails instead of
-skipping.
+runs at a time (an flock on the backup directory's lock file), the free-space rule (twice
+the newest kept backup plus a margin) and the Redis check that comes before a migrate. That
+check runs the bench's own Python: here a stand-in `env/bin/python` that loads a stub `redis`
+module, and, in one class, the real Redis client against a small socket server. The script
+tests need bash, git, gzip and flock, so they run on Linux; CI sets REQUIRE_DEPLOY_SCRIPT_TOOLS
+so that a missing tool fails instead of skipping.
 
 Run: python -m unittest erpnext_enhancements.tests.test_pre_migrate_backup -v
 """
 
+import importlib.util
+import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -40,6 +46,12 @@ UPSTREAM_YAML = INFRA / "cloudbuild-upstream.yaml"
 CLOUD_BUILD_TF = INFRA / "cloud_build.tf"
 
 RUN_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
+
+#: The release pair every copy-paste example names: what production runs. Move it, and every
+#: example with it, when production moves. An example left on an older pair is a downgrade
+#: waiting to be pasted.
+EXAMPLE_FRAPPE_TAG = "v16.60.2"
+EXAMPLE_ERPNEXT_TAG = "v16.60.0"
 
 #: Set by the CI step: a missing tool then fails these tests instead of skipping them.
 REQUIRE_TOOLS = os.environ.get("REQUIRE_DEPLOY_SCRIPT_TOOLS") == "1"
@@ -209,10 +221,12 @@ class UpstreamYamlTests(unittest.TestCase):
 		)
 
 	def test_the_vm_receives_a_valid_command_with_both_tags(self):
-		remote = _remote_string(self, self.block, FRAPPE_TAG="v16.56.0", ERPNEXT_TAG="v16.54.0")
+		remote = _remote_string(
+			self, self.block, FRAPPE_TAG=EXAMPLE_FRAPPE_TAG, ERPNEXT_TAG=EXAMPLE_ERPNEXT_TAG
+		)
 		self.assertTrue(
 			remote.endswith(
-				"bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.56.0 v16.54.0' "
+				"bash apps/erpnext_enhancements/infra/bench_update.sh upstream v16.60.2 v16.60.0' "
 				"&& sudo systemctl restart frappe-bench"
 			),
 			remote,
@@ -250,7 +264,7 @@ class UpstreamYamlTests(unittest.TestCase):
 			env = {"PATH": os.environ.get("PATH", ""), "FRAPPE_TAG": frappe_tag, "ERPNEXT_TAG": erpnext_tag}
 			return subprocess.run(["sh", "-c", "set -e\n" + check], env=env, capture_output=True, text=True)
 
-		self.assertEqual(run("v16.56.0", "v16.54.0").returncode, 0)
+		self.assertEqual(run(EXAMPLE_FRAPPE_TAG, EXAMPLE_ERPNEXT_TAG).returncode, 0)
 		for pair in (
 			("", ""),
 			("v16.56.0", ""),
@@ -283,6 +297,33 @@ class UpstreamYamlTests(unittest.TestCase):
 		doc = yaml.safe_load(self.text)
 		self.assertEqual(doc["steps"][0]["env"], ["FRAPPE_TAG=$_FRAPPE_TAG", "ERPNEXT_TAG=$_ERPNEXT_TAG"])
 		self.assertEqual(doc["substitutions"], {"_ALLOW_SKIP": "false", "_FRAPPE_TAG": "", "_ERPNEXT_TAG": ""})
+
+
+class ExampleTagTests(unittest.TestCase):
+	"""The examples are commands people paste. Each names the one release pair, and none of
+	these files names any other v16 release, in an example or in a note on what was verified."""
+
+	FILES = (SCRIPT, UPSTREAM_YAML, INFRA / "README.md", INFRA / "WORKFLOW.md")
+
+	def test_every_example_names_the_one_release_pair(self):
+		found = []
+		for path in self.FILES:
+			text = path.read_text(encoding="utf-8")
+			found += re.findall(r"_FRAPPE_TAG=(v[0-9.]+),_ERPNEXT_TAG=(v[0-9.]+)", text)
+			found += re.findall(r"bench_update\.sh upstream (v[0-9.]+) (v[0-9.]+)", text)
+		self.assertGreaterEqual(len(found), 5)
+		self.assertEqual(set(found), {(EXAMPLE_FRAPPE_TAG, EXAMPLE_ERPNEXT_TAG)})
+
+	def test_no_file_names_another_release(self):
+		pair = {EXAMPLE_FRAPPE_TAG, EXAMPLE_ERPNEXT_TAG}
+		for path in self.FILES:
+			named = set(re.findall(r"\bv16\.[0-9]+\.[0-9]+\b", path.read_text(encoding="utf-8")))
+			self.assertLessEqual(named, pair, path.name)
+			self.assertIn(EXAMPLE_FRAPPE_TAG, named, path.name)
+
+	def test_the_pair_is_two_release_tags(self):
+		for tag in (EXAMPLE_FRAPPE_TAG, EXAMPLE_ERPNEXT_TAG):
+			self.assertRegex(tag, _script_tag_re())
 
 
 class TerraformTests(unittest.TestCase):
@@ -352,6 +393,75 @@ fi
 exec @REAL_DF@ "$@"
 """
 
+#: A stand-in for the bench's own interpreter, <bench>/env/bin/python: the real one, with a stub
+#: `redis` module first on its path unless STUB_REDIS_REAL is set (@PYTHON@ and @STUB_PY@ are
+#: replaced). A wrapper, not a symlink: run through a symlink outside its environment, a
+#: virtualenv's python does not find that environment's packages.
+STUB_PYTHON = r"""#!/usr/bin/env bash
+if [ -z "${STUB_REDIS_REAL:-}" ]; then export PYTHONPATH=@STUB_PY@; fi
+exec @PYTHON@ "$@"
+"""
+
+#: The stub `redis` module. Each ping is written to STUB_CALLS. An address that contains a word
+#: of STUB_REDIS_DOWN does not answer, one that contains a word of STUB_REDIS_REFUSE refuses the
+#: sign-in, and from ping number STUB_REDIS_DOWN_FROM of the run onward nothing answers.
+STUB_REDIS = r"""import os
+
+from . import exceptions
+
+
+class Redis:
+	def __init__(self, url, options):
+		self.url = url
+		self.options = options
+
+	@classmethod
+	def from_url(cls, url, **options):
+		if not url.startswith(("redis://", "rediss://", "unix://")):
+			raise ValueError("Redis URL must specify one of the following schemes")
+		return cls(url, options)
+
+	def ping(self):
+		calls = os.environ["STUB_CALLS"]
+		done = 0
+		if os.path.exists(calls):
+			with open(calls) as handle:
+				done = sum(1 for line in handle if line.startswith("redis-ping "))
+		with open(calls, "a") as handle:
+			handle.write(
+				"redis-ping %s connect=%s read=%s\n"
+				% (self.url, self.options.get("socket_connect_timeout"), self.options.get("socket_timeout"))
+			)
+		down_from = int(os.environ.get("STUB_REDIS_DOWN_FROM") or 0)
+		if down_from and done + 1 >= down_from:
+			raise exceptions.ConnectionError("Error 111 connecting. Connection refused.")
+		if any(word in self.url for word in os.environ.get("STUB_REDIS_DOWN", "").split()):
+			raise exceptions.ConnectionError("Error 111 connecting to %s. Connection refused." % self.url)
+		if any(word in self.url for word in os.environ.get("STUB_REDIS_REFUSE", "").split()):
+			raise exceptions.AuthenticationError("Authentication required.")
+		return True
+"""
+
+STUB_REDIS_EXCEPTIONS = r"""class RedisError(Exception):
+	pass
+
+
+class ConnectionError(RedisError):
+	pass
+
+
+class AuthenticationError(ConnectionError):
+	pass
+
+
+class ResponseError(RedisError):
+	pass
+"""
+
+#: The two addresses the scratch bench is configured for.
+CACHE_URL = "redis://127.0.0.1:13000"
+QUEUE_URL = "redis://127.0.0.1:11000"
+
 LOCK_NAME = ".bench_update.lock"
 
 
@@ -382,9 +492,23 @@ class _ScratchBench(unittest.TestCase):
 		df = self.stubs / "df"
 		df.write_text(STUB_DF.replace("@REAL_DF@", shutil.which("df")))
 		df.chmod(df.stat().st_mode | stat.S_IXUSR)
+		stub_py = self.tmp / "stub-python"
+		(stub_py / "redis").mkdir(parents=True)
+		(stub_py / "redis" / "__init__.py").write_text(STUB_REDIS)
+		(stub_py / "redis" / "exceptions.py").write_text(STUB_REDIS_EXCEPTIONS)
+		self.python = self.bench / "env" / "bin" / "python"
+		self.python.parent.mkdir(parents=True)
+		wrapper = STUB_PYTHON.replace("@PYTHON@", sys.executable).replace("@STUB_PY@", str(stub_py))
+		self.python.write_text(wrapper)
+		self.python.chmod(self.python.stat().st_mode | stat.S_IXUSR)
+		self.common_config = self.bench / "sites" / "common_site_config.json"
+		self.write_config(redis_cache=CACHE_URL, redis_queue=QUEUE_URL)
 		self.calls = self.tmp / "calls.log"
 		self.root = self.bench / "pre-migrate-backups"
 		self.lock = self.root / LOCK_NAME
+
+	def write_config(self, **config):
+		self.common_config.write_text(json.dumps(config))
 
 	def script_env(self, **env):
 		"""The script's environment; a value of None removes that variable."""
@@ -423,6 +547,14 @@ class _ScratchBench(unittest.TestCase):
 
 	def call_log(self):
 		return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+	def bench_calls(self):
+		"""The call log without the Redis checks."""
+		return [line for line in self.call_log() if not line.startswith("redis-ping ")]
+
+	def pings(self):
+		"""The addresses pinged, in order."""
+		return [line.split()[1] for line in self.call_log() if line.startswith("redis-ping ")]
 
 	def runs(self):
 		if not self.root.is_dir():
@@ -566,7 +698,7 @@ class BackupTests(_ScratchBench):
 		self.assertIn("is not a bench", result.stderr)
 
 	def test_unknown_modes_print_usage(self):
-		for args in ((), ("migrate",), ("backup", "extra")):
+		for args in ((), ("migrate",), ("backup", "extra"), ("redis", "extra")):
 			result = self.run_script(*args)
 			self.assertEqual(result.returncode, 2, args)
 			self.assertIn("usage:", result.stderr)
@@ -734,6 +866,261 @@ class LockTests(_ScratchBench):
 		self.assertEqual(len(self.runs()), 1)
 
 
+class RedisCheckTests(_ScratchBench):
+	"""`bench_update.sh redis`: both instances the bench is configured for must answer."""
+
+	def test_both_answering_passes_and_changes_nothing(self):
+		result = self.run_script("redis")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(
+			result.stdout.splitlines(),
+			[
+				f"bench_update.sh: redis_cache at {CACHE_URL} answers",
+				f"bench_update.sh: redis_queue at {QUEUE_URL} answers",
+			],
+		)
+		self.assertEqual(
+			self.call_log(), [f"redis-ping {url} connect=5 read=5" for url in (CACHE_URL, QUEUE_URL)]
+		)
+		self.assertFalse(self.root.exists())
+
+	def test_either_one_down_fails_and_both_are_reported(self):
+		for down, key, url in (("13000", "redis_cache", CACHE_URL), ("11000", "redis_queue", QUEUE_URL)):
+			self.calls.unlink(missing_ok=True)
+			result = self.run_script("redis", STUB_REDIS_DOWN=down)
+			self.assertEqual(result.returncode, 1, down)
+			self.assertIn(
+				f"bench_update.sh: {key} at {url} did not answer: ConnectionError: Error 111", result.stderr
+			)
+			self.assertIn(
+				"bench_update.sh: Redis is not ready, and a migrate started now would stop partway; "
+				"nothing was changed. Start Redis (sudo systemctl start frappe-bench starts both instances), "
+				"then run the same command again",
+				result.stderr,
+			)
+			self.assertEqual(result.stdout.count(" answers"), 1)
+			self.assertEqual(self.pings(), [CACHE_URL, QUEUE_URL])
+
+	def test_the_addresses_are_the_ones_frappe_uses(self):
+		"""The environment first, then the bench's common config, then frappe's defaults."""
+		self.write_config(redis_cache="redis://cache.test:1", redis_queue="redis://queue.test:2")
+		self.assertEqual(self.run_script("redis").returncode, 0)
+		self.assertEqual(self.pings(), ["redis://cache.test:1", "redis://queue.test:2"])
+		self.calls.unlink()
+		env = {
+			"FRAPPE_REDIS_CACHE": "redis://env-cache.test:3",
+			"FRAPPE_REDIS_QUEUE": "redis://env-queue.test:4",
+		}
+		self.assertEqual(self.run_script("redis", **env).returncode, 0)
+		self.assertEqual(self.pings(), ["redis://env-cache.test:3", "redis://env-queue.test:4"])
+		self.calls.unlink()
+		self.write_config()
+		self.assertEqual(self.run_script("redis").returncode, 0)
+		self.assertEqual(self.pings(), ["redis://127.0.0.1:13311", "redis://127.0.0.1:11311"])
+
+	def test_a_password_in_the_address_is_never_printed(self):
+		secret = "not-a-real-password-0001"
+		self.write_config(redis_cache=f"redis://user:{secret}@127.0.0.1:13000/2", redis_queue=QUEUE_URL)
+		for env in ({}, {"STUB_REDIS_DOWN": "13000"}, {"STUB_REDIS_REFUSE": "13000"}):
+			result = self.run_script("redis", **env)
+			self.assertNotIn(secret, result.stdout + result.stderr, env)
+			self.assertIn("redis_cache at redis://127.0.0.1:13000", result.stdout + result.stderr, env)
+		# The stub's refusal message carried the whole address, as a client's might.
+		down = self.run_script("redis", STUB_REDIS_DOWN="13000")
+		self.assertIn(
+			"did not answer: ConnectionError: Error 111 connecting to redis://user:***@127.0.0.1", down.stderr
+		)
+
+	def test_a_cache_that_refuses_the_sign_in_is_not_ready(self):
+		result = self.run_script("redis", STUB_REDIS_REFUSE="13000")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(f"redis_cache at {CACHE_URL} refused the sign-in: AuthenticationError", result.stderr)
+		self.assertIn("Redis is not ready", result.stderr)
+
+	def test_a_queue_that_asks_for_a_sign_in_is_up(self):
+		result = self.run_script("redis", STUB_REDIS_REFUSE="11000")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn(
+			f"redis_queue at {QUEUE_URL} answers (it asks for a sign-in, which this check does not send)",
+			result.stdout,
+		)
+
+	def test_an_instance_behind_sentinel_is_said_to_be_unchecked(self):
+		self.write_config(redis_cache=CACHE_URL, redis_cache_sentinel_enabled=1, redis_queue=QUEUE_URL)
+		result = self.run_script("redis", STUB_REDIS_DOWN="13000")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn("redis_cache is reached through Redis Sentinel; not checked here", result.stdout)
+		self.assertEqual(self.pings(), [QUEUE_URL])
+
+	def test_an_address_that_is_not_a_url_fails(self):
+		self.write_config(redis_cache=13000, redis_queue="http://127.0.0.1:11000")
+		result = self.run_script("redis")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(f"redis_cache in {self.common_config} is not a URL", result.stderr)
+		self.assertIn("redis_queue at http://127.0.0.1:11000 did not answer: ValueError", result.stderr)
+		self.assertEqual(self.pings(), [])
+
+	def test_a_check_that_cannot_run_fails_without_telling_anyone_to_start_redis(self):
+		self.common_config.write_text("not json")
+		unreadable = self.run_script("redis")
+		self.common_config.unlink()
+		missing = self.run_script("redis")
+		for result, reason in ((unreadable, "JSONDecodeError"), (missing, "FileNotFoundError")):
+			self.assertEqual(result.returncode, 1, reason)
+			self.assertIn(f"could not check Redis: {reason}", result.stderr)
+			self.assertIn(
+				"Redis could not be checked (the reason is above); nothing was changed", result.stderr
+			)
+			self.assertNotIn("Start Redis", result.stderr)
+		self.write_config(redis_cache=CACHE_URL, redis_queue=QUEUE_URL)
+		self.python.unlink()
+		result = self.run_script("redis")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(
+			"cannot check Redis: the bench has no env/bin/python; nothing was changed", result.stderr
+		)
+		self.assertEqual(self.call_log(), [])
+
+
+class _FakeRedis(threading.Thread):
+	"""A socket server that speaks enough of the Redis protocol for a client to connect and
+	ping: +PONG to PING, the server's description to HELLO (newer clients open with it, to
+	choose the protocol version) and +OK to anything else, or one fixed error to every command."""
+
+	def __init__(self, error=None):
+		super().__init__(daemon=True)
+		self.error = error
+		self.listener = socket.socket()
+		self.listener.bind(("127.0.0.1", 0))
+		self.listener.listen()
+		self.port = self.listener.getsockname()[1]
+		self.commands = []
+
+	def run(self):
+		while True:
+			try:
+				conn, _ = self.listener.accept()
+			except OSError:
+				return
+			threading.Thread(target=self.serve, args=(conn,), daemon=True).start()
+
+	@staticmethod
+	def take_command(buffer):
+		"""(words, rest) for one whole command at the head of the buffer, else (None, buffer)."""
+		head, sep, rest = buffer.partition(b"\r\n")
+		if not sep:
+			return None, buffer
+		words = []
+		for _ in range(int(head[1:])):
+			size, sep, rest = rest.partition(b"\r\n")
+			if not sep or len(rest) < int(size[1:]) + 2:
+				return None, buffer
+			words.append(rest[: int(size[1:])])
+			rest = rest[int(size[1:]) + 2 :]
+		return words, rest
+
+	@staticmethod
+	def hello(words):
+		"""The reply to HELLO [version]: seven fields, as a map in protocol 3 and a flat list in 2."""
+		version = words[1] if len(words) > 1 else b"2"
+		head = b"%7" if version == b"3" else b"*14"
+		fields = (
+			b"$6\r\nserver\r\n$5\r\nredis\r\n",
+			b"$7\r\nversion\r\n$5\r\n7.0.0\r\n",
+			b"$5\r\nproto\r\n:" + version + b"\r\n",
+			b"$2\r\nid\r\n:1\r\n",
+			b"$4\r\nmode\r\n$10\r\nstandalone\r\n",
+			b"$4\r\nrole\r\n$6\r\nmaster\r\n",
+			b"$7\r\nmodules\r\n*0\r\n",
+		)
+		return head + b"\r\n" + b"".join(fields)
+
+	def serve(self, conn):
+		buffer = b""
+		with conn:
+			while True:
+				try:
+					data = conn.recv(4096)
+				except OSError:
+					return
+				if not data:
+					return
+				buffer += data
+				while buffer:
+					words, buffer = self.take_command(buffer)
+					if words is None:
+						break
+					command = words[0].upper()
+					self.commands.append(command)
+					if self.error:
+						conn.sendall(b"-" + self.error + b"\r\n")
+					elif command == b"HELLO":
+						conn.sendall(self.hello(words))
+					else:
+						conn.sendall(b"+PONG\r\n" if command == b"PING" else b"+OK\r\n")
+
+	def stop(self):
+		self.listener.close()
+
+
+class RedisCheckRealClientTests(_ScratchBench):
+	"""The same check with the real Redis client, against sockets: what the stub cannot show is
+	which error the client raises for an instance that is down, and for one that wants a
+	sign-in."""
+
+	def setUp(self):
+		super().setUp()
+		_tool_or_skip(self, importlib.util.find_spec("redis"), "the redis Python client")
+
+	def server(self, error=None):
+		fake = _FakeRedis(error)
+		fake.start()
+		self.addCleanup(fake.stop)
+		return fake
+
+	def closed_port(self):
+		with socket.socket() as probe:
+			probe.bind(("127.0.0.1", 0))
+			return probe.getsockname()[1]
+
+	def run_real(self, cache_port, queue_port):
+		self.write_config(
+			redis_cache=f"redis://127.0.0.1:{cache_port}", redis_queue=f"redis://127.0.0.1:{queue_port}/1"
+		)
+		return self.run_script("redis", STUB_REDIS_REAL="1")
+
+	def test_two_instances_that_answer(self):
+		cache, queue = self.server(), self.server()
+		result = self.run_real(cache.port, queue.port)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(result.stdout.count(" answers\n"), 2)
+		self.assertIn(b"PING", cache.commands)
+		self.assertIn(b"PING", queue.commands)
+		self.assertEqual(self.call_log(), [])
+
+	def test_one_that_is_down(self):
+		cache = self.server()
+		for ports, key in (
+			((self.closed_port(), cache.port), "redis_cache"),
+			((cache.port, self.closed_port()), "redis_queue"),
+		):
+			result = self.run_real(*ports)
+			self.assertEqual(result.returncode, 1, key)
+			self.assertRegex(
+				result.stderr, rf"{key} at redis://127\.0\.0\.1:\d+ did not answer: ConnectionError"
+			)
+			self.assertIn("Redis is not ready", result.stderr)
+
+	def test_one_that_wants_a_sign_in(self):
+		plain, locked = self.server(), self.server(b"NOAUTH Authentication required.")
+		cache_locked = self.run_real(locked.port, plain.port)
+		self.assertEqual(cache_locked.returncode, 1)
+		self.assertRegex(cache_locked.stderr, r"redis_cache at \S+ refused the sign-in: AuthenticationError")
+		queue_locked = self.run_real(plain.port, locked.port)
+		self.assertEqual(queue_locked.returncode, 0, queue_locked.stderr)
+		self.assertIn("answers (it asks for a sign-in, which this check does not send)", queue_locked.stdout)
+
+
 class UpstreamTests(_ScratchBench):
 	def git(self, cwd, *args):
 		return subprocess.run(
@@ -835,12 +1222,15 @@ class UpstreamTests(_ScratchBench):
 		self.assertEqual(self.head("frappe"), self.new["frappe"])
 		self.assertEqual(self.head("erpnext"), self.new["erpnext"])
 		(run,) = self.runs()
+		checked = [f"redis-ping {url} connect=5 read=5" for url in (CACHE_URL, QUEUE_URL)]
 		self.assertEqual(
 			self.call_log(),
 			[
+				*checked,
 				f"--site all backup --backup-path {self.root / run} --ignore-backup-conf",
 				f"frappe-head-at-backup {self.old['frappe']}",
 				"setup requirements",
+				*checked,
 				"--site all migrate",
 				"build",
 			],
@@ -851,9 +1241,55 @@ class UpstreamTests(_ScratchBench):
 		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_LOCK=str(self.lock))
 		self.assertEqual(result.returncode, 0, result.stderr)
 		self.assertEqual(
-			self.call_log()[2:],
+			self.bench_calls()[2:],
 			["setup requirements", "lock-free", "--site all migrate", "lock-free", "build", "lock-free"],
 		)
+
+	def test_redis_down_stops_it_before_the_backup(self):
+		for down in ("13000", "11000"):
+			self.calls.unlink(missing_ok=True)
+			result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_REDIS_DOWN=down)
+			self.assertEqual(result.returncode, 1, down)
+			self.assertIn(
+				"Redis is not ready, and a migrate started now would stop partway; nothing was changed. "
+				"Start Redis",
+				result.stderr,
+			)
+			self.assertNotIn("UPSTREAM UPDATE FAILED", result.stderr)
+			# Both were asked, and nothing else ran: no backup, no checkout, no bench command.
+			self.assertEqual(self.pings(), [CACHE_URL, QUEUE_URL])
+			self.assertEqual(self.bench_calls(), [])
+			self.assertEqual(self.runs(), [])
+			for app in ("frappe", "erpnext"):
+				self.assertEqual(self.head(app), self.old[app])
+
+	def test_redis_going_down_after_the_switch_stops_it_before_the_migrate(self):
+		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_REDIS_DOWN_FROM="3")
+		self.assertEqual(result.returncode, 1)
+		(run,) = self.runs()
+		self.assertEqual(
+			self.bench_calls(),
+			[
+				f"--site all backup --backup-path {self.root / run} --ignore-backup-conf",
+				f"frappe-head-at-backup {self.old['frappe']}",
+				"setup requirements",
+			],
+		)
+		self.assertEqual(self.pings(), [CACHE_URL, QUEUE_URL, CACHE_URL, QUEUE_URL])
+		self.assertIn("the code was switched but nothing was migrated. Start Redis", result.stderr)
+		self.assertIn("then run the same command again", result.stderr)
+		self.assertIn("UPSTREAM UPDATE FAILED", result.stderr)
+		self.assertIn(str(self.root / run), result.stderr)
+		self.assertIn(f"frappe was at commit {self.old['frappe']}", result.stderr)
+		for app in ("frappe", "erpnext"):
+			self.assertEqual(self.head(app), self.new[app])
+		# The same command again, with Redis back, finishes the update (a second later: a run's
+		# directory is named to the second).
+		self.calls.unlink()
+		time.sleep(1.1)
+		again = self.run_script("upstream", "v16.2.0", "v16.2.0")
+		self.assertEqual(again.returncode, 0, again.stderr)
+		self.assertEqual(self.bench_calls()[-2:], ["--site all migrate", "build"])
 
 	def test_a_failed_backup_switches_nothing(self):
 		result = self.run_script("upstream", "v16.2.0", "v16.2.0", STUB_BACKUP="fail")

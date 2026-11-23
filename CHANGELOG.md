@@ -34,22 +34,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     only. The deploy step's timeout goes from 600 to 2100 seconds and the upstream step's from
     1200 to 3300, to fit the backup and that wait.
   - **Bench's own `backup` command deletes older scheduled backups, now on every deploy.** At
-    frappe v16.56.0 it runs `delete_temp_backups()` (`frappe/utils/backups.py`) for each site,
+    frappe v16.60.2 it runs `delete_temp_backups()` (`frappe/utils/backups.py`) for each site,
     which removes every file in `sites/<site>/private/backups` at least 23 hours old (or the
     site's `keep_backups_for_hours`), whatever `--backup-path` says. The script's header and the
     runbook state this with file and line references; after a deploy, only the last 23 hours of
     scheduled backups remain there.
   - **Upstream updates install two named release tags.** `infra/cloudbuild-upstream.yaml` no
     longer runs `bench update --pull --no-backup`. Each run takes two required substitutions,
-    `_FRAPPE_TAG` and `_ERPNEXT_TAG`, each a tag like `v16.56.0` (`^v16\.[0-9]+\.[0-9]+$`); a run
+    `_FRAPPE_TAG` and `_ERPNEXT_TAG`, each a tag like `v16.60.2` (`^v16\.[0-9]+\.[0-9]+$`); a run
     with either blank or anything else stops before it connects to the VM. On the VM the script
     checks the tags again, refuses a checkout with changes to tracked files, fetches both tags,
-    takes the same backup, checks out exactly those tags, and runs `bench setup requirements`,
-    `bench --site all migrate` and `bench build`. Updating by hand in a shell is the same command
+    checks Redis (below), takes the same backup, checks out exactly those tags, and runs `bench
+    setup requirements`, the Redis check again, `bench --site all migrate` and `bench build`.
+    Updating by hand in a shell is the same command
     (`bash apps/erpnext_enhancements/infra/bench_update.sh upstream <frappe-tag> <erpnext-tag>`)
     and is now the only supported way. The bench's other apps (`payments`, `telephony`,
     `newsletter`, `frappe_assistant_core`) are not moved by this path; the runbook gives the
     commands for updating one by hand to a named tag or commit, behind the same backup.
+  - **Redis is checked before a migrate starts.** Frappe reads a cache that is down as an empty
+    one instead of stopping, so a migrate started then fails partway through, after it has
+    already changed the database; on 2026-11-23 two migrates in a row stopped that way, at
+    fixture sync. `bench_update.sh redis` asks both instances the bench is configured for
+    (`redis_cache` and `redis_queue`, found the way frappe finds them: an environment override,
+    then `sites/common_site_config.json`, then frappe's default) with the bench's own Python and
+    Redis client, prints one line for each, and changes nothing. `upstream` runs it as the last
+    check before its backup, and again just before its migrate, because the backup and the
+    installs take time. A failure before the backup changes nothing. A failure before the migrate
+    says the code was switched and nothing was migrated, names the backup, and says to run the
+    same command again once Redis is back. A password in an address is never printed. A queue
+    that asks for a sign-in counts as up, since frappe signs in to it with a user of its own; a
+    cache that refuses the sign-in does not; an instance behind Redis Sentinel is not checked,
+    and the output says so. Stopping `frappe-bench` stops both Redis instances, so the runbook
+    now says to leave the bench running through an update.
+  - **What an update installs and builds, written down.** The script already ran `bench setup
+    requirements` after the checkout and `bench build` after the migrate. Read at frappe v16.60.2,
+    the release that added the Studio and Flow frontends, that is enough: `bench build` installs
+    and builds those two apps and frappe's island toolchain itself on every run
+    (`esbuild/esbuild.js`, `frappe/commands/utils.py`), and the script's header gives the lines.
+    Neither command installs operating-system packages. A release lists the ones it needs in its
+    `pyproject.toml` under `[deploy.dependencies.apt]` (v16.60.2 lists `libgl1` and
+    `libglib2.0-0`), and the runbook now says to read that list and install anything new as root
+    before an update.
+  - **Every example names production's releases, frappe v16.60.2 and erpnext v16.60.0.** The
+    examples in the runbook, `infra/WORKFLOW.md`, the upstream file and the script are commands
+    people paste, and the script installs exactly the pair it is given, so an example left on an
+    older pair is a downgrade. The test suite now holds every one of them to one pair
+    (`EXAMPLE_FRAPPE_TAG`, `EXAMPLE_ERPNEXT_TAG`) and fails when any of those four files names
+    another v16 release. Move the pair, the examples and the notes on what was verified together
+    when production moves.
+  - **What was read again at v16.60.2.** What bench's `backup` deletes
+    (`frappe/utils/backups.py`, `frappe/commands/site.py`) and which directories count as sites
+    (`frappe.utils.get_sites`): the three files are byte for byte what they were at v16.56.0, so
+    every line reference stands. One reference moved: the hourly cleanup of downloadable backups
+    is now at `frappe/hooks.py:327`.
   - **Terraform must be applied for the triggers' new substitutions.** `infra/cloud_build.tf`
     adds `_FRAPPE_TAG` and `_ERPNEXT_TAG`, blank, to `app-upstream-test` and `app-upstream-prod`,
     so the console shows them. Apply the shared state after this merges, not before: a trigger
@@ -61,7 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `bash -n` and shellcheck on the script and runs of it against a scratch bench: two
     overlapping backups run one after the other, a run that cannot get the lock in time fails
     and deletes nothing, the lock is free after a failed backup, and the free-space rule with
-    and without a kept backup.
+    and without a kept backup. The Redis check is tested twice over: with a stub client (which
+    address is asked, what each failure prints, where the check sits in an update, the same
+    command finishing the update once Redis is back), and with the real Redis client against a
+    small socket server (an instance that is down, and one that wants a sign-in). The real
+    client was also run by hand against real `redis-server` processes at 7.1, the version
+    frappe v16.60.2 pins, and at 8.1, the one CI carries.
 
 ## [1.835.2] - 2026-11-23
 

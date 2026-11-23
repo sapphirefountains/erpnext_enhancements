@@ -2414,14 +2414,18 @@ jobs:
             sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck nginx
           fi
           python -m unittest erpnext_enhancements.tests.test_production_web_tier -v
-      # Pre-migrate backup and pinned upstream updates (v1.836.7). Every app deploy runs
+      # Pre-migrate backup and pinned upstream updates (v1.837.0). Every app deploy runs
       # infra/bench_update.sh before `bench migrate` and stops when its backup fails; the
-      # upstream trigger moves Frappe and ERPNext only to two named v16 release tags. Nothing
-      # else runs these files before a merge puts them on production, so this reads both Cloud
-      # Build files (and parses them with PyYAML), runs the upstream file's tag check with sh,
-      # and runs the script against a scratch bench with a stub `bench` and real git repos,
-      # plus bash -n and shellcheck. REQUIRE_DEPLOY_SCRIPT_TOOLS makes a missing tool a failure
-      # rather than a skip. Own step: it shells out.
+      # upstream trigger moves Frappe and ERPNext only to two named v16 release tags, after
+      # the script has checked that both Redis instances answer. Nothing else runs these files
+      # before a merge puts them on production, so this reads both Cloud Build files (and
+      # parses them with PyYAML), runs the upstream file's tag check with sh, and runs the
+      # script against a scratch bench with a stub `bench` and real git repos, plus bash -n
+      # and shellcheck. The Redis check runs twice over: with a stub client, and with the real
+      # one against a socket server (the same pin as the rate-limit step above, so this step
+      # changes no other step's client; frappe v16.60.2 itself pins 7.1, tried by hand). It
+      # also holds every copy-paste example to one release pair. REQUIRE_DEPLOY_SCRIPT_TOOLS
+      # makes a missing tool a failure rather than a skip. Own step: it shells out.
       - name: Pre-migrate backup and pinned upstream updates (bench-free)
         env:
           REQUIRE_DEPLOY_SCRIPT_TOOLS: "1"
@@ -2429,7 +2433,7 @@ jobs:
           if ! command -v shellcheck >/dev/null; then
             sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           fi
-          python -m pip install "PyYAML~=6.0.2"
+          python -m pip install "PyYAML~=6.0.2" redis==8.1.0
           python -m unittest erpnext_enhancements.tests.test_pre_migrate_backup -v
       # Frappe v16 force-downloads FOUR extensions from /private/files/ and serves everything
       # else inline; frappe's own develop branch widened that list to fourteen. The seven in

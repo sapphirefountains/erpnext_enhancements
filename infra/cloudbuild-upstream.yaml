@@ -1,11 +1,12 @@
 # Moves Frappe and ERPNext to two named release tags, never to a branch head. Run it with
 # both substitutions set, for example:
 #   gcloud builds triggers run app-upstream-prod --branch=main \
-#     --substitutions=_FRAPPE_TAG=v16.56.0,_ERPNEXT_TAG=v16.54.0
-# A run without both, or with anything other than a tag like v16.56.0, stops here before it
-# connects to the VM. On the VM, infra/bench_update.sh checks the tags again, takes a database
-# backup, checks out the two tags and runs `bench setup requirements`, `bench --site all
-# migrate` and `bench build`; a person in a shell runs the same script the same way.
+#     --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
+# A run without both, or with anything other than a tag like v16.60.2, stops here before it
+# connects to the VM. On the VM, infra/bench_update.sh checks the tags again, checks that
+# both Redis instances answer, takes a database backup, checks out the two tags and runs
+# `bench setup requirements`, the Redis check again, `bench --site all migrate` and `bench
+# build`; a person in a shell runs the same script the same way.
 # Runbook: infra/README.md, section 13.
 #
 # The tags reach the shell as environment variables (FRAPPE_TAG, ERPNEXT_TAG), not as text
@@ -32,7 +33,7 @@ steps:
         for TAG in "$$FRAPPE_TAG" "$$ERPNEXT_TAG"; do
           if [ "$$(printf '%s' "$$TAG" | wc -l)" -ne 0 ] || \
             ! printf '%s' "$$TAG" | grep -Eq '^v16\.[0-9]+\.[0-9]+$$'; then
-            echo "❌  _FRAPPE_TAG and _ERPNEXT_TAG must both be release tags like v16.56.0 (got '$$FRAPPE_TAG' and '$$ERPNEXT_TAG'); nothing was changed"
+            echo "❌  _FRAPPE_TAG and _ERPNEXT_TAG must both be release tags like v16.60.2 (got '$$FRAPPE_TAG' and '$$ERPNEXT_TAG'); nothing was changed"
             exit 1
           fi
         done
