@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.835.1] - 2026-11-23
+
+### Fixed
+
+- **Link field searches keep frappe 16.60's paging, images and order.** frappe 16.60 added
+  `start`, `include_image` and `keep_order` to `frappe.desk.search.search_link`, and `keep_order` to
+  `search_widget`. The Desk's Link dropdown sends them to page through results and show images.
+  1.835.0's overrides of both (field-level read on the field names a request carries) were written
+  against 16.56.0 and did not declare them. `frappe.call` hands a whitelisted function only the names
+  it declares, so the arguments were dropped without an error. Every search still answered, but
+  scrolling a Link dropdown would have shown its first page again, with no images and the relevance
+  order re-sorted.
+  - The wrappers now declare the three arguments and forward them only to a frappe that declares them
+    (`_declared`, through `inspect.signature`, which follows `http_cache`'s `__wrapped__`). The same
+    code runs on 16.56, where passing them would raise `TypeError`, and on 16.60.
+  - A request carries them as text, and `"0"` is truthy, so they are read as frappe's own annotations
+    would read them (`_as_int`, `_as_flag`). frappe's typing check applies to the function `frappe.call`
+    invokes, which is now the wrapper, not frappe's original.
+  - Why now: on 2026-11-23 production's frappe code moved from 16.56.0 to the version-16 branch head
+    (16.60.x) without a migrate. The new code asked for doctypes the database did not have (the Flow
+    module's `Flow Trigger`), and every website page answered "There was an error building this page",
+    `/login` included. The site is being migrated forward to 16.60. A read of 16.56.0 to 16.60.2 found
+    no other change to the arguments of a function this app wraps: `client.py` and `reportview.py`
+    changed only functions it does not wrap, and `frappe/desk/form/load.py` did not change.
+  - Tests in `test_fieldlevel_filters.py` (`TestSixteenSixty`): both frappe signatures, the text
+    values, the field check still running first, and the signature table now listing the new names.
+
 ## [1.835.0] - 2026-11-23
 
 ### Changed

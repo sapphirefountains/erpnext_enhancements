@@ -140,8 +140,10 @@ FRAPPE_V16_56 = {
 			"ignore_user_permissions",
 		],
 		[None, None, 10, None, None, False],
-		["link_fieldname"],
-		[None],
+		# start / include_image / keep_order: frappe 16.60's additions (v1.835.1), forwarded only to a
+		# frappe that declares them.
+		["link_fieldname", "start", "include_image", "keep_order"],
+		[None, 0, False, False],
 	),
 	"frappe.desk.search.search_widget": (
 		"search_widget",
@@ -159,8 +161,9 @@ FRAPPE_V16_56 = {
 			"ignore_user_permissions",
 		],
 		[None, None, 0, 10, None, None, False, None, False],
-		["link_fieldname", "for_link_validation", "query_filters_as_dict"],
-		[None, False, False],
+		# keep_order: frappe 16.60's addition (v1.835.1).
+		["link_fieldname", "for_link_validation", "query_filters_as_dict", "keep_order"],
+		[None, False, False, False],
 	),
 	"frappe.desk.form.utils.get_next": (
 		"form_get_next",
@@ -1181,6 +1184,10 @@ class TestWrappers(unittest.TestCase):
 				"reference_doctype": None,
 				"ignore_user_permissions": False,
 				"link_fieldname": "employee",
+				# The stub takes **kwargs, so frappe 16.60's arguments are forwarded (see TestSixteenSixty).
+				"start": 0,
+				"include_image": False,
+				"keep_order": False,
 			},
 		)
 		_reset()
@@ -1188,7 +1195,13 @@ class TestWrappers(unittest.TestCase):
 			ff.search_widget, "search.search_widget", "Employee", "a", for_link_validation=True
 		)
 		self.assertEqual(
-			call[2], {"link_fieldname": None, "for_link_validation": True, "query_filters_as_dict": False}
+			call[2],
+			{
+				"link_fieldname": None,
+				"for_link_validation": True,
+				"query_filters_as_dict": False,
+				"keep_order": False,
+			},
 		)
 
 	def test_a_doctype_that_is_not_a_string_is_left_to_frappes_type_check(self):
@@ -1390,6 +1403,153 @@ class TestWrappers(unittest.TestCase):
 		_reset(HR_MANAGER)
 		STATE["stored"][("Dashboard Chart", "Pay")] = stored
 		self.assert_passed_through(ff.dashboard_chart_get, "dashboard_chart.get", chart_name="Pay")
+
+
+# ---------------------------------------------------------------------------
+# frappe 16.60's new link-search arguments (v1.835.1)
+# ---------------------------------------------------------------------------
+
+
+def _search_link_v16_56(
+	doctype,
+	txt,
+	query=None,
+	filters=None,
+	page_length=10,
+	searchfield=None,
+	reference_doctype=None,
+	ignore_user_permissions=False,
+	*,
+	link_fieldname=None,
+):
+	STATE["calls"].append(("search.search_link", (), {"doctype": doctype, "link_fieldname": link_fieldname}))
+	return []
+
+
+def _search_link_v16_60(
+	doctype,
+	txt,
+	query=None,
+	filters=None,
+	page_length=10,
+	searchfield=None,
+	reference_doctype=None,
+	ignore_user_permissions=False,
+	*,
+	link_fieldname=None,
+	start=0,
+	include_image=False,
+	keep_order=False,
+):
+	STATE["calls"].append(
+		(
+			"search.search_link",
+			(),
+			{"start": start, "include_image": include_image, "keep_order": keep_order},
+		)
+	)
+	return []
+
+
+def _search_widget_v16_56(
+	doctype,
+	txt,
+	query=None,
+	searchfield=None,
+	start=0,
+	page_length=10,
+	filters=None,
+	filter_fields=None,
+	as_dict=False,
+	reference_doctype=None,
+	ignore_user_permissions=False,
+	*,
+	link_fieldname=None,
+	for_link_validation=False,
+	query_filters_as_dict=False,
+):
+	STATE["calls"].append(("search.search_widget", (doctype, txt), {}))
+	return []
+
+
+def _search_widget_v16_60(
+	*args, link_fieldname=None, for_link_validation=False, query_filters_as_dict=False, keep_order=False
+):
+	STATE["calls"].append(("search.search_widget", args, {"keep_order": keep_order}))
+	return []
+
+
+class TestSixteenSixty(unittest.TestCase):
+	"""frappe 16.60 gave ``search_link`` ``start``, ``include_image`` and ``keep_order``, and
+	``search_widget`` ``keep_order``; 16.56 has none of them. ``frappe.call`` passes a whitelisted
+	function only the names it declares, so the wrappers declare them and forward them only to a frappe
+	that declares them too: dropping them loses the Link dropdown's paging, passing them to 16.56 raises
+	``TypeError``. A request carries them as text, so they are read as frappe's annotations would read
+	them."""
+
+	def setUp(self):
+		_reset()
+		self.search = sys.modules["frappe.desk.search"]
+		self.saved = (self.search.search_link, self.search.search_widget)
+
+	def tearDown(self):
+		self.search.search_link, self.search.search_widget = self.saved
+
+	def test_16_60_gets_the_new_arguments_typed(self):
+		self.search.search_link = _search_link_v16_60
+		ff.search_link("Employee", "a", start="20", include_image="1", keep_order="0")
+		self.assertEqual(
+			STATE["calls"],
+			[("search.search_link", (), {"start": 20, "include_image": True, "keep_order": False})],
+		)
+
+	def test_16_60_defaults_when_the_desk_sends_nothing(self):
+		self.search.search_link = _search_link_v16_60
+		ff.search_link("Employee", "a")
+		self.assertEqual(STATE["calls"][0][2], {"start": 0, "include_image": False, "keep_order": False})
+
+	def test_16_56_never_receives_them(self):
+		"""No TypeError on the frappe production ran until 2026-11-23, whatever the request carries."""
+		self.search.search_link = _search_link_v16_56
+		ff.search_link("Employee", "a", link_fieldname="employee", start="20", include_image=1, keep_order=1)
+		self.assertEqual(
+			STATE["calls"],
+			[("search.search_link", (), {"doctype": "Employee", "link_fieldname": "employee"})],
+		)
+
+	def test_search_widget_keep_order(self):
+		self.search.search_widget = _search_widget_v16_60
+		ff.search_widget("Employee", "a", keep_order="true")
+		self.assertEqual(STATE["calls"][0][2], {"keep_order": True})
+		_reset()
+		self.search.search_widget = _search_widget_v16_56
+		ff.search_widget("Employee", "a", keep_order=True)
+		self.assertEqual(STATE["calls"], [("search.search_widget", ("Employee", "a"), {})])
+
+	def test_the_field_check_still_runs_first(self):
+		self.search.search_link = _search_link_v16_60
+		self.assertTrue(_refused(ff.search_link, "Employee", "a", searchfield="ctc", start=10))
+		self.assertEqual(STATE["calls"], [], "frappe's function must not run")
+
+	def test_text_values_read_as_frappe_reads_them(self):
+		for raw, flag in (
+			("1", True),
+			("0", False),
+			("true", True),
+			("false", False),
+			("", False),
+			(1, True),
+			(0, False),
+			(None, False),
+		):
+			with self.subTest(raw=raw):
+				self.assertIs(ff._as_flag(raw), flag)
+		for raw, number in (("20", 20), (" 5 ", 5), (7, 7), (None, 0), ("", 0), ("x", 0)):
+			with self.subTest(raw=raw):
+				self.assertEqual(ff._as_int(raw), number)
+
+	def test_an_unreadable_signature_forwards_nothing(self):
+		self.assertEqual(ff._declared(object(), start=1), {})
 
 
 # ---------------------------------------------------------------------------
