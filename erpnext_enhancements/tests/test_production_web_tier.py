@@ -1028,8 +1028,14 @@ class DeployTests(unittest.TestCase):
 	def test_the_deploy_restarts_the_umbrella_by_name(self):
 		# Renaming frappe-bench.service would break every deploy: the yaml restarts it by
 		# name, and the deploy user may sudo exactly that command and nothing else.
+		# The restart is followed only by the command that closes the deploy user's lock: a shell
+		# runs its last command in its own place, so the restart must not be the last, or the
+		# lock would be let go before it ran (tests/test_pre_migrate_backup.py runs the chain).
 		for yaml in (DEPLOY_YAML, UPSTREAM_YAML):
-			self.assertIn('sudo systemctl restart frappe-bench"', yaml.read_text(encoding="utf-8"), yaml.name)
+			text = yaml.read_text(encoding="utf-8")
+			joined = " ".join(text.replace("\\\n", " ").split())
+			self.assertIn('sudo systemctl restart frappe-bench && exec 9>&-"', joined, yaml.name)
+			self.assertEqual(text.count("sudo systemctl "), 1, yaml.name)
 		self.assertIn(
 			'default     = "/usr/bin/systemctl restart frappe-bench"',
 			VARIABLES_TF.read_text(encoding="utf-8"),

@@ -1,17 +1,51 @@
-# `bench update` restarts nothing on these VMs: there is no supervisorctl, and
+# Moves Frappe and ERPNext to two named release tags, never to a branch head. Run it with
+# both substitutions set, for example:
+#   gcloud builds triggers run app-upstream-prod --branch=main \
+#     --substitutions=_FRAPPE_TAG=v16.60.2,_ERPNEXT_TAG=v16.60.0
+# A run without both, or with anything other than a tag like v16.60.2, stops here before it
+# connects to the VM. On the VM, infra/bench_update.sh checks the tags again, checks that
+# both Redis instances answer, takes a database backup, checks out the two tags and runs
+# `bench setup requirements`, the Redis check again, `bench --site all migrate` and `bench
+# build`; a person in a shell runs the same script the same way.
+# Runbook: infra/README.md, section 13.
+#
+# The tags reach the shell as environment variables (FRAPPE_TAG, ERPNEXT_TAG), not as text
+# substituted into the script, and are used only after they match the pattern.
+#
+# Nothing here restarts through bench: there is no supervisorctl on these VMs, and
 # restart_systemd_on_update is not set. Leave it unset -- bench's systemd restart stops
 # whatever frappe-bench.target Requires, and these VMs have no such target. The
 # `systemctl restart frappe-bench` below does the restart, on a VM cut over to gunicorn
 # and on one still on the development Procfile alike. See infra/cloudbuild-deploy.yaml.
+#
+# One run at a time: the remote shell holds the deploy user's lock,
+# ~/.frappe-bench-deploy.lock, from its first command to the restart, as a deploy does, and
+# the script itself holds the bench's lock, <bench>/.deploy.lock, for the whole update. See
+# the note in infra/cloudbuild-deploy.yaml. A downgrade cannot be allowed from here: the
+# script refuses a tag lower than what is installed unless a person sets ALLOW_DOWNGRADE=1
+# in a shell on the VM.
 steps:
   - name: 'google/cloud-sdk:latest'
     id: 'Update Upstream Apps'
     entrypoint: 'sh'
     secretEnv: ['DEPLOY_SSH_KEY']
+    env:
+      - 'FRAPPE_TAG=$_FRAPPE_TAG'
+      - 'ERPNEXT_TAG=$_ERPNEXT_TAG'
     args:
       - '-c'
       - |
         set -e
+        # tag check: begin
+        for TAG in "$$FRAPPE_TAG" "$$ERPNEXT_TAG"; do
+          if [ "$$(printf '%s' "$$TAG" | wc -l)" -ne 0 ] || \
+            ! printf '%s' "$$TAG" | grep -Eq '^v16\.[0-9]+\.[0-9]+$$'; then
+            echo "❌  _FRAPPE_TAG and _ERPNEXT_TAG must both be release tags like v16.60.2 (got '$$FRAPPE_TAG' and '$$ERPNEXT_TAG'); nothing was changed"
+            exit 1
+          fi
+        done
+        # tag check: end
+
         mkdir -p /root/.ssh && chmod 700 /root/.ssh
         echo "$$DEPLOY_SSH_KEY" > /root/.ssh/id_rsa
         chmod 600 /root/.ssh/id_rsa
@@ -32,22 +66,30 @@ steps:
           fi
         fi
 
-        echo "🚀 Updating all apps on $$VM"
+        echo "🚀 Updating frappe to $$FRAPPE_TAG and erpnext to $$ERPNEXT_TAG on $$VM"
         gcloud compute ssh deploy@"$$VM" \
           --zone="$$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
-          --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
-            /home/frappe/.local/bin/bench update --pull --no-backup' && \
-            sudo systemctl restart frappe-bench"
+          --command="exec 9>>\$$HOME/.frappe-bench-deploy.lock && \
+            flock --verbose -w 900 9 && \
+            sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
+            export PATH=\$$PATH:/home/frappe/.local/bin && \
+            bash apps/erpnext_enhancements/infra/bench_update.sh upstream $$FRAPPE_TAG $$ERPNEXT_TAG' && \
+            sudo systemctl restart frappe-bench && \
+            exec 9>&-"
         echo "✅  $$VM updated"
 
-timeout: '1200s'
+# 3300s: 2400s for the update and its backup, plus up to 900s waiting for another run to
+# finish (one lock wait).
+timeout: '3300s'
 options:
   logging: CLOUD_LOGGING_ONLY
 
 substitutions:
   _ALLOW_SKIP: 'false'
+  _FRAPPE_TAG: ''
+  _ERPNEXT_TAG: ''
 
 availableSecrets:
   secretManager:
