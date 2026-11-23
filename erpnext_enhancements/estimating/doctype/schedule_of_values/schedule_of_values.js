@@ -39,9 +39,13 @@ function draw_reconciliation(frm) {
 			${row(__("Approved change orders ({0})", [changes]), money(change / 100))}
 			${row(__("Contract sum to date"), `<b>${money((c(frm.doc.contract_sum) + change) / 100)}</b>`)}
 			${row(__("Billed to date"), money(frm.doc.billed_to_date))}
+			${row(__("Retainage held"), money(frm.doc.retainage_held))}
+			${row(__("Retainage released to date"), money(frm.doc.retainage_released))}
 		</table>
 		<div class="text-muted small">${esc(
-			frm.doc.status === "Locked"
+			frm.doc.status === "Closed"
+				? __("Closed: the final pay application has been certified. Cancel it to bill again.")
+				: frm.doc.status === "Locked"
 				? __("Locked: these lines are the contract breakdown. A change in scope is a change order.")
 				: __("A schedule cannot lock while the difference is not zero.")
 		)}</div>`);
@@ -56,12 +60,13 @@ frappe.ui.form.on("Schedule of Values", {
 	refresh(frm) {
 		draw_reconciliation(frm);
 		const locked = frm.doc.status === "Locked";
-		frm.set_df_property("lines", "read_only", locked ? 1 : 0);
-		frm.set_df_property("contract_sum", "read_only", locked ? 1 : 0);
+		const closed = frm.doc.status === "Closed";
+		frm.set_df_property("lines", "read_only", locked || closed ? 1 : 0);
+		frm.set_df_property("contract_sum", "read_only", locked || closed ? 1 : 0);
 		if (frm.is_new()) return;
 		const can_write = frm.perm[0] && frm.perm[0].write;
 
-		if (can_write && !locked) {
+		if (can_write && !locked && !closed) {
 			frm.add_custom_button(__("Lock"), async () => {
 				if (frm.is_dirty()) await frm.save();
 				if (frm.is_dirty()) return; // the save was refused; nothing to lock
@@ -69,7 +74,7 @@ frappe.ui.form.on("Schedule of Values", {
 				frm.reload_doc();
 			});
 		}
-		if (can_write) {
+		if (can_write && !closed) {
 			frm.add_custom_button(
 				__("Add Approved Change Orders"),
 				async () => {
@@ -100,10 +105,18 @@ frappe.ui.form.on("Schedule of Values", {
 			);
 		}
 		if (locked && frappe.model.can_create("Pay Application")) {
-			frm.add_custom_button(__("Start Pay Application"), async () => {
-				const name = await call("start_pay_application", { schedule: frm.doc.name }, __("Starting the application"));
+			const start = async (application_type) => {
+				const name = await call(
+					"start_pay_application",
+					{ schedule: frm.doc.name, application_type },
+					__("Starting the application")
+				);
 				if (name) frappe.set_route("Form", "Pay Application", name);
-			}).addClass("btn-primary");
+			};
+			frm.add_custom_button(__("Start Pay Application"), () => start("Progress")).addClass("btn-primary");
+			// B9: an application that only releases retainage, and the final one that releases it all.
+			frm.add_custom_button(__("Start Retainage Release"), () => start("Retainage Release"), __("Actions"));
+			frm.add_custom_button(__("Start Final Application"), () => start("Final"), __("Actions"));
 		}
 		frm.add_custom_button(
 			__("Pay Applications"),

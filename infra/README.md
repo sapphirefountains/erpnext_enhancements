@@ -120,7 +120,7 @@ gcloud compute project-info add-metadata \
 
 #### Runbook: pre-migrate backups and upstream updates
 
-Since v1.837.0, nothing changes the production database without a backup first, and Frappe and
+Since v1.839.0, nothing changes the production database without a backup first, and Frappe and
 ERPNext move only to a release chosen on purpose. Both go through one script,
 [`bench_update.sh`](bench_update.sh), run as the `frappe` user from the bench. Each deploy takes
 a few minutes longer for the backup.

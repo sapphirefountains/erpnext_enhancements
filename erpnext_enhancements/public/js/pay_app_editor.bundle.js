@@ -16,7 +16,7 @@ import * as math from "./estimating/pay_app_math.js";
 // estimating/doctype/pay_application/pay_application.js). Bump both together whenever the form script
 // starts calling something this bundle did not export before: scripts/test_estimate_math.mjs fails the
 // build if they differ. A tab open across a deploy can pair a new script with an old bundle (CLAUDE.md).
-const VERSION = 1;
+const VERSION = 2;
 
 if (!window.sf_pay_app_editor || !(window.sf_pay_app_editor.version >= VERSION)) {
 	window.sf_pay_app_editor = Object.assign({ version: VERSION, math }, editor);

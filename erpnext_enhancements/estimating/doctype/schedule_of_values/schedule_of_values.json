@@ -39,6 +39,8 @@
   "change_order_total",
   "contract_sum_to_date",
   "billed_to_date",
+  "retainage_held",
+  "retainage_released",
   "section_lock",
   "locked_on",
   "locked_by",
@@ -91,7 +93,7 @@
    "in_standard_filter": 1,
    "label": "Status",
    "no_copy": 1,
-   "options": "Draft\nLocked",
+   "options": "Draft\nLocked\nClosed",
    "read_only": 1
   },
   {
@@ -269,6 +271,22 @@
    "read_only": 1
   },
   {
+   "description": "On the latest certified pay application.",
+   "fieldname": "retainage_held",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Retainage Held",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "retainage_released",
+   "fieldtype": "Currency",
+   "label": "Retainage Released to Date",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_lock",
    "fieldtype": "Section Break",
@@ -301,7 +319,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-20 09:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Estimating",
  "name": "Schedule of Values",

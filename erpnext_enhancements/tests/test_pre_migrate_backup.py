@@ -1,4 +1,4 @@
-"""Bench-free tests for the pre-migrate backup and the pinned upstream update (v1.837.0).
+"""Bench-free tests for the pre-migrate backup and the pinned upstream update (v1.839.0).
 
 Two rules, both enforced by files that run nowhere but on a VM:
 

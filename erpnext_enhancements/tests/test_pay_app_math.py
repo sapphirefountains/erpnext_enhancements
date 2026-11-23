@@ -205,6 +205,139 @@ class TestRefusals(unittest.TestCase):
 		codes = self.codes(lines, {"a": 5000}, application={"less_previous_certificates": 5000})
 		self.assertIn("PAYMENT_DUE_NEGATIVE", codes)
 
+	# ---- B9: releasing retainage and the final application
+	def test_a_release_is_between_nothing_and_all_that_is_held(self):
+		held = {"a": {"work": 4000, "retainage_work": 200}}
+		self.assertEqual(self.codes([L("a", 10000, 0, retainage_release=200)], held), [])
+		for release in (200.01, -1):
+			codes = self.codes([L("a", 10000, 0, retainage_release=release)], held)
+			self.assertIn("RELEASE_OVER_HELD", codes, release)
+
+	def test_a_release_application_bills_no_new_work_and_must_release(self):
+		held = {"a": {"work": 4000, "retainage_work": 200}}
+		release = {"application_type": pm.RELEASE}
+		codes = self.codes(
+			[L("a", 10000, 10, retainage_release=50)], held, application=release, application_type=pm.RELEASE
+		)
+		self.assertIn("RELEASE_HAS_WORK", codes)
+		codes = self.codes([L("a", 10000, 0)], held, application=release, application_type=pm.RELEASE)
+		self.assertEqual(codes, ["RELEASE_NOTHING"])
+		codes = self.codes(
+			[L("a", 10000, 0, retainage_release=50)], held, application=release, application_type=pm.RELEASE
+		)
+		self.assertEqual(codes, [])
+
+	def test_releases_that_net_to_nothing_still_release(self):
+		# a release on a deduction line is negative: two real releases can sum to 0
+		release = {"application_type": pm.RELEASE}
+		lines = [
+			L("a", 10000, 0, retainage_release=25),
+			L("co", -500, 0, is_change_order=1, retainage_release=-25),
+		]
+		held = {"a": {"work": 1000, "retainage_work": 50}, "co": {"work": -500, "retainage_work": -25}}
+		codes = self.codes(lines, held, application=release, application_type=pm.RELEASE)
+		self.assertNotIn("RELEASE_NOTHING", codes)
+
+	def test_a_final_certified_short_is_refused(self):
+		final = {"application_type": pm.FINAL}
+		codes = self.codes(
+			[L("a", 10000, 100)], application=final, application_type=pm.FINAL, amount_certified=100
+		)
+		self.assertEqual(codes, ["FINAL_CERTIFIED_SHORT"])
+
+	def test_a_final_application_needs_every_line_finished(self):
+		final = {"application_type": pm.FINAL}
+		lines = [
+			L("a", 6000, 0, item_no="1", description="Pumps"),
+			L("b", 4000, 50, item_no="2", description="Basin"),
+			L("x", 0, 0, item_no="3", description="Tile", by_others=1),
+			L("s", 1000, 0, item_no="4", description="Lights", stored=100),
+		]
+		previous = {"a": 6000, "b": 1000, "s": 1000}
+		codes = self.codes(
+			lines,
+			previous,
+			schedule=dict(SCHEDULE, stored_materials=1),
+			application=final,
+			application_type=pm.FINAL,
+			stored_materials=True,
+			excluded_change_orders=["CO-0009"],
+		)
+		self.assertIn("FINAL_NOT_FINISHED", codes)
+		self.assertIn("FINAL_STORED", codes)
+		self.assertIn("FINAL_CHANGE_ORDERS_LEFT_OUT", codes)
+		# a line by others is never billed, so it never holds a final application up
+		lines = [L("a", 6000, 0), L("b", 4000, 75), L("x", 0, 0, by_others=1)]
+		codes = self.codes(lines, {"a": 6000, "b": 1000}, application=final, application_type=pm.FINAL)
+		self.assertEqual(codes, [])
+
+	def test_a_progress_application_may_leave_change_orders_out(self):
+		codes = self.codes([L("a", 10000, 10)], excluded_change_orders=["CO-0009"])
+		self.assertEqual(codes, [])
+
+
+class TestRelease(unittest.TestCase):
+	def test_release_amounts_take_a_share_of_what_each_line_holds(self):
+		priced = pm.price_application(
+			SCHEDULE,
+			{},
+			[L("a", 6000, 0), L("b", 3333.33, 0), L("c", 666.67, 50)],
+			{"a": {"work": 6000, "retainage_work": 300}, "b": {"work": 3333.33, "retainage_work": 166.67}},
+		)["lines"]
+		self.assertEqual(pm.release_amounts(priced, 100), {"a": 300.0, "b": 166.67, "c": 16.67})
+		# banker's rounding per line: 166.67 x 50% = 83.335 -> 83.34
+		self.assertEqual(pm.release_amounts(priced, 50), {"a": 150.0, "b": 83.34, "c": 8.34})
+		# only lines with nothing left to bill
+		self.assertEqual(
+			pm.release_amounts(priced, 100, finished_only=True), {"a": 300.0, "b": 166.67, "c": 0.0}
+		)
+		self.assertEqual(pm.release_amounts(priced, 0), {"a": 0.0, "b": 0.0, "c": 0.0})
+
+	def test_a_job_from_first_application_to_final_releases_every_cent(self):
+		# 10% until 50% complete, then 5%; a partial release mid-job; the final releases the rest.
+		schedule = dict(
+			SCHEDULE,
+			steps=[
+				{"from_percent_complete": 0, "work_pct": 10, "stored_pct": 10},
+				{"from_percent_complete": 50, "work_pct": 5, "stored_pct": 5},
+			],
+		)
+		plan = [
+			(pm.PROGRESS, {"a": 60, "b": 0}, {}),
+			(pm.PROGRESS, {"a": 40, "b": 30}, {"a": 300}),  # a is finished: release half its 600
+			(pm.RELEASE, {"a": 0, "b": 0}, {"a": 300}),  # and the other half
+			(pm.FINAL, {"a": 0, "b": 70}, {}),
+		]
+		previous, line7, paid = {}, 0.0, 0
+		for kind, pcts, releases in plan:
+			application = {"application_type": kind, "less_previous_certificates": line7}
+			lines = [
+				L("a", 6000, pcts["a"], retainage_release=releases.get("a", 0)),
+				L("b", 4000, pcts["b"]),
+			]
+			got = pm.price_application(schedule, application, lines, previous)
+			totals = got["totals"]
+			paid += pm.cents(totals["current_payment_due"])
+			previous = {
+				r["line_key"]: {
+					"work": r["work_completed_to_date"],
+					"retainage_work": r["retainage_work"],
+					"released": r["retainage_released_to_date"],
+				}
+				for r in got["lines"]
+			}
+			line7 = pm.next_previous_certificates(
+				{"less_previous_certificates": line7, "amount_certified": totals["current_payment_due"]}
+			)
+		# every cent of the contract has been paid, and nothing is still held
+		self.assertEqual(totals["total_retainage"], 0.0)
+		self.assertEqual(pm.dollars(paid), 10000.0)
+		# a held 600 (10% of 6,000) and released it in two halves; b held 10% of its first 1,200 and 5%
+		# of the rest: 120 + 140 = 260, all released on the final
+		self.assertEqual(previous["a"]["released"], 600.0)
+		self.assertEqual(previous["b"]["released"], 260.0)
+		self.assertEqual(totals["retainage_released_to_date"], 860.0)
+
 
 ESTIMATE_LINES = [
 	{

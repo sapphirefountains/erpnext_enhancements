@@ -198,6 +198,11 @@ def setUpModule():
 			return (doctype, filters) in DOCS
 
 		def get_value(self, doctype, filters, field=None, as_dict=False, **k):
+			if isinstance(filters, str) and doctype == "Schedule of Values" and (doctype, filters) in DOCS:
+				doc = DOCS[(doctype, filters)]
+				if isinstance(field, (list, tuple)):
+					return Row({f: doc.get(f) for f in field})
+				return doc.get(field)
 			items = STORE.get(doctype, {}).items()
 			if isinstance(filters, str):
 				items = [(n, r) for n, r in items if n == filters]
@@ -215,8 +220,10 @@ def setUpModule():
 		def sql(self, query, values=None, **k):
 			return SQL["billed"]
 
-		def set_value(self, *a, **k):
-			pass
+		def set_value(self, doctype, name, field, value=None, **k):
+			values = field if isinstance(field, dict) else {field: value}
+			if (doctype, name) in DOCS:
+				DOCS[(doctype, name)].update(values)
 
 	frappe.db = DB()
 	utils = types.ModuleType("frappe.utils")
@@ -427,6 +434,34 @@ class TestScheduleOfValues(unittest.TestCase):
 		doc.retainage_applies = 0
 		with self.assertRaises(Thrown):
 			doc.validate()
+
+	def test_a_closed_schedule_takes_nothing_new(self):
+		doc = saved(schedule(), "SOV-1")
+		doc.status = "Closed"
+		doc.retainage_held = 500
+		doc.__dict__["_before"] = FakeDocument(**doc.as_dict())
+		doc.retainage_held = 1  # a stale form
+		doc.validate()
+		self.assertEqual((doc.status, doc.retainage_held), ("Closed", 500))
+		doc.append("lines", {"item_no": "CO-01", "description": "Change order 1", "change_order": "CO-1"})
+		with self.assertRaises(Thrown) as cm:
+			doc.validate()
+		self.assertIn("final pay application", str(cm.exception))
+		with self.assertRaises(Thrown):
+			api.add_change_orders("SOV-1")
+		self.assertEqual(api.lock_schedule("SOV-1"), "SOV-1")  # already past locked: nothing to do
+
+	def test_start_pay_application_takes_a_type(self):
+		locked_schedule()
+		with self.assertRaises(Thrown):
+			api.start_pay_application("SOV-1", application_type="Bonus")
+		made = {}
+		pa_mod.PayApplication.insert = lambda self: (made.setdefault("doc", self), setattr(self, "name", "PAY-9"))
+		try:
+			self.assertEqual(api.start_pay_application("SOV-1", application_type="Final"), "PAY-9")
+		finally:
+			del pa_mod.PayApplication.insert
+		self.assertEqual(made["doc"].application_type, "Final")
 
 	def test_one_schedule_per_project(self):
 		STORE["Schedule of Values"]["SOV-0"] = {"project": "PRJ-00001"}
@@ -691,17 +726,160 @@ class TestPayApplication(unittest.TestCase):
 				"work_retainage_override": "0",
 				"certified_less": 1,
 				"amount_certified": 1,
-				"lines": [{"line_key": "k001", "work_retainage_override": "0"}],
+				"lines": [{"line_key": "k001", "work_retainage_override": "0", "retainage_release": 50}],
 			}
 		)
 		pa.before_insert()
 		self.assertEqual((pa.work_retainage_override, pa.certified_less), ("", 0))
 		self.assertEqual(pa.lines[0].work_retainage_override, "")
+		self.assertEqual(pa.lines[0].retainage_release, 0)
 		PERMLEVELS["write"] = [0, 1]  # accounting keeps them
 		pa2 = pa_mod.PayApplication()
 		pa2.update({"schedule_of_values": "SOV-1", "period_to": "2026-11-30", "work_retainage_override": "0"})
 		pa2.before_insert()
 		self.assertEqual(pa2.work_retainage_override, "0")
+
+	# ---- B9: releasing retainage and the final application
+	def test_a_release_carries_forward_as_a_running_total(self):
+		locked_schedule()
+		pa1 = application("PAY-1", period_to="2026-09-30")
+		pct(pa1, "k002", 100)
+		certify(pa1)
+		self.assertEqual(pa1.total_retainage, 300.0)
+		pa2 = application("PAY-2", period_to="2026-10-31")
+		next(r for r in pa2.lines if r.line_key == "k002")["retainage_release"] = 150
+		pa2.validate()
+		line = next(r for r in pa2.lines if r.line_key == "k002")
+		self.assertEqual((line.retainage_held_now, line.retainage_work, line.retainage_released_to_date), (300.0, 150.0, 150.0))
+		self.assertEqual((pa2.retainage_released, pa2.current_payment_due), (150.0, 150.0))
+		certify(pa2)
+		pa3 = application("PAY-3", period_to="2026-11-30", application_type="Retainage Release")
+		next(r for r in pa3.lines if r.line_key == "k002")["retainage_release"] = 150
+		pa3.validate()
+		line = next(r for r in pa3.lines if r.line_key == "k002")
+		self.assertEqual((line.retainage_released_previous, line.retainage_released_to_date), (150.0, 300.0))
+		self.assertEqual((pa3.retainage_released_to_date, pa3.total_retainage, pa3.this_period_total), (300.0, 0.0, 0.0))
+		pa3.before_submit()
+
+	def test_a_release_over_what_is_held_is_refused(self):
+		locked_schedule()
+		pa = application("PAY-1")
+		pct(pa, "k002", 50)
+		next(r for r in pa.lines if r.line_key == "k002")["retainage_release"] = 150.01
+		pa.validate()
+		with self.assertRaises(Thrown) as cm:
+			pa.before_submit()
+		self.assertIn("all the retainage held", str(cm.exception))
+
+	def test_an_unknown_type_is_progress(self):
+		locked_schedule()
+		pa = application("PAY-1", application_type="Whatever")
+		self.assertEqual(pa.application_type, "Progress")
+
+	def test_a_final_application_closes_the_schedule_and_canceling_it_reopens(self):
+		STORE["Change Order"] = {}  # no approved change order outside the schedule
+		sov = locked_schedule()
+		pa1 = application("PAY-1", period_to="2026-10-31")
+		pct(pa1, "k001", 100)
+		pct(pa1, "k002", 50)
+		certify(pa1)
+		pa2 = application("PAY-2", application_type="Final")
+		pct(pa2, "k002", 50)
+		next(r for r in pa2.lines if r.line_key == "k001")["retainage_release"] = 1  # ignored on a final
+		pa2.validate()
+		self.assertEqual((pa2.total_retainage, pa2.retainage_released, pa2.retainage_released_to_date), (0.0, 500.0, 500.0))
+		# PAY-1 certified 7,000 less 350 held; the final pays the last 3,000 of work and the 350 held
+		# before it (the 150 held on its own work is released in the same breath)
+		self.assertEqual(pa2.current_payment_due, 3000.0 + 350.0)
+		certify(pa2)
+		pa2.on_submit()
+		self.assertEqual(sov.status, "Closed")
+		with self.assertRaises(Thrown) as cm:
+			application("PAY-3")
+		self.assertIn("billed out", str(cm.exception))
+		pa2.on_cancel()
+		self.assertEqual(sov.status, "Locked")
+
+	def test_a_final_application_refuses_unfinished_work_and_left_out_change_orders(self):
+		sov = locked_schedule()
+		sov.append("lines", {"item_no": "CO-01", "description": "Change order 1", "scheduled_value": 1500, "change_order": "CO-1", "approved_on": "2026-11-15", "line_key": "kco"})
+		pa = application("PAY-1", period_to="2026-11-10", application_type="Final")
+		pct(pa, "k001", 100)
+		pa.validate()
+		with self.assertRaises(Thrown) as cm:
+			pa.before_submit()
+		message = str(cm.exception)
+		self.assertIn("every line finished", message)
+		self.assertIn("CO-1", message)
+
+	def test_milestone_jobs_release_and_close_without_a_milestone(self):
+		# review of #1508: a release or a final after the last milestone has no milestone left to pick
+		STORE["Change Order"] = {}
+		locked_schedule(billing_mode="Milestones", milestones=[{"milestone": "M1", "percent": 50}, {"milestone": "M2", "percent": 50}])
+		for name, period, milestone in (("PAY-1", "2026-08-31", "M1"), ("PAY-2", "2026-09-30", "M2")):
+			certify(application(name, period_to=period, milestone=milestone))
+		pa3 = application("PAY-3", period_to="2026-10-31", application_type="Retainage Release")
+		next(r for r in pa3.lines if r.line_key == "k001")["retainage_release"] = 100
+		certify(pa3)
+		pa4 = application("PAY-4", period_to="2026-11-30", application_type="Final")
+		certify(pa4)
+		self.assertEqual(pa4.total_retainage, 0.0)
+		# a progress application still has to bill something
+		STORE["Pay Application"]["PAY-4"]["docstatus"] = 2
+		pa5 = application("PAY-5", period_to="2026-12-31")
+		with self.assertRaises(Thrown) as cm:
+			pa5.before_submit()
+		self.assertIn("Pick the milestone", str(cm.exception))
+
+	def test_leaving_final_clears_its_computed_release(self):
+		STORE["Change Order"] = {}
+		locked_schedule()
+		pa1 = application("PAY-1", period_to="2026-10-31")
+		pct(pa1, "k001", 100)
+		certify(pa1)
+		pa2 = application("PAY-2", application_type="Final")
+		self.assertEqual(pa2.retainage_released, 200.0)
+		pa2.__dict__["_before"] = FakeDocument(**pa2.as_dict())
+		pa2.application_type = "Progress"
+		pa2.validate()
+		self.assertEqual([r.retainage_release for r in pa2.lines], [0, 0, 0])
+		self.assertEqual((pa2.retainage_released, pa2.total_retainage), (0.0, 200.0))
+
+	def test_a_final_cannot_be_certified_short(self):
+		STORE["Change Order"] = {}
+		locked_schedule()
+		pa = application("PAY-1", application_type="Final")
+		for key in ("k001", "k002"):
+			pct(pa, key, 100)
+		pa.certified_less = 1
+		pa.amount_certified = 100
+		pa.validate()
+		with self.assertRaises(Thrown) as cm:
+			pa.before_submit()
+		self.assertIn("whole payment due", str(cm.exception))
+
+	def test_a_final_refuses_an_approved_change_order_never_added(self):
+		locked_schedule()  # CO-1 is approved on the project but not on the schedule
+		pa = application("PAY-1", application_type="Final")
+		for key in ("k001", "k002"):
+			pct(pa, key, 100)
+		pa.validate()
+		with self.assertRaises(Thrown) as cm:
+			pa.before_submit()
+		self.assertIn("CO-1", str(cm.exception))
+
+	def test_a_release_keeps_the_stored_balance(self):
+		locked_schedule(stored_materials=1)
+		pa1 = application("PAY-1", period_to="2026-10-31")
+		next(r for r in pa1.lines if r.line_key == "k002")["stored"] = 400
+		pct(pa1, "k001", 100)
+		certify(pa1)
+		pa2 = application("PAY-2", application_type="Retainage Release")
+		next(r for r in pa2.lines if r.line_key == "k002")["stored"] = 0  # typed in the grid
+		next(r for r in pa2.lines if r.line_key == "k001")["retainage_release"] = 200
+		pa2.validate()
+		self.assertEqual(next(r for r in pa2.lines if r.line_key == "k002").stored, 400.0)
+		self.assertEqual(pa2.stored_total, 400.0)
 
 	def test_amending_is_refused(self):
 		locked_schedule()

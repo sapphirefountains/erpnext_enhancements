@@ -60,9 +60,27 @@ final release, and only work after it is held at 5%; a step-down, or an override
 earlier retainage. (Re-rating all work to date, ``(D + E) x rate``, would have let the application
 that crosses the step pay out half of everything held so far.) A line whose work goes down releases
 retainage at today's rate, never below zero and never leaving more held than the work that is left.
-Nothing in this module releases retainage otherwise: an override of 0 holds nothing NEW, and final
-release is its own step (B9). Retainage on stored materials stays ``F x rate``,
-because stored is a balance.
+An override of 0 holds nothing NEW; it releases nothing. Retainage on stored materials stays
+``F x rate``, because stored is a balance (so a stored override of 0 does release it).
+
+**Releasing retainage (B9)** is its own input, never a side effect of a rate::
+
+    held now          = held before + E x work % now        (kept between 0 and D + E, as above)
+    released          = what accounting releases on the line this application
+    retainage on work = held now - released
+
+A release is any amount between nothing and all that is held now (a deduction line holds a negative
+amount, so its release is negative too); more is refused, never clipped. :func:`release_amounts`
+turns "release 50% of what is held, on the finished lines" into per-line amounts. Each line carries
+what was released before this application and to date, so a job's released total is a running sum.
+
+Three kinds of application share all of this:
+
+* **Progress**, the monthly one. It may release retainage too, as general contractors often do on
+  finished portions of a job.
+* **Retainage Release** bills no new work: it exists to release.
+* **Final** releases everything still held, on every line, whatever was typed. It is refused unless
+  every line is finished, nothing is stored and every approved change order is on it.
 
 **Finishing a line.** A percent of C seldom lands on the exact cents left. When the percent typed is
 the percent remaining (to two places), E is the balance itself, so a line marked finished always
@@ -73,6 +91,10 @@ G702 is a record that must not move when the schedule is later revised. Nothing 
 """
 
 from erpnext_enhancements.estimating import estimate_math as em
+
+#: The kinds of pay application (B9). Only Final changes the arithmetic: it releases all retainage.
+PROGRESS, RELEASE, FINAL = "Progress", "Retainage Release", "Final"
+APPLICATION_TYPES = (PROGRESS, RELEASE, FINAL)
 
 #: Cost types in schedule order, and how a grouped row names them.
 TYPE_ORDER = {t: i for i, t in enumerate(em.COST_TYPES)}
@@ -253,14 +275,17 @@ def price_application(schedule, application, lines, previous):
 	"""Price one pay application. Returns ``{"lines": [...], "totals": {...}}`` in dollars.
 
 	``schedule``: ``contract_sum``, ``stored_materials`` and the retainage fields of
-	:func:`resolve_rates`. ``application``: ``less_previous_certificates`` and the two overrides.
-	``lines``: ``line_key``, ``scheduled_value``, ``this_period_pct``, ``stored``, ``by_others``,
-	``is_change_order``, ``work_retainage_override``, ``stored_retainage_override``.
+	:func:`resolve_rates`. ``application``: ``less_previous_certificates``, the two overrides and
+	``application_type`` (blank is Progress). ``lines``: ``line_key``, ``scheduled_value``,
+	``this_period_pct``, ``stored``, ``by_others``, ``is_change_order``, ``work_retainage_override``,
+	``stored_retainage_override`` and ``retainage_release`` (dollars released on the line this
+	application; ignored on a Final application, which releases everything held).
 	``previous``: per line key, from the application before, either ``{"work": its D + E,
-	"retainage_work": the retainage on work it held}`` or a bare number (work completed, with no
-	retainage history: an opening balance, held at today's rate).
+	"retainage_work": the retainage on work it held, "released": retainage released to date}`` or a
+	bare number (work completed, with no retainage history: an opening balance, held at today's rate).
 	"""
 	stored_on = bool(schedule.get("stored_materials"))
+	final = (application.get("application_type") or PROGRESS) == FINAL
 	prepared = []
 	for line in lines or []:
 		c = cents(line.get("scheduled_value"))
@@ -269,16 +294,17 @@ def price_application(schedule, application, lines, previous):
 			d = cents(entry.get("work"))
 			held = entry.get("retainage_work")
 			held = None if held is None else cents(held)
+			released_before = cents(entry.get("released"))
 		else:
-			d, held = cents(entry or 0), None
-		prepared.append((line, c, d, held))
+			d, held, released_before = cents(entry or 0), None, 0
+		prepared.append((line, c, d, held, released_before))
 
 	contract_to_date = sum(p[1] for p in prepared)
 	start_pct = percent(sum(p[2] for p in prepared), contract_to_date) or 0
 	job_work, job_stored, source = resolve_rates(schedule, application, start_pct)
 
 	out = []
-	for line, c, d, held in prepared:
+	for line, c, d, held, released_before in prepared:
 		by_others = bool(line.get("by_others"))
 		pct = 0.0 if by_others else float(line.get("this_period_pct") or 0)
 		remaining = percent(c - d, c)
@@ -298,11 +324,15 @@ def price_application(schedule, application, lines, previous):
 		# period's work is held at the rate in force now. A step-down never releases earlier retainage.
 		if held is None:
 			held = share(d, work_pct)  # an opening balance with no history: held at today's rate
-		ret_work = held + share(e, work_pct)
+		held_now = held + share(e, work_pct)
 		# Never hold more than the work it is held on, nor less than nothing: when a line's work goes
 		# down, retainage comes down with it at most to the work that is left.
 		low, high = sorted((0, d + e))
-		ret_work = min(max(ret_work, low), high)
+		held_now = min(max(held_now, low), high)
+		# Release (B9): a Final application releases everything held; otherwise what accounting typed.
+		# Not clipped to what is held: more than that is refused at certify, by name.
+		released = held_now if final else cents(line.get("retainage_release"))
+		ret_work = held_now - released
 		ret_stored = share(f, stored_pct)
 		out.append(
 			{
@@ -310,6 +340,10 @@ def price_application(schedule, application, lines, previous):
 				"scheduled_value": dollars(c),
 				"from_previous": dollars(d),
 				"retainage_previous": dollars(held),
+				"retainage_held_now": dollars(held_now),
+				"retainage_release": dollars(released),
+				"retainage_released_previous": dollars(released_before),
+				"retainage_released_to_date": dollars(released_before + released),
 				"this_period_pct": pct,
 				"this_period": dollars(e),
 				"stored": dollars(f),
@@ -327,6 +361,8 @@ def price_application(schedule, application, lines, previous):
 				"_g": g,
 				"_rw": ret_work,
 				"_rs": ret_stored,
+				"_rel": released,
+				"_reld": released_before + released,
 				"_co": bool(line.get("is_change_order")),
 			}
 		)
@@ -351,6 +387,8 @@ def price_application(schedule, application, lines, previous):
 		"retainage_work": dollars(ret_work),
 		"retainage_stored": dollars(ret_stored),
 		"total_retainage": dollars(ret_work + ret_stored),
+		"retainage_released": dollars(sum(r["_rel"] for r in out)),
+		"retainage_released_to_date": dollars(sum(r["_reld"] for r in out)),
 		"total_earned_less_retainage": dollars(earned),
 		"less_previous_certificates": dollars(prev_cert),
 		"current_payment_due": dollars(earned - prev_cert),
@@ -362,9 +400,30 @@ def price_application(schedule, application, lines, previous):
 		"retainage_source": source,
 	}
 	for r in out:
-		for k in ("_c", "_e", "_g", "_rw", "_rs", "_co"):
+		for k in ("_c", "_e", "_g", "_rw", "_rs", "_rel", "_reld", "_co"):
 			r.pop(k)
 	return {"lines": out, "totals": totals}
+
+
+def release_amounts(priced_lines, pct, finished_only=False):
+	"""Per-line retainage releases for "release ``pct``% of what is held", from priced lines.
+
+	``priced_lines`` are :func:`price_application`'s lines (each carries ``retainage_held_now``,
+	``balance`` and the line key); ``finished_only`` limits the release to lines with nothing left
+	to bill (balance 0, scheduled value not 0). Each line releases its own share, banker's-rounded in
+	cents, so 100% releases exactly what each line holds. Returns ``{line_key: dollars}`` for every
+	line, 0 where nothing is released.
+	"""
+	out = {}
+	for row in priced_lines or []:
+		held = cents(row.get("retainage_held_now"))
+		finished = cents(row.get("scheduled_value")) != 0 and cents(row.get("balance")) == 0
+		if finished_only and not finished:
+			out[row.get("line_key")] = 0.0
+			continue
+		amount = held if float(pct or 0) == 100 else share(held, pct)
+		out[row.get("line_key")] = dollars(amount)
+	return out
 
 
 # ----------------------------------------------------------------------- refusals
@@ -376,10 +435,13 @@ def refusals(context, priced):
 
 	``context``: ``schedule_locked``, ``schedule_keys`` (line keys on the schedule now),
 	``previous`` (``None`` or ``{"name", "docstatus", "period_to"}``), ``period_from``,
-	``period_to`` (ISO date strings), ``stored_materials``, ``amount_certified`` and ``lines``
-	(the input lines, aligned with ``priced["lines"]``).
+	``period_to`` (ISO date strings), ``stored_materials``, ``amount_certified``, ``lines`` (the
+	input lines, aligned with ``priced["lines"]``), ``application_type`` and
+	``excluded_change_orders`` (change orders on the schedule that this application leaves out,
+	because they were approved after its period: a Final application may not).
 	"""
 	out = []
+	kind = context.get("application_type") or PROGRESS
 	if not context.get("schedule_locked"):
 		out.append(("SCHEDULE_NOT_LOCKED", "Lock the schedule of values before certifying against it."))
 	previous = context.get("previous")
@@ -407,6 +469,7 @@ def refusals(context, priced):
 	keys = set(context.get("schedule_keys") or [])
 	gone, over, negative, zero_work, stored_off, bad_rate, others = [], [], [], [], [], [], []
 	below_zero, stored_negative = [], []
+	over_held, unfinished, stored_left, worked = [], [], [], []
 	for line, row in zip(context.get("lines") or [], priced.get("lines") or []):
 		name = f"{line.get('item_no') or ''} {line.get('description') or ''}".strip()
 		if line.get("line_key") not in keys:
@@ -430,6 +493,16 @@ def refusals(context, priced):
 			if pct < 0 or pct > 100:
 				bad_rate.append(name)
 				break
+		held, released = cents(row.get("retainage_held_now")), cents(row.get("retainage_release"))
+		low, high = sorted((0, held))
+		if not low <= released <= high:
+			over_held.append(name)
+		if kind == FINAL and not line.get("by_others") and c - g:
+			unfinished.append(name)
+		if kind == FINAL and cents(row["stored"]):
+			stored_left.append(name)
+		if kind == RELEASE and e:
+			worked.append(name)
 
 	def listed(names):
 		shown = ", ".join(names[:8])
@@ -459,6 +532,48 @@ def refusals(context, priced):
 		out.append(("STORED_WHILE_OFF", f"Stored materials are off for this job: {listed(stored_off)}."))
 	if bad_rate:
 		out.append(("RETAINAGE_OUT_OF_RANGE", f"Retainage must be 0 to 100%: {listed(bad_rate)}."))
+	if over_held:
+		out.append(
+			(
+				"RELEASE_OVER_HELD",
+				f"A release can be anything from nothing to all the retainage held on the line: "
+				f"{listed(over_held)}.",
+			)
+		)
+	if worked:
+		out.append(
+			(
+				"RELEASE_HAS_WORK",
+				f"A retainage release application bills no new work. Bill it on a progress application: "
+				f"{listed(worked)}.",
+			)
+		)
+	# Per line, not the net total: a release on a deduction line is negative, so two real releases can
+	# net to nothing.
+	released_any = any(cents(r.get("retainage_release")) for r in priced.get("lines") or [])
+	if kind == RELEASE and not over_held and not released_any:
+		out.append(("RELEASE_NOTHING", "This retainage release application releases nothing."))
+	if unfinished:
+		out.append(
+			("FINAL_NOT_FINISHED", f"A final application needs every line finished: {listed(unfinished)}.")
+		)
+	if stored_left:
+		out.append(
+			(
+				"FINAL_STORED",
+				f"A final application bills no stored materials; install or remove them: {listed(stored_left)}.",
+			)
+		)
+	excluded = context.get("excluded_change_orders") or []
+	if kind == FINAL and excluded:
+		out.append(
+			(
+				"FINAL_CHANGE_ORDERS_LEFT_OUT",
+				f"Approved change orders are not on this final application: {listed(list(excluded))}. Add any "
+				"missing ones to the schedule of values (Add Approved Change Orders) and end the period on or "
+				"after their approval date.",
+			)
+		)
 
 	totals = priced.get("totals") or {}
 	due = cents(totals.get("current_payment_due"))
@@ -477,6 +592,15 @@ def refusals(context, priced):
 			out.append(("CERTIFIED_NEGATIVE", "The amount certified cannot be negative."))
 		elif certified > due:
 			out.append(("CERTIFIED_OVER_DUE", "The amount certified is more than the payment due."))
+		elif kind == FINAL and certified < due:
+			# A final application closes the schedule, so nothing could ever carry the shortfall forward.
+			out.append(
+				(
+					"FINAL_CERTIFIED_SHORT",
+					"A final application closes the job, so it must be certified for the whole payment due. "
+					"Certify a progress or retainage release application for less instead.",
+				)
+			)
 	return out
 
 
