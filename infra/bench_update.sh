@@ -49,7 +49,14 @@
 # File modes. A backup is readable by the bench's owner only: the backup directory, each
 # run in it and every file are created under umask 077. Everything else a run writes is
 # created under umask 022, whatever mask the caller had, because nginx serves the built
-# assets and each app's public files from disk as another user.
+# assets and each app's public files from disk as another user. A run is as sensitive as
+# site_config.json itself: bench's copy of that file beside the dump is plain text even when
+# the dump is encrypted (frappe/utils/backups.py:371-376, and :235 for what is encrypted, at
+# v16.60.2), so it holds the database password and the key the dump was encrypted with.
+#
+# Sizing. Three runs are kept and the margin is 5120 MB, from one measurement on production
+# on 2026-11-23: a backup is 681 MiB and takes 2 min 50 s, with 14 GB free on a 49 GB disk.
+# infra/README.md has the arithmetic and says how to measure again.
 #
 # A backup is written into <backup dir>/.partial-<UTC time> and gets its real name only once
 # bench has exited cleanly, every site has a database file and each plain .sql.gz passes
@@ -85,7 +92,7 @@ umask 022
 readonly TAG_RE='^v16\.[0-9]+\.[0-9]+$'
 readonly RUN_RE='^[0-9]{8}T[0-9]{6}Z$'
 readonly PARTIAL_PREFIX=.partial-
-readonly KEEP=5
+readonly KEEP=3
 readonly LOCK_NAME=.bench_update.lock
 readonly RUN_LOCK_NAME=.deploy.lock
 readonly UPSTREAM_APPS=(frappe erpnext)
@@ -135,7 +142,8 @@ check_bench() {
 }
 
 # The sites `bench --site all` means: directories under sites/ with a site_config.json, not
-# symlinks (frappe.utils.get_sites, frappe/utils/__init__.py:702-718 at v16.60.2).
+# symlinks (frappe.utils.get_sites, frappe/utils/__init__.py:702-718 at v16.60.2). So
+# sites/assets is not a site, and neither is sites/flow-server, which frappe 16.60 adds.
 list_sites() {
 	local path
 	for path in "$BENCH_DIR"/sites/*/; do
@@ -271,7 +279,12 @@ take_backup() {
 	# and cannot be tested without its key.
 	for f in "$PARTIAL"/*.sql.gz; do
 		[ -f "$f" ] || continue
-		case $f in *-enc.sql.gz) continue ;; esac
+		case $f in
+		*-enc.sql.gz)
+			say "note: ${f##*/} is encrypted, so only its size was checked, not its content"
+			continue
+			;;
+		esac
 		gzip -t -- "$f" 2>/dev/null || backup_failed "${f##*/} is not a whole gzip file"
 	done
 	mv -T -- "$PARTIAL" "$run_dir" || backup_failed "could not give the finished backup its name, $run_dir"

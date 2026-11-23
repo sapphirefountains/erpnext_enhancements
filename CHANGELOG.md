@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     backup of every site with bench's own `backup` command, into
     `<bench>/pre-migrate-backups/<UTC time>/`. It checks free disk first (twice the newest kept
     backup plus a 5 GB margin, `PRE_MIGRATE_MIN_FREE_MB`, or the margin alone when none is kept
-    yet), prints each file's name and size, and keeps the newest five runs, deleting older ones
+    yet), prints each file's name and size, and keeps the newest three runs, deleting older ones
     from that directory only. When the check or the backup fails, the build log says
     `PRE-MIGRATE BACKUP FAILED: <reason>` and the deploy stops there: no code reset, migrate,
     build, redis flush or restart, so the site keeps running the release it had. The redis
@@ -88,6 +88,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     through. What the check cannot see is a bench on a branch head past its last release, which
     still declares that release's version: installing that release's tag takes the later commits
     away, and the run prints a note saying so. A version that cannot be read stops the run.
+  - **Sized from a measurement on production (2026-11-23).** One backup is 681 MiB and takes 2 min
+    50 s, with 14 GB free on the 49 GB disk; the database is about 5.8 GB before compression. So
+    three runs are kept, not five (about 2 GB), and the margin stays at 5 GB: the check wants
+    about 6.4 GB free before each backup, which leaves about 5.6 GB of room before deploys begin
+    to refuse. The runbook has the table, says how to measure again, and says what to do when a
+    deploy refuses for disk: grow the VM's disk or lower `KEEP`, never skip the backup.
+  - **Production's backups are encrypted, and the runbook now says how to restore one.** On the
+    same site `bench restore` reads the key from `site_config.json`; elsewhere it takes
+    `--encryption-key`. Read at frappe v16.60.2, bench encrypts the dump but not the copy of
+    `site_config.json` it puts beside it, whatever that copy's name says: the copy is plain text
+    and holds the database password and the key the dump was encrypted with. That is one more
+    reason a run directory is readable by `frappe` only, and the runbook says not to point a test
+    backup at `/tmp` or any shared directory. An encrypted dump cannot be gzip-tested, so on
+    production the script checks its size only and says so in the log; the dump being whole rests
+    on bench having exited cleanly, which it does not after a failed dump (`set -o pipefail` and a
+    checked exit code in `frappe/utils/backups.py`).
+  - **A folder under `sites/` with no `site_config.json` is not a site.** frappe 16.60 adds
+    `sites/flow-server/` beside the real site. The script already counted sites as bench does
+    (`frappe.utils.get_sites`: a directory, not a symlink, with a `site_config.json`), so nothing
+    changed; a test now puts such a folder and a symlinked site beside the real ones.
   - **Redis is checked before a migrate starts.** Frappe reads a cache that is down as an empty
     one instead of stopping, so a migrate started then fails partway through, after it has already
     changed the database; on 2026-11-23 two migrates in a row stopped that way, at fixture sync.

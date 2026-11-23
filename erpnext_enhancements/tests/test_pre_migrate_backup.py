@@ -148,6 +148,11 @@ def _script_lock_wait_default():
 	return int(match.group(1))
 
 
+def _script_keep():
+	"""How many backups the script keeps."""
+	return int(re.search(r"^readonly KEEP=(\d+)$", SCRIPT.read_text(encoding="utf-8"), re.M).group(1))
+
+
 def _timeout_s(path):
 	return int(re.search(r"^timeout: '(\d+)s'$", path.read_text(encoding="utf-8"), re.M).group(1))
 
@@ -817,7 +822,14 @@ class BackupTests(_ScratchBench):
 		self.assertEqual(result.returncode, 1)
 		self.assertIn("wrote no database file for site2.test", result.stderr)
 
-	def test_retention_keeps_the_newest_five_and_touches_nothing_else(self):
+	def test_three_backups_are_kept_and_the_margin_is_5_gb(self):
+		"""Sized from one measurement on production (2026-11-23): a backup is 681 MiB, so
+		three kept are about 2 GB and the check wants about 6.4 GB free, on a disk that had
+		14 GB free. Five kept would have left little room before deploys began to refuse."""
+		self.assertEqual(_script_keep(), 3)
+		self.assertIn("margin_mb=${PRE_MIGRATE_MIN_FREE_MB:-5120}", SCRIPT.read_text(encoding="utf-8"))
+
+	def test_retention_keeps_the_newest_few_and_touches_nothing_else(self):
 		self.root.mkdir()
 		old = [f"20260101T00000{i}Z" for i in range(7)]
 		for name in old:
@@ -836,8 +848,10 @@ class BackupTests(_ScratchBench):
 		result = self.run_script("backup")
 		self.assertEqual(result.returncode, 0, result.stderr)
 		runs = self.runs()
-		self.assertEqual(len(runs), 5)
-		self.assertEqual(runs[:4], old[3:])
+		keep = _script_keep()
+		self.assertEqual(len(runs), keep)
+		self.assertEqual(runs[:-1], old[len(old) - (keep - 1) :])
+		self.assertNotIn(runs[-1], old)
 		self.assertTrue((self.root / "notes").is_dir())
 		self.assertTrue((self.root / "20260101T000000Z.txt").is_file())
 		self.assertTrue((self.root / "20250101T000000Z").is_symlink())
@@ -921,6 +935,42 @@ class BackupTests(_ScratchBench):
 		self.assertEqual(result.returncode, 0, result.stderr)
 		(run,) = self.runs()
 		self.assertTrue((self.root / run / "20261119_000000-site1_test-database-enc.sql.gz").is_file())
+		# ...and the log does not let it pass for a tested one.
+		for site in self.SITES:
+			name = f"20261119_000000-{site.replace('.', '_')}-database-enc.sql.gz"
+			note = f"note: {name} is encrypted, so only its size was checked, not its content"
+			self.assertIn(note, result.stdout)
+		plain = self.run_script("backup", PRE_MIGRATE_BACKUP_DIR=str(self.tmp / "plain"))
+		self.assertEqual(plain.returncode, 0, plain.stderr)
+		self.assertNotIn("note:", plain.stdout)
+
+	def test_a_folder_under_sites_without_a_site_config_is_not_a_site(self):
+		"""frappe 16.60 keeps `sites/flow-server/` beside the real sites, and `sites/assets/`
+		was always there. Neither has a site_config.json, so bench does not back it up
+		(frappe.utils.get_sites) and the script must not wait for its dump. A symlink to a
+		site is not a second site either."""
+		flow = self.bench / "sites" / "flow-server"
+		flow.mkdir()
+		(flow / "flow.sqlite").write_text("x")
+		self.assertTrue((self.bench / "sites" / "assets").is_dir())
+		(self.bench / "sites" / "alias.test").symlink_to(self.bench / "sites" / self.SITES[0])
+		result = self.run_script("backup")
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertIn(f"pre-migrate backup of {' '.join(self.SITES)} into ", result.stdout)
+		for not_a_site in ("flow-server", "flow_server", "assets", "alias"):
+			self.assertNotIn(not_a_site, result.stdout + result.stderr, not_a_site)
+		(run,) = self.runs()
+		self.assertEqual(len(list((self.root / run).iterdir())), 2 * len(self.SITES))
+
+	def test_a_bench_with_no_site_at_all_is_refused(self):
+		for site in self.SITES:
+			(self.bench / "sites" / site / "site_config.json").unlink()
+		(self.bench / "sites" / "flow-server").mkdir()
+		result = self.run_script("backup")
+		self.assertEqual(result.returncode, 1)
+		self.assertIn(f"PRE-MIGRATE BACKUP FAILED: no sites found under {self.bench}/sites", result.stderr)
+		self.assertEqual(self.call_log(), [])
+		self.assertFalse(self.root.exists())
 
 	def test_a_failed_backup_leaves_no_unfinished_directory(self):
 		for mode in ("fail", "empty"):
@@ -975,9 +1025,11 @@ class BackupTests(_ScratchBench):
 			f"warning: could not remove the older pre-migrate backup {self.root / old[0]}; remove it by hand",
 			result.stderr,
 		)
+		# The one that could not be removed is still there, beside the newest that are kept.
+		keep = _script_keep()
 		runs = self.runs()
-		self.assertEqual(runs[:5], [old[0], *old[2:]])
-		self.assertEqual(len(runs), 6)
+		self.assertEqual(runs[:-1], [old[0], *old[len(old) - (keep - 1) :]])
+		self.assertEqual(len(runs), keep + 1)
 
 
 class FreeSpaceTests(_ScratchBench):

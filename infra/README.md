@@ -127,13 +127,47 @@ a few minutes longer for the backup.
 
 **Where the backups are.** `/home/frappe/frappe-bench/pre-migrate-backups/<UTC time>/`, one
 directory per run (for example `20261119T201500Z`), readable only by `frappe`. Each holds one
-`<time>-<site>-database.sql.gz` per site (`-database-enc.sql.gz` when backup encryption is on)
-and bench's copy of the site config. The script keeps the newest five runs and deletes older ones
-from that directory only; it never deletes the scheduled backups in `sites/<site>/private/backups`
-or the offsite backup's files itself, but bench's own `backup` command does delete some of the
-former on every run (see below). Before it starts, it checks that the disk has free at least twice
-the newest kept backup plus a 5 GB margin (`PRE_MIGRATE_MIN_FREE_MB`, default 5120), or the margin
-alone when no backup is kept yet. Production's database is about 5.8 GB before compression.
+`<time>-<site>-database.sql.gz` per site (`-database-enc.sql.gz` when backup encryption is on, as
+it is on production) and bench's copy of the site config. The script keeps the newest three runs
+and deletes older ones from that directory only; it never deletes the scheduled backups in
+`sites/<site>/private/backups` or the offsite backup's files itself, but bench's own `backup`
+command does delete some of the former on every run (see below). Before it starts, it checks that
+the disk has free at least twice the newest kept backup plus a 5 GB margin
+(`PRE_MIGRATE_MIN_FREE_MB`, default 5120), or the margin alone when no backup is kept yet.
+
+**A site is a folder under `sites/` with a `site_config.json`.** That is bench's own rule
+(`frappe.utils.get_sites`), and the script counts sites the same way. `sites/assets/` is not a
+site, and neither is `sites/flow-server/`, which frappe 16.60 adds: neither is backed up, and the
+script does not wait for a dump from either. Production has one site.
+
+**How it was sized, and what to do when the disk runs short.** Measured on production on
+2026-11-23, as `frappe` in the bench:
+
+| | |
+|---|---|
+| One backup (the database, encrypted) | 681 MiB |
+| Time for one backup | 2 min 50 s |
+| Free on the bench's disk | 14 GB of 49 GB |
+| The database before compression | about 5.8 GB |
+
+- Three kept runs are about 2 GB.
+- The check wants twice the newest backup plus the margin free before each backup: about 6.4 GB.
+- That leaves about 5.6 GB of room before deploys begin to refuse. Free space fell by about 4 GB
+  on the day of the 16.60 upgrade alone, so watch it.
+- **When a deploy refuses for disk, grow the VM's disk or lower `KEEP` in the script. Never skip
+  the backup** and never remove the step: the refusal is the backup doing its job.
+- To measure again once the script is live: `time bash apps/erpnext_enhancements/infra/bench_update.sh backup`
+  as `frappe` in the bench. It prints each file's size, keeps the backup among the three, and writes
+  only into its own private directory. Do not point `bench backup` at `/tmp` or another shared
+  directory to measure: see the next paragraph for what a backup holds.
+
+**What a run holds, and why it is private.** Beside the dump bench puts a copy of
+`site_config.json` (`<time>-<site>-site_config_backup.json`, with `-enc` in the name when
+encryption is on). That copy is plain text in every case: bench encrypts the dump and the file
+archives, not the config (`frappe/utils/backups.py:235` and `:371`-`:376` at v16.60.2). It holds
+the database password and the backup encryption key the dump beside it was encrypted with, so a
+run directory is as sensitive as `site_config.json` itself. Leave the runs where they are, owned by
+`frappe`, and never copy one to a place more people can read.
 
 **One run at a time.** Two locks, both `flock` (it ships in util-linux):
 
@@ -170,7 +204,8 @@ written 0600 there answers 403, and a later build overwrites it in place and kee
 **A backup gets its name only when it is whole.** bench writes into
 `pre-migrate-backups/.partial-<UTC time>/`. The script renames that to `<UTC time>/` only after
 bench has exited cleanly, every site has a database file, and each `.sql.gz` passes `gzip -t`
-(an encrypted `-enc.sql.gz` is not gzip data and cannot be tested without its key). So a run that
+(an encrypted `-enc.sql.gz` is not gzip data and cannot be tested without its key, so on
+production only its size is checked, and the log says so). So a run that
 is stopped or killed partway (a build timeout, a dropped connection, Ctrl-C) never leaves a
 cut-off dump under a name that looks like a backup. The script removes the unfinished directory
 as it ends; when it was killed outright and could not, the next backup removes it. A directory
@@ -369,16 +404,37 @@ ls -l pre-migrate-backups/<run>/
 #   upstream update: git -C apps/frappe checkout <previous commit>   (and the same for erpnext;
 #                    the failed run printed both), then: bench setup requirements
 #   app deploy:      git -C apps/erpnext_enhancements reset --hard <previous commit>
-bench --site <site> restore /home/frappe/frappe-bench/pre-migrate-backups/<run>/<time>-<site>-database.sql.gz
+# The file name ends -database-enc.sql.gz when backup encryption is on (it is on production).
+bench --site <site> restore /home/frappe/frappe-bench/pre-migrate-backups/<run>/<time>-<site>-database-enc.sql.gz
 bench build
 bench --site <site> clear-cache
 exit
 sudo systemctl restart frappe-bench
 ```
 
-`restore` asks for the database root password. An encrypted backup is decrypted with the site's
-own backup encryption key. The next merge to `main` deploys again, so revert the change on `main`
-before you lift the hold.
+`restore` asks for the database root password. The next merge to `main` deploys again, so revert
+the change on `main` before you lift the hold.
+
+**Restoring an encrypted backup.** Production's backups are encrypted, so a restore needs the
+site's backup encryption key (read at frappe v16.60.2, `frappe/commands/site.py:257`-`:274`):
+
+- **On the same site, nothing extra.** `restore` sees that the file is encrypted and reads the key
+  from that site's `site_config.json` (`backup_encryption_key`). It says
+  `Encrypted backup file detected. Decrypting using site config.` It needs `gpg` and `file`
+  installed, and it decrypts beside the file, so the backup directory needs room for the file once
+  more.
+- **On another machine, or after the site's config was replaced,** pass the key:
+  `bench --site <site> restore <file> --encryption-key <key>`. The key that fits a dump is the
+  `backup_encryption_key` in the config copy that sits beside it in the same run directory.
+- **A wrong or missing key** ends with `Decryption failed. Please provide a valid key and try
+  again.` before the database is touched. When the site's config has no key at all, frappe makes a
+  new one and writes it there, and that key does not fit: take the right one from the run's copy.
+- **Never print the key, paste it into a ticket or a chat, or let it reach a build log.** Read it
+  on the VM, as `frappe`, and type it where it is needed. A key typed on a command line stays in
+  the shell's history: remove that line afterwards (`history -d <number>`).
+- Without the key an encrypted dump cannot be read by anyone. The copies beside the dumps are the
+  only ones on the VM, so the same holds for a copy of a backup kept elsewhere: keep its config
+  copy with it, as protected as the dump.
 
 **IAM**: Cloud Build SA is granted `iap.tunnelResourceAccessor` role for IAP SSH. Trigger configs reference YAML paths via `cloudbuild_deploy_yaml_path` / `cloudbuild_upstream_yaml_path` variables.
 

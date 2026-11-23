@@ -8,7 +8,7 @@
 #
 # Before anything on the VM changes, infra/bench_update.sh checks that both Redis instances
 # answer (a migrate started while one is down stops partway), then takes a database-only
-# backup of every site into <bench>/pre-migrate-backups and keeps the newest five. When
+# backup of every site into <bench>/pre-migrate-backups and keeps the newest three. When
 # either fails, or there is not enough free disk, the `&&` chain stops there: no code reset,
 # migrate, build, redis flush or restart, so the site keeps running the release it had.
 # The order is fetch, Redis check, backup, reset. After the fetch only the script itself is
