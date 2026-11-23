@@ -363,6 +363,43 @@ ERROR otherwise.
 **Delete this module, and its `_patch_fac_list_documents_count` entry in `monkeypatches.py`, once
 `frappe_assistant_core` is upgraded past 3.0.0.** A Task on PRJ-00580 tracks the removal.
 
+## Frappe Flow and the Studio User role stay off (`flow_guard.py`, v1.836.0)
+
+frappe 16.60 ships **Flow**, an AI assistant inside the framework, and **Studio**, a page builder.
+Flow is not an entry point this gate can see:
+
+- Its tools run inside frappe as the person chatting with it. Record reads call frappe's query
+  functions directly, so this app's field-level read checks on the HTTP read routes
+  (`fieldlevel_filters.py`, `fieldlevel_read.py`) never see them. frappe's own permission checks
+  still apply; this app's additions to them do not.
+- Its writes are approved, if at all, by that same person in Flow's chat panel. A session can be set
+  to approve everything, and a scheduled Flow Trigger always does. No AI Pending Action is created
+  and nothing reaches the AI Action Log. When a Flow tool calls a whitelisted method by name it does
+  go through `override_whitelisted_methods` and the whitelist check, so the wrapped methods stay
+  wrapped on that one path.
+
+A Studio User can publish pages with scripts on this site's address, guest pages included, so the
+role is as strong as System Manager.
+
+**ERPNext Enhancements Settings > AI Governance > Allow Frappe Flow and Studio User** is off by
+default. While it is off:
+
+| Refused | Hook | Why this is enough |
+|---|---|---|
+| Creating a Flow Provider or Flow Model | `before_insert` | A Flow chat or trigger needs an agent with a model. frappe builds its built-in Assistant agent only once an enabled model exists. |
+| A new Flow User or Studio User role on a User or Role Profile | `validate` | Only System Managers can use Flow or Studio without these roles, and they already read every field. |
+
+A record that already holds one of the roles saves normally; only an addition is refused, and the
+setting is read only then. Turning the switch off does not remove a model, provider or role added
+while it was on. The guard never raises during `bench migrate`, an install or a patch, because that
+would abort the deploy; it writes a warning to the app log instead. Nothing frappe ships does
+either during a migrate today.
+
+Before turning the switch on, re-read Flow at the version prod runs. Whether its read tools still
+call frappe's query functions directly decides whether this app's field-level checks need to cover
+them. The guard pins doctype and role names that frappe could rename; `tests/test_flow_guard.py`
+pins the wiring but cannot see frappe.
+
 ## Relationship to Triton
 
 Triton confirmation-gates writes in its own chat UI (`PendingAction` + `IntegrationAuditLog`);
@@ -374,6 +411,9 @@ FAC 3.0.0's in-Desk **FAC Chat** (off on prod; a paid FAC Cloud service) is a th
 point but not a third path: its cloud runtime calls this site's `handle_mcp` endpoint as the
 user, so its tool calls pass through the same gate. Pending actions it causes carry the chat
 conversation id as `session_id` and `fac-chat` as `client_id`.
+
+frappe 16.60's **Flow** is a fourth entry point, and it does **not** pass through the gate. It
+stays off unless a System Manager opts in; see the Flow section above.
 
 ## Tests
 
@@ -387,6 +427,12 @@ python -m unittest \
 keep it green and keep it in the CI list. The FAC category sync is covered by
 `TestFacToolCategorySync` in `test_assistant_tools_schema` (same CI step), which also asserts
 that FAC's category hints, merged over each tool's annotations, change nothing.
+
+```bash
+python -m unittest erpnext_enhancements.tests.test_flow_guard -v
+```
+
+`test_flow_guard` is bench-free and has its own CI step, because it installs its own `frappe` stub.
 
 ```bash
 python -m unittest \

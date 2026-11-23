@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.836.0] - 2026-11-23
+
+### Added
+
+- **Frappe Flow and the Studio User role stay off until a System Manager opts in.** frappe 16.60
+  added two modules: Flow, an AI assistant inside the framework, and Studio, a page builder. Prod
+  moved to 16.60.2 today. Neither module goes through this app's controls.
+  - Flow's tools run in-process as the person chatting with it. Its record reads call frappe's
+    query functions directly, so the field-level read checks this app puts on the HTTP read routes
+    (1.835.0, `fieldlevel_filters.py`, and 1.542.0, `fieldlevel_read.py`) never see them. frappe's
+    own permission checks still apply.
+  - Flow's writes are approved, if at all, by the same person in Flow's chat panel. A session can be
+    set to approve everything, and a scheduled Flow Trigger always does. So they never reach the AI
+    write gate (1.525.0) or the AI Action Log.
+  - A Studio User can publish pages, scripts included, on this site's address, guest pages among
+    them. That makes the role as strong as System Manager.
+- **The switch.** New Check field ERPNext Enhancements Settings > AI Governance > **Allow Frappe
+  Flow and Studio User** (`allow_frappe_flow`), off by default. While it is off,
+  `ai_governance/flow_guard.py` refuses two things:
+  - creating a Flow Provider or a Flow Model (`before_insert`). A Flow chat or trigger needs an agent
+    with a model, and frappe's `after_migrate` builds its built-in Assistant agent, with every
+    built-in tool, only once an enabled model exists;
+  - a new Flow User or Studio User role on a User or a Role Profile (`validate`).
+- **What the guard leaves alone.**
+  - A record that already holds one of the roles saves normally; only an addition is refused.
+  - The setting is read only when a save adds one of the roles, so other User saves cost nothing.
+  - A never-saved or unreadable setting counts as off. A new field on a Single reads `None` on an
+    existing site, which is the default wanted here, so no backfill patch is needed.
+  - Turning the switch off again does not remove a model, provider or role added while it was on.
+  - It never raises during `bench migrate`, an install or a patch, because that would abort the
+    deploy. It logs a warning instead; nothing frappe ships creates a model or grants these roles
+    during a migrate today.
+- **Why a guard, and not field-level checks inside Flow.** Production had no Flow Model, no Flow
+  Agent and nobody holding Flow User or Studio User when this was written, so the guard changes
+  nothing anyone uses. Covering Flow's tools would mean wrapping frappe internals, which move with
+  every frappe release, and prod's frappe moves without a deploy of this app. Re-read Flow at
+  prod's version before turning the switch on.
+- `tests/test_flow_guard.py` (bench-free, its own CI step, 22 tests) covers the refusals, the role
+  already held, the deploy flags, the exact `doc_events` wiring, the field's declaration and the
+  settings DocType's `modified` stamp.
+
 ## [1.835.1] - 2026-11-23
 
 ### Fixed

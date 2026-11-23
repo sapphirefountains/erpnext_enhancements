@@ -370,6 +370,14 @@ jobs:
       # Own step: it installs its own frappe stub.
       - name: User permission guard (patch removes Production Team's User row; fixture never grants User)
         run: python -m unittest erpnext_enhancements.tests.test_user_docperm_guard -v
+      # v1.836.0: Frappe Flow and the Studio User role stay off until ERPNext Enhancements Settings
+      # allow_frappe_flow is ticked. While it is off (or unset, or unreadable) a Flow Provider or Flow
+      # Model cannot be created and no User or Role Profile can be given Flow User or Studio User; a
+      # role already held saves normally; nothing raises during migrate, install or a patch (that would
+      # abort the deploy); and hooks.py wires exactly those four events. Own step: it installs its own
+      # frappe stub.
+      - name: Flow guard (Flow setup and Flow/Studio roles refused until the site opts in)
+        run: python -m unittest erpnext_enhancements.tests.test_flow_guard -v
       # Its own step for the same reason as the Item naming schema step: this suite imports no frappe at
       # all -- party_naming_rules takes only `re` and `typing` -- and appending it to a step
       # that installs sys.modules stubs would put it under a stub set it does not want.
