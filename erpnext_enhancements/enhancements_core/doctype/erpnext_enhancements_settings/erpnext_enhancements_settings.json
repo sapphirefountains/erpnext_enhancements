@@ -65,6 +65,7 @@
   "ai_write_gating_enabled",
   "ai_pending_action_ttl_hours",
   "ai_exempt_doctypes",
+  "allow_frappe_flow",
   "ai_governance_column_break",
   "ai_usage_tracking_enabled",
   "ai_action_log_retention_days",
@@ -602,6 +603,13 @@
    "fieldtype": "Table",
    "label": "Confirmation-Exempt Doctypes",
    "options": "AI Confirmation Exempt Doctype"
+  },
+  {
+   "default": "0",
+   "description": "OFF (default): Frappe's Flow assistant cannot be connected to a model (no Flow Provider or Flow Model can be created, so no Flow chat or trigger can run), and no user or Role Profile can be given the Flow User or Studio User role. Flow's assistant reads and writes records as the person using it, outside the AI write gate above and this app's field-level read checks; a Studio User can publish pages with scripts on this site's address, including pages open to guests. Turning this OFF again does not remove a model, provider or role added while it was ON.",
+   "fieldname": "allow_frappe_flow",
+   "fieldtype": "Check",
+   "label": "Allow Frappe Flow and Studio User"
   },
   {
    "fieldname": "ai_governance_column_break",
@@ -1484,7 +1492,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-18 09:00:00.000000",
+ "modified": "2026-11-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

@@ -108,6 +108,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     client was also run by hand against real `redis-server` processes at 7.1, the version
     frappe v16.60.2 pins, and at 8.1, the one CI carries.
 
+## [1.836.0] - 2026-11-23
+
+### Added
+
+- **Frappe Flow and the Studio User role stay off until a System Manager opts in.** frappe 16.60
+  added two modules: Flow, an AI assistant inside the framework, and Studio, a page builder. Prod
+  moved to 16.60.2 today. Neither module goes through this app's controls.
+  - Flow's tools act as the person chatting with it. frappe's own permission checks apply to what it
+    reads; this app's field-level read checks (1.835.0, `fieldlevel_filters.py`, and 1.542.0,
+    `fieldlevel_read.py`) are not applied to it.
+  - Flow's writes are approved, if at all, by the same person in Flow's chat panel. A session can be
+    set to approve everything, and a scheduled Flow Trigger always does. So they never reach the AI
+    write gate (1.525.0) or the AI Action Log.
+  - A Studio User can publish pages, scripts included, on this site's address, guest pages among
+    them.
+- **The switch.** New Check field ERPNext Enhancements Settings > AI Governance > **Allow Frappe
+  Flow and Studio User** (`allow_frappe_flow`), off by default. While it is off,
+  `ai_governance/flow_guard.py` does two things on `validate`:
+  - **A new Flow Provider or Flow Model, or one saved enabled, is refused.** A Flow chat or trigger
+    needs an agent with an enabled model, and frappe's `after_migrate` builds its built-in Assistant
+    agent, with every built-in tool, only once an enabled model exists. A hook on save rather than on
+    insert, because frappe's own Flow setup saves an existing provider with `enabled = 1`.
+  - **A Flow User or Studio User role that a User or Role Profile save adds is taken off, never
+    refused.** frappe's setup wizard gives the first user every role
+    (`setup_wizard.create_or_update_user`), erpnext gives Administrator every role before tests
+    (`_enable_all_roles_for_admin`), and an LDAP sign-in syncs mapped roles on login. A refusal would
+    fail the wizard, the bench test setup or a sign-in over an optional role. A signed-in person
+    editing in the Desk is told which role was not given.
+- **During a deploy or setup nothing raises, and the lock still holds.** In `bench migrate`, an
+  install, a patch, the setup wizard, or on a site whose setup is not complete, a new or enabled
+  Flow Provider or Flow Model is saved **disabled**, and roles are dropped as above. A raise there
+  would abort the deploy or the wizard. prod's frappe upgrades outside this app's deploys, so a later
+  frappe that made a model or granted a role during migrate would still find it held. Each change is
+  one line in the app log, without the record's contents.
+- **What the guard leaves alone.**
+  - A record that already holds one of the roles keeps it.
+  - The setting is read only when a save adds one of the roles or touches a Flow Provider or Model.
+  - The setting is read with a bound query on `tabSingles`, not `get_single_value`. That one looks the
+    field up in the DocType meta first and throws into the message log when a patch runs before the
+    DocType sync has added it. A never-saved or unreadable value counts as off. A new field on a
+    Single has no row on an existing site, which is the default wanted here, so no backfill patch is
+    needed.
+  - Turning the switch off again does not disable a model, provider or role added while it was on.
+- **Not covered, and written down in the module README.**
+  - Studio's own AI uses an OpenRouter key from Studio Settings, not a Flow Model.
+  - The guard matches role names, not permissions: a Custom DocPerm on a Flow or Studio doctype is
+    refused in `custom_docperm.json` by the test, but not one added in the Desk.
+  - frappe's Flow setup re-enables an existing model with `frappe.db.set_value`, which runs no hooks.
+- **Why a guard, and not field-level checks inside Flow.** Production had no Flow Model, no Flow
+  Agent and nobody holding Flow User or Studio User when this was written, so the guard changes
+  nothing anyone uses. Covering Flow would mean wrapping frappe internals, which move with every
+  frappe release, and prod's frappe moves without a deploy of this app. Re-read Flow at prod's
+  version before turning the switch on.
+- `tests/test_flow_guard.py` (bench-free, its own CI step, 37 tests) covers:
+  - refusing in a request and saving disabled during a deploy, the setup wizard or an unfinished
+    setup;
+  - roles dropped for the wizard's first user, Administrator's test setup and a Guest-session sign-in;
+  - the bound `tabSingles` read;
+  - the exact `doc_events` wiring, with no duplicate key at any depth of `doc_events`;
+  - the field's declaration and the settings DocType's `modified` bump;
+  - no fixture naming the roles or granting a permission on a Flow or Studio doctype.
+
 ## [1.835.2] - 2026-11-23
 
 ### Documentation
