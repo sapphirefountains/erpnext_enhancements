@@ -40,24 +40,30 @@ from erpnext_enhancements.tests.test_triton_personas import install_stubs
 # returns and so what the widget's live list is built from. The ids are also in
 # its `docs/configuration.md`.
 #
-# Copied 2026-11-11 from Triton 0.86.0. When Triton's catalog changes, change
-# this tuple and `TRITON_FALLBACK_MODEL_IDS` in `triton_chat.py` together. Do
-# not correct an id here from memory: these names are newer than most memories.
+# Copied 2026-11-23 from Triton 0.93.0 (sapphirefountains/triton#386), which
+# made Gemini 4 Neon the default, kept Argon behind it and added Hydrogen.
+# When Triton's catalog changes, change this tuple and
+# `TRITON_FALLBACK_MODEL_IDS` in `triton_chat.py` together. Do not correct an
+# id here from memory: these names are newer than most memories.
 # ---------------------------------------------------------------------------
 TRITON_GEMINI_CATALOG = (
+	"gemini-4-neon",
 	"gemini-4-argon",
 	"gemini-3.8-flash",
+	"gemini-4-hydrogen",
 	"gemini-3.5-flash-lite",
 )
 
 # What the Triton site calls each of those models in its own picker: the
-# `short_label` of the same catalog entries. Copied 2026-11-12 from Triton
-# 0.88.1. The widget does not read these (they are served only by
+# `short_label` of the same catalog entries. Copied 2026-11-23 from Triton
+# 0.93.0. The widget does not read these (they are served only by
 # `/assistant/models/catalog`); it derives a label from the id, and the test
 # below fails when the two disagree, so one model cannot have two names.
 TRITON_SHORT_LABELS = {
+	"gemini-4-neon": "4 Neon",
 	"gemini-4-argon": "4 Argon",
 	"gemini-3.8-flash": "3.8 Flash",
+	"gemini-4-hydrogen": "4 Hydrogen",
 	"gemini-3.5-flash-lite": "3.5 Flash Lite",
 }
 
@@ -248,7 +254,9 @@ def test_fallback_labels_are_the_live_list_s_labels(monkeypatch):
 
 	live = triton_chat._models_from_ids(list(TRITON_GEMINI_CATALOG))
 	assert triton_chat.TRITON_MODELS == live
-	assert [m["label"] for m in live] == ["Auto", "4 Argon", "3.8 Flash", "3.5 Flash Lite"]
+	assert [m["label"] for m in live] == [
+		"Auto", "4 Neon", "4 Argon", "3.8 Flash", "4 Hydrogen", "3.5 Flash Lite",
+	]
 
 
 def test_each_model_has_the_name_the_triton_site_gives_it(monkeypatch):

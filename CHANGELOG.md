@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.840.2] - 2026-11-23
+
+### Changed
+
+- **The Triton widget's fallback model list follows Triton 0.93.0** (sapphirefountains/triton#386),
+  which made Gemini 4 Neon Triton's default, kept Gemini 4 Argon as its 12-month fallback and
+  added Gemini 4 Hydrogen. The picker's fallback, used before Triton's live list arrives and
+  whenever Triton cannot be reached, now offers 4 Neon, 4 Argon, 3.8 Flash, 4 Hydrogen and 3.5
+  Flash Lite, in Triton's order, under Triton's own labels. The pinned copy of Triton's catalog in
+  `tests/test_triton_widget_defaults.py` moves with it. Auto, the widget's default, needed no
+  change: it already answers with whatever Triton's default is. Merge after the Triton PR. If this
+  one lands first, nothing breaks: Triton below 0.93.0 reads a Gemini id it does not list as Auto.
+
+### Fixed
+
+- **The notes on the drafting model's lifecycle were out of date.** `api/gemini.py` and
+  `api/README.md` said `gemini-3.8-flash` retires 45 days after its replacement ships, and that
+  `gemini-3.5-flash` is the 12-month alternative. Google has moved 3.8 Flash to the 12-month
+  lifecycle (retires 2027-09-02 or later, lifecycle table read 2026-11-23), so the constant no
+  longer needs a monthly look. The module docstring now says why `MODEL_ID` stays on 3.8 Flash
+  rather than a Gemini 4 model:
+  - Neon and Hydrogen are short-term models.
+  - Neon is limited to verified enterprise customers and was checked only on Triton's GCP
+    project, not on this one (`sapphire-fountains-poseidon`).
+  - For drafts nobody waits on, 3.8 Flash costs a quarter of Neon and, until 2026-12-31, half
+    of Hydrogen.
+
+  The 404 hint names the lifecycle table rather than "recent Flash models". `MODEL_ID` itself is
+  unchanged, and so is `api/telephony.py`, already on `gemini-3.8-live` since v1.801.1.
+
 ## [1.840.1] - 2026-11-23
 
 ### Fixed

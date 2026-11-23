@@ -60,19 +60,34 @@ so that shape is testable without a network; the regional literal that failed
 for a week was one nobody could exercise.
 
 --------------------------------------------------------------------------
-The model, and why its id will need changing again
+The model, and when its id will need changing
 --------------------------------------------------------------------------
 
-``MODEL_ID`` is Gemini 3.8 Flash (GA 2026-09-02, global endpoint), the fast
-tier Triton answers most turns with. Google's lifecycle table puts the recent
-Flash models (3.6, 3.7, 3.8) in a **short-term** class that retires **45 days
-after a replacement ships**, and a Flash has shipped roughly monthly. A
-retired id is a 404 on every call — safe here, since every caller falls back
-and the Integrations Health tile reports the last narrative's source — but
-this is a constant to revisit when Google announces a Flash, not one to
-forget. The 12-month alternative is ``gemini-3.5-flash`` (retires 2027-05-19
-or later); ``gemini-3.1-pro-preview`` remains the newest Pro and is a public
-preview. Any caller can pin a different id per call with ``model_id``.
+``MODEL_ID`` is Gemini 3.8 Flash (GA 2026-09-02, global endpoint), the model
+Triton's own background work and post-call summaries run on. It launched in
+Google's short-term class, but Google has since moved it to the **12-month**
+lifecycle: it retires **2027-09-02 or later** (lifecycle table, read
+2026-11-23). A retired id is a 404 on every call — safe here, since every
+caller falls back and the Integrations Health tile reports the last
+narrative's source — so it is still a constant to look at when Google posts a
+retirement date, just not monthly any more.
+
+Deliberately not a Gemini 4 model (checked 2026-11-23, when Triton moved its
+chat default to Gemini 4 Neon):
+
+* ``gemini-4-neon`` and ``gemini-4-hydrogen`` are short-term models (no
+  retirement date announced, at least 45 days' notice), and Google limits Neon
+  to "verified enterprise customers in select regions". Triton's project was
+  checked for Neon; ``PROJECT_ID`` here is a different project and was not.
+* Price, for one-shot drafts nobody waits on: per million tokens in / out,
+  3.8 Flash is $0.75 / $3.75 through 2026-12-31, then $1.50 / $7.50. Hydrogen
+  is $1.50 / $7.50 and Neon $3 / $15.
+* ``gemini-4-argon`` is the 12-month Gemini 4 model, at $4 / $20 from
+  2026-12-01.
+
+``gemini-3.1-pro-preview`` is still a preview, and Google's migration guide
+points it at Gemini 4 Neon. Any caller can pin a different id per call with
+``model_id``.
 
 Errors raise plain ``Exception`` so callers can fall back gracefully, and are
 **not** logged here: all five callers already log, so every failure was
@@ -100,9 +115,9 @@ IAM_HINT = (
     "Project Folder Google Drive Settings (it belongs to a different project)."
 )
 MODEL_HINT = (
-    "The model was not found on the global endpoint. Recent Flash models retire 45 days after "
-    "a replacement ships: check Google's model lifecycle table and update MODEL_ID in "
-    "erpnext_enhancements/api/gemini.py."
+    "The model was not found on the global endpoint. Google retires models on the dates in "
+    "its lifecycle table (short-term models 45 days after a replacement ships): check that "
+    "table and update MODEL_ID in erpnext_enhancements/api/gemini.py."
 )
 
 
