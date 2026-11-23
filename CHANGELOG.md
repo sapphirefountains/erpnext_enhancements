@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.840.1] - 2026-11-23
+
+### Fixed
+
+- **One QuickBooks record whose ERPNext name was already taken stopped the QuickBooks change sync
+  for good. It is now set aside for review, and the sync carries on.** Seen on production
+  2026-11-23: the change sync (CDC, every 20 minutes) failed on every run from early afternoon
+  on, and its cursor stayed where it was.
+  - **How it happens.** An ERPNext record's name (its docname) is fixed when the record is
+    created. A QuickBooks Account was imported, then renamed in QuickBooks: the ERPNext
+    account's `account_name` followed the rename, but its docname kept the first name. Someone
+    then created a new QuickBooks Account under the old name. Creating it computes the same
+    docname, and the insert fails with a duplicate primary key.
+  - **Why one record stopped everything.** Frappe reports that as `DuplicateEntryError`, which
+    belongs to Frappe's own `NameError` family, not `ValidationError`. The create path
+    (`mapping._persist_or_manual_review`) caught only `ValidationError`, so the error went
+    past it. `sync.safe_upsert` then rolled the record back and marked it failed. One failed
+    record marks the whole run Failed, and `last_cdc_sync` advances only after a Completed
+    run. So every poll went back to the last good run, replayed every change since, and failed
+    on the same record. That repeats until a person fixes the record by hand.
+  - **What happens now.** On a create, a `DuplicateEntryError` for the record's own row parks
+    it for manual review, like a validation failure. The note names the ERPNext record that
+    already holds the name. When a QuickBooks Sync Mapping links that record, the note also
+    gives that record's QuickBooks type and id (`other_mapping_linking`, the lookup the
+    auto-link and parent-promotion guards already use). The run completes and the cursor moves on.
+  - **What the sync still does not do.** It does not rename the existing record, and it does not
+    make up a different name for the new one. The sync has been link-only since v1.800.0, and
+    which record should change its name is a person's decision. To clear the parked record,
+    rename the old ERPNext record to its current QuickBooks name, then retry the parked one.
+  - **Only the record's own row is parked.** Frappe writes the parent row first and its child
+    rows after it, so a collision on any other row (a child table row, or another record that a
+    hook inserts) can come after the new record was already written. Parking returns normally,
+    so `safe_upsert` would keep that record with no mapping: a silent duplicate. Those cases,
+    and a `DuplicateEntryError` without the `(doctype, name, error)` arguments Frappe raises it
+    with (`frappe/model/document.py` `db_insert`, v16.60.2), still fail and roll back as before.
+    The save path is unchanged, and `TimestampMismatchError` is still re-raised for the retry.
+  - **Nothing else in the create path raises it.** `_drop_self_parent_account` only drops a key
+    from the mapped values. Promoting a parent Account in `_ensure_group_parent` is a save, and
+    Frappe's `db_update` never raises `DuplicateEntryError`. The mapping inserts in
+    `save_mapping` and `save_manual_review_mapping` are named `QBO-MAP-<type>-<id>`, so they can
+    collide only with a concurrent run, and CDC runs are serialized. They are left to fail and
+    roll back.
+  - **Tests.** `tests/test_quickbooks_link_only.py` reproduces the case through `safe_upsert`.
+    The record is parked, the mapping is recorded with the note, there is no rollback and no
+    Error Log, and the run log finishes Completed. Further cases: the note when nothing links
+    the record, collisions on other rows (still failures), the save path (unchanged), and other
+    exceptions (untouched). The bench-free frappe stub now has `DuplicateEntryError` outside
+    `ValidationError`, as Frappe does, and the test asserts it, so it cannot pass by accident.
+    The suite already runs in its own `python -m pytest` step in `ci.yml`.
+
 ## [1.840.0] - 2026-11-23
 
 ### Added

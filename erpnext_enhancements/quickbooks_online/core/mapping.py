@@ -4688,6 +4688,19 @@ def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpn
 	Shared body of ``_save_or_manual_review`` (save) and ``_insert_or_manual_review``
 	(insert). ``TimestampMismatchError`` (a transient concurrency error) is re-raised
 	so the caller's retry path handles it rather than mis-parking a good record.
+
+	**An insert whose docname is already taken is parked too (v1.840.1).** Frappe raises
+	``DuplicateEntryError`` for a primary-key collision, and that is a ``NameError`` in
+	frappe's hierarchy, not a ``ValidationError``, so it went straight past the catch
+	below. ``safe_upsert`` then failed the record, one failed record fails the CDC run,
+	and ``last_cdc_sync`` advances only on a Completed run: every 20-minute poll replayed
+	the same window and failed on the same record until a person stepped in. The
+	common way in is a QuickBooks record renamed after it was imported -- its ERPNext
+	docname keeps the first name -- followed by a new QuickBooks record under the old
+	name. The sync is link-only (v1.800.0), so it neither renames the existing record
+	nor invents a new name: it parks this one and says which record holds the name
+	(``_name_collision_reason``). The save path is untouched: an UPDATE cannot collide on
+	the primary key, and a save that raises it anyway is re-raised as before.
 	"""
 	# Normalise any scheme-less URL the record carries (typically a pre-existing
 	# Customer/Supplier website) so the whole-doc re-validation doesn't reject it.
@@ -4721,6 +4734,67 @@ def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpn
 			"qbo_id": qbo_id,
 			"reason": message,
 		}
+	except Exception as exc:
+		if not insert or not _is_own_name_collision(exc, erpnext_doctype, doc):
+			raise
+		message = _name_collision_reason(entity_type, qbo_id, erpnext_doctype, doc.name)
+		save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [message])
+		return {
+			"action": "manual_review",
+			"doctype": erpnext_doctype,
+			"name": doc.name,
+			"qbo_id": qbo_id,
+			"reason": message,
+		}
+
+
+def _is_own_name_collision(exc, erpnext_doctype: str, doc) -> bool:
+	"""True only for the ``DuplicateEntryError`` of ``doc``'s own row.
+
+	Frappe raises it from ``db_insert`` as ``DuplicateEntryError(doctype, name, error)``
+	(``frappe/model/document.py``, read at v16.60.2). The parent row is inserted first and
+	its child rows after it, so a collision that names a different doctype or name is one
+	the parent row already landed before: parking that would leave the new record in the
+	transaction with no mapping (``safe_upsert``'s savepoint is rolled back only on a
+	raise), which is the silent duplicate the savepoint exists to prevent. Those stay
+	raised, and so does anything that does not carry the arguments this expects. Looked
+	up with ``getattr``, as ``attachments._is_duplicate_row`` does, so a frappe stub that
+	lacks the class is a plain "no".
+	"""
+	duplicate = getattr(frappe.exceptions, "DuplicateEntryError", None)
+	if not duplicate or not isinstance(exc, duplicate):
+		return False
+	name = getattr(doc, "name", None)
+	args = getattr(exc, "args", None) or ()
+	return bool(name) and len(args) >= 2 and args[0] == erpnext_doctype and args[1] == name
+
+
+def _name_collision_reason(entity_type: str, qbo_id: str, erpnext_doctype: str, name: str) -> str:
+	"""The manual-review note for a create whose ERPNext name is already taken.
+
+	Names the record that holds the name and, when a QuickBooks Sync Mapping links it, the
+	QuickBooks record it belongs to: that is the whole diagnosis a person needs, and the
+	name alone does not give it, because a record renamed in QuickBooks still shows its
+	first name in ERPNext. ``other_mapping_linking`` is the same lookup the auto-link and
+	parent-promotion guards use (``erpnext_doctype`` + ``erpnext_name``, this record's own
+	mapping and a job consolidated onto a Customer not counted).
+	"""
+	other = other_mapping_linking(erpnext_doctype, name, entity_type, qbo_id)
+	if other:
+		return (
+			f"Cannot create {erpnext_doctype} '{name}': that name is already taken by the "
+			f"{erpnext_doctype} linked to QuickBooks {getattr(other, 'qbo_entity_type', '')} "
+			f"{getattr(other, 'qbo_id', '')}. A QuickBooks record renamed after it was imported keeps "
+			f"its first name in ERPNext, so a new QuickBooks record under the old name collides with it. "
+			f"The sync does not rename records: rename '{name}' in ERPNext to match QuickBooks, then retry "
+			f"this record."
+		)
+	return (
+		f"Cannot create {erpnext_doctype} '{name}': a {erpnext_doctype} with that name already exists "
+		f"and no QuickBooks record is linked to it. If it is the same record as this QuickBooks "
+		f"{entity_type}, link the two on the Record Matching page; if not, rename one of them, then "
+		f"retry this record."
+	)
 
 
 def _root_account_for_type(root_type, settings):

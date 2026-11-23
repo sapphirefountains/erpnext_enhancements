@@ -3848,3 +3848,197 @@ def test_the_changelog_and_readme_explain_the_third_review():
 def test_it_is_wired_into_ci_on_a_pytest_step():
 	ci = _read(REPO / ".github" / "workflows" / "ci.yml")
 	assert "python -m pytest erpnext_enhancements/tests/test_quickbooks_link_only.py" in ci
+
+
+# ---------------------------------------------------------------------------
+# A create whose ERPNext name is already taken (v1.840.1)
+# ---------------------------------------------------------------------------
+
+
+TAKEN_NAME = "Card Account (1234) - MC"
+NEW_CARD_PAYLOAD = {"Id": "357", "Name": "Card Account (1234)", "SyncToken": "0"}
+
+
+def _duplicate(frappe, doctype, name):
+	"""What frappe's ``db_insert`` raises on a primary-key collision: ``DuplicateEntryError(
+	doctype, name, error)`` (``frappe/model/document.py``, v16.60.2)."""
+	return frappe.exceptions.DuplicateEntryError(
+		doctype, name, Exception(1062, f"Duplicate entry '{name}' for key 'PRIMARY'")
+	)
+
+
+def _colliding_account(monkeypatch, *, holder_links, error=None):
+	"""A new QuickBooks credit-card Account named what another QuickBooks Account was called
+	when it was imported. That one has been renamed in QuickBooks since, and its ERPNext
+	``account_name`` followed, but an ERPNext docname never moves -- so this create computes
+	``TAKEN_NAME`` and frappe's insert raises. The production case of 2026-11-23, which froze
+	the CDC cursor for every poll after it."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping, sync
+
+	values = {
+		"account_name": "Card Account (1234)",
+		"parent_account": "Credit Cards - MC",
+		"is_group": 0,
+		"root_type": "Liability",
+		"company": "Main Co",
+	}
+	events = {"parked": [], "save_mapping": [], "rollbacks": [], "logged": [], "lookups": []}
+	doc = _doc(doctype="Account", name=TAKEN_NAME)
+	raised = error(frappe) if error else _duplicate(frappe, "Account", TAKEN_NAME)
+
+	def insert(**kwargs):
+		raise raised
+
+	doc.insert = insert
+
+	def get_all(doctype, filters=None, **kwargs):
+		if doctype != "QuickBooks Sync Mapping":
+			return []
+		filters = dict(filters or {})
+		events["lookups"].append(filters)
+		if (filters.get("erpnext_doctype"), filters.get("erpnext_name")) == ("Account", TAKEN_NAME):
+			return _mapping_rows(holder_links, filters)
+		return []
+
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Account", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: None)
+	monkeypatch.setattr(mapping, "find_existing_match", lambda *args: None)
+	monkeypatch.setattr(mapping, "_ensure_group_parent", lambda *args: None)
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: events["parked"].append(args))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: events["save_mapping"].append(args))
+	monkeypatch.setattr(frappe, "get_all", get_all)
+	monkeypatch.setattr(frappe, "new_doc", lambda doctype: doc, raising=False)
+	monkeypatch.setattr(frappe.db, "exists", lambda *args, **kwargs: False, raising=False)
+	monkeypatch.setattr(
+		frappe.db, "rollback", lambda save_point=None: events["rollbacks"].append(save_point), raising=False
+	)
+	monkeypatch.setattr(
+		frappe, "log_error", lambda *args, **kwargs: events["logged"].append(args), raising=False
+	)
+	return frappe, mapping, sync, events
+
+
+def _run_log():
+	log = types.SimpleNamespace(name="QBO-SYNC-1", status="Running", failed_count=0, manual_review_count=0)
+	log.save = lambda **kwargs: None
+	return log
+
+
+def test_a_create_whose_name_is_taken_parks_for_review_and_the_cdc_run_completes(monkeypatch):
+	"""``DuplicateEntryError`` is frappe's ``NameError``, not a ``ValidationError``, so it went
+	past the create path's catch: ``safe_upsert`` failed the record, the run ended Failed, and
+	``last_cdc_sync`` -- written only on a Completed run -- stayed put, so every 20-minute poll
+	replayed the window and failed on the same record. Now the record is parked with a note
+	saying which QuickBooks record holds the name, and the run completes."""
+	frappe, _mapping, sync, events = _colliding_account(monkeypatch, holder_links=[_link("Account", "351")])
+	# The stub is only an honest witness if it keeps frappe's hierarchy.
+	assert not issubclass(frappe.exceptions.DuplicateEntryError, frappe.exceptions.ValidationError)
+
+	result = sync.safe_upsert("Account", dict(NEW_CARD_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "manual_review"
+	assert result["doctype"] == "Account" and result["qbo_id"] == "357"
+	reason = result["reason"]
+	assert f"'{TAKEN_NAME}'" in reason, "the note names the record that holds the name"
+	assert "QuickBooks Account 351" in reason, "and the QuickBooks record it is linked to"
+	assert "does not rename records" in reason
+	assert events["lookups"] == [{"erpnext_doctype": "Account", "erpnext_name": TAKEN_NAME}]
+
+	# The mapping is recorded for review, with the note as its issue; no link is written.
+	assert len(events["parked"]) == 1
+	entity_type, qbo_id, payload, doctype, issues = events["parked"][0]
+	assert (entity_type, qbo_id, doctype, issues) == ("Account", "357", "Account", [reason])
+	assert payload["Id"] == "357"
+	assert events["save_mapping"] == []
+
+	# Not a failed record: no rollback, no Error Log -- and so the run completes.
+	assert events["rollbacks"] == [] and events["logged"] == []
+	log = _run_log()
+	sync._track_result(log, result)
+	sync.finish_log(log)
+	assert (log.status, log.failed_count, log.manual_review_count) == ("Completed", 0, 1)
+
+
+def test_a_taken_name_no_quickbooks_record_links_says_so(monkeypatch):
+	"""With no mapping on the record that holds the name, the note says that instead, and
+	points at the Record Matching page in case it is the same record."""
+	_frappe, mapping, _sync, events = _colliding_account(monkeypatch, holder_links=[])
+
+	result = mapping.upsert_entity("Account", dict(NEW_CARD_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "manual_review"
+	assert f"'{TAKEN_NAME}'" in result["reason"]
+	assert "no QuickBooks record is linked to it" in result["reason"]
+	assert "Record Matching page" in result["reason"]
+	assert len(events["parked"]) == 1 and events["save_mapping"] == []
+
+
+@pytest.mark.parametrize(
+	"error",
+	[
+		# A child row: the parent row is inserted first, so it is already in the transaction.
+		lambda frappe: _duplicate(frappe, "Journal Entry Account", "a1b2c3d4e5"),
+		# Another Account's row, from a hook the insert set off.
+		lambda frappe: _duplicate(frappe, "Account", "Another Account - MC"),
+		# Not the shape frappe raises: nothing here can say whose row it was.
+		lambda frappe: frappe.exceptions.DuplicateEntryError("Duplicate entry"),
+	],
+)
+def test_a_collision_that_is_not_the_records_own_row_still_fails_and_rolls_back(monkeypatch, error):
+	"""Only the record's own row is parked. Any other collision may come after the parent
+	row landed, and parking returns normally, so ``safe_upsert`` would keep that row with no
+	mapping -- the silent duplicate its savepoint exists to prevent. Those stay failures."""
+	_frappe, _mapping, sync, events = _colliding_account(monkeypatch, holder_links=[], error=error)
+
+	result = sync.safe_upsert("Account", dict(NEW_CARD_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "failed"
+	assert events["rollbacks"] == ["qbo_upsert"] and len(events["logged"]) == 1
+	assert events["parked"] == [] and events["save_mapping"] == []
+
+
+def test_the_save_path_still_raises_a_duplicate_entry(monkeypatch):
+	"""The update path is unchanged: a save cannot collide on the primary key, and one that
+	raises ``DuplicateEntryError`` anyway is re-raised, not parked."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	parked = []
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: parked.append(args))
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	doc = _doc(doctype="Account", name=TAKEN_NAME)
+	error = _duplicate(frappe, "Account", TAKEN_NAME)
+
+	def save(**kwargs):
+		raise error
+
+	doc.save = save
+	with pytest.raises(frappe.exceptions.DuplicateEntryError):
+		mapping._save_or_manual_review("Account", "351", {"Id": "351"}, "Account", doc)
+	assert parked == []
+
+
+def test_an_insert_that_raises_something_else_is_left_alone(monkeypatch):
+	"""The new clause catches ``Exception`` to look at it; anything it does not recognise
+	leaves exactly as it arrived, and a concurrency conflict is still re-raised for the
+	retry path."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	parked = []
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *args: parked.append(args))
+	monkeypatch.setattr(mapping, "_heal_invalid_urls", lambda doc: [])
+	for error in (ValueError("bad"), frappe.exceptions.TimestampMismatchError("modified after open")):
+		doc = _doc(doctype="Account", name=TAKEN_NAME)
+
+		def insert(error=error, **kwargs):
+			raise error
+
+		doc.insert = insert
+		with pytest.raises(type(error)) as caught:
+			mapping._insert_or_manual_review("Account", "357", {"Id": "357"}, "Account", doc)
+		assert caught.value is error
+	assert parked == []
