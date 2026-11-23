@@ -52,11 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draft schedules* is ticked, because a draft is not a contract yet.
 - **The reports read live figures.** There is no as-of or month-end view, and no company or
   date-range filter yet.
-- **Progress Billing card** on the Project Enhancements workspace: Schedule of Values, Pay
-  Application and the three reports. The workspace JSON's `modified` is bumped, and a post-model-sync
-  patch, `resync_project_enhancements_workspace_billing`, force-reloads it. Workspaces are
-  timestamp-gated, so a row edited in the Desk would otherwise keep the file out for good. The patch
-  never raises (one Error Log row) and is safe to run twice.
+- **Progress Billing card** on the Project Enhancements workspace and, at Nik's request ("Yes
+  finance hub too", 2026-11-23), on the **Finance Hub**. The card links Schedule of Values, Pay
+  Application and the three reports. The Finance Hub is limited to Accounts Manager, Accounts User,
+  Finance Team and System Manager, and every one of those roles may open all three reports (a test
+  holds this).
+  - Both workspace JSONs have `modified` bumped, and a post-model-sync patch,
+    `resync_progress_billing_workspaces`, force-reloads each one. Workspaces are timestamp-gated, so
+    a row edited in the Desk would otherwise keep the file out for good.
+  - The patch never raises (one Error Log row per workspace) and is safe to run twice.
 - **Prod effects on migrate:** three new Report records, the workspace re-sync and nothing else. No
   schema change and no data written.
 

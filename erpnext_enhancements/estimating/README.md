@@ -210,8 +210,9 @@ Receivable is B8's, and sales tax is unchanged until the CPA confirms WI-036.
 
 ### Progress-billing reports (B9 follow-up)
 
-Three Script Reports, on the **Progress Billing** card of the Project Enhancements workspace with the
-Schedule of Values and the Pay Application:
+Three Script Reports, on the **Progress Billing** card of the Project Enhancements workspace and the
+Finance Hub, with the Schedule of Values and the Pay Application (every Finance Hub role opens all
+three):
 
 | Report | Rows | Roles (each may report on the reference doctype) |
 |---|---|---|

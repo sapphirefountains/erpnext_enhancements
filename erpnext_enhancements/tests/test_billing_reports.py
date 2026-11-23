@@ -380,17 +380,38 @@ class TestReportDefinitions(unittest.TestCase):
 		for name in ("Retainage Held", "Billed vs Scheduled"):
 			self.assertIn("_total(rows)", report(name)[1], name)
 
-	def test_the_workspace_card_links_every_report(self):
-		path = os.path.join(
-			APP, "project_enhancements", "workspace", "project_enhancements", "project_enhancements.json"
-		)
-		with open(path, encoding="utf-8") as fh:
-			ws = json.load(fh)
-		reports = {
-			l["link_to"] for l in ws["links"] if l.get("link_type") == "Report" and l.get("is_query_report")
-		}
-		self.assertTrue(set(NAMES) <= reports)
-		self.assertGreaterEqual(ws["modified"], "2026-11-23")
+	def test_both_workspace_cards_link_every_report(self):
+		# Project Enhancements, and the Finance Hub (Nik, 2026-11-23: "Yes finance hub too")
+		for module, name in (
+			("project_enhancements", "project_enhancements"),
+			("accounting_intake", "finance_hub"),
+		):
+			with open(os.path.join(APP, module, "workspace", name, name + ".json"), encoding="utf-8") as fh:
+				ws = json.load(fh)
+			card = [
+				l for l in ws["links"] if l.get("type") == "Card Break" and l["label"] == "Progress Billing"
+			]
+			self.assertEqual(len(card), 1, name)
+			reports = {
+				l["link_to"]
+				for l in ws["links"]
+				if l.get("link_type") == "Report" and l.get("is_query_report")
+			}
+			self.assertTrue(set(NAMES) <= reports, name)
+			self.assertGreaterEqual(ws["modified"], "2026-11-23", name)
+			# a hub restricted to roles shows the card to them only: each must open every report on it
+			for role in [r["role"] for r in ws.get("roles") or []]:
+				for report_name in NAMES:
+					doc, _src = report(report_name)
+					self.assertIn(
+						role, [r["role"] for r in doc["roles"]], f"{name}: {role} cannot open {report_name}"
+					)
+		with open(
+			os.path.join(APP, "patches", "resync_progress_billing_workspaces.py"), encoding="utf-8"
+		) as fh:
+			patch = fh.read()
+		self.assertIn('("accounting_intake", "finance_hub")', patch)
+		self.assertIn('("project_enhancements", "project_enhancements")', patch)
 
 
 if __name__ == "__main__":
