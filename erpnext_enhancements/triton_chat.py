@@ -63,10 +63,11 @@ _TOKEN_REFRESH_MARGIN_SEC = 120
 #      own schedule and Triton's catalog follows; a pinned id here is wrong
 #      again at the next retirement, and Auto never is.
 #   2. It already resolves to the model Triton's owner chose as the default. An
-#      Auto turn is answered by Triton's default chat model (`gemini-4-argon` at
-#      medium reasoning since Triton 0.83.0, `DEFAULT_CHAT_MODEL_ID` in its
-#      `core/model_catalog.py`), with a trivial one-line lookup still going to
-#      the lite tier. Pinning that same id here would buy nothing.
+#      Auto turn is answered by Triton's default chat model (`gemini-4-neon` at
+#      medium reasoning since Triton 0.93.0, `gemini-4-argon` from 0.83.0;
+#      `DEFAULT_CHAT_MODEL_ID` in its `core/model_catalog.py`), with a trivial
+#      one-line lookup still going to the lite tier. Pinning that same id here
+#      would buy nothing, and Auto followed the move to Neon with no change here.
 #   3. Pinning costs something. An explicit model on a request is what moves a
 #      Triton turn off its deployed agent and onto the in-process path, so a
 #      pinned default would do that to every turn of every user.
@@ -80,16 +81,23 @@ _DEFAULT_MODEL = ""
 # truth lives in the Triton repository, `backend/app/core/model_catalog.py`
 # (`MODELS`, the Google provider) -- which is exactly what
 # `GET /api/v1/assistant/models` returns. This copy is only as good as the day
-# it was made (2026-11-11, Triton 0.86.0), so
+# it was made (2026-11-23, Triton 0.93.0), so
 # `tests/test_triton_widget_defaults.py` holds a pinned copy of the catalog
 # and fails the build when an id here is not in it.
 #
 # It went stale once already. Until v1.801.1 it offered `gemini-3.1-pro-preview`
 # as "Pro", an id Triton dropped in 0.83.0 (2026-11-11) along with
 # `gemini-3.5-flash`, and it had no entry for the model Triton now answers with.
+#
+# Triton 0.93.0 made Gemini 4 Neon the default, kept Argon as its 12-month
+# fallback, and added Gemini 4 Hydrogen as a pick. Offering Neon or Hydrogen
+# to a Triton older than 0.93.0 is harmless: Triton reads a Gemini id it does
+# not list as Auto rather than refusing the turn.
 TRITON_FALLBACK_MODEL_IDS = (
+    "gemini-4-neon",
     "gemini-4-argon",
     "gemini-3.8-flash",
+    "gemini-4-hydrogen",
     "gemini-3.5-flash-lite",
 )
 
@@ -97,7 +105,7 @@ TRITON_FALLBACK_MODEL_IDS = (
 def _pretty_model_label(model_id: str) -> str:
     """Turn a raw model id into a short picker label.
 
-    "gemini-4-argon" -> "4 Argon", "gemini-3.8-flash" -> "3.8 Flash",
+    "gemini-4-neon" -> "4 Neon", "gemini-3.8-flash" -> "3.8 Flash",
     "gemini-3.5-flash-lite" -> "3.5 Flash Lite".
 
     The ONE labeling rule for this widget: the live list and the fallback list
