@@ -50,7 +50,9 @@ def execute(filters=None):
 	# A Check left unticked is never sent (query_report.js get_filter_values drops every falsy value), so
 	# the box is "include jobs holding nothing", off by default: absent means holding only.
 	holding_only = not cint(filters.get("include_empty"))
-	return columns(), br.retainage_rows(schedules, certified, holding_only=holding_only)
+	rows = br.retainage_rows(schedules, certified, holding_only=holding_only)
+	# Our own total row: frappe's would average the percent column (billing_reports module docstring).
+	return columns(), [*rows, br.retainage_total(rows)] if rows else rows
 
 
 def columns():

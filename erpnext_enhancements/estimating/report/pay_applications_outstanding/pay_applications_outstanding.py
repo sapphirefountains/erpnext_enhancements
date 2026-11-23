@@ -8,11 +8,13 @@ Two kinds of row, longest waiting first (:func:`erpnext_enhancements.estimating.
 * an application still **open**, as a draft with the project manager or **To Review** with
   accounting, with the days since its period ended;
 * a **locked** schedule with nothing open whose last certified application's period ended more than
-  the reminder window ago ("Due"), or that has never had one ("Not started"). A closed schedule is
-  billed out and never listed.
+  the reminder window ago ("Due"), or that has never had one ("Not started", aged from the day it was
+  locked). A closed schedule is billed out and never listed, and a job billed by milestones is never
+  "Due" by the calendar.
 
-Read with ``frappe.get_list`` and only permlevel 0 fields: the amount certified is accounting's
-(permlevel 1), so the column here is the payment due.
+Read with ``frappe.get_list`` and only permlevel 0 fields. The column is the payment due: every role
+on this report could read the amount certified (permlevel 1) too, but an open application has none
+yet, and keeping to level 0 means the report never depends on who holds level 1.
 """
 
 import frappe
@@ -21,7 +23,7 @@ from frappe.utils import cint, getdate, nowdate
 
 from erpnext_enhancements.estimating import billing_reports as br
 
-SOV_FIELDS = ["name", "project", "customer", "status"]
+SOV_FIELDS = ["name", "project", "customer", "status", "billing_mode", "locked_on"]
 APP_FIELDS = [
 	"name",
 	"schedule_of_values",

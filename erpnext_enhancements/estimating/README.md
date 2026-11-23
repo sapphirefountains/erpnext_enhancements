@@ -216,14 +216,20 @@ Schedule of Values and the Pay Application:
 | Report | Rows | Roles (each may report on the reference doctype) |
 |---|---|---|
 | **Retainage Held** (ref Schedule of Values) | One per schedule holding retainage (or every one): held, released to date, held as a percent of billed, its latest certified application | the schedule's readers who also read Pay Application: System Manager, Projects Manager, Project Manager, Finance Team, Executive Team, Accounts Manager, Accounts User |
-| **Pay Applications Outstanding** (ref Pay Application) | Applications still open (Draft, To Review) with days since their period ended; locked jobs whose last certified period ended more than *Due after* days ago (default 30) or that never had one. A closed schedule never shows | the Pay Application roles above |
-| **Billed vs Scheduled** (ref Schedule of Values) | With a schedule picked, its lines by top phase (change orders last; a line by others counts nowhere) or one per line; without, one per schedule | the Schedule of Values roles, Estimator included |
+| **Pay Applications Outstanding** (ref Pay Application) | Applications still open (Draft, To Review) with days since their period ended; locked jobs whose last certified period ended more than *Due after* days ago (default 30), or that never had one (aged from the day they were locked). A closed schedule never shows, and a job billed by milestones is never "Due" by the calendar | the Pay Application roles above |
+| **Billed vs Scheduled** (ref Schedule of Values) | With a schedule picked, its lines by top phase (change orders last; a line by others counts nowhere) or one per line; without, one per locked or closed schedule (drafts on request) | the Schedule of Values roles, Estimator included |
 
 The arithmetic is [`billing_reports.py`](billing_reports.py) (no frappe), in whole cents. The reports
 read through `frappe.get_list`, so a person sees only the jobs they may read, and **read permlevel 0
 fields only**: a Script Report runs server-side, where the field-level read checks (1.835.0) do not
 reach, so `tests/test_billing_reports.py` holds every field they read to permlevel 0 (the amount
-certified is accounting's, so Outstanding shows the payment due). None has a print format.
+certified, permlevel 1, is left out of Outstanding: it shows the payment due). None has a print
+format. **Total rows are the reports' own**, computed from cents: frappe's total row averages a
+Percent column (`report_column_total` and `query_report.add_total_row` at v16.60.2), so it is off.
+
+**They read live figures.** There is no as-of or month-end view: each run shows the schedules and
+applications as they stand, and the retainage figures from each schedule's latest certified
+application. There is no company or date-range filter yet.
 
 ## Tests (bench-free, in CI)
 

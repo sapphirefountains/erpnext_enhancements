@@ -113,6 +113,14 @@ class TestRetainageHeld(unittest.TestCase):
 			(0.0, 250.0, "Final"),
 		)
 
+	def test_the_total_row_weights_the_percent(self):
+		rows = br.retainage_rows(self.SCHEDULES, self.CERTIFIED)
+		total = br.retainage_total(rows)
+		# 600.01 held on 9,000 billed is 6.67%; the mean of the rows' 10.0% and 5.0% would be 7.5%
+		self.assertEqual((total["retainage_held"], total["billed_to_date"]), (600.01, 9000.0))
+		self.assertEqual(total["held_percent_of_billed"], 6.67)
+		self.assertEqual(total["status"], "Total")
+
 	def test_nothing_billed_is_no_percent(self):
 		rows = br.retainage_rows([{"name": "SOV-9", "retainage_held": 10, "billed_to_date": 0}], [])
 		self.assertIsNone(rows[0]["held_percent_of_billed"])
@@ -124,7 +132,12 @@ class TestOutstanding(unittest.TestCase):
 		{"name": "SOV-1", "project": "PRJ-1", "status": "Locked"},  # an open draft
 		{"name": "SOV-2", "project": "PRJ-2", "status": "Locked"},  # last certified long ago: due
 		{"name": "SOV-3", "project": "PRJ-3", "status": "Locked"},  # certified recently: nothing to do
-		{"name": "SOV-4", "project": "PRJ-4", "status": "Locked"},  # never billed
+		{
+			"name": "SOV-4",
+			"project": "PRJ-4",
+			"status": "Locked",
+			"locked_on": "2026-11-20 09:00:00",
+		},  # never billed
 		{"name": "SOV-5", "project": "PRJ-5", "status": "Closed"},  # billed out
 	]
 	APPS = [
@@ -175,6 +188,7 @@ class TestOutstanding(unittest.TestCase):
 
 	def test_open_due_and_not_started(self):
 		rows = br.outstanding_rows(self.SCHEDULES, self.APPS, self.TODAY)
+		self.assertEqual(rows[-1]["days_waiting"], 10)  # not started: days since it was locked
 		self.assertEqual(
 			[(r["state"], r["schedule_of_values"]) for r in rows],
 			[("Due", "SOV-2"), ("To Review", "SOV-1"), ("Not started", "SOV-4")],
@@ -185,6 +199,14 @@ class TestOutstanding(unittest.TestCase):
 			(review["days_waiting"], review["current_payment_due"], review["application_type"]),
 			(15, 1234.5, "Progress"),
 		)
+
+	def test_a_milestone_job_is_never_due_by_the_calendar(self):
+		schedules = [
+			{"name": "SOV-2", "status": "Locked", "billing_mode": "Milestones"},
+			{"name": "SOV-4", "status": "Locked", "billing_mode": "Milestones", "locked_on": "2026-11-01"},
+		]
+		rows = br.outstanding_rows(schedules, self.APPS, self.TODAY)
+		self.assertEqual([(r["state"], r["schedule_of_values"]) for r in rows], [("Not started", "SOV-4")])
 
 	def test_the_window_decides_due(self):
 		rows = br.outstanding_rows(self.SCHEDULES, self.APPS, self.TODAY, due_after_days=10)
@@ -265,6 +287,15 @@ class TestBilledVsScheduled(unittest.TestCase):
 		# the groups add up to every line in whole cents
 		self.assertEqual(sum(round(r["scheduled_value"] * 100) for r in rows), 365072)
 
+	def test_the_total_row_weights_the_percent(self):
+		# 950 billed of 3,650.72 is 26.02%, whichever way the rows are cut; a line by others adds nothing
+		for group_by in ("Phase", "Line"):
+			total = br.billed_total(br.billed_rows(self.LINES, group_by))
+			self.assertEqual(
+				(total["label"], total["scheduled_value"], total["billed_to_date"]), ("Total", 3650.72, 950.0)
+			)
+			self.assertEqual((total["percent_billed"], total["balance"]), (26.02, 2700.72), group_by)
+
 	def test_one_row_per_line(self):
 		rows = br.billed_rows(self.LINES, "Line")
 		self.assertEqual([r["label"] for r in rows][:2], ["1.1 Schematic design", "1.2 Project management"])
@@ -340,6 +371,14 @@ class TestReportDefinitions(unittest.TestCase):
 				readers = {p["role"] for p in perms if p.get("read") and not p.get("permlevel")}
 				for role in doc["roles"]:
 					self.assertIn(role["role"], readers, f"{name}: {role['role']} cannot read {doctype}")
+
+	def test_frappe_never_totals_a_percent(self):
+		# frappe's total row averages a Percent column, so the reports append their own
+		for name in NAMES:
+			doc, src = report(name)
+			self.assertEqual(doc["add_total_row"], 0, name)
+		for name in ("Retainage Held", "Billed vs Scheduled"):
+			self.assertIn("_total(rows)", report(name)[1], name)
 
 	def test_the_workspace_card_links_every_report(self):
 		path = os.path.join(

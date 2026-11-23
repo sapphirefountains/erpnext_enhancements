@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     closed schedule is billed out and never shows.
   - **Billed vs Scheduled:** with a schedule picked, its lines by top phase (change orders last) or
     one row per line, giving billed to date against scheduled value, the percent and the balance.
-    Without a schedule, one row per job.
+    Without a schedule, one row per locked or closed job.
   - The arithmetic is `estimating/billing_reports.py`, a pure module in whole cents, tested without
     a bench in `tests/test_billing_reports.py` (its own CI step).
 - **Each report admits only roles that may run a report on its reference doctype.** frappe refuses
@@ -35,8 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Retainage Held. The test holds both rules against the doctype JSON.
 - **Only permlevel 0 fields are read.** A Script Report runs server-side, where the field-level read
   checks (1.835.0) do not reach, so the rule is kept in the reports and the test holds every field
-  they read to it. Outstanding shows the payment due, not the amount certified, which is
-  accounting's (permlevel 1). No report has a print format.
+  they read to it.
+  - Outstanding shows the payment due rather than the amount certified. Every role on it could read
+    that permlevel 1 field, but an open application has none yet, and staying at level 0 keeps the
+    report independent of who holds level 1.
+  - No report has a print format.
+- **The total rows are the reports' own, computed from cents.** At v16.60.2, frappe's total row,
+  both on screen (`report_column_total`) and exported (`query_report.add_total_row`), takes a plain
+  mean of a Percent column. Held as a percent of billed across jobs, or percent billed across
+  phases, would be an average of percentages. So `add_total_row` is off and each report appends
+  total held ÷ total billed, or total billed ÷ total scheduled.
+- **A job billed by milestones is never "Due" by the calendar.** Between milestones there is nothing
+  to bill. It shows in Outstanding only with an application open, or as "Not started". A "Not
+  started" job is aged from the day it was locked.
+- **Billed vs Scheduled leaves draft schedules out** of its one-row-per-job view unless *Include
+  draft schedules* is ticked, because a draft is not a contract yet.
+- **The reports read live figures.** There is no as-of or month-end view, and no company or
+  date-range filter yet.
 - **Progress Billing card** on the Project Enhancements workspace: Schedule of Values, Pay
   Application and the three reports. The workspace JSON's `modified` is bumped, and a post-model-sync
   patch, `resync_project_enhancements_workspace_billing`, force-reloads it. Workspaces are

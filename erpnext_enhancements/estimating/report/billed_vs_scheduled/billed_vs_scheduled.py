@@ -12,6 +12,7 @@ permission checks and only permlevel 0 fields (a schedule of values has no other
 
 import frappe
 from frappe import _
+from frappe.utils import cint
 
 from erpnext_enhancements.estimating import billing_reports as br
 
@@ -34,12 +35,16 @@ def execute(filters=None):
 		sov = frappe.get_doc("Schedule of Values", filters.get("schedule_of_values"))
 		sov.check_permission("read")
 		lines = [{f: row.get(f) for f in LINE_FIELDS} for row in sov.lines]
-		return line_columns(), br.billed_rows(lines, filters.get("group_by") or "Phase")
-	where = {}
+		rows = br.billed_rows(lines, filters.get("group_by") or "Phase")
+		# Our own total row: frappe's would average the percent column (billing_reports docstring).
+		return line_columns(), [*rows, br.billed_total(rows)] if rows else rows
+	# A draft schedule is not a contract yet; it shows only when asked (an unticked box is never sent).
+	where = {} if cint(filters.get("include_drafts")) else {"status": ["in", ["Locked", "Closed"]]}
 	if filters.get("project"):
 		where["project"] = filters.get("project")
 	schedules = frappe.get_list("Schedule of Values", filters=where, fields=SOV_FIELDS, limit_page_length=0)
-	return summary_columns(), br.schedule_summary_rows(schedules)
+	rows = br.schedule_summary_rows(schedules)
+	return summary_columns(), [*rows, br.billed_total(rows)] if rows else rows
 
 
 def _money_columns():
