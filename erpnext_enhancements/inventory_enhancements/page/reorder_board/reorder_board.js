@@ -38,6 +38,8 @@ frappe.pages["reorder-board"].on_page_show = function (wrapper) {
 const ROB_PAGE = "reorder-board";
 const ROB_API = "erpnext_enhancements.api.reorder_board.";
 const ROB_VIEWS = ["needs", "on-order", "snoozed", "levels"];
+// The most places a line lists before "and n more" (where_parts).
+const ROB_MAX_PLACES = 6;
 
 // The page's decisions, without the DOM. Tests load this file under node (tests/test_reorder_board.py).
 const ROB = {
@@ -162,6 +164,49 @@ const ROB = {
 
 	direction_label(direction) {
 		return { higher: __("raise"), lower: __("lower"), same: __("same") }[direction] || "";
+	},
+
+	// Where a line's stock is, in words (v1.833.1, TASK-2026-03279). A rule's warehouse is where its request
+	// delivers, not where the stock is: the server's reorder_rules.stock_places lists every place the rule
+	// counts (its scope, the shop's) and every place it does not, and says when the rule's own bin is empty
+	// while the stock sits in another. This only words it. It never says which bin is right.
+	// stock is null for a line with no stock read (the Reorder levels tab).
+	where_parts(line) {
+		const l = line || {};
+		const qty = (p) => `${p.warehouse}: ${ROB.fmt_qty(p.qty)}`;
+		const capped = (list, word) => {
+			const shown = list.slice(0, ROB_MAX_PLACES).map(word);
+			if (list.length > ROB_MAX_PLACES) shown.push(__("and {0} more", [list.length - ROB_MAX_PLACES]));
+			return shown;
+		};
+		const group = l.warehouse_group && l.warehouse_group !== l.warehouse ? l.warehouse_group : "";
+		const places = Array.isArray(l.places) ? l.places : null;
+		const elsewhere = Array.isArray(l.elsewhere) ? l.elsewhere : [];
+		let warning = "";
+		if (places !== null && l.rule_empty) {
+			warning =
+				l.rule_assigned === false
+					? __("Nothing in {0}, and it is not one of this item's bins. Fix the rule or move the stock.", [l.warehouse])
+					: __("Nothing in {0}; the stock is in another bin. Fix the rule or move the stock.", [l.warehouse]);
+		} else if (places !== null && l.rule_assigned === false) {
+			warning = __("{0} is not one of this item's bins in the Bin Manager.", [l.warehouse]);
+		}
+		return {
+			stock:
+				places === null
+					? null
+					: places.length
+						? capped(places, qty)
+						: [group ? __("None on hand in {0}", [group]) : __("None on hand")],
+			reorder_into: __("Reorder into {0}", [l.warehouse]),
+			warning,
+			across: group ? __("projected across {0}", [group]) : "",
+			elsewhere: elsewhere.length
+				? __("Not counted by this rule: {0}", [
+						capped(elsewhere, (p) => (p.for_jobs ? __("{0} (held for jobs)", [qty(p)]) : qty(p))).join(", "),
+					])
+				: "",
+		};
 	},
 };
 
@@ -344,11 +389,20 @@ class ReorderBoardPage {
 			.join(", ")}</div>`;
 	}
 
+	// Where the stock is first, each place on its own line to walk to, then the bin a request delivers to
+	// (v1.833.1, TASK-2026-03279: the cell showed only the rule's bin, and someone checking a count went to a
+	// bin that was empty). A line with no stock read (Reorder levels) shows its rule's warehouse, as before.
 	where(line) {
-		const group = line.warehouse_group && line.warehouse_group !== line.warehouse;
-		return `${this.esc(line.warehouse)}${
-			group ? `<div class="rob-sub">${this.esc(__("projected across {0}", [line.warehouse_group]))}</div>` : ""
-		}`;
+		const w = ROB.where_parts(line);
+		const sub = (text, cls) => (text ? `<div class="rob-sub${cls ? ` ${cls}` : ""}">${this.esc(text)}</div>` : "");
+		if (w.stock === null) return `${this.esc(line.warehouse)}${sub(w.across)}`;
+		return [
+			w.stock.map((text) => `<div class="rob-place">${this.esc(text)}</div>`).join(""),
+			sub(w.reorder_into),
+			sub(w.warning, "rob-mismatch"),
+			sub(w.across),
+			sub(w.elsewhere),
+		].join("");
 	}
 
 	render_needs() {
@@ -401,7 +455,7 @@ class ReorderBoardPage {
 		const count = lines.filter((l) => this.selected.has(l.key)).length;
 		this.$body.html(`
 			<p class="rob-intro">${this.esc(
-				__("At or below the reorder point, with no open request or order. Buy is ERPNext's suggested quantity; change it before you ask.")
+				__("At or below the reorder point, with no open request or order. Buy is ERPNext's suggested quantity; change it before you ask. Where it is lists every bin the rule counts and what each holds; Reorder into is where a request delivers.")
 			)}</p>
 			<div class="rob-scroll">
 				<table class="table table-sm rob-table">
@@ -412,7 +466,7 @@ class ReorderBoardPage {
 								: ""
 						}</th>
 						<th>${this.esc(__("Item"))}</th>
-						<th>${this.esc(__("Warehouse"))}</th>
+						<th>${this.esc(__("Where it is"))}</th>
 						<th class="rob-num">${this.esc(__("On hand"))}</th>
 						<th class="rob-num">${this.esc(__("Projected"))}</th>
 						<th class="rob-num">${this.esc(__("Reorder at"))}</th>
@@ -540,7 +594,7 @@ class ReorderBoardPage {
 				<table class="table table-sm rob-table">
 					<thead><tr>
 						<th>${this.esc(__("Item"))}</th>
-						<th>${this.esc(__("Warehouse"))}</th>
+						<th>${this.esc(__("Where it is"))}</th>
 						<th class="rob-num">${this.esc(__("Projected"))}</th>
 						<th class="rob-num">${this.esc(__("Reorder at"))}</th>
 						<th>${this.esc(__("Snoozed"))}</th>
@@ -843,7 +897,7 @@ class ReorderBoardPage {
 								: __("{0} lines on one Draft Material Request (type Purchase):", [out.length])
 						)}</p>
 						<div class="rob-scroll"><table class="table table-sm rob-table">
-							<thead><tr><th>${this.esc(__("Item"))}</th><th>${this.esc(__("Warehouse"))}</th><th class="rob-num">${this.esc(
+							<thead><tr><th>${this.esc(__("Item"))}</th><th>${this.esc(__("Reorder into"))}</th><th class="rob-num">${this.esc(
 								__("Qty")
 							)}</th></tr></thead>
 							<tbody>${rows}</tbody>

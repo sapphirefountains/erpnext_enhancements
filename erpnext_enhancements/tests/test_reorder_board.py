@@ -22,6 +22,10 @@ What is held, in the order the brief asked for it:
   writes nothing; neither patch raises.
 * **The page.** Its logic under node (routes, quantities, the picked lines), its roles, and that every
   tab is a ``frappe.set_route`` (a history entry) while dialogs push nothing.
+* **Where the stock is (v1.833.1, TASK-2026-03279).** ``reorder_rules.stock_places`` splits an item's
+  bins into what its rule counts and what it does not (job stock, outside the rule's group), says when
+  the rule's own bin is empty while the stock is elsewhere, and whether that bin is one of the item's
+  bins; ``build_board`` carries it onto the page's line; the page words it (under node).
 * **Suggested reorder levels (v1.831.0).** ``reorder_suggest_rules``: what counts as used (takes,
   deliveries, moves out to a job site or the Project Shelf, less returns from a job; never a count
   correction, a move between shop places or a release from the shelf), the scope, the basis (the
@@ -405,6 +409,168 @@ class TestCoverageByGroup(unittest.TestCase):
 
 	def test_ancestor_map_survives_a_loop(self):
 		self.assertEqual(rules.ancestor_map({"A": "B", "B": "A"})["A"], frozenset({"B", "A"}))
+
+
+# --- where the stock is (v1.833.1, TASK-2026-03279) -------------------------------------
+
+#: Production's shape on 2026-11-21: bins under shelves under the Inventory Room, and the Project
+#: Shelf, a vehicle and a job site under the company's root.
+SHOP_PARENTS = {
+	"Bin B2-3-4 - SF": "Shelf B2-3 - SF",
+	"Bin B2-3-5 - SF": "Shelf B2-3 - SF",
+	"Shelf B2-3 - SF": "Inventory Room - SF",
+	"Bin B1-3-12 - SF": "Shelf B1-3 - SF",
+	"Shelf B1-3 - SF": "Inventory Room - SF",
+	"Inventory Room - SF": "All Warehouses - SF",
+	"Receiving - SF": "All Warehouses - SF",
+	"Project Shelf - SF": "All Warehouses - SF",
+	"Truck 3 - SF": "Vehicles - SF",
+	"Vehicles - SF": "All Warehouses - SF",
+	"Job 101 - SF": "Job Sites - SF",
+	"Job Sites - SF": "All Warehouses - SF",
+	"All Warehouses - SF": None,
+}
+SHOP_ANCESTORS = rules.ancestor_map(SHOP_PARENTS)
+BOARD_NOT_SHOP = {"Project Shelf - SF", "Job 101 - SF"}
+
+
+def stock(*pairs):
+	return [{"warehouse": w, "actual_qty": q} for w, q in pairs]
+
+
+class TestStockPlaces(unittest.TestCase):
+	def places(self, rule_row, bins, assigned=None, receiving="Receiving - SF"):
+		return rules.stock_places(
+			rule_row, bins, SHOP_ANCESTORS, BOARD_NOT_SHOP, assigned, receiving=receiving
+		)
+
+	def test_the_reported_item(self):
+		# 406-020 on production: the rule names B2-3-4, reconciled to 0; the two are in B1-3-12 and one
+		# more is on the Project Shelf. The board showed only B2-3-4.
+		got = self.places(
+			rule("406-020", "Bin B2-3-4 - SF", "Inventory Room - SF", level=5, qty=5),
+			stock(("Bin B1-3-12 - SF", 2), ("Bin B2-3-4 - SF", 0), ("Project Shelf - SF", 1)),
+			assigned={"Bin B1-3-12 - SF"},
+		)
+		self.assertEqual(got["places"], [{"warehouse": "Bin B1-3-12 - SF", "qty": 2.0}])
+		self.assertEqual(
+			got["elsewhere"], [{"warehouse": "Project Shelf - SF", "qty": 1.0, "for_jobs": True}]
+		)
+		self.assertEqual(got["on_hand"], 2.0)
+		self.assertEqual(got["rule_qty"], 0.0)
+		self.assertTrue(got["rule_empty"])
+		self.assertIs(got["rule_assigned"], False)
+
+	def test_the_rule_bin_and_a_sibling_most_first(self):
+		got = self.places(
+			rule("13994", "Bin B2-3-4 - SF", "Inventory Room - SF"),
+			stock(("Bin B2-3-5 - SF", 1), ("Bin B2-3-4 - SF", 3)),
+			assigned={"Bin B2-3-4 - SF"},
+		)
+		self.assertEqual(
+			got["places"],
+			[{"warehouse": "Bin B2-3-4 - SF", "qty": 3.0}, {"warehouse": "Bin B2-3-5 - SF", "qty": 1.0}],
+		)
+		self.assertEqual(got["on_hand"], 4.0)
+		self.assertEqual(got["rule_qty"], 3.0)
+		self.assertFalse(got["rule_empty"])
+		self.assertIs(got["rule_assigned"], True)
+
+	def test_a_rule_with_no_group_counts_its_own_bin_only(self):
+		got = self.places(
+			rule("ITEM-A", "Bin B2-3-4 - SF", None),
+			stock(("Bin B2-3-4 - SF", 1), ("Bin B1-3-12 - SF", 4)),
+		)
+		self.assertEqual(got["places"], [{"warehouse": "Bin B2-3-4 - SF", "qty": 1.0}])
+		self.assertEqual(got["elsewhere"], [{"warehouse": "Bin B1-3-12 - SF", "qty": 4.0, "for_jobs": False}])
+		self.assertEqual(got["on_hand"], 1.0)
+
+	def test_outside_the_group_and_on_a_job_are_not_counted(self):
+		got = self.places(
+			rule("ITEM-A", "Bin B2-3-4 - SF", "Inventory Room - SF"),
+			stock(("Truck 3 - SF", 2), ("Job 101 - SF", 5)),
+		)
+		self.assertEqual(got["places"], [])
+		self.assertEqual(
+			got["elsewhere"],
+			[
+				{"warehouse": "Job 101 - SF", "qty": 5.0, "for_jobs": True},
+				{"warehouse": "Truck 3 - SF", "qty": 2.0, "for_jobs": False},
+			],
+		)
+		# Nothing the rule counts is anywhere, so its bin being empty is not news.
+		self.assertFalse(got["rule_empty"])
+
+	def test_a_root_group_counts_the_shop_but_never_job_stock(self):
+		# 29 of production's rules group at the company's root: a vehicle is counted, a site never is.
+		got = self.places(
+			rule("ITEM-A", "Bin B2-3-4 - SF", "All Warehouses - SF"),
+			stock(("Truck 3 - SF", 2), ("Job 101 - SF", 5), ("Project Shelf - SF", 1)),
+		)
+		self.assertEqual(got["places"], [{"warehouse": "Truck 3 - SF", "qty": 2.0}])
+		self.assertEqual([p["warehouse"] for p in got["elsewhere"]], ["Job 101 - SF", "Project Shelf - SF"])
+		self.assertTrue(all(p["for_jobs"] for p in got["elsewhere"]))
+
+	def test_nothing_on_hand_and_bad_rows(self):
+		got = self.places(
+			rule("ITEM-A", "Bin B2-3-4 - SF", "Inventory Room - SF"),
+			stock(("Bin B2-3-4 - SF", 0), (None, 4), ("Bin B2-3-5 - SF", "junk")),
+		)
+		self.assertEqual((got["places"], got["elsewhere"], got["on_hand"]), ([], [], 0))
+		self.assertFalse(got["rule_empty"])
+		self.assertIsNone(got["rule_assigned"])
+		self.assertEqual(rules.stock_places(None, None)["places"], [])
+
+	def test_an_item_with_no_bins_says_nothing_about_assignment(self):
+		got = self.places(rule("ITEM-A", "Bin B2-3-4 - SF", "Inventory Room - SF"), [], assigned=set())
+		self.assertIsNone(got["rule_assigned"])
+
+	def test_a_rule_that_delivers_to_receiving_is_never_told_its_bin_is_empty(self):
+		# 29 of production's rules deliver to Receiving - SF. Once the stock is put away, Receiving holds
+		# none, and that is how it should be: no "fix the rule or move the stock", no "not its bin".
+		receiving_rule = rule("ITEM-A", "Receiving - SF", "All Warehouses - SF")
+		got = self.places(receiving_rule, stock(("Bin B2-3-5 - SF", 4)), assigned={"Bin B2-3-5 - SF"})
+		self.assertEqual(got["places"], [{"warehouse": "Bin B2-3-5 - SF", "qty": 4.0}])
+		self.assertTrue(got["rule_receiving"])
+		self.assertFalse(got["rule_empty"])
+		self.assertIsNone(got["rule_assigned"])
+		# With no receiving place set, it is an ordinary bin and is told.
+		plain = self.places(
+			receiving_rule, stock(("Bin B2-3-5 - SF", 4)), {"Bin B2-3-5 - SF"}, receiving=None
+		)
+		self.assertFalse(plain["rule_receiving"])
+		self.assertTrue(plain["rule_empty"])
+		self.assertIs(plain["rule_assigned"], False)
+
+	def test_a_rule_on_a_site_or_the_shelf_counts_its_own_stock(self):
+		# without_sites keeps a site's own figure, so such a rule's projected qty counts the stock there;
+		# the line must count it too, not call it someone else's.
+		for own in ("Project Shelf - SF", "Job 101 - SF"):
+			with self.subTest(own=own):
+				got = self.places(
+					rule("ITEM-A", own, "All Warehouses - SF"), stock((own, 2), ("Truck 3 - SF", 1))
+				)
+				self.assertEqual(
+					got["places"], [{"warehouse": own, "qty": 2.0}, {"warehouse": "Truck 3 - SF", "qty": 1.0}]
+				)
+				self.assertEqual((got["on_hand"], got["rule_qty"], got["elsewhere"]), (3.0, 2.0, []))
+				self.assertFalse(got["rule_empty"])
+
+	def test_negative_stock_is_shown_not_dropped(self):
+		# ERPNext projects -2 + 3 = 1. Dropping the negative row would list 3 on hand and call the
+		# rule's bin empty.
+		got = self.places(
+			rule("ITEM-A", "Bin B2-3-4 - SF", "Inventory Room - SF"),
+			stock(("Bin B2-3-4 - SF", -2), ("Bin B2-3-5 - SF", 3), ("Truck 3 - SF", -1)),
+		)
+		self.assertEqual(
+			got["places"],
+			[{"warehouse": "Bin B2-3-5 - SF", "qty": 3.0}, {"warehouse": "Bin B2-3-4 - SF", "qty": -2.0}],
+		)
+		self.assertEqual(got["on_hand"], 1.0)
+		self.assertEqual(got["rule_qty"], -2.0)
+		self.assertFalse(got["rule_empty"])
+		self.assertEqual(got["elsewhere"], [{"warehouse": "Truck 3 - SF", "qty": -1.0, "for_jobs": False}])
 
 
 class TestSnooze(unittest.TestCase):
@@ -1163,6 +1329,8 @@ class TestDigest(_BoardCase):
 	def test_the_table_is_four_columns(self):
 		# email_style.table: four columns or fewer fit a phone.
 		self.assertEqual(len(board.DIGEST_HEADERS), 4)
+		# The rule's warehouse is where a request delivers, not where the item is (TASK-2026-03279).
+		self.assertEqual(board.DIGEST_HEADERS[1], "Reorder into")
 		rows = board.digest_rows(
 			[
 				{
@@ -1210,6 +1378,101 @@ class TestDigest(_BoardCase):
 		board.send_daily_digest()
 		board.sync_watch()
 		self.assertEqual(len(STATE["logged"]), 2)
+
+
+class TestBoardShowsWhereStockIs(unittest.TestCase):
+	"""``build_board``'s own reads, on the stub: the line on the page says where the item is
+	(TASK-2026-03279). Only ERPNext's rule read and the not-shop set are replaced."""
+
+	def setUp(self):
+		_reset()
+		self._orig = (
+			board.read_rules,
+			board.project_shelf.not_shop_warehouses,
+			board.project_shelf.fallback_warehouse,
+		)
+		board.read_rules = lambda: (
+			[
+				rule("406-020", "Bin B2-3-4 - SF", "Inventory Room - SF", level=5, qty=5),
+				rule("RCV-1", "Receiving - SF", "All Warehouses - SF", level=5, qty=5),
+			],
+			{
+				"406-020": {
+					"Bin B1-3-12 - SF": 2.0,
+					"Shelf B1-3 - SF": 2.0,
+					"Bin B2-3-4 - SF": 0.0,
+					"Inventory Room - SF": 2.0,
+					"Project Shelf - SF": 1.0,
+					"All Warehouses - SF": 3.0,
+				},
+				"RCV-1": {"Bin B2-3-5 - SF": 2.0, "Inventory Room - SF": 2.0, "All Warehouses - SF": 2.0},
+			},
+		)
+		board.project_shelf.not_shop_warehouses = lambda: set(BOARD_NOT_SHOP)
+		board.project_shelf.fallback_warehouse = lambda: "Receiving - SF"
+
+		def handler(query, values):
+			if "parent_warehouse" in query:
+				return list(SHOP_PARENTS.items())
+			if "`tabBin`" in query:
+				return [
+					{"item_code": "406-020", "warehouse": "Bin B1-3-12 - SF", "actual_qty": 2.0},
+					{"item_code": "406-020", "warehouse": "Project Shelf - SF", "actual_qty": 1.0},
+					{"item_code": "RCV-1", "warehouse": "Bin B2-3-5 - SF", "actual_qty": 2.0},
+				]
+			if "`tabPutaway Rule`" in query:
+				return [
+					{"item_code": "406-020", "warehouse": "Bin B1-3-12 - SF"},
+					{"item_code": "RCV-1", "warehouse": "Bin B2-3-5 - SF"},
+				]
+			return []
+
+		STATE["sql_handler"] = handler
+
+	def tearDown(self):
+		(
+			board.read_rules,
+			board.project_shelf.not_shop_warehouses,
+			board.project_shelf.fallback_warehouse,
+		) = self._orig
+
+	def needs(self):
+		return {line["item_code"]: line for line in board.page_data()["needs"]}
+
+	def test_the_line_names_where_the_stock_is_and_where_a_request_goes(self):
+		line = self.needs()["406-020"]
+		self.assertEqual(line["warehouse"], "Bin B2-3-4 - SF")
+		self.assertEqual(line["projected_qty"], 2.0)
+		self.assertEqual(line["places"], [{"warehouse": "Bin B1-3-12 - SF", "qty": 2.0}])
+		self.assertEqual(
+			line["elsewhere"], [{"warehouse": "Project Shelf - SF", "qty": 1.0, "for_jobs": True}]
+		)
+		# On hand is what the rule counts, across its group: it was the rule's own bin, so it read 0.
+		self.assertEqual(line["on_hand"], 2.0)
+		self.assertEqual(line["rule_qty"], 0.0)
+		self.assertTrue(line["rule_empty"])
+		self.assertIs(line["rule_assigned"], False)
+
+	def test_a_rule_that_delivers_to_receiving_lists_the_stock_and_no_warning(self):
+		# The receiving place comes from the settings (project_shelf.fallback_warehouse), not a name.
+		line = self.needs()["RCV-1"]
+		self.assertEqual(line["warehouse"], "Receiving - SF")
+		self.assertEqual(line["places"], [{"warehouse": "Bin B2-3-5 - SF", "qty": 2.0}])
+		self.assertFalse(line["rule_empty"])
+		self.assertIsNone(line["rule_assigned"])
+		board.project_shelf.fallback_warehouse = lambda: None
+		self.assertTrue(self.needs()["RCV-1"]["rule_empty"])
+
+	def test_the_reads_are_the_bin_managers(self):
+		board.page_data()
+		queries = [q for q, _v in STATE["sql"]]
+		bins = [q for q in queries if "`tabBin`" in q]
+		self.assertEqual(len(bins), 1)
+		# Negative rows are kept (ERPNext's projected qty counts them); only zero rows are dropped.
+		self.assertIn("actual_qty <> 0", bins[0])
+		putaway = [q for q in queries if "`tabPutaway Rule`" in q]
+		self.assertEqual(len(putaway), 1)
+		self.assertIn("disable = 0", putaway[0])
 
 
 class TestPatches(unittest.TestCase):
@@ -1990,6 +2253,17 @@ const out = {
 	})(),
 	days: [R.days_below("2026-10-22 06:00:00", new Date("2026-10-22T08:00:00")), R.days_below("2026-10-19 06:00:00", new Date("2026-10-22T08:00:00")), R.days_below(null, new Date())],
 	ref: R.new_ref().length >= 8,
+	where: [
+		R.where_parts({ warehouse: "Bin B2-3-4 - SF", warehouse_group: "Inventory Room - SF", places: [{ warehouse: "Bin B1-3-12 - SF", qty: 2 }], elsewhere: [{ warehouse: "Project Shelf - SF", qty: 1, for_jobs: true }], rule_empty: true, rule_assigned: false }),
+		R.where_parts({ warehouse: "Bin B2-3-4 - SF", warehouse_group: "Inventory Room - SF", places: [{ warehouse: "Bin B1-3-12 - SF", qty: 2 }], elsewhere: [], rule_empty: true, rule_assigned: null }),
+		R.where_parts({ warehouse: "Bin C1-3-10 - SF", warehouse_group: "Inventory Room - SF", places: [{ warehouse: "Bin C1-3-10 - SF", qty: 3 }, { warehouse: "Bin C1-3-2 - SF", qty: 1.5 }], elsewhere: [{ warehouse: "Truck 3 - SF", qty: 2, for_jobs: false }], rule_empty: false, rule_assigned: true }),
+		R.where_parts({ warehouse: "Bin C1-3-10 - SF", warehouse_group: "Inventory Room - SF", places: [{ warehouse: "Bin C1-3-10 - SF", qty: 3 }], elsewhere: [], rule_empty: false, rule_assigned: false }),
+		R.where_parts({ warehouse: "Room - X", warehouse_group: "Room - X", places: [], elsewhere: [], rule_empty: false, rule_assigned: null }),
+		R.where_parts({ warehouse: "Room - X", warehouse_group: "All - X" }),
+		R.where_parts({ warehouse: "Bin B2-3-4 - SF", warehouse_group: "Inventory Room - SF", places: [{ warehouse: "Bin B2-3-5 - SF", qty: 3 }, { warehouse: "Bin B2-3-4 - SF", qty: -2 }], elsewhere: [], rule_empty: false, rule_assigned: null }),
+		R.where_parts({ warehouse: "Receiving - SF", warehouse_group: "All Warehouses - SF", places: [{ warehouse: "Bin B2-3-5 - SF", qty: 4 }], elsewhere: [], rule_receiving: true, rule_empty: false, rule_assigned: null }),
+	],
+	where_cap: R.where_parts({ warehouse: "W", places: Array.from({ length: 8 }, (_, i) => ({ warehouse: `B${i}`, qty: 8 - i })) }).stock,
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -2039,6 +2313,44 @@ class TestPageLogicUnderNode(unittest.TestCase):
 		self.assertEqual(out["picked"], {"out": [["a", 10]], "errors": ["b"]})
 		self.assertEqual(out["days"], ["today", "3 days", ""])
 		self.assertTrue(out["ref"])
+		reported, unassigned_unknown, two_bins, not_its_bin, none_here, levels_tab, negative, receiving = out[
+			"where"
+		]
+		# 406-020: where it is, where a request goes, and that the rule's bin is empty and not one of its bins.
+		self.assertEqual(
+			reported,
+			{
+				"stock": ["Bin B1-3-12 - SF: 2"],
+				"reorder_into": "Reorder into Bin B2-3-4 - SF",
+				"warning": "Nothing in Bin B2-3-4 - SF, and it is not one of this item's bins. "
+				"Fix the rule or move the stock.",
+				"across": "projected across Inventory Room - SF",
+				"elsewhere": "Not counted by this rule: Project Shelf - SF: 1 (held for jobs)",
+			},
+		)
+		self.assertEqual(
+			unassigned_unknown["warning"],
+			"Nothing in Bin B2-3-4 - SF; the stock is in another bin. Fix the rule or move the stock.",
+		)
+		self.assertEqual(two_bins["stock"], ["Bin C1-3-10 - SF: 3", "Bin C1-3-2 - SF: 1.5"])
+		self.assertEqual(two_bins["warning"], "")
+		self.assertEqual(two_bins["elsewhere"], "Not counted by this rule: Truck 3 - SF: 2")
+		self.assertEqual(
+			not_its_bin["warning"], "Bin C1-3-10 - SF is not one of this item's bins in the Bin Manager."
+		)
+		self.assertEqual(none_here["stock"], ["None on hand"])
+		self.assertEqual((none_here["across"], none_here["elsewhere"], none_here["warning"]), ("", "", ""))
+		# The Reorder levels tab reads no stock: its cell is the rule's warehouse, as before.
+		self.assertIsNone(levels_tab["stock"])
+		self.assertEqual(levels_tab["across"], "projected across All - X")
+		self.assertEqual(negative["stock"], ["Bin B2-3-5 - SF: 3", "Bin B2-3-4 - SF: -2"])
+		self.assertEqual(negative["warning"], "")
+		self.assertEqual(receiving["stock"], ["Bin B2-3-5 - SF: 4"])
+		self.assertEqual(receiving["reorder_into"], "Reorder into Receiving - SF")
+		self.assertEqual(receiving["warning"], "")
+		self.assertEqual(
+			out["where_cap"], ["B0: 8", "B1: 7", "B2: 6", "B3: 5", "B4: 4", "B5: 3", "and 2 more"]
+		)
 
 
 if __name__ == "__main__":
