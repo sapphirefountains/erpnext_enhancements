@@ -25,6 +25,13 @@ Two halves, as in ``test_fieldlevel_read.py``:
   columns all pass (``TestOrdinaryRequests``); the same routes naming a field hidden from that
   caller are still refused (``TestStillRefused``).
 
+* **Names, list shapes and other doctypes**: a field named in another case is that field, in every
+  position (``TestNamesInAnyCase``); a list of filters is read with and without its None entries
+  (``TestListShapes``); ``fields`` and ``filters`` are read either way round where the route reaches
+  ``frappe.get_list`` (``TestFieldsAndFiltersEitherWay``); on ``frappe.client.get``, a field named
+  in another doctype is held to that doctype's levels (``TestAnotherDoctypesFields``); every spelling
+  of a closed child table (``TestClosedChildTableSpellings``).
+
 Bench-free: installs a ``frappe`` stub in ``setUpModule``, so it has its own CI step.
 
 Run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters
@@ -49,8 +56,8 @@ ANY = ["GET", "POST", "PUT", "DELETE"]
 #: frappe 16.56.0: dotted path -> (wrapper, positional parameters, their defaults from the right,
 #: keyword-only parameters, their defaults). Every one is @frappe.whitelist() with no methods, so
 #: it answers GET, POST, PUT and DELETE. Read from frappe/desk/reportview.py, frappe/desk/listview.py,
-#: frappe/client.py, frappe/desk/search.py, frappe/desk/form/utils.py and the Number Card and
-#: Dashboard Chart controllers at the v16.56.0 tag.
+#: frappe/client.py, frappe/desk/search.py, frappe/desk/form/utils.py, frappe/desk/calendar.py and the
+#: Number Card and Dashboard Chart controllers at the v16.56.0 tag.
 FRAPPE_V16_56 = {
 	"frappe.desk.reportview.get": ("reportview_get", [], [], [], []),
 	"frappe.desk.reportview.get_list": ("reportview_get_list", [], [], [], []),
@@ -194,6 +201,13 @@ FRAPPE_V16_56 = {
 		[],
 		[],
 	),
+	"frappe.desk.calendar.get_events": (
+		"calendar_get_events",
+		["doctype", "start", "end", "field_map", "filters", "fields", "order_by"],
+		[None, None, None],
+		[],
+		[],
+	),
 }
 
 AFTER_REQUEST = f"{MODULE}.refuse_rest_list_references"
@@ -286,7 +300,31 @@ METAS = {
 	),
 	"Department": _Meta("Department", [_df("department_name")], [_perm("All")]),
 	"Other Child": _Meta("Other Child", [_df("x")], istable=True),
-	"ToDo": _Meta("ToDo", [_df("description")], [_perm("All")]),
+	# Nothing above level 0, for anyone, and three Links: to Employee (level-1 ``ctc``), to User (a
+	# Desk user has ``select`` only) and to Department (everyone reads it).
+	"ToDo": _Meta(
+		"ToDo",
+		[
+			_df("description"),
+			_df("allocated_to", 0, "Link", "User"),
+			_df("employee", 0, "Link", "Employee"),
+			_df("department", 0, "Link", "Department"),
+		],
+		[_perm("All")],
+	),
+	# A level-1 table whose child doctype has no space in its name, beside a level-0 table whose
+	# fieldname starts with "tab".
+	"Holiday List": _Meta(
+		"Holiday List",
+		[
+			_df("holiday_list_name"),
+			_df("holidays", 1, "Table", "Holiday"),
+			_df("table_notes", 0, "Table", "Holiday Note"),
+		],
+		[_perm("HR User"), _perm("HR Manager"), _perm("HR Manager", 1)],
+	),
+	"Holiday": _Meta("Holiday", [_df("holiday_date", 0, "Date"), _df("description")], istable=True),
+	"Holiday Note": _Meta("Holiday Note", [_df("note")], istable=True),
 	# ERPNext v16.54.0's shapes (stock/doctype/item, selling/doctype/customer, buying/doctype/supplier):
 	# each has a level-1 `allowed_companies` table (Company Restriction, whose one field is `company`),
 	# after level-0 tables whose child doctypes also have a `company` field. Trimmed to what is read.
@@ -550,6 +588,7 @@ def _install_frappe_stub():
 	)
 	desk.listview = _module("frappe.desk.listview", ["get_group_by_count"])
 	desk.search = _module("frappe.desk.search", ["search_link", "search_widget"])
+	desk.calendar = _module("frappe.desk.calendar", ["get_events"])
 	form.utils = _module("frappe.desk.form.utils", ["get_next"])
 	nc_pkg.number_card = _module(
 		"frappe.desk.doctype.number_card.number_card", ["get_result", "get_percentage_difference"]
@@ -854,6 +893,9 @@ class TestRule(unittest.TestCase):
 			["EMP-1", "EMP-2", "EMP-3"],
 			["EMP-1", "EMP-2", "EMP-3", "EMP-4"],
 			["EMP-1", "EMP-2"],
+			["tabloid.weekly", "EMP-2", "EMP-3"],
+			[None, "EMP-1"],
+			[None],
 			7,
 		):
 			with self.subTest(filters=filters):
@@ -962,9 +1004,24 @@ class TestWrappers(unittest.TestCase):
 			"Employee",
 			json.dumps({"employee_name": "A"}),
 		)
+		# By keyword: frappe's function sits behind frappe.read_only, and its argument check reads
+		# keywords only through a decorator.
+		self.assertEqual(call[1], ())
 		self.assertEqual(
-			call[1],
-			(json.dumps(["_user_tags", "department"]), "Employee", json.dumps({"employee_name": "A"})),
+			call[2],
+			{
+				"stats": json.dumps(["_user_tags", "department"]),
+				"doctype": "Employee",
+				"filters": json.dumps({"employee_name": "A"}),
+			},
+		)
+		_reset()
+		call = self.assert_passed_through(
+			ff.reportview_get_stats, "reportview.get_stats", json.dumps(["_user_tags"]), "Employee"
+		)
+		self.assertEqual(call[1], ())
+		self.assertEqual(
+			call[2], {"stats": json.dumps(["_user_tags"]), "doctype": "Employee", "filters": None}
 		)
 		_reset()
 		self.assert_passed_through(
@@ -1110,8 +1167,22 @@ class TestWrappers(unittest.TestCase):
 			filters={"department": "Ops"},
 			link_fieldname="employee",
 		)
-		self.assertEqual(call[1], ("Employee", "a", None, {"department": "Ops"}, 10, None, None, False))
-		self.assertEqual(call[2], {"link_fieldname": "employee"})
+		# By keyword: frappe's function sits behind http_cache.
+		self.assertEqual(call[1], ())
+		self.assertEqual(
+			call[2],
+			{
+				"doctype": "Employee",
+				"txt": "a",
+				"query": None,
+				"filters": {"department": "Ops"},
+				"page_length": 10,
+				"searchfield": None,
+				"reference_doctype": None,
+				"ignore_user_permissions": False,
+				"link_fieldname": "employee",
+			},
+		)
 		_reset()
 		call = self.assert_passed_through(
 			ff.search_widget, "search.search_widget", "Employee", "a", for_link_validation=True
@@ -1146,10 +1217,50 @@ class TestWrappers(unittest.TestCase):
 			{"document_type": "Employee", "function": "Count", "aggregate_function_based_on": None},
 			[],
 		)
+		# A Count card keeps the name of the field it used to total: frappe counts * for one and never
+		# reads that field (number_card.py 140-145), so neither does the check.
+		_reset()
+		self.assert_passed_through(
+			ff.number_card_get_result,
+			"number_card.get_result",
+			{"document_type": "Employee", "function": "Count", "aggregate_function_based_on": "ctc"},
+			[],
+		)
+		_reset()
+		STATE["stored"][("Number Card", "Head Count")] = {
+			"document_type": "Employee",
+			"function": "Count",
+			"aggregate_function_based_on": "ctc",
+		}
+		self.assert_passed_through(
+			ff.number_card_get_percentage_difference,
+			"number_card.get_percentage_difference",
+			{"name": "Head Count"},
+			"[]",
+			5,
+		)
+		_reset()
+		STATE["stored"][("Number Card", "Head Count")] = {
+			"document_type": "Employee",
+			"function": "Count",
+			"aggregate_function_based_on": "ctc",
+		}
+		self.assert_refused_before_frappe(
+			ff.number_card_get_percentage_difference, {"name": "Head Count"}, json.dumps({"ctc": 1}), 5
+		)
+		for function in ("Sum", "Average", "Minimum", "Maximum", None):
+			with self.subTest(function=function):
+				_reset()
+				self.assert_refused_before_frappe(
+					ff.number_card_get_result,
+					{"document_type": "Employee", "function": function, "aggregate_function_based_on": "ctc"},
+					[],
+				)
 		_reset()
 		STATE["stored"][("Number Card", "Pay Card")] = {
 			"document_type": "Employee",
 			"parent_document_type": None,
+			"function": "Sum",
 			"aggregate_function_based_on": "ctc",
 		}
 		self.assert_refused_before_frappe(
@@ -1166,6 +1277,51 @@ class TestWrappers(unittest.TestCase):
 			{"name": "Pay Card"},
 			"[]",
 			5,
+		)
+
+	def test_calendar_events(self):
+		dates = ("2026-01-01", "2026-02-01")
+		field_map = {"start": "modified", "end": "modified", "title": "employee_name"}
+		as_sent = json.dumps(field_map)
+		refusals = {
+			"the start field": {"field_map": json.dumps({**field_map, "start": "ctc"})},
+			"the end field, in another case": {"field_map": json.dumps({**field_map, "end": "CTC"})},
+			"filters": {"field_map": as_sent, "filters": json.dumps([["Employee", "ctc", ">", 1]])},
+			"order_by": {"field_map": as_sent, "order_by": "ctc desc"},
+			"an aggregate in fields": {"field_map": as_sent, "fields": json.dumps([{"MAX": "ctc"}])},
+			"a field map that cannot be read": {"field_map": "not json"},
+			"a field map with no date fields": {"field_map": json.dumps({"title": "employee_name"})},
+		}
+		for label, kwargs in refusals.items():
+			with self.subTest(label):
+				_reset()
+				self.assert_refused_before_frappe(ff.calendar_get_events, "Employee", *dates, **kwargs)
+		_reset()
+		call = self.assert_passed_through(
+			ff.calendar_get_events,
+			"calendar.get_events",
+			"Employee",
+			*dates,
+			as_sent,
+			fields=json.dumps(["name", "employee_name"]),
+		)
+		self.assertEqual(call[1], ())
+		self.assertEqual(
+			call[2],
+			{
+				"doctype": "Employee",
+				"start": dates[0],
+				"end": dates[1],
+				"field_map": as_sent,
+				"filters": None,
+				"fields": json.dumps(["name", "employee_name"]),
+				"order_by": None,
+			},
+		)
+		# A caller who reads everything is left to frappe, whatever the request.
+		_reset(HR_MANAGER)
+		self.assert_passed_through(
+			ff.calendar_get_events, "calendar.get_events", "Employee", *dates, "not json", order_by="ctc"
 		)
 
 	def test_dashboard_charts(self):
@@ -1277,6 +1433,22 @@ class TestRestLists(unittest.TestCase):
 				else:
 					self.assertEqual(body["exc_type"], "PermissionError")
 				self.assertNotIn("data", body)
+
+	def test_a_head_request_is_checked_like_a_get(self):
+		"""A werkzeug rule for GET answers HEAD too, and its status and length say as much as a body."""
+		for path, form in (
+			("/api/resource/Employee", {"filters": json.dumps({"ctc": 1})}),
+			("/api/v2/document/Employee", {"order_by": "ctc desc"}),
+			("/api/v2/doctype/Employee/count", {"filters": json.dumps({"ctc": 1})}),
+		):
+			with self.subTest(path=path):
+				response = self.run_hook(path, form, method="HEAD")
+				self.assertEqual(response.status_code, 403)
+				self.assertNotIn("data", response.json())
+		response = self.run_hook(
+			"/api/resource/Employee", {"filters": json.dumps({"employee_name": "A"})}, method="HEAD"
+		)
+		self.assertEqual((response.status_code, response.set_data_calls), (200, 0))
 
 	def test_everything_else_is_left_alone(self):
 		for path, form, kwargs in (
@@ -2124,6 +2296,397 @@ class TestStillRefused(_RouteCase):
 		):
 			with self.subTest(path=path, form=form):
 				self.assertEqual(self.rest(path, form), 403)
+
+
+# ---------------------------------------------------------------------------
+# Names in any case, list shapes, fields and filters either way round, other doctypes
+# ---------------------------------------------------------------------------
+
+
+class TestNamesInAnyCase(_RouteCase):
+	"""MariaDB matches a column name whatever its case, so another spelling of a field the caller
+	cannot read is that field, in every position and on every route."""
+
+	def setUp(self):
+		_reset(HR_USER)
+
+	def refused(self, doctype="Employee", parent=None, **kwargs):
+		return _refused(ff.check_request, doctype, parent, child_names=True, **kwargs)
+
+	def test_another_spelling_of_a_hidden_field_is_refused_in_every_position(self):
+		cases = {
+			"filters dict": {"filters": {"CTC": [">", 1]}},
+			"filters dict, mixed case": {"filters": {"Ctc": 1}},
+			"filters list": {"filters": [["cTc", ">", 1]]},
+			"filters [doctype, field, op, value]": {"filters": [["Employee", "CTC", ">", 1]]},
+			"filters, the doctype in another case": {"filters": [["employee", "CTC", ">", 1]]},
+			"filters single condition": {"filters": ["CTC", ">", 1]},
+			"filters as JSON": {"filters": json.dumps({"CTC": [">", 1]})},
+			"or_filters": {"or_filters": [["Ctc", ">", 1]]},
+			"backtick": {"filters": {"`tabEmployee`.`CTC`": 1}},
+			"backtick, the table in another case": {"order_by": "`tabemployee`.`Ctc` desc"},
+			"quoted": {"filters": {"`CTC`": 1}},
+			"order_by": {"order_by": "CTC desc"},
+			"group_by": {"group_by": "Ctc"},
+			"aggregate": {"fields": [{"SUM": "CTC"}]},
+			"a reference": {"references": ["CTC"]},
+			"an expression": {"expressions": ["Ctc"]},
+			"a hidden Link": {"filters": {"PAY_GRADE": "G1"}},
+			"through a hidden Link": {"order_by": "Pay_Grade.grade_name"},
+			"a closed table, dotted": {"filters": {"CUSTOM_PAY_RATES.name": "x"}},
+			"a closed table, backtick": {"order_by": "`tabEMPLOYEE PAY RATE`.`idx`"},
+			"a closed table by doctype": {"filters": [["employee pay rate", "name", "=", "x"]]},
+			"a closed table in fields": {"fields": ["Custom_Pay_Rates.name"]},
+			"a closed table in a child query": {"fields": [{"CUSTOM_PAY_RATES": ["name"]}]},
+			"letters outside ASCII that read as the name": {"filters": {"ｃｔｃ": 1}},
+		}
+		for label, kwargs in cases.items():
+			with self.subTest(label):
+				self.assertTrue(self.refused(**kwargs))
+				self.assertEqual(STATE["thrown"][-1], ff.REFUSAL)
+		_reset(HR_MANAGER)
+		for label, kwargs in cases.items():
+			with self.subTest(label, who="hr manager"):
+				self.assertFalse(self.refused(**kwargs))
+
+	def test_a_child_tables_hidden_column_in_another_spelling(self):
+		_reset(PROJECTS_USER)
+		refused = {
+			"dotted": {"filters": {"time_logs.BASE_COSTING_RATE": [">", 1]}},
+			"dotted, the table field too": {"order_by": "TIME_LOGS.Base_Costing_Rate"},
+			"backtick": {"filters": [["`tabTimesheet Detail`.`BASE_COSTING_RATE`", ">", 50]]},
+			"[child doctype, field, op, value]": {
+				"filters": [["Timesheet Detail", "Base_Costing_Rate", ">", 1]]
+			},
+			"a child's name used bare": {"filters": {"BASE_COSTING_RATE": 1}},
+			"a child query": {"fields": [{"time_logs": ["hours", "BASE_COSTING_RATE"]}]},
+		}
+		for label, kwargs in refused.items():
+			with self.subTest(label):
+				self.assertTrue(self.refused("Timesheet", **kwargs))
+		passed = {
+			"a visible column": {"filters": {"time_logs.HOURS": [">", 1]}},
+			"a standard column": {"order_by": "time_logs.IDX"},
+			"a visible column by doctype": {"filters": [["timesheet detail", "Hours", ">", 1]]},
+		}
+		for label, kwargs in passed.items():
+			with self.subTest(label):
+				self.assertFalse(self.refused("Timesheet", **kwargs))
+
+	def test_another_spelling_of_a_visible_field_passes(self):
+		passed = {
+			"a visible field": {"filters": {"EMPLOYEE_NAME": "A"}, "order_by": "Employee_Name asc"},
+			"a standard column": {"filters": {"NAME": "EMP-1"}, "order_by": "MODIFIED desc"},
+			"through a visible Link": {"filters": {"Department.department_name": "Ops"}},
+			"a name the doctype lacks": {"order_by": "NOT_A_FIELD"},
+			"a function name": {"fields": [{"count": "*", "as": "n"}]},
+		}
+		for label, kwargs in passed.items():
+			with self.subTest(label):
+				self.assertFalse(self.refused(**kwargs))
+
+	def test_the_named_exception_holds_in_any_case(self):
+		_reset(DESK_USER)
+		self.assertFalse(self.refused("User", filters={"USER_TYPE": "System User"}))
+		self.assertFalse(self.refused("User", order_by="User_Type asc"))
+		self.assertTrue(self.refused("User", filters={"API_KEY": ["like", "a%"]}))
+
+	def test_the_routes_that_use_a_name_as_written(self):
+		"""The sort field of next-record, the search field of a custom query, a document looked up by
+		filters and a Single's fields are not looked up by frappe before the database reads them."""
+		self.refuses(ff.client_get, "Employee", filters=json.dumps({"CTC": [">", 1]}))
+		self.refuses(ff.form_get_next, "Employee", "EMP-1", 1, sort_field="Ctc")
+		self.refuses(
+			ff.search_widget,
+			"Employee",
+			"a",
+			query="erpnext.controllers.queries.employee_query",
+			searchfield="CTC",
+		)
+		self.refuses(ff.search_link, "Employee", "a", searchfield="Ctc")
+		self.refuses(ff.listview_get_group_by_count, "Employee", "{}", "CTC")
+		self.refuses(ff.client_get_value, "Pay Settings", "DEFAULT_RATE")
+		self.refuses(ff.client_get_value, "Pay Settings", json.dumps(["company", "Default_Rate"]))
+		self.refuses(ff.client_get_single_value, "Pay Settings", "Default_Rate")
+
+	def test_a_singles_answer_is_scrubbed_whatever_the_spelling(self):
+		STATE["returns"]["client.get_value"] = {"company": "X", "default_rate": 5, "Default_Rate": 6}
+		self.assertEqual(ff.client_get_value("Pay Settings", "company", {"company": "X"}), {"company": "X"})
+
+	def test_folding(self):
+		self.assertEqual(ff._fold("CTC"), "ctc")
+		self.assertEqual(ff._fold("ranK"), "rank")  # KELVIN SIGN
+		self.assertEqual(ff._fold("İd"), "id")  # LATIN CAPITAL LETTER I WITH DOT ABOVE
+		self.assertEqual(ff._fold("café"), "cafe")
+
+
+class TestListShapes(_RouteCase):
+	"""A list of filters is read as given and as ``frappe.db.get_values`` leaves it, without its None
+	entries (database.py 662): that is how a document looked up by filters is found."""
+
+	REFUSED = (
+		[None, ["ctc", ">", 1]],
+		[None, None, ["ctc", ">", 1]],
+		[None, {"ctc": 1}],
+		[None, "ctc", ">", 1],
+		["ctc", None, ">", 1],
+		[None, None, "ctc", ">", 1],
+		[None, ["employee_name", "=", "A"], "or", ["ctc", ">", 1]],
+		[["employee_name", "=", "A"], None, ["ctc", ">", 1]],
+		[None, ["CTC", ">", 1]],
+	)
+	PASSED = (
+		[None, ["employee_name", "=", "A"]],
+		[["employee_name", "=", "A"], None],
+		["employee_name", "=", None],
+		["employee_name", "in", ["A", "B"]],
+		["employee_name", "between", ["A", "B"]],
+		[None, "EMP-1"],
+		[None],
+	)
+
+	def setUp(self):
+		_reset(HR_USER)
+
+	def test_on_the_rule(self):
+		for filters in self.REFUSED:
+			for sent in (filters, json.dumps(filters)):
+				with self.subTest(filters=sent):
+					self.assertTrue(_refused(ff.check_request, "Employee", child_names=True, filters=sent))
+					self.assertTrue(
+						_refused(ff.check_request, "Employee", child_names=True, or_filters=sent)
+					)
+		for filters in self.PASSED:
+			for sent in (filters, json.dumps(filters)):
+				with self.subTest(filters=sent):
+					self.assertFalse(_refused(ff.check_request, "Employee", child_names=True, filters=sent))
+
+	def test_a_document_looked_up_by_filters(self):
+		for filters in self.REFUSED:
+			with self.subTest(filters=filters):
+				_reset(HR_USER)
+				self.refuses(ff.client_get, "Employee", filters=json.dumps(filters))
+		for filters in self.PASSED:
+			with self.subTest(filters=filters):
+				_reset(HR_USER)
+				self.passes(ff.client_get, "Employee", filters=json.dumps(filters))
+
+	def test_a_caller_who_reads_everything_is_untouched(self):
+		for filters in self.REFUSED:
+			with self.subTest(filters=filters):
+				_reset(HR_MANAGER)
+				self.passes(ff.client_get, "Employee", filters=json.dumps(filters))
+
+
+class TestFieldsAndFiltersEitherWay(_RouteCase):
+	"""``frappe.get_list`` takes ``fields`` and ``filters`` in either order (qb_query.py 107-115), so
+	each is read as the other wherever the route reaches it."""
+
+	def setUp(self):
+		_reset(PROJECTS_USER)
+
+	def refused(self, doctype="Timesheet", **kwargs):
+		return _refused(ff.check_request, doctype, None, child_names=True, **kwargs)
+
+	def test_filters_handed_over_as_fields_are_read_as_filters(self):
+		cases = {
+			"a list of conditions": {"fields": [["Timesheet Detail", "base_costing_rate", ">", 1]]},
+			"a list of conditions, as JSON": {
+				"fields": json.dumps([["time_logs.base_costing_rate", ">", 1]])
+			},
+			"a dict": {"fields": {"time_logs.base_costing_rate": [">", 1]}},
+			"a dict, as JSON": {"fields": json.dumps({"`tabTimesheet Detail`.`base_costing_rate`": 1})},
+			"the doctype's own field": {"fields": {"total_costing_amount": [">", 1]}},
+			"beside a list of names in filters": {
+				"fields": ["time_logs.base_costing_rate", ">", "1"],
+				"filters": ["name", "note"],
+			},
+		}
+		for label, kwargs in cases.items():
+			with self.subTest(label):
+				self.assertTrue(self.refused(**kwargs))
+		_reset(HR_USER)
+		self.assertTrue(self.refused("Employee", fields={"`tabEmployee Pay Rate`.`name`": ["like", "%"]}))
+		self.assertTrue(self.refused("Employee", fields=[["Employee Pay Rate", "idx", ">", 0]]))
+
+	def test_on_the_routes(self):
+		conditions = json.dumps([["Timesheet Detail", "base_costing_rate", ">", 1]])
+		self.refuses(ff.client_get_list, "Timesheet", fields=conditions)
+		self.refuses(ff.client_get_value, "Timesheet", conditions)
+		self.assertEqual(self.rest("/api/resource/Timesheet", {"fields": conditions}, who=PROJECTS_USER), 403)
+		_reset(PROJECTS_USER, form={"doctype": "Timesheet", "fields": conditions})
+		self.refuses(ff.reportview_get)
+
+	def test_ordinary_fields_and_filters_still_pass(self):
+		cases = {
+			"plain fields and a list of conditions": {
+				"fields": ["name", "note"],
+				"filters": [["note", "like", "%a%"]],
+			},
+			"an aggregate": {"fields": [{"COUNT": "*", "as": "n"}], "filters": {"note": "x"}},
+			"plain fields, one of them hidden, and a dict": {
+				"fields": ["total_costing_amount", "name", "note"],
+				"filters": {"note": "x"},
+			},
+			"a child query": {"fields": ["name", {"time_logs": ["hours"]}]},
+			"fields as one string": {"fields": "name, note", "filters": [["note", "=", "x"]]},
+			"a star": {"fields": ["*"], "filters": [["Timesheet", "note", "=", "x"]]},
+			"a list of names in filters and no fields": {"filters": ["TS-1", "TS-2", "TS-3"]},
+		}
+		for label, kwargs in cases.items():
+			with self.subTest(label):
+				self.assertFalse(self.refused(**kwargs))
+
+	def test_the_route_that_goes_to_the_query_engine_reads_them_as_given(self):
+		"""``/api/v2/document`` hands both to the query engine, which takes them one way only."""
+		kwargs = {"fields": ["total_costing_amount", "name", "note"], "filters": ["note", "like", "%a%"]}
+		self.assertTrue(self.refused(**kwargs))
+		self.assertFalse(self.refused(swap=False, **kwargs))
+		form = {key: json.dumps(value) for key, value in kwargs.items()}
+		self.assertEqual(self.rest("/api/v2/document/Timesheet", form, who=PROJECTS_USER), 200)
+		self.assertEqual(self.rest("/api/resource/Timesheet", form, who=PROJECTS_USER), 403)
+
+
+class TestAnotherDoctypesFields(_RouteCase):
+	"""``frappe.client.get`` finds its document with no permission applied to the filters, so a field
+	they name in another doctype, through a Link field or by table, is held to that doctype's read
+	levels here. ToDo hides nothing from anyone; Employee's ``ctc`` is level 1; User gives a Desk user
+	``select`` only."""
+
+	def get(self, filters, who=HR_USER):
+		_reset(who)
+		refused = _refused(ff.client_get, "ToDo", filters=json.dumps(filters))
+		self.assertEqual(len(STATE["calls"]), 0 if refused else 1)
+		return refused
+
+	def test_a_field_the_caller_cannot_read_in_another_doctype_is_refused(self):
+		cases = {
+			"a dict": {"employee.ctc": [">", 1]},
+			"another spelling of the field": {"employee.CTC": [">", 1]},
+			"another spelling of the Link field": {"Employee.ctc": 1},
+			"a condition": [["employee.ctc", ">", 1]],
+			"a single condition": ["employee.ctc", ">", 1],
+			"behind a None": [None, ["employee.ctc", ">", 1]],
+			"with an alias": {"employee.ctc as x": 1},
+			"in a nested group": [["description", "=", "a"], "or", ["employee.ctc", ">", 1]],
+			"after a shape frappe refuses": [["x"], ["employee.ctc", ">", 1]],
+			"the table by name": {"`tabEmployee`.`ctc`": 1},
+			"the table by name, unquoted field": {"`tabEmployee`.ctc": 1},
+			"the doctype in a condition": [["Employee", "ctc", ">", 1]],
+			"a table that is no doctype": {"`tab_Employee_1`.`ctc`": 1},
+			"a doctype that is none, in a condition": [["_Employee_1", "employee_name", "=", "A"]],
+			"a child table of another doctype": {"`tabEmployee Pay Rate`.`hourly_rate`": 1},
+		}
+		for label, filters in cases.items():
+			with self.subTest(label):
+				self.assertTrue(self.get(filters))
+				self.assertEqual(STATE["thrown"][-1], ff.REFUSAL)
+
+	def test_no_read_on_the_other_doctype_closes_it(self):
+		# PROJECTS_USER holds no role that reads Employee; a Desk user has ``select`` only on User.
+		self.assertTrue(self.get({"employee.employee_name": "A"}, who=PROJECTS_USER))
+		self.assertTrue(self.get({"employee.creation": [">", "2026-01-01"]}, who=PROJECTS_USER))
+		self.assertTrue(self.get({"allocated_to.full_name": ["like", "a%"]}, who=DESK_USER))
+		self.assertTrue(self.get({"allocated_to.api_key": ["like", "a%"]}, who=DESK_USER))
+		# The one reference a doctype does not hold back.
+		self.assertFalse(self.get({"allocated_to.user_type": "System User"}, who=DESK_USER))
+		self.assertFalse(self.get({"allocated_to.USER_TYPE": "System User"}, who=DESK_USER))
+
+	def test_what_the_caller_reads_passes(self):
+		cases = {
+			"a field the caller reads": ({"employee.employee_name": "A"}, HR_USER),
+			"a standard column": ({"employee.creation": [">", "2026-01-01"]}, HR_USER),
+			"at the level": ({"employee.ctc": [">", 1]}, HR_MANAGER),
+			"a System Manager": ({"allocated_to.api_key": ["like", "a%"]}, SYSTEM_MANAGER),
+			"a doctype everyone reads": ({"department.department_name": "Ops"}, DESK_USER),
+			"the doctype's own fields": ({"description": ["like", "%a%"], "employee": "EMP-1"}, DESK_USER),
+			"a document name": ("TODO-0001", HR_USER),
+			"a list of names": (["T-1", "T-2", "T-3"], HR_USER),
+			"a shape frappe refuses": ([["a", "b", "c", "d", "e", "f"]], HR_USER),
+			"a field map of no kind": ({"nothing.here": 1}, HR_USER),
+		}
+		for label, (filters, who) in cases.items():
+			with self.subTest(label):
+				self.assertFalse(self.get(filters, who=who))
+
+	def test_a_doctype_with_hidden_fields_of_its_own(self):
+		_reset(HR_USER)
+		self.refuses(ff.client_get, "Employee", filters=json.dumps({"`tabUser`.`api_key`": ["like", "a%"]}))
+		self.refuses(ff.client_get, "Employee", filters=json.dumps({"department.nothing": 1, "ctc": 1}))
+		self.passes(ff.client_get, "Employee", filters=json.dumps({"department.department_name": "Ops"}))
+
+	def test_by_name_and_for_administrator_nothing_is_read(self):
+		_reset(HR_USER)
+		self.passes(ff.client_get, "ToDo", "TODO-0001")
+		self.assertEqual(STATE["meta_calls"], [])
+		_reset(("Administrator", ()))
+		self.passes(ff.client_get, "ToDo", filters=json.dumps({"employee.ctc": 1}))
+		self.assertEqual(STATE["meta_calls"], [])
+
+	def test_where_frappe_applies_permissions_the_other_doctype_is_its_check(self):
+		"""Every other route reaches frappe's query engine with permissions on, which holds a linked
+		doctype's field to that doctype's own (query.py 888-898). Nothing is read here for a doctype
+		that hides nothing."""
+		_reset(HR_USER)
+		self.passes(ff.client_get_list, "ToDo", filters={"employee.ctc": [">", 1]})
+		self.passes(ff.client_get_count, "ToDo", filters=json.dumps({"employee.ctc": 1}))
+		self.passes(ff.form_get_next, "ToDo", "T-1", 0, json.dumps({"employee.ctc": 1}))
+		self.assertFalse(_refused(ff.check_request, "ToDo", child_names=True, filters={"employee.ctc": 1}))
+
+
+class TestClosedChildTableSpellings(_RouteCase):
+	"""frappe reads ``tabChild.col`` in ``fields`` with a backtick, a double quote or nothing around
+	either part (query.py 183). Holiday List's ``holidays`` table is level 1; HR User reads level 0."""
+
+	SPELLINGS = (
+		"tabHoliday.description",
+		"`tabHoliday`.`description`",
+		"`tabHoliday`.description",
+		'"tabHoliday".description',
+		'tabHoliday."description"',
+		"tabHoliday.description as note",
+		"tabHoliday.name",
+		"tabholiday.description",
+		"holidays.description",
+		"HOLIDAYS.description",
+	)
+
+	def setUp(self):
+		_reset(HR_USER)
+
+	def test_every_spelling_is_refused_in_fields(self):
+		for entry in self.SPELLINGS:
+			with self.subTest(entry=entry):
+				_reset(HR_USER)
+				self.assertTrue(_refused(ff.check_request, "Holiday List", child_names=True, fields=[entry]))
+				self.refuses(ff.client_get_list, "Holiday List", fields=json.dumps(["name", entry]))
+				_reset(HR_MANAGER)
+				self.passes(ff.client_get_list, "Holiday List", fields=json.dumps(["name", entry]))
+
+	def test_the_other_closed_table_with_a_space_in_its_name(self):
+		for entry in ("tabEmployee Pay Rate.hourly_rate", '"tabEmployee Pay Rate".idx'):
+			with self.subTest(entry=entry):
+				self.assertTrue(_refused(ff.check_request, "Employee", child_names=True, fields=[entry]))
+
+	def test_the_same_spellings_in_the_other_positions(self):
+		for label, kwargs in {
+			"order_by": {"order_by": "tabHoliday.holiday_date desc"},
+			"group_by": {"group_by": '"tabHoliday".description'},
+			"an aggregate": {"fields": [{"MAX": "tabHoliday.holiday_date"}]},
+			"filters": {"filters": {"tabHoliday.description": "x"}},
+		}.items():
+			with self.subTest(label):
+				self.assertTrue(_refused(ff.check_request, "Holiday List", child_names=True, **kwargs))
+
+	def test_a_table_field_whose_name_starts_with_tab_is_read_as_a_table_field(self):
+		for label, kwargs in {
+			"fields": {"fields": ["table_notes.note", "table_notes.name as n"]},
+			"filters": {"filters": {"table_notes.note": ["like", "%a%"]}},
+			"order_by": {"order_by": "table_notes.note asc"},
+			"the doctype's own table": {"fields": ["tabHoliday List.holiday_list_name"]},
+		}.items():
+			with self.subTest(label):
+				self.assertFalse(_refused(ff.check_request, "Holiday List", child_names=True, **kwargs))
 
 
 # ---------------------------------------------------------------------------

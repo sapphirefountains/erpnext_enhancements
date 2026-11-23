@@ -3565,7 +3565,7 @@ override_whitelisted_methods = {
 	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
 	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
 	# Field references in read requests (v1.835.0): a list, count, value, search, next-record,
-	# number-card or chart request that names a field the caller cannot read at its permlevel, in
+	# number-card, chart or calendar request that names a field the caller cannot read at its permlevel, in
 	# filters / or_filters / order_by / group_by / an aggregate, is refused with a plain permission
 	# message; a child table's field answers to the parent's levels. A caller who reads every field
 	# of the doctype leaves on the first check, and in-process calls never come through here. Each
@@ -3591,6 +3591,7 @@ override_whitelisted_methods = {
 	"frappe.desk.doctype.number_card.number_card.get_result": "erpnext_enhancements.fieldlevel_filters.number_card_get_result",
 	"frappe.desk.doctype.number_card.number_card.get_percentage_difference": "erpnext_enhancements.fieldlevel_filters.number_card_get_percentage_difference",
 	"frappe.desk.doctype.dashboard_chart.dashboard_chart.get": "erpnext_enhancements.fieldlevel_filters.dashboard_chart_get",
+	"frappe.desk.calendar.get_events": "erpnext_enhancements.fieldlevel_filters.calendar_get_events",
 }
 
 # POST/PUT /api/resource and /api/v2/document return the saved document unstripped, and they
@@ -3604,7 +3605,7 @@ override_whitelisted_methods = {
 # offline only when that matches the key the page claimed. Every other request leaves on a method
 # + path check; it never raises. See workforce/kiosk_offline.stamp_response.
 #
-# Field references in REST list requests (v1.835.0): GET /api/resource/<doctype> (and /api/v1),
+# Field references in REST list requests (v1.835.0): GET or HEAD /api/resource/<doctype> (and /api/v1),
 # /api/v2/document/<doctype> and /api/v2/doctype/<doctype>/count get a 403 in place of their body
 # when they name a field the caller cannot read, by the rule of the fieldlevel_filters overrides
 # above. after_request rather than before_request because frappe runs before_request hooks before
@@ -3644,7 +3645,7 @@ before_request = [
 	# `oauth_registration_guard: 0` turns it off. Every other request returns after a method check
 	# and a string test and never raises. See oauth_registration.py.
 	"erpnext_enhancements.oauth_registration.guard_registration",
-	# Field references in read requests (v1.835.0): the same seal for the nineteen read routes the
+	# Field references in read requests (v1.835.0): the same seal for the twenty read routes the
 	# fieldlevel_filters overrides replace (frappe.client imports search_widget, for one), so no other
 	# dotted name for frappe's function answers HTTP. Never raises. See
 	# fieldlevel_filters.seal_filter_originals.

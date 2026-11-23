@@ -3739,7 +3739,10 @@ jobs:
       # lists, reports, sidebar, next/previous, cards, charts, REST lists, the Create Project
       # dialog's list of desk users by User.user_type) must pass for a caller with hidden fields.
       # A child table whose table field the caller cannot read is refused in every reference,
-      # standard columns included, and through its parent.
+      # standard columns included, and through its parent. A field named in another case is that
+      # field; a list of filters is read with and without its None entries; fields and filters are
+      # read either way round; on frappe.client.get a field named in another doctype is held to
+      # that doctype's levels.
       - name: Field-level read on the field names a read request carries
         run: python -m unittest erpnext_enhancements.tests.test_fieldlevel_filters -v
       # Its own step: this suite installs a frappe stub in setUpModule. Pins that the

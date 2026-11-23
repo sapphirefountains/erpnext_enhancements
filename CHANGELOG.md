@@ -21,14 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already applies to documents. New `fieldlevel_filters.py`; nothing changes for a caller who can
   read every field of the doctype and its child tables (Administrator included), and server-side
   code never passes through it.
-  - **Where.** Nineteen frappe read routes, through `override_whitelisted_methods` wrappers that
+  - **Where.** Twenty frappe read routes, through `override_whitelisted_methods` wrappers that
     check the request and then call frappe's own function unchanged: the report view (`get`,
     `get_list`, `get_count`, `export_query`, sidebar stats, filter dashboard), the list sidebar's
     group-by counts, `frappe.client.get_list`, `get_count`, `get`, `get_value` and
     `get_single_value`, link search (`search_link`, `search_widget`), the form's next/previous
-    record, Number Card results and Dashboard Chart data. The REST list routes (`GET /api/resource/<doctype>`,
-    `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`) answer 403 in place of their
-    body by the same rule, from `after_request`.
+    record, Number Card results, Dashboard Chart data and calendar events (their filters, sort and
+    the two date fields the request names). The REST list routes (`GET` or `HEAD` on
+    `/api/resource/<doctype>`, `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`)
+    answer 403 in place of their body by the same rule, from `after_request`.
   - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
     doctype; the wrappers hold every route above to it in one way. A child table's fields answer to
     the parent's levels in every notation, and a document looked up by filters, a value read from
@@ -56,6 +57,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `owner`, `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the
     rest) never are. Ordinary searches and lists, such as item search on sales and buying documents,
     keep working for a user who cannot read a table like `allowed_companies`.
+  - **A name is matched as the database matches it.** MariaDB reads a column name in any case and
+    frappe's own lookups do not, so a field named in another case is treated as that field, in
+    every position and for child tables too.
+  - **A request is read every way frappe may read it.** A list of filters is read as given and
+    without its empty entries, which frappe drops on one path. `fields` and `filters` are read
+    either way round on the routes that reach `frappe.get_list`, which accepts them in either
+    order. A child table's column is recognised in every spelling frappe accepts (`tabChild.column`
+    with a backtick, a double quote or nothing around either part), and an alias after a dotted
+    name is set aside as frappe sets it aside.
+  - **Another doctype's fields, where frappe makes no check of its own.** Almost everywhere,
+    frappe's query engine applies the caller's permissions to a field named in a linked doctype
+    (`link_field.field`), and nothing changes there. On the one route that reads its filters with
+    no permission applied, the filters are now read for every caller, and a field named in another
+    doctype, through a Link field or by table, answers to that doctype's read levels; it is refused
+    whole when the caller has no read on that doctype.
+  - **A Count Number Card is judged on what it counts.** frappe counts rows for a Count card and
+    never reads the aggregate field the card may still carry from an earlier setting, so that
+    leftover field no longer causes a refusal.
   - **Link search follows frappe's choice of path.** With a custom query (the request's `query`,
     or a query the doctype registers through the `standard_queries` hook), the filters are that
     query's arguments and are not read as field names. Without one they are checked as frappe's
@@ -68,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     user who cannot read it, and a user who holds only `select` on a doctype is not exempt in general.
   - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
     frappe reads a bare value as a document name.
+  - **Three wrappers call frappe's function by keyword** (link search and the two sidebar-stats
+    routes): those functions sit behind a decorator of frappe's own, and its argument type check
+    only sees keyword arguments through one, so a wrongly typed argument is answered with frappe's
+    type error as before.
   - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
     `fieldlevel_read.seal_wrapped_originals`), so no other dotted name for frappe's function
     answers HTTP.
@@ -85,7 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   User, while every other level-1 field of User stays refused for that user. Closed child tables are
   refused in every reference and through their parent, for a user below the table field's level
   and for one with no read on the parent, and answered for a user at the level; a readable table
-  (Timesheet's `time_logs`) keeps its standard columns.
+  (Timesheet's `time_logs`) keeps its standard columns. Names in another case, lists with empty
+  entries, `fields` and `filters` either way round, another doctype's fields on the unchecked
+  route, every spelling of a child table's column, a table field whose name starts with `tab`, a
+  Count card's leftover field, `HEAD` on the REST lists and calendar events each have their own
+  cases, with the ordinary requests beside them that must keep passing.
 
 ## [1.834.0] - 2026-11-23
 
