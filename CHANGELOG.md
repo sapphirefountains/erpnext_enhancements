@@ -48,6 +48,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already held, the deploy flags, the exact `doc_events` wiring, the field's declaration and the
   settings DocType's `modified` stamp.
 
+## [1.835.2] - 2026-11-23
+
+### Documentation
+
+- **WI-036 now carries the expected sales-tax matrix by stream, and the questions for the CPA.**
+  Nikolas collected research on Utah sales tax for each of Sapphire's four kinds of work (Build,
+  Design, Maintenance & Repair, Rentals). The work item now records what that research says for
+  each kind of line:
+  - Design fees: not taxed.
+  - Build on a permanent feature: not charged to the customer; Sapphire pays tax on materials.
+  - Portable products: taxed.
+  - On-site repair of a permanent feature: not taxed. Repair of a portable feature, or shop
+    repair: taxed.
+  - Cleaning: real property not taxed, tangible items taxed.
+  - Equipment rental: taxed at the event location's rate.
+
+  It also records the rules that hold across streams: itemize labor, parts, equipment and delivery,
+  and charge the destination rate from the Utah State Tax Commission's quarterly chart. It lists
+  what a line needs for ERPNext to decide, including a new permanent-or-portable flag, and seven
+  questions for the CPA, the first being whether routine maintenance of a permanent fountain is
+  taxable.
+  - The research is not a ruling. WI-036's hard gate, the CPA's written confirmation, is
+    unchanged. `docs/migration/wi036-utah-tax-guidance.md` now ticks the matrix and the rate source
+    and keeps the Build confirmation open.
+  - This changes documentation only, not executable behavior.
+
 ## [1.835.1] - 2026-11-23
 
 ### Fixed
