@@ -71,7 +71,8 @@ there. A caller with ``select`` but not ``read`` on a doctype is not exempt in g
 
 **How each route is reached.** The RPC routes are whitelisted methods, wrapped here through
 ``override_whitelisted_methods`` exactly as in ``fieldlevel_read``: each wrapper restates frappe's
-parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0),
+parameter list and HTTP methods (``tests/test_fieldlevel_filters.py`` pins both against 16.56.0,
+plus the link-search arguments 16.60 added, which ``_declared`` forwards only where they exist),
 checks the request, and then calls frappe's own function unchanged. ``seal_filter_originals``, a
 ``before_request`` hook, takes frappe's own copies off the whitelist once their canonical names are
 overridden, so no other dotted name for the same function (``frappe.client.search_widget`` is one)
@@ -89,6 +90,7 @@ frappe itself reads a bare value as a document name (a top-level filter list of 
 string filter). Those two positions are only refused when the value reads as a hidden field.
 """
 
+import inspect
 import json
 import re
 import unicodedata
@@ -1088,6 +1090,50 @@ def _check_search(doctype, query, filters, searchfield):
 	)
 
 
+def _as_int(value):
+	"""A request value as frappe's ``int`` annotation would read it: ``"20"`` is 20, junk is 0."""
+	try:
+		return int(value or 0)
+	except (TypeError, ValueError):
+		return 0
+
+
+def _as_flag(value):
+	"""A request value as frappe's ``bool`` annotation would read it. The Desk sends ``1``/``0``,
+	and a request carries them as text, where ``"0"`` is truthy."""
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes", "on")
+	return bool(value)
+
+
+def _declared(fn, **optional):
+	"""The part of ``optional`` that frappe's ``fn`` names in its signature; none when the signature
+	cannot be read.
+
+	frappe 16.60 added ``start``, ``include_image`` and ``keep_order`` to ``search_link``, and
+	``keep_order`` to ``search_widget``; 16.56 has none of them. ``frappe.call`` passes a whitelisted
+	function only the names it declares, so a wrapper that does not declare them silently drops the
+	Link dropdown's paging, images and order; one that passes them to a frappe that does not know them
+	raises ``TypeError`` on every Link search. Declaring them here and forwarding only what the
+	installed frappe names works on both.
+
+	``inspect.signature`` follows ``__wrapped__`` through both of frappe's layers, ``http_cache`` and
+	the whitelist's argument check, which both use ``functools.wraps``. A catch-all ``**kwargs`` is
+	deliberately not taken as acceptance: frappe's own functions never declare one, so seeing it means
+	a decorator without ``wraps`` is hiding the real parameters, and guessing there would bring the
+	``TypeError`` back. Dropping an argument costs paging; passing one costs the search.
+	"""
+	try:
+		params = inspect.signature(fn).parameters
+	except (TypeError, ValueError):
+		return {}
+	return {
+		name: value
+		for name, value in optional.items()
+		if name in params and params[name].kind is not inspect.Parameter.VAR_KEYWORD
+	}
+
+
 @frappe.whitelist(methods=["GET", "POST", "PUT", "DELETE"])
 def search_link(
 	doctype,
@@ -1100,9 +1146,13 @@ def search_link(
 	ignore_user_permissions=False,
 	*,
 	link_fieldname=None,
+	start=0,
+	include_image=False,
+	keep_order=False,
 ):
 	"""``frappe.desk.search.search_link``: its search field, and its filters unless a custom query
-	takes them (``_check_search``)."""
+	takes them (``_check_search``). ``start``, ``include_image`` and ``keep_order`` are frappe
+	16.60's, forwarded only to a frappe that declares them (``_declared``)."""
 	from frappe.desk import search
 
 	_check_search(doctype, query, filters, searchfield)
@@ -1116,6 +1166,12 @@ def search_link(
 		reference_doctype=reference_doctype,
 		ignore_user_permissions=ignore_user_permissions,
 		link_fieldname=link_fieldname,
+		**_declared(
+			search.search_link,
+			start=_as_int(start),
+			include_image=_as_flag(include_image),
+			keep_order=_as_flag(keep_order),
+		),
 	)
 
 
@@ -1136,9 +1192,11 @@ def search_widget(
 	link_fieldname=None,
 	for_link_validation=False,
 	query_filters_as_dict=False,
+	keep_order=False,
 ):
 	"""``frappe.desk.search.search_widget``: its search field, and its filters unless a custom query
-	takes them (``_check_search``)."""
+	takes them (``_check_search``). ``keep_order`` is frappe 16.60's, forwarded only to a frappe that
+	declares it (``_declared``)."""
 	from frappe.desk import search
 
 	_check_search(doctype, query, filters, searchfield)
@@ -1157,6 +1215,7 @@ def search_widget(
 		link_fieldname=link_fieldname,
 		for_link_validation=for_link_validation,
 		query_filters_as_dict=query_filters_as_dict,
+		**_declared(search.search_widget, keep_order=_as_flag(keep_order)),
 	)
 
 
