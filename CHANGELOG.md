@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.840.0] - 2026-11-23
+
+### Added
+
+- **Three progress-billing reports and a Progress Billing workspace card** (estimating B9
+  follow-up, listed in #1508). Script Reports in the Estimating module, all read with
+  `frappe.get_list`, so a person sees only the jobs they may read:
+  - **Retainage Held:** one row per schedule of values holding retainage, or every schedule with
+    the filter off. It shows what is held, what was released to date, retainage as a percent of
+    billed, and the latest certified application. Filters: account, project, status, and
+    *Include jobs holding nothing*. That box is off by default because frappe never sends an
+    unticked box to the server, so a box ticked by default could never be turned off.
+  - **Pay Applications Outstanding:** applications still open (Draft with the project manager, or
+    To Review with accounting) with the days since their period ended. It also lists locked jobs
+    with nothing open whose last certified application ended more than *Due after* days ago
+    (default 30) as **Due**, and locked jobs that never had an application as **Not started**. A
+    closed schedule is billed out and never shows.
+  - **Billed vs Scheduled:** with a schedule picked, its lines by top phase (change orders last) or
+    one row per line, giving billed to date against scheduled value, the percent and the balance.
+    Without a schedule, one row per locked or closed job.
+  - The arithmetic is `estimating/billing_reports.py`, a pure module in whole cents, tested without
+    a bench in `tests/test_billing_reports.py` (its own CI step).
+- **Each report admits only roles that may run a report on its reference doctype.** frappe refuses
+  a run otherwise, after the report's own role check. Retainage Held and Outstanding also read the
+  other billing doctype, so every role on them reads both, which is why the Estimator is not on
+  Retainage Held. The test holds both rules against the doctype JSON.
+- **Only permlevel 0 fields are read.** A Script Report runs server-side, where the field-level read
+  checks (1.835.0) do not reach, so the rule is kept in the reports and the test holds every field
+  they read to it.
+  - Outstanding shows the payment due rather than the amount certified. Every role on it could read
+    that permlevel 1 field, but an open application has none yet, and staying at level 0 keeps the
+    report independent of who holds level 1.
+  - No report has a print format.
+- **The total rows are the reports' own, computed from cents.** At v16.60.2, frappe's total row,
+  both on screen (`report_column_total`) and exported (`query_report.add_total_row`), takes a plain
+  mean of a Percent column. Held as a percent of billed across jobs, or percent billed across
+  phases, would be an average of percentages. So `add_total_row` is off and each report appends
+  total held ÷ total billed, or total billed ÷ total scheduled.
+- **A job billed by milestones is never "Due" by the calendar.** Between milestones there is nothing
+  to bill. It shows in Outstanding only with an application open, or as "Not started". A "Not
+  started" job is aged from the day it was locked.
+- **Billed vs Scheduled leaves draft schedules out** of its one-row-per-job view unless *Include
+  draft schedules* is ticked, because a draft is not a contract yet.
+- **The reports read live figures.** There is no as-of or month-end view, and no company or
+  date-range filter yet.
+- **Progress Billing card** on the Project Enhancements workspace and, at Nik's request ("Yes
+  finance hub too", 2026-11-23), on the **Finance Hub**. The card links Schedule of Values, Pay
+  Application and the three reports. The Finance Hub is limited to Accounts Manager, Accounts User,
+  Finance Team and System Manager, and every one of those roles may open all three reports (a test
+  holds this).
+  - Both workspace JSONs have `modified` bumped, and a post-model-sync patch,
+    `resync_progress_billing_workspaces`, force-reloads each one. Workspaces are timestamp-gated, so
+    a row edited in the Desk would otherwise keep the file out for good.
+  - The patch never raises (one Error Log row per workspace) and is safe to run twice.
+- **Prod effects on migrate:** three new Report records, the workspace re-sync and nothing else. No
+  schema change and no data written.
+
 ## [1.839.0] - 2026-11-23
 
 ### Changed

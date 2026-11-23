@@ -43,6 +43,8 @@ BUMPED_ON_OR_AFTER = "2026-10-14 12:00:00"
 #: and the stamp it set: (patch module, modified on or after).
 LATER_RESYNCS = {
 	"Marketing Hub": ("marketing_insights_hub_links", "2026-10-29 20:00:00"),
+	# v1.840.0 put the Progress Billing card on the Finance Hub (estimating B9 follow-up).
+	"Finance Hub": ("resync_progress_billing_workspaces", "2026-11-23 15:00:00"),
 }
 HUB_LINKS = "Dashboard Hub Links"
 
