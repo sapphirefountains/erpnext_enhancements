@@ -19,7 +19,9 @@ read-only in ``_gate.EXPLICIT_READONLY``. The nightly job and the cockpit's own
 Refresh button remain the ways to force a rebuild.
 
 Per-department visibility is ``api/kpi.py::_can_view``'s decision and is not
-re-implemented here.
+re-implemented here. So is the revenue and margin rule: the values come through
+``get_kpi_dashboard``, which leaves those figures (``kpi_dashboards/money.py``) out for a
+caller without Accounts Manager or System Manager.
 """
 
 from typing import Any

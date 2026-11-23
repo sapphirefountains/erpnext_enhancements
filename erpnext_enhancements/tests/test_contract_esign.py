@@ -606,19 +606,20 @@ class TestPortalGuards(unittest.TestCase):
             ):
                 self.fail(f"mass assignment via {node.func.value.id}.update() at line {node.lineno}")
 
-    def test_email_comparison_is_constant_time_over_bytes(self):
-        """compare_digest only accepts str operands that are pure ASCII, so a
-        pasted address with an accent or a curly quote would raise instead of
-        returning the uniform failure."""
-        self.assertIn("hmac.compare_digest", self.src)
-        self.assertIn('.encode("utf-8")', self.src)
+    def test_code_comparison_is_constant_time_over_bytes(self):
+        """The emailed code (v1.833.0) is compared with compare_digest, over bytes.
+        test_esign_email_code runs the comparison itself."""
+        code_src = (APP_DIR / "project_enhancements" / "esign" / "email_code.py").read_text(encoding="utf-8")
+        self.assertIn("hmac.compare_digest", code_src)
+        self.assertIn('.encode("utf-8")', code_src)
 
-    def test_blank_email_never_costs_an_attempt(self):
-        """The decline dialog never asks for the address; charging for a blank
-        let it silently spend the signer's whole hourly budget."""
-        body = self.src[self.src.index("def _email_matches") :]
-        guard = body.index('if not str(typed or "").strip():')
-        counter = body.index("_bump_counter")
+    def test_blank_code_never_costs_an_attempt(self):
+        """A blank or malformed entry is refused before anything is counted against the
+        request's entry limits."""
+        body = self.src[self.src.index("def verify_signing_code") :]
+        body = body[: body.index("def _code_step_problem")]
+        guard = body.index("if not typed:")
+        counter = body.index("_code_entry_allowed(request)")
         self.assertLess(guard, counter)
 
     def test_lifetime_attempt_counter_is_persisted_not_only_cached(self):

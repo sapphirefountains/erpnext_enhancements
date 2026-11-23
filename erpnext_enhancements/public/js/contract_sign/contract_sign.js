@@ -3,6 +3,12 @@
  * Boot data arrives as window.CS_BOOT — an explicit server-side allowlist, never
  * a config endpoint. The recipient address is only ever present here masked.
  *
+ * Signing starts with a code the server emails to the address on file
+ * (esign.portal.send_signing_code). Until it is entered (verify_signing_code) the
+ * agreement on screen is a preview with the client's address masked and the form is
+ * hidden; the answer to a right code carries the agreement as stored, which replaces
+ * the preview before any initials box is wired up.
+ *
  * The CSRF header is sent ONLY when the server handed us a token. A Guest
  * session has none (validation short-circuits server-side), but a logged-in
  * staff member previewing this page does, and omitting it there is a hard 400.
@@ -410,9 +416,8 @@
 				window.turnstile.reset();
 			},
 			"error-callback": function () {
-				// The widget itself failed. Open the session flagged, so the server
-				// records "we could not check" on the evidence rather than either
-				// blocking a real customer or silently laundering it as a pass.
+				// The widget itself failed. Open the session without a token: whether
+				// that is acceptable is the server's call, from its own settings.
 				widgetUnavailable();
 			},
 		});
@@ -421,19 +426,189 @@
 	function widgetUnavailable() {
 		if (sid) return;
 		turnstileToken = null;
-		begin(true);
+		begin();
 	}
 
-	function begin(unavailable) {
-		return post("erpnext_enhancements.project_enhancements.esign.portal.begin_signing", {
+	function resetChallenge() {
+		turnstileToken = null;
+		if (turnstileRendered && window.turnstile) window.turnstile.reset();
+	}
+
+	var opening = null; // a begin_signing call in flight, so a tap meanwhile waits for it
+
+	function begin() {
+		opening = post("erpnext_enhancements.project_enhancements.esign.portal.begin_signing", {
 			ref: BOOT.ref,
 			turnstile_token: turnstileToken,
-			widget_unavailable: unavailable ? 1 : 0,
 			esign_sid: sid,
-		}).then(function (result) {
-			if (result.esign_sid) sid = result.esign_sid;
-			return result;
+		}).then(
+			function (result) {
+				opening = null;
+				if (result.esign_sid) sid = result.esign_sid;
+				return result;
+			},
+			function (error) {
+				opening = null;
+				throw error;
+			}
+		);
+		return opening;
+	}
+
+	function session() {
+		return sid ? Promise.resolve({}) : opening || begin();
+	}
+
+	/* ------------------------------------------------------------ the code */
+
+	var unlocked = false;
+
+	function codeError(text) {
+		var box = $("cs-code-error");
+		if (!box) return;
+		box.textContent = text || "";
+		box.hidden = !text;
+	}
+
+	function codeNote(text) {
+		var note = $("cs-code-note");
+		if (note) note.textContent = text || "";
+	}
+
+	function setCodeButtons(disabled) {
+		["cs-code-send", "cs-code-resend", "cs-code-verify"].forEach(function (id) {
+			var button = $(id);
+			if (button) button.disabled = disabled;
 		});
+	}
+
+	/* A refusal from either code call. `restart`: the server has no session for us any
+	 * more (the cache is cleared on every deploy), so open a new one and let the customer
+	 * ask for a new code. `retry_captcha`: the bot check has to be done again. */
+	function codeRefused(result) {
+		codeError((result && result.error) || "Something went wrong. Please try again.");
+		if (result && result.restart) {
+			sid = null;
+			if (turnstileRendered && window.turnstile) resetChallenge(); // its callback opens the session
+			else begin();
+		} else if (result && result.retry_captcha) {
+			resetChallenge();
+		}
+	}
+
+	function sendCode() {
+		codeError("");
+		if (!sid && !opening && BOOT.turnstile_sitekey && turnstileRendered && !turnstileToken) {
+			codeError("Please finish the security check above, then ask for the code.");
+			return;
+		}
+		setCodeButtons(true);
+		var ready = session();
+		ready
+			.then(function () {
+				return post("erpnext_enhancements.project_enhancements.esign.portal.send_signing_code", {
+					esign_sid: sid,
+				});
+			})
+			.then(function (result) {
+				setCodeButtons(false);
+				if (result && result.ok) {
+					$("cs-code-send").hidden = true;
+					$("cs-code-form").hidden = false;
+					codeNote(
+						"We sent a code to " + (result.sent_to || BOOT.signer_email_hint || "your email") +
+							". It works for " + (result.minutes || BOOT.code_minutes || 10) + " minutes."
+					);
+					var field = $("cs-code");
+					if (field) {
+						field.value = "";
+						field.focus();
+					}
+					return;
+				}
+				codeRefused(result);
+			})
+			.catch(function () {
+				setCodeButtons(false);
+				codeError("Something went wrong. Please try again.");
+			});
+	}
+
+	function verifyCode(event) {
+		if (event) event.preventDefault();
+		codeError("");
+		var code = ($("cs-code").value || "").replace(/[\s-]/g, "");
+		if (!/^[0-9]{6}$/.test(code)) {
+			codeError("Enter the 6-digit code from the email.");
+			$("cs-code").focus();
+			return;
+		}
+		setCodeButtons(true);
+		var ready = session();
+		ready
+			.then(function () {
+				return post("erpnext_enhancements.project_enhancements.esign.portal.verify_signing_code", {
+					esign_sid: sid,
+					code: code,
+				});
+			})
+			.then(function (result) {
+				setCodeButtons(false);
+				if (result && result.ok) {
+					unlock(result.agreement_html);
+					return;
+				}
+				codeRefused(result);
+			})
+			.catch(function () {
+				setCodeButtons(false);
+				codeError("Something went wrong. Please try again.");
+			});
+	}
+
+	/* The code was right: the agreement as stored replaces the masked preview, and the
+	 * signing form appears. Initials, the pad and the read-to-the-end cue are wired only
+	 * now, on the agreement that will be signed. No history entry: a swap in place. */
+	function unlock(html) {
+		var agreement = $("cs-agreement");
+		if (html && agreement) agreement.innerHTML = html;
+		$("cs-verify").hidden = true;
+		$("cs-locked").hidden = true;
+		$("cs-verified").hidden = false;
+		$("cs-form").hidden = false;
+		if (unlocked) return;
+		unlocked = true;
+		setupPad();
+		setupInitials();
+		// Reading to the end emphasises the primary action but never gates it —
+		// a hard scroll gate is theatre and breaks screen readers.
+		if (agreement && "IntersectionObserver" in window) {
+			var sentinel = document.createElement("div");
+			agreement.appendChild(sentinel);
+			new IntersectionObserver(function (entries) {
+				if (entries[0].isIntersecting) $("cs-submit").classList.add("is-ready");
+			}).observe(sentinel);
+		}
+	}
+
+	/* The server says this session has no verified code (a resend replaced the link it
+	 * was entered for, say): back to the code step. */
+	function relock() {
+		$("cs-verified").hidden = true;
+		$("cs-verify").hidden = false;
+		$("cs-code-send").hidden = false;
+		$("cs-code-form").hidden = true;
+		codeNote("");
+		goToCode();
+	}
+
+	function goToCode() {
+		var step = $("cs-verify");
+		if (step && step.scrollIntoView) step.scrollIntoView({ behavior: "smooth", block: "start" });
+		var send = $("cs-code-send");
+		var field = $("cs-code");
+		if (field && !$("cs-code-form").hidden) field.focus();
+		else if (send && send.focus) send.focus();
 	}
 
 	/* ----------------------------------------------------------------- flow */
@@ -447,12 +622,6 @@
 		var name = signedName();
 		if (!name) {
 			showError("Enter your full name as your signature.");
-			button.disabled = false;
-			return;
-		}
-		// Checked here as well as server-side: a blank address would otherwise
-		// spend one of the customer's limited confirmation attempts.
-		if (!requireEmail()) {
 			button.disabled = false;
 			return;
 		}
@@ -477,7 +646,6 @@
 			.then(function () {
 				return post("erpnext_enhancements.project_enhancements.esign.portal.sign_contract", {
 					esign_sid: sid,
-					confirm_email: ($("cs-email").value || "").trim(),
 					signature_mode: mode,
 					signed_name: name,
 					signature_image: image,
@@ -490,6 +658,7 @@
 				if (result && result.ok) {
 					$("cs-form").hidden = true;
 					$("cs-agreement").hidden = true;
+					$("cs-verified").hidden = true;
 					$("cs-done").hidden = false;
 					// Offered only now, after the contract is executed and committed.
 					if (result.autopay && result.autopay.offer) {
@@ -499,10 +668,8 @@
 					return;
 				}
 				showError((result && result.error) || "Something went wrong. Please try again.");
-				if (result && result.retry_captcha && window.turnstile) {
-					turnstileToken = null;
-					window.turnstile.reset();
-				}
+				if (result && result.retry_captcha) resetChallenge();
+				if (result && result.code_required) relock();
 				button.disabled = false;
 			})
 			.catch(function () {
@@ -511,18 +678,9 @@
 			});
 	}
 
-	function requireEmail() {
-		var field = $("cs-email");
-		if (field && (field.value || "").trim()) return true;
-		showError("Type the email address this agreement was sent to.");
-		if (field) field.focus();
-		return false;
-	}
-
 	function decline() {
-		// The decline dialog never asked for the address, so without this a
-		// decline silently failed AND burned a confirmation attempt.
-		if (!requireEmail()) return;
+		// Reachable only once the code is entered: the button is in the form, which is
+		// hidden until then, and the server asks for the same verified code.
 		if (!window.confirm("Let us know you don't want to sign this agreement?")) return;
 		var reason = window.prompt("Anything you'd like us to know? (optional)") || "";
 		var ready = sid ? Promise.resolve({}) : begin();
@@ -530,7 +688,6 @@
 			.then(function () {
 				return post("erpnext_enhancements.project_enhancements.esign.portal.decline_contract", {
 					esign_sid: sid,
-					confirm_email: ($("cs-email").value || "").trim(),
 					reason: reason,
 				});
 			})
@@ -540,11 +697,13 @@
 					// could only say "This link isn't available", never "declined".
 					$("cs-form").hidden = true;
 					$("cs-agreement").hidden = true;
+					$("cs-verified").hidden = true;
 					$("cs-declined").hidden = false;
 					window.scrollTo(0, 0);
 					return;
 				}
-				showError((result && result.error) || "Please confirm your email address first.");
+				showError((result && result.error) || "Something went wrong. Please try again.");
+				if (result && result.code_required) relock();
 			});
 	}
 
@@ -709,21 +868,15 @@
 		$("cs-signed-name").addEventListener("input", function (event) {
 			$("cs-preview").textContent = event.target.value;
 		});
-		setupPad();
-		setupInitials();
+		// The pad, the initials and the read-to-the-end cue are wired by unlock(), once
+		// the code is entered and the agreement as stored is on screen.
 		form.addEventListener("submit", submit);
 		$("cs-decline").addEventListener("click", decline);
 
-		// Reading to the end emphasises the primary action but never gates it —
-		// a hard scroll gate is theatre and breaks screen readers.
-		var agreement = $("cs-agreement");
-		if (agreement && "IntersectionObserver" in window) {
-			var sentinel = document.createElement("div");
-			agreement.appendChild(sentinel);
-			new IntersectionObserver(function (entries) {
-				if (entries[0].isIntersecting) $("cs-submit").classList.add("is-ready");
-			}).observe(sentinel);
-		}
+		$("cs-code-send").addEventListener("click", sendCode);
+		$("cs-code-resend").addEventListener("click", sendCode);
+		$("cs-code-form").addEventListener("submit", verifyCode);
+		$("cs-locked-go").addEventListener("click", goToCode);
 
 		if (BOOT.turnstile_sitekey) {
 			if (window.turnstile) startTurnstile();
@@ -736,8 +889,8 @@
 			setTimeout(function () {
 				clearInterval(poll);
 				// challenges.cloudflare.com never loaded (blocked, offline, outage).
-				// Open the session flagged rather than leaving the customer to hit
-				// a misleading "check your email address" when they press Sign.
+				// Open the session without a token; the server decides from its own
+				// settings whether the code may be sent.
 				if (!window.turnstile) widgetUnavailable();
 			}, 10000);
 		} else {

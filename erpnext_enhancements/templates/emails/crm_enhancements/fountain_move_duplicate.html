@@ -1,5 +1,5 @@
-{# A fountain-move request matched more than one existing party, so conversion
-   stopped without creating anything.
+{# A fountain-move request matched an existing party (or several), so conversion
+   stopped without creating anything until a staff member confirms the match.
    Context: req, reason (plain sentence), candidates (list of {type, name}), request_url.
 
    A FRAGMENT — chrome comes from email_style.wrap() in fountain_move/notify.py.
@@ -8,7 +8,7 @@
    arguments; anything interpolated into ee.rich() must carry |e. #}
 {% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
 
-{{ ee.rich(req.first_name|e ~ " " ~ req.last_name|e ~ " (" ~ req.email|e ~ ") submitted a request that matches more than one existing record. <b>Nothing was created</b> — guessing wrong here would write a stranger's address onto someone else's account, which is far harder to unpick than doing it by hand now.") }}
+{{ ee.rich(req.first_name|e ~ " " ~ req.last_name|e ~ " (" ~ req.email|e ~ ") submitted a request that matches an existing record. <b>Nothing was created, and nothing was added to that record</b> — guessing wrong here would write a stranger's address onto someone else's account, which is far harder to unpick than doing it by hand now.") }}
 
 {% if reason %}
 {{ ee.callout(reason, "warning") }}
@@ -29,4 +29,4 @@
 
 {{ ee.button(request_url, "Open the request") }}
 
-{{ ee.note_rich("Decide which account this belongs to, set it on the request, then press <b>Retry Conversion</b>.") }}
+{{ ee.note_rich("Decide which account this belongs to, then press <b>Confirm Match</b> on the request.") }}

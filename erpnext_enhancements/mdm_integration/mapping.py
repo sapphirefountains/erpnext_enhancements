@@ -13,8 +13,8 @@ on its own, so "awaiting confirmation" lasted an hour and nobody ever confirmed
 anything: all four devices on production were promoted that way. It matters
 because a discovered device's ownership defaults to Company, and a full wipe is
 refused for BYOD only -- so an unconfirmed personal phone would have been
-eligible for a factory reset. ``actions.execute_device_action`` now refuses a
-full wipe of a Discovered device.
+eligible for a factory reset. ``actions.execute_device_action`` now refuses every
+action on a Discovered device until a person confirms it.
 """
 
 from __future__ import annotations
@@ -61,7 +61,12 @@ def _find_device(pd):
 
 
 def _apply_provider_fields(doc, pd):
-	"""Overwrite the provider-owned posture + link fields on an existing device."""
+	"""Overwrite the provider-owned posture + link fields on an existing device.
+
+	``ownership`` is not one of them. On an existing device it is what a person stated, and the
+	controller refuses BYOD to Company on a save made with ``ignore_permissions``
+	(``ManagedDevice._guard_ownership_change``). A provider's hint seeds only a device the
+	sync creates (``_create_discovered``)."""
 	doc.mdm_provider = pd.provider
 	doc.mdm_provider_device_id = pd.provider_id
 	if doc.mdm_link_state != "Discovered":

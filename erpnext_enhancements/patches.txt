@@ -8,6 +8,10 @@ erpnext_enhancements.patches.seed_contract_manager_role
 # pre_model_sync so the role exists before the Warehouse Floor Map DocType syncs the permission row naming it.
 # Insert-only; grants it to nobody.
 erpnext_enhancements.patches.seed_warehouse_map_editor_role
+# v1.832.0: the "Estimator" role (estimating milestone 1; TASK-2026-02149's cost-and-margin audience with Finance Team,
+# Executive Team and System Manager). pre_model_sync so the role exists before Estimate / Estimate Template / Estimate
+# Rate Card sync the permission rows naming it. Insert-only; grants it to nobody.
+erpnext_enhancements.patches.seed_estimator_role
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
@@ -1711,3 +1715,21 @@ erpnext_enhancements.patches.seed_estop_pre_shipment_test
 # declared default ONLY where tabSingles has no row for it, never over a stored value, so a settings page saved before this
 # release does not show the new box unticked and save it as 0. Also on after_migrate. Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_product_build_settings_defaults
+# v1.831.0 -- Job number prefixes (Nik, 2026-11-19 Ops Review): seed two Document Naming Rules on Project, SRV- (condition
+# project_type = Service) and EVT- (project_type = Events), 5 digits, priority 10 so Frappe tries them before the
+# unconditional PRJ- rule (priority 0). Each counts on its own; SRV- starts after 100 (QuickBooks holds old customer-jobs
+# named SRV-00000 to SRV-00015), EVT- after 0, or after the highest existing Project with that prefix if higher (none on
+# prod, so SRV-00101 and EVT-00001). Create-only per prefix: an existing or disabled rule is left alone, the PRJ-
+# rule and its counter are never touched, and NO Project is renamed or retyped. Cannot raise (one Error Log row per
+# failed prefix), safe twice. See project_enhancements/job_prefixes.py.
+erpnext_enhancements.patches.seed_job_prefix_naming_rules
+# v1.832.0 -- estimating milestone 1. One empty default "Standard" Estimate Rate Card (every rate 0: the repo is public and
+# Finance types the rates in the Desk); does nothing when any rate card exists. Insert-only, safe twice.
+erpnext_enhancements.patches.seed_estimate_rate_card
+# v1.832.0 -- estimating milestone 1. The Design-Build, Build, Event and Custom Panel Estimate Templates from
+# estimating/data/estimate_templates.json; insert-only by template name, no prices. Safe twice.
+erpnext_enhancements.patches.seed_estimate_templates
+# v1.832.0 -- estimating milestone 1. The non-stock Item EST-SCOPE every quotation line an Estimate issues uses (unit Unit),
+# and a 0 Item Price for it on the default selling price list so prod's auto-insert never makes a phase price its list
+# price. Insert-only, cannot raise (estimating/seed.run logs each failed step), safe twice.
+erpnext_enhancements.patches.seed_estimate_scope_item

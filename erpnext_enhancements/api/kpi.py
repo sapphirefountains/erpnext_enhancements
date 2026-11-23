@@ -8,7 +8,7 @@ Visibility is role-gated per department (System Manager sees all).
 
 import frappe
 
-from erpnext_enhancements.kpi_dashboards import snapshots
+from erpnext_enhancements.kpi_dashboards import money, snapshots
 
 # Departments that have a snapshot aggregator — single source of truth is the
 # engine's registry, so this can never drift from what actually produces data.
@@ -43,7 +43,13 @@ def _can_view(department):
 
 
 def _serialize(doc):
+	"""The snapshot as the cockpit and the assistant tool read it. A caller without
+	Accounts Manager or System Manager gets the department's figures with the revenue
+	and margin figures left out (``kpi_dashboards/money.py``); ``figures_left_out`` says so."""
+	all_values = list(doc.values)
+	values = money.without_revenue(all_values)
 	return {
+		"figures_left_out": len(values) < len(all_values),
 		"department": doc.department,
 		"period": doc.period,
 		"snapshot_date": str(doc.snapshot_date),
@@ -63,7 +69,7 @@ def _serialize(doc):
 				"source": v.source,
 				"is_stale": v.is_stale,
 			}
-			for v in doc.values
+			for v in values
 		],
 	}
 

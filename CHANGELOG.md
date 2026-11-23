@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.836.7] - 2026-11-19
+## [1.837.0] - 2026-11-23
 
 ### Changed
 
@@ -62,6 +62,1171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     overlapping backups run one after the other, a run that cannot get the lock in time fails
     and deletes nothing, the lock is free after a failed backup, and the free-space rule with
     and without a kept backup.
+
+## [1.835.2] - 2026-11-23
+
+### Documentation
+
+- **WI-036 now carries the expected sales-tax matrix by stream, and the questions for the CPA.**
+  Nikolas collected research on Utah sales tax for each of Sapphire's four kinds of work (Build,
+  Design, Maintenance & Repair, Rentals). The work item now records what that research says for
+  each kind of line:
+  - Design fees: not taxed.
+  - Build on a permanent feature: not charged to the customer; Sapphire pays tax on materials.
+  - Portable products: taxed.
+  - On-site repair of a permanent feature: not taxed. Repair of a portable feature, or shop
+    repair: taxed.
+  - Cleaning: real property not taxed, tangible items taxed.
+  - Equipment rental: taxed at the event location's rate.
+
+  It also records the rules that hold across streams: itemize labor, parts, equipment and delivery,
+  and charge the destination rate from the Utah State Tax Commission's quarterly chart. It lists
+  what a line needs for ERPNext to decide, including a new permanent-or-portable flag, and seven
+  questions for the CPA, the first being whether routine maintenance of a permanent fountain is
+  taxable.
+  - The research is not a ruling. WI-036's hard gate, the CPA's written confirmation, is
+    unchanged. `docs/migration/wi036-utah-tax-guidance.md` now ticks the matrix and the rate source
+    and keeps the Build confirmation open.
+  - This changes documentation only, not executable behavior.
+
+## [1.835.1] - 2026-11-23
+
+### Fixed
+
+- **Link field searches keep frappe 16.60's paging, images and order.** frappe 16.60 added
+  `start`, `include_image` and `keep_order` to `frappe.desk.search.search_link`, and `keep_order` to
+  `search_widget`. The Desk's Link dropdown sends them to page through results and show images.
+  1.835.0's overrides of both (field-level read on the field names a request carries) were written
+  against 16.56.0 and did not declare them. `frappe.call` hands a whitelisted function only the names
+  it declares, so the arguments were dropped without an error. Every search still answered, but
+  scrolling a Link dropdown would have shown its first page again, with no images and the relevance
+  order re-sorted.
+  - The wrappers now declare the three arguments and forward them only to a frappe whose signature
+    names them (`_declared`). `inspect.signature` reads through both of frappe's `functools.wraps`
+    layers on `search_link`, `http_cache` and the whitelist's argument check. The same code runs on
+    16.56, where passing them would raise `TypeError` on every Link search, and on 16.60.
+  - A catch-all `**kwargs` is not taken as acceptance. frappe's own functions never declare one, so
+    seeing it means a decorator without `wraps` is hiding the real parameters; forwarding there would
+    bring the `TypeError` back. Dropping an argument costs paging, passing one costs the search.
+  - The wrappers hand frappe a Python int and Python bools (`_as_int`, `_as_flag`), because a request
+    carries the values as text and `"0"` is truthy. 16.60.2's `search_link` also converts them itself,
+    so this is belt and braces.
+  - Why now: on 2026-11-23 production's frappe code moved from 16.56.0 to the version-16 branch head
+    (16.60.x) without a migrate. The new code asked for doctypes the database did not have (the Flow
+    module's `Flow Trigger`), and every website page answered "There was an error building this page",
+    `/login` included. Production was migrated forward the same day and now runs frappe 16.60.2 and
+    erpnext 16.60.0.
+  - A read of 16.56.0 to 16.60.2 found no other change to the signature, decorators or HTTP methods
+    of a function this app wraps or seals:
+    - `client.py` and `reportview.py` changed only functions it does not wrap;
+    - `dashboard_chart.py`'s heatmap now queries through `frappe.qb.get_query` and returns a `dates`
+      key, and `number_card.py` caches its permission check per request, with no argument changes;
+    - `form/load.py`, `form/save.py`, `form/utils.py`, `listview.py` and `calendar.py` did not change.
+  - Tests in `test_fieldlevel_filters.py` (`TestSixteenSixty`) cover:
+    - both frappe signatures, read through two `functools.wraps` layers as production stacks them;
+    - a bare `**kwargs` wrapper getting nothing;
+    - the text values;
+    - the field check still running first.
+
+    The signature table now lists the new names.
+
+## [1.835.0] - 2026-11-23
+
+### Changed
+
+- **Read requests are held to field-level read on the field names they carry (hardening).** A
+  request that names a field the caller cannot read at its permlevel, in `filters`, `or_filters`,
+  `order_by`, `group_by`, an aggregate or another `fields` expression, is now refused with a plain
+  permission message. The message says how to get out of it: a saved list or report that uses such a
+  field keeps being refused until the filter, sort or column is removed (in a report, Menu > Pick
+  Columns).
+  A field of a child table answers to the parent doctype's levels, the rule `fieldlevel_read.py`
+  already applies to documents. New `fieldlevel_filters.py`; nothing changes for a caller who can
+  read every field of the doctype and its child tables (Administrator included), and server-side
+  code never passes through it.
+  - **Where.** Twenty frappe read routes, through `override_whitelisted_methods` wrappers that
+    check the request and then call frappe's own function unchanged: the report view (`get`,
+    `get_list`, `get_count`, `export_query`, sidebar stats, filter dashboard), the list sidebar's
+    group-by counts, `frappe.client.get_list`, `get_count`, `get`, `get_value` and
+    `get_single_value`, link search (`search_link`, `search_widget`), the form's next/previous
+    record, Number Card results, Dashboard Chart data and calendar events (their filters, sort and
+    the two date fields the request names). The REST list routes (`GET` or `HEAD` on
+    `/api/resource/<doctype>`, `/api/v2/document/<doctype>`, `/api/v2/doctype/<doctype>/count`)
+    answer 403 in place of their body by the same rule, from `after_request`.
+  - **Consistent with frappe 16.56.0.** frappe's query engine applies this rule to a query's own
+    doctype; the wrappers hold every route above to it in one way. A child table's fields answer to
+    the parent's levels in every notation, and a document looked up by filters, a value read from
+    a Single and the next-record sort field follow the same levels. On a Single that hides fields
+    from the caller, `get_value` accepts only readable field names, and the whole-record dict a
+    lookup by filters answers with leaves without the fields the caller cannot read. Plain field
+    names in `fields` stay with frappe, which leaves out of the result what the caller cannot read,
+    except an entry that names a child table the caller cannot read (below).
+  - **A child table the caller cannot read is closed.** When the user cannot read the table field
+    that holds a child table, or reads no level of the doctype at all, every reference to that child
+    table is refused, whatever the column, its standard columns (`name`, `owner`, `creation`,
+    `modified`, `parent` and the rest) included: in filters (`table_field.column`,
+    `` `tabChild`.`column` ``, `[child doctype, column, operator, value]`), sort, grouping, an
+    aggregate, a `fields` entry and a child query. A list, count, value, report, card or chart
+    request on the child doctype itself, read through such a parent (`parent`, `parent_doctype`,
+    `parent_document_type`), is refused whole. A child table whose table field the user can read is
+    unchanged: its standard columns stay open and only its own columns above the user's level are
+    refused.
+  - **A name the doctype does not have is read the way frappe reads it.** frappe's query engine
+    looks a plain filter name its doctype lacks up in the doctype's child tables, using the first
+    table, in field order, that has a field of that name, so in filters that reach the engine such
+    a name answers to that child field's level. Everywhere else (a sort, a grouping, an aggregate, a
+    search field, a Single's filters, a filter that names its own doctype) a name the doctype lacks
+    is not one of its fields and is not refused, and the doctype's own standard columns (`name`,
+    `owner`, `creation`, `modified`, `docstatus`, `idx`, `parent`, `_assign`, `_user_tags` and the
+    rest) never are. Ordinary searches and lists, such as item search on sales and buying documents,
+    keep working for a user who cannot read a table like `allowed_companies`.
+  - **A name is matched as the database matches it.** MariaDB reads a column name in any case and
+    frappe's own lookups do not, so a field named in another case is treated as that field, in
+    every position and for child tables too.
+  - **A request is read every way frappe may read it.** A list of filters is read as given and
+    without its empty entries, which frappe drops on one path. `fields` and `filters` are read
+    either way round on the routes that reach `frappe.get_list`, which accepts them in either
+    order. A child table's column is recognised in every spelling frappe accepts (`tabChild.column`
+    with a backtick, a double quote or nothing around either part), and an alias after a dotted
+    name is set aside as frappe sets it aside.
+  - **Another doctype's fields, where frappe makes no check of its own.** Almost everywhere,
+    frappe's query engine applies the caller's permissions to a field named in a linked doctype
+    (`link_field.field`), and nothing changes there. On the one route that reads its filters with
+    no permission applied, the filters are now read for every caller, and a field named in another
+    doctype, through a Link field or by table, is held exactly as frappe's query engine holds it
+    elsewhere: to that doctype's read levels, to its level-0 fields for a caller who holds only
+    `select` on it, and to its standard columns for a caller with no access to it.
+  - **A Count Number Card is judged on what it counts.** frappe counts rows for a Count card and
+    never reads the aggregate field the card may still carry from an earlier setting, so that
+    leftover field no longer causes a refusal.
+  - **Link search follows frappe's choice of path.** With a custom query (the request's `query`,
+    or a query the doctype registers through the `standard_queries` hook), the filters are that
+    query's arguments and are not read as field names. Without one they are checked as frappe's
+    query engine reads them. The search field is checked on both paths.
+  - **One named exception: `User.user_type`.** It says only whether an account is a desk account or
+    a website account; the Desk and this app list staff by it (frappe's Users workspace cards, the
+    Create Project dialog's list of users to notify), and frappe's query engine already lets any
+    caller filter, sort and group by it. A filter, sort, grouping or aggregate on it is accepted for
+    every Desk user, on every route. Every other field of User above level 0 is still refused for a
+    user who cannot read it, and a user who holds only `select` on a doctype is not exempt in general.
+  - **Unknown shapes are refused** for a caller with hidden fields on the doctype, except where
+    frappe reads a bare value as a document name.
+  - **Three wrappers call frappe's function by keyword** (link search and the two sidebar-stats
+    routes): those functions sit behind a decorator of frappe's own, and its argument type check
+    only sees keyword arguments through one, so a wrongly typed argument is answered with frappe's
+    type error as before.
+  - **The originals are sealed** in `before_request` (`seal_filter_originals`, the same rule as
+    `fieldlevel_read.seal_wrapped_originals`), so no other dotted name for frappe's function
+    answers HTTP.
+  - What a user may notice: a list, report, chart or search that filters, sorts or totals by a
+    field above the user's permission level shows the permission message instead of results.
+- **New `tests/test_fieldlevel_filters.py`** (bench-free, `frappe` stub, its own CI step): the
+  wiring against frappe 16.56.0's signatures and methods, the seal, both hooks, and the rule run
+  over stand-in metadata in every position and notation, for a caller with hidden fields and one
+  without. A set of ordinary Desk and ERPNext requests (the item, supplier and customer searches
+  ERPNext v16.54.0 sets up, list view, Kanban, report view group-by, sidebar counts and tags,
+  next/previous, number cards, charts, REST lists, standard columns) runs for a caller who cannot
+  read Item, Customer and Supplier's `allowed_companies` table and must pass; the same routes
+  naming a hidden field must still be refused. The Create Project dialog's list of desk users, over
+  stand-in User metadata shaped like frappe 16.56.0's, passes for a user with `select` only on
+  User, while every other level-1 field of User stays refused for that user. Closed child tables are
+  refused in every reference and through their parent, for a user below the table field's level
+  and for one with no read on the parent, and answered for a user at the level; a readable table
+  (Timesheet's `time_logs`) keeps its standard columns. Names in another case, lists with empty
+  entries, `fields` and `filters` either way round, another doctype's fields on the unchecked
+  route, every spelling of a child table's column, a table field whose name starts with `tab`, a
+  Count card's leftover field, `HEAD` on the REST lists and calendar events each have their own
+  cases, with the ordinary requests beside them that must keep passing.
+
+## [1.834.1] - 2026-11-23
+
+ERPNext Task TASK-2026-02996 (PRJ-00580, Marketing Tools).
+
+### Added
+- **A plan for selling on www.sapphirefountains.com, for Nik to decide from**
+  (`docs/website-commerce/plan.md`). Docs only: nothing is built, and no executable behavior
+  changes. Nik asked for better SEO, our products on Google (including Google's "Universal Cart"),
+  and a website checkout whose orders reach ERPNext as real sales records with stock tracked. All
+  research was read-only: the live site's public pages and catalog API, Google's and vendors'
+  documentation, and read-only queries on production ERPNext.
+  - **Universal Cart is real but not open to us.** Google launched it in the US on 2026-10-15 as a
+    shopper's cart in AI Mode and Gemini. Merchants take part only through the Universal Commerce
+    Protocol, which is early access with merchants chosen by Google. It has no WooCommerce support,
+    and it excludes custom goods, rentals and special shipping. Recommendation: look again in
+    mid-2027.
+  - **Merchant Center free listings need a store that sells.** Google requires a working cart and
+    checkout. Today WooCommerce holds 24 products as a catalog: 4 are priced, there is a "Contact us"
+    button in place of "Add to cart", and three SKUs don't match ERPNext's item codes. Services,
+    rentals and quote-priced fountains can't be listed at all.
+  - **Recommended checkout:** WooCommerce on the website, with ERPNext owning price and stock.
+    - A paid order becomes a durable `Web Order` row inside the webhook request, then a Customer, a
+      submitted Sales Order and a Payment Entry.
+    - A poll and a re-drive sweep make the order survive a deploy's Redis flush.
+    - WooCommerce's Stripe gateway charges on our own Stripe account. A `Stripe Payment` row per
+      order lets the existing `finalize_payment`, payout entry and `invoice_payment_block` cover it.
+  - **Build the sync ourselves rather than install WooCommerce Fusion.** It is the only v16
+    connector, and its source on 2026-10-28 showed three problems: its webhook doesn't check
+    signatures, its default mode loses orders when queued jobs are flushed, and its stock push can
+    oversell. ERPNext core removed its own WooCommerce connector in v15 (frappe/erpnext#37015).
+  - **ERPNext's catalog is not ready to sell.** No Item has a photo, weight, GTIN or brand. Most
+    Items are non-stock (PR #1378 adds the switch), stock reservation is off, and there are no
+    Sales Orders or Delivery Notes yet. Chemicals stay off the store at launch because of hazmat
+    shipping rules.
+  - **The SEO audit has 17 findings, 6 of them High.** The contact page is set to noindex. Project
+    pages can't be crawled and are duplicated. The live sitemap comes from a second plugin and lists
+    junk. There is no local-business markup. A 404 is linked from the site. Most fixes are settings;
+    the page-by-page copy fits the agreed Marketing approval path, and none uses Slim SEO's own
+    write abilities.
+    - On 2026-10-29 the read-only Sapphire SEO abilities, newly active on the site, confirmed the
+      contact page and policy-page findings. They also corrected one fix: WooCommerce's real cart and
+      checkout are `/cart-2/` and `/checkout-2/`. So the old `/cart/` and `/checkout/` are the pages
+      to delete, and the plan no longer tells anyone to delete the pages checkout runs on.
+  - **The customer's account lives in ERPNext, not the website** (section 6, added at Nik's request
+    the same day).
+    - The shopper checks out as a guest, and the order creates a portal account on
+      `erp.sapphirefountains.com`: a Website User with the Customer role only, signing in by email
+      link.
+    - Order status, shipments with tracking, invoices, history and support go in this app's own
+      portal pages, beside `/pay` and `/rentals`.
+    - ERPNext's stock portal pages are switched off and their routes guarded. Read in source at
+      erpnext v16.52.1, they scope by `Customer.portal_users`, are built for other kinds of portal
+      users, and show no tracking.
+    - The stock Issues, Tasks and Addresses web forms, the Voice Call Settings permissions and the
+      wider staff sign-in guard are marked as shipped in v1.755.0 (#1383), not as work still to do.
+    - History is shown only from a cut-off Accounts has reconciled, because 162 QuickBooks-era
+      invoices still show as overdue.
+    - Prod's portal home is `/desk`, which refuses customers. So an email-link sign-in very likely
+      lands on "not permitted" today; the plan proposes fixing that now.
+    - Re-weighing the options against this requirement keeps WooCommerce guest checkout. An
+      ERPNext checkout would keep customer data in fewer places, but Google flags a checkout on
+      another domain from the product pages, and it goes down with every deploy.
+  - **Also in the plan:** phases with effort, what Nik sets up himself (Merchant Center, the
+    Business Profile, the Stripe gateway, the policies, the CPA note, Cloudflare rate limits), and
+    21 decisions.
+  - Written 2026-10-28 and 29, merged 2026-11-23. Before the merge, §6.6 (Security) was cut back to
+    the controls the portal needs, because this repository is public. Some facts are as of
+    October: catalog counts, the SEO findings, and what had shipped.
+
+## [1.834.0] - 2026-11-23
+
+### Added
+
+- **Estimating, milestone 2: the Schedule of Values and the Pay Application.** The contract broken
+  into the lines the customer signed, and one period's AIA progress billing (G702 and G703) against
+  it, replacing the pay application workbook. Follows the 2026-11-04 concept decisions, the v2 PayApp
+  and SOV mockups, Nik's picks of 2026-11-06 and the B-series plan (TASK-2026-02065 to -02073).
+  - **Schedule of Values.** Typed by hand (the day-one path: most jobs have no estimate) or filled
+    from an Estimate with **Create > Schedule of Values**, one row per phase and cost type by default
+    or one per line, editable afterwards. The fill is an exact partition: the rows are the
+    estimate's own line prices regrouped in whole cents, so they sum to the estimate to the cent, and
+    the same estimate in any order gives the same rows. "By others" lines stay on as flagged rows worth
+    nothing. **No cost or markup field exists on it**, by design: it is handed to a general contractor.
+  - **Lock.** The schedule cannot lock until its lines equal the contract sum. Once locked its lines
+    are the contract breakdown: a changed value, a new base line or a new contract sum is refused, and
+    scope changes arrive as **change-order rows** (Add Approved Change Orders: every submitted,
+    customer-approved Change Order of the project, at its signed price, dated by the customer's
+    approval). It unlocks only before any application is certified, and a billed line can never be
+    deleted. Every line carries a `line_key` minted once, so reordering or renumbering never repoints
+    a billed line.
+  - **Pay Application.** Start Pay Application on a locked schedule makes the next one, chained by a
+    stored link to the latest (never inferred from dates), dated from the day after the last period;
+    one open application per schedule. **The link and the number are derived again on every save**:
+    read_only is not enforced on a save at frappe v16.56 (`client.set_value` and the REST update just
+    save), and a blanked link would have priced every line from nothing, billing the whole job again. **The project manager types this period's percent per line**
+    (Nik, 2026-11-06) in a phone-usable editor: phases with work this period open, the rest folded; a
+    REST button bills what is left; a line pushed past its scheduled value turns red. Send to
+    Accounting marks it To Review; accounting reviews the amount due and **certifies**, which submits
+    it. Milestone billing bills a milestone's percent of every base line, each milestone once, and the
+    milestones must total 100% before the schedule locks. **Change-order rows bill outside the
+    milestones**, by the percent typed on them, alone or alongside a milestone: a milestone's percent
+    on a change order, with each milestone billed once, would leave approved scope unbillable.
+  - **The arithmetic** (`estimating/pay_app_math.py`, a browser twin held to the same cases), in whole
+    cents with frappe's banker's rounding. **Column D is the earlier applications' work completed, not
+    their column G**: stored material is a balance, so carrying G forward would count it twice (the
+    workbook's "E = prior H" makes that mistake). The G702's nine lines with retainage as two rows (on
+    work, on stored materials); **line 7 sums what was certified**, so when a GC certifies less than
+    was due the shortfall is in the next payment due by construction. No six-month limit.
+  - **Retainage** (D16) resolves line → application → the schedule's rate → none, and may **step
+    down** (for example 10% until 50% complete, then 5%), chosen by the percent complete at the
+    **start** of the period so a month's own work never changes the rate it is billed at. **A step-down
+    keeps holding** (Nik, 2026-11-19: "Keep holding it"): work billed before the step stays held at the
+    old rate until final release, and only work after it is held at the new rate. So retainage on work
+    is cumulative per line, what the earlier applications held plus this period's work at the rate in
+    force, never `(D + E) x` today's rate, which would have paid out half of everything held in the
+    month the job crossed the step. The rate used and the retainage held before are stored on every
+    line; a certified application never re-rates. Stored materials are off unless
+    the job turns them on.
+  - **Change orders join from the application whose period reaches their approval date**, and
+    "approved this month" means "not on the previous application", so a change order approved in March
+    and added in June moves line 2 in June, the month it actually moved. A change order on a
+    certified application cannot be canceled (Change Order `before_cancel`, naming the application),
+    because it moved that certificate's contract sum to date; one canceled earlier leaves every
+    schedule (`on_cancel`), and a draft drops it, or refuses it by name when a percent was typed on it.
+    Moving a draft's period earlier drops a change order approved after it the same way.
+  - **Accounting owns the certification and the retainage.** The amount certified (and its
+    "certified for less" tick) and the application and line retainage overrides are at permlevel 1:
+    accounting writes them, project managers read them. Overrides are cleaned as typed (blank
+    inherits, 0 to 100 is a rate, anything else refused by name). A locked schedule keeps its project,
+    billing mode, stored-materials setting, milestones **and retainage terms**, the terms the job was
+    signed on. Its status moves only through Lock and Unlock (a saved status is ignored), a change-order
+    row always equals its Change Order (an approved one of the same project, at its price and approval
+    date) and can never be unlinked from it or have one put on a base row, a row that appears on any
+    certified application cannot be deleted, and a project has one schedule. A line override sent with
+    a new application by someone without level-1 access is cleared (frappe v16.56 does not reset child
+    rows on insert). Negative completed-to-date and negative stored
+    materials are refused. A percent typed on a "by others" line, or stored
+    materials on a job that does not bill them, is set back to 0 rather than billed.
+  - **Certify refuses with every reason at once**: the schedule not locked, the previous application
+    not certified, a period that overlaps the last one, a line no longer on the schedule, a line billed
+    past its scheduled value, a negative amount without a note, work on a line scheduled at nothing,
+    stored materials while they are off, retainage outside 0 to 100%, a negative payment due, an
+    amount certified above the amount due. Only the latest application can be canceled; amending is
+    refused.
+  - Not in this release: the Sales Invoice with retainage receivable, the G702/G703 print and the
+    portal export, retainage release, and percent-complete accounting. They are the next PRs.
+    **Nothing releases retainage until retainage release (B9) lands**: with keep-holding, an override
+    of 0 holds nothing new but releases nothing. B9 comes next and must ship before any job reaches its
+    last application.
+- Bench-free tests, in CI: `test_pay_app_math` (the arithmetic, the shared cases, the projection),
+  `test_billing_controllers` (both controllers and the endpoints, frappe stub), the node twin and the
+  editor's bundle level in `scripts/test_estimate_math.mjs`, and the no-cost-field and who-certifies
+  rules in `test_estimating_rules`.
+
+### Fixed
+
+- **CI: the publishing rate-limit step pins redis-py at 8.1.0.** The step pinned fakeredis and lupa
+  but not redis-py, which fakeredis installs as a loose dependency. redis 8.2.0, released
+  2026-11-23, breaks fakeredis 2.38.0's client setup: every `FakeRedis()` raised
+  `'method_descriptor' object has no attribute '__closure__'`, so all eight Lua-versus-spec tests
+  errored on any branch. That had nothing to do with the change under test. Checked locally: the
+  same suite errors on redis 8.2.0 and passes on 8.1.0. Upgrade fakeredis, lupa and redis together.
+  This changes CI only.
+
+## [1.833.1] - 2026-11-21
+
+### Fixed
+
+- **The Reorder Board sent people to a bin the item was not in** (TASK-2026-03279, from enhancement
+  request ER-2026-1335803). Each line's location cell printed the rule's own warehouse
+  (`Item Reorder.warehouse`). That is where a Material Request delivers, not where the stock is. A
+  rule with a `warehouse_group` is judged on every warehouse under that group, so the item can sit in
+  another bin while the rule's own bin is empty.
+  - **The case on production:** item 406-020. Its rule names `Bin B2-3-4`, which was counted to 0 on
+    2026-11-04. Its two were in `Bin B1-3-12`, with one more on the Project Shelf. "Below" was right
+    (2 projected across the Inventory Room, under a level of 5), but the only clue was "projected
+    across Inventory Room". Someone checking the count went to B2-3-4 and found nothing.
+  - **How often:** on 2026-11-21, 10 of production's 53 rules had their item in a bin other than the
+    rule's own, inside the rule's group. For 406-020 the rule's own bin was empty.
+  - **Where it is.** This column on Needs reorder and Snoozed now lists every bin the rule counts
+    that holds the item, with the quantity in each, largest first. "Counts" means the rule's scope
+    (`reorder_rules.in_scope`) less job sites and the Project Shelf
+    (`project_shelf.not_shop_warehouses`): the same places its projected quantity is read from. The
+    read is the Bin Manager item filter's (`tabBin` rows), with one difference: a negative row is
+    kept and shown as negative. ERPNext's projected quantity counts it, so dropping it would list
+    more on hand than the Projected figure beside it (none on production). A rule written on a job
+    site or the Project Shelf counts the stock in its own warehouse, because its projected quantity
+    does too (none on production).
+  - **Reorder into** names the rule's warehouse under the list, so it reads as where a request goes.
+  - **When the rule's bin is empty** while the stock sits in another bin, the line says so and asks
+    someone to fix the rule or move the stock. The line also says when the rule's bin is not one of
+    the item's bins in the Bin Manager, meaning it has no enabled Putaway Rule while the item has
+    others. 406-020's Putaway Rule for B2-3-4 is disabled. The board never decides which bin is right:
+    the rule's bin may be the intended home and the stock the thing out of place.
+  - **No warning for a rule that delivers to receiving.** On production, 29 of the 53 rules deliver
+    to `Receiving - SF`. Stock is put away from there, so an empty receiving room is normal, and
+    "fix the rule or move the stock" would be wrong advice. The receiving place is read from
+    `Inventory Scanner Settings.overhead_receiving_warehouse` (`project_shelf.fallback_warehouse`),
+    not from a name. The line still lists where the stock is.
+  - **Not counted by this rule** lists stock outside the rule's scope, with job stock marked "held for
+    jobs". So the line shows every place, as Where Is This Item does.
+  - **On hand** is now what the rule counts, across the same scope as Projected. It used to be the
+    rule's own bin alone, so 406-020 read 0 beside a projected 2. A rule with no group counts its own
+    bin only, so its figure does not change.
+  - The Create Material Request dialog and the daily digest now head the rule's warehouse **Reorder
+    into** instead of Warehouse.
+  - **Code:** the pure rule is `reorder_rules.stock_places`. The reads are `reorder_board.read_stock`
+    and `read_assigned`: two bound-parameter SELECTs on `tabBin` (`actual_qty <> 0`) and
+    `tabPutaway Rule` (`disable = 0`), plus the receiving setting. There are no writes, and no new
+    endpoint, field, fixture or patch.
+  - **The request named a `Storage Location` doctype.** It exists but has no rows on production, and
+    the board never read it. The Bin Manager's bins are Warehouses and its assignments are Putaway
+    Rules, and those are what the board reads.
+  - **Tests:** `tests/test_reorder_board.py`, which is already its own unittest step in CI, gains three:
+    - `TestStockPlaces`, which includes a rule that delivers to receiving, a rule on a site or the
+      shelf, and negative stock;
+    - `TestBoardShowsWhereStockIs`, which runs `build_board`'s own reads on the stub, with the reported
+      item as the case;
+    - the page's wording, under node.
+
+## [1.833.0] - 2026-11-19
+
+Hardening changes released together. Each was written and reviewed as its own pull request (#1479, #1480, #1481, #1482, #1483, #1484, #1486, #1487, #1489, #1490, #1491, #1499, #1495, #1497), and the notes below are theirs, grouped by kind.
+
+### Added
+
+- **New Desk page: Time Edit Approvals** (`/desk/time-edit-approvals`, Workforce). Stacked cards, one
+  per waiting entry the session user may decide (a supervisor's direct reports, or everyone for HR
+  Manager and System Manager): employee, day, project, the times before and now (or *Added by hand*),
+  the reason given, who edited it and when, with **Approve** and **Send Back** (optional note). It
+  reads through one new endpoint, `time_edits.get_waiting_edits` (GET), which picks the rows on the
+  server by the same rule and returns only what the page shows, so a supervisor needs no read
+  permission on Job Interval. The page opens to Employee, HR Manager and System Manager.
+- **Endpoints.** `workforce.time_edits.get_waiting_edits` (GET, the page's read),
+  `approve_time_edit` and `send_back_time_edit` (POST);
+  `project_enhancements.esign.portal.send_signing_code` and `verify_signing_code` (guest, POST, rate
+  limited, in the guest endpoint register); `crm_enhancements.fountain_move.api.confirm_match`
+  (POST, System Manager and Sales Manager). Each is described with its change below.
+- **Fields, with no default and no backfill.** Job Interval: the eight *Edit Approval* fields and
+  the `sync_status` option `Held - Not Approved`. Contract Signature Request: `email_code_verified`
+  and `email_code_verified_on`. Fountain Move Request: `match_confirmed_by` and
+  `match_confirmed_on`. Stripe Payments Settings: `autopay_limit` (blank or 0 means nothing is
+  charged automatically).
+
+### Changed
+
+- **Document Intake endpoints check access consistently (hardening).**
+  - `ingest_upload` and `ingest_mobile_photo` now require read permission on the File they are
+    given, using the File doctype's own rule (the caller's own upload, a public file, a file shared
+    with them, or a file attached to a record they can read). The check runs in the whitelisted
+    wrapper before anything is read; `ingest_document` is unchanged, so the email, Drive watch and
+    other server-side channels keep working. The Upload Document button and the mobile channel
+    upload a File first and are unaffected.
+  - `reprocess` (Re-extract) now resets only a document that is still being worked up (Received,
+    Extracting, Needs Item Review, Needs Review or Failed) and never one that names the record it
+    created. It is rate limited to 30 calls per user per hour with `utils/user_rate_limit`.
+  - `reject_document` now refuses a document that is Posting or Posted, or that names the record
+    it created. Approve already refused those.
+  - A person who sets or changes a document's **Source File** on the form or through the REST
+    resource must be able to read that file, by the same rule (`DocumentIntake.validate`). The
+    channels are not asked, and neither is a save that leaves the file as it was, so a reviewer
+    can still re-extract and approve a document that came in by email, Drive, mobile or chat.
+  - New bench-free suite `tests/test_intake_access_checks.py`, wired into CI.
+- **The Drive folder link on Customer, Project and Opportunity is set only by the Google Drive
+  integration and System Managers (hardening).** `custom_drive_folder_id` was read-only in the
+  form only; a new `validate` hook, `google_drive/folder_link_guard.guard_drive_folder_link`,
+  now holds the same rule on the server for every save and insert:
+  - A save from anyone other than a System Manager that carries a different folder is refused
+    with "The Drive folder link on this record is set by the Google Drive integration."
+  - A save that carries the field empty while the record has a folder keeps the stored folder.
+    A form opened before the integration linked the folder used to clear the link when saved;
+    the save now goes through and the link stays.
+  - A new record from anyone other than a System Manager keeps no folder value, so a Duplicate
+    of a Project starts unlinked instead of sharing the original's folder.
+  - Unchanged for the integration: the provisioners, the backfill, the Drive Link Manager and the
+    Opportunity hand-off job all write the field with `frappe.db.set_value` / `db_set`, which run
+    no controller. Server code that saves one of these documents with a new folder sets
+    `doc.flags.drive_folder_update`. Migrate, install and patches pass, and a site without the
+    column is a no-op.
+  - Bench-free tests run the hook (`tests/test_drive_folder_link_guard.py`, own CI step).
+- **Device actions require a confirmed device, and device cards start unticked (hardening).**
+  - A Managed Device whose link state is Discovered now accepts no action until a Device Manager
+    confirms it and its ownership: every wipe mode, lock, locate, reboot, run script and deploy
+    patch is refused before any provider call, with a message that says to confirm the device
+    first. Before, only a full wipe was held back. The refusal is recorded in the Device Action
+    Log like any other. Actions on a confirmed device run as before.
+  - Every remote device action in the AI confirmation list (lock, wipe, locate, reboot, run
+    script, deploy patch) now starts unticked in the batch dialog, whatever its risk band, with the
+    reason "runs a remote device action". Locate, reboot and deploy patch used to start ticked.
+    Select all and ticking by hand work as before; other tools are unchanged.
+  - A locate request adds a Comment to the device's timeline naming who asked and when, written
+    before the request is sent, and Device Managers get a notification the same way as for a
+    wipe or a lock. If the Comment cannot be written, nothing is sent.
+  - **A personally owned (BYOD) device accepts Locate and Lock only** (Nikolas, 2026-11-19). A
+    wipe in either mode, a reboot, a script, a patch and any action added later are refused before
+    any provider call and recorded in the Device Action Log (`actions.BYOD_ACTIONS` is the list).
+    Before, a BYOD device took a selective wipe. The device form no longer draws Remote Wipe,
+    Reboot or Run Script on a BYOD device, and the wipe tool's description says the same. To remove
+    company data from a personal device, use the provider's own console.
+  - **The ownership field is held to the same care as the rule that reads it.** Changing a device's
+    ownership from BYOD to Company requires a System Manager (`ManagedDevice.validate`, so the form,
+    the REST resource and `set_value` alike), and server code that saves without a permission check
+    never makes that change; Company to BYOD stays open to Device Managers. Every ownership change
+    leaves a note on the device's timeline saying who, from what to what, and when. Confirm
+    Discovered Device is still how ownership is stated for the first time, and its prompt no longer
+    preselects an answer.
+  - **A refused or failed device action is recorded even though the request ends in an error.** The
+    Device Action Log row, the Device Managers' notice and a locate's timeline note are written again
+    after the request's rollback and committed by themselves (`actions._keep_through_rollback`, on
+    `frappe.db.after_rollback`), so there is exactly one of each per attempt whether the action came
+    from the form or from a confirmed assistant action, and nothing else that was pending is
+    committed with them.
+  - `tests/test_mdm_provider_clients.py` now runs each action against a Discovered and a confirmed
+    device with a stand-in provider, and each against a BYOD device; `tests/test_ai_gate_batch.py` and
+    `scripts/test_ai_pending_batch.mjs` cover the unticked cards.
+- **The Visit Wizard's bootstrap applies the briefing's role rule (hardening).**
+  `api.maintenance_visit.get_visit_bootstrap` now includes the site briefing (the `dashboard` key)
+  only for a caller who passes the rule `get_dashboard_context` and the `maintenance_site_briefing`
+  assistant tool already apply: a user holding one of the roles in
+  `sapphire_maintenance.permissions.VIEW_ALL_ROLES`, or Administrator. The bootstrap reuses that
+  module's `_sees_all` rather than listing the roles again.
+  - A caller who can read the visit but holds none of those roles still gets the visit, its
+    sections, template guidance and state; the `dashboard` key is `{}` and the briefing builder is
+    not called for them.
+  - Nothing changes for a technician, supervisor, Projects Manager or System Manager.
+  - The wizard page already reads every briefing key through a fallback (`data.dashboard || {}`),
+    so it needed no change; `tests/test_visit_briefing_role.py` pins that too.
+  - Tests: `tests/test_visit_briefing_role.py` runs the bootstrap's decision against a stand-in
+    `frappe` and checks it gives the same answer as the endpoint's role step for every role in the
+    list and for roles outside it. Wired into CI.
+- **Applying a workflow action over HTTP now requires POST (hardening).** The field-level-read
+  wrapper for `frappe.model.workflow.apply_workflow` declares `methods=["POST"]`, the request the
+  Desk's form toolbar already sends (`frappe.xcall`). The emailed approval link and the bulk
+  approval run the transition in process and are unaffected. `tests/test_fieldlevel_read.py`
+  still holds every other wrapper's methods equal to Frappe's, records this one as deliberately
+  narrower, and fails if any wrapper answers a request type Frappe's own does not. The endpoint
+  leaves the whitelist-methods baseline (`BASELINE_CEILING` 356 to 355).
+- **The feedback rate counters set their window again when they find none.** The per-person
+  filing and draft counters in `api/feedback.py` now set the expiry on the first call and again
+  whenever the counter exists without one, the same rule `utils/user_rate_limit.py` and
+  `carrier_tracking/tracking.py` apply, so a counter whose first expiry was lost cannot outlive
+  its window. New cases in `tests/test_feedback_capture_intake.py` run both counters against a
+  cache whose first expiry is dropped.
+- **The Projects Dashboard's bulk edit accepts only the fields the dashboard edits (hardening).**
+  `update_multiple_docs` now checks every field name in the request before it writes anything:
+  - A Project may be changed only in `EDITABLE_PROJECT_FIELDS`, the list `update_project_details`
+    already uses (status and the two priorities).
+  - A Task may be changed only in the new `EDITABLE_TASK_FIELDS`: `exp_start_date`, `exp_end_date`
+    and `expected_time`, the three cells the Tasks tree's inline editor saves.
+  - A request that names any other field, or whose changes are not a name-to-fields mapping, is
+    refused as a whole with a message and nothing is saved. The per-record write check, the
+    parent-dates rule and the POST-only declaration are as before.
+  - The Tasks tree's Save changes button is unaffected: it sends only those three fields.
+  - `tests/test_dashboard_bulk_edit_fields.py` (bench-free, wired into CI) runs the endpoint on a
+    stand-in `frappe` and reads the page's JavaScript, so the lists and the grid cannot drift apart.
+- **Water Feature Design drawings print only as the SVG the Fountain Designer draws (hardening).** A
+  design keeps its drawings as SVG text (the charts in `results_json`, and each Standard Detail's
+  `svg`), and the print formats and the submittal packet place that text in their HTML. Each drawing
+  now passes `water_engineering/svg_safe.clean_svg` first:
+  - **An allowlist built from the module's own drawing code.** It keeps only the elements and
+    attributes `engine/drawings.py` (which the electrical and controls packages draw through) and the
+    seeded Standard Details emit, `style` on the root with only `max-width` and `font-family`, and a
+    reference only as a same-drawing `url(#id)`; everything else is dropped, an element together with
+    its content. Text and attribute values are written back escaped.
+  - **It fails closed.** Text that is not one well-formed SVG root (malformed, a DOCTYPE, anything
+    after the root, too long) prints the drawing's "nothing to show" sentence, never the original.
+  - **Standard library only** (`xml.etree`), as the host installs no packages.
+  - **Every print path uses it.** The formats and the packet call the new Jinja method `we_safe_svg`
+    (`hooks.py`), and `prints.drawing`, `we_circulation_schematic`, `we_electrical_oneline` and
+    `we_standard_details` call `clean_svg` too, so a drawing stored by an earlier release is held to
+    the same list when it is printed.
+  - The drawings the derive makes print exactly as before: the new suite runs the real derive over
+    four designs and every print drawing and checks that nothing they contain is lost. A Standard
+    Detail someone drew by hand with an element off the list (a `g` group, for one) prints without
+    that part.
+  - **Preview Packet opens in a dialog.** The Water Feature Design form's **Submittal > Preview Packet**
+    now shows the packet in a sandboxed frame inside a dialog, where the packet's HTML runs no script and
+    has an origin of its own, instead of writing it into a new window of the site. The dialog's
+    **Print** opens the packet format in frappe's print view, as other formats print. **Generate Packet
+    PDF** is unchanged. A private letterhead image may not show in the preview; it prints.
+  - Tests: `tests/test_water_svg_safe.py` (pytest, in the print formats' CI step) runs the allowlist over
+    samples off the list assembled at run time, over the real generator's drawings, and holds every
+    format, the packet helpers and the preview to it. `test_water_prints` registers `we_safe_svg` as
+    frappe does.
+- **Approvals on budget reallocations and change orders are recorded only by the approval steps (hardening).**
+  - **Budget reallocations: the requester does not record the project manager approval
+    (hardening).** *Approve as Project Manager* now refuses the person who requested the
+    reallocation, and the person who already gave the second approval; submit refuses a project
+    manager approval recorded by the requester. With the existing second-approval rule, the
+    request, the first approval and the second approval come from three different people on a
+    protected category, and from two on any other. A project manager who raises a reallocation now
+    needs a colleague to approve it. `quality/budgets.first_approval_errors` holds the rule.
+  - **Approval stamps on Budget Reallocation and Change Order are written only by their approval
+    endpoints (hardening).** `read_only` hides a field in the form but is not checked on the server,
+    so each controller now enforces it: a save that changes `requested_by` or an approval stamp on a
+    reallocation, or `pm_approved`, `customer_approved`, `customer_approval_note` or their by/on
+    stamps on a change order, is refused unless it comes from the approve, record or revoke
+    endpoint, which sets a document flag (`APPROVAL_FLAG`), and a new document that arrives carrying
+    an approval is refused. `requested_by` is always the session user on insert. Migrate, install,
+    patches and a System Manager's Data Import keep the values they write, as on Tier Review.
+  - **The approval stamps are not copied by Duplicate**, so a duplicated reallocation or change
+    order starts unapproved instead of being refused, and *How the customer approved* is read-only
+    on the Change Order form (it is written by *Record Customer Approval*). Both DocType JSONs carry
+    a new `modified` so `bench migrate` picks the field changes up.
+  - New bench-free suite `tests/test_approval_stamps.py` (own CI step) runs both controllers and
+    their endpoints over a stand-in `frappe`.
+- **A visit's sign-off link may still go to any single address; one that is not on file is now
+  recorded and the office is told (hardening).** Decided by Nik, 2026-11-19: "Any address, but the
+  office gets a notice naming the address whenever it is not one on file."
+  - **What counts as on file.** `sign_off.is_on_file` compares case-insensitively after trimming
+    against the Customer's `email_id` and its two custom email fields, the visit Project's customer
+    and billing email, the `contact_email` of the Project Contract behind the visit's maintenance
+    contract, and the email addresses of Contacts that are the Customer's primary contact, are
+    linked to the Customer or Project, or are stakeholder rows on either.
+  - **What happens otherwise.** The link is sent exactly as before. The visit's timeline gets a
+    Comment naming the address, who sent it and when, and the Visit Review Emails list (the people
+    who already read finished visits) gets a short notice with the visit, customer, address, sender
+    and a link to the visit, in the shared email shell (`visit_sign_off_notice.html`).
+  - **Both entry points.** Finish and the visit form's button both call `send_request`, so both do
+    it. An address that is on file behaves as before: no Comment, no notice.
+  - **A notice never blocks anything.** A failure to write the Comment or send the notice is logged
+    (no token, no link) and the send and the Finish go on. Who may send, the token, its lifetime and
+    the signing page are unchanged.
+- **Revenue and margin figures on the KPI dashboards go to Accounts Manager and System Manager
+  only (Nikolas, 2026-11-19).** Cash collected (30 days) is counted with revenue, by his
+  answer the same day. Every other role that may open a department's dashboard keeps
+  everything else that department shows, other money figures included: receivables, payables,
+  spend, stock value, pipeline, closed-won value, deal size, backlog,
+  change-order value, marketing pipeline, marketing spend and cost per lead. The revenue and
+  margin figures are left out of the answer by the server, so the tile is absent rather than
+  zeroed. The department gate (`DEPARTMENT_ROLES`) is unchanged.
+  - **One registry, one helper.** `kpi_dashboards/money.py` lists the nine keys that state
+    revenue or margin (`RESTRICTED_KPIS`: revenue 30 days and month to date, cash collected 30 days, catalog revenue 30
+    days and one year, rental revenue booked, rental revenue per fountain, revenue per employee,
+    gross margin) and every other key whose name, label or unit reads like money, with the
+    reason it is not a revenue or margin figure (`REVIEWED_UNRESTRICTED`). `can_see_revenue` is
+    the role rule and `without_revenue` is the filter; every read path below calls them.
+  - **Read paths.** The cockpit endpoints (`get_kpi_dashboard`, `refresh_kpi_dashboard`) and the
+    assistant tool `kpi_dashboard_status` (through them); KPI Snapshot document reads, which open
+    with those rows left out (`KPISnapshot.apply_fieldlevel_read_permissions`); the Executive
+    Dashboard widgets (scorecard counts, cash and receivables, risk queue); and the Task Dashboard
+    wall band.
+  - **Lists and reports.** A KPI Snapshot list, Report View or count, including one that selects,
+    filters, sorts or totals by KPI Snapshot Value columns, returns for these callers only the
+    snapshots that hold no revenue or margin row (the parent's `permission_query_conditions`). A
+    query on KPI Snapshot Value itself leaves those rows out.
+  - **KPI Target.** A target for a revenue or margin figure is listed, opened, created, edited and
+    deleted by Accounts Manager and System Manager only (`permission_query_conditions` and
+    `has_permission` on KPI Target). A target is judged on the key it is stored under as well as
+    the key a save carries, so it stays under this rule whatever key it is given. Sales Manager
+    keeps every other target.
+  - **What a user notices.** An Accounts User opening Finance sees receivables, payables and the
+    counts, without the two revenue tiles and cash collected. Item Manager, Stock Manager and Sales
+    Manager open Product without catalog revenue, rental revenue and gross margin. Sales Manager
+    opens Executive without revenue, cash collected and revenue per employee. In the KPI Snapshot list these
+    roles see only the snapshots that hold no revenue or margin row. A dashboard whose figures are all revenue or
+    margin shows "Nothing to show for your role." The snapshots themselves are stored whole; the
+    rule applies on read.
+  - **Tests.** `tests/test_kpi_money_roles.py` reads every aggregator and fails the build when a
+    key or label that reads like money is in neither table, or when one that names revenue or
+    margin is not restricted; it runs the rule through each read path, and runs the KPI Snapshot
+    and KPI Target list conditions in SQLite against sample rows.
+- **Fountain Move: a public-form request that matches an existing customer waits for staff
+  (hardening; Nik's decision of 2026-11-19).** When a request from the public `/fountain-move` form
+  matches an existing Customer, Contact or Lead (by email or phone), the conversion now records the
+  match as a suggestion and parks the request in **Duplicate Review**. Nothing is created, attached
+  or written: the existing Customer, its Contacts, its Addresses and its Drive folder stay as they
+  were, and the usual duplicate-decision alert goes out.
+  - **Confirm Match** (new button on a Duplicate Review request; `fountain_move.api.confirm_match`,
+    POST, System Manager or Sales Manager) records who confirmed and when, links the request to the
+    Customer the staff member picks (prefilled with the suggestion) and queues the conversion. The
+    conversion then creates **only the Opportunity** under that Customer, with the submitted name,
+    email and phone in its scope notes, and attaches the photos to that Opportunity alone. No
+    Address, Contact or Lead is created, and nothing is written onto an existing Customer, Contact
+    or Address: staff copy anything they want across by hand.
+  - Unchanged: a public request that matches nobody converts into the five new records as before,
+    and so does a request staff started — a row made in the Desk (owned by a desk user) or the first
+    request submitted through a staff member's emailed link. Which kind a request is comes from the
+    server's own record (`owner`, and the invite resolved from the link's token), never from the
+    submission; later requests through the same emailed link count as public.
+  - Two new read-only fields on Fountain Move Request, **Match Confirmed By** and **Match Confirmed
+    On**, with no default: existing rows read blank. Requests already waiting in Duplicate Review
+    can now be finished with Confirm Match instead of being edited and retried.
+  - **The daily digest lists a request left Queued.** Confirm Match and Retry mark the request
+    Queued just before the conversion job is enqueued, and a deploy empties the job queue, so the
+    job can be lost. `notify.digest_stuck_requests` now has a "Queued (not started over an hour)"
+    section. The hour runs from the later of the two actions: Retry now stamps the request's last
+    change, Confirm Match stamps its confirmation time, and a request is listed only when both are
+    over an hour old. Retry on the request starts it again.
+  - New bench-free suite `tests/test_fountain_move_public_match.py`, in its own CI step.
+- **Signing a contract online now starts with a code emailed to the customer (hardening).**
+  Nik, 2026-11-19: "Emailed code. When they start signing, email a short code to the address on
+  file and ask them to type it." The typed-email step on `/contract-sign` is replaced by it.
+  - **What the customer sees.** Above the agreement, "Confirm it's you": *Email me a code* sends a
+    6-digit code to the address the agreement was sent to, shown as `j•••@example.com`. They type
+    it and press *Confirm*; the signing form (initials, signature, consent) then appears, with
+    *Decline* inside it. Until then the agreement is shown with their address masked; the right
+    code swaps in the agreement exactly as sent. *Send a new code* is always there, including when
+    a code has vanished because a deploy cleared the cache. No history entry is added anywhere.
+  - **The code's rules** (`esign/email_code.py`): six digits from `secrets`, valid 10 minutes, at
+    most 5 entries per code, at most 3 sends per signing request per 15 minutes, a new code
+    replaces the old one. Only a keyed hash is stored, in the cache, under the request and bound to
+    its live link; it is compared in constant time and works once. A wrong, expired, used or
+    exhausted code gets one message. Entries also count against the request's existing limits
+    (5 an hour, 15 in all, persisted in `email_attempts`), and spending them pauses the link until
+    staff re-send it, as before.
+  - **Two new guest endpoints**, both POST-only and rate limited, and listed in the guest endpoint
+    register: `esign.portal.send_signing_code` (sends only to the address on the request) and
+    `esign.portal.verify_signing_code`. `sign_contract` and `decline_contract` now require a
+    verified code for the session's current link and no longer take an email address.
+  - **The bot check is decided by the server alone.** `begin_signing` takes the challenge token and
+    nothing else about it: the verdict comes from `turnstile.verify` on the site's own settings.
+    A site with no bot-check secret keeps its behaviour ("Not Checked", accepted). A request that
+    carries no bot-check token goes on to the emailed code, which is the identity check, under the
+    same limits: it is recorded as "Unavailable" with a detail saying no token was sent, which the
+    evidence record and the staff alert show. A token that is sent and fails is "Failed" and is
+    refused. The code can be sent only on an accepted verdict. The bot check is a signal kept on
+    the evidence, not a gate: the page relies on the single-use link, the emailed code and the
+    limits on sending and entering codes.
+  - **The code email** (`templates/emails/project_enhancements/contract_signing_code.html`) goes
+    through the email shell: the code, the document's name, how long it works, and "Didn't ask for
+    a code? You can ignore this email." It is sent straight after the commit, with the body
+    replaced in the Email Queue once sent, and the code is never in the subject.
+  - **The evidence record** gains two read-only fields on Contract Signature Request,
+    `email_code_verified` and `email_code_verified_on` (new columns; existing rows read 0 and
+    empty, which is correct for them). Signing in the Contract Builder asks for no code and records
+    none. The invitation email, the Send for Signature and hand-over dialogs, and the field
+    descriptions now say a code will be emailed rather than that the address must be re-typed.
+  - Tests: `tests/test_esign_email_code.py` (new, own CI step) runs the code and the endpoints over
+    an in-memory cache and a moving clock; `scripts/test_web_flow_history.js` drives the page's
+    code step; `tests/test_contract_esign.py` follows the moved checks.
+- **Autopay charges only maintenance agreement invoices under a limit (hardening).** The owner's
+  rule: an automatic charge of a saved card or bank account (autopay on submit, the hourly autopay
+  sweep, dunning retries) runs only for an invoice billed from a maintenance agreement whose balance
+  is at or under the new **Automatic Payment Limit** in Stripe Payments Settings → Saved Cards /
+  Autopay. Blank or 0 allows no automatic charge, and that is how it ships: no default amount and no
+  backfill, so until Accounts set a limit every invoice waits for the desk.
+  - **One decision for every automatic path.** `saved_methods.automatic_charge_allowed` is asked by
+    the submit hook and the sweep before they enqueue, and by `charge_saved_method` for every channel
+    but `Desk`, before any guard, ledger row or Stripe call. A refusal there is
+    `card_element.AutomaticChargeHeld`, a `PaymentBlocked`, so dunning reschedules instead of
+    counting a decline. The invoice lock, the shared guard and the open-link rule run unchanged after
+    it.
+  - **How an agreement invoice is recognized.** A Sapphire Maintenance Record that names a maintenance
+    contract and is not a service call, linked to the invoice (or the invoice it was amended from)
+    through the invoice's Maintenance Record field (per-visit billing) or the record's Generated Sales
+    Invoice (per-visit and recurring billing), on a contract whose customer is the invoice's. A
+    recurring invoice for a period with no visits has no such link and waits for the desk.
+  - **A held invoice says so.** It gets one comment, "Automatic payment did not run: …" with the
+    reason, and Accounts Managers get one notification, once per invoice. The sweep no longer picks up
+    an invoice carrying that note.
+  - **Charge Saved Method on the Customer is unchanged**, with the same operator check, and charges a
+    held invoice as before.
+- **Time changed or entered by hand now waits for approval before it counts (hardening).** When an
+  employee moves the start or end of their own Job Interval from the Time Kiosk
+  (`update_interval_times`), adds time by hand (`add_manual_interval`) or starts work backdated
+  (`start_backdated`), the interval is marked **Waiting** on a new *Edit Approval* block with who
+  edited it, when, and the start and end before the edit. The same applies to an edit of another
+  person's time by someone who may not approve that person's edits, a Projects Manager included. A
+  change of activity alone moves no hours and does not wait; a time sent back unchanged to the minute
+  is treated as unchanged and the stored value is kept. The rule lives in `workforce/time_edits.py`.
+  - **Who approves.** The employee's `reports_to` supervisor (an enabled user), or anyone holding HR
+    Manager or System Manager (`time_edits.may_approve`), and never the employee or the person who made
+    the edit. Projects Manager is not an approver of hand edits. This is its own rule: the Time
+    Correction Request gate (`permissions.can_review`) is unchanged. An employee with no supervisor, or
+    whose supervisor's login is disabled, is decided by HR Manager or System Manager. An approver's edit
+    to someone else's time needs no approval and settles a waiting one as approved; an approver's edit
+    to their own time still waits.
+  - **The approver is told when an entry starts waiting**, once per waiting spell (a Sent Back entry
+    edited again starts a new one): a bell notification that opens the approvals page and one email in
+    the app's email design, saying who, which day, the project, what changed, the reason given and who
+    edited it. It goes to the supervisor, or to the HR Managers when there is no supervisor to tell, or
+    to the System Managers when that leaves nobody, and never to the employee or the editor. It is sent
+    from `JobInterval.on_update`, after the save, on
+    every path that can start a wait (the three kiosk endpoints and the Desk form); a refused save tells
+    nobody, and a notice that fails is logged and never fails the edit.
+  - **A waiting entry is left out of payroll at the source.** `payroll_export` leaves Waiting and Sent
+    Back intervals out of every total, the overtime split included, and the workbook gains a third
+    sheet, **Waiting for Approval** (employee, day, hours, status, what changed, reason, who edited),
+    marked as not part of the submission; the provider sheet's columns are unchanged. The Payroll Hours
+    Export report lists the same entries above its table. `sync_interval_to_timesheet` writes no
+    Timesheet line for a held interval (its `sync_status` reads `Held - Not Approved`, a new option),
+    so it is not submitted with the day and does not reach a project's labour actuals; an edit to an
+    interval that already had a Draft line takes that line off until the edit is approved.
+  - **Approve Edit / Send Back on the Job Interval form too.** `approve_time_edit` and
+    `send_back_time_edit` (both POST; the decider comes from the session) accept an approver who is
+    neither the interval's employee nor the person who made the edit, record who and when with an
+    optional note, and re-sync the Timesheet line. Sending back restores nothing: the entry stays out
+    and the employee is emailed. The form shows what changed and draws the buttons only for a reader
+    who may decide. The kiosk's My Day rows read *Waiting for approval* or *Sent back*, and the edit
+    toast says when an edit waits.
+  - **The Job Interval form follows the same rule.** A save made through the DocType's own write
+    permission (the Desk form, the REST resource) is checked in `JobInterval.validate`
+    (`time_edits.guard_direct_save`). A change to the employee, start, end or paused time is a hand
+    edit and waits on the same terms, an interval entered there for oneself waits, and the *Edit
+    Approval* fields keep their stored values whatever the save sent. When the save changes whether
+    the interval is held, `on_update` re-syncs its Timesheet line. Saves by this app's endpoints, the
+    sweeper and an approved correction are not affected: they save with `ignore_permissions`.
+  - **A Time Correction Request follows the same principle.** It is decided only by a reviewer who
+    is neither the employee it is for nor the person who filed it (`permissions.may_decide_request`):
+    on the Approve and Decline endpoints, on any status change saved on the form or through the REST
+    resource (`TimeCorrectionRequest.validate`), and the form draws the two buttons only for someone
+    who may decide. Who may review, and who may file, are unchanged; a manager can still file a
+    request for their own time and someone else decides it.
+  - **What the approver rule rests on.** Who approves is read from `Employee.reports_to` and
+    `Employee.user_id`, which anyone with write access to Employee can edit; the workforce README
+    says so. Employee tracks changes to both.
+  - **Existing intervals are not marked.** `edit_approval` has no default, so after migrate every
+    existing row reads blank, which counts exactly as before. Bench-free suite
+    `tests/test_time_edit_approval.py`, in its own CI step; `tests/test_s3_page_css.py` holds the new
+    page's stylesheet to the design tokens.
+
+## [1.832.0] - 2026-11-19
+
+### Added
+
+- **Estimating, milestone 1: the Estimate (new module Estimating).** Priced lines grouped by phase,
+  built quickly from a job-kind template, issuing a native draft Quotation. The first step of the full
+  concept Nik chose at the 2026-11-19 Weekly Operations Review (estimate → schedule of values → pay
+  applications); it follows TASK-2026-02149 (D15–D18, the Estimator role and the cost wall), the
+  2026-11-04 concept page and the v2 mockups.
+  - **Templates by job kind.** Design-Build (phase 100 holds the four design stages as **110 to 140**,
+    the Design Project template's Predesign, Schematic design, Design development and Construction
+    documents), Build, Event (no phases: each line is its own quotation line) and Custom Panel (no
+    rough-in or vessel). Applying one shows its checklist with the usual lines ticked, as James
+    asked ("a conscious decision to include or not"). Phases are integers because
+    `Task.custom_phase_number` is an Int; the concept page's "100.1 to 100.4" would not fit a Task.
+  - **Pricing (policy A with D15).** Cost (with use tax on material and equipment, a cost, never an
+    invoice line), plus markup by cost type, makes the cost of work; contingency, insurance and fee
+    are each a percent of the cost of work, **added, not stacked** (the 2026-09-21 sheet fix moved
+    the contingency base to the cost of work). **Commission is internal**: a percent of the price,
+    taken out of the margin and never added to the price or shown to the customer (concept card 1).
+    Every rate resolves line → phase → parent phase → estimate; a blank override inherits and `0` is
+    a real rate. Rates are copied from the **Estimate Rate Card** when an estimate is made, so a later
+    card edit never reprices a quote already sent. Every amount is rounded to the cent where it is
+    made (banker's, after float noise: 2.10 × 2.45 is 5.14), so a price is exactly the sum of its parts.
+  - **A line with a sheet price and no cost** is priced at its sheet price and flagged; **back-fill**
+    (one line or all) turns the price into the unit cost that reproduces it under the line's rates
+    (Nik, 2026-11-06), trying the cent either side so it lands on the price where the cents allow.
+  - **Cost and margin behind the wall.** Cost, markup, margin, commission and every rate are at
+    permlevel 1, readable only by **Estimator, Finance Team, Executive Team and System Manager**; in
+    this release those are also the only roles that can open an Estimate, template or rate card.
+  - **Issue Quotation** makes a draft Quotation with one line per phase at the phase's price on the
+    new non-stock Item `EST-SCOPE`, allowances named under their phase, "by others" lines listed as
+    exclusions in the terms. The deal goes on `custom_source_opportunity`, never ERPNext's
+    `opportunity` field (which drives and freezes the Opportunity's status). No sales tax on a build
+    quotation, because use tax is already inside the prices; after `set_missing_values` the builder
+    clears any tax template the customer's details pulled in. A draft Quotation is refreshed in place;
+    a submitted one is never touched. A line priced at nothing stops the issue.
+  - **Revisions.** New Revision copies the estimate as revision n+1, dated today; the old one becomes
+    Superseded and read-only, the record of what was quoted. A quotation still in draft moves to the
+    new revision, so issuing refreshes it instead of leaving a second draft behind.
+  - **The quotation keeps the estimate's prices**: `ignore_pricing_rule` is set, so a selling Pricing
+    Rule added later cannot reprice it in validate, and a "valid until" already in the past is dropped
+    (ERPNext refuses a quotation valid until before its own date).
+  - The **Estimator** role is meant to be paired with a selling role: it grants nothing on Quotation,
+    Customer, Opportunity or Project. `planner_tracking.COST_ROLES` already names it, so the Project Planner's labor
+    forecast answers an Estimator with the money; the Project form's `labor_forecast` field stays
+    hidden from it, because `grant_labor_forecast_visibility` ran once, before the role existed.
+  - **The lines editor** (the v2 Estimate board), in the Estimate form: phases fold (open by default
+    only where work is missing, or all on a short estimate), line rows turn into labelled cards under
+    720px with 44px inputs and Save / Issue Quotation stuck to the bottom, cost codes from the catalog
+    (choosing one sets the cost type; a labor line takes the labor cost per hour), the "ready to accept"
+    checks (cost and cost code on every line). Edits update numbers in place and never redraw under the
+    finger. Its pricing is a browser twin of the server engine held to the same cases; the server's
+    numbers are the ones saved.
+  - **Create > Estimate** on an Opportunity, for the roles that may, opens a new Estimate for the deal;
+    **View > Estimates** lists them.
+  - Cost codes are checked against `quality/cost_codes.py` (a legal shape is not enough); `FEE` and
+    `01 2116` are refused on a line because they are computed from the rates.
+- Patches: `seed_estimator_role` (pre_model_sync), `seed_estimate_rate_card` (one empty default
+  "Standard" card: **every rate is 0** because this repository is public; Finance types the rates in the
+  Desk, and the editor says so while they are zero), `seed_estimate_templates` (insert-only by name,
+  no prices), `seed_estimate_scope_item`. Fixture Custom Field `Quotation.custom_estimate`.
+  - **No seed step can abort the migrate.** Each runs through `estimating/seed.run`: committed when it
+    works, rolled back and logged as one "Estimating seed: <step>" Error Log (with what to do by hand)
+    when it does not, the shape the role seeds use. A raising patch aborts `bench migrate`, which is
+    the deploy here.
+  - **EST-SCOPE** is named `SERVICE, ESTIMATE SCOPE` in the Item Naming Schema's shape and uses the unit
+    **Unit** ("Nos" is disabled on prod). The naming audit still reports one finding for it,
+    `name_category_unapproved`: Appendix A lists only physical parts, so a service category is the
+    Process Owner's to add.
+  - **EST-SCOPE holds a 0 Item Price** on the default selling price list, and Issue Quotation adds one
+    on any other list a quotation uses before inserting it. Prod has "Auto Insert Item Price If
+    Missing" on, so without it the first quotation an Estimate issued would have made the first
+    phase's price EST-SCOPE's list price, and every EST-SCOPE line added by hand would default to it. A
+    0 list price never overrides a line's own rate, and with "Update Existing Price List Rate" off (as
+    on prod) ERPNext leaves an existing price alone. The quotation rows carry no rate until after
+    `set_missing_values`, because ERPNext's `insert_item_price` runs there and skips only a row with no
+    rate.
+- **An Estimate and its Quotation can be deleted, either one first.** They Link each other
+  (`Estimate.quotation`, `Quotation.custom_estimate`), so `delete_doc` refused both. Their `on_trash`
+  hooks (`estimating/links.py`; Quotation's through `doc_events`) clear the pointing field first, since
+  `on_trash` runs before the link check. Deleting the quotation sets an "Issued" estimate back to
+  "Draft". Deleting a middle revision points the next one at the one before, so the chain survives.
+  Deleting the newest makes the one before it editable again: "Issued" when its quotation still holds
+  its own prices, "Draft" when the deleted revision had issued onto the same draft quotation.
+- **Issue Quotation and New Revision stop when the save before them fails.** At frappe v16.56
+  `frm.save()` swallows a server refusal (a cost code the catalog does not know, say) and resolves
+  anyway, so the editor carried on: it issued from the last stored version and then reloaded over
+  the unsaved edits. Both now check the form is clean after the save and stop if it is not.
+- Bench-free tests, all in CI: `test_estimate_math` (engine), `test_estimating_rules` (codes,
+  quotation rows, seeded templates, the permlevel wall), `test_estimate_controller` (frappe stub),
+  `test_estimating_api` (Issue Quotation, the seed patches and the delete links, frappe stub) and
+  `scripts/test_estimate_math.mjs` (the browser twin against the same cases, the bundle level, no
+  unescaped text, and Issue / New Revision stopping after a failed save).
+## [1.831.0] - 2026-11-19
+
+One release for five reviewed PRs from the 2026-11-19 Weekly Operations Review: new Service and
+Events jobs numbered SRV-/EVT- (#1488), build priority on the Products tab (#1494), Warehouse
+Transactions upgrades (#1485), suggested reorder levels on the Reorder Board (#1492) and the rack QR
+sheet (#1496).
+
+### Added
+
+- **Rack QR sheet: one printed page per rack, every shelf's code with its position.** From the
+  2026-11-19 operations review: the north-facing Atrium shelves are too high, and their side blocks
+  too thin, for QR stickers. A new page, `/rack-qr-sheet?w=<rack>`, prints one Letter page per rack
+  to laminate and hang low beside it. The Warehouse form of any group has a new **Rack QR Sheet**
+  button (Stock Scan menu, beside Print QR Labels).
+  - **The same codes as the location labels.** Each encodes `<site>/stock-scan?w=<warehouse>`
+    (`stock_scan_rules.scan_url`), drawn as inline SVG by `qr_svg`, so a phone's camera or the
+    in-page scanner opens Stock Scan on that shelf, exactly as a sticker would.
+  - **Shelf 1 is the top shelf.** The rows are the rack's own children in the order a person sees
+    them (`Shelf NLR1-2` before `Shelf NLR1-10`), listed top to bottom. A location child (the Atrium
+    and Build Room shelves) is one shelf with one code. A group child (a bay's shelf) is one shelf
+    with a code for every location on it, left to right. Each row shows the shelf number, "Top
+    shelf" or "Bottom shelf", and each location's name under its code. **The number is the one the
+    shelf's name ends in** (`Shelf NLR1-3` is shelf 3), so a disabled shelf leaves a gap instead of
+    renumbering the shelves below it beside codes captioned with their real names; a name with no
+    number takes its place in the order. Where the Warehouse Map
+    has a box for the rack, the box decides, as the map's front view does: *Shelf 1 is at the*
+    Bottom turns the rows over, *Bin 1 is at the* Right turns each row around, and the box's own
+    order comes first.
+  - **A room prints each rack.** A group whose map box is a Room (production's Atrium and Build
+    Room) prints a page for every group inside it that holds a location, and one page named after
+    the room for any shelves standing in it directly, off a rack. So the Atrium's button prints its
+    six racks. Without a map, every group prints as one rack.
+  - **Sized for reading from a step back.** Codes are as large as the page allows, up to 1.8 in
+    (the two-shelf north racks) and never below 0.8 in. A busy shelf wraps, and a rack that cannot
+    fit on one page runs onto a second, never splitting a shelf (`rack_sheet_rules.layout`). Each
+    page is a table whose header (the rack's name, its room, how to read it) and footer print again
+    on every sheet the rack takes, and the screen says when a rack will not fit on one. Disabled
+    and Transit locations are left off, as on the labels.
+  - **Who.** The labels page's roles (`stock_scan_rules.LABEL_ROLES`). A signed-out visitor is sent
+    to log in and back to the same address. Server-rendered with `no_cache`, and the only script is
+    the Print button.
+  - **No endpoint, no schema change, no patch.** Pure rules in
+    `inventory_enhancements/rack_sheet_rules.py`; the read is `warehouse_labels.rack_sheets`. Tests:
+    `tests/test_rack_qr_sheet.py`, a new CI step that installs PyQRCode and Jinja2 so the real codes
+    and the template render.
+
+
+
+
+### Added
+
+- **Reorder Board: suggested reorder levels from real usage, applied item by item.** From the
+  2026-11-19 operations review: set reorder points from what is actually used. A fourth tab,
+  **Reorder levels** (`/desk/reorder-board/levels`, its own history entry), lists every Purchase
+  reorder rule the board reads. Each rule shows its current Reorder at and Buy, a suggested pair, and
+  what the suggestion rests on.
+  - **What counts as used.** Stock that left the shop for a job or a customer, inside the rule's
+    scope (its warehouse group, as ERPNext reads its projected qty). That means takes (Material
+    Issue), deliveries, and moves out to a job site or the Project Shelf, less what came back from a
+    job. Stock added with a job picked (Stock Scan's + with a job) comes off in full. A move back
+    from a job site or the Project Shelf comes off only up to what the shop sent out to them in the
+    same period: the shelf also holds parts bought straight for a job, and those were never the
+    shop's to have used. A **count correction is never use**: the derived count change is shown
+    beside the suggestion ("counts found 3 fewer, not counted as use"), so a shelf that keeps
+    coming up short is visible. Moves between shop places, receipts and returns to a supplier are
+    not use either.
+  - **The suggestion.** Average daily use over the basis, times (lead time + 7 days) for Reorder
+    at, and times 30 days for Buy. Both are rounded up, to whole units for a whole-number unit, and
+    Buy is never below one unit. An item with no lead time gets 7 days, and the page says that was
+    assumed. On production no rule item has a lead time set.
+  - **Honest about thin data.** The use is counted, and averaged, over one period: from the latest
+    of the window's start (30, 60, 90 or 180 days; 90 by default), the first take this site ever
+    recorded, and the item's first day in the shop, to today. So the weeks before Stock Scan went
+    live neither dilute the average nor add uses to it. A suggestion needs at least 3 uses over at
+    least 14 days. A thinner rule is listed under "too little history", with its basis and the one
+    reason in words: not in the shop, not used, as much came back as went out, too few uses, or too
+    few days. Items used in the window that have no rule are listed too, read-only.
+  - **Apply** opens a dialog with the suggested pair filled in and editable, then writes that one
+    rule: `api.reorder_board.apply_reorder_suggestion`, POST only. It needs Purchase Manager,
+    Stock Manager or System Manager **and** the person's own write permission on the Item. ERPNext
+    gives Item write to Item Manager alone (production's Custom DocPerms keep Stock Manager at write
+    0), so in practice Apply is for people who hold Item Manager and an apply role: 14 on
+    2026-11-19, not counting Administrator and the service account. Everyone else sees the tab
+    without Apply and a sentence saying why. No permission is changed. The change is one
+    `Item.save()` as the person, so ERPNext validates it and the Item's version history records it.
+    Only an existing rule is changed, and a page older than the Item writes nothing. A variant whose
+    rule comes from its template (ERPNext's reorder job gives a variant with no rule of its own its
+    template's rules) is marked with the template and has no Apply, because changing that rule
+    changes every variant; the endpoint refuses it in those words. The read is
+    `api.reorder_board.get_reorder_suggestions` (GET, the board's roles). The ledger is read per item
+    code, behind the role gate.
+  - **No schema change, no patch, no fixture.** Pure rules: `inventory_enhancements/reorder_suggest_rules.py`;
+    reads and the write: `inventory_enhancements/reorder_suggestions.py`. Tests:
+    `tests/test_reorder_board.py` (its existing CI step).
+
+- **Product orders on the Products tab's order board get a build priority, a percent complete and
+  an expected end.** These take the place of a job's company and value-stream priority. James and
+  Nik asked for them at the 2026-11-19 Weekly Operations Review. A product order is tracked by its
+  Sales Order number and has no Project, so the three facts are kept on or worked out from the
+  Sales Order and its Work Orders.
+  - **Build priority** says which open product order to build first, 1 first.
+    - **Storage:** a new Custom Field, `Sales Order.custom_build_priority` ("Build Priority", Int,
+      allowed on submit, not copied, hidden on print). It sits after Fulfillment, so it can also be
+      set from the order's own form.
+    - **Setting it:** on the board, someone who may write and submit Sales Orders clicks the rank. A number box
+      opens; Enter or leaving the box saves, blank clears, and Escape cancels.
+    - **The save** goes to a new POST endpoint, `project_dashboard.set_build_priority`. It checks:
+      - the page gate;
+      - write on that Sales Order and, once it's submitted, submit too, which is what saving an
+        allow-on-submit field on the order's own form needs (Sales User has both; so do Logan,
+        Brian, James, Nathan and Nikolas);
+      - that the value is a whole number from 1 to 999, or blank;
+      - that the order isn't cancelled.
+    - **The write** is a `db.set_value` that leaves `modified` alone. A full save of a submitted
+      order would run its whole update-after-submit chain for one number, and anyone with the order
+      open would hit "Document has been modified". The change goes on the order's timeline as a
+      comment that names the old and new rank, written in its own try so a failed comment is logged
+      and never reported as a failed save.
+    - **Known gap, accepted for now:** someone who already had the order's form open and then saves
+      an allow-on-submit edit there writes back the rank their form loaded.
+    - **Sorting:** within each stage, ranked orders come first, 1 first, then the promise date as
+      before.
+  - **Percent complete** (`product_orders.order_percent_complete`). The build is 80 of the 100 and
+    the delivery the last 20.
+    - The build share is the units produced over the units on the order's submitted Work Orders.
+      Drafts and cancelled Work Orders don't count, as in the stage rule.
+    - A built order (Ready or Testing) has the whole build share.
+    - A delivered unit always counts as built.
+    - Examples: nothing released is 0, half built is 40, built and waiting is 80, one of two units
+      delivered with the other built is 90, delivered is 100.
+  - **Expected end** (`product_orders.order_expected_end`):
+    - for an order being built, the latest planned end of its Work Orders that are still running;
+    - otherwise the promise date;
+    - for a delivered order, the day it was delivered.
+
+    A note under the date says which. An "After promise" chip shows when the Work Order plan runs
+    past the promise. "Late" still means past the promise and not delivered. This column took the
+    Promise date column's place, keeps its saved width (`p_promise`), and shows the promise
+    underneath whenever the two dates differ. ERPNext fills `planned_end_date` from the routing, and
+    prod has no workstations yet, so until it has, the date shown is the promise.
+- The endpoint reads the new column only once it exists (`has_column`). Until the fixture lands, the
+  board shows every order unranked and offers no editing.
+
+### Deploy notes
+
+- **Migrate effect:** one new Custom Field on Sales Order. No patch; an Int column's default of 0
+  is "not ranked", which is the right value for every existing order. No data is written.
+- Prod has almost no product orders yet, so all of this is tested on stubs: rules, endpoint and the
+  board script in the node harness.
+
+
+### Added
+
+- **Warehouse Transactions: a job, a room or rack, what each movement was, and totals by person
+  and by item.** From the 2026-11-19 operations review: before setting reorder points, see what is
+  taken and by whom. The report (v1.797.0) is extended, not rebuilt; with no new filter set it
+  shows the same rows as before, with three more columns.
+  - **Project filter.** Stock moved for a job: every ledger row that carries the job (a take with
+    the job picked, a receipt against its order line, a move onto or off the Project Shelf for it,
+    a move to its site), and every row at the job's own job-site warehouse. The two halves are one
+    `or_filters` group, so the dates, item, location, person and kind still narrow both. A count
+    corrects stock without a job: a count on the Project Shelf is no job's movement, a count at a
+    job's site is that job's.
+  - **A room or a rack covers every shelf under it.** It already did (a group warehouse includes
+    its descendants); the filter now says so ("Location (room, rack or bin)") and a new **Room /
+    Rack** column names the groups above each row's warehouse ("Atrium › North Large Rack 1").
+  - **Kind.** Each row says what it was: Take, Receive, Add, Move, Count, Return to supplier,
+    Delivered or Other (`inventory_enhancements/stock_movement_rules.movement_kind`), and a Kind
+    filter keeps one. The ledger stores no Stock Entry purpose, so the report reads the purposes
+    of its Stock Entries in one permission-checked `get_list`; a Stock Entry the reader may not
+    see reads as Other. A **Project** column shows the job on each row.
+  - **View: By person / By item.** By person totals saves, ledger lines, takes, receipts, moves
+    and counts per person (a transfer counts as one move, however many of its two legs the
+    filters show), with items, days active and the last movement. It also lists, as rows of
+    zeros, everyone who keeps stock and made no movement in the period: enabled System Users
+    with Stock User, Stock Manager or Inventory Clerk, without Administrator, Guest and the
+    service account (`reorder_rules.EXCLUDED_RECIPIENTS`). With the User filter set, that person
+    alone, zeros included. By item totals, in each item's stock unit, what was **taken** (for a
+    job, or delivered), received, moved, corrected by counts, returned, and the net change. A count
+    correction is never taken. The column is called Taken, not Used, on purpose: the Reorder Board's
+    suggested reorder levels count use from the shop's side (moves out to a job site or the Project
+    Shelf as well, less returns), and one word must not mean two figures for the same item.
+  - **From the Bin Manager.** A **Movements** button on a bin (that bin's movements), on a job in
+    By project (the job's), and on the picker (the job or item the picker is filtered to). It opens
+    the report as a new history entry, so Back returns to the Bin Manager. Every other filter is
+    sent blank, so a filter left from an earlier visit does not narrow the link. On a job the
+    report opens from the day the job's first stock moved to today, so parts moved weeks ago are
+    not hidden behind the default 30 days: `bin_views.project_view` now returns `movements_since`,
+    read by `project_stock.first_movement` (the earliest live ledger row carrying the job or at its
+    site; the Project's own dates are not used, since a Stock Scan role may not read the Project and
+    parts are often bought before a job starts). A job with nothing moved keeps the report's dates.
+    The button shows
+    only to people the Desk lets open the report (`frappe.boot.allowed_reports`), and only when the
+    page's bundle has the new route: `bin_manager.bundle.js` is version 3, and a tab still holding
+    an older copy draws the page without the button.
+  - **No new endpoint, no schema change, no patch.** Tests: `tests/test_warehouse_transactions.py`
+    (rules, the Project filter's two halves, rooms, kinds, both views),
+    `scripts/test_bin_manager.mjs` (the route, the job's dates and the button) and
+    `tests/test_bin_views.py` (the job's first movement, and a failed read never failing the view).
+
+- **New Service jobs are numbered `SRV-#####` and new Events jobs `EVT-#####`.** Design, Build and
+  every other type keep `PRJ-#####`. At the 2026-11-19 Weekly Operations Review, James said 35 open
+  Service projects make the design/build backlog look bigger than it is, and Nik picked these
+  prefixes. **Only new jobs change.** No Project is renamed, so the 35 open Service and 3 open Events
+  projects keep their PRJ numbers.
+  - **How it works.** Production doesn't name Projects from the naming series. It uses one Document
+    Naming Rule: prefix `PRJ-`, no conditions, priority 0, counter 787. `tabSeries` has no `PRJ-` row
+    at all. Frappe tries a doctype's rules highest priority first, and the first rule whose
+    conditions match names the document. A new patch, `patches/seed_job_prefix_naming_rules`, adds
+    two rules with priority 10: `SRV-` when `project_type = Service`, and `EVT-` when
+    `project_type = Events`. Nothing runs at naming time.
+  - **Numbering.** Each prefix counts on its own. The first new Service job is **SRV-00101**, the
+    first Events job EVT-00001, and PRJ- carries on from 787.
+    - SRV- starts after 100 because QuickBooks already holds ten old customer-jobs of its own named
+      SRV-00000 to SRV-00015 (checked on prod), and a person should never mistake one of those for a
+      new job. QuickBooks has no EVT- names.
+    - A rule keeps and locks its own counter, so this needs no code and can't give two jobs one
+      name. One shared count would need our own naming code in place of Frappe's rules.
+    - The cost: a bare number such as "12" can now mean up to three jobs. Desk search shows all of
+      them: "12", "project 12" or "job 12" look under PRJ-, SRV- and EVT-, and "SRV 12",
+      "service 12" or "EVT 12" narrows the search.
+  - **When the prefix is picked.** Once, when the Project is created. A type set or changed later
+    never renames the job, because a rename would orphan the Drive folder, the QuickBooks job, the
+    visit numbers and people's notes. Reports and the Projects Dashboard group by type, never by
+    prefix, so a PRJ- Service job still counts as Service.
+  - **Every way a Project is created now gets its type before it is named:**
+    - the Closed Won hand-off (unchanged);
+    - service calls (Service);
+    - rentals' "create project" (Events);
+    - Fountain Move jobs (Service);
+    - Quick Entry (the "Project Stage" field);
+    - the AI tools (the values arrive with the insert).
+  - **Templates.** A new `before_insert` hook, `job_prefixes.fill_type_from_template`, gives a
+    Project with no type its template's type. So a job made from *Service Project Template*,
+    *Service Call* or *Fountain Move* is SRV-, and one from *Rent Project Template* is EVT-. ERPNext
+    copies the template's type too, but in `copy_from_template` during `after_insert`, after the
+    job is named, so without this hook such a job would be typed Service and numbered PRJ-. The
+    hook only fills a blank and never raises.
+  - **Not covered:** the Desk's "Create > Project" from an Opportunity goes through
+    `opportunity_enhancements.make_project`, which imports a `make_project` that ERPNext 16.54
+    doesn't define. That path can't create anything today; it's left for a separate change.
+
+### Fixed
+
+- **Code that reads a job number out of a name now knows SRV- and EVT-, except QuickBooks, which
+  must not.** Every parser was audited:
+  - **QuickBooks job matching stays PRJ-only, on purpose** (`quickbooks_online/core/mapping.py`,
+    `_PRJ_NUMBER_RE`, now commented with the reason).
+    - ERPNext never pushes a job to QuickBooks, so a new SRV- or EVT- job can never have a QBO
+      counterpart.
+    - QuickBooks does hold ten old customer-jobs named SRV-00000 to SRV-00015, for example
+      "Wasatch Retail & Hospitality:SRV-00003 - 4-17-13", each linked to its parent Customer.
+    - A prefix-aware matcher would have linked QBO job 1504 to a new SRV-00003 at confidence 95,
+      and the remediation's invoice tagging could then have stamped that customer's invoices and
+      GL rows with an unrelated project.
+    - Two tests pin it: "SRV-00003 - 4-17-13" yields no number, and `_match_project` never runs
+      the number query for it.
+  - **Drive folder matching** (`google_drive/drive_match.py`). A folder named "SRV-00012 Riverton Splash Pad"
+    now matches "Riverton Splash Pad" the way a PRJ- folder does. "Service" and "Events" are never taken
+    for a job number.
+  - **Desk search.** A word for a job ("p", "proj", "project" and now "job") looks under all
+    three prefixes, so "project 12" finds PRJ-00012, SRV-00012 and EVT-00012. The series' own
+    letters stay in their series ("PRJ-12" only finds PRJ-00012), and SRV, SERVICE, EVT, EVENT and
+    EVENTS are new aliases.
+  - **The Time Kiosk's project picker** placeholder now reads "Search project name or number". The
+    search already matched any part of the name.
+  - **Already prefix-agnostic, unchanged:** visit numbers (`<project>-YYYY-V###`), change orders
+    (`<project>-CO-###`), PO PDF names, Drive folder names, the Project ID mirror, and the kiosk's
+    substring search.
+
+### Deploy notes
+
+- **Migrate effect:** one patch creates the SRV- rule (counter 100, so the first job is SRV-00101)
+  and the EVT- rule (counter 0).
+  - It creates nothing if a rule with that prefix already exists.
+  - It never touches the PRJ- rule or its counter, and never renames or retypes a Project.
+  - It cannot raise: a failure writes one Error Log row and the deploy goes on.
+  - **Check after deploy:** ``SELECT name, prefix, counter, priority FROM `tabDocument Naming Rule`
+    WHERE document_type='Project'`` should show three rules.
+  - No fixtures change.
+- **Note for people:** the Item code family `SRV-###` (POL-0602 service items, three digits) shares
+  the letters with the new `SRV-#####` job numbers (five digits). They are different doctypes and
+  don't clash, but people may confuse them.
 
 ## [1.830.0] - 2026-11-19
 

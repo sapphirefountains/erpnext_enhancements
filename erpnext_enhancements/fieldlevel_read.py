@@ -70,6 +70,9 @@ request.
 
 ``tests/test_fieldlevel_read.py`` pins the wiring against frappe v16's signatures and HTTP
 methods, and the scrub on the Employee and Job Interval shapes.
+
+The field *names* a read request carries (filters, sort, grouping, aggregates) are held to the same
+levels by ``fieldlevel_filters.py`` (v1.835.0), which reuses the level helpers here.
 """
 
 import json
@@ -443,7 +446,7 @@ def client_cancel(doctype, name):
 	return _scrubbed(client.cancel(doctype, name))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def apply_workflow(doc, action):
 	"""``frappe.model.workflow.apply_workflow``, its returned document scrubbed.
 

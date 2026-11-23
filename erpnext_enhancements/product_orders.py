@@ -23,7 +23,13 @@ without a bench:
 * ``on_board``: which product Sales Orders the board shows (not Closed or Cancelled; delivered
   ones for 30 days, by their last non-return Delivery Note);
 * ``pending_stock_qty``, ``paid_state``, ``is_late``, ``is_open_quotation``,
-  ``is_open_opportunity``, ``win_rate``, ``component_state``: the smaller facts the tab shows.
+  ``is_open_opportunity``, ``win_rate``, ``component_state``: the smaller facts the tab shows;
+* ``clean_build_priority``, ``order_percent_complete``, ``order_expected_end`` (v1.831.0, the
+  2026-11-19 Ops Review): what a product order shows **instead of** a job's company and
+  value-stream priority. A build priority, which of the open orders to build first, kept on the
+  Sales Order (``custom_build_priority``); how far along it is, from its Work Orders and its
+  deliveries; and when it is expected to be done, from the Work Orders' planned end or else the
+  promise date.
 
 **Where a control-panel order shows, once.** A product Sales Order that needs a project (a
 control panel on it) is not on the order board. Its working record is its Project, so it shows in
@@ -532,6 +538,105 @@ def is_late(delivery_date, today, stage):
 	"""Past its promise date and not delivered."""
 	promise = _iso(delivery_date)
 	return bool(promise) and stage != STAGE_DELIVERED and promise < _iso(today)
+
+
+# ---------------------------------------------------------------------------------------------
+# Build priority, percent complete and expected end (v1.831.0)
+# ---------------------------------------------------------------------------------------------
+#
+# Weekly Operations Review, 2026-11-19: product orders, tracked by Sales Order number on the
+# Products tab, get a build priority, a percent complete and an expected end, in place of the
+# company and value-stream priority that jobs carry. A product order has no Project, so the
+# priority is kept on the Sales Order itself (Custom Field ``custom_build_priority``, allowed on
+# submit), and the other two are worked out from what ERPNext already records.
+
+#: The highest build priority the board accepts. A rank, not a score: 1 is built first.
+BUILD_PRIORITY_MAX = 999
+
+#: How much of an order's percent complete the build is worth; the delivery is the rest. A built
+#: unit on the shelf is most of the work, and an order is not done until it is delivered.
+BUILD_SHARE = 80
+
+
+def clean_build_priority(value):
+	"""A build priority as stored: an int from 1 to ``BUILD_PRIORITY_MAX``, or 0 for not ranked.
+
+	Blank, None and 0 mean not ranked. Anything else that is not a whole number in range (a word,
+	a fraction, a negative) returns None, which the endpoint refuses rather than guessing.
+	"""
+	if value is None:
+		return 0
+	text = str(value).strip()
+	if not text:
+		return 0
+	try:
+		number = float(text)
+		whole = int(number)  # "inf" and "nan" parse as floats and raise here
+	except (TypeError, ValueError, OverflowError):
+		return None
+	if number != whole or whole < 0 or whole > BUILD_PRIORITY_MAX:
+		return None
+	return whole
+
+
+def order_percent_complete(stage, per_delivered=0, work_orders=()):
+	"""How far along one product order is, 0 to 100.
+
+	``BUILD_SHARE`` of it is the build and the rest the delivery:
+
+	* **delivered** (or ``per_delivered`` 100): 100;
+	* **built**, Ready or Testing: the build is done, so ``BUILD_SHARE`` plus the share delivered;
+	* **otherwise** the build is the units produced over the units on its submitted Work Orders
+	  (``work_order_summary``: in progress, finished and closed short; a draft or cancelled one is
+	  not counted, as the stage rule does not count it), never less than the share delivered,
+	  since a delivered unit was built.
+
+	So an order with nothing released is 0, half produced is 40, built and waiting is 80, and one
+	of two units delivered with the other built is 90.
+	"""
+	delivered = min(max(_num(per_delivered), 0.0), 100.0) / 100.0
+	if stage == STAGE_DELIVERED or delivered >= 1:
+		return 100
+	if stage in (STAGE_READY, STAGE_TESTING):
+		built = 1.0
+	else:
+		summary = work_order_summary(work_orders)
+		counted = summary["in_progress"] + summary["finished"] + summary["closed_short"]
+		qty = sum(_num(wo.get("qty")) for wo in counted)
+		made = sum(min(_num(wo.get("produced_qty")), _num(wo.get("qty"))) for wo in counted)
+		built = made / qty if qty > 0 else 0.0
+	built = max(built, delivered)
+	return int(round(BUILD_SHARE * built + (100 - BUILD_SHARE) * delivered))
+
+
+def order_expected_end(stage, delivery_date=None, delivered_on=None, work_orders=()):
+	"""When one product order is expected to be done, and where that date comes from.
+
+	* **delivered**: the day it was delivered (``source`` ``"delivered"``);
+	* **being built** with a planned end on a Work Order still in progress: the latest of those
+	  planned ends (``"work_order"``). ERPNext fills ``planned_end_date`` from the routing, so a
+	  Work Order with no operations may have none, and a draft one is not released, so neither
+	  counts;
+	* **otherwise** the Sales Order's promise date, ``delivery_date`` (``"promise"``), or no date
+	  at all (``""``).
+
+	``after_promise`` is True when a Work Order's planned end falls after the promise date: the
+	build itself is expected to finish late, which ``is_late`` cannot see until the day passes.
+
+	Returns ``{"date": "YYYY-MM-DD" or "", "source": ..., "after_promise": bool}``.
+	"""
+	promise = _iso(delivery_date)
+	if stage == STAGE_DELIVERED:
+		return {"date": _iso(delivered_on) or promise, "source": "delivered", "after_promise": False}
+	ends = [
+		_iso(wo.get("planned_end_date"))
+		for wo in work_order_summary(work_orders)["in_progress"]
+		if _iso(wo.get("planned_end_date"))
+	]
+	if ends:
+		end = max(ends)
+		return {"date": end, "source": "work_order", "after_promise": bool(promise) and end > promise}
+	return {"date": promise, "source": "promise" if promise else "", "after_promise": False}
 
 
 # ---------------------------------------------------------------------------------------------

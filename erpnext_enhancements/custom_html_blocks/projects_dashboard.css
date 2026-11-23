@@ -408,6 +408,33 @@
 }
 .pd-select:focus, .edit-view:focus { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 1px; }
 
+/* The Products tab's build priority (v1.831.0): the rank is a bare button over its pill, so it
+   reads as the Priority Overview's ranks do; clicking it swaps in a narrow number box. */
+.pd-build-rank {
+    display: inline-block;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.pd-build-rank:hover { background: color-mix(in srgb, var(--sf-text) 6%, transparent); }
+.pd-build-rank:focus-visible { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 1px; }
+.pd-build-input {
+    width: 72px;
+    height: 28px;
+    padding: 0 8px;
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    border-radius: var(--sf-radius-none);
+    background: var(--sf-field-bg);
+    color: var(--sf-field-text);
+    font-family: var(--sf-font-sans);
+    font-size: var(--sf-text-sm);
+}
+.pd-build-input[hidden], .pd-build-rank[hidden] { display: none; }
+.pd-build-input:focus { outline: var(--sf-border-control) solid var(--sf-focus); outline-offset: 1px; }
+
 /* Sortable headers: the sorted column reads in the strong ink with a plain arrow. */
 .sortable-header { cursor: pointer; user-select: none; }
 .sortable-header:hover { color: var(--sf-text-strong); }

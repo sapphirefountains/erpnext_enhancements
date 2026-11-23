@@ -38,6 +38,28 @@ class DocumentIntake(Document):
 	def validate(self):
 		self._set_title()
 		self._guard_status_transition()
+		self._guard_source_file()
+
+	def _guard_source_file(self):
+		"""A person who sets or changes ``source_file`` must be able to read that file
+		(``intake.require_file_read``, the File doctype's own rule), so a document is only
+		ever extracted from a file its setter could open.
+
+		Asked on a save made through the DocType's own write permission (the Desk form, the
+		REST resource). The channels and the rest of this package save with
+		``ignore_permissions`` and are not asked: email, the Drive watch and the scheduler
+		have no signed-in reader, and the upload and mobile endpoints check before they
+		ingest. A save that leaves ``source_file`` as it was is not asked either, so a
+		reviewer works a document whoever sent it in."""
+		if self.flags.ignore_permissions or not self.source_file:
+			return
+		if not self.is_new():
+			previous = self.get_doc_before_save()
+			if previous and (previous.source_file or "") == self.source_file:
+				return
+		from erpnext_enhancements.accounting_intake.intake import require_file_read
+
+		require_file_read(self.source_file)
 
 	def _set_title(self):
 		parts = [self.document_type or "Document"]

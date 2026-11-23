@@ -3,7 +3,8 @@
 //
 // Approve / Decline for a Time Correction Request, drawn for the people the
 // server will let decide: HR Manager, Projects Manager, System Manager, or the
-// employee's reports_to user. The client check decides which buttons to DRAW;
+// employee's reports_to user, and never the employee the request is for or the
+// person who filed it. The client check decides which buttons to DRAW;
 // erpnext_enhancements.workforce.corrections.approve_request / decline_request
 // decide whether the action is allowed. A button the server refuses is a
 // confusing button, never a hole.
@@ -24,6 +25,9 @@ frappe.ui.form.on("Time Correction Request", {
 
 	ee_review_buttons(frm) {
 		if (frm.is_new() || frm.doc.status !== "Requested") return;
+		// The employee the request is for and the person who filed it never decide it,
+		// whatever their roles. The controller's onload says so (ee_may_decide).
+		if ((frm.doc.__onload || {}).ee_may_decide === false) return;
 
 		const draw = () => {
 			frm.add_custom_button(__("Approve"), () => frm.trigger("ee_approve"), __("Review"));

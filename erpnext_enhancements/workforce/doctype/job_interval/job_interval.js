@@ -24,10 +24,75 @@ const EE_HEALTH_COLOURS = {
 	Off: "gray",
 };
 
+// A hand edit waiting for approval (workforce/time_edits.py) is left out of payroll
+// until it is approved. The form says so, and shows "Approve Edit" / "Send Back" to a
+// reader the server says may decide it (__onload.ee_may_decide_edit: the employee's
+// reports_to supervisor, an HR Manager or a System Manager, who is neither the employee
+// nor the person who made the edit). The queue is the Time Edit Approvals page
+// (/desk/time-edit-approvals); the list's "Edit Approval" filter set to Waiting shows the
+// same entries to those who can read the list.
+
 frappe.ui.form.on("Job Interval", {
 	refresh(frm) {
 		frm.trigger("ee_indicator");
 		frm.trigger("ee_buttons");
+		frm.trigger("ee_edit_approval");
+	},
+
+	ee_edit_approval(frm) {
+		if (frm.is_new()) return;
+		const state = frm.doc.edit_approval || "";
+		if (state !== "Waiting" && state !== "Sent Back") return;
+
+		const esc = frappe.utils.escape_html;
+		const when = (v) => (v ? frappe.datetime.str_to_user(v) : __("open"));
+		let text =
+			state === "Waiting"
+				? __("Edited by {0} on {1}. Waiting for approval; not counted toward payroll.", [
+						esc(frm.doc.edited_by || ""),
+						when(frm.doc.edited_on),
+				  ])
+				: __("Sent back by {0}. Not counted toward payroll.", [esc(frm.doc.edit_reviewed_by || "")]);
+		if (frm.doc.edit_previous_start || frm.doc.edit_previous_end) {
+			text +=
+				" " +
+				__("Before the edit: {0} to {1}.", [when(frm.doc.edit_previous_start), when(frm.doc.edit_previous_end)]);
+		} else {
+			text += " " + __("Added by hand.");
+		}
+		frm.dashboard.add_comment(text, state === "Waiting" ? "orange" : "red", true);
+
+		if (!(frm.doc.__onload && frm.doc.__onload.ee_may_decide_edit)) return;
+		const decide = (method, label, message) => {
+			frappe.prompt(
+				[{ fieldname: "note", fieldtype: "Small Text", label: __("Note to the employee (optional)") }],
+				(values) => {
+					frappe.call({
+						method: "erpnext_enhancements.workforce.time_edits." + method,
+						args: { interval: frm.doc.name, note: values.note || "" },
+						freeze: true,
+						callback: () => {
+							frappe.show_alert({ message, indicator: "green" });
+							frm.reload_doc();
+						},
+					});
+				},
+				label,
+				label
+			);
+		};
+		frm.add_custom_button(
+			__("Approve Edit"),
+			() => decide("approve_time_edit", __("Approve Edit"), __("Approved. The interval counts toward payroll.")),
+			__("Edit Approval")
+		);
+		if (state === "Waiting") {
+			frm.add_custom_button(
+				__("Send Back"),
+				() => decide("send_back_time_edit", __("Send Back"), __("Sent back. The employee has been told.")),
+				__("Edit Approval")
+			);
+		}
 	},
 
 	ee_indicator(frm) {

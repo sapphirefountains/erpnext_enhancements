@@ -86,8 +86,9 @@ Proposed: on Customer, an attachment plus `Exemption Certificate Expiry`, and a 
 ## Status
 
 - [x] CPA guidance received and recorded (this file).
-- [ ] **Real-property / Build treatment confirmed** — blocks WI-036 and the WI-029 chart freeze.
-- [ ] Rates and jurisdictions supplied.
+- [x] Expected matrix by stream, and the questions for the CPA, recorded in WI-036 (2026-11-23, from research summaries, not a ruling).
+- [ ] **Real-property / Build treatment confirmed** — blocks WI-036 and the WI-029 chart freeze. Direction since: Build is treated as real-property improvement (Nikolas, 2026-10-06), and the 2026-11-23 research agrees; the CPA has still to confirm it in writing.
+- [ ] Rates and jurisdictions supplied. The rate source is now identified: the Utah State Tax Commission's quarterly combined rate chart (2026 Q4 chart in hand, in effect 2026-10-01).
 - [ ] Per-rate vs per-jurisdiction leaves resolved — **before 26 Dec**.
 - [ ] Exemption-certificate handling agreed and added to scope.
 - [ ] Tax Categories, Tax Rules and templates built (WI-036 / WI-037).

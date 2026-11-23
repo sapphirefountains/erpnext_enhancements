@@ -12,9 +12,12 @@ in ``workforce/corrections.py``; this controller only guards the shape of a
 request.
 
 Who may review: HR Manager, Projects Manager, System Manager, **or the
-employee's ``reports_to`` user**, who need hold none of those roles. The desk form
-draws Approve / Decline for exactly that set; the endpoint enforces it
-(``permissions.can_review``).
+employee's ``reports_to`` user**, who need hold none of those roles
+(``permissions.can_review``), and never the employee the request is for or the person
+who filed it (``permissions.may_decide_request``). The endpoint enforces it, this
+controller holds a status change saved on the form or through the REST resource to the
+same rule (``_check_decider``), and the form draws Approve / Decline only when
+``onload`` says the user may decide.
 
 Statuses: Requested → Approved / Declined, or Canceled by the employee while it is
 still Requested. ``Canceled`` with one *l* — house style.
@@ -35,6 +38,9 @@ REQUIRED_PROPOSALS = {
 
 OPEN_STATUS = "Requested"
 
+#: Statuses that record a decision on the request.
+DECIDED_STATUSES = ("Approved", "Declined")
+
 
 class TimeCorrectionRequest(Document):
 	def validate(self):
@@ -47,6 +53,17 @@ class TimeCorrectionRequest(Document):
 		self._check_proposals()
 		self._check_interval_ownership()
 		self._check_employee_edit_window()
+		self._check_decider()
+
+	def onload(self):
+		# Read by the form to decide whether to draw Approve / Decline. Frappe runs
+		# ``onload`` when the Desk form loads the document (frappe/desk/form/load.py,
+		# ``getdoc`` -> ``run_onload``, lines 48 and 413-415 at v16.56.0).
+		from erpnext_enhancements.workforce import permissions
+
+		self.set_onload(
+			"ee_may_decide", permissions.may_decide_request(self.employee, self.owner, frappe.session.user)
+		)
 
 	def after_insert(self):
 		# Tell the supervisor. Never raises — a request that exists but whose
@@ -81,7 +98,8 @@ class TimeCorrectionRequest(Document):
 	def _check_filer(self):
 		"""A new request is filed for the caller's own Employee, unless the caller may
 		review that employee's requests (``permissions.can_review``: the manager roles,
-		Administrator, or the employee's ``reports_to`` login)."""
+		Administrator, or the employee's ``reports_to`` login). Whoever files it cannot
+		decide it (``_check_decider``)."""
 		if not self.is_new():
 			return
 		from erpnext_enhancements.workforce import permissions
@@ -130,3 +148,27 @@ class TimeCorrectionRequest(Document):
 			)
 		if self.status != OPEN_STATUS:
 			frappe.throw(_("Only the reviewer can change a request's status."), frappe.PermissionError)
+
+	def _check_decider(self):
+		"""A save that moves the request to a decided status (``DECIDED_STATUSES``) is a
+		decision, however it arrives: the review endpoints, the Desk form or the REST
+		resource. It is allowed only to a reviewer who is neither the employee the request
+		is for nor the person who filed it (``permissions.may_decide_request``). On a new
+		request the person saving it is the one filing it, so a request is never filed
+		already decided."""
+		if self.status not in DECIDED_STATUSES:
+			return
+		before = None if self.is_new() else self.get_doc_before_save()
+		if before is not None and before.status == self.status:
+			return
+		from erpnext_enhancements.workforce import permissions
+
+		user = frappe.session.user
+		filer = user if self.is_new() else self.owner
+		if not permissions.may_decide_request(self.employee, filer, user):
+			frappe.throw(
+				_(
+					"A time correction request can be decided only by a reviewer who is neither the employee it is for nor the person who filed it."
+				),
+				frappe.PermissionError,
+			)

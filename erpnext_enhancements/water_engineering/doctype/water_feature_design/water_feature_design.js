@@ -136,6 +136,9 @@ function wfd_send_design(frm) {
 	});
 }
 
+// The packet preview is a sandboxed frame in a dialog: `sandbox` with no flags, so the packet's HTML
+// runs no script and has an origin of its own, apart from the Desk's. Print opens the same format in
+// frappe's own print view, which prints it as every other format prints.
 function wfd_preview_packet(frm) {
 	frappe.call({
 		method: "erpnext_enhancements.water_engineering.packet.assemble_packet",
@@ -144,15 +147,33 @@ function wfd_preview_packet(frm) {
 		freeze_message: __("Assembling submittal packet…"),
 		callback: (r) => {
 			if (!r || !r.message) return;
-			const w = window.open("", "_blank");
-			if (w) {
-				w.document.write(r.message);
-				w.document.close();
-			} else {
-				frappe.msgprint(__("Allow pop-ups to preview the packet."));
-			}
+			const dialog = new frappe.ui.Dialog({
+				title: __("Submittal packet preview"),
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "packet" }],
+				primary_action_label: __("Print"),
+				primary_action: () => wfd_print_packet(frm),
+			});
+			const frame = document.createElement("iframe");
+			frame.setAttribute("sandbox", "");
+			frame.setAttribute("title", __("Submittal packet preview"));
+			frame.style.cssText = "width:100%;height:70vh;border:1px solid var(--border-color);background:#fff";
+			frame.srcdoc = r.message;
+			dialog.fields_dict.packet.$wrapper.empty().append(frame);
+			dialog.show();
 		},
 	});
+}
+
+function wfd_print_packet(frm) {
+	const query = new URLSearchParams({
+		doctype: frm.doctype,
+		name: frm.doc.name,
+		format: "Water Feature Design - Submittal Packet",
+		trigger_print: 1,
+	});
+	const w = window.open(`/printview?${query.toString()}`, "_blank");
+	if (!w) frappe.msgprint(__("Allow pop-ups to print the packet."));
 }
 
 function wfd_generate_packet(frm) {

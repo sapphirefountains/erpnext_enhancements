@@ -197,6 +197,7 @@ def digest_stuck_requests():
 	buckets = {
 		"Failed": _stuck("Failed"),
 		"Duplicate Review": _stuck("Duplicate Review"),
+		"Queued (not started over an hour)": _stalled_queued(),
 		"Converting (stalled over an hour)": _stalled_converting(),
 		"New (unconverted over a day)": _stale_new(),
 	}
@@ -226,6 +227,27 @@ def _stuck(status):
 	return frappe.get_all(
 		"Fountain Move Request",
 		filters={"status": status},
+		fields=["name", "first_name", "last_name", "city", "email", "modified"],
+		order_by="modified asc",
+		limit=50,
+	)
+
+
+def _stalled_queued():
+	"""Rows waiting for a conversion job that has not started in an hour.
+
+	``Queued`` is written just before the job is enqueued (Retry, and Confirm Match on a
+	request held in Duplicate Review). The job queue is emptied by every deploy, so a row
+	can be left ``Queued`` with no job behind it; Retry on the request starts it again.
+	The hour runs from the later of the two actions: Retry stamps ``modified`` and Confirm
+	Match stamps ``match_confirmed_on``, and a row is listed only when both are over an
+	hour old (a request never confirmed has no ``match_confirmed_on`` to wait for).
+	"""
+	cutoff = add_to_date(None, hours=-1)
+	return frappe.get_all(
+		"Fountain Move Request",
+		filters={"status": "Queued", "modified": ["<", cutoff]},
+		or_filters=[["match_confirmed_on", "is", "not set"], ["match_confirmed_on", "<", cutoff]],
 		fields=["name", "first_name", "last_name", "city", "email", "modified"],
 		order_by="modified asc",
 		limit=50,

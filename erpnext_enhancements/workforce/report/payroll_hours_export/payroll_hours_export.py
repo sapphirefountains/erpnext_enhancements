@@ -29,7 +29,7 @@ qualified-overtime figure is a tax-reporting error.
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import cint, escape_html
 
 from erpnext_enhancements.workforce import payroll_export
 
@@ -94,6 +94,27 @@ def _message(rows, from_date, to_date):
 			payroll_export.period_label(from_date, to_date), *payroll_export.overtime_settings()
 		)
 	]
+
+	held = payroll_export.held_entries(from_date, to_date) if frappe.db.table_exists("Job Interval") else []
+	if held:
+		lines = "".join(
+			"<li>"
+			+ escape_html(
+				_("{0}, {1}: {2} h, {3} ({4})").format(
+					entry["employee_name"], entry["day"], entry["hours"], entry["status"], entry["change"]
+				)
+			)
+			+ "</li>"
+			for entry in held
+		)
+		notes.append(
+			_("<b>{0} time entries are waiting for approval</b> and are left out of every total below "
+			  "({1} h). They count once a manager approves them on the Job Interval form "
+			  "(list filter Edit Approval = Waiting). The workbook lists them on its Waiting for Approval sheet.").format(
+				len(held), round(sum(entry["hours"] for entry in held), 2)
+			)
+			+ f"<ul>{lines}</ul>"
+		)
 
 	unmapped = [r["employee"] for r in rows if r.get("is_employee_row") and r.get("unmapped")]
 	if unmapped:
