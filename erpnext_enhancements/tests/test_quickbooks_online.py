@@ -133,6 +133,14 @@ def install_frappe_stub():
 
 		frappe_exceptions.ValidationError = ValidationError
 		frappe_exceptions.TimestampMismatchError = TimestampMismatchError
+	if not hasattr(frappe_exceptions, "DuplicateEntryError"):
+		# frappe's DuplicateEntryError subclasses frappe's own NameError, NOT ValidationError:
+		# the reason the create path has to recognise it separately (v1.840.1). Raised by
+		# db_insert as DuplicateEntryError(doctype, name, error), so the stub takes any args.
+		class DuplicateEntryError(Exception):
+			pass
+
+		frappe_exceptions.DuplicateEntryError = DuplicateEntryError
 	frappe.exceptions = frappe_exceptions
 	sys.modules.setdefault("frappe.exceptions", frappe_exceptions)
 	# Passthrough decorator so the @frappe.whitelist() RPC layer is importable.
