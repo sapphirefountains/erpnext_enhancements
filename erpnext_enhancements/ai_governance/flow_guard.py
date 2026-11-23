@@ -3,37 +3,44 @@
 frappe 16.60 added two modules: **Flow**, an AI assistant that runs inside the framework, and
 **Studio**, a page builder. Neither goes through this app's controls:
 
-- **Flow's assistant reads and writes records as the person chatting with it, in-process.** Its
-  record reads call frappe's query functions directly, so they never pass the field-level read
-  checks this app puts on the HTTP read routes (``fieldlevel_filters.py``, ``fieldlevel_read.py``),
-  which only wrap requests. Its writes are approved, if at all, by that same person inside Flow's
-  chat panel (a session can be set to approve everything, and a scheduled Flow Trigger always
-  does), so they never reach the AI write gate (``assistant_tools/_gate.py``) or the AI Action Log.
+- **Flow's assistant reads and writes records as the person chatting with it.** This app's
+  field-level read checks (``fieldlevel_filters.py``, ``fieldlevel_read.py``) are not applied to
+  what Flow reads; frappe's own permission checks are. Its writes are approved, if at all, by that
+  same person inside Flow's chat panel (a session can be set to approve everything, and a scheduled
+  Flow Trigger always does), so they never reach the AI write gate (``assistant_tools/_gate.py``) or
+  the AI Action Log.
 - **A Studio User can publish pages, scripts included, on this site's address**, pages open to
-  guests among them, which makes the role as strong as System Manager in practice.
+  guests among them.
 
-A Flow chat cannot run until the site has a **Flow Model**, and a model needs a **Flow Provider**
-(the account and API key of an LLM vendor). Once an enabled model exists, frappe's own
-``after_migrate`` builds its built-in Assistant agent with every built-in tool, writes included.
-So this module refuses, while **ERPNext Enhancements Settings > AI Governance > Allow Frappe Flow
-and Studio User** is off (the default):
+A Flow chat cannot run until the site has an enabled **Flow Model**, and a model needs a **Flow
+Provider** (the account and API key of an LLM vendor). frappe's own ``after_migrate`` builds its
+built-in Assistant agent, every built-in tool included, only once an enabled model exists. So while
+**ERPNext Enhancements Settings > AI Governance > Allow Frappe Flow and Studio User** is off (the
+default):
 
-1. creating a Flow Provider or a Flow Model (``refuse_flow_setup``, ``before_insert``), which keeps
-   every Flow chat and trigger inert; and
-2. giving a user, or a Role Profile, the **Flow User** or **Studio User** role
-   (``refuse_new_flow_roles``, ``validate``). A record that already holds one keeps it and saves
-   normally; only an addition is refused.
+1. **Flow Provider and Flow Model** (``guard_flow_setup``, ``validate``): creating one, or saving
+   one enabled, is refused. During ``bench migrate``, an install or a patch, in the setup wizard and
+   on a site whose setup is not complete, nothing is refused: the record is saved **disabled**
+   instead (a raise there would abort the deploy or the wizard). An existing record saved disabled
+   is left alone.
+2. **Flow User and Studio User** (``drop_new_flow_roles``, ``validate`` on User and Role Profile):
+   a role this save adds is **taken off the record, never refused**. frappe's setup wizard gives the
+   first user every role, erpnext gives Administrator every role before tests, and an LDAP sign-in
+   syncs roles on login: refusing any of those saves would fail the wizard, the test bench or the
+   sign-in over an optional role. A signed-in person editing in the Desk is told which role was not
+   given. A role the record already held is kept.
 
-Turning the switch off again does not remove a model, provider or role added while it was on.
+Every record changed this way is logged once to the app log, without its contents.
 
-It never runs during ``bench migrate``, an install or a patch: a hook that raises there aborts the
-migrate, which on this repo is the deploy. Nothing frappe ships creates a model or grants these
-roles during a migrate today, so nothing is lost; such a case is logged instead.
+Known limit: frappe's Flow setup re-enables an existing model with ``frappe.db.set_value``, which
+runs no hooks. It only applies to a model that already exists, and no model can be saved enabled
+while the switch is off. Turning the switch off again does not disable what was added while it was
+on. The guard matches doctype and role names, not permissions: a Custom DocPerm on a Flow or Studio
+doctype for another role is not caught here (the fixture test refuses one in the repo).
 
-Read at frappe v16.60.2: ``frappe/flow/tools/builtins.py`` (the tools), ``frappe/flow/utils/
-safe_exec.py`` (``execute``'s sandbox), ``frappe/flow/daemon/callback.py`` (tools run as the session
-owner), ``frappe/flow/assistant/assistant.py`` (``sync_builtin_assistant`` needs an enabled model),
-``frappe/flow/permissions.py`` and the Flow and Studio DocType permissions.
+Read at frappe v16.60.2: ``frappe/flow/tools/builtins.py``, ``frappe/flow/utils/safe_exec.py``,
+``frappe/flow/daemon/callback.py``, ``frappe/flow/assistant/assistant.py``, ``frappe/flow/api/
+setup.py``, ``frappe/desk/page/setup_wizard/setup_wizard.py`` and the Flow and Studio DocTypes.
 """
 
 import frappe
@@ -41,7 +48,7 @@ import frappe
 SETTINGS_DOCTYPE = "ERPNext Enhancements Settings"
 SETTING_FIELD = "allow_frappe_flow"
 
-#: Without one of these, no Flow chat or trigger can run: an agent needs a model, a model a provider.
+#: Without an enabled one of these, no Flow chat or trigger can run.
 SETUP_DOCTYPES = ("Flow Provider", "Flow Model")
 
 #: frappe's roles for the two modules. Flow User opens Flow's chat; Studio User writes Studio pages.
@@ -55,57 +62,84 @@ _DEPLOY_FLAGS = ("in_migrate", "in_install", "in_patch")
 
 
 def flow_allowed() -> bool:
-	"""Whether the site opted in. Off when the setting is unset, unreadable or not yet a column.
+	"""Whether the site opted in. Off when the value is unset, unreadable or never saved.
 
-	``get_single_value`` (never ``get_value("Singles", ...)``: tabSingles has no ``creation``
-	column). A never-saved field reads None, which is off, the safe answer and the default.
+	Read straight from ``tabSingles`` with bound parameters: ``get_single_value`` looks the field up
+	in the DocType's meta first and calls ``frappe.throw`` (into ``message_log``) when a patch runs
+	before the DocType sync has added it. Never ``get_value("Singles", ...)``: tabSingles has no
+	``creation`` column to order by.
 	"""
 	try:
-		return bool(int(frappe.db.get_single_value(SETTINGS_DOCTYPE, SETTING_FIELD) or 0))
+		rows = frappe.db.sql(
+			"select `value` from `tabSingles` where `doctype` = %s and `field` = %s",
+			(SETTINGS_DOCTYPE, SETTING_FIELD),
+		)
+		return bool(rows) and str(rows[0][0] or "").strip() in ("1", "1.0")
 	except Exception:
 		return False
 
 
+def _flag(name: str) -> bool:
+	return bool(getattr(getattr(frappe, "flags", None), name, False))
+
+
 def _deploying() -> bool:
-	flags = getattr(frappe, "flags", None)
-	return any(getattr(flags, flag, False) for flag in _DEPLOY_FLAGS)
+	return any(_flag(flag) for flag in _DEPLOY_FLAGS)
 
 
-def _note_skipped(what: str) -> None:
-	"""A deploy went ahead with something the switch would refuse: say so without failing it."""
+def _setting_up() -> bool:
+	"""The setup wizard is running, or this site has not finished it."""
+	if _flag("in_setup_wizard"):
+		return True
 	try:
-		frappe.logger("erpnext_enhancements").warning(
-			f"flow_guard: {what} during migrate or install, while {SETTING_FIELD} is off; left in place"
-		)
+		return not frappe.is_setup_complete()
+	except Exception:
+		return False
+
+
+def _log(what: str) -> None:
+	"""One line in the app log: what the guard changed, never the record's contents."""
+	try:
+		frappe.logger("erpnext_enhancements").warning(f"flow_guard: {what} ({SETTING_FIELD} is off)")
 	except Exception:
 		pass
 
 
-def _refuse(message: str) -> None:
-	frappe.throw(
-		message
-		+ " "
-		+ frappe._(
-			"A System Manager can allow it in ERPNext Enhancements Settings > AI Governance > "
-			"Allow Frappe Flow and Studio User."
-		),
-		frappe.PermissionError,
-		title=frappe._("Frappe Flow is off on this site"),
+def _how_to_allow() -> str:
+	return frappe._(
+		"A System Manager can allow it in ERPNext Enhancements Settings > AI Governance > "
+		"Allow Frappe Flow and Studio User."
 	)
 
 
-def refuse_flow_setup(doc, method=None) -> None:
-	"""``before_insert`` on Flow Provider and Flow Model: refused while the switch is off."""
-	if doc.doctype not in SETUP_DOCTYPES or flow_allowed():
+def guard_flow_setup(doc, method=None) -> None:
+	"""``validate`` on Flow Provider and Flow Model: none new and none enabled while the switch is off.
+
+	Refused in an ordinary request; saved disabled (never refused) during a deploy, in the setup
+	wizard or before setup is complete.
+	"""
+	if doc.doctype not in SETUP_DOCTYPES:
 		return
-	if _deploying():
-		_note_skipped(f"a {doc.doctype} was created")
+	is_new = doc.is_new() if hasattr(doc, "is_new") else False
+	enabled = bool(int(doc.get("enabled") or 0))
+	if not (is_new or enabled):
+		return  # an existing record saved disabled
+	if _deploying() or _setting_up():
+		if enabled and not flow_allowed():
+			doc.enabled = 0
+			_log(f"a {doc.doctype} was saved disabled")
 		return
-	_refuse(
+	if flow_allowed():
+		return
+	frappe.throw(
 		frappe._(
-			"Frappe Flow's assistant reads and writes records outside this app's AI write gate and "
-			"field-level read checks, so it cannot be connected to a model here."
+			"Frappe Flow's assistant works outside this app's AI write gate and field-level read "
+			"checks, so it cannot be connected to a model here."
 		)
+		+ " "
+		+ _how_to_allow(),
+		frappe.PermissionError,
+		title=frappe._("Frappe Flow is off on this site"),
 	)
 
 
@@ -122,23 +156,39 @@ def added_guarded_roles(doc) -> set:
 	return guarded - (_roles(before) if before else set())
 
 
-def refuse_new_flow_roles(doc, method=None) -> None:
-	"""``validate`` on User and Role Profile: no new Flow User or Studio User while the switch is off.
+def drop_new_flow_roles(doc, method=None) -> None:
+	"""``validate`` on User and Role Profile: a Flow User or Studio User role this save adds is taken off.
 
-	Reads the setting only when the save adds one of the two roles, so every other User save (and
-	ERPNext's test bootstrap, before this app's fields exist) costs one set intersection.
+	Never raises. Reads the setting only when the save adds one of the two roles, so every other
+	User save (and ERPNext's test bootstrap, before this app's fields exist) costs one set
+	intersection.
 	"""
 	if doc.doctype not in ROLE_HOLDERS:
 		return
 	added = added_guarded_roles(doc)
 	if not added or flow_allowed():
 		return
-	if _deploying():
-		_note_skipped(f"{', '.join(sorted(added))} was given on a {doc.doctype}")
-		return
-	_refuse(
-		frappe._(
-			"{0} cannot be given here: Flow's assistant works outside this app's AI write gate and "
-			"field-level read checks, and a Studio User can publish pages with scripts on this site."
-		).format(", ".join(sorted(added)))
-	)
+	rows = doc.get("roles")  # the record's own list: removing from it removes the row
+	for row in [row for row in rows if row.get("role") in added]:
+		rows.remove(row)
+	for idx, row in enumerate(rows, start=1):
+		row.idx = idx
+	names = ", ".join(sorted(added))
+	_log(f"{names} not given on a {doc.doctype}")
+	user = getattr(getattr(frappe, "session", None), "user", None) or "Guest"
+	if _deploying() or _flag("in_setup_wizard") or user == "Guest":
+		return  # nobody at a screen to tell: a deploy, the wizard, or a sign-in syncing roles
+	try:
+		frappe.msgprint(
+			frappe._(
+				"Not given: {0}. Frappe Flow and Studio are off on this site, because Flow's "
+				"assistant works outside this app's AI write gate and field-level read checks, and a "
+				"Studio User can publish pages with scripts on this site."
+			).format(names)
+			+ " "
+			+ _how_to_allow(),
+			title=frappe._("Role not given"),
+			indicator="orange",
+		)
+	except Exception:
+		pass

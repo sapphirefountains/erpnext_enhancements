@@ -368,37 +368,53 @@ ERROR otherwise.
 frappe 16.60 ships **Flow**, an AI assistant inside the framework, and **Studio**, a page builder.
 Flow is not an entry point this gate can see:
 
-- Its tools run inside frappe as the person chatting with it. Record reads call frappe's query
-  functions directly, so this app's field-level read checks on the HTTP read routes
-  (`fieldlevel_filters.py`, `fieldlevel_read.py`) never see them. frappe's own permission checks
-  still apply; this app's additions to them do not.
+- Its tools act as the person chatting with it. frappe's own permission checks apply to what it
+  reads; this app's field-level read checks (`fieldlevel_filters.py`, `fieldlevel_read.py`) are not
+  applied to it.
 - Its writes are approved, if at all, by that same person in Flow's chat panel. A session can be set
   to approve everything, and a scheduled Flow Trigger always does. No AI Pending Action is created
   and nothing reaches the AI Action Log. When a Flow tool calls a whitelisted method by name it does
-  go through `override_whitelisted_methods` and the whitelist check, so the wrapped methods stay
-  wrapped on that one path.
+  go through `override_whitelisted_methods` and the whitelist check.
 
-A Studio User can publish pages with scripts on this site's address, guest pages included, so the
-role is as strong as System Manager.
+A Studio User can publish pages with scripts on this site's address, guest pages included, so grant
+the role only with the care given to administrator roles.
 
 **ERPNext Enhancements Settings > AI Governance > Allow Frappe Flow and Studio User** is off by
 default. While it is off:
 
-| Refused | Hook | Why this is enough |
-|---|---|---|
-| Creating a Flow Provider or Flow Model | `before_insert` | A Flow chat or trigger needs an agent with a model. frappe builds its built-in Assistant agent only once an enabled model exists. |
-| A new Flow User or Studio User role on a User or Role Profile | `validate` | Only System Managers can use Flow or Studio without these roles, and they already read every field. |
+| What | Hook | In an ordinary request | During a deploy or setup |
+|---|---|---|---|
+| A new Flow Provider or Flow Model, or one saved enabled | `validate` | Refused | Saved **disabled**, logged |
+| A Flow User or Studio User role a User or Role Profile save adds | `validate` | Taken off; a person in the Desk is told | Taken off, logged |
 
-A record that already holds one of the roles saves normally; only an addition is refused, and the
-setting is read only then. Turning the switch off does not remove a model, provider or role added
-while it was on. The guard never raises during `bench migrate`, an install or a patch, because that
-would abort the deploy; it writes a warning to the app log instead. Nothing frappe ships does
-either during a migrate today.
+"During a deploy or setup" means `bench migrate`, an install, a patch, the setup wizard, or a site
+whose setup is not complete: a raise there would abort the deploy or the wizard.
 
-Before turning the switch on, re-read Flow at the version prod runs. Whether its read tools still
-call frappe's query functions directly decides whether this app's field-level checks need to cover
-them. The guard pins doctype and role names that frappe could rename; `tests/test_flow_guard.py`
-pins the wiring but cannot see frappe.
+- **Why models and providers are enough.** A Flow chat or trigger needs an agent with an enabled
+  model, and frappe builds its built-in Assistant agent only once an enabled model exists.
+- **Why roles are dropped, not refused.** frappe's setup wizard gives the first user every role,
+  erpnext gives Administrator every role before tests, and an LDAP sign-in syncs mapped roles on
+  login. Refusing those saves would fail the wizard, the test bench or a sign-in over an optional
+  role. A role a record already held is kept, and the setting is read only when a role is added.
+- **Read with a bound SQL query on `tabSingles`,** not `get_single_value`, which throws into the
+  message log when a patch runs before the DocType sync adds the field.
+
+What it does not cover:
+
+- **Studio's own AI** uses an OpenRouter key from Studio Settings, not a Flow Model, so blocking
+  models does not stop it. It edits Studio pages only, and only System Managers and Studio Users
+  can reach it.
+- **Permissions on Flow or Studio doctypes.** The guard matches role names. A System Manager could
+  still give another role a Custom DocPerm on a `Flow *` or `Studio *` doctype;
+  `tests/test_flow_guard.py` refuses one in `custom_docperm.json`, but not one added in the Desk.
+- frappe's Flow setup re-enables an *existing* model with `frappe.db.set_value`, which runs no
+  hooks. No model can be saved enabled while the switch is off, so this needs one added while it
+  was on.
+- Turning the switch off does not disable a model, provider or role added while it was on.
+
+Before turning the switch on, re-read Flow at the version prod runs and decide whether this app's
+field-level checks need to cover it. The guard pins doctype and role names that frappe could rename;
+`tests/test_flow_guard.py` pins the wiring but cannot see frappe.
 
 ## Relationship to Triton
 

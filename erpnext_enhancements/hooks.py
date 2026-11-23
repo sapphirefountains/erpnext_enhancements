@@ -1840,22 +1840,23 @@ doc_events = {
 			# Profile change is not. Never raises (setup/dock_profiles.py).
 			"erpnext_enhancements.setup.dock_profiles.on_user_update",
 		],
-		# Flow guard (v1.836.0): no new Flow User or Studio User role while ERPNext Enhancements
-		# Settings > Allow Frappe Flow and Studio User is off (the default). A user who already
-		# holds one saves normally; only an addition is refused, and the setting is read only then.
-		# Skipped during migrate, install and patches. See ai_governance/flow_guard.py.
-		"validate": "erpnext_enhancements.ai_governance.flow_guard.refuse_new_flow_roles",
+		# Flow guard (v1.836.0): a Flow User or Studio User role this save adds is taken off while
+		# ERPNext Enhancements Settings > Allow Frappe Flow and Studio User is off (the default).
+		# Never raises: the setup wizard, erpnext's test setup and an LDAP sign-in all add roles, and
+		# none of them may fail over an optional one. A role already held is kept; a person editing in
+		# the Desk is told. The setting is read only when a guarded role is added. See
+		# ai_governance/flow_guard.py.
+		"validate": "erpnext_enhancements.ai_governance.flow_guard.drop_new_flow_roles",
 	},
-	# Flow guard (v1.836.0): frappe 16.60's Flow assistant reads records in-process, past the
-	# field-level read checks this app puts on HTTP routes (fieldlevel_filters / fieldlevel_read),
-	# and its writes are approved inside Flow's own chat, never by the AI write gate. A Flow chat or
-	# trigger cannot run without a Flow Model, and a model needs a Flow Provider, so neither can be
-	# created while the switch is off; a Role Profile cannot carry the two roles either (its save
-	# would push them onto every user on it). Skipped during migrate, install and patches, where a
-	# raise would abort the deploy. See ai_governance/flow_guard.py.
-	"Flow Provider": {"before_insert": "erpnext_enhancements.ai_governance.flow_guard.refuse_flow_setup"},
-	"Flow Model": {"before_insert": "erpnext_enhancements.ai_governance.flow_guard.refuse_flow_setup"},
-	"Role Profile": {"validate": "erpnext_enhancements.ai_governance.flow_guard.refuse_new_flow_roles"},
+	# Flow guard (v1.836.0): frappe 16.60's Flow assistant works outside this app's field-level read
+	# checks and the AI write gate. A Flow chat or trigger needs an enabled Flow Model, which needs a
+	# Flow Provider, so while the switch is off a new or enabled one is refused, or saved disabled
+	# during a migrate, an install, a patch or the setup wizard, where a raise would abort the deploy
+	# or the wizard. A Role Profile drops the two roles as a User does (its save would push them onto
+	# every user on it). See ai_governance/flow_guard.py.
+	"Flow Provider": {"validate": "erpnext_enhancements.ai_governance.flow_guard.guard_flow_setup"},
+	"Flow Model": {"validate": "erpnext_enhancements.ai_governance.flow_guard.guard_flow_setup"},
+	"Role Profile": {"validate": "erpnext_enhancements.ai_governance.flow_guard.drop_new_flow_roles"},
 	"Supplier": {
 		# See the Lead block above — same fixture, same defect. 24 Suppliers were
 		# carrying a scheme-less website. The QuickBooks sync has healed this on its
