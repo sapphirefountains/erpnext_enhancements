@@ -4042,3 +4042,74 @@ def test_an_insert_that_raises_something_else_is_left_alone(monkeypatch):
 			mapping._insert_or_manual_review("Account", "357", {"Id": "357"}, "Account", doc)
 		assert caught.value is error
 	assert parked == []
+
+
+def test_a_holder_whose_quickbooks_record_was_deleted_is_marked_so(monkeypatch):
+	"""``other_mapping_linking`` counts a mapping marked ``deleted`` (its ERPNext record is
+	still one the sync linked), so the note names it -- and says it is gone from QuickBooks,
+	which changes what a person does about it."""
+	_frappe, mapping, _sync, _events = _colliding_account(
+		monkeypatch, holder_links=[_link("Account", "351", deleted=1)]
+	)
+
+	result = mapping.upsert_entity("Account", dict(NEW_CARD_PAYLOAD), SETTINGS)
+
+	assert result["action"] == "manual_review"
+	assert "linked to QuickBooks Account 351 (deleted in QuickBooks)." in result["reason"]
+
+
+def _series_doc(doctype, name, naming_series=None):
+	fields = {"doctype": doctype, "name": name}
+	if naming_series is not None:
+		fields["naming_series"] = naming_series
+	return _doc(**fields)
+
+
+@pytest.mark.parametrize(
+	"doctype, name, naming_series, autoname, expected",
+	[
+		# Named from its series: the series' fixed prefix begins the name.
+		("Journal Entry", "ACC-JV-2026-00012", "ACC-JV-.YYYY.-", "naming_series:", True),
+		# Item and Customer carry a naming_series default even when named by their own data.
+		("Item", "PUMP-100", "STO-ITEM-.YYYY.-", "field:item_code", False),
+		("Customer", "Acme Supply", "CUST-.YYYY.-", "naming_series:", False),
+		# A counter written straight into autoname.
+		("Maintenance Visit", "MV-00031", None, "MV-.#####", True),
+		# Account names come from the account name and the company abbreviation.
+		("Account", TAKEN_NAME, None, None, False),
+	],
+)
+def test_named_by_series_tells_a_counter_from_a_records_own_data(
+	monkeypatch, doctype, name, naming_series, autoname, expected
+):
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	monkeypatch.setattr(frappe, "get_meta", lambda dt: types.SimpleNamespace(autoname=autoname))
+	assert mapping._named_by_series(doctype, _series_doc(doctype, name, naming_series)) is expected
+
+
+@pytest.mark.parametrize("links", [[], [_link("JournalEntry", "88")]])
+def test_a_series_collision_note_points_at_the_series_not_at_quickbooks(monkeypatch, links):
+	"""For a record named from a counter, a taken name means the counter is behind the records
+	that exist, not that QuickBooks renamed something. The note stays generic: check the
+	series, or rename the existing record -- never "rename it to match QuickBooks"."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	monkeypatch.setattr(frappe, "get_meta", lambda dt: types.SimpleNamespace(autoname="naming_series:"))
+	monkeypatch.setattr(
+		frappe,
+		"get_all",
+		lambda doctype, filters=None, **kwargs: _mapping_rows(links, filters)
+		if doctype == "QuickBooks Sync Mapping"
+		else [],
+	)
+	doc = _series_doc("Journal Entry", "ACC-JV-2026-00012", "ACC-JV-.YYYY.-")
+
+	reason = mapping._name_collision_reason("JournalEntry", "301", "Journal Entry", doc)
+
+	assert "'ACC-JV-2026-00012': the name is already taken" in reason
+	assert "naming series" in reason and "rename the existing record" in reason
+	assert "renamed after it was imported" not in reason and "to match QuickBooks" not in reason
+	assert ("linked to QuickBooks JournalEntry 88" in reason) is bool(links)

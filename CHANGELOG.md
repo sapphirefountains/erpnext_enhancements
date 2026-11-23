@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     already holds the name. When a QuickBooks Sync Mapping links that record, the note also
     gives that record's QuickBooks type and id (`other_mapping_linking`, the lookup the
     auto-link and parent-promotion guards already use). The run completes and the cursor moves on.
+    - When that QuickBooks record has since been deleted (its mapping is marked `deleted`, which
+      `other_mapping_linking` still counts), the note says "(deleted in QuickBooks)" after its id.
+    - When the new record is named from a naming series, a collision usually means the series
+      counter is behind the records that already exist, not that QuickBooks renamed anything.
+      Then the note stays generic: check the naming series, or rename the existing record.
+      `_named_by_series` decides it from the series' fixed prefix beginning the name, or a `#`
+      counter in the DocType's `autoname`. The field being set is not enough: Item and Customer
+      carry a `naming_series` default even when named by item code or customer name.
+  - **Writes made before the insert are now kept.** Parking returns normally, so `safe_upsert`
+    releases its savepoint instead of rolling back to it. What was written for this record
+    before its INSERT stays: `_ensure_group_parent` promoting a parent Account, the
+    naming-series counter, and whatever `before_insert` or `validate` hooks wrote. The old failure
+    rolled those back. The existing `ValidationError` park has always kept them the same way.
+    ERPNext's Account `validate` copies a new account into child companies, which cannot fire on
+    production's single company.
   - **What the sync still does not do.** It does not rename the existing record, and it does not
     make up a different name for the new one. The sync has been link-only since v1.800.0, and
     which record should change its name is a person's decision. To clear the parked record,
@@ -52,8 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Tests.** `tests/test_quickbooks_link_only.py` reproduces the case through `safe_upsert`.
     The record is parked, the mapping is recorded with the note, there is no rollback and no
     Error Log, and the run log finishes Completed. Further cases: the note when nothing links
-    the record, collisions on other rows (still failures), the save path (unchanged), and other
-    exceptions (untouched). The bench-free frappe stub now has `DuplicateEntryError` outside
+    the record, collisions on other rows (still failures), the save path (unchanged), other
+    exceptions (untouched), a holder whose QuickBooks record was deleted, and the naming-series
+    note and its detection. The bench-free frappe stub now has `DuplicateEntryError` outside
     `ValidationError`, as Frappe does, and the test asserts it, so it cannot pass by accident.
     The suite already runs in its own `python -m pytest` step in `ci.yml`.
 

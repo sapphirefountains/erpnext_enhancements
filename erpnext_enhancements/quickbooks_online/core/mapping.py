@@ -4737,7 +4737,15 @@ def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpn
 	except Exception as exc:
 		if not insert or not _is_own_name_collision(exc, erpnext_doctype, doc):
 			raise
-		message = _name_collision_reason(entity_type, qbo_id, erpnext_doctype, doc.name)
+		# Parking returns normally, so ``safe_upsert`` releases its savepoint instead of rolling
+		# back to it: what was written for this record before its INSERT is now KEPT, where the
+		# old failure undid it. That is ``_ensure_group_parent`` promoting a ledger parent
+		# Account to a group, the naming-series counter ``set_new_name`` advanced, and whatever a
+		# ``before_insert`` / ``validate`` hook wrote -- ERPNext's Account ``validate`` copies a
+		# new account into child companies (``validate_root_company_and_sync_account_to_children``,
+		# v16.60.0), which cannot fire on production's single company. The ValidationError park
+		# above has always kept the same writes, so this is not a new kind of exposure.
+		message = _name_collision_reason(entity_type, qbo_id, erpnext_doctype, doc)
 		save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [message])
 		return {
 			"action": "manual_review",
@@ -4769,7 +4777,7 @@ def _is_own_name_collision(exc, erpnext_doctype: str, doc) -> bool:
 	return bool(name) and len(args) >= 2 and args[0] == erpnext_doctype and args[1] == name
 
 
-def _name_collision_reason(entity_type: str, qbo_id: str, erpnext_doctype: str, name: str) -> str:
+def _name_collision_reason(entity_type: str, qbo_id: str, erpnext_doctype: str, doc) -> str:
 	"""The manual-review note for a create whose ERPNext name is already taken.
 
 	Names the record that holds the name and, when a QuickBooks Sync Mapping links it, the
@@ -4777,17 +4785,36 @@ def _name_collision_reason(entity_type: str, qbo_id: str, erpnext_doctype: str, 
 	name alone does not give it, because a record renamed in QuickBooks still shows its
 	first name in ERPNext. ``other_mapping_linking`` is the same lookup the auto-link and
 	parent-promotion guards use (``erpnext_doctype`` + ``erpnext_name``, this record's own
-	mapping and a job consolidated onto a Customer not counted).
+	mapping and a job consolidated onto a Customer not counted). It does count a mapping
+	marked ``deleted``, and the note says so.
+
+	A record named from a counter is another story: there a collision almost always means
+	the series is behind the records that already exist (an import that wrote names
+	without moving the counter), not that QuickBooks renamed anything. So that note
+	stays generic and does not tell anyone to rename the record holding the name.
 	"""
+	name = doc.name
 	other = other_mapping_linking(erpnext_doctype, name, entity_type, qbo_id)
+	holder = ""
 	if other:
+		holder = f"QuickBooks {getattr(other, 'qbo_entity_type', '')} {getattr(other, 'qbo_id', '')}"
+		if cint(getattr(other, "deleted", 0)):
+			holder += " (deleted in QuickBooks)"
+	if _named_by_series(erpnext_doctype, doc):
+		linked = f" by the {erpnext_doctype} linked to {holder}" if holder else ""
+		return (
+			f"Cannot create {erpnext_doctype} '{name}': the name is already taken{linked}. This "
+			f"{erpnext_doctype} was named from a naming series, so the series counter is probably behind "
+			f"the records that already exist. Check the naming series, or rename the existing record, "
+			f"then retry this record."
+		)
+	if holder:
 		return (
 			f"Cannot create {erpnext_doctype} '{name}': that name is already taken by the "
-			f"{erpnext_doctype} linked to QuickBooks {getattr(other, 'qbo_entity_type', '')} "
-			f"{getattr(other, 'qbo_id', '')}. A QuickBooks record renamed after it was imported keeps "
-			f"its first name in ERPNext, so a new QuickBooks record under the old name collides with it. "
-			f"The sync does not rename records: rename '{name}' in ERPNext to match QuickBooks, then retry "
-			f"this record."
+			f"{erpnext_doctype} linked to {holder}. A QuickBooks record renamed after it was imported "
+			f"keeps its first name in ERPNext, so a new QuickBooks record under the old name collides with "
+			f"it. The sync does not rename records: rename '{name}' in ERPNext to match QuickBooks, then "
+			f"retry this record."
 		)
 	return (
 		f"Cannot create {erpnext_doctype} '{name}': a {erpnext_doctype} with that name already exists "
@@ -4795,6 +4822,29 @@ def _name_collision_reason(entity_type: str, qbo_id: str, erpnext_doctype: str, 
 		f"{entity_type}, link the two on the Record Matching page; if not, rename one of them, then "
 		f"retry this record."
 	)
+
+
+def _named_by_series(erpnext_doctype: str, doc) -> bool:
+	"""Whether ``doc`` took its name from a counter rather than from its own data.
+
+	Two shapes: a ``naming_series`` whose fixed prefix (the text before its first ``.``,
+	``#`` or ``{``) begins the name -- ``ACC-JV-.YYYY.-`` naming ``ACC-JV-2026-00012`` -- or a
+	DocType ``autoname`` with a ``#`` counter in it. The prefix check is what keeps a
+	field-named record out: Item and Customer carry a ``naming_series`` default even when
+	they are named by item code or customer name, so the field being set proves nothing on
+	its own. An unreadable meta is a "no", which falls back to the ordinary note.
+	"""
+	name = str(getattr(doc, "name", "") or "")
+	getter = getattr(doc, "get", None)
+	series = str((getter("naming_series") if callable(getter) else getattr(doc, "naming_series", None)) or "")
+	prefix = re.split(r"[.#{]", series, maxsplit=1)[0]
+	if prefix and name.startswith(prefix):
+		return True
+	try:
+		autoname = str(getattr(frappe.get_meta(erpnext_doctype), "autoname", "") or "")
+	except Exception:
+		return False
+	return "#" in autoname
 
 
 def _root_account_for_type(root_type, settings):
