@@ -267,6 +267,7 @@ class PayApplication(Document):
 		self.sync_lines(sov)
 		self.apply_milestone(sov)
 		self.clean_overrides()
+		self.settle_type_inputs(prev)
 		# Work completed and retainage held, per line, as the previous application stored them: earlier
 		# retainage stays held at its own rate (keep holding, Nik 2026-11-19).
 		previous_work = {
@@ -411,6 +412,38 @@ class PayApplication(Document):
 					frappe.throw(_("Retainage override on {0} must be 0 to 100%.").format(where))
 				doc.set(field, "" if value is None else f"{value:g}")
 
+	def settle_type_inputs(self, prev):
+		"""What the application's type does to the inputs, after frappe's permlevel reset has run.
+
+		* A **Final** application stores the release it computes (everything held) in each line's
+		  ``retainage_release``, so a certified final is a complete record. When the type moves off Final,
+		  that computed release is not anybody's input: it is cleared, or a Progress application would
+		  quietly release everything (and a project manager's save keeps a level-1 value as it was).
+		* A **Retainage Release** application bills no new work and moves no stored material: stored is a
+		  balance, so each line keeps the balance the previous application certified.
+		"""
+		before = self.get_doc_before_save() if not self.is_new() else None
+		if before and before.get("application_type") == pm.FINAL and self.application_type != pm.FINAL:
+			for row in self.lines:
+				row.retainage_release = 0
+		if self.application_type == pm.RELEASE:
+			stored = {r.line_key: flt(r.stored) for r in (prev.lines if prev else [])}
+			for row in self.lines:
+				row.stored = stored.get(row.line_key, 0)
+
+	def unbilled_change_orders(self, sov):
+		"""Approved change orders of the project that a Final application would leave unbilled for good:
+		the schedule's own rows approved after this period, and any customer-approved change order that
+		was never added to the schedule (a closed schedule takes no more)."""
+		on_schedule = {line.change_order for line in sov.lines if line.change_order}
+		approved = frappe.get_all(
+			"Change Order",
+			filters={"project": sov.project, "docstatus": 1, "customer_approved": 1},
+			pluck="name",
+		)
+		missing = sorted(name for name in approved if name not in on_schedule)
+		return list(self.flags.excluded_change_orders or ()) + missing
+
 	# ------------------------------------------------------------------ certify
 	def before_submit(self):
 		if not self.flags.priced:
@@ -432,11 +465,20 @@ class PayApplication(Document):
 			"amount_certified": self.amount_certified,
 			"lines": [r.as_dict() for r in self.lines],
 			"application_type": self.application_type,
-			"excluded_change_orders": list(self.flags.excluded_change_orders or ()),
+			"excluded_change_orders": self.unbilled_change_orders(sov)
+			if self.application_type == pm.FINAL
+			else list(self.flags.excluded_change_orders or ()),
 		}
 		reasons = [msg for _code, msg in pm.refusals(context, priced)]
+		# Only a progress application has to bill something: a release bills no work by definition, and a
+		# final one may follow the last milestone (it is refused anyway unless every line is finished).
 		billed_changes = any(r.is_change_order and pm.cents(r.this_period) for r in self.lines)
-		if sov.billing_mode == "Milestones" and not self.milestone and not billed_changes:
+		if (
+			sov.billing_mode == "Milestones"
+			and self.application_type == pm.PROGRESS
+			and not self.milestone
+			and not billed_changes
+		):
 			reasons.append(_("Pick the milestone this application bills."))
 		if reasons:
 			frappe.throw(

@@ -548,11 +548,10 @@ def refusals(context, priced):
 				f"{listed(worked)}.",
 			)
 		)
-	if (
-		kind == RELEASE
-		and not over_held
-		and not cents((priced.get("totals") or {}).get("retainage_released"))
-	):
+	# Per line, not the net total: a release on a deduction line is negative, so two real releases can
+	# net to nothing.
+	released_any = any(cents(r.get("retainage_release")) for r in priced.get("lines") or [])
+	if kind == RELEASE and not over_held and not released_any:
 		out.append(("RELEASE_NOTHING", "This retainage release application releases nothing."))
 	if unfinished:
 		out.append(
@@ -570,8 +569,9 @@ def refusals(context, priced):
 		out.append(
 			(
 				"FINAL_CHANGE_ORDERS_LEFT_OUT",
-				f"Change orders approved after this period are not on it: {listed(list(excluded))}. Move the "
-				"period to their approval date, or bill them first.",
+				f"Approved change orders are not on this final application: {listed(list(excluded))}. Add any "
+				"missing ones to the schedule of values (Add Approved Change Orders) and end the period on or "
+				"after their approval date.",
 			)
 		)
 
@@ -592,6 +592,15 @@ def refusals(context, priced):
 			out.append(("CERTIFIED_NEGATIVE", "The amount certified cannot be negative."))
 		elif certified > due:
 			out.append(("CERTIFIED_OVER_DUE", "The amount certified is more than the payment due."))
+		elif kind == FINAL and certified < due:
+			# A final application closes the schedule, so nothing could ever carry the shortfall forward.
+			out.append(
+				(
+					"FINAL_CERTIFIED_SHORT",
+					"A final application closes the job, so it must be certified for the whole payment due. "
+					"Certify a progress or retainage release application for less instead.",
+				)
+			)
 	return out
 
 

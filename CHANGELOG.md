@@ -39,8 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refuses it unless:
     - every line is finished (a line by others never holds it up);
     - nothing is stored;
-    - every approved change order on the schedule is on it (`FINAL_NOT_FINISHED`, `FINAL_STORED`,
-      `FINAL_CHANGE_ORDERS_LEFT_OUT`).
+    - every customer-approved change order of the project is on it, including one nobody added to
+      the schedule, since a closed schedule takes no more (`FINAL_NOT_FINISHED`, `FINAL_STORED`,
+      `FINAL_CHANGE_ORDERS_LEFT_OUT`);
+    - it is certified for the whole payment due (`FINAL_CERTIFIED_SHORT`): a closed schedule has no
+      next application to carry a shortfall into.
+
+    A Final application stores the release it computed on each line, so the certified record is
+    complete. When its type moves off Final, that computed release is cleared on the next save, after
+    frappe's permlevel reset, so a Progress application never inherits a release nobody typed.
 
     Certifying it sets the Schedule of Values to a new status, **Closed**. A closed schedule:
     - starts no application;
@@ -51,7 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     schedule back to Locked. Like Locked, the status is written only by these server steps, never
     by a save.
   - **A Retainage Release application bills no new work** (`RELEASE_HAS_WORK`), and it is refused
-    if it releases nothing (`RELEASE_NOTHING`). Its percents are not editable in the editor.
+    if no line releases anything (`RELEASE_NOTHING`, judged per line, because releases on a
+    deduction line are negative and can net to 0). Its percents are not editable in the editor, and
+    each line keeps the stored-material balance the previous application certified, whatever the
+    grid says.
+  - **On a milestone job, only a Progress application must pick a milestone.** A Retainage Release
+    and a Final after the last milestone have none left to pick.
   - Both engines, the Python one and its browser twin, carry the change and are held to three new
     shared cases: a partial release, a running total across applications, and a final application
     with a step-down and a deduction change order. A new test walks one job from its first

@@ -147,9 +147,14 @@ type:
 - **Progress**: the monthly one. Accounting may release retainage on it too, as a general contractor
   often does on finished portions of a job.
 - **Retainage Release**: releases retainage and bills no new work (its percents are locked).
-- **Final**: every line finished, nothing stored, every approved change order on it. It releases all
-  retainage still held, whatever was typed, and **certifying it closes the schedule of values**: no
-  further application or change order can join. Canceling the final application reopens it.
+- **Final**: every line finished, nothing stored, every customer-approved change order of the project
+  on it (one never added to the schedule included), certified for the whole payment due. It releases
+  all retainage still held, whatever was typed, and **certifying it closes the schedule of values**: no
+  further application or change order can join. Canceling the final application reopens it. Its
+  computed release is cleared if the type moves off Final.
+
+On a milestone job only a Progress application has to pick a milestone; a Retainage Release keeps
+each line's stored-material balance from the previous application.
 
 A release is a per-line amount, `retainage_release`, at **permlevel 1** (accounting's). **RELEASE
 RETAINAGE** in the editor fills it from a percent of what each line holds, on every line or only the

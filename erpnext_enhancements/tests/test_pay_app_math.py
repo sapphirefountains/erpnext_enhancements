@@ -227,6 +227,24 @@ class TestRefusals(unittest.TestCase):
 		)
 		self.assertEqual(codes, [])
 
+	def test_releases_that_net_to_nothing_still_release(self):
+		# a release on a deduction line is negative: two real releases can sum to 0
+		release = {"application_type": pm.RELEASE}
+		lines = [
+			L("a", 10000, 0, retainage_release=25),
+			L("co", -500, 0, is_change_order=1, retainage_release=-25),
+		]
+		held = {"a": {"work": 1000, "retainage_work": 50}, "co": {"work": -500, "retainage_work": -25}}
+		codes = self.codes(lines, held, application=release, application_type=pm.RELEASE)
+		self.assertNotIn("RELEASE_NOTHING", codes)
+
+	def test_a_final_certified_short_is_refused(self):
+		final = {"application_type": pm.FINAL}
+		codes = self.codes(
+			[L("a", 10000, 100)], application=final, application_type=pm.FINAL, amount_certified=100
+		)
+		self.assertEqual(codes, ["FINAL_CERTIFIED_SHORT"])
+
 	def test_a_final_application_needs_every_line_finished(self):
 		final = {"application_type": pm.FINAL}
 		lines = [
