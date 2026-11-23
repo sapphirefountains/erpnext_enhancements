@@ -320,6 +320,8 @@ def add_change_orders(schedule):
 	the date that decides the first application it bills on. Returns how many rows were added.
 	"""
 	sov = _schedule(schedule)
+	if sov.status == "Closed":
+		frappe.throw(_("This schedule is closed: its final pay application has been certified."))
 	have = {r.change_order for r in sov.lines if r.change_order}
 	# get_list, not get_all: a change order's price and scope go only to people who may read it.
 	orders = frappe.get_list(
@@ -353,7 +355,7 @@ def add_change_orders(schedule):
 def lock_schedule(schedule):
 	"""Lock the schedule: its lines become the contract breakdown that pay applications bill against."""
 	sov = _schedule(schedule)
-	if sov.status == "Locked":
+	if sov.status in ("Locked", "Closed"):
 		return sov.name
 	sov.save()  # total it up exactly as stored
 	problems = sov.lock_problems()
@@ -383,12 +385,21 @@ def unlock_schedule(schedule):
 
 
 @frappe.whitelist(methods=["POST"])
-def start_pay_application(schedule, period_to=None):
-	"""The next pay application of a locked schedule, as a draft. Returns its name."""
+def start_pay_application(schedule, period_to=None, application_type=None):
+	"""The next pay application of a locked schedule, as a draft. Returns its name.
+
+	``application_type`` is Progress (the default), Retainage Release or Final (B9).
+	"""
+	from erpnext_enhancements.estimating import pay_app_math as pm
+
 	sov = _schedule(schedule, "read")
 	frappe.has_permission("Pay Application", "create", throw=True)
+	kind = application_type or pm.PROGRESS
+	if kind not in pm.APPLICATION_TYPES:
+		frappe.throw(_("Unknown application type: {0}").format(escape_html(kind)))
 	pa = frappe.new_doc("Pay Application")
 	pa.schedule_of_values = sov.name
+	pa.application_type = kind
 	pa.period_to = getdate(period_to) if period_to else getdate(nowdate())
 	pa.insert()
 	return pa.name

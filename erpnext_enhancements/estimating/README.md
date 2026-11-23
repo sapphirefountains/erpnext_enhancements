@@ -9,8 +9,9 @@ the decisions it follows are TASK-2026-02149 (D15–D18, the Estimator role and 
 phone).
 
 Milestone 2 adds the **Schedule of Values** and the **Pay Application** (G702/G703, retainage stepping
-down per D16, change orders), below. The Sales Invoice with retainage receivable, the G702/G703 print
-and portal export, retainage release and percent-complete accounting come in later releases.
+down per D16, change orders), below; B9 adds **retainage release and the final application**. The
+Sales Invoice with retainage receivable, the G702/G703 print and portal export, the B9 reports and
+percent-complete accounting come in later releases.
 
 ## How a price is made
 
@@ -133,9 +134,38 @@ to [`tests/data/pay_app_math_cases.json`](../tests/data/pay_app_math_cases.json)
 ```
 D from previous      = earlier applications' WORK completed   (not their G: stored is a balance)
 E this period        = C x this period's %                     (the percent left closes the line)
-G completed + stored = D + E + F            retainage = held before + E x work % now + F x stored %
+G completed + stored = D + E + F            retainage = held before + E x work % now - released
+                                                         + F x stored %
 G702 line 7          = what earlier applications were CERTIFIED for (a short one carries forward)
 ```
+
+### Releasing retainage and the final application (B9)
+
+Retainage is held line by line and only comes back when someone releases it. Each application has a
+type:
+
+- **Progress**: the monthly one. Accounting may release retainage on it too, as a general contractor
+  often does on finished portions of a job.
+- **Retainage Release**: releases retainage and bills no new work (its percents are locked).
+- **Final**: every line finished, nothing stored, every customer-approved change order of the project
+  on it (one never added to the schedule included), certified for the whole payment due. It releases
+  all retainage still held, whatever was typed, and **certifying it closes the schedule of values**: no
+  further application or change order can join. Canceling the final application reopens it. Its
+  computed release is cleared if the type moves off Final.
+
+On a milestone job only a Progress application has to pick a milestone; a Retainage Release keeps
+each line's stored-material balance from the previous application.
+
+A release is a per-line amount, `retainage_release`, at **permlevel 1** (accounting's). **RELEASE
+RETAINAGE** in the editor fills it from a percent of what each line holds, on every line or only the
+finished ones (`pay_app_math.release_amounts`, banker's-rounded per line, so 100% releases every
+cent). Anything from nothing to all that is held is accepted; more is refused at certify, never
+clipped. Each line carries what was released before and to date, and the schedule of values shows
+the **retainage held** and **released to date** from its latest certified application.
+
+Start Pay Application, Start Retainage Release and Start Final Application are on the locked
+schedule. The release does not raise an invoice yet: the release Sales Invoice that clears Retainage
+Receivable is B8's, and sales tax is unchanged until the CPA confirms WI-036.
 
 ### Careful about
 
@@ -145,7 +175,7 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
   2026-11-19, "Keep holding it"). When 10% steps down to 5% at 50% complete, work billed before the
   step stays held at 10% until final release and only later work is held at 5%. Each line carries what
   the earlier applications held (`retainage_previous`) and adds this period's work at the rate in force;
-  a step-down or an override never releases earlier retainage. Release is a later PR (B9).
+  a step-down or an override never releases earlier retainage. Only a release does (B9, above).
 - **The chain is a stored link** (`previous_application`), never inferred from dates, and lines chain
   by `line_key`, so a reordered schedule never repoints a billed line. **It is derived again on every
   save**, because read_only is not enforced on a save at v16.56: a blanked link would bill the job twice.
@@ -153,9 +183,11 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
   Lock / Unlock; a change-order row always equals its Change Order and never loses or gains one;
   retainage terms freeze at lock. Overrides and the amount certified are permlevel 1, and are cleared
   on a new application for a user without level-1 access.
-- **Nothing releases retainage until B9.** With keep-holding, an override of 0 holds nothing new but
-  releases nothing, and held retainage only comes down with a line's work (capped at the work left).
-  Final release (B9) must ship before any job reaches its last application.
+- **Only a release releases retainage.** With keep-holding, an override of 0 holds nothing new but
+  releases nothing, and held retainage otherwise only comes down with a line's work (capped at the work
+  left). A release is its own input, and a Final application releases everything.
+- **A closed schedule takes nothing new**, change orders included, and starts no application. The
+  status is written by the final application's certify and cancel, never by a save.
 - **Milestone billing puts the milestone's percent on base lines only**; change-order rows bill by
   their own typed percent, so approved scope never becomes unbillable.
 - **A change order joins from the application whose period reaches its approval date**, and counts
@@ -169,11 +201,11 @@ G702 line 7          = what earlier applications were CERTIFIED for (a short one
 
 | File | Purpose | Wiring |
 |---|---|---|
-| `pay_app_math.py` | `sov_rows` (the projection, an exact partition), `price_application` (G703 + G702), `resolve_rates`, `refusals`. Pure | both controllers, `api/estimating.py`; twin in `public/js/estimating/pay_app_math.js` |
+| `pay_app_math.py` | `sov_rows` (the projection, an exact partition), `price_application` (G703 + G702, releases), `release_amounts`, `resolve_rates`, `refusals`. Pure | both controllers, `api/estimating.py`; twin in `public/js/estimating/pay_app_math.js` |
 | `doctype/schedule_of_values/` (+ `_line`, `retainage_step`) | The schedule; lock and change-order rules; reuses `Contract Milestone` for milestones | form; `api/estimating.py` |
-| `doctype/pay_application/` (+ `_line`) | The chain, the line sync from the schedule, pricing, certify refusals, the latest-only cancel | form; `api/estimating.py` |
+| `doctype/pay_application/` (+ `_line`) | The chain, the line sync from the schedule, pricing, certify refusals, the latest-only cancel; a certified Final closes the schedule and its cancel reopens it | form; `api/estimating.py` |
 | `links.py` `guard_change_order_cancel`, `drop_canceled_change_order` | A change order on a certified application cannot be canceled; one canceled earlier leaves every schedule | Change Order `doc_events` (`before_cancel`, `on_cancel`) |
-| `../public/js/estimating/pay_app_editor.js` | The PM's editor: phases fold, percent per line, REST, past-scheduled highlight, Amount Due panel, Send to Accounting / Certify | `pay_app_editor.bundle.js` + `.css`, loaded by `pay_application.js` |
+| `../public/js/estimating/pay_app_editor.js` | The PM's editor: phases fold, percent per line, REST, past-scheduled highlight, Amount Due panel, Send to Accounting / Certify, and accounting's Release Retainage dialog | `pay_app_editor.bundle.js` + `.css`, loaded by `pay_application.js` |
 
 ## Tests (bench-free, in CI)
 

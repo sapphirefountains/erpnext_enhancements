@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.838.0] - 2026-11-23
+
+### Added
+
+- **Retainage release and the final pay application (estimating B9, TASK-2026-02073).** Since
+  milestone 2 (1.834.0), retainage has been held line by line and kept at the rate it was held at
+  (Nik, 2026-11-19: "Keep holding it"). Until now nothing could release it, so a job's last
+  application could never pay out what it held. This has to ship before any job reaches that point.
+  - **Three kinds of pay application.** New field Pay Application > **Application Type**:
+    - **Progress**, the monthly one. It can release retainage too, as general contractors often do
+      on finished portions of a job.
+    - **Retainage Release** releases retainage and bills no new work.
+    - **Final** releases everything still held.
+    The locked Schedule of Values gains **Start Retainage Release** and **Start Final Application**
+    next to Start Pay Application. `start_pay_application` takes an optional `application_type`.
+  - **A release is a per-line amount, and it is accounting's.** New field Pay Application Line >
+    **Retainage Released (this application)** is at permlevel 1, like the retainage overrides and
+    the amount certified, and it is cleared on a new application sent by a user without level-1
+    access.
+    - **RELEASE RETAINAGE** in the editor fills it from a percent of what each line holds, on every
+      line or only the finished ones (`pay_app_math.release_amounts`, banker's-rounded per line, so
+      100% releases every cent).
+    - Retainage on work is now: held before + this period's work at the rate in force − released.
+    - Anything from nothing to all that is held is accepted. More is refused at certify, by line,
+      never clipped. On a deduction line the held amount is negative, and so is its release.
+  - **Running totals.** Each line stores what was released before and to date. The application
+    stores the retainage released on it and to date. The Schedule of Values shows **Retainage Held**
+    (in its list view) and **Retainage Released to Date** from its latest certified application.
+  - **A Final application closes the job.** It releases all retainage whatever was typed. Certify
+    refuses it unless:
+    - every line is finished (a line by others never holds it up);
+    - nothing is stored;
+    - every customer-approved change order of the project is on it, including one nobody added to
+      the schedule, since a closed schedule takes no more (`FINAL_NOT_FINISHED`, `FINAL_STORED`,
+      `FINAL_CHANGE_ORDERS_LEFT_OUT`);
+    - it is certified for the whole payment due (`FINAL_CERTIFIED_SHORT`): a closed schedule has no
+      next application to carry a shortfall into.
+
+    A Final application stores the release it computed on each line, so the certified record is
+    complete. When its type moves off Final, that computed release is cleared on the next save, after
+    frappe's permlevel reset, so a Progress application never inherits a release nobody typed.
+
+    Certifying it sets the Schedule of Values to a new status, **Closed**. A closed schedule:
+    - starts no application;
+    - takes no new line, change orders included;
+    - is left alone by Lock.
+
+    Canceling the final application, which is allowed only while it is the latest, sets the
+    schedule back to Locked. Like Locked, the status is written only by these server steps, never
+    by a save.
+  - **A Retainage Release application bills no new work** (`RELEASE_HAS_WORK`), and it is refused
+    if no line releases anything (`RELEASE_NOTHING`, judged per line, because releases on a
+    deduction line are negative and can net to 0). Its percents are not editable in the editor, and
+    each line keeps the stored-material balance the previous application certified, whatever the
+    grid says.
+  - **On a milestone job, only a Progress application must pick a milestone.** A Retainage Release
+    and a Final after the last milestone have none left to pick.
+  - Both engines, the Python one and its browser twin, carry the change and are held to three new
+    shared cases: a partial release, a running total across applications, and a final application
+    with a step-down and a deduction change order. A new test walks one job from its first
+    application through a partial release to the final and checks that every cent of the contract
+    is paid and nothing is left held.
+  - **Prod effects on migrate:**
+    - New fields on Pay Application, Pay Application Line and Schedule of Values.
+    - `Closed` added to the Schedule of Values status options.
+    - The three doctypes' `modified` is bumped so the sync picks them up.
+    - No patch, no fixture, nothing on existing rows. Prod has no Schedule of Values or Pay
+      Application yet, and every new number field defaults to 0, which is right for an application
+      that has released nothing.
+    - The pay application editor bundle goes to level 2 (`REQUIRED_PAY_EDITOR_LEVEL`), so a tab
+      open across the deploy says "reload" instead of pricing with the old rules.
+  - **Not in this release:**
+    - The release Sales Invoice that clears Retainage Receivable (B8).
+    - Any change to sales tax: WI-036's CPA confirmation is still open, so tax stays as it was in
+      milestone 2.
+    - The G702/G703 print (B6).
+    - B9's three reports (retainage held by job, applications outstanding, billed against
+      scheduled) and the workspace card.
+
 ## [1.836.0] - 2026-11-23
 
 ### Added

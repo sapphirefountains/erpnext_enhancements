@@ -9,6 +9,11 @@
  * application again on the server, and its numbers are the ones stored. Lines with a percent that
  * would take them past their scheduled value are highlighted, and certifying refuses them.
  *
+ * Releasing retainage (B9) is accounting's (permlevel 1): RELEASE RETAINAGE fills each line's release from
+ * a percent of what it holds, on every line or only the finished ones. A Final application releases all of
+ * it on the server whatever is typed, and a Retainage Release application bills no new work, so its percents
+ * are not editable.
+ *
  * Desk links are /desk/, never /app/ (a full page load on v16). Every value drawn is escaped.
  */
 
@@ -48,7 +53,13 @@ export function compute(frm) {
 	const lines = frm.doc.lines || [];
 	const previous = {};
 	// D and the retainage already held, as the server stored them at the last save (keep holding).
-	for (const l of lines) previous[l.line_key] = { work: l.from_previous || 0, retainage_work: l.retainage_previous || 0 };
+	for (const l of lines) {
+		previous[l.line_key] = {
+			work: l.from_previous || 0,
+			retainage_work: l.retainage_previous || 0,
+			released: l.retainage_released_previous || 0,
+		};
+	}
 	try {
 		return pm.price_application(schedule(frm), frm.doc, lines, previous);
 	} catch (e) {
@@ -83,8 +94,26 @@ function editable(frm) {
 	return frm.doc.docstatus === 0 && frm.perm[0] && frm.perm[0].write;
 }
 
-/** In milestone billing the base lines bill the milestone's percent; change orders are typed like progress. */
+function kind(frm) {
+	return frm.doc.application_type || pm.PROGRESS;
+}
+
+/** Accounting (permlevel 1) releases retainage, on any application but a Final one, which releases it all. */
+export function can_release(frm) {
+	return (
+		frm.doc.docstatus === 0 &&
+		kind(frm) !== pm.FINAL &&
+		!!schedule(frm).retainage_applies &&
+		!!(frm.perm[1] && frm.perm[1].write)
+	);
+}
+
+/**
+ * In milestone billing the base lines bill the milestone's percent; change orders are typed like progress.
+ * A Retainage Release application bills no new work at all.
+ */
 export function row_editable(frm, line) {
+	if (kind(frm) === pm.RELEASE) return false;
 	return editable(frm) && (schedule(frm).billing_mode !== "Milestones" || !!Number(line.is_change_order));
 }
 
@@ -142,12 +171,15 @@ function sideHtml(frm, totals) {
 		<div class="kv">
 			<span class="k">${esc(__("Work completed to date"))}</span><span class="v" data-t="completed">${money(totals.total_completed_stored)}</span>
 			<span class="k">${esc(__("Less retainage"))}${esc(ret)}</span><span class="v" data-t="ret">−${money(totals.total_retainage)}</span>
+			<span class="k">${esc(__("Retainage released on this application"))}</span><span class="v" data-t="released">${money(totals.retainage_released)}</span>
 			<span class="k">${esc(__("Less previous payments"))}</span><span class="v">−${money(totals.less_previous_certificates)}</span>
 			<span class="k"><b>${esc(__("Due on this application"))}</b></span><span class="v big" data-t="due">${money(totals.current_payment_due)}</span>
 		</div>
 		${certified}
 		<div class="muted">${esc(__("Contract sum to date {0} · {1} complete", [money(totals.contract_sum_to_date), pctText(totals.percent_complete)]))}</div>
 		<div class="muted">${esc(__("Retainage rate from: {0}", [totals.retainage_source]))}</div>
+		<div class="muted">${esc(__("Retainage released to date {0}", [money(totals.retainage_released_to_date)]))}</div>
+		${can_release(frm) ? `<button class="btn sm" type="button" data-act="release">${esc(__("RELEASE RETAINAGE"))}</button>` : ""}
 	</div>`;
 }
 
@@ -195,15 +227,24 @@ export function draw(frm) {
 	const progress = schedule(frm).billing_mode !== "Milestones";
 	const overCount = priced.lines.filter(over).length;
 	const milestone = schedule(frm).billing_mode === "Milestones";
+	const type_note =
+		kind(frm) === pm.FINAL
+			? __("Final application: every line must be finished and nothing stored. All retainage is released, and certifying it closes the schedule of values.")
+			: kind(frm) === pm.RELEASE
+			? __("Retainage release: this application releases retainage and bills no new work.")
+			: "";
 	const head = `<div class="cardhead"><h2>${esc(__("Work completed this period"))}</h2>
 		<span class="muted">${esc(
-			milestone
+			kind(frm) === pm.RELEASE
+				? __("No new work is billed on a retainage release.")
+				: milestone
 				? __("Billed by milestone: every line bills the milestone's percent. Change orders bill by the percent typed on them.")
 				: can
 				? __("Open a phase and type the percent of each line completed this period. The amount follows.")
 				: __("As the project manager marked them.")
 		)}</span>
-		<span class="tools">${can && progress && frm.doc.previous_application ? `<button class="btn sm" type="button" data-act="copy">${esc(__("COPY LAST MONTH"))}</button>` : ""}</span></div>
+		<span class="tools">${can && progress && kind(frm) !== pm.RELEASE && frm.doc.previous_application ? `<button class="btn sm" type="button" data-act="copy">${esc(__("COPY LAST MONTH"))}</button>` : ""}</span></div>
+		${type_note ? `<div class="banner">${esc(type_note)}</div>` : ""}
 		<div class="banner warn" data-over ${overCount ? "" : "hidden"}>${esc(overText(overCount))}</div>`;
 	const body = grouped
 		.map(([g, ls]) => {
@@ -261,6 +302,7 @@ export function numbers(frm) {
 	set("this2", money(t.this_period_total));
 	set("completed", money(t.total_completed_stored));
 	set("ret", `−${money(t.total_retainage)}`);
+	set("released", money(t.retainage_released));
 	set("due", money(t.current_payment_due));
 	const overCount = priced.lines.filter(over).length;
 	const banner = root.querySelector("[data-over]");
@@ -277,6 +319,54 @@ async function setPct(frm, name, value) {
 	} finally {
 		frm.__pay_editing = false;
 	}
+}
+
+/** Fill every line's release from "release pct% of what is held" (pay_app_math.release_amounts). */
+function releaseDialog(frm) {
+	const d = new frappe.ui.Dialog({
+		title: __("Release retainage"),
+		fields: [
+			{
+				fieldname: "pct",
+				fieldtype: "Float",
+				label: __("Percent of the retainage held to release"),
+				default: 100,
+				description: __("0 clears every release on this application."),
+			},
+			{
+				fieldname: "scope",
+				fieldtype: "Select",
+				label: __("Lines"),
+				options: [
+					{ value: "all", label: __("Every line") },
+					{ value: "finished", label: __("Finished lines only") },
+				],
+				default: "all",
+			},
+		],
+		primary_action_label: __("Fill releases"),
+		primary_action: async (values) => {
+			const pct = Number(values.pct) || 0;
+			if (pct < 0 || pct > 100) {
+				frappe.msgprint(__("The percent must be 0 to 100."));
+				return;
+			}
+			const priced = compute(frm);
+			if (!priced) return;
+			const amounts = pm.release_amounts(priced.lines, pct, values.scope === "finished");
+			frm.__pay_editing = true;
+			try {
+				for (const l of frm.doc.lines || []) {
+					await frappe.model.set_value("Pay Application Line", l.name, "retainage_release", amounts[l.line_key] || 0);
+				}
+			} finally {
+				frm.__pay_editing = false;
+			}
+			d.hide();
+			draw(frm);
+		},
+	});
+	d.show();
 }
 
 async function saved(frm) {
@@ -310,6 +400,8 @@ async function act(frm, action, el) {
 			if (!Number(l.by_others) && last[l.line_key] !== undefined) await setPct(frm, l.name, last[l.line_key]);
 		}
 		draw(frm);
+	} else if (action === "release") {
+		releaseDialog(frm);
 	} else if (action === "save") {
 		await frm.save();
 	} else if (action === "send") {

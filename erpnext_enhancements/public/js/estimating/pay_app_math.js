@@ -3,7 +3,8 @@
  * erpnext_enhancements/estimating/pay_app_math.py (read its docstring for the model and the reasons:
  * column D is the earlier applications' WORK completed, stored material is a balance, retainage steps
  * by the percent complete at the START of the period and earlier retainage stays held at its own rate
- * (Nik, 2026-11-19: keep holding), finishing a line closes it to the cent).
+ * (Nik, 2026-11-19: keep holding), finishing a line closes it to the cent, and a release of
+ * retainage is its own input that a Final application sets to everything held (B9)).
  *
  * The editor uses this only to show totals while a project manager types; the server prices the
  * application again on every save and its numbers are the ones stored. Both are held to the same
@@ -11,6 +12,10 @@
  */
 
 import { round_money, parse_rate } from "./estimate_math.js";
+
+export const PROGRESS = "Progress";
+export const RELEASE = "Retainage Release";
+export const FINAL = "Final";
 
 const num = (v) => {
 	const n = Number(v);
@@ -67,19 +72,26 @@ export function resolve_rates(schedule, application, pct_start) {
 
 export function price_application(schedule, application, lines, previous) {
 	const stored_on = !!schedule.stored_materials;
+	const final = (application.application_type || PROGRESS) === FINAL;
 	const prepared = (lines || []).map((line) => {
 		const entry = (previous || {})[line.line_key];
 		if (entry !== null && typeof entry === "object") {
 			const held = entry.retainage_work;
-			return [line, cents(line.scheduled_value), cents(entry.work), held === null || held === undefined ? null : cents(held)];
+			return [
+				line,
+				cents(line.scheduled_value),
+				cents(entry.work),
+				held === null || held === undefined ? null : cents(held),
+				cents(entry.released),
+			];
 		}
-		return [line, cents(line.scheduled_value), cents(entry || 0), null];
+		return [line, cents(line.scheduled_value), cents(entry || 0), null, 0];
 	});
 	const contract_to_date = prepared.reduce((s, [, c]) => s + c, 0);
 	const start_pct = percent(prepared.reduce((s, [, , d]) => s + d, 0), contract_to_date) || 0;
 	const [job_work, job_stored, source] = resolve_rates(schedule, application, start_pct);
 
-	const out = prepared.map(([line, c, d, prior]) => {
+	const out = prepared.map(([line, c, d, prior, released_before]) => {
 		const by_others = !!num(line.by_others);
 		const pct = by_others ? 0 : num(line.this_period_pct);
 		const remaining = percent(c - d, c);
@@ -96,17 +108,24 @@ export function price_application(schedule, application, lines, previous) {
 		sp = sp === null ? job_stored : sp;
 		// Keep holding (Nik, 2026-11-19): earlier retainage stays at the rate it was held at.
 		const held = prior === null ? share(d, wp) : prior;
-		let rw = held + share(e, wp);
+		let held_now = held + share(e, wp);
 		// Never hold more than the work it is held on, nor less than nothing.
 		const low = Math.min(0, d + e);
 		const high = Math.max(0, d + e);
-		rw = Math.min(Math.max(rw, low), high);
+		held_now = Math.min(Math.max(held_now, low), high);
+		// Release (B9): a Final application releases everything held; otherwise what accounting typed.
+		const released = final ? held_now : cents(line.retainage_release);
+		const rw = held_now - released;
 		const rs = share(f, sp);
 		return {
 			line_key: line.line_key,
 			scheduled_value: dollars(c),
 			from_previous: dollars(d),
 			retainage_previous: dollars(held),
+			retainage_held_now: dollars(held_now),
+			retainage_release: dollars(released),
+			retainage_released_previous: dollars(released_before),
+			retainage_released_to_date: dollars(released_before + released),
 			this_period_pct: pct,
 			this_period: dollars(e),
 			stored: dollars(f),
@@ -126,6 +145,8 @@ export function price_application(schedule, application, lines, previous) {
 			_g: g,
 			_rw: rw,
 			_rs: rs,
+			_rel: released,
+			_reld: released_before + released,
 			_co: !!num(line.is_change_order),
 		};
 	});
@@ -151,6 +172,8 @@ export function price_application(schedule, application, lines, previous) {
 		retainage_work: dollars(ret_work),
 		retainage_stored: dollars(ret_stored),
 		total_retainage: dollars(ret_work + ret_stored),
+		retainage_released: dollars(sum("_rel")),
+		retainage_released_to_date: dollars(sum("_reld")),
 		total_earned_less_retainage: dollars(earned),
 		less_previous_certificates: dollars(prev_cert),
 		current_payment_due: dollars(earned - prev_cert),
@@ -161,6 +184,21 @@ export function price_application(schedule, application, lines, previous) {
 		stored_retainage_pct: job_stored,
 		retainage_source: source,
 	};
-	for (const r of out) for (const k of ["_c", "_d", "_e", "_f", "_g", "_rw", "_rs", "_co"]) delete r[k];
+	for (const r of out) for (const k of ["_c", "_d", "_e", "_f", "_g", "_rw", "_rs", "_rel", "_reld", "_co"]) delete r[k];
 	return { lines: out, totals };
+}
+
+/** Per-line releases for "release pct% of what is held", the twin of release_amounts in the engine. */
+export function release_amounts(priced_lines, pct, finished_only = false) {
+	const out = {};
+	for (const row of priced_lines || []) {
+		const held = cents(row.retainage_held_now);
+		const finished = cents(row.scheduled_value) !== 0 && cents(row.balance) === 0;
+		if (finished_only && !finished) {
+			out[row.line_key] = 0;
+			continue;
+		}
+		out[row.line_key] = dollars(num(pct) === 100 ? held : share(held, pct));
+	}
+	return out;
 }
