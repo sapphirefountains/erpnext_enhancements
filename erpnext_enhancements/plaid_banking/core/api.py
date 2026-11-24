@@ -10,8 +10,13 @@ callable directly, so the RPC gate is the only access boundary):
   Accounts User}``. Returns balances + masks + freshness per bank; never tokens
   or keys.
 * **connect** -- anything that spends a Plaid call or writes a Bank Account's
-  Plaid link (refresh / test / map / absorb): ``{System Manager, Accounts
-  Manager}`` only.
+  Plaid link (refresh / test / map / apply, and the held card step, which also sets a
+  card ledger's Account Type to Bank): ``{System Manager, Accounts Manager}`` only.
+
+There is no absorb endpoint any more: folding a duplicate into a master is a step of
+``apply_plaid_mappings``, behind its plan and confirmation. A direct absorb endpoint could fold
+one real master into another and delete it. ``link_accounts.absorb_native_duplicate`` stays
+for ``bench execute``.
 
 There is no link / exchange / disconnect endpoint any more: linking a bank is the
 native ERPNext flow (Plaid Settings -> "Link a new bank account"; Bank ->
@@ -84,7 +89,7 @@ def refresh_now():
 	return {"ok": True, "banks": snapshot["banks"], "last_sync": snapshot["fetched_at"]}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def test_connection():
 	"""Validate the setup without spending a balance call.
 
@@ -130,14 +135,14 @@ def test_connection():
 # ---- mapping helpers (see core/link_accounts.py) ---------------------------
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mapping_overview():
 	"""Per linked bank: its Plaid accounts and our company Bank Accounts (for the dialog)."""
 	_require_finance_operator(connect=True)
 	return link_accounts.mapping_overview()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def list_plaid_accounts(bank):
 	"""The Plaid accounts behind one linked Bank (ids, names, masks; no balances)."""
 	_require_finance_operator(connect=True)
@@ -155,14 +160,36 @@ def map_plaid_account(bank_account, account_id, mask=None, start_date=None, bank
 
 
 @frappe.whitelist(methods=["POST"])
-def absorb_native_duplicate(duplicate, into):
-	"""Move a native-created duplicate's Plaid link onto our master and delete the duplicate."""
+def apply_plaid_mappings(rows, start_date=None, dry_run=0, allow_card_ledgers=0):
+	"""The Map Plaid accounts dialog's two calls. ``dry_run`` plans every row and writes
+	nothing; the dialog shows those plans for confirmation. The write then runs only rows
+	that carry the ``fingerprint`` of a confirmed plan, and refuses any whose plan changed
+	since. Each row puts a Plaid account on a master or on a card's GL account (creating the
+	card's Bank Account), folds in the duplicate native Link made, or switches that duplicate
+	off. Per-row results; one refused row does not undo the others."""
 	_require_finance_operator(connect=True)
-	return link_accounts.absorb_native_duplicate(duplicate, into)
+	rows = frappe.parse_json(rows) if isinstance(rows, str) else rows
+	if not isinstance(rows, list):
+		frappe.throw("rows must be a list.")
+	if not all(isinstance(row, dict) for row in rows):
+		frappe.throw("Each row must be an object.")
+	dry = _truthy(dry_run)
+	if not dry and any(not (row or {}).get("fingerprint") for row in rows):
+		frappe.throw(
+			"Every row needs the fingerprint of the plan that was confirmed: run it with dry_run first."
+		)
+	return link_accounts.apply_plaid_mappings(
+		rows, start_date=start_date or None, dry_run=dry, allow_card_ledgers=_truthy(allow_card_ledgers)
+	)
+
+
+def _truthy(value) -> bool:
+	"""A form-encoded boolean arrives as the string "true"."""
+	return value is True or str(value).strip().lower() in ("1", "true")
 
 
 @frappe.whitelist(methods=["POST"])
 def prune_link_created_gl_accounts(bank):
-	"""Delete the unused GL Accounts a native "Refresh Plaid Link" left behind for one Bank."""
+	"""Delete the unused GL Accounts a native re-link left behind for one Bank (16.50; 16.60 leaves none)."""
 	_require_finance_operator(connect=True)
 	return link_accounts.prune_link_created_gl_accounts(bank)

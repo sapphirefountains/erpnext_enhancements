@@ -62,15 +62,19 @@
     function renderAccount(sf, a) {
         const mask = a.mask ? `••${sf.esc(a.mask)}` : "";
         const sub = [sf.esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");
+        // A credit card's Plaid "current" is what is owed and "available" is the credit
+        // left, so the bare number next to checking balances would read as cash.
+        const isCard = a.type === "credit";
         const available =
             a.available !== null && a.available !== undefined
-                ? `<span class="fbb-avail">${__("avail")} ${sf.esc(money(a.available, a.currency))}</span>`
+                ? `<span class="fbb-avail">${isCard ? __("credit left") : __("avail")} ${sf.esc(money(a.available, a.currency))}</span>`
                 : "";
+        const owed = isCard ? ` <span class="fbb-owed">${__("owed")}</span>` : "";
         return `
             <div class="fbb-acct">
                 <div class="fbb-acct-top">
                     <span class="fbb-acct-name">${sf.esc(a.name || __("Account"))}</span>
-                    <span class="fbb-acct-bal">${sf.esc(money(a.current, a.currency))}</span>
+                    <span class="fbb-acct-bal">${sf.esc(money(a.current, a.currency))}${owed}</span>
                 </div>
                 <div class="fbb-acct-foot">
                     <span class="fbb-acct-sub">${sub}</span>

@@ -46,6 +46,7 @@ Native **Sales Taxes and Charges Template** + **Item Tax Template** (both verifi
 5. **Confirm the Build real-property treatment itself.** It is still open in the guidance doc.
 6. **The governing Utah publications.** The research cites Publication 42.
 7. **Use-tax accrual timing:** per purchase or at period end.
+8. **Credit cards on the Cash Flow statement** (added 2026-11-24 for WI-056; not a tax question, but it goes to the same CPA). Should the credit-card liability ledgers be typed **Bank** so the Plaid card feeds can be reconciled? ERPNext then counts them as cash, net of the balances owed, and their whole history moves out of operating activities. The cards held until the answer are Capital One Spark (22500), American Express Prime (22600) and the US Bank company Mastercard. Background: `erpnext_enhancements/plaid_banking/README.md`, "Credit cards".
 
 ## Scope
 - Create new Sales Taxes and Charges Templates per required Utah jurisdiction/rate combination, each row charge_type 'On Net Total' with account_head = the matching new liability sub-account; set `is_default=1` on the primary home-jurisdiction template; create a 'Non-Taxable / Out of State' zero-rate template.
