@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     The condition is a plain filter, not a SQL function in a field string, which Frappe 16 refuses.
   - **"Mine" is the Stock Ledger Entry's `owner`**, the same person the User filter matches. On
     production on 2026-11-24, all 278 live entries of the previous 30 days had the same owner as
-    their voucher (Stock Entry, Purchase Receipt, Stock Reconciliation).
+    their voucher (Stock Entry, Purchase Receipt, Stock Reconciliation). The owner is whoever
+    *submits* the voucher. A count left as a draft for a Stock Manager becomes the manager's once
+    they submit it. So a manager who ticks the box also hides the counts they approved, just as
+    By person credits those counts to them.
   - **A count keeps its real change.** ERPNext stores a count's change as 0, and the report works it
     out from the balance before it (`count_changes`). That read still covers the whole ledger, so a
     count someone else made just after one of your entries shows the change from your balance, not
@@ -47,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - that the box is off by default and also reads a route option of `"1"`;
   - every card, and both total views;
   - the box with each of the dates, item, location, project and kind;
+  - the box and the User filter with a job that has a job site, whose Project filter is an
+    `or_filters` group: the owner condition stays in the plain filters, which `get_list` ANDs
+    onto the group;
   - the User filter set to someone else, and set to yourself (no ledger read, a note, in all three
     views);
   - a count's change when the entry before it was the reader's;

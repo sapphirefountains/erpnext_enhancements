@@ -38,7 +38,8 @@ What is held:
 * **v1.841.0, Exclude my entries.** ``stock_movement_rules.owner_filter`` (the User filter and the box
   together, without case), ``checked`` and ``without_me``; the box leaves the signed-in user's rows out
   of the movement list, both total views and every card, combines with the dates, item, location,
-  project and kind, is off by default, keeps a count's real change when the entry before it was the
+  project and kind (and, with the User filter, with a job whose job site makes the Project filter an
+  ``or_filters`` group), is off by default, keeps a count's real change when the entry before it was the
   reader's, drops the reader from By person's list, and with the User filter set to the reader reads
   nothing and says why.
 
@@ -1552,6 +1553,39 @@ class TestExcludeMyEntries(unittest.TestCase):
 		self.assertEqual([self.names[r["voucher_no"]] for r in rows], ["THEIRS-TAKE"])
 		self.assertIsNone(message)
 		self.assertEqual(_ledger_reads()[0]["filters"]["owner"], OTHER)
+
+	def test_a_job_with_a_site_still_narrows_by_owner(self):
+		# The Project filter of a job that has a job site is an or_filters group (rows carrying the
+		# job OR rows at its site). The owner condition must sit beside it in the plain filters,
+		# which get_list ANDs onto the group, for both halves: the box, and the User filter too.
+		ledger = [
+			# At the job's site, untagged: one of mine, one of theirs.
+			sle("A", -1, owner=ME, warehouse=SITE, time="08:00", name="MINE-SITE"),
+			sle("B", -2, owner=OTHER, warehouse=SITE, time="08:10", name="THEIRS-SITE"),
+			# Tagged with the job at a shop bin: one of mine, one of theirs.
+			sle("C", -1, owner=ME, project="PRJ-90001", time="08:20", name="MINE-TAGGED"),
+			sle("D", -3, owner=OTHER, project="PRJ-90001", time="08:30", name="THEIRS-TAGGED"),
+			# Theirs, but not the job's.
+			sle("E", -1, owner=OTHER, time="08:40", name="THEIRS-ELSEWHERE"),
+		]
+		names = {r["voucher_no"]: r["name"] for r in ledger}
+		cases = [
+			({"exclude_mine": 1}, ["THEIRS-SITE", "THEIRS-TAGGED"], ["!=", ME]),
+			({"user": OTHER}, ["THEIRS-SITE", "THEIRS-TAGGED"], OTHER),
+			({"user": OTHER, "exclude_mine": 1}, ["THEIRS-SITE", "THEIRS-TAGGED"], OTHER),
+			({"user": ME}, ["MINE-SITE", "MINE-TAGGED"], ME),
+		]
+		for filters, expected, owner in cases:
+			with self.subTest(filters=filters):
+				_reset(ledger=ledger, warehouses=TREE)
+				rows = report.execute({"project": "PRJ-90001", **filters})[1]
+				self.assertEqual(sorted(names[r["voucher_no"]] for r in rows), expected)
+				read = _ledger_reads()[0]
+				self.assertEqual(
+					read["or_filters"], [["project", "=", "PRJ-90001"], ["warehouse", "in", [SITE]]]
+				)
+				self.assertNotIn("project", read["filters"])
+				self.assertEqual(read["filters"]["owner"], owner)
 
 	def test_the_user_filter_set_to_me_reads_nothing_and_says_why(self):
 		for view in rules.VIEWS:

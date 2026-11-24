@@ -1784,6 +1784,11 @@ ledger lines, so everyone else's movements were hard to find.
   worked out from what is left.
 - **"Mine" is the entry's `owner`**, the same person the User filter matches. On production on
   2026-11-24, all 278 live entries of the previous 30 days had the same owner as their voucher.
+  - The owner is whoever *submits* the voucher.
+  - A count left as a draft for a Stock Manager (the Inventory Scanner Audit's Finalize, or
+    `api/count_desk.post_count(mode="draft")`) becomes the manager's once they submit it.
+  - So a manager who ticks the box also hides the counts they approved. By person already credits
+    those counts to the manager.
 - **Counts keep their real change.** `count_changes` still reads the whole ledger. So a count someone
   else made just after one of your entries shows the change from your balance, not from zero.
 - **By person** leaves the reader out of its list of people, so they are not a row of zeros.

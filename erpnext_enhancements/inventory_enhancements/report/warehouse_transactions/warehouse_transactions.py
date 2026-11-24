@@ -80,11 +80,15 @@ left out, "to see how everyone else has been using the warehouse". The box adds 
 signed-in user>`` to the same ``get_list`` read, so every other filter still applies, and the rows, the
 By person and By item views and every card are worked out from what is left. "Mine" is the entry's
 ``owner``, the same person the User filter matches; on production on 2026-11-24 all 278 live entries of
-the previous 30 days had the same owner as their voucher. The count walk (:func:`count_changes`) still
-reads the whole ledger, so a count someone else made just after one of yours still shows its real
-change. With Exclude my entries on, By person leaves the reader out of its list of people. The User
-filter naming the reader as well matches nothing: the report reads nothing and says so
-(``stock_movement_rules.owner_filter``).
+the previous 30 days had the same owner as their voucher. The owner is whoever *submits* the voucher,
+though: a count left as a draft for a Stock Manager (the Inventory Scanner Audit's Finalize,
+``api/inventory_scanner.py``, or ``api/count_desk.post_count(mode="draft")``) becomes the manager's
+entry once they submit it, so a manager who ticks the box also hides the counts they approved. By
+person already credits those counts to the manager the same way. The count walk
+(:func:`count_changes`) still reads the whole ledger, so a count someone else made just after one of
+yours still shows its real change. With Exclude my entries on, By person leaves the reader out of its
+list of people. The User filter naming the reader as well matches nothing: the report reads nothing
+and says so (``stock_movement_rules.owner_filter``).
 """
 
 import frappe
