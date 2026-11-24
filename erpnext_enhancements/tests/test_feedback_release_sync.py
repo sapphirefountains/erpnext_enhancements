@@ -347,6 +347,8 @@ class TestChangelogVersions(unittest.TestCase):
 SHIPPED_REFS: dict[str, list[str]] = {
 	# Warehouse Transactions report and its hub links (ER-2026-1330007).
 	"1.797.0": ["Refs: ER-2026-1330007, TASK-2026-03136, TASK-2026-03137"],
+	# Warehouse Transactions: Exclude my entries (ER-2026-1358314).
+	"1.841.0": ["Refs: ER-2026-1358314, TASK-2026-03290"],
 }
 
 

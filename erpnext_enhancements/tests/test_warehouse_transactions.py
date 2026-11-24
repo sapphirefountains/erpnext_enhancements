@@ -35,6 +35,13 @@ What is held:
   both, a job with no site, no site field yet); a room covering its shelves with the Room / Rack
   column; the Kind column and filter from a permission-checked Stock Entry read; and both views,
   with everyone who keeps stock listed at zero and the service account left out.
+* **v1.841.0, Exclude my entries.** ``stock_movement_rules.owner_filter`` (the User filter and the box
+  together, without case), ``checked`` and ``without_me``; the box leaves the signed-in user's rows out
+  of the movement list, both total views and every card, combines with the dates, item, location,
+  project and kind (and, with the User filter, with a job whose job site makes the Project filter an
+  ``or_filters`` group), is off by default, keeps a count's real change when the entry before it was the
+  reader's, drops the reader from By person's list, and with the User filter set to the reader reads
+  nothing and says why.
 
 The ``frappe`` stub holds a small in-memory ledger and applies ``get_list``'s filters, ordering and
 field list to it, so a query that asked for the wrong rows or too few fields fails here. Installed
@@ -75,6 +82,8 @@ NAME = "Warehouse Transactions"
 TODAY = dt.date(2026, 11, 5)
 STAMP = "2026-11-05 10:00"
 SR = "Stock Reconciliation"
+#: The signed-in user in the stub (``frappe.session.user``), for Exclude my entries.
+ME = "me@example.com"
 
 #: Stock Ledger Entry's fields at ERPNext v16.52.1 (production), read from the tag's
 #: stock_ledger_entry.json, plus the standard columns every doctype has.
@@ -154,6 +163,7 @@ def _reset(
 	user_rows=None,
 	uoms=None,
 	site_column=True,
+	me=ME,
 ):
 	STATE.clear()
 	STATE.update(
@@ -184,6 +194,7 @@ def _reset(
 	)
 	if frappe_stub is not None:
 		frappe_stub.flags.in_import = False
+		frappe_stub.session.user = me
 
 
 def _cond(value, op, arg):
@@ -195,6 +206,8 @@ def _cond(value, op, arg):
 		return value <= arg
 	if op == "=":
 		return value == arg
+	if op == "!=":
+		return value != arg
 	raise AssertionError(f"stub does not know {op}")
 
 
@@ -234,6 +247,7 @@ def setUpModule():
 	frappe._ = lambda text: text
 	frappe._dict = _Dict
 	frappe.flags = _Dict(in_import=False)
+	frappe.session = _Dict(user=ME)
 
 	def throw(message, *args, **kwargs):
 		raise _Thrown(message)
@@ -451,7 +465,12 @@ class TestConditions(unittest.TestCase):
 		# The whole point of a Script Report here: absent and blank both mean "any".
 		base = self.conditions(from_date="2026-10-01", to_date="2026-10-31")
 		blank = self.conditions(
-			from_date="2026-10-01", to_date="2026-10-31", item_code="", warehouse=None, user=""
+			from_date="2026-10-01",
+			to_date="2026-10-31",
+			item_code="",
+			warehouse=None,
+			user="",
+			exclude_mine=0,
 		)
 		self.assertEqual(base, blank)
 		self.assertEqual(set(base), {"is_cancelled", "posting_date"})
@@ -771,7 +790,18 @@ class TestColumnsAndFilters(unittest.TestCase):
 		self.assertIn(f'frappe.query_reports["{NAME}"]', text)
 		fieldnames = re.findall(r'fieldname:\s*"(\w+)"', text)
 		self.assertEqual(
-			fieldnames, ["from_date", "to_date", "view", "item_code", "warehouse", "project", "user", "kind"]
+			fieldnames,
+			[
+				"from_date",
+				"to_date",
+				"view",
+				"item_code",
+				"warehouse",
+				"project",
+				"user",
+				"exclude_mine",
+				"kind",
+			],
 		)
 		# Only the two dates are required; one reqd per date block.
 		self.assertEqual(text.count("reqd: 1"), 2)
@@ -1371,6 +1401,273 @@ class TestByItemView(unittest.TestCase):
 			with self.subTest(view=view):
 				columns = report.execute({"view": view})[0]
 				self.assertEqual(columns, report.get_columns())
+
+
+# --- v1.841.0: Exclude my entries (TASK-2026-03290) ------------------------------------------------
+
+OTHER = "b@example.com"
+THIRD = "c@example.com"
+
+
+class TestOwnerFilterRule(unittest.TestCase):
+	"""stock_movement_rules.owner_filter, checked and without_me: no Frappe."""
+
+	def test_the_table(self):
+		cases = [
+			# (user filter, box, signed-in user) -> condition on owner
+			((None, False, ME), None),
+			(("", False, ME), None),
+			((OTHER, False, ME), OTHER),
+			((ME, False, ME), ME),
+			((None, True, ME), ["!=", ME]),
+			(("  ", True, ME), ["!=", ME]),
+			((OTHER, True, ME), OTHER),
+			((ME, True, ME), rules.NO_ONE),
+			# The column compares without case (MariaDB's default collation), so the rule does too.
+			((ME.upper(), True, ME), rules.NO_ONE),
+			# Nobody signed in: nobody to leave out.
+			((None, True, None), None),
+			((OTHER, True, ""), OTHER),
+		]
+		for args, expected in cases:
+			with self.subTest(args=args):
+				self.assertEqual(rules.owner_filter(*args), expected)
+
+	def test_no_one_is_never_a_condition(self):
+		# Falsy, so build_conditions' `if owner:` cannot turn it into a filter, and distinct from None
+		# ("anyone"), which get_data must not mistake for "nothing".
+		self.assertFalse(rules.NO_ONE)
+		self.assertIsNot(rules.NO_ONE, None)
+		self.assertIs(rules.owner_filter(ME, True, ME), rules.NO_ONE)
+		self.assertIsNot(rules.owner_filter(None, False, ME), rules.NO_ONE)
+
+	def test_checked(self):
+		for on in (1, "1", True, 1.0, "2"):
+			with self.subTest(value=on):
+				self.assertTrue(rules.checked(on))
+		for off in (0, "0", "", None, False, "no", "abc"):
+			with self.subTest(value=off):
+				self.assertFalse(rules.checked(off))
+
+	def test_without_me(self):
+		people = {ME: "Me", OTHER: "Bo", THIRD: "Cy"}
+		self.assertEqual(rules.without_me(people, ME), {OTHER: "Bo", THIRD: "Cy"})
+		self.assertEqual(rules.without_me(people, ME.upper()), {OTHER: "Bo", THIRD: "Cy"})
+		self.assertEqual(rules.without_me(people, None), people)
+		self.assertEqual(rules.without_me(None, ME), {})
+
+
+class TestExcludeMyEntries(unittest.TestCase):
+	def ledger(self):
+		return [
+			sle("A", -1, owner=ME, time="08:00", project="PRJ-1", name="MINE-TAKE"),
+			sle("B", 5, owner=ME, voucher_type="Purchase Receipt", time="08:30", name="MINE-RECEIPT"),
+			sle("A", -2, owner=OTHER, time="09:00", project="PRJ-1", name="THEIRS-TAKE"),
+			sle(
+				"C",
+				3,
+				owner=THIRD,
+				voucher_type="Purchase Receipt",
+				warehouse="Bin A2 - X",
+				time="09:30",
+				name="THEIRS-RECEIPT",
+			),
+			# Someone else's, before the default 30 days.
+			sle("A", -4, owner=OTHER, day=TODAY - dt.timedelta(days=40), name="THEIRS-OLD"),
+		]
+
+	def setUp(self):
+		ledger = self.ledger()
+		_reset(
+			ledger=ledger,
+			items={"A": "Pump", "B": "Nozzle", "C": "Valve"},
+			users={ME: "Me Myself", OTHER: "Bo Baker", THIRD: "Cy Cole"},
+			stock_entries={
+				r["voucher_no"]: "Material Issue" for r in ledger if r["voucher_type"] == "Stock Entry"
+			},
+			has_role=[(ME, "Stock User"), (OTHER, "Stock User"), (THIRD, "Inventory Clerk")],
+			user_rows={
+				ME: {"full_name": "Me Myself", "enabled": 1, "user_type": "System User"},
+				OTHER: {"full_name": "Bo Baker", "enabled": 1, "user_type": "System User"},
+				THIRD: {"full_name": "Cy Cole", "enabled": 1, "user_type": "System User"},
+			},
+		)
+		self.names = {r["voucher_no"]: r["name"] for r in ledger}
+
+	def run_report(self, **filters):
+		return report.execute(filters)
+
+	def movement_names(self, **filters):
+		return sorted(self.names[r["voucher_no"]] for r in self.run_report(**filters)[1])
+
+	def test_off_by_default_changes_nothing(self):
+		everyone = ["MINE-RECEIPT", "MINE-TAKE", "THEIRS-RECEIPT", "THEIRS-TAKE"]
+		self.assertEqual(self.movement_names(), everyone)
+		for off in (0, "0", "", None):
+			with self.subTest(exclude_mine=off):
+				self.assertEqual(self.movement_names(exclude_mine=off), everyone)
+				self.assertNotIn("owner", _ledger_reads()[-1]["filters"])
+
+	def test_leaves_my_rows_out_and_the_cards_follow(self):
+		columns, rows, message, chart, cards = self.run_report(exclude_mine=1)
+		self.assertEqual(sorted(self.names[r["voucher_no"]] for r in rows), ["THEIRS-RECEIPT", "THEIRS-TAKE"])
+		self.assertNotIn(ME, {r["user"] for r in rows})
+		self.assertIsNone(message)
+		cards = {c["label"]: c["value"] for c in cards}
+		self.assertEqual(
+			(
+				cards["Ledger lines"],
+				cards["Lines adding stock"],
+				cards["Lines removing stock"],
+				cards["People"],
+			),
+			(2, 1, 1, 2),
+		)
+		# One permission-checked ledger read, with the exclusion in its filters: never SQL, never get_all.
+		read = _ledger_reads()[0]
+		self.assertEqual(read["filters"]["owner"], ["!=", ME])
+		self.assertFalse(any(c["doctype"] == "Stock Ledger Entry" for c in STATE["get_all"]))
+
+	def test_a_route_option_of_one_is_on_too(self):
+		self.assertEqual(self.movement_names(exclude_mine="1"), ["THEIRS-RECEIPT", "THEIRS-TAKE"])
+
+	def test_combines_with_every_other_filter(self):
+		cases = [
+			({"item_code": "A"}, ["THEIRS-TAKE"]),
+			({"warehouse": "Bin A2 - X"}, ["THEIRS-RECEIPT"]),
+			({"project": "PRJ-1"}, ["THEIRS-TAKE"]),
+			({"kind": "Take"}, ["THEIRS-TAKE"]),
+			({"kind": "Receive"}, ["THEIRS-RECEIPT"]),
+			(
+				{"from_date": (TODAY - dt.timedelta(days=60)).isoformat(), "to_date": TODAY.isoformat()},
+				["THEIRS-OLD", "THEIRS-RECEIPT", "THEIRS-TAKE"],
+			),
+			({"to_date": (TODAY - dt.timedelta(days=1)).isoformat()}, []),
+		]
+		for filters, expected in cases:
+			with self.subTest(filters=filters):
+				self.assertEqual(self.movement_names(exclude_mine=1, **filters), expected)
+
+	def test_the_user_filter_set_to_someone_else_is_that_person(self):
+		columns, rows, message, chart, cards = self.run_report(exclude_mine=1, user=OTHER)
+		self.assertEqual([self.names[r["voucher_no"]] for r in rows], ["THEIRS-TAKE"])
+		self.assertIsNone(message)
+		self.assertEqual(_ledger_reads()[0]["filters"]["owner"], OTHER)
+
+	def test_a_job_with_a_site_still_narrows_by_owner(self):
+		# The Project filter of a job that has a job site is an or_filters group (rows carrying the
+		# job OR rows at its site). The owner condition must sit beside it in the plain filters,
+		# which get_list ANDs onto the group, for both halves: the box, and the User filter too.
+		ledger = [
+			# At the job's site, untagged: one of mine, one of theirs.
+			sle("A", -1, owner=ME, warehouse=SITE, time="08:00", name="MINE-SITE"),
+			sle("B", -2, owner=OTHER, warehouse=SITE, time="08:10", name="THEIRS-SITE"),
+			# Tagged with the job at a shop bin: one of mine, one of theirs.
+			sle("C", -1, owner=ME, project="PRJ-90001", time="08:20", name="MINE-TAGGED"),
+			sle("D", -3, owner=OTHER, project="PRJ-90001", time="08:30", name="THEIRS-TAGGED"),
+			# Theirs, but not the job's.
+			sle("E", -1, owner=OTHER, time="08:40", name="THEIRS-ELSEWHERE"),
+		]
+		names = {r["voucher_no"]: r["name"] for r in ledger}
+		cases = [
+			({"exclude_mine": 1}, ["THEIRS-SITE", "THEIRS-TAGGED"], ["!=", ME]),
+			({"user": OTHER}, ["THEIRS-SITE", "THEIRS-TAGGED"], OTHER),
+			({"user": OTHER, "exclude_mine": 1}, ["THEIRS-SITE", "THEIRS-TAGGED"], OTHER),
+			({"user": ME}, ["MINE-SITE", "MINE-TAGGED"], ME),
+		]
+		for filters, expected, owner in cases:
+			with self.subTest(filters=filters):
+				_reset(ledger=ledger, warehouses=TREE)
+				rows = report.execute({"project": "PRJ-90001", **filters})[1]
+				self.assertEqual(sorted(names[r["voucher_no"]] for r in rows), expected)
+				read = _ledger_reads()[0]
+				self.assertEqual(
+					read["or_filters"], [["project", "=", "PRJ-90001"], ["warehouse", "in", [SITE]]]
+				)
+				self.assertNotIn("project", read["filters"])
+				self.assertEqual(read["filters"]["owner"], owner)
+
+	def test_the_user_filter_set_to_me_reads_nothing_and_says_why(self):
+		for view in rules.VIEWS:
+			for user in (ME, ME.upper()):
+				with self.subTest(view=view, user=user):
+					STATE["get_list"].clear()
+					columns, rows, message, chart, cards = self.run_report(
+						exclude_mine=1, user=user, view=view
+					)
+					self.assertEqual(rows, [])
+					self.assertIn("Exclude my entries", message)
+					self.assertEqual(_ledger_reads(), [])
+					self.assertTrue(all(not c["value"] for c in cards), cards)
+		# Without the box, User set to me is my own history, as before.
+		self.assertEqual(self.movement_names(user=ME), ["MINE-RECEIPT", "MINE-TAKE"])
+		self.assertIsNone(self.run_report(user=ME)[2])
+
+	def test_by_person_leaves_me_out_of_the_people_too(self):
+		people = self.run_report(view="By person", exclude_mine=1)[1]
+		self.assertEqual([p["user"] for p in people], [OTHER, THIRD])
+		self.assertEqual([p["saves"] for p in people], [1, 1])
+		cards = {c["label"]: c["value"] for c in self.run_report(view="By person", exclude_mine=1)[4]}
+		self.assertEqual((cards["People with movements"], cards["People with none"]), (2, 0))
+		self.assertEqual((cards["Saves"], cards["Ledger lines"]), (2, 2))
+		# Without the box I am listed, first, with my two saves.
+		people = self.run_report(view="By person")[1]
+		self.assertEqual(people[0]["user"], ME)
+		self.assertEqual(people[0]["saves"], 2)
+
+	def test_by_person_keeps_a_colleague_with_no_movement_at_zero(self):
+		_reset(
+			ledger=[sle("A", -1, owner=ME)],
+			users={ME: "Me Myself"},
+			has_role=[(ME, "Stock User"), (OTHER, "Stock User")],
+			user_rows={
+				ME: {"full_name": "Me Myself", "enabled": 1, "user_type": "System User"},
+				OTHER: {"full_name": "Bo Baker", "enabled": 1, "user_type": "System User"},
+			},
+		)
+		people = report.execute({"view": "By person", "exclude_mine": 1})[1]
+		self.assertEqual([(p["user"], p["saves"]) for p in people], [(OTHER, 0)])
+
+	def test_by_item_totals_follow(self):
+		columns, items, message, chart, cards = self.run_report(view="By item", exclude_mine=1)
+		self.assertEqual(sorted(i["item_code"] for i in items), ["A", "C"])
+		a = next(i for i in items if i["item_code"] == "A")
+		# Only Bo's take of 2; my take of 1 is left out.
+		self.assertEqual((a["taken"], a["takes"], a["people"], a["lines"]), (2.0, 1, 1, 1))
+		cards = {c["label"]: c["value"] for c in cards}
+		self.assertEqual((cards["Items moved"], cards["Items taken"], cards["Ledger lines"]), (2, 1, 2))
+		everything = {i["item_code"]: i for i in self.run_report(view="By item")[1]}
+		self.assertEqual(everything["A"]["taken"], 3.0)
+		self.assertIn("B", everything)
+
+	def test_a_count_after_my_entry_still_shows_its_real_change(self):
+		# I put 10 in; someone else counted 7. Leaving my row out must not make their count look like
+		# +7 from nothing: the balance before it is still mine.
+		_reset(
+			ledger=[
+				sle("A", 10, after=10, owner=ME, voucher_type="Purchase Receipt", time="08:00"),
+				count("A", after=7, owner=OTHER, time="09:00"),
+			]
+		)
+		rows = report.execute({"exclude_mine": 1})[1]
+		self.assertEqual([(r["user"], r["kind"], r["qty_change"]) for r in rows], [(OTHER, "Count", -3.0)])
+		balance_read = _ledger_reads()[1]
+		self.assertNotIn("owner", balance_read["filters"])
+
+	def test_nobody_signed_in_leaves_nothing_out(self):
+		_reset(ledger=self.ledger(), me=None)
+		self.assertEqual(len(report.execute({"exclude_mine": 1})[1]), 4)
+
+	def test_the_js_filter(self):
+		text = REPORT_JS.read_text(encoding="utf-8")
+		block = text[text.index('fieldname: "exclude_mine"') : text.index('fieldname: "kind"')]
+		self.assertIn('label: __("Exclude my entries")', block)
+		self.assertIn('fieldtype: "Check"', block)
+		# Off unless ticked, and never required.
+		self.assertIn("default: 0", block)
+		self.assertNotIn("reqd", block)
+		# Beside the User filter, which narrows the same column.
+		self.assertLess(text.index('fieldname: "user"'), text.index('fieldname: "exclude_mine"'))
 
 
 if __name__ == "__main__":

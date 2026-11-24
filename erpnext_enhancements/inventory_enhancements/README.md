@@ -61,7 +61,7 @@ model, the pure rules and the label reads.
 | `rack_sheet_rules.py` | The printable rack QR sheet (v1.831.0): which racks a choice prints (a Room box prints each rack in it), a rack's shelves top to bottom with their codes left to right, the map box's shelf and bin direction, and how big the codes are. No Frappe. See *The rack QR sheet* below |
 | `reorder_suggest_rules.py` | Suggested reorder levels (v1.831.0): what counts as used, the basis, the thin-data gate, the suggestion's arithmetic, and the numbers a person may approve. No Frappe, no I/O. See *Suggested reorder levels* below |
 | `reorder_suggestions.py` | The Reorder Board's Reorder levels tab: its read over the board's rules and the stock ledger, and Apply (one rule's numbers, `Item.save()` as the person) |
-| `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0). No Frappe, no I/O. See *Warehouse Transactions* below |
+| `stock_movement_rules.py` | What a stock ledger line was (Take, Receive, Add, Move, Count, Return to supplier, Delivered, Other), what counts as use, and the Warehouse Transactions report's totals by person (people with none included) and by item (v1.831.0), and its Exclude my entries rule (`owner_filter`, v1.841.0). No Frappe, no I/O. See *Warehouse Transactions* below |
 | `reorder_rules.py` | The Reorder Board's judgements (v1.730.0): ERPNext v16's reorder trigger and suggested quantity, the projected qty at the rule's group, where the item's stock is against the rule's scope (`stock_places`, v1.833.1), each open request's stage from the MR → PO → receipt links, snoozes, the digest's pick and its recipients. No Frappe, no I/O. See *The Reorder Board* below |
 | `reorder_board.py` | The Reorder Board's reads (ERPNext's own reorder helpers), its Draft Material Requests, snoozes, the hourly `sync_watch` and the 07:20 `send_daily_digest`. The endpoints are `api/reorder_board.py` |
 | `doctype/reorder_watch/` | One row per item and warehouse while it is below its reorder point: since when, whether the digest named it, its snooze (v1.730.0) |
@@ -1821,6 +1821,33 @@ The 2026-11-19 operations review: before setting reorder points, see what is tak
   often bought before a job starts. A bin, the picker, and a job with nothing moved leave the dates
   as they are. Shown only when `frappe.boot.allowed_reports` has the report and the bundle has the
   function (`bin_manager.bundle.js` version 3).
+
+### Exclude my entries (v1.841.0)
+
+A warehouse user asked to leave their own entries out, "to see how everyone else has been using the
+warehouse" (TASK-2026-03290). In the 30 days before 2026-11-24, one person made 254 of the 278 live
+ledger lines, so everyone else's movements were hard to find.
+
+- **The box.** **Exclude my entries** sits next to the User filter and is off unless ticked. It adds
+  `owner != <the signed-in user>` to the same permission-checked `get_list`, so the dates,
+  location, item, project and kind still apply. The rows, both total views and every card are
+  worked out from what is left.
+- **"Mine" is the entry's `owner`**, the same person the User filter matches. On production on
+  2026-11-24, all 278 live entries of the previous 30 days had the same owner as their voucher.
+  - The owner is whoever *submits* the voucher.
+  - A count left as a draft for a Stock Manager (the Inventory Scanner Audit's Finalize, or
+    `api/count_desk.post_count(mode="draft")`) becomes the manager's once they submit it.
+  - So a manager who ticks the box also hides the counts they approved. By person already credits
+    those counts to the manager.
+- **Counts keep their real change.** `count_changes` still reads the whole ledger. So a count someone
+  else made just after one of your entries shows the change from your balance, not from zero.
+- **By person** leaves the reader out of its list of people, so they are not a row of zeros.
+- **With the User filter set to yourself as well**, nothing can match. The report reads nothing and
+  says so in its note (`stock_movement_rules.owner_filter`, its table of the five cases).
+- **Where people browse movements.** On production, Route History since 2026-11-05 shows this report as
+  the only list of movements anyone opened: ERPNext's Stock Ledger report had no visits, and the Stock
+  Scan Log list had none since 2026-10-01. The Inventory Scanner Audit page is a counting page, with
+  no list of other people's movements. So the box is here only.
 
 ## Inventory reports (v1.805.0)
 
