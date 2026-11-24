@@ -624,9 +624,11 @@ def preview_matching_import(file_name):
 
 
 @frappe.whitelist(methods=["POST"])
-def apply_matching_import(token, indexes):
+def apply_matching_import(token, indexes, file_name=None):
 	"""RPC: apply previewed rows (the page sends a few at a time) through the page's own
-	Link / Keep / Retry code path, each row re-checked first; one result per row."""
+	Link / Keep / Retry code path, each row re-checked first; one result per row. Each entry
+	is a preview row number or ``{index, sheet, row_number, qbo_type, qbo_id}``. ``file_name``
+	(v1.840.3) is the uploaded workbook, read again only if the cache lost the preview."""
 	_require_qbo_operator()
 	if isinstance(indexes, str):
 		try:
@@ -635,7 +637,7 @@ def apply_matching_import(token, indexes):
 			indexes = None
 	if not isinstance(indexes, list):
 		frappe.throw("indexes must be a list of preview row numbers.")
-	return matching_excel.apply(token, indexes)
+	return matching_excel.apply(token, indexes, file_name=file_name)
 
 
 def _state_key(state):

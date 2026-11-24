@@ -76,6 +76,19 @@
  *    server re-checks each one before running it through the same Link / Keep / Retry
  *    code as the buttons on this page. Dialogs only: neither adds a history entry.
  *
+ *  - An Apply run always ends in its own "Import finished" dialog (v1.840.3). A Link that merges
+ *    a duplicate runs rename_doc, which ends with frappe.clear_cache() and used to take the
+ *    preview's plan with it, so every batch after the first merge came back "This preview has
+ *    expired". The server now keeps the plan out of clear_cache's reach and rebuilds it from the
+ *    uploaded file if a deploy flushes it; this page sends the file with every batch, and the
+ *    sheet, row number and QBO keys with every index. If a batch still comes back expired, the
+ *    page previews the same file again and retries that batch once, under the fresh preview's
+ *    numbers; if that fails too it stops and says which rows were never sent. The apply calls are
+ *    silent, so no server message opens frappe's shared message dialog mid-run, and the report is
+ *    a Dialog of its own: the shared one's delayed hide empties whatever was put into it last,
+ *    which is how the report could vanish. The run itself is qbo_rm_run_import, below, outside
+ *    on_page_load so scripts/test_qbo_matching_import.mjs can run it as it is.
+ *
  * Endpoints (erpnext_enhancements.quickbooks_online.core.api): get_match_queue,
  * decide_match, decide_matches, confirm_match, confirm_matches,
  * get_parked_transactions, sync_entity, keep_erpnext, use_quickbooks_values,
@@ -83,6 +96,156 @@
  * preview_matching_import, apply_matching_import.
  * Every server-supplied string is escaped before it reaches the DOM.
  */
+
+/**
+ * The batches an Apply run sends: Links, Keeps and notes `size` at a time, each Retry alone (a
+ * round trip to Intuit, as the page's own Retry button does) and as soon as it comes up, ahead
+ * of the batch still filling. Each row is its own decision on the server, so order is not owed.
+ */
+function qbo_rm_import_chunks(rows, size) {
+	const chunks = [];
+	let batch = [];
+	rows.forEach((row) => {
+		if (row.decision === "Retry") {
+			chunks.push([row]);
+			return;
+		}
+		batch.push(row);
+		if (batch.length >= size) {
+			chunks.push(batch);
+			batch = [];
+		}
+	});
+	if (batch.length) {
+		chunks.push(batch);
+	}
+	return chunks;
+}
+
+/** What apply_matching_import gets for a row: its index and what the row is, so the server can
+ * refuse an index that no longer names it (matching_excel.ROW_IDENTITY). */
+function qbo_rm_identity(row) {
+	return { index: row.index, sheet: row.sheet, row_number: row.row_number, qbo_type: row.qbo_type, qbo_id: row.qbo_id };
+}
+
+/** A preview row's place in the file, which outlasts a renewed preview's new numbers. */
+function qbo_rm_row_key(row) {
+	return JSON.stringify([String(row.sheet), String(row.row_number), String(row.qbo_type), String(row.qbo_id)]);
+}
+
+/**
+ * Why a frappe.call failed, from the jqXHR it rejected with: the exception's class (exc_type,
+ * the way to tell an expired preview from everything else) and the server's own words.
+ */
+function qbo_rm_failure(xhr) {
+	const out = { exc_type: "", error: "" };
+	try {
+		let body = xhr && xhr.responseJSON;
+		if (!body && xhr && typeof xhr.responseText === "string" && xhr.responseText.trim().startsWith("{")) {
+			body = JSON.parse(xhr.responseText);
+		}
+		if (!body) {
+			return out;
+		}
+		out.exc_type = String(body.exc_type || "");
+		const words = [];
+		JSON.parse(body._server_messages || "[]").forEach((entry) => {
+			const message = typeof entry === "string" ? JSON.parse(entry) : entry;
+			const said = String((message && message.message) || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+			if (said && !words.includes(said)) {
+				words.push(said);
+			}
+		});
+		out.error = words.join(" ");
+	} catch (e) {
+		// A body that is not frappe's: no more to say than that the request failed.
+	}
+	return out;
+}
+
+/**
+ * One Apply run (v1.840.3). Sends the batches one after another and ALWAYS ends by handing
+ * `finish` one result per row -- whatever the server, the network or this code does.
+ *
+ *   send(token, entries)   -> Promise<{ok, message, exc_type, error}>  (never rejects)
+ *   repreview()            -> Promise<{ok, token, rows}>               (never rejects)
+ *   freeze(text), unfreeze()   the screen while a request is out
+ *   finish(results)
+ *
+ * A failed batch is reported against its rows and the run carries on: each row is its own
+ * decision on the server. A batch that comes back expired (MatchingPreviewExpired) gets the file
+ * previewed again and is retried once, every row still to go moved to the fresh preview's number
+ * for it (found by sheet, row number and QBO keys; a row the fresh preview does not list is
+ * reported, not guessed). If the fresh preview fails, or the retry is expired too, the run stops:
+ * the batch and every row after it are reported as not applied.
+ */
+async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, unfreeze, finish }) {
+	const EXPIRED = "MatchingPreviewExpired";
+	const results = [];
+	const chunks = qbo_rm_import_chunks(rows, size);
+	const failed = (row, message) => Object.assign({}, row, { ok: false, skipped: false, message });
+	let done = 0;
+	let stopped = "";
+	const request = async (text, call) => {
+		freeze(text);
+		try {
+			return (await call()) || { ok: false };
+		} catch (e) {
+			return { ok: false };
+		} finally {
+			unfreeze();
+		}
+	};
+	try {
+		while (chunks.length && !stopped) {
+			let chunk = chunks[0];
+			const shown = [done + 1, done + chunk.length, rows.length];
+			let reply = await request(__("Applying {0}–{1} of {2}…", shown), () => send(token, chunk.map(qbo_rm_identity)));
+			if (!reply.ok && reply.exc_type === EXPIRED) {
+				const fresh = await request(__("The preview expired; reading the file again…"), () => repreview());
+				const renewed = !!(fresh.ok && fresh.token && Array.isArray(fresh.rows));
+				if (renewed) {
+					token = fresh.token;
+					const numbers = new Map(fresh.rows.map((row) => [qbo_rm_row_key(row), row.index]));
+					const lost = [];
+					chunks.forEach((each, position) => {
+						chunks[position] = each.flatMap((row) => {
+							if (numbers.has(qbo_rm_row_key(row))) {
+								return [Object.assign({}, row, { index: numbers.get(qbo_rm_row_key(row)) })];
+							}
+							lost.push(row);
+							return [];
+						});
+					});
+					lost.forEach((row) => results.push(failed(row, __("The fresh preview of the file no longer lists this row, so it was not applied. Import the file again."))));
+					chunk = chunks[0];
+					reply = chunk.length ? await request(__("Applying {0}–{1} of {2}…", shown), () => send(token, chunk.map(qbo_rm_identity))) : { ok: true, message: [] };
+				}
+				if (!reply.ok && reply.exc_type === EXPIRED) {
+					const reason = renewed ? __("the fresh preview expired at once too") : fresh.error || __("the file could not be read again");
+					stopped = __("Not sent: the preview expired and could not be renewed ({0}). Import the file again; rows that were applied will say they are already done.", [reason]);
+					break;
+				}
+			}
+			if (reply.ok && Array.isArray(reply.message)) {
+				results.push(...reply.message);
+			} else {
+				const why = reply.ok ? __("The server's answer was not understood") : reply.error || __("The request failed");
+				chunk.forEach((row) => results.push(failed(row, __("{0}; import the file again to see whether it landed.", [why]))));
+			}
+			chunks.shift();
+			done = shown[1];
+		}
+	} catch (e) {
+		stopped = stopped || __("Not sent: the import stopped on an error in this page ({0}). Import the file again to see what landed.", [String((e && e.message) || e)]);
+	}
+	if (stopped) {
+		chunks.forEach((chunk) => chunk.forEach((row) => results.push(Object.assign(failed(row, stopped), { not_sent: true }))));
+	}
+	finish(results);
+	return results;
+}
+
 frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -977,15 +1140,16 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 
 	/**
 	 * frappe.call, settled on the promise it returns: resolves {ok: true, message} or
-	 * {ok: false}, and never hangs. Frappe v16's `error` callback is not called on a
-	 * QueryTimeout or a Deadlock (request.js shows its own dialog and stops), so a chunk loop
-	 * that waited on it would sit frozen forever on the first slow request.
+	 * {ok: false, exc_type, error}, and never hangs. Frappe v16's `error` callback is not called
+	 * on a QueryTimeout or a Deadlock (request.js shows its own dialog and stops), so a chunk loop
+	 * that waited on it would sit frozen forever on the first slow request. `silent` keeps the
+	 * server's messages out of frappe's shared message dialog; the caller reports `error` itself.
 	 */
-	function settle(method, args) {
+	function settle(method, args, { silent = false } = {}) {
 		return new Promise((resolve) => {
 			let pending;
 			try {
-				pending = frappe.call({ method: API + method, args });
+				pending = frappe.call({ method: API + method, args, silent });
 			} catch (e) {
 				resolve({ ok: false });
 				return;
@@ -996,7 +1160,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 			}
 			pending.then(
 				(data) => resolve({ ok: true, message: (data || {}).message }),
-				() => resolve({ ok: false }),
+				(xhr) => resolve(Object.assign({ ok: false }, qbo_rm_failure(xhr))),
 			);
 		});
 	}
@@ -1941,7 +2105,7 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 		dialog.set_primary_action(__("Apply {0} changes", [changes.length]), () => {
 			frappe.confirm(__("Apply the {0} rows that will change? Links can merge the import's copies away, as the Link button does.", [changes.length]), () => {
 				dialog.hide();
-				applyImport(data.token, changes, data.apply_chunk || 10);
+				applyImport(data.token, data.file, changes, data.apply_chunk || 10);
 			});
 		});
 		dialog.get_primary_btn().prop("disabled", !changes.length);
@@ -1950,84 +2114,85 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	}
 
 	/**
-	 * Send the previewed changes to apply_matching_import, one request after another. Links,
-	 * Keeps and notes go `size` at a time; a Retry is a round trip to Intuit and goes alone,
-	 * as the page's own Retry does, so ten of them can never outrun the gateway together.
-	 * Not runInChunks: the chunks are not of one size, and a failed request is reported
-	 * against the preview's own rows, which carry the sheet and row number.
+	 * Send the previewed changes to apply_matching_import, one request after another, through
+	 * qbo_rm_run_import (above on_page_load; see "An Apply run always ends..." in the header).
+	 * Not runInChunks: the chunks are not of one size, a failed request is reported against the
+	 * preview's own rows, which carry the sheet and row number, and an expired preview is renewed.
+	 * The calls are silent: a failure's words go into the report, not into a dialog mid-run.
 	 */
-	function applyImport(token, rows, size) {
-		const chunks = [];
-		let batch = [];
-		rows.forEach((row) => {
-			if (row.decision === "Retry") {
-				chunks.push([row]);
-				return;
-			}
-			batch.push(row);
-			if (batch.length >= size) {
-				chunks.push(batch);
-				batch = [];
-			}
-		});
-		if (batch.length) {
-			chunks.push(batch);
-		}
-		const results = [];
-		let done = 0;
-		const next = () => {
-			const chunk = chunks.shift();
-			if (!chunk) {
+	function applyImport(token, fileName, rows, size) {
+		qbo_rm_run_import({
+			token,
+			rows,
+			size,
+			send: (current, indexes) => settle("apply_matching_import", { token: current, file_name: fileName, indexes }, { silent: true }),
+			repreview: () =>
+				settle("preview_matching_import", { file_name: fileName }, { silent: true }).then((reply) => {
+					const data = reply.message || {};
+					return reply.ok ? { ok: !!data.token, token: data.token, rows: data.rows } : reply;
+				}),
+			freeze: (text) => frappe.dom.freeze(text),
+			unfreeze: () => frappe.dom.unfreeze(),
+			finish(results) {
 				reportImport(results);
-				load();
-				if (state.txn.rows.length) {
-					loadTransactions();
+				try {
+					load();
+					if (state.txn.rows.length) {
+						loadTransactions();
+					}
+				} catch (e) {
+					console.error(e);
 				}
-				return;
-			}
-			frappe.dom.freeze(__("Applying {0}–{1} of {2}…", [done + 1, done + chunk.length, rows.length]));
-			done += chunk.length;
-			settle("apply_matching_import", { token, indexes: chunk.map((row) => row.index) }).then((reply) => {
-				if (reply.ok) {
-					results.push(...(reply.message || []));
-				} else {
-					// A failed request -- a timeout included -- is reported against these rows and
-					// the rest carry on: each row is its own decision on the server.
-					chunk.forEach((row) =>
-						results.push(
-							Object.assign({}, row, {
-								ok: false,
-								skipped: false,
-								message: __("The request failed; import the file again to see whether it landed."),
-							}),
-						),
-					);
-				}
-				frappe.dom.unfreeze();
-				next();
-			});
-		};
-		next();
+			},
+		});
 	}
 
+	/**
+	 * The end of every Apply run. A Dialog of its own, not frappe.msgprint: msgprint writes into
+	 * frappe's one shared message dialog, which any server message replaces and whose delayed
+	 * hide empties whatever was put into it last. If drawing the report fails, a plain line
+	 * still says the run is over.
+	 */
 	function reportImport(results) {
-		const where = (r) => (r.sheet ? `${esc(r.sheet)} ${__("row {0}", [esc(String(r.row_number))])}` : __("row {0}", [esc(String(r.index))]));
-		const ok = results.filter((r) => r.ok);
-		const skipped = results.filter((r) => !r.ok && r.skipped);
-		const failed = results.filter((r) => !r.ok && !r.skipped);
-		const list = (items) => "<ul>" + items.map((r) => `<li>${where(r)}${r.qbo_id ? ` (${esc(r.qbo_type)} #${esc(r.qbo_id)})` : ""}: ${esc(r.message || "")}</li>`).join("") + "</ul>";
-		let message = `<p>${__("{0} applied.", [ok.length])}</p>`;
-		if (skipped.length) {
-			message += `<p>${__("{0} skipped, because they changed after the preview or were already done:", [skipped.length])}</p>${list(skipped)}`;
+		try {
+			const where = (r) => (r.sheet ? `${esc(r.sheet)} ${__("row {0}", [esc(String(r.row_number))])}` : __("row {0}", [esc(String(r.index))]));
+			const ok = results.filter((r) => r.ok);
+			const skipped = results.filter((r) => !r.ok && r.skipped);
+			const failed = results.filter((r) => !r.ok && !r.skipped && !r.not_sent);
+			const unsent = results.filter((r) => !r.ok && r.not_sent);
+			const list = (items) => "<ul>" + items.map((r) => `<li>${where(r)}${r.qbo_id ? ` (${esc(r.qbo_type)} #${esc(r.qbo_id)})` : ""}: ${esc(r.message || "")}</li>`).join("") + "</ul>";
+			let message = `<p>${__("{0} applied.", [ok.length])}</p>`;
+			if (skipped.length) {
+				message += `<p>${__("{0} skipped, because they changed after the preview or were already done:", [skipped.length])}</p>${list(skipped)}`;
+			}
+			if (failed.length) {
+				message += `<p>${__("{0} failed:", [failed.length])}</p>${list(failed)}`;
+			}
+			if (unsent.length) {
+				message += `<p>${__("{0} were not sent:", [unsent.length])}</p>${list(unsent)}`;
+			}
+			const merges = ok.filter((r) => r.merge_failed);
+			if (merges.length) {
+				message += `<p>${__("{0} linked, but the import's copy could not be merged:", [merges.length])}</p>${list(merges)}`;
+			}
+			const tone = failed.length || unsent.length ? "red" : skipped.length || merges.length ? "orange" : "green";
+			const dialog = new frappe.ui.Dialog({
+				title: __("Import finished"),
+				indicator: tone,
+				fields: [{ fieldname: "report", fieldtype: "HTML", options: `<div class="qbo-mt-confirm-list">${message}</div>` }],
+				primary_action_label: __("Close"),
+				primary_action: () => dialog.hide(),
+			});
+			dialog.show();
+		} catch (e) {
+			console.error(e);
+			const applied = results.filter((r) => r.ok).length;
+			frappe.msgprint({
+				title: __("Import finished"),
+				indicator: "orange",
+				message: __("{0} of {1} rows applied. Import the file again to see the rest.", [applied, results.length]),
+			});
 		}
-		if (failed.length) {
-			message += `<p>${__("{0} failed:", [failed.length])}</p>${list(failed)}`;
-		}
-		const merges = ok.filter((r) => r.merge_failed);
-		if (merges.length) {
-			message += `<p>${__("{0} linked, but the import's copy could not be merged:", [merges.length])}</p>${list(merges)}`;
-		}
-		frappe.msgprint({ title: __("Import finished"), message, indicator: failed.length || skipped.length || merges.length ? "orange" : "green" });
 	}
 
 	load();

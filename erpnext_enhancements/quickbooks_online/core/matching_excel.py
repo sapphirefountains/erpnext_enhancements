@@ -57,6 +57,18 @@ Things this module is careful about:
 * **Built with openpyxl**, which ships with Frappe (``openpyxl~=3.1.5`` on v16), for the
   data validation the dropdowns need -- ``frappe.utils.xlsxutils.make_xlsx`` writes one plain
   sheet through xlsxwriter (``workforce/payroll_export.py`` made the same call).
+* **The preview's plan outlives ``frappe.clear_cache()``** (v1.840.3). The plan lives in the
+  cache between the preview and the last Apply batch, and a Link that merges a duplicate goes
+  through ``rename_doc``, which ends with ``frappe.clear_cache()`` (frappe v16.60.2,
+  ``model/rename_doc.py`` line 212): that deletes every cache key of the site except the
+  patterns in the ``persistent_cache_keys`` hook. So every batch after the first merge read
+  "This preview has expired" (2026-11-24, prod: stopped at row 30 of 532). Two layers now:
+  ``hooks.py`` lists this module's keys in ``persistent_cache_keys``, and a plan the cache lost
+  anyway -- a deploy ``FLUSHDB``s the cache -- is rebuilt from the uploaded File, which the page
+  names with every batch. The token carries a digest of the parsed rows, so a rebuilt plan is
+  used only when it is the same rows under the same indexes; and the page sends each row's
+  sheet, row number and QBO keys with its index, so an index that no longer names that row
+  is skipped rather than applied.
 """
 
 from __future__ import annotations
@@ -65,12 +77,15 @@ import datetime
 import hashlib
 import html
 import io
+import json
 import re
 import secrets
 import time
 import zipfile
+from typing import NoReturn
 
 import frappe
+from frappe.exceptions import ValidationError
 from frappe.utils import cint, now_datetime
 
 from erpnext_enhancements.quickbooks_online.core import matching
@@ -141,6 +156,17 @@ FILE_TAG = "qbo_matching_excel"
 #: A string cell starting with one of these is a formula to Excel or to whatever the sheet
 #: is pasted into; see ``_put``.
 FORMULA_LEADS = ("=", "+", "-", "@")
+#: What the page sends back with each index it applies (v1.840.3): a row runs only while the
+#: plan's row under that index is still this one. See ``same_row``.
+ROW_IDENTITY = ("sheet", "row_number", "qbo_type", "qbo_id")
+
+
+class MatchingPreviewExpired(ValidationError):
+	"""The preview's plan is gone and could not be rebuilt from the uploaded file. A class of
+	its own so the page tells it from every other failure by ``exc_type``, never by wording,
+	and previews the same file again rather than failing every batch after it (v1.840.3). A
+	ValidationError, so still the 417 it always was."""
+
 
 #: (key, header, width, hidden, editable). The import finds columns by header text.
 MASTER_COLUMNS = (
@@ -875,6 +901,27 @@ def shared_target_warnings(rows, results) -> None:
 			)
 
 
+def plan_digest(rows) -> str:
+	"""A fingerprint of the parsed rows, in order: exactly what the preview's indexes point
+	into. The token carries it, so a plan rebuilt from the file is used only when it is the
+	same rows under the same indexes. Rows, not file bytes: a parser that changed in a deploy
+	between the preview and the Apply would read the same bytes into a different list. Pure."""
+	raw = json.dumps(rows, sort_keys=True, separators=(",", ":"), default=str)
+	return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def token_digest(token) -> str:
+	"""The plan digest a token carries, or ``""`` for a token from before v1.840.3. Pure."""
+	_nonce, sep, digest = str(token or "").rpartition("-")
+	return digest if sep else ""
+
+
+def same_row(row, expect) -> bool:
+	"""Whether a plan row is the one the page asked for: every ``ROW_IDENTITY`` field the page
+	sent back agrees, and a field it left out matches nothing. Pure."""
+	return all(key in expect and text(row.get(key)) == text(expect.get(key)) for key in ROW_IDENTITY)
+
+
 # ---------------------------------------------------------------------------
 # Database reads for the import
 # ---------------------------------------------------------------------------
@@ -1016,6 +1063,8 @@ def delete_old_files() -> int:
 
 
 def _job_key(user, token) -> str:
+	# Listed in hooks.py's persistent_cache_keys (v1.840.3): a merge anywhere on the site while
+	# an export runs used to wipe this, and the page read the missing state as a lost job.
 	return f"qbo_matching_excel:{user}:{token}"
 
 
@@ -1173,7 +1222,50 @@ def _read_upload(file_name):
 
 
 def _plan_key(user, token) -> str:
+	# The prefix is listed in hooks.py's persistent_cache_keys; keep the two in step.
 	return f"qbo_matching_import:{user}:{token}"
+
+
+def _make_plan(file_name, rows, results) -> dict:
+	"""What ``apply`` needs from a preview. classify ran duplicate_rows over the whole file;
+	apply sees one row at a time and cannot, so the plan keeps those verdicts."""
+	blocked = {
+		str(index): [result["category"], result["message"]]
+		for index, result in enumerate(results)
+		if result.get("held")
+	}
+	return {"file": file_name, "rows": rows, "blocked": blocked}
+
+
+def _expired(detail="") -> NoReturn:
+	frappe.throw(
+		" ".join(
+			part
+			for part in ("This preview has expired.", detail, "Import the file again to get a fresh preview.")
+			if part
+		),
+		exc=MatchingPreviewExpired,
+	)
+	raise MatchingPreviewExpired(detail)  # frappe.throw raises; this only makes it certain
+
+
+def _rebuild_plan(user, token, file_name) -> dict:
+	"""The plan again, from the uploaded file, when the cache no longer holds it: the deploy
+	``FLUSHDB``s the cache, and no ``persistent_cache_keys`` entry survives that. Used only when
+	the rows digest to what the token says, so every index means what it meant at the preview;
+	cached again under the same token for the next batch."""
+	digest = token_digest(token)
+	if not (file_name and digest):
+		_expired()
+	try:
+		rows = parse_workbook(_read_upload(file_name))["rows"]
+	except Exception as exc:
+		_expired(f"The file could not be read again: {matching.clean_error(exc)}.")
+	if not secrets.compare_digest(plan_digest(rows), digest):
+		_expired("The file no longer reads the way it did at the preview.")
+	plan = _make_plan(file_name, rows, classify(rows) if rows else [])
+	_set_state(_plan_key(user, token), plan, PLAN_TTL)
+	return plan
 
 
 def _preview_row(index, row, result) -> dict:
@@ -1200,19 +1292,8 @@ def preview(file_name) -> dict:
 	parsed = parse_workbook(_read_upload(file_name))
 	rows = parsed["rows"]
 	results = classify(rows) if rows else []
-	# classify ran duplicate_rows over the whole file; apply sees one row at a time and
-	# cannot, so the plan keeps those verdicts.
-	blocked = {
-		index: (result["category"], result["message"])
-		for index, result in enumerate(results)
-		if result.get("held")
-	}
-	token = secrets.token_hex(8)
-	_set_state(
-		_plan_key(frappe.session.user, token),
-		{"file": file_name, "rows": rows, "blocked": {str(i): list(v) for i, v in blocked.items()}},
-		PLAN_TTL,
-	)
+	token = f"{secrets.token_hex(4)}-{plan_digest(rows)}"
+	_set_state(_plan_key(frappe.session.user, token), _make_plan(file_name, rows, results), PLAN_TTL)
 	summary = {category: 0 for category in CATEGORIES}
 	for result in results:
 		summary[result["category"]] += 1
@@ -1279,25 +1360,42 @@ def _run_action(row, result, user) -> tuple[str, bool]:
 	return "", False
 
 
-def apply(token, indexes) -> list:
+def apply(token, indexes, file_name=None) -> list:
 	"""Apply the previewed rows at ``indexes`` (the page sends a few at a time). One failure
 	never stops the rest. Returns one result per index, in order.
+
+	Each entry of ``indexes`` is an index, or (the page since v1.840.3) ``{"index": n, "sheet":
+	..., "row_number": ..., "qbo_type": ..., "qbo_id": ...}``; a row that is not the one named
+	is skipped, never applied. ``file_name`` is the uploaded File, read again only when the
+	cache lost the plan (``_rebuild_plan``). A plain index still works, for a tab opened before.
 
 	Each row is classified again **immediately before it runs**, not once for the chunk: a Link
 	earlier in the same request can merge an import copy away, and ``rename_doc`` re-points
 	every other mapping that pointed at it, so a row judged before that ran would be applied
 	on a verdict that no longer holds."""
 	user = frappe.session.user
-	plan = frappe.cache.get_value(_plan_key(user, token))
-	if not plan:
-		frappe.throw("This preview has expired. Import the file again to get a fresh preview.")
+	plan = frappe.cache.get_value(_plan_key(user, token)) or _rebuild_plan(user, token, file_name)
 	rows = plan.get("rows") or []
 	out = []
-	for index in indexes or []:
-		index = cint(index)
+	for entry in indexes or []:
+		expect = entry if isinstance(entry, dict) else None
+		index = cint(expect.get("index") if expect is not None else entry)
 		if not 0 <= index < len(rows):
 			continue
 		row = rows[index]
+		if expect is not None and not same_row(row, expect):
+			out.append(
+				{
+					"index": index,
+					**{key: expect.get(key) for key in ROW_IDENTITY},
+					"ok": False,
+					"skipped": True,
+					"category": INVALID,
+					"message": "The preview had a different row under this number, so it was not applied. "
+					"Import the file again.",
+				}
+			)
+			continue
 		base = {
 			"index": index,
 			"sheet": row["sheet"],

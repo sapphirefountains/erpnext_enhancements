@@ -30,7 +30,7 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
 | `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status`, `get_sync_log_summary`, `get_match_queue`, `get_parked_transactions`, `decide_match`, `decide_matches`, `confirm_match`, `confirm_matches`, `keep_erpnext`, `use_quickbooks_values`, `refresh_drafts`, `start_matching_export`, `get_matching_export_status`, `preview_matching_import`, `apply_matching_import` |
 | `core/matching.py` | The Record Matching page's engine (v1.474.0): the master-record review queue with candidates, the parked-transactions list, and the link/merge/confirm decisions, and (v1.800.0) the "QuickBooks changed" view and its three answers -- see [Record matching review](#record-matching-review-v14740) | `master_queue`, `parked_transactions`, `decide`, `decide_many`, `confirm`, `confirm_many`, `merge_plan`, `similar_records`, `latest_payloads`, `change_view`, `keep_erpnext`, `use_quickbooks_values`, `refresh_draft`, `review_many` |
-| `core/matching_excel.py` | The Record Matching page's Excel round trip (v1.721.0): the export workbook (background job), the import preview and the re-checked apply -- see [Excel round trip](#excel-round-trip-v17210) | `start_export`, `run_export`, `export_status`, `build_workbook`, `parse_workbook`, `classify_row`, `classify`, `preview`, `apply`, `row_version` |
+| `core/matching_excel.py` | The Record Matching page's Excel round trip (v1.721.0): the export workbook (background job), the import preview and the re-checked apply -- see [Excel round trip](#excel-round-trip-v17210) | `start_export`, `run_export`, `export_status`, `build_workbook`, `parse_workbook`, `classify_row`, `classify`, `preview`, `apply`, `row_version`, `plan_digest`, `same_row`, `MatchingPreviewExpired` |
 | `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`, `download_attachable`), `QuickBooksAPIError`, `QuickBooksDownloadTicketError` |
 | `core/attachments.py` | Mirror QBO `Attachable` files onto their ERPNext docs as private Files (WI-071); self-protecting daily pass, fresh-ticket batching | `sync_attachments`, `reset_attachable`, `DOWNLOAD_URI_BATCH`, `MAX_ATTEMPTS`, `STALE_ATTEMPT_SECONDS`, `SAVE_TIMEOUT_SECONDS` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
@@ -409,6 +409,25 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
   `attached_to_field = "qbo_matching_excel"`. The daily `matching_excel.delete_old_files` deletes only
   tagged, unattached Files older than 7 days, never a File that merely sits in the folder. Preview
   accepts only the caller's own private, unattached upload, since accepting one tags it for deletion.
+- **A run survives `frappe.clear_cache()` (v1.840.3).** The preview's plan waits in the cache
+  between Apply batches. A Link that merges a duplicate runs `rename_doc`, which ends with
+  `frappe.clear_cache()`, and that deletes every cache key of the site except the
+  `persistent_cache_keys` hook's patterns. On 2026-11-24 every batch after the first merge read
+  "This preview has expired", and the run stopped at row 30 of 532. Now:
+  - `hooks.py` lists `qbo_matching_import:*` (the plan) and `qbo_matching_excel:*` (the export
+    job's state, which a merge used to make look lost) in `persistent_cache_keys`.
+  - If the cache loses the plan anyway (a deploy `FLUSHDB`s it), `apply` rebuilds it from the
+    uploaded File, which the page names with every batch. The rebuilt plan is used only if its
+    rows digest to what the token carries (`plan_digest`).
+  - The page sends each index with its row's sheet, row number and QBO keys, and a row that is
+    not the one named is skipped (`same_row`).
+  - If a batch still comes back `MatchingPreviewExpired`, the page previews the file again and
+    retries that batch once under the fresh preview's numbers. If that fails too, it stops and
+    lists the rows it never sent.
+  - Every run ends in the page's own "Import finished" Dialog. The apply calls are silent, so no
+    server message lands in Frappe's shared message dialog mid-run.
+  - Tests: `tests/test_quickbooks_matching_excel.py`, plus `scripts/test_qbo_matching_import.mjs`,
+    which runs the page under node.
 
 ## Scheduler / webhook entry points
 
