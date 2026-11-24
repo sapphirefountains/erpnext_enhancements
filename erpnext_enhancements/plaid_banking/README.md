@@ -108,15 +108,32 @@ names do.
 Plaid's account names ("Checking", "Business Savings") are not ours ("Key Bank Checking -
 Key Bank", GL 13100). Left alone, native Link therefore leaves a **second** Bank Account
 per account **and a second GL Account**, while the eight masters the ledger posts to stay
-unlinked. `core/link_accounts.py` closes that gap. The dialog's one call is
-`apply_plaid_mappings(rows, start_date)`, which runs `apply_plaid_mapping` per row:
+unlinked. `core/link_accounts.py` closes that gap, in two calls the dialog makes to
+`apply_plaid_mappings(rows, start_date, dry_run)`:
 
-- **Target.** Each row names a company Bank Account (a master) *or*, for a credit card, the
-  card's GL Account (`card_gl_account`). Exactly one.
+- **Plan, then write.** `plan_plaid_mapping` works out, without writing, exactly what each row
+  will do, and every refusal happens there. The dry run returns those plans; the dialog shows
+  their `changes` lines as the confirmation list. The write then runs `apply_plaid_mapping`
+  with each row's plan **fingerprint** and refuses a row whose plan changed in between (a new
+  duplicate, another tab mapping the same account). The endpoint refuses a write row with no
+  fingerprint, so the confirmation cannot be skipped.
+- **Target.** Each row names a company Bank Account (a master), *or* for a credit card the
+  card's GL Account (`card_gl_account`), *or* `disable_duplicate` (below). Exactly one.
 - **Who holds the Plaid id decides the step.** Nobody: `map_plaid_account` stamps it on the
   master. The master already: only the mask and start date are refreshed. A row native Link
-  created (`is_link_created`): `absorb_native_duplicate` folds it into the master. Another
-  master: refused, because moving a link between two real accounts is a person's decision.
+  created (`is_link_created`) under the same Bank: `absorb_native_duplicate` folds it into the
+  master. Another master: refused, because moving a link between two real accounts is a
+  person's decision.
+- **A master already on a different Plaid account is never stamped over.** That would stop the
+  other account's feed with no error anywhere. `map_plaid_account` refuses it too.
+- **Accounts left blank.** Their Link-created duplicate keeps its Plaid id with a NULL
+  `last_integration_date`, so once Automatic Sync is on it pulls about 90 days onto the
+  duplicate, and folding it in later is refused because it then has Bank Transactions. The
+  dialog's **Switch off the Plaid Link copy of any account left blank** (on by default) sends
+  `disable_duplicate` for those: the duplicate is ticked Disabled, keeps its link, and the
+  sync skips it (`enqueue_synchronization` filters `disabled = 0`). It folds in normally when
+  mapped later. Don't delete a duplicate by hand: its id then has no holder, and the next map
+  of that account has nothing to fold.
 - **`is_link_created`** looks at the GL Account, not the Bank Account's name. A master is
   named `"<account_name> - <bank>"` too, so the name proves nothing. A Link-created row's GL
   Account is named `"<its account_name> - <its bank>"`, and a master's carries our own name.
@@ -159,9 +176,10 @@ Plaid account with a Select of that bank's still-unmapped masters plus the maste
 Banks that hold no token (picking one moves it under the linked Bank). A credit account also
 gets a Link to a Liability GL Account, pre-filled when exactly one ledger's name carries the
 card's mask. Accounts a master already holds are shown as mapped, with no control.
-**Map selected** first lists every change it will make, per account (the card ledger's type,
-the card's new Bank Account, each Link-created duplicate deleted, the start date), and writes
-nothing until that list is confirmed.
+**Map selected** first asks the server for the plan and lists exactly what it will do, per
+account: the card ledger's type change and what that does, the card's new Bank Account, a
+master moving Bank, each duplicate deleted (and its GL Account) or switched off, masks, the
+start date. Nothing is written until that list is confirmed, and only the confirmed plans run.
 
 ## Credit cards
 
@@ -175,12 +193,24 @@ since WI-042), and ERPNext's own matcher expects it: its comment in
 `get_je_matching_query` says one bank can hold asset and liability accounts and judges debit
 or credit from the transaction, not the account type.
 
-So mapping a card to its GL Account (`_ensure_card_master`):
+**What typing a card ledger Bank does to the books — read before mapping a card.** At
+16.60.0, `erpnext/accounts/report/cash_flow/cash_flow.py` treats every Bank and Cash ledger as
+cash: `get_opening_balance` sums them for opening cash, and `get_row_account_condition` leaves
+them out of the operating, investing and financing rows. So once 22500 or 22600 is Bank-typed,
+its **whole history** (2,458 and 1,318 GL rows on 2026-11-24, posted years included) moves
+out of operating activities and into opening and closing cash: the Cash Flow statement then
+shows cash net of card debt. Bank Reconciliation Statement and Bank Clearance would also list
+those past entries as uncleared. It is reversible (blank the type again after removing the
+card's Bank Account), but it changes a financial statement, so it is an accounting decision,
+not a mapping one. The confirmation list states it for every card ledger it would type.
+
+So mapping a card to its GL Account (`_card_plan`, then `apply_plaid_mapping`):
 
 1. checks the ledger is an enabled, non-group **Liability** account whose type is blank or
    Bank (anything else is refused rather than overwritten);
-2. reuses a Bank Account already on that ledger if there is one (ERPNext allows only one per
-   GL Account), which makes a re-run harmless;
+2. reuses a company Bank Account already on that ledger if there is one (ERPNext allows only
+   one per GL Account), which makes a re-run harmless; one that is disabled, not a company
+   account, or another company's is refused rather than adopted;
 3. otherwise sets the ledger's `account_type` to Bank through a normal save, so ERPNext's
    Account checks run, and inserts the card's Bank Account under the token-holding Bank,
    named after the ledger, with **Is Credit Card** ticked (16.60; skipped on a site without the
@@ -241,11 +271,14 @@ reports usage counts only.
    Expect a duplicate Bank Account and GL Account per account; step 3 removes them.
 3. **Map.** `/desk/plaid-banking-settings` → **Map Plaid accounts**. Set **Feed starts on**
    (the cutover date), pick each bank account's master (the mask is the tell), and for each
-   card pick its GL Account instead. **Map selected** reports per account what it did: mapped,
-   duplicate folded in, card Bank Account created, the card ledger's type set to Bank, the
-   duplicate's GL Account deleted or kept and why.
+   card pick its GL Account instead (only once the cash-flow effect above is agreed; until
+   then leave the card blank). Leave **Switch off the Plaid Link copy of any account left
+   blank** ticked. **Map selected** shows the plan; confirm it. The result reports per account
+   what it did: mapped, duplicate folded in or switched off, card Bank Account created, the card
+   ledger's type set to Bank, the duplicate's GL Account deleted or kept and why.
 4. **Check** `last_integration_date` on each mapped Bank Account is the cutover date, and that
-   no `"<Plaid name> - <Bank>"` Bank Account is left.
+   every `"<Plaid name> - <Bank>"` Bank Account left over is ticked Disabled. Don't delete
+   one by hand.
 5. **Transactions.** Tick **Automatic Sync** on the native form. First-run expectations: one
    `Bank Transaction` per posted (not pending) transaction since that date, **submitted** on
    insert, tagged with Plaid categories, and no "Plaid transactions sync error" or "Plaid

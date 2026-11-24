@@ -44,6 +44,9 @@ on return), and are whitelisted behind the connect-role gate in ``core/api.py``.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import frappe
 from frappe.utils import add_days, cint, getdate, today
 
@@ -145,6 +148,7 @@ def mapping_overview() -> dict:
 			holder = holders.get(pa.get("account_id"))
 			pa["holder"] = holder["name"] if holder else None
 			pa["holder_link_created"] = bool(holder) and is_link_created(holder)
+			pa["holder_disabled"] = bool(holder) and bool(cint(holder.get("disabled")))
 			if pa.get("type") == "credit":
 				pa["suggested_card_gl_account"] = _card_gl_suggestion(pa.get("mask"))
 	return {"banks": out, "unlinked_bank_accounts": unlinked_company_bank_accounts() if out else []}
@@ -158,7 +162,7 @@ def _holders(account_ids) -> dict:
 	rows = frappe.get_all(
 		"Bank Account",
 		filters={"integration_id": ["in", ids]},
-		fields=["name", "bank", "account", "account_name", "integration_id", "mask"],
+		fields=["name", "bank", "account", "account_name", "integration_id", "mask", "disabled"],
 	)
 	return {row.get("integration_id"): row for row in rows if row.get("integration_id") in ids}
 
@@ -229,7 +233,8 @@ def map_plaid_account(
 	Writes ``integration_id`` (+ ``mask`` when given) and ``last_integration_date``
 	= ``start_date`` or yesterday, so the native transactions sync's first pull
 	starts there instead of dragging in twelve months of history. Validates that
-	the Bank Account exists, is a company account, and that no OTHER Bank Account
+	the Bank Account exists, is a company account, carries no OTHER Plaid id (stamping
+	over one would silently stop that account's feed), and that no OTHER Bank Account
 	already carries this id (the column is unique; a clear message beats a
 	UniqueValidationError).
 
@@ -252,6 +257,12 @@ def map_plaid_account(
 		frappe.throw(f"Bank Account '{bank_account}' does not exist.")
 	if not cint(row.get("is_company_account")):
 		frappe.throw(f"Bank Account '{bank_account}' is not a company account.")
+	if row.get("integration_id") and row.get("integration_id") != account_id:
+		frappe.throw(
+			f"Bank Account '{bank_account}' is already linked to another Plaid account "
+			f"({row.get('integration_id')}). Mapping this one onto it would stop that feed. "
+			"Clear its Integration ID first if this account really replaces it."
+		)
 	repointed_from = _resolve_token_bank(row.get("bank"), bank, bank_account)
 	other = frappe.db.get_value(
 		"Bank Account", {"integration_id": account_id, "name": ["!=", bank_account]}, "name"
@@ -382,106 +393,256 @@ def absorb_native_duplicate(duplicate: str, into: str, start_date=None) -> dict:
 	return result
 
 
-def apply_plaid_mapping(
+CARD_TYPE_EFFECT = (
+	"ERPNext's Cash Flow report then counts this ledger as cash: its whole history, posted "
+	"years included, moves out of operating activities into opening and closing cash. Bank "
+	"Reconciliation and Bank Clearance list its past entries as uncleared."
+)
+
+#: The plan fields a confirmation is about. Their hash is the fingerprint the dialog sends
+#: back, so a row whose plan changed after it was shown is refused instead of run.
+_PLAN_FINGERPRINT_FIELDS = (
+	"bank",
+	"account_id",
+	"action",
+	"bank_account",
+	"create_bank_account",
+	"gl_account",
+	"set_gl_account_type",
+	"repoint_bank_from",
+	"duplicate",
+	"duplicate_gl_account",
+	"duplicate_gl_account_fate",
+	"mask",
+	"last_integration_date",
+)
+
+
+def plan_plaid_mapping(
 	bank: str,
 	account_id: str,
 	bank_account: str | None = None,
 	card_gl_account: str | None = None,
 	mask: str | None = None,
 	start_date=None,
+	disable_duplicate: bool = False,
 ) -> dict:
-	"""Put one Plaid account on the company account it really is. The dialog's per-row step.
+	"""Work out, without writing anything, exactly what mapping one Plaid account will do.
 
-	Pass exactly one target. ``bank_account`` is an existing company Bank Account (a
-	master). ``card_gl_account`` is a credit card's Liability ledger: the card has no Bank
-	Account yet, so one is made for it (:func:`_ensure_card_master`) and then used as the
-	master. ``bank`` is the Bank holding the Plaid token for this account.
+	The dialog's confirmation list is this function's ``changes``, and
+	:func:`apply_plaid_mapping` runs the plan this returns, so what a person confirms and
+	what the server does come from the same code. Every refusal happens here, before any
+	write.
 
-	What happens depends on who carries the Plaid id now:
+	A row names exactly one of: ``bank_account`` (an existing company master),
+	``card_gl_account`` (a credit card's Liability ledger, which gets a Bank Account of its
+	own), or ``disable_duplicate`` (no target: switch off the duplicate Plaid Link made for
+	an account left unmapped, so the hourly sync skips it). ``bank`` is the Bank holding the
+	Plaid token.
 
-	* nobody -> :func:`map_plaid_account` stamps it on the master;
-	* the master already -> only the mask and the start date are refreshed;
-	* a row native Link created (:func:`is_link_created`) -> :func:`absorb_native_duplicate`
-	  folds it into the master: the link moves, the duplicate is deleted, and so is its
+	Who carries the Plaid id now decides the action:
+
+	* nobody -> ``mapped``: the id is stamped on the master;
+	* the master already -> ``already mapped``: only the mask and start date are refreshed;
+	* a row native Link created (:func:`is_link_created`), under this same Bank ->
+	  ``absorbed``: the link moves to the master, the duplicate is deleted, and so is its
 	  auto-created GL Account when nothing uses it;
-	* another master -> refused. Moving a link between two real accounts is a decision for
-	  a person, not for a dialog.
+	* another master -> refused. Moving a link between two real accounts is a person's call.
 
-	``start_date`` (the feed's first day) is written to ``last_integration_date``.
+	A master that already carries a *different* Plaid id is refused too: stamping over it
+	would silently stop that other account's feed.
 	"""
 	if not account_id:
 		frappe.throw("A Plaid account id is required.")
-	if bool(bank_account) == bool(card_gl_account):
-		frappe.throw("Pick either a company Bank Account or a card's GL account for this Plaid account.")
+	targets = [bool(bank_account), bool(card_gl_account), bool(disable_duplicate)]
+	if targets.count(True) != 1:
+		frappe.throw(
+			"Pick a company Bank Account, a card's GL account, or switching off the duplicate "
+			"for this Plaid account: exactly one."
+		)
 	_bank_token(bank)
 	start = _feed_start(start_date)
 	holder = _holders([account_id]).get(account_id)
 	holder_is_duplicate = bool(holder) and is_link_created(holder)
-	if holder and not holder_is_duplicate:
-		# Refused here, before the card step can type a ledger or create a Bank Account.
-		wanted = bank_account or frappe.db.get_value("Bank Account", {"account": card_gl_account}, "name")
-		if holder["name"] != wanted:
+	if holder_is_duplicate and holder.get("bank") != bank:
+		frappe.throw(
+			f"Plaid account {account_id} sits on '{holder['name']}' under Bank '{holder.get('bank')}', "
+			f"not under '{bank}'. Reopen Map Plaid accounts."
+		)
+
+	plan = {key: None for key in _PLAN_FINGERPRINT_FIELDS}
+	plan.update(
+		{
+			"bank": bank,
+			"account_id": account_id,
+			"create_bank_account": False,
+			"set_gl_account_type": False,
+			"changes": [],
+			"duplicate_gl_account_note": None,
+		}
+	)
+	changes = plan["changes"]
+
+	if disable_duplicate:
+		if not holder_is_duplicate:
 			frappe.throw(
-				f"Plaid account {account_id} is already on '{holder['name']}', a company account "
-				"rather than a row Plaid Link created. Clear its Integration ID there first if it "
-				"really belongs on another account."
+				f"Nothing to switch off for Plaid account {account_id}: no row Plaid Link created holds it."
+			)
+		plan.update({"action": "disable duplicate", "duplicate": holder["name"]})
+		changes.append(
+			f"'{holder['name']}', which Plaid Link created, is switched off (Disabled): it keeps "
+			"its Plaid link, but the hourly sync skips it until it is mapped."
+		)
+		return _with_fingerprint(plan)
+
+	if card_gl_account:
+		card = _card_plan(card_gl_account, bank)
+		target, target_exists = card["bank_account"], not card["create"]
+		plan.update(
+			{
+				"gl_account": card_gl_account,
+				"set_gl_account_type": card["set_type"],
+				"create_bank_account": card["create"],
+			}
+		)
+		if card["set_type"]:
+			changes.append(
+				f"GL account '{card_gl_account}': Account Type changes from blank to Bank. {CARD_TYPE_EFFECT}"
+			)
+		if card["create"]:
+			changes.append(
+				f"Bank Account '{target}' is created on '{card_gl_account}' under Bank '{bank}', "
+				"with Is Credit Card ticked."
+			)
+	else:
+		target, target_exists = bank_account, True
+	plan["bank_account"] = target
+
+	if holder and not holder_is_duplicate and holder["name"] != (target if target_exists else None):
+		frappe.throw(
+			f"Plaid account {account_id} is already on '{holder['name']}', a company account "
+			"rather than a row Plaid Link created. Clear its Integration ID there first if it "
+			"really belongs on another account."
+		)
+
+	trow = None
+	if target_exists:
+		trow = frappe.db.get_value(
+			"Bank Account",
+			target,
+			[
+				"name",
+				"bank",
+				"is_company_account",
+				"disabled",
+				"integration_id",
+				"mask",
+				"last_integration_date",
+			],
+			as_dict=True,
+		)
+		if not trow:
+			frappe.throw(f"Bank Account '{target}' does not exist.")
+		if not cint(trow.get("is_company_account")):
+			frappe.throw(f"Bank Account '{target}' is not a company account.")
+		if cint(trow.get("disabled")):
+			frappe.throw(f"Bank Account '{target}' is disabled; the sync skips disabled accounts.")
+		if trow.get("integration_id") and trow.get("integration_id") != account_id:
+			frappe.throw(
+				f"Bank Account '{target}' is already linked to another Plaid account "
+				f"({trow.get('integration_id')}). Mapping this one onto it would stop that feed. "
+				"Clear its Integration ID first if this account really replaces it."
 			)
 
-	result = {
-		"bank": bank,
-		"account_id": account_id,
-		"card_master_created": False,
-		"gl_account_type_set": False,
-		"gl_account_note": None,
-	}
-	if card_gl_account:
-		target, created, typed = _ensure_card_master(card_gl_account, bank, holder)
-		result["card_master_created"], result["gl_account_type_set"] = created, typed
-	else:
-		target = bank_account
-	result["bank_account"] = target
-
 	if holder is None:
-		map_plaid_account(target, account_id, mask=mask, start_date=start, bank=bank)
-		result["action"] = "mapped"
-	elif holder["name"] == target:
-		values = {}
-		if start:
-			values["last_integration_date"] = start
+		plan["action"] = "mapped"
+		if trow and trow.get("bank") != bank:
+			_resolve_token_bank(trow.get("bank"), bank, target)
+			plan["repoint_bank_from"] = trow.get("bank")
+		plan["mask"] = mask or None
+		plan["last_integration_date"] = str(start or add_days(getdate(today()), -1))
+	elif target_exists and holder["name"] == target:
+		plan["action"] = "already mapped"
 		if mask and mask != holder.get("mask"):
-			values["mask"] = mask
-		if values:
-			frappe.db.set_value("Bank Account", target, values)
-		result["action"] = "already mapped"
-	else:  # a Link-created duplicate: the only holder left after the check above
-		absorbed = absorb_native_duplicate(holder["name"], target, start_date=start)
-		result["action"] = "absorbed"
-		result["deleted_duplicate"] = absorbed["deleted_duplicate"]
-		result["gl_account_note"] = absorbed["gl_account_note"]
-	result["last_integration_date"] = str(
-		frappe.db.get_value("Bank Account", target, "last_integration_date") or ""
-	)
-	return result
+			plan["mask"] = mask
+		if start:
+			plan["last_integration_date"] = str(start)
+	else:
+		plan["action"] = "absorbed"
+		dup = _bank_account_row(holder["name"])
+		if trow and trow.get("bank") != bank:
+			if _bank_token_or_none(trow.get("bank")):
+				frappe.throw(
+					f"'{target}' sits under Bank '{trow.get('bank')}', which holds its own Plaid link; "
+					"a Plaid link cannot move between institutions."
+				)
+			plan["repoint_bank_from"] = trow.get("bank")
+		if frappe.db.count("Bank Transaction", {"bank_account": dup["name"]}):
+			frappe.throw(
+				f"'{dup['name']}' already has Bank Transaction rows, so it cannot be folded in. "
+				"Re-point or cancel them first."
+			)
+		fate, note = _gl_account_fate(
+			dup.get("account"),
+			plaid_name=dup.get("account_name"),
+			institution=dup.get("bank"),
+			ignore_bank_account=dup["name"],
+		)
+		plan.update(
+			{
+				"duplicate": dup["name"],
+				"duplicate_gl_account": dup.get("account"),
+				"duplicate_gl_account_fate": fate,
+				"duplicate_gl_account_note": note,
+				"mask": dup.get("mask") or None,
+				"last_integration_date": str(
+					start
+					or dup.get("last_integration_date")
+					or (trow or {}).get("last_integration_date")
+					or add_days(getdate(today()), -1)
+				),
+			}
+		)
+
+	if plan["action"] in ("mapped", "absorbed"):
+		changes.append(f"Bank Account '{target}' gets Plaid account {account_id}.")
+	if plan["repoint_bank_from"]:
+		changes.append(f"Bank Account '{target}' moves from Bank '{plan['repoint_bank_from']}' to '{bank}'.")
+	if plan["duplicate"]:
+		gl_line = (
+			f"its GL account '{plan['duplicate_gl_account']}' is deleted too, unless something else links to it"
+			if plan["duplicate_gl_account_fate"] == "delete"
+			else f"its GL account is kept ({plan['duplicate_gl_account_note']})"
+		)
+		changes.append(f"'{plan['duplicate']}', which Plaid Link created, is deleted; {gl_line}.")
+	if plan["mask"]:
+		changes.append(f"Mask set to {plan['mask']}.")
+	if plan["last_integration_date"]:
+		changes.append(
+			f"Last Integration Date set to {plan['last_integration_date']}: the feed starts there."
+		)
+	if not changes:
+		changes.append("Nothing changes.")
+	return _with_fingerprint(plan)
 
 
-def _ensure_card_master(gl_account: str, bank: str, holder=None) -> tuple[str, bool, bool]:
-	"""The company Bank Account for a credit card's GL Account, created when there is none.
+def _with_fingerprint(plan: dict) -> dict:
+	core = {key: plan.get(key) for key in _PLAN_FINGERPRINT_FIELDS}
+	plan["fingerprint"] = hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()
+	return plan
 
-	Returns ``(bank_account, created, gl_account_type_set)``.
 
-	The GL Account must be an enabled Liability ledger: a card is money owed, and this
-	refuses an Asset account rather than quietly turning a checking ledger into a card.
-	ERPNext lets one GL Account back only one Bank Account, so an existing Bank Account on
-	it is the card's master and is reused, which makes a re-run harmless.
+def _card_plan(gl_account: str, bank: str) -> dict:
+	"""Validate a credit card's GL Account and say what the card step would do to it.
 
-	Otherwise the ledger's ``account_type`` is set to Bank when it is blank (any other type
-	is refused: it means something else in this ledger), because ``Bank Account.validate``
-	accepts nothing else. That is a real change to the GL Account, made through a save so
-	ERPNext's own Account checks run. Bank on a Liability root is legal; 13202 America
-	First Auto Loan has carried it since WI-042. Then the Bank Account is inserted under the
-	token-holding Bank, named after the ledger, with ``is_credit_card`` ticked (16.60+:
-	vouchers made from its Bank Transactions become "Credit Card Entry"). Plaid's account
-	type and subtype are copied from the Link-created duplicate when there is one.
+	Returns ``{bank_account, create, set_type}``. The ledger must be an enabled Liability
+	account: a card is money owed, and this refuses an Asset account rather than quietly
+	turning a checking ledger into a card. ERPNext lets one GL Account back only one Bank
+	Account, so a company Bank Account already on it is the card's master and is reused
+	(a re-run is harmless); one that is disabled, not a company account, or another
+	company's is refused rather than adopted. Otherwise the type must be blank (how the
+	QuickBooks sync leaves cards) or Bank, and the new Bank Account's name is ERPNext's
+	autoname for it, ``"<account_name> - <bank>"``.
 	"""
 	acc = frappe.db.get_value(
 		"Account",
@@ -500,23 +661,115 @@ def _ensure_card_master(gl_account: str, bank: str, holder=None) -> tuple[str, b
 			f"A card's GL account must be a Liability account; '{gl_account}' is "
 			f"{acc.get('root_type') or 'not typed'}."
 		)
-	existing = frappe.db.get_value("Bank Account", {"account": gl_account}, "name")
+	existing = frappe.db.get_value(
+		"Bank Account",
+		{"account": gl_account},
+		["name", "is_company_account", "disabled", "company"],
+		as_dict=True,
+	)
 	if existing:
-		return existing, False, False
-
+		if (
+			not cint(existing.get("is_company_account"))
+			or cint(existing.get("disabled"))
+			or existing.get("company") != acc.get("company")
+		):
+			frappe.throw(
+				f"Bank Account '{existing.get('name')}' already uses '{gl_account}' but is disabled, "
+				"not a company account, or another company's. Fix or remove it first."
+			)
+		return {"bank_account": existing.get("name"), "create": False, "set_type": False}
 	account_type = acc.get("account_type") or ""
 	if account_type not in ("", "Bank"):
 		frappe.throw(
 			f"GL Account '{gl_account}' has Account Type '{account_type}'. A card's GL account "
 			"must be untyped (as the QuickBooks sync leaves cards) or Bank."
 		)
-	typed = False
-	if not account_type:
-		account = frappe.get_doc("Account", gl_account)
-		account.account_type = "Bank"
-		account.save(ignore_permissions=True)
-		typed = True
+	name = f"{acc.get('account_name')} - {bank}"
+	if frappe.db.exists("Bank Account", name):
+		frappe.throw(f"A Bank Account named '{name}' already exists on another GL account.")
+	return {"bank_account": name, "create": True, "set_type": not account_type}
 
+
+def apply_plaid_mapping(
+	bank: str,
+	account_id: str,
+	bank_account: str | None = None,
+	card_gl_account: str | None = None,
+	mask: str | None = None,
+	start_date=None,
+	disable_duplicate: bool = False,
+	expected_fingerprint: str | None = None,
+) -> dict:
+	"""Run :func:`plan_plaid_mapping`'s plan for one Plaid account. The dialog's per-row write.
+
+	``expected_fingerprint`` is the plan the person confirmed. When it no longer matches --
+	a duplicate appeared, a master was mapped in another tab -- the row is refused rather
+	than doing something that was never shown. The steps are the existing helpers, which
+	re-check their own preconditions: the card's ledger is typed, its Bank Account created,
+	then :func:`map_plaid_account` or :func:`absorb_native_duplicate` moves the link.
+	"""
+	plan = plan_plaid_mapping(
+		bank,
+		account_id,
+		bank_account=bank_account,
+		card_gl_account=card_gl_account,
+		mask=mask,
+		start_date=start_date,
+		disable_duplicate=disable_duplicate,
+	)
+	if expected_fingerprint and plan["fingerprint"] != expected_fingerprint:
+		frappe.throw(
+			f"Plaid account {account_id} changed after the list you confirmed was made. Nothing was "
+			"done for it; reopen Map Plaid accounts to see what it would do now."
+		)
+	start = _feed_start(start_date)
+	result = {key: plan.get(key) for key in (*_PLAN_FINGERPRINT_FIELDS, "duplicate_gl_account_note")}
+	result.update({"card_master_created": False, "gl_account_type_set": False, "gl_account_note": None})
+
+	if plan["action"] == "disable duplicate":
+		frappe.db.set_value("Bank Account", plan["duplicate"], "disabled", 1)
+		return result
+
+	target = plan["bank_account"]
+	if plan["gl_account"]:
+		if plan["set_gl_account_type"]:
+			account = frappe.get_doc("Account", plan["gl_account"])
+			account.account_type = "Bank"
+			account.save(ignore_permissions=True)
+			result["gl_account_type_set"] = True
+		if plan["create_bank_account"]:
+			target = _create_card_master(plan["gl_account"], bank, plan["duplicate"])
+			result["card_master_created"] = True
+			result["bank_account"] = target
+
+	if plan["action"] == "mapped":
+		map_plaid_account(target, account_id, mask=mask, start_date=start, bank=bank)
+	elif plan["action"] == "already mapped":
+		values = {}
+		if plan["last_integration_date"]:
+			values["last_integration_date"] = start
+		if plan["mask"]:
+			values["mask"] = plan["mask"]
+		if values:
+			frappe.db.set_value("Bank Account", target, values)
+	else:
+		absorbed = absorb_native_duplicate(plan["duplicate"], target, start_date=start)
+		result["deleted_duplicate"] = absorbed["deleted_duplicate"]
+		result["gl_account_note"] = absorbed["gl_account_note"]
+	result["last_integration_date"] = str(
+		frappe.db.get_value("Bank Account", target, "last_integration_date") or ""
+	)
+	return result
+
+
+def _create_card_master(gl_account: str, bank: str, duplicate: str | None) -> str:
+	"""Insert the card's Bank Account on its (now Bank-typed) ledger; returns its name.
+
+	Under the token-holding Bank, named after the ledger, ``is_credit_card`` ticked
+	(16.60+: vouchers made from its Bank Transactions become "Credit Card Entry"), and
+	Plaid's account type and subtype copied from the Link-created duplicate when there is one.
+	"""
+	acc = frappe.db.get_value("Account", gl_account, ["account_name", "company"], as_dict=True)
 	values = {
 		"doctype": "Bank Account",
 		"account_name": acc.get("account_name"),
@@ -525,9 +778,9 @@ def _ensure_card_master(gl_account: str, bank: str, holder=None) -> tuple[str, b
 		"is_company_account": 1,
 		"company": acc.get("company"),
 	}
-	if holder:
+	if duplicate:
 		dup = frappe.db.get_value(
-			"Bank Account", holder["name"], ["account_type", "account_subtype"], as_dict=True
+			"Bank Account", duplicate, ["account_type", "account_subtype"], as_dict=True
 		)
 		for fieldname in ("account_type", "account_subtype"):
 			if dup and dup.get(fieldname):
@@ -536,7 +789,7 @@ def _ensure_card_master(gl_account: str, bank: str, holder=None) -> tuple[str, b
 		values["is_credit_card"] = 1
 	master = frappe.get_doc(values)
 	master.insert(ignore_permissions=True)
-	return master.name, True, typed
+	return master.name
 
 
 def _has_field(doctype: str, fieldname: str) -> bool:
@@ -548,50 +801,84 @@ def _has_field(doctype: str, fieldname: str) -> bool:
 		return False
 
 
-def apply_plaid_mappings(rows, start_date=None) -> dict:
-	"""Apply the dialog's choices: :func:`apply_plaid_mapping` per row, each on its own.
+def apply_plaid_mappings(rows, start_date=None, dry_run=False) -> dict:
+	"""The dialog's two calls: plan every row (``dry_run``), then run the confirmed plans.
 
-	``rows`` is a list of ``{bank, account_id, mask, bank_account | card_gl_account}``.
-	The start date is checked once, before any write. Each row runs inside its own
-	savepoint with messages muted, so one refusal (an account already mapped, a GL Account
-	of the wrong type) is rolled back and reported in that row's result while the rows
-	around it commit. Returns ``{start_date, results: [...]}`` in the order given.
+	``rows`` is a list of ``{bank, account_id, mask, bank_account | card_gl_account |
+	disable_duplicate, fingerprint}``. The start date is checked once, before anything.
+
+	* ``dry_run``: :func:`plan_plaid_mapping` per row, messages muted, nothing written.
+	  Returns ``{start_date, plans: [...]}``; a refused row is ``{ok: False, message}``.
+	* otherwise: :func:`apply_plaid_mapping` per row with the row's ``fingerprint``, each in
+	  its own savepoint with messages muted, so one refusal is rolled back and reported while
+	  the rows around it commit. Returns ``{start_date, results: [...]}``.
+
+	If the database rolled back the whole transaction (a deadlock does; the savepoint is
+	then gone too), the batch stops and says nothing was saved, rather than reporting the
+	earlier rows as done.
 	"""
 	start = _feed_start(start_date)
-	results = []
 	flags = frappe.flags
+	out = []
 	for row in rows or []:
 		row = row or {}
-		frappe.db.savepoint("plaid_map_row")
+		kwargs = {
+			"bank_account": row.get("bank_account") or None,
+			"card_gl_account": row.get("card_gl_account") or None,
+			"mask": row.get("mask") or None,
+			"start_date": start,
+			"disable_duplicate": bool(row.get("disable_duplicate")),
+		}
 		previous = getattr(flags, "mute_messages", False)
 		flags.mute_messages = True
+		if dry_run:
+			try:
+				out.append(
+					{"ok": True, **plan_plaid_mapping(row.get("bank"), row.get("account_id"), **kwargs)}
+				)
+			except Exception as exc:
+				out.append(_refused(row, exc))
+			finally:
+				flags.mute_messages = previous
+			continue
+
+		frappe.db.savepoint("plaid_map_row")
 		try:
-			out = apply_plaid_mapping(
+			result = apply_plaid_mapping(
 				row.get("bank"),
 				row.get("account_id"),
-				bank_account=row.get("bank_account") or None,
-				card_gl_account=row.get("card_gl_account") or None,
-				mask=row.get("mask") or None,
-				start_date=start,
+				expected_fingerprint=row.get("fingerprint") or None,
+				**kwargs,
 			)
-			results.append({"ok": True, **out})
+			out.append({"ok": True, **result})
 		except Exception as exc:
-			frappe.db.rollback(save_point="plaid_map_row")
 			if row.get("card_gl_account"):
 				# The Account save cleared its cache entry, and Bank Account.validate may have
-				# cached it again as Bank before the rollback reverted the row.
+				# cached it again as Bank before the rollback reverts the row.
 				frappe.clear_document_cache("Account", row.get("card_gl_account"))
-			results.append(
-				{
-					"ok": False,
-					"bank": row.get("bank"),
-					"account_id": row.get("account_id"),
-					"message": error_snippet(str(exc), 300),
-				}
-			)
+			try:
+				frappe.db.rollback(save_point="plaid_map_row")
+			except Exception:
+				flags.mute_messages = previous
+				frappe.throw(
+					"The database rolled back the whole batch, so nothing was saved, not even the "
+					f"accounts before this one ({error_snippet(str(exc), 200)}). Open Map Plaid "
+					"accounts and run it again."
+				)
+			out.append(_refused(row, exc))
 		finally:
 			flags.mute_messages = previous
-	return {"start_date": str(start) if start else None, "results": results}
+	key = "plans" if dry_run else "results"
+	return {"start_date": str(start) if start else None, key: out}
+
+
+def _refused(row: dict, exc: Exception) -> dict:
+	return {
+		"ok": False,
+		"bank": row.get("bank"),
+		"account_id": row.get("account_id"),
+		"message": error_snippet(str(exc), 300),
+	}
 
 
 def prune_link_created_gl_accounts(bank: str) -> dict:
@@ -639,6 +926,37 @@ def _bank_account_row(name: str) -> dict:
 	return dict(row)
 
 
+def _gl_account_fate(
+	gl_account: str | None, *, plaid_name: str | None, institution: str | None, ignore_bank_account=None
+) -> tuple[str, str]:
+	"""Whether a Link-created duplicate's GL Account would be deleted: ``("delete" | "keep", note)``.
+
+	The same guards :func:`_delete_auto_created_gl_account` applies, read-only, so a plan can
+	show the outcome. ``ignore_bank_account`` is the duplicate itself, which still uses the
+	account at plan time. "delete" still means "unless something else links to it": that
+	last check is ``delete_doc``'s own and runs only at delete time.
+	"""
+	if not gl_account:
+		return "keep", "the duplicate has no GL Account"
+	acct = frappe.db.get_value("Account", gl_account, ["name", "account_name"], as_dict=True)
+	if not acct:
+		return "keep", f"GL Account '{gl_account}' no longer exists"
+	expected = f"{plaid_name} - {institution}" if plaid_name else None
+	if not expected or (acct.get("account_name") or "") != expected:
+		return "keep", (
+			f"GL Account '{gl_account}' left alone: its account_name is not the native "
+			f"'<Plaid name> - <institution>' pattern ({expected!r}), so it was not auto-created by the link"
+		)
+	if frappe.db.exists("GL Entry", {"account": gl_account}):
+		return "keep", f"GL Account '{gl_account}' left alone: it has GL Entry rows"
+	users = {"account": gl_account}
+	if ignore_bank_account:
+		users["name"] = ["!=", ignore_bank_account]
+	if frappe.db.exists("Bank Account", users):
+		return "keep", f"GL Account '{gl_account}' left alone: another Bank Account still uses it"
+	return "delete", f"GL Account '{gl_account}' is unused and was auto-created by the link"
+
+
 def _delete_auto_created_gl_account(gl_account: str, *, plaid_name: str | None, institution: str):
 	"""Delete the GL Account only when it is provably the link's own creation and unused.
 
@@ -652,27 +970,22 @@ def _delete_auto_created_gl_account(gl_account: str, *, plaid_name: str | None, 
 	response; that message is cleared so a whitelisted caller does not see a red error
 	dialog over a result that says the absorb succeeded.
 	"""
-	acct = frappe.db.get_value("Account", gl_account, ["name", "account_name"], as_dict=True)
-	if not acct:
-		return False, f"GL Account '{gl_account}' no longer exists"
-	expected = f"{plaid_name} - {institution}" if plaid_name else None
-	if not expected or (acct.get("account_name") or "") != expected:
-		return False, (
-			f"GL Account '{gl_account}' left alone: its account_name is not the native "
-			f"'<Plaid name> - <institution>' pattern ({expected!r}), so it was not auto-created by the link"
-		)
-	if frappe.db.exists("GL Entry", {"account": gl_account}):
-		return False, f"GL Account '{gl_account}' left alone: it has GL Entry rows"
-	if frappe.db.exists("Bank Account", {"account": gl_account}):
-		return False, f"GL Account '{gl_account}' left alone: another Bank Account still uses it"
+	fate, note = _gl_account_fate(gl_account, plaid_name=plaid_name, institution=institution)
+	if fate != "delete":
+		return False, note
 
 	frappe.db.savepoint("plaid_absorb_gl")
 	try:
 		frappe.delete_doc("Account", gl_account, ignore_permissions=True)
 	except Exception as exc:
-		frappe.db.rollback(save_point="plaid_absorb_gl")
-		# Under mute_messages (the batch below) the throw queued nothing, so clearing would
-		# drop somebody else's message instead.
+		try:
+			frappe.db.rollback(save_point="plaid_absorb_gl")
+		except Exception:
+			# The savepoint is gone because the database already rolled back the whole
+			# transaction (a deadlock does that). Nothing here is still true; let the caller see it.
+			raise exc from None
+		# Under mute_messages (the batch) the throw queued nothing, so clearing would drop
+		# somebody else's message instead.
 		if not getattr(getattr(frappe, "flags", None), "mute_messages", False):
 			frappe.clear_last_message()
 		return False, f"GL Account '{gl_account}' left alone: {error_snippet(str(exc), 300)}"

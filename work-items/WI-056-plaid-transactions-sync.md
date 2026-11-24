@@ -27,12 +27,18 @@ Nik approved this plan (2026-11-24):
 - **QuickBooks overlap:** no double posting. Bank Transactions write no GL. Matching needs
   submitted vouchers, so the feed sits Unreconciled until the 2026 drafts are posted. Rule
   until then: match only, never create a voucher from a Bank Transaction.
-- **Code (v1.841.0):** 16.60's first Link always creates a duplicate Bank Account + GL
+- **Code (v1.842.0):** 16.60's first Link always creates a duplicate Bank Account + GL
   Account per account, and the old Map dialog showed those as "already mapped". Cards could
   not be Bank Accounts at all (their ledgers are untyped; ERPNext requires Bank). The dialog
-  now folds duplicates into masters, gives each card a Bank Account on its own Liability
-  ledger (typed Bank, Is Credit Card ticked), and applies one feed start date. The widget
-  labels card balances as owed.
+  now folds duplicates into masters, switches off the duplicate of an account left blank,
+  gives each card a Bank Account on its own Liability ledger (typed Bank, Is Credit Card
+  ticked), and applies one feed start date. It shows the server's exact plan for
+  confirmation first and runs only the confirmed plans. The widget labels card balances as owed.
+- **Cards wait for a decision.** Typing a card ledger Bank makes ERPNext's Cash Flow report
+  count it as cash (its whole history moves out of operating activities), and Bank
+  Reconciliation lists its past entries as uncleared. Owner review, 2026-11-24: banks first;
+  map the cards only on the owner's word, which may wait for the CPA. See the README's
+  "Credit cards".
 
 Nik's steps are an ERPNext Task with a ToDo. The procedure is in
 `erpnext_enhancements/plaid_banking/README.md` ("Operating procedure"), which supersedes the

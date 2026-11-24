@@ -20,8 +20,10 @@
  *    the company account it really is (apply_plaid_mappings): an existing master,
  *    or -- for a credit card, which has none -- the card's Liability GL account,
  *    which gets a Bank Account of its own. The duplicate a first native Link always
- *    creates is folded in, and one "Feed starts on" date becomes every mapped
- *    account's Last Integration Date.
+ *    creates is folded in (or switched off, for an account left blank), and one
+ *    "Feed starts on" date becomes every mapped account's Last Integration Date.
+ *    "Map selected" first asks the server for the plan (dry_run) and shows that
+ *    exact list; the write runs only the confirmed plans, by fingerprint.
  */
 const PLAID_API = "erpnext_enhancements.plaid_banking.core.api";
 
@@ -41,19 +43,20 @@ function plaidLabel(pa) {
 const ACTION_LABELS = {
 	mapped: __("Mapped"),
 	absorbed: __("Linked; the duplicate Plaid Link made was removed"),
-	"already mapped": __("Already on this account; start date updated"),
+	"already mapped": __("Already on this account"),
+	"disable duplicate": __("The duplicate Plaid Link made is switched off"),
 };
 
-function showMappingResults(chosen, payload) {
+function showMappingResults(sent, payload) {
 	const results = (payload && payload.results) || [];
 	const esc = frappe.utils.escape_html;
 	const rows = results.map((res, i) => {
-		const label = (chosen[i] && chosen[i].label) || res.account_id || "";
+		const label = (sent[i] && sent[i].label) || res.account_id || "";
 		let outcome;
 		if (res.ok) {
-			const parts = [
-				`${ACTION_LABELS[res.action] || esc(res.action || "")} → <b>${esc(res.bank_account || "")}</b>`,
-			];
+			const parts = [`${ACTION_LABELS[res.action] || esc(res.action || "")}`];
+			if (res.bank_account) parts[0] += ` → <b>${esc(res.bank_account)}</b>`;
+			if (res.duplicate && res.action === "disable duplicate") parts[0] += ` (${esc(res.duplicate)})`;
 			if (res.card_master_created) parts.push(__("card Bank Account created"));
 			if (res.gl_account_type_set) parts.push(__("its GL account's Account Type set to Bank"));
 			if (res.last_integration_date) parts.push(__("feed starts {0}", [esc(res.last_integration_date)]));
@@ -71,6 +74,22 @@ function showMappingResults(chosen, payload) {
 		message: `<table class="table table-bordered table-sm"><tbody>${rows.join("")}</tbody></table>`,
 		wide: true,
 	});
+}
+
+// The confirmation list is the server's own plan (apply_plaid_mappings with dry_run), so it
+// names every record the write will touch -- the card ledger's type, a new Bank Account, a
+// master moving Bank, each duplicate deleted or switched off -- and nothing else.
+function describePlans(chosen, plans) {
+	const esc = frappe.utils.escape_html;
+	const items = plans.map((plan, i) => {
+		const label = esc((chosen[i] && chosen[i].label) || plan.account_id || "");
+		if (!plan.ok) {
+			return `<li>${label}: <span class="text-danger">${__("will be skipped")}: ${esc(plan.message || "")}</span></li>`;
+		}
+		const lines = (plan.changes || []).map((line) => `<li>${esc(line)}</li>`).join("");
+		return `<li>${label}<ul>${lines}</ul></li>`;
+	});
+	return `<p>${__("These changes will be made:")}</p><ul>${items.join("")}</ul><p>${__("Continue?")}</p>`;
 }
 
 function openMappingDialog(overview) {
@@ -91,6 +110,15 @@ function openMappingDialog(overview) {
 			default: frappe.datetime.month_start(),
 			description: __(
 				"Written to each account you map here as its Last Integration Date: the first sync pulls Plaid transactions from this day on. Plaid keeps about 90 days of history. Not a future date.",
+			),
+		},
+		{
+			fieldtype: "Check",
+			fieldname: "disable_skipped",
+			label: __("Switch off the Plaid Link copy of any account left blank"),
+			default: 1,
+			description: __(
+				"It keeps its Plaid link but the hourly sync skips it, so it can't pull about 90 days of history onto a duplicate. Map it later the same way.",
 			),
 		},
 	];
@@ -128,7 +156,8 @@ function openMappingDialog(overview) {
 				account_id: pa.account_id,
 				mask: pa.mask,
 				label,
-				duplicate: pa.holder_link_created ? pa.holder : null,
+				// a live Link-created copy that a blank row would leave syncing
+				switch_off: pa.holder_link_created && !pa.holder_disabled,
 			};
 			row.map_field = `map_${bi}_${pi}`;
 			fields.push({
@@ -156,7 +185,7 @@ function openMappingDialog(overview) {
 					default: pa.suggested_card_gl_account || "",
 					get_query: () => ({ filters: { root_type: "Liability", is_group: 0, disabled: 0 } }),
 					description: __(
-						"Cards have no Bank Account yet. Picking the card's Liability account sets its Account Type to Bank (ERPNext requires it) and creates the card's Bank Account with Is Credit Card ticked.",
+						"Cards have no Bank Account yet. Picking the card's Liability account sets its Account Type to Bank (ERPNext requires it), which also makes the Cash Flow report count it as cash; the confirmation spells that out. A Bank Account is created for the card with Is Credit Card ticked.",
 					),
 				});
 			}
@@ -183,21 +212,17 @@ function openMappingDialog(overview) {
 					return;
 				}
 				const target = bank_account || card_gl_account;
-				if (!target) continue;
+				const base = { bank: r.bank, account_id: r.account_id, mask: r.mask, label: r.label };
+				if (!target) {
+					if (values.disable_skipped && r.switch_off) chosen.push({ ...base, disable_duplicate: 1 });
+					continue;
+				}
 				if (seen[target]) {
 					frappe.msgprint(__("{0} is selected twice.", [target]));
 					return;
 				}
 				seen[target] = true;
-				chosen.push({
-					bank: r.bank,
-					account_id: r.account_id,
-					mask: r.mask,
-					bank_account,
-					card_gl_account,
-					label: r.label,
-					duplicate: r.duplicate,
-				});
+				chosen.push({ ...base, bank_account, card_gl_account });
 			}
 			if (!chosen.length) {
 				frappe.msgprint(__("Nothing selected."));
@@ -207,53 +232,46 @@ function openMappingDialog(overview) {
 				frappe.msgprint(__("Feed starts on can't be a future date."));
 				return;
 			}
-			// Show every write before making it: the card step changes a GL Account and the
-			// fold deletes records, so the person confirms the exact list, not a summary.
-			frappe.confirm(describeMappingChanges(chosen, values.feed_start), () => {
-				dialog.hide();
-				frappe
-					.call({
-						method: `${PLAID_API}.apply_plaid_mappings`,
-						args: {
-							rows: chosen.map(({ label, duplicate, ...row }) => row),
-							start_date: values.feed_start,
-						},
-						freeze: true,
-						freeze_message: __("Mapping {0} account(s)…", [chosen.length]),
-					})
-					.then((r) => showMappingResults(chosen, r && r.message));
-			});
+			const payload = chosen.map(({ label, ...row }) => row);
+			frappe
+				.call({
+					method: `${PLAID_API}.apply_plaid_mappings`,
+					args: { rows: payload, start_date: values.feed_start, dry_run: 1 },
+					freeze: true,
+					freeze_message: __("Working out the changes…"),
+				})
+				.then((r) => {
+					const plans = (r && r.message && r.message.plans) || [];
+					const runnable = [];
+					plans.forEach((plan, i) => {
+						if (plan.ok) runnable.push({ ...chosen[i], fingerprint: plan.fingerprint });
+					});
+					if (!runnable.length) {
+						frappe.msgprint({
+							title: __("Nothing can be mapped"),
+							indicator: "orange",
+							message: describePlans(chosen, plans),
+						});
+						return;
+					}
+					frappe.confirm(describePlans(chosen, plans), () => {
+						dialog.hide();
+						frappe
+							.call({
+								method: `${PLAID_API}.apply_plaid_mappings`,
+								args: {
+									rows: runnable.map(({ label, ...row }) => row),
+									start_date: values.feed_start,
+								},
+								freeze: true,
+								freeze_message: __("Mapping {0} account(s)…", [runnable.length]),
+							})
+							.then((res) => showMappingResults(runnable, res && res.message));
+					});
+				});
 		},
 	});
 	dialog.show();
-}
-
-// The confirmation text: per chosen row, every record the server will write or delete.
-function describeMappingChanges(chosen, feedStart) {
-	const esc = frappe.utils.escape_html;
-	const items = chosen.map((c) => {
-		const lines = [];
-		if (c.card_gl_account) {
-			lines.push(
-				__("GL account {0}: Account Type becomes <b>Bank</b> if it is blank (ERPNext requires it for a Bank Account).", [
-					`<b>${esc(c.card_gl_account)}</b>`,
-				]),
-			);
-			lines.push(__("A Bank Account is created for the card on that GL account, with Is Credit Card ticked (unless one exists already)."));
-		} else {
-			lines.push(__("Bank Account {0} gets this Plaid link.", [`<b>${esc(c.bank_account)}</b>`]));
-		}
-		if (c.duplicate) {
-			lines.push(
-				__("{0}, which Plaid Link created, is deleted, and so is its GL account if nothing uses it.", [
-					`<b>${esc(c.duplicate)}</b>`,
-				]),
-			);
-		}
-		lines.push(__("Last Integration Date set to {0}.", [esc(feedStart)]));
-		return `<li>${esc(c.label)}<ul>${lines.map((l) => `<li>${l}</li>`).join("")}</ul></li>`;
-	});
-	return `<p>${__("These changes will be made:")}</p><ul>${items.join("")}</ul><p>${__("Continue?")}</p>`;
 }
 
 frappe.ui.form.on("Plaid Banking Settings", {

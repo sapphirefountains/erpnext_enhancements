@@ -84,7 +84,7 @@ def refresh_now():
 	return {"ok": True, "banks": snapshot["banks"], "last_sync": snapshot["fetched_at"]}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def test_connection():
 	"""Validate the setup without spending a balance call.
 
@@ -130,14 +130,14 @@ def test_connection():
 # ---- mapping helpers (see core/link_accounts.py) ---------------------------
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def mapping_overview():
 	"""Per linked bank: its Plaid accounts and our company Bank Accounts (for the dialog)."""
 	_require_finance_operator(connect=True)
 	return link_accounts.mapping_overview()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def list_plaid_accounts(bank):
 	"""The Plaid accounts behind one linked Bank (ids, names, masks; no balances)."""
 	_require_finance_operator(connect=True)
@@ -162,19 +162,28 @@ def absorb_native_duplicate(duplicate, into, start_date=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def apply_plaid_mappings(rows, start_date=None):
-	"""The Map Plaid accounts dialog's one call: each row puts a Plaid account on a master
-	or on a card's GL account (creating the card's Bank Account), folding in the duplicate
-	native Link made. Per-row results; one refused row does not undo the others."""
+def apply_plaid_mappings(rows, start_date=None, dry_run=0):
+	"""The Map Plaid accounts dialog's two calls. ``dry_run`` plans every row and writes
+	nothing; the dialog shows those plans for confirmation. The write then runs only rows
+	that carry the ``fingerprint`` of a confirmed plan, and refuses any whose plan changed
+	since. Each row puts a Plaid account on a master or on a card's GL account (creating the
+	card's Bank Account), folds in the duplicate native Link made, or switches that duplicate
+	off. Per-row results; one refused row does not undo the others."""
 	_require_finance_operator(connect=True)
 	rows = frappe.parse_json(rows) if isinstance(rows, str) else rows
 	if not isinstance(rows, list):
 		frappe.throw("rows must be a list.")
-	return link_accounts.apply_plaid_mappings(rows, start_date=start_date or None)
+	# A form-encoded boolean arrives as the string "true".
+	dry = dry_run is True or str(dry_run).strip().lower() in ("1", "true")
+	if not dry and any(not (row or {}).get("fingerprint") for row in rows):
+		frappe.throw(
+			"Every row needs the fingerprint of the plan that was confirmed: run it with dry_run first."
+		)
+	return link_accounts.apply_plaid_mappings(rows, start_date=start_date or None, dry_run=dry)
 
 
 @frappe.whitelist(methods=["POST"])
 def prune_link_created_gl_accounts(bank):
-	"""Delete the unused GL Accounts a native "Refresh Plaid Link" left behind for one Bank."""
+	"""Delete the unused GL Accounts a native re-link left behind for one Bank (16.50; 16.60 leaves none)."""
 	_require_finance_operator(connect=True)
 	return link_accounts.prune_link_created_gl_accounts(bank)
