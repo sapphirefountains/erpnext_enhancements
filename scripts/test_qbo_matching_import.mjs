@@ -172,7 +172,7 @@ function makeFile(count, { retryAt = [] } = {}) {
 
 /** Load the page script as the Desk does and open it; returns the handles a test drives. */
 function openPage(server, { dialogThrowsFor = null } = {}) {
-	const world = { calls: [], dialogs: [], buttons: {}, uploader: null, msgprints: [], errors: [], frozen: 0, maxFrozen: 0, loads: 0 };
+	const world = { calls: [], dialogs: [], buttons: {}, uploader: null, msgprints: [], errors: [], timers: [], frozen: 0, maxFrozen: 0, loads: 0 };
 	class Dialog {
 		constructor(opts) {
 			if (dialogThrowsFor && opts.title === dialogThrowsFor) throw new Error("dialog broke");
@@ -243,6 +243,11 @@ function openPage(server, { dialogThrowsFor = null } = {}) {
 		},
 	});
 	const quiet = { log() {}, warn() {}, error: (error) => world.errors.push(error) };
+	// The page's pauses before a resend, recorded and not waited out.
+	const timer = (fn, ms) => {
+		world.timers.push(ms);
+		return setTimeout(fn, 0);
+	};
 	const load = new Function(
 		"frappe",
 		"__",
@@ -250,9 +255,10 @@ function openPage(server, { dialogThrowsFor = null } = {}) {
 		"window",
 		"document",
 		"console",
+		"setTimeout",
 		`${SOURCE}\nreturn { qbo_rm_run_import, qbo_rm_import_chunks, qbo_rm_failure, qbo_rm_identity };`
 	);
-	const helpers = load(frappe, translate, anything(), lenient({}), anything(), quiet);
+	const helpers = load(frappe, translate, anything(), lenient({}), anything(), quiet, timer);
 	const wrapper = {};
 	frappe.pages["quickbooks-record-matching"].on_page_load(wrapper);
 	world.helpers = helpers;
@@ -359,7 +365,7 @@ test("an ordinary failed batch is reported against its rows and the run carries 
 	const file = makeFile(25);
 	const server = new FakeServer(file);
 	server.applyScript = [
-		() => Promise.reject({ status: 502, responseText: "<html>Bad gateway</html>" }),
+		() => Promise.reject({ status: 500, responseText: "<html>Internal server error</html>" }),
 		() => Promise.resolve({ message: { not: "a list" } }),
 	];
 	const world = openPage(server);
@@ -372,6 +378,26 @@ test("an ordinary failed batch is reported against its rows and the run carries 
 	assert.match(html, /The request failed; import the file again to see whether it landed\./);
 	assert.match(html, /The server&#39;s answer was not understood|The server's answer was not understood/);
 	assert.equal(server.previews, 1, "a non-expired failure never re-previews");
+	assert.deepEqual(world.timers, [], "a 500 is not resent");
+});
+
+test("a deploy restart (503) mid-run: the page waits, sends the same batch again, and every row lands", async () => {
+	const file = makeFile(25);
+	const server = new FakeServer(file);
+	const unavailable = () => Promise.reject({ status: 503, responseText: "<html>Service Unavailable</html>" });
+	// One entry per apply call: batch 1 runs normally, then batch 2 meets two 503s.
+	server.applyScript = [null, unavailable, unavailable];
+	const world = openPage(server);
+	const report = await runImport(world);
+	assert.ok(report && report.shown);
+	assert.deepEqual(server.applied, file.map((row) => row.row_number), "every row applied once");
+	assert.deepEqual(world.timers, [5000, 10000], "waited 5 s, then 10 s");
+	const sent = applies(world);
+	assert.equal(sent.length, 5, "batch 1, batch 2 three times, batch 3");
+	assert.deepEqual(sent[1].args, sent[2].args, "the resend is the same batch under the same token");
+	assert.deepEqual(sent[2].args, sent[3].args);
+	assert.match(reportHtml(report), /<p>25 applied\.<\/p>/);
+	assert.equal(world.frozen, 0);
 });
 
 test("a Retry goes alone and the report survives a broken Dialog", async () => {
@@ -393,18 +419,96 @@ test("a Retry goes alone and the report survives a broken Dialog", async () => {
 test("qbo_rm_failure reads the exception class and the server's words, and survives anything", () => {
 	const { qbo_rm_failure } = openPage(new FakeServer([])).helpers;
 	assert.deepEqual(qbo_rm_failure(rejection(EXPIRED, "This preview has expired.")), {
+		status: 417,
 		exc_type: EXPIRED,
 		error: "This preview has expired.",
 	});
 	assert.deepEqual(
-		qbo_rm_failure({ responseText: JSON.stringify({ exc_type: "PermissionError", _server_messages: "[]" }) }),
-		{ exc_type: "PermissionError", error: "" }
+		qbo_rm_failure({ status: 403, responseText: JSON.stringify({ exc_type: "PermissionError", _server_messages: "[]" }) }),
+		{ status: 403, exc_type: "PermissionError", error: "" }
 	);
+	assert.deepEqual(qbo_rm_failure({ status: 0, responseText: "" }), { status: 0, exc_type: "", error: "" }, "no connection is 0, not missing");
 	for (const odd of [undefined, null, {}, { responseText: "<html>" }, { responseJSON: { _server_messages: "not json" } }]) {
 		const out = qbo_rm_failure(odd);
+		assert.equal(out.status, null);
 		assert.equal(typeof out.exc_type, "string");
 		assert.equal(typeof out.error, "string");
 	}
+});
+
+/** qbo_rm_run_import with a scripted `send`: one reply (or reply-maker) per call, in order. */
+async function runScripted(rows, replies, { repreview, size = 10 } = {}) {
+	const { qbo_rm_run_import } = openPage(new FakeServer([])).helpers;
+	const sent = [];
+	const pauses = [];
+	let frozen = 0;
+	let finished = null;
+	await qbo_rm_run_import({
+		token: "t1-digest",
+		rows,
+		size,
+		send: (token, entries) => {
+			sent.push({ token, entries });
+			const next = replies.length ? replies.shift() : "ok";
+			if (next === "ok") return Promise.resolve({ ok: true, message: entries.map((e) => ({ ...e, ok: true, message: "done" })) });
+			return Promise.resolve(typeof next === "function" ? next(entries) : next);
+		},
+		repreview: repreview || (() => Promise.resolve({ ok: false })),
+		freeze: () => (frozen += 1),
+		unfreeze: () => (frozen -= 1),
+		wait: (ms) => {
+			pauses.push(ms);
+			return Promise.resolve();
+		},
+		finish: (results) => (finished = results),
+	});
+	assert.equal(frozen, 0, "every freeze is undone");
+	return { sent, pauses, finished };
+}
+
+const indexed = (count) => makeFile(count).map((row, index) => ({ ...row, index }));
+
+test("a 504 is never sent again: the worker may still be running it", async () => {
+	const { sent, pauses, finished } = await runScripted(indexed(15), [{ ok: false, status: 504, exc_type: "", error: "" }]);
+	assert.equal(sent.length, 2, "batch 1 once, then batch 2");
+	assert.deepEqual(pauses, []);
+	assert.equal(finished.filter((r) => !r.ok && /see whether it landed/.test(r.message)).length, 10);
+	assert.equal(finished.filter((r) => r.ok).length, 5, "the run carried on");
+});
+
+test("a dead connection is tried five times over 75 seconds, then the run stops", async () => {
+	const down = { ok: false, status: 0, exc_type: "", error: "" };
+	const { sent, pauses, finished } = await runScripted(indexed(25), [down, down, down, down, down]);
+	assert.equal(sent.length, 5, "batch 1 and its four resends; batches 2 and 3 never go");
+	assert.ok(sent.every((call) => call.token === "t1-digest" && call.entries.length === 10 && call.entries[0].index === 0));
+	assert.deepEqual(pauses, [5000, 10000, 20000, 40000]);
+	assert.equal(finished.length, 25);
+	assert.equal(finished.filter((r) => !r.not_sent && /see whether it landed/.test(r.message)).length, 10, "batch 1 may have landed");
+	const unsent = finished.filter((r) => r.not_sent);
+	assert.equal(unsent.length, 15);
+	assert.match(unsent[0].message, /stopped answering \(no connection\) for over a minute/);
+});
+
+test("a renewal the server does not answer stops the run, with the batch reported as not sent", async () => {
+	const expired = { ok: false, status: 417, exc_type: EXPIRED, error: "expired" };
+	const { sent, pauses, finished } = await runScripted(indexed(15), [expired], {
+		repreview: () => Promise.resolve({ ok: false, status: 502, exc_type: "", error: "" }),
+	});
+	assert.equal(sent.length, 1);
+	assert.deepEqual(pauses, [5000, 10000, 20000, 40000], "the renewal was resent too");
+	assert.equal(finished.filter((r) => r.not_sent).length, 15, "batch 1 never ran; nothing after it went");
+});
+
+test("a batch the fresh preview emptied is not sent", async () => {
+	const rows = indexed(12); // batches of 10 and 2
+	const expired = { ok: false, status: 417, exc_type: EXPIRED, error: "expired" };
+	const { sent, finished } = await runScripted(rows, [expired], {
+		repreview: () => Promise.resolve({ ok: true, token: "t2-digest", rows: rows.slice(0, 10).map((r) => ({ ...r, index: r.index + 3 })) }),
+	});
+	assert.equal(sent.length, 2, "batch 1, its retry, and no empty batch 2");
+	assert.equal(sent[1].entries[0].index, 3);
+	assert.equal(finished.filter((r) => r.ok).length, 10);
+	assert.equal(finished.filter((r) => /no longer lists this row/.test(r.message)).length, 2);
 });
 
 test("a send that throws, or a finish handed to the run directly, still ends the run", async () => {

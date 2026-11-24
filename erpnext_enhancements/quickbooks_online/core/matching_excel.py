@@ -1261,7 +1261,9 @@ def _rebuild_plan(user, token, file_name) -> dict:
 		rows = parse_workbook(_read_upload(file_name))["rows"]
 	except Exception as exc:
 		_expired(f"The file could not be read again: {matching.clean_error(exc)}.")
-	if not secrets.compare_digest(plan_digest(rows), digest):
+	# `==`, not secrets.compare_digest: the digest is no secret (the caller can compute it from
+	# their own file), and compare_digest raises TypeError -- a 500 -- on a non-ASCII token.
+	if plan_digest(rows) != digest:
 		_expired("The file no longer reads the way it did at the preview.")
 	plan = _make_plan(file_name, rows, classify(rows) if rows else [])
 	_set_state(_plan_key(user, token), plan, PLAN_TTL)

@@ -615,10 +615,12 @@ def get_matching_export_status(token):
 	return matching_excel.export_status(token)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def preview_matching_import(file_name):
-	"""RPC: read an uploaded export and say, row by row, what Apply would do. Writes
-	nothing -- an upload is never applied by itself."""
+	"""RPC: read an uploaded export and say, row by row, what Apply would do. Applies
+	nothing -- an upload is never applied by itself -- but it does write: accepting the upload
+	moves and tags the File for the daily clean-up. So POST only (v1.840.3): a GET is
+	CSRF-free, and the page calls this inside the Apply run too. Both page calls are POSTs."""
 	_require_qbo_operator()
 	return matching_excel.preview(file_name)
 

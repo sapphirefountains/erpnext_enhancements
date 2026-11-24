@@ -53,10 +53,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the page previews the same file again and retries that batch once. Every row still to go
     moves to the fresh preview's number, found by its place in the file.
   - If the renewal fails, or the retry is expired too, the run stops and lists the rows it never
-    sent. It does not loop.
+    sent. It does not loop. A later batch whose rows the fresh preview all dropped is not sent.
+  - **A batch the server never answered is sent again**: no connection, a 502 or a 503, which is
+    how every call reads while a deploy restarts the bench. The page waits 5, 10, 20 and 40
+    seconds, resending the same batch under the same token each time. That is safe because the
+    server re-checks every row and reports one that already landed as done. If the batch is
+    still unanswered after the last pause, the run stops, rather than spending that minute on
+    every batch after it. **A 504 is never resent**: the worker may still be running that batch,
+    and a resend would race it on merges and notes.
   - A plain failed batch is reported against its rows, and the run carries on. A plain failure
-    is a 500, an answer that is not a list, or a call that throws.
-  - The apply calls are `silent`, and the server's words go into the report.
+    is a 500, a 504, an answer that is not a list, or a call that throws.
+  - The apply calls are `silent`. In frappe v16.60.2 that only gates a failure's
+    `_server_messages`, so a 417's validation messages (an expired preview, a refused row) go into
+    the report instead of Frappe's shared message dialog. A 500, 502, 504, 508, QueryTimeout or
+    Deadlock still opens request.js's own dialog.
   - **The report is now a Dialog of its own**, with a plain `msgprint` fallback if drawing it
     fails. `frappe.msgprint` writes into Frappe's single shared message dialog, so per-batch error
     messages landed in the same dialog. Most likely that is why the report vanished: in frappe
@@ -65,18 +75,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     4.6 ignores a `show()` that arrives mid-fade. This was read from the source, not reproduced
     in a browser.
 
-  **Tests.** `tests/test_quickbooks_matching_excel.py` gains seven tests:
+  **Also:**
+  - **`preview_matching_import` is POST-only** (`methods=["POST"]`). It writes: accepting an
+    upload moves and tags the File for the clean-up. It also accepted a CSRF-free GET, and the
+    page now calls it inside the Apply run too. Both of the page's calls already went as POST.
+  - The token's digest is compared with `==`. It is not a secret, and `secrets.compare_digest`
+    raised `TypeError`, a 500, on a token with a non-ASCII character.
+
+  **Tests.** `tests/test_quickbooks_matching_excel.py` gains eight tests (68 in the file), covering:
   - a model of v16.60.2's `clear_cache` that a merging `decide` calls mid-run, with the hook and,
     to show the bug, without it;
   - a `FLUSHDB` between batches, rebuilt from the file;
-  - a different, unreadable or unnamed file, or an old token, refused with nothing applied;
+  - a rebuilt plan that keeps the preview's duplicate verdicts. An agreeing copy of a row that
+    already ran stays "applied once, there", and a disagreeing pair stays held;
+  - a different, unreadable or unnamed file, an old token, or a non-ASCII token, refused with
+    nothing applied;
   - an index that names the wrong row, skipped;
+  - the preview endpoint is POST-only;
   - the hook's patterns, and the page and CI wiring.
 
   New `scripts/test_qbo_matching_import.mjs` has its own CI step. It runs the page script under
   node, clicks Import, Apply and the confirm against a fake server that checks row identities,
-  and covers expiry after merges (25 rows land once, across two renewals), a failed renewal,
-  expiry again, plain failures and a broken report dialog.
+  and covers:
+  - expiry after merges (25 rows land once, across two renewals);
+  - a failed renewal, and expiry again;
+  - resends after 502 and 503 with the same token and entries;
+  - a 504 never resent;
+  - a dead connection that stops the run;
+  - a batch emptied by renumbering, never sent;
+  - plain failures and a broken report dialog.
 
   **Production effect on deploy:** no patch, fixture, schema change or data write. A tab already
   open on the page keeps the old script until it reloads; the hook alone fixes its runs.

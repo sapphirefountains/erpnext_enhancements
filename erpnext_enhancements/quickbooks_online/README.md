@@ -424,8 +424,12 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
   - If a batch still comes back `MatchingPreviewExpired`, the page previews the file again and
     retries that batch once under the fresh preview's numbers. If that fails too, it stops and
     lists the rows it never sent.
-  - Every run ends in the page's own "Import finished" Dialog. The apply calls are silent, so no
-    server message lands in Frappe's shared message dialog mid-run.
+  - A batch the server never answered (no connection, 502, 503: a deploy restarting the bench)
+    is sent again after 5, 10, 20 and 40 seconds, then stops the run. Never on a 504: the worker
+    may still be running that batch.
+  - Every run ends in the page's own "Import finished" Dialog. The apply calls are silent, which
+    keeps a 417's validation messages (an expired preview included) out of Frappe's shared
+    message dialog mid-run. A 500, 502, 504 or a query timeout still opens request.js's own.
   - Tests: `tests/test_quickbooks_matching_excel.py`, plus `scripts/test_qbo_matching_import.mjs`,
     which runs the page under node.
 

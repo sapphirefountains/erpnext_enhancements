@@ -83,11 +83,15 @@
  *    uploaded file if a deploy flushes it; this page sends the file with every batch, and the
  *    sheet, row number and QBO keys with every index. If a batch still comes back expired, the
  *    page previews the same file again and retries that batch once, under the fresh preview's
- *    numbers; if that fails too it stops and says which rows were never sent. The apply calls are
- *    silent, so no server message opens frappe's shared message dialog mid-run, and the report is
- *    a Dialog of its own: the shared one's delayed hide empties whatever was put into it last,
- *    which is how the report could vanish. The run itself is qbo_rm_run_import, below, outside
- *    on_page_load so scripts/test_qbo_matching_import.mjs can run it as it is.
+ *    numbers; if that fails too it stops and says which rows were never sent. A batch the server
+ *    never answered (no connection, 502, 503: a deploy restarting the bench) is sent again after
+ *    5, 10, 20 and 40 seconds; a 504 never is, because the worker may still be running it. The
+ *    apply calls are silent, which in frappe v16.60.2 keeps a 417's validation messages (an
+ *    expired preview included) out of frappe's shared message dialog; a 500, 502, 504 or a query
+ *    timeout still opens its own. The report is a Dialog of its own either way: the shared one's
+ *    delayed hide empties whatever was put into it last, which is how the report could vanish.
+ *    The run itself is qbo_rm_run_import, below, outside on_page_load so
+ *    scripts/test_qbo_matching_import.mjs can run it as it is.
  *
  * Endpoints (erpnext_enhancements.quickbooks_online.core.api): get_match_queue,
  * decide_match, decide_matches, confirm_match, confirm_matches,
@@ -134,11 +138,12 @@ function qbo_rm_row_key(row) {
 }
 
 /**
- * Why a frappe.call failed, from the jqXHR it rejected with: the exception's class (exc_type,
- * the way to tell an expired preview from everything else) and the server's own words.
+ * Why a frappe.call failed, from the jqXHR it rejected with: the HTTP status (0 = no connection),
+ * the exception's class (exc_type, the way to tell an expired preview from everything else) and
+ * the server's own words.
  */
 function qbo_rm_failure(xhr) {
-	const out = { exc_type: "", error: "" };
+	const out = { status: xhr && typeof xhr.status === "number" ? xhr.status : null, exc_type: "", error: "" };
 	try {
 		let body = xhr && xhr.responseJSON;
 		if (!body && xhr && typeof xhr.responseText === "string" && xhr.responseText.trim().startsWith("{")) {
@@ -167,26 +172,38 @@ function qbo_rm_failure(xhr) {
  * One Apply run (v1.840.3). Sends the batches one after another and ALWAYS ends by handing
  * `finish` one result per row -- whatever the server, the network or this code does.
  *
- *   send(token, entries)   -> Promise<{ok, message, exc_type, error}>  (never rejects)
- *   repreview()            -> Promise<{ok, token, rows}>               (never rejects)
+ *   send(token, entries)   -> Promise<{ok, message, status, exc_type, error}>  (never rejects)
+ *   repreview()            -> Promise<{ok, token, rows, status, error}>        (never rejects)
  *   freeze(text), unfreeze()   the screen while a request is out
  *   finish(results)
+ *   wait(ms)               -> Promise, the pause before a resend (a test passes one that does not wait)
  *
  * A failed batch is reported against its rows and the run carries on: each row is its own
  * decision on the server. A batch that comes back expired (MatchingPreviewExpired) gets the file
  * previewed again and is retried once, every row still to go moved to the fresh preview's number
  * for it (found by sheet, row number and QBO keys; a row the fresh preview does not list is
- * reported, not guessed). If the fresh preview fails, or the retry is expired too, the run stops:
- * the batch and every row after it are reported as not applied.
+ * reported, not guessed, and a batch left empty is not sent). If the fresh preview fails, or the
+ * retry is expired too, the run stops: the batch and every row after it are reported as not sent.
+ *
+ * A request the server never answered -- no connection (0), 502, 503: a deploy restarting the
+ * bench answers every call that way for a minute or so -- is sent again, as it was, after each
+ * of RESEND_PAUSES. Safe because the server re-checks every row before it runs and reports one
+ * that already landed as done. Never on a 504: the worker may still be running that batch, and
+ * a resend would race it on merges and notes. A batch still unanswered after the last pause
+ * stops the run, rather than spending the same minute on every batch after it.
  */
-async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, unfreeze, finish }) {
+async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, unfreeze, finish, wait }) {
 	const EXPIRED = "MatchingPreviewExpired";
+	const UNANSWERED = [0, 502, 503];
+	const RESEND_PAUSES = [5000, 10000, 20000, 40000];
+	const pause = wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 	const results = [];
 	const chunks = qbo_rm_import_chunks(rows, size);
 	const failed = (row, message) => Object.assign({}, row, { ok: false, skipped: false, message });
+	const unanswered = (reply) => !reply.ok && UNANSWERED.includes(reply.status);
 	let done = 0;
 	let stopped = "";
-	const request = async (text, call) => {
+	const once = async (text, call) => {
 		freeze(text);
 		try {
 			return (await call()) || { ok: false };
@@ -196,6 +213,26 @@ async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, u
 			unfreeze();
 		}
 	};
+	const request = async (text, call) => {
+		let reply = await once(text, call);
+		for (const ms of RESEND_PAUSES) {
+			if (!unanswered(reply)) {
+				break;
+			}
+			freeze(__("The server did not answer ({0}); trying again in {1} seconds…", [reply.status || __("no connection"), ms / 1000]));
+			try {
+				await pause(ms);
+			} finally {
+				unfreeze();
+			}
+			reply = await once(text, call);
+		}
+		return reply;
+	};
+	const silence = (reply) =>
+		__("Not sent: the server stopped answering ({0}) for over a minute. Import the file again when it is back; rows that were applied will say they are already done.", [
+			reply.status || __("no connection"),
+		]);
 	try {
 		while (chunks.length && !stopped) {
 			let chunk = chunks[0];
@@ -219,7 +256,16 @@ async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, u
 					});
 					lost.forEach((row) => results.push(failed(row, __("The fresh preview of the file no longer lists this row, so it was not applied. Import the file again."))));
 					chunk = chunks[0];
+					// A later batch every row of which the fresh preview dropped is not sent at all.
+					for (let position = chunks.length - 1; position > 0; position--) {
+						if (!chunks[position].length) {
+							chunks.splice(position, 1);
+						}
+					}
 					reply = chunk.length ? await request(__("Applying {0}–{1} of {2}…", shown), () => send(token, chunk.map(qbo_rm_identity))) : { ok: true, message: [] };
+				} else if (unanswered(fresh)) {
+					stopped = silence(fresh);
+					break;
 				}
 				if (!reply.ok && reply.exc_type === EXPIRED) {
 					const reason = renewed ? __("the fresh preview expired at once too") : fresh.error || __("the file could not be read again");
@@ -235,6 +281,9 @@ async function qbo_rm_run_import({ token, rows, size, send, repreview, freeze, u
 			}
 			chunks.shift();
 			done = shown[1];
+			if (unanswered(reply)) {
+				stopped = silence(reply);
+			}
 		}
 	} catch (e) {
 		stopped = stopped || __("Not sent: the import stopped on an error in this page ({0}). Import the file again to see what landed.", [String((e && e.message) || e)]);
@@ -1142,8 +1191,10 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	 * frappe.call, settled on the promise it returns: resolves {ok: true, message} or
 	 * {ok: false, exc_type, error}, and never hangs. Frappe v16's `error` callback is not called
 	 * on a QueryTimeout or a Deadlock (request.js shows its own dialog and stops), so a chunk loop
-	 * that waited on it would sit frozen forever on the first slow request. `silent` keeps the
-	 * server's messages out of frappe's shared message dialog; the caller reports `error` itself.
+	 * that waited on it would sit frozen forever on the first slow request. `silent` keeps a
+	 * failure's _server_messages (a 417's validation messages) out of frappe's shared message
+	 * dialog, and the caller reports `error` itself; in frappe v16.60.2 a 500, 502, 504, 508, a
+	 * QueryTimeout or a Deadlock still opens a dialog of request.js's own.
 	 */
 	function settle(method, args, { silent = false } = {}) {
 		return new Promise((resolve) => {
@@ -2118,7 +2169,8 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	 * qbo_rm_run_import (above on_page_load; see "An Apply run always ends..." in the header).
 	 * Not runInChunks: the chunks are not of one size, a failed request is reported against the
 	 * preview's own rows, which carry the sheet and row number, and an expired preview is renewed.
-	 * The calls are silent: a failure's words go into the report, not into a dialog mid-run.
+	 * The calls are silent: a 417's words (an expired preview, a refused row) go into the report,
+	 * not into frappe's shared dialog mid-run. Other failures still get request.js's own dialog.
 	 */
 	function applyImport(token, fileName, rows, size) {
 		qbo_rm_run_import({

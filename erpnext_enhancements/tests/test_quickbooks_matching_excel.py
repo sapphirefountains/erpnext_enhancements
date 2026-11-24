@@ -1015,11 +1015,46 @@ def test_a_flushed_cache_is_rebuilt_from_the_uploaded_file(monkeypatch):
 	assert cache.get_value(matching_excel._plan_key("nik@example.com", preview["token"])), "and cached again"
 	third = matching_excel.apply(preview["token"], [2], file_name="FILE-1")
 	assert third[0]["ok"] and len(reads) == 2, "the next batch found it in the cache"
-	# The rebuilt plan carries the preview's duplicate verdicts and the "already done" checks.
+	# A rebuilt plan still re-checks each row: rows that already ran report "already done".
 	cache.flushdb()
 	again = matching_excel.apply(preview["token"], [0, 1, 2], file_name="FILE-1")
 	assert all(r["skipped"] and r["category"] == "unchanged" for r in again)
 	assert len(ledger.calls) == 3
+
+
+def test_a_rebuilt_plan_keeps_the_previews_duplicate_verdicts(monkeypatch):
+	"""apply sees one row at a time and cannot judge duplicates; the plan carries the preview's
+	verdicts. A plan rebuilt after a flush must reach the same ones, or a copied sheet's second
+	copy of a row would run again, and a disagreeing pair would apply."""
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, _persistent_cache_keys())
+	workbook = openpyxl.load_workbook(io.BytesIO(_meg_file(matching_excel)))
+	copy = workbook.copy_worksheet(workbook["Vendors"])
+	copy.title = "Vendors (2)"
+	headers = {cell.value: cell.column for cell in copy[1]}
+	copy.cell(row=2, column=headers["Decision"], value="Keep")  # disagrees with Vendors row 2 (Link)
+	out = io.BytesIO()
+	workbook.save(out)
+	content = out.getvalue()
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	place = {(row["sheet"], row["qbo_id"]): row["index"] for row in preview["rows"]}
+	first_keep, second_keep = place[("Vendors", "57")], place[("Vendors (2)", "57")]
+	link, conflicting_keep = place[("Vendors", "56")], place[("Vendors (2)", "56")]
+
+	assert matching_excel.apply(preview["token"], [first_keep], file_name="FILE-1")[0]["ok"]
+	cache.flushdb()
+	results = matching_excel.apply(
+		preview["token"], [second_keep, link, conflicting_keep], file_name="FILE-1"
+	)
+	by_index = {r["index"]: r for r in results}
+	assert by_index[second_keep]["skipped"] and by_index[second_keep]["category"] == "unchanged"
+	assert "applied once, there" in by_index[second_keep]["message"]
+	for index in (link, conflicting_keep):
+		assert by_index[index]["skipped"] and by_index[index]["category"] == "invalid"
+		assert "Conflict" in by_index[index]["message"]
+	assert ledger.calls == [("confirm", "57")], "one confirm, no decide"
 
 
 def test_a_rebuilt_plan_is_used_only_when_it_is_the_previewed_plan(monkeypatch):
@@ -1054,6 +1089,10 @@ def test_a_rebuilt_plan_is_used_only_when_it_is_the_previewed_plan(monkeypatch):
 		matching_excel.apply(token, [1])  # no file named
 	with pytest.raises(matching_excel.MatchingPreviewExpired, match="expired"):
 		matching_excel.apply("0123456789abcdef", [1], file_name="FILE-1")  # a token from before the digest
+	# A crafted token is refused as expired, not a 500: secrets.compare_digest raised TypeError
+	# on a non-ASCII str.
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="no longer reads the way"):
+		matching_excel.apply("ab12cd34-é", [1], file_name="FILE-1")
 	assert ledger.calls == [], "nothing was applied from a plan that could not be proved"
 	assert issubclass(matching_excel.MatchingPreviewExpired, frappe.exceptions.ValidationError), "still a 417"
 
@@ -1104,6 +1143,16 @@ def test_the_page_tells_an_expired_preview_by_its_class_and_sends_the_file():
 	api = CORE_API.read_text(encoding="utf-8")
 	start = api.index("def apply_matching_import(")
 	assert "file_name=file_name" in api[start : start + 1200]
+	# Preview writes (it tags the File for the clean-up) and the Apply run now calls it too: a
+	# CSRF-free GET must not reach it. frappe.call sends POST unless told otherwise.
+	decorators = {
+		node.name: [ast.unparse(decorator) for decorator in node.decorator_list]
+		for node in ast.parse(api).body
+		if isinstance(node, ast.FunctionDef)
+	}
+	for endpoint in ("preview_matching_import", "apply_matching_import", "start_matching_export"):
+		assert "frappe.whitelist(methods=['POST'])" in decorators[endpoint], endpoint
+	assert 'type: "GET"' not in js and "type: 'GET'" not in js
 	ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 	assert "node scripts/test_qbo_matching_import.mjs" in ci
 
