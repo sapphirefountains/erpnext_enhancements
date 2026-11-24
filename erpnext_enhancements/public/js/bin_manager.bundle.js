@@ -25,7 +25,9 @@ import { Controller } from "./bin_manager/controller.js";
 // 3 since v1.831.0 (transactions_route): a newer copy replaces an older one already installed in the tab.
 // The page shows its Movements link only when the copy it got has the function, so an old copy in a tab
 // open across the deploy draws the page without the link instead of throwing on the click.
-const VERSION = 3;
+// 4 since v1.843.0 (count_names_jobs, split_*, Controller.count_plan / count_whose): a count at the
+// Project Shelf names its jobs. The page draws the split only on a copy at that level (BM_SPLIT_LEVEL).
+const VERSION = 4;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_bin_manager && window.sf_bin_manager.version >= VERSION)) {

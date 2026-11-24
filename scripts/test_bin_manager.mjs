@@ -32,6 +32,8 @@ const logic = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/l
 const views = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/views.js")).href);
 const { Controller } = await import(pathToFileURL(path.join(APP, "public/js/bin_manager/controller.js")).href);
 const PAGE_JS = path.join(APP, "inventory_enhancements/page/bin_manager/bin_manager.js");
+// The bundle's VERSION (public/js/bin_manager.bundle.js): the copy every test page is handed, unless it asks for an older one.
+const BUNDLE_VERSION = Number(/const VERSION = (\d+);/.exec(fs.readFileSync(path.join(APP, "public/js/bin_manager.bundle.js"), "utf8"))[1]);
 // The reorder boxes (v1.725.0), the real modules, for the page test that gives the page its bundle.
 const reorder_logic = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/logic.js")).href);
 const { ReorderEditor, cell_html } = await import(pathToFileURL(path.join(APP, "public/js/reorder_levels/editor.js")).href);
@@ -152,6 +154,12 @@ function makeServer(options) {
 			if (name === "get_item") return JSON.parse(JSON.stringify(fixture.shelf_item || { item_code: args.item_code, project_shelf: false, shelf_jobs: [], shelf_jobs_exact: true }));
 			if (name === "search_projects") return JSON.parse(JSON.stringify(fixture.jobs_found || [{ project: "PRJ-90007", project_name: "Courtyard Rill", customer: "Greenway Homes", status: "Active" }]));
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
+			// A count at the Project Shelf names its jobs (v1.843.0): the default split, and an item's latest count there.
+			if (name === "count_plan") {
+				if (fixture.count_plan) return JSON.parse(JSON.stringify(fixture.count_plan(args)));
+				return { shelf: false };
+			}
+			if (name === "count_whose") return JSON.parse(JSON.stringify(fixture.count_whose || { count: null }));
 			server.seq += 1;
 			const log = {
 				name: `SCAN-${server.seq}`,
@@ -166,7 +174,7 @@ function makeServer(options) {
 	};
 	server.writes = () =>
 		server.calls.filter(
-			(c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder|item_locations|project_index|project_view|problems|job_site|get_item|search_projects/.test(c.method)
+			(c) => !/manager_boot|get_location|get_recent|search_items|check_new_item|get_reorder_levels|set_show_reorder|item_locations|project_index|project_view|problems|job_site|get_item|search_projects|count_plan|count_whose/.test(c.method)
 		);
 	return server;
 }
@@ -740,7 +748,7 @@ function loadPage(options) {
 					delete old.transactions_route;
 					return old;
 			  })()
-			: Object.assign({ version: 3, Controller, views }, logic),
+			: Object.assign({ version: (options || {}).bundle_version || BUNDLE_VERSION, Controller, views }, logic),
 		// The reorder bundle, when the test asks for it: the real modules over this stand-in's root, which
 		// has no querySelectorAll (nothing is drawn into a real DOM here).
 		sf_reorder: (options || {}).reorder
@@ -2315,6 +2323,165 @@ test("the real page: no Movements link without the report, with an old bundle, o
 		await settle();
 		check(`${name}: a click goes nowhere`, world.route(), at);
 	}
+});
+
+// ------------------------------------------------------------------ a count at the Project Shelf names its jobs (v1.843.0)
+
+// The boot of a site where a count at the shelf names its jobs.
+const SHELF_COUNT_BOOT = Object.assign({}, SHELF_BOOT, { shelf_count_jobs: true });
+// The server's default for a count of PDT-0001 (4 on the shelf: Water Wall's 3 delivered first, Old Lobby's 1 later).
+const SHELF_PLAN = (args) => {
+	const change = Number(args.qty) - 4;
+	const old = Math.min(Math.max(-change, 0), 3);
+	return {
+		shelf: true,
+		item_code: args.item_code,
+		stock_uom: "Unit",
+		before: 4,
+		change,
+		unclaimed: 0,
+		no_job: change > 0 ? change : 0,
+		choice: true,
+		rows: [
+			{ project: "PRJ-90001", project_name: "Water Wall", holds: 3, short: 0, qty: old },
+			{ project: "PRJ-80000", project_name: "Old Lobby", holds: 1, short: 0, qty: Math.max(-change - old, 0) },
+		],
+	};
+};
+const splitHtml = (d) => d.fields_dict.bm_split.$wrapper.__state.html || "";
+const splitInput = (d) => d.fields_dict.bm_split.$wrapper.__state.handlers.find((h) => h.selector === ".bm-split-qty");
+const typeQty = async (d, qty) => {
+	d.values.qty = qty;
+	const input = d.fields_dict.qty.$input.__state;
+	input.value = String(qty);
+	input.handlers.find((h) => h.evt === "input").fn();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	await settle();
+};
+
+test("whose a count is: the split's pure pieces", () => {
+	const perms = logic.permissions(SHELF_COUNT_BOOT);
+	check("the capability comes from the boot, with a shelf", [perms.shelf_counts, logic.permissions(SHELF_BOOT).shelf_counts], [SHELF, null]);
+	check("only at the shelf", [logic.count_names_jobs(perms, SHELF), logic.count_names_jobs(perms, BIN_A), logic.count_names_jobs(logic.permissions(SHELF_BOOT), SHELF)], [true, false, false]);
+	const full = Object.assign({}, perms, { can_count: true });
+	check("Change whose on a shelf row, for whoever may count", logic.row_actions({ on_hand: 0 }, full, SHELF).includes("whose"), true);
+	check("never on a bin, never without count rights", [logic.row_actions({ on_hand: 1 }, full, BIN_A).includes("whose"), logic.row_actions({ on_hand: 1 }, Object.assign({}, full, { can_count: false }), SHELF).includes("whose")], [false, false]);
+	const plan = SHELF_PLAN({ item_code: "PDT-0001", qty: 0 });
+	check("the split starts on the server's shares", logic.split_from_plan(plan), { "PRJ-90001": 3, "PRJ-80000": 1 });
+	check("found units under no job start there", logic.split_from_plan(SHELF_PLAN({ qty: 6 })), { "": 2 });
+	check("shares that add up pass", logic.split_problem({ "PRJ-90001": 3, "PRJ-80000": 1 }, -4), null);
+	check("shares that do not are a sentence", logic.split_problem({ "PRJ-90001": 1 }, -4), "The shares add up to 1; the count changes the shelf by 4.");
+	check("a negative share is a sentence", logic.split_problem({ "PRJ-90001": -1, "": 5 }, -4), "Each share is a number, 0 or more.");
+	check("the questions", [logic.split_question(-200, "Unit"), logic.split_question(2, "Unit"), logic.split_question(0, "Unit")], [
+		"This count takes 200 Unit off the Project Shelf. Whose were they?",
+		"This count finds 2 Unit more on the Project Shelf. Whose are they?",
+		"",
+	]);
+	const row = { item_code: "PDT-0001", on_hand: 4, stock_uom: "Unit" };
+	check("a count's split must add up before it is sent", logic.check_values("count", row, { qty: 0, jobs: { "PRJ-90001": 1 } }, SHELF), "The shares add up to 1; the count changes the shelf by 4.");
+	check("a count with no split is the one it always was", logic.check_values("count", row, { qty: 0 }, SHELF), null);
+	const req = logic.request("count", SHELF, row, { qty: 0, jobs: { "PRJ-90001": 3, "PRJ-80000": 1 } }, "bm-x-00000001");
+	check("the count carries the split as JSON", JSON.parse(req.args.jobs), { "PRJ-90001": 3, "PRJ-80000": 1 });
+	check("a count away from the shelf carries none", "jobs" in logic.request("count", BIN_A, row, { qty: 0 }, "bm-x-00000001").args, false);
+	const whose = logic.request("whose", SHELF, row, { voucher_no: "MAT-RECO-1", change: -4, jobs: { "PRJ-80000": 4 } }, null);
+	check("Change whose names the count and the split", [whose.method.endsWith("bin_assignments.change_whose"), whose.args.voucher_no, JSON.parse(whose.args.jobs)], [true, "MAT-RECO-1", { "PRJ-80000": 4 }]);
+	check("Change whose with nothing to change is refused", logic.check_values("whose", row, { jobs: {} }), "There is no count of this item on the Project Shelf to change.");
+});
+
+test("the real page: a count at the shelf asks whose, starts on the default, and sends the person's split", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_plan: SHELF_PLAN }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	check("the dialog has a split box", !!d.fields_dict.bm_split, true);
+	check("nothing is asked before the quantity changes", server.calls.some((c) => c.method.endsWith("count_plan")), false);
+	await typeQty(d, 0);
+	const asked = server.calls.filter((c) => c.method.endsWith("bin_assignments.count_plan")).pop();
+	check("the default was asked for, at the shelf, for the counted quantity", asked && asked.args, { item_code: "PDT-0001", warehouse: SHELF, qty: 0 });
+	check("the question and both jobs are drawn", [/takes 4 Unit off the Project Shelf/.test(splitHtml(d)), /Water Wall/.test(splitHtml(d)), /Old Lobby/.test(splitHtml(d))], [true, true, true]);
+	check("it says the count charges no job", /charges no job/.test(splitHtml(d)), true);
+	// The person moves the loss: all 4 were Old Lobby's... which holds only 1, so the server would refuse; here the
+	// page sends what was typed and the sum is what it checks.
+	splitInput(d).fn({ currentTarget: { getAttribute: () => "PRJ-90001", value: "2" } });
+	splitInput(d).fn({ currentTarget: { getAttribute: () => "PRJ-80000", value: "1" } });
+	const before = server.writes().length;
+	await d.click_primary();
+	await settle();
+	check("shares that do not add up: refused in words, nothing sent", [/add up to 3/.test(msgOf(d)), server.writes().length], [true, before]);
+	splitInput(d).fn({ currentTarget: { getAttribute: () => "PRJ-90001", value: "3" } });
+	await d.click_primary();
+	await settle();
+	const write = server.writes().pop();
+	check("set_count carries the split", [write.method.endsWith("bin_assignments.set_count"), write.args.qty, JSON.parse(write.args.jobs)], [true, 0, { "PRJ-90001": 3, "PRJ-80000": 1 }]);
+	check("the dialog closed", d.shown, false);
+
+	// A count at an ordinary bin draws no split and sends none.
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const b = registry.dialogs.pop();
+	check("no split box at a bin", !!b.fields_dict.bm_split, false);
+	b.values.qty = 1;
+	await b.click_primary();
+	await settle();
+	check("and no split is sent", "jobs" in server.writes().pop().args, false);
+});
+
+test("the real page: an older answer for the split never replaces a newer one", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_plan: SHELF_PLAN }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	let release = null;
+	server.delay.set("count_plan", new Promise((resolve) => (release = resolve)));
+	await typeQty(d, 0);
+	server.delay.delete("count_plan");
+	await typeQty(d, 2);
+	check("the newer question is answered: 2 off", /takes 2 Unit off/.test(splitHtml(d)), true);
+	release();
+	await settle();
+	check("the older answer (4 off) arrives late and is not drawn", [/takes 2 Unit off/.test(splitHtml(d)), /takes 4 Unit off/.test(splitHtml(d))], [true, false]);
+});
+
+test("the real page: an older bundle in the tab counts at the shelf as it always did", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_plan: SHELF_PLAN, bundle_version: 3 }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	check("no split box from a copy below the level", !!d.fields_dict.bm_split, false);
+	d.values.qty = 0;
+	await d.click_primary();
+	await settle();
+	check("the count goes out without a split (the server's default names the job)", "jobs" in server.writes().pop().args, false);
+});
+
+test("the real page: Change whose says again whose the latest count was", async () => {
+	const count = { voucher_no: "MAT-RECO-2026-00239", posting_date: "2026-11-24", before: 4, change: -4, unclaimed: 0, no_job: 0, choice: true, rows: [
+		{ project: "PRJ-90001", project_name: "Water Wall", holds: 3, short: 0, qty: 3 },
+		{ project: "PRJ-80000", project_name: "Old Lobby", holds: 1, short: 0, qty: 1 },
+	] };
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_whose: { count, stock_uom: "Unit" } }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "whose", "data-item": "PDT-0001" });
+	await settle();
+	const d = registry.dialogs.pop();
+	check("the count is named, and its split is drawn", [/MAT-RECO-2026-00239/.test(d.opts.fields.find((f) => f.fieldname === "bm_whose_head").options), /Water Wall/.test(splitHtml(d))], [true, true]);
+	splitInput(d).fn({ currentTarget: { getAttribute: () => "PRJ-90001", value: "4" } });
+	splitInput(d).fn({ currentTarget: { getAttribute: () => "PRJ-80000", value: "0" } });
+	await d.click_primary();
+	await settle();
+	const write = server.writes().pop();
+	check("change_whose carries the count and the new split", [write.method.endsWith("bin_assignments.change_whose"), write.args.voucher_no, JSON.parse(write.args.jobs)], [true, "MAT-RECO-2026-00239", { "PRJ-90001": 4 }]);
+	check("and no client_ref: replacing is its own repeat", "client_ref" in write.args, false);
+});
+
+test("the bundle's level and the page's are one number", () => {
+	const level = Number(/const BM_SPLIT_LEVEL = (\d+);/.exec(fs.readFileSync(PAGE_JS, "utf8"))[1]);
+	check("BM_SPLIT_LEVEL is the bundle's VERSION", level, BUNDLE_VERSION);
 });
 
 // ------------------------------------------------------------------ run

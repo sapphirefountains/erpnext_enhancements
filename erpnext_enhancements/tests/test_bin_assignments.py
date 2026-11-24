@@ -1637,13 +1637,25 @@ ENDPOINTS = {
 	# (tests/test_project_shelf.py has its behaviour).
 	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home", "project"],
 	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref", "project"],
-	"set_count": ["item_code", "warehouse", "qty", "client_ref", "rate"],
+	# ``jobs`` (v1.843.0): whose a count's change at the Project Shelf was
+	# (tests/test_project_shelf_counts.py has its behaviour).
+	"set_count": ["item_code", "warehouse", "qty", "client_ref", "rate", "jobs"],
 	# v1.693.0, the Bin Manager page's New item (tests/test_bin_manager.py has its behaviour).
 	"create_and_assign": ["warehouse", "client_ref", "item_code", "item_name", "item_group", "stock_uom"],
 }
 
 #: Read-only endpoints (v1.693.0): GET, role-checked first, no client_ref.
-READS = {"manager_boot": []}
+READS = {
+	"manager_boot": [],
+	# v1.843.0: who a count at the Project Shelf would belong to, and an item's latest count there.
+	"count_plan": ["item_code", "warehouse", "qty"],
+	"count_whose": ["item_code"],
+}
+
+#: Writes that are not logged (v1.843.0): ``change_whose`` replaces one count's Project Shelf Tags.
+#: It moves no stock and posts nothing, so there is nothing for Undo to reverse and no voucher to log;
+#: replacing is its own repeat, so it needs no client_ref. It needs what a count needs, first.
+UNLOGGED = {"change_whose": ["item_code", "voucher_no", "jobs"]}
 
 #: The one write allowed before the log row: create_and_assign's quick Item, because the log's
 #: item_code is a Link and the Item has to exist first (the store run does the same). A retry
@@ -1669,7 +1681,20 @@ class TestTheSource(unittest.TestCase):
 			for name, fn in _functions(MODULE).items()
 			if any("whitelist" in ast.unparse(d) for d in fn.decorator_list)
 		}
-		self.assertEqual(set(found), set(ENDPOINTS) | set(READS))
+		self.assertEqual(set(found), set(ENDPOINTS) | set(READS) | set(UNLOGGED))
+		for name in UNLOGGED:
+			fn = found.pop(name)
+			with self.subTest(unlogged=name):
+				self.assertEqual(
+					[ast.unparse(d) for d in fn.decorator_list], ["frappe.whitelist(methods=['POST'])"]
+				)
+				self.assertEqual([a.arg for a in fn.args.args], UNLOGGED[name])
+				body = [
+					s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+				]
+				self.assertEqual(
+					[ast.unparse(s) for s in body[:2]], ["scan._check_access()", "_require_count()"]
+				)
 		for name in READS:
 			fn = found.pop(name)
 			with self.subTest(read=name):

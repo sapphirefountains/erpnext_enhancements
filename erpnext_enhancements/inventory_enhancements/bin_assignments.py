@@ -39,7 +39,9 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
   off the source bin if that empties it. Never makes a rule at the Boneyard.
 * :func:`set_count` -- correct what is on hand: a submitted **Stock Reconciliation** for one
   item at one bin, never a Material Issue, so the ledger says it was a count and the stock
-  value moves at the item's rate.
+  value moves at the item's rate. At the Project Shelf (v1.843.0) it names the job(s) the
+  change belongs to (:func:`count_plan` fills the dialog; :func:`count_whose` and
+  :func:`change_whose` say it again afterwards), with Project Shelf Tags that post nothing.
 * :func:`create_and_assign` (v1.693.0, the Bin Manager page) -- create a new Item through the
   store run's quick-item path (``api.stock_scan._check_quick_item`` / ``_quick_item``: the same
   checks, the same refusals, the naming guard on insert, as the user) and put it on the bin, in
@@ -827,7 +829,7 @@ def _reconciliation(item, qty, rate, location):
 
 
 @frappe.whitelist(methods=["POST"])
-def set_count(item_code, warehouse, qty, client_ref, rate=None):
+def set_count(item_code, warehouse, qty, client_ref, rate=None, jobs=None):
 	"""Correct what is on hand at a bin to ``qty`` (zero allowed): a submitted Stock
 	Reconciliation for one item at one warehouse.
 
@@ -835,6 +837,16 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None):
 	consumption, and it has to be able to go *up* as well as down. Refused in a sentence when
 	it matches what the system already shows, when it is below what is reserved there, and when
 	the bin is empty and the item has no cost on record (``api.stock_scan._receipt_rate``).
+
+	**At the Project Shelf the count names its jobs** (v1.843.0). ``jobs`` is the person's split
+	of the change, ``{project: qty}`` of positive amounts with ``""`` for the part that is no
+	job's (the page's count dialog, filled from :func:`count_plan`). It is checked before
+	anything is written (``project_shelf_rules.count_split``: the shares add up to the change,
+	and a count down takes from a job no more than it holds; a job named must exist) and handed
+	to the Stock Reconciliation's submit hook (``project_shelf.tag_reconciliation``), which
+	writes the Project Shelf Tags. Without ``jobs`` (a tab open across the deploy) the hook's
+	default split applies. The tags post nothing: the count's difference still goes to the stock
+	adjustment account with no project. A job named alone is also the log row's ``project``.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -856,6 +868,7 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None):
 	if problem:
 		frappe.throw(problem)
 	_require_count()
+	split = _shelf_split(item, location, on_hand, count, jobs)
 	typed_cost = False
 	cost = None
 	if on_hand <= rules.TOLERANCE and count > rules.TOLERANCE:
@@ -867,6 +880,7 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None):
 			return prompt
 	rate = cost
 
+	named = [project for project, _qty in (split or {}).get("tags") or ()]
 	log = scan._begin_log(
 		ref,
 		rules.ACTION_COUNT,
@@ -875,11 +889,131 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None):
 		location,
 		qty_before=on_hand,
 		rate=rate if typed_cost else None,
+		project=named[0] if len(named) == 1 else None,
 	)
 	sr = _reconciliation(item, count, rate, location)
+	if split is not None:
+		# Read by project_shelf.tag_reconciliation when the submit below fires it.
+		sr.flags.shelf_jobs = {item.name: split["chosen"]}
+	if project_shelf.is_shelf(location.name):
+		sr.flags.shelf_log = log.name
 	scan._post(sr)
 	scan._finish_log(log, "Stock Reconciliation", sr.name)
 	return scan._result(log.name)
+
+
+def _shelf_split(item, location, on_hand, count, jobs):
+	"""The person's split of a count at the Project Shelf, checked: ``{"chosen", "tags"}``, or
+	``None`` when the count is not at the shelf or names no split (the submit hook's default
+	then applies). Raises the sentence when the split cannot be posted, before anything is
+	written (v1.843.0)."""
+	if not project_shelf.is_shelf(location.name):
+		return None
+	chosen = project_shelf.rules.chosen_split(jobs)
+	if chosen is None:
+		return None
+	_check_jobs(chosen)
+	plan = project_shelf.count_plan(item.name, count, chosen=chosen, before=on_hand)
+	if plan is None:
+		return None
+	if plan["problem"]:
+		frappe.throw(_(plan["problem"]))
+	return {"chosen": chosen, "tags": plan["tags"]}
+
+
+def _check_jobs(chosen):
+	"""Every job a split gives a share to must exist."""
+	for project, qty in (chosen or {}).items():
+		if project and qty > rules.TOLERANCE and not frappe.db.exists("Project", project):
+			frappe.throw(_("There is no job {0}.").format(project))
+
+
+def _plan_out(plan):
+	"""A ``count_split`` answer as the page reads it."""
+	return {
+		"before": plan.get("before"),
+		"change": plan.get("change"),
+		"unclaimed": plan.get("unclaimed"),
+		"no_job": plan.get("no_job"),
+		"choice": bool(plan.get("choice")),
+		"rows": [
+			{
+				"project": row["project"],
+				"project_name": row.get("project_name") or row["project"],
+				"holds": row["holds"],
+				"short": row["short"],
+				"qty": row["qty"],
+			}
+			for row in plan.get("rows") or ()
+		],
+	}
+
+
+@frappe.whitelist(methods=["GET"])
+def count_plan(item_code, warehouse, qty):
+	"""Who a count of one item at the Project Shelf would belong to (v1.843.0): the jobs that
+	hold it there, what each holds, and the default share of the change for each
+	(``project_shelf.count_plan``). The count dialog shows it and lets the person change it.
+
+	Answers ``{"shelf": False}`` anywhere but the shelf, and for a quantity that is not a
+	number. Role-checked like every read here. GET, reads only."""
+	scan._check_access()
+	location = scan._location(warehouse)
+	if not project_shelf.is_shelf(location.name):
+		return {"shelf": False}
+	item = scan._stock_item(item_code)
+	try:
+		counted = float(qty)
+	except (TypeError, ValueError):
+		return {"shelf": False}
+	on_hand, _reserved = scan._bin(item.name, location.name)
+	plan = project_shelf.count_plan(item.name, counted, before=on_hand) or {}
+	return {"shelf": True, "item_code": item.name, "stock_uom": item.stock_uom, **_plan_out(plan)}
+
+
+@frappe.whitelist(methods=["GET"])
+def count_whose(item_code):
+	"""The item's latest count at the Project Shelf and whose its change was (v1.843.0), for the
+	Bin Manager's *Change whose*: ``{"count": None}`` when it has none, else ``{"count":
+	{voucher_no, posting_date, before, change, rows, no_job, unclaimed}}`` with each job's
+	current share (``project_shelf.latest_count``). GET, reads only."""
+	scan._check_access()
+	item = scan._stock_item(item_code)
+	answer = project_shelf.latest_count(item.name)
+	if not answer:
+		return {"count": None, "stock_uom": item.stock_uom}
+	return {
+		"stock_uom": item.stock_uom,
+		"count": {
+			"voucher_no": answer["voucher_no"],
+			"posting_date": answer["posting_date"],
+			**_plan_out(answer["split"]),
+			"before": answer["before"],
+			"change": answer["change"],
+		},
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def change_whose(item_code, voucher_no, jobs):
+	"""Say again whose one count's change at the Project Shelf was (v1.843.0): the count's
+	Project Shelf Tags for the item are replaced by ``jobs`` (``{project: qty}``, ``""`` for no
+	job), checked against what the shelf held just before that count. Changes no stock and no
+	GL: only whose the units were.
+
+	Needs what a count needs (Stock Reconciliation create and submit, :func:`_require_count`):
+	the person who may post the count may say whose it was. Replacing is its own repeat, so a
+	retry after a dropped reply writes the same tags again."""
+	scan._check_access()
+	_require_count()
+	item = scan._stock_item(item_code)
+	chosen = project_shelf.rules.chosen_split(jobs) or {}
+	_check_jobs(chosen)
+	split = project_shelf.change_whose(item.name, voucher_no, chosen)
+	return {
+		"message": _("Saved whose the count of {0} was.").format(item.item_name or item.name),
+		**_plan_out(split),
+	}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1069,6 +1203,9 @@ def manager_boot():
 			frappe.has_permission("Stock Entry", "create") and frappe.has_permission("Stock Entry", "submit")
 		),
 		"can_create_items": bool(frappe.has_permission("Item", "create")),
+		# A count at the Project Shelf names its jobs (v1.843.0): the dialog asks count_plan, and the
+		# shelf's rows offer Change whose. A page that does not see this flag counts as it always did.
+		"shelf_count_jobs": bool(project_shelf.warehouse()),
 		# Whether an item's name links to its Item record (TASK-2026-02918).
 		"can_open_items": bool(frappe.has_permission("Item", "read")),
 		# Whether the caller has turned the reorder boxes on here (TASK-2026-02920): hidden unless they have,

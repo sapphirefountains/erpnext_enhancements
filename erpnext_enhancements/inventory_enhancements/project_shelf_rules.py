@@ -25,6 +25,20 @@ number. Nothing here hides that: the difference between what is on hand and what
 add up to is returned per item (``untagged``), each such movement is listed
 (``untagged_movements``), and ``exact`` is true only when none of that is there.
 
+**A count names its jobs with a tag that posts nothing** (v1.843.0, the owner's yes of
+2026-11-24). A count is a Stock Reconciliation, and ERPNext 16.60.0 has no project on one: a
+custom field would be copied onto the Stock Adjustment GL line (``stock_controller``), so the
+loss would land in the job's P&L, and a count has one row per item and place, so it could not
+split between two jobs. So the count posts exactly as it did (the difference to the stock
+adjustment account, no project), and a **Project Shelf Tag** beside it says whose units the
+change was: document, item, job, signed quantity. :func:`shelf_summary` reads a tag as sharing
+out that movement's own change among the jobs it names, **never more than the change and only
+of its sign**, so a tag cannot invent a claim; whatever the tags do not cover stays untagged.
+A tag counts only while its document's ledger rows are live, and a canceled document's tags
+are deleted too (``project_shelf.drop_tags``). :func:`count_split` is who a count's change belongs to when nobody
+says (the default) and whether a person's own split adds up; :func:`settle_untagged` is the
+same default applied to the movements off the shelf that were never named (the cleanup patch).
+
 **A job's figure is never more than is physically on the shelf.** A tag is a claim, and a
 claim on stock that has left is not stock. So each job's ``qty`` is its tag balance capped by
 what is on hand (:func:`allocate`), the uncapped balance stays beside it as ``tagged``, and
@@ -76,6 +90,16 @@ TOLERANCE = 1e-6
 
 #: How many untagged movements :func:`shelf_summary` returns, newest first.
 MOVEMENT_LIMIT = 200
+
+#: Where a Project Shelf Tag came from (its ``source``, v1.843.0).
+TAG_COUNT = "Count"  # named by the person in the Bin Manager's count dialog
+TAG_DEFAULT = "Default"  # the rule's split when nobody named it: Count Desk, the phone audit, the Desk
+TAG_CLEANUP = "Cleanup"  # the one-off patch that settled the movements nobody had named
+TAG_CHANGED = "Changed"  # re-split afterwards with the Bin Manager's "Change whose"
+TAG_SOURCES = (TAG_COUNT, TAG_DEFAULT, TAG_CLEANUP, TAG_CHANGED)
+
+#: In a person's split of a count, the part that belongs to no job.
+NO_JOB = ""
 
 
 def _name(value):
@@ -417,13 +441,120 @@ def is_count(row):
 	return row.get("voucher_type") == RECONCILIATION and abs(_qty(row.get("actual_qty"))) <= TOLERANCE
 
 
-def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_LIMIT):
+def _key(voucher_type, voucher_no, item_code):
+	return (_name(voucher_type), _name(voucher_no), _name(item_code))
+
+
+def tag_pool(tags):
+	"""``{(voucher_type, voucher_no, item_code): [[project, qty], ...]}`` from Project Shelf Tag
+	rows (``voucher_type``, ``voucher_no``, ``item_code``, ``project``, ``qty``). A tag with no
+	job, no document or no quantity is left out. The lists are consumed as the ledger is read
+	(:func:`_named`), so one document's tags are used once however many of its rows there are."""
+	pool = {}
+	for tag in tags or ():
+		key = _key(tag.get("voucher_type"), tag.get("voucher_no"), tag.get("item_code"))
+		project = _name(tag.get("project"))
+		qty = _qty(tag.get("qty"))
+		if not all(key) or not project or abs(qty) <= TOLERANCE:
+			continue
+		pool.setdefault(key, []).append([project, qty])
+	return pool
+
+
+def _named(change, pooled):
+	"""Share one untagged movement's ``change`` among the jobs its tags name: only tags of the
+	change's own sign, and never more than the change. Takes what it uses out of ``pooled``.
+	Returns ``[(project, qty), ...]`` signed like ``change``."""
+	out = []
+	left = abs(change)
+	sign = 1.0 if change > 0 else -1.0
+	for entry in pooled or ():
+		if left <= TOLERANCE:
+			break
+		project, qty = entry
+		if qty * sign <= TOLERANCE:
+			continue
+		take = min(abs(qty), left)
+		out.append((project, sign * take))
+		entry[1] = qty - sign * take
+		left -= take
+	return out
+
+
+def _walk(ledger, pool, only_item=""):
+	"""One step per ledger row that changes what is on the shelf, in ledger order:
+	``{"code", "change", "before", "named", "rest", "tagged", "kind", "day", "row"}``.
+
+	``named`` is ``[(project, qty)]``: the row's own project for a row that has one (``tagged``
+	true), else the share its Project Shelf Tags give it (:func:`_named`). ``rest`` is what no
+	job has, 0 for a tagged row. A count's change is worked out from the balance before it,
+	and a count's own row never carries a job (a Stock Reconciliation has no project), so a
+	count is named only by its tags."""
+	balance = {}
+	for row in ledger or ():
+		code = _name(row.get("item_code"))
+		if not code or (only_item and code != only_item):
+			continue
+		before = balance.get(code, 0.0)
+		after = row.get("qty_after_transaction")
+		if is_count(row):
+			change = _qty(after) - before
+			balance[code] = _qty(after)
+			tag = None
+			kind = KIND_COUNT
+		else:
+			change = _qty(row.get("actual_qty"))
+			balance[code] = _qty(after) if after is not None else before + change
+			tag = _name(row.get("project")) or None
+			kind = KIND_MOVE if row.get("voucher_type") == STOCK_ENTRY else KIND_OTHER
+		if abs(change) <= TOLERANCE:
+			continue
+		if tag:
+			named, rest = [(tag, change)], 0.0
+		else:
+			named = _named(change, pool.get(_key(row.get("voucher_type"), row.get("voucher_no"), code)))
+			rest = change - sum(qty for _project, qty in named)
+			if abs(rest) <= TOLERANCE:
+				rest = 0.0
+		yield {
+			"code": code,
+			"change": change,
+			"before": before,
+			"named": named,
+			"rest": rest,
+			"tagged": bool(tag),
+			"kind": kind,
+			"day": str(row.get("posting_date") or "")[:10],
+			"row": row,
+		}
+
+
+def _credit(entries, project, code, qty, day, counted=False):
+	"""Add one job's share of a movement to its running figures for one item."""
+	entry = entries.setdefault(
+		(project, code),
+		{"qty_in": 0.0, "qty_out": 0.0, "last_movement": "", "last_in": "", "counted": 0.0},
+	)
+	if qty > 0:
+		entry["qty_in"] += qty
+		entry["last_in"] = max(entry["last_in"], day)
+	else:
+		entry["qty_out"] -= qty
+	entry["last_movement"] = max(entry["last_movement"], day)
+	if counted:
+		entry["counted"] += qty
+	return entry
+
+
+def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_LIMIT, tags=None):
 	"""Add the shelf's ledger up by job. The arithmetic behind ``project_shelf.shelf_stock``.
 
 	``ledger`` is every live Stock Ledger row at the shelf, **in ledger order** (posting time,
 	then creation), each with ``item_code``, ``project``, ``actual_qty``,
 	``qty_after_transaction``, ``voucher_type``, ``voucher_no`` and ``posting_date``.
-	``on_hand`` is ``{item_code: quantity}`` from ERPNext's on-hand table.
+	``on_hand`` is ``{item_code: quantity}`` from ERPNext's on-hand table. ``tags`` are the
+	Project Shelf Tags at the shelf (v1.843.0): each names a job for part of a movement that
+	carries none (:func:`tag_pool`).
 
 	Returns ``{"rows", "untagged", "untagged_movements", "exact"}``:
 
@@ -434,61 +565,40 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 	  and **a negative one is kept**: more left the shelf under that job than came in under
 	  it, usually parts bought for one job and used on another. ``over_tagged`` is
 	  ``tagged`` minus ``qty`` when the cap took something off, else 0. ``last_movement`` is
-	  the date of the job's latest row.
+	  the date of the job's latest row and ``last_in`` of its latest arrival. ``counted`` is
+	  the net its counts' tags gave it (negative: counted off the shelf).
 	* ``untagged``: one per item whose on-hand differs from the sum of its jobs' tag
 	  balances. ``qty`` is on hand minus tagged: positive is stock no job has a claim on,
 	  negative is more claimed than is there. ``over_tagged`` is the claimed stock that is
 	  not there, 0 or more.
-	* ``untagged_movements``: the ledger rows with no project, newest first, at most
-	  ``limit``. A count's change is worked out from the balance before it.
+	* ``untagged_movements``: the part of each movement no job has (no project, and not
+	  covered by a tag), newest first, at most ``limit``. A count's change is worked out from
+	  the balance before it.
 	* ``exact``: no untagged difference and no negative balance.
 
-	A count never counts toward a job, whatever its row says: a Stock Reconciliation has no
-	project in ERPNext. ``project`` and ``item_code`` narrow the answer; with ``project``, the
-	untagged parts cover only the items that job has rows for.
+	A count's own row never counts toward a job, whatever it says: a Stock Reconciliation has
+	no project in ERPNext. Only its tags name its jobs. ``project`` and ``item_code`` narrow
+	the answer; with ``project``, the untagged parts cover only the items that job has rows for.
 	"""
 	only_item = _name(item_code)
 	only_project = _name(project)
 	tagged = {}
-	balance = {}
 	movements = []
-	for row in ledger or ():
-		code = _name(row.get("item_code"))
-		if not code or (only_item and code != only_item):
-			continue
-		after = row.get("qty_after_transaction")
-		if is_count(row):
-			change = _qty(after) - balance.get(code, 0.0)
-			balance[code] = _qty(after)
-			tag = None
-			kind = KIND_COUNT
-		else:
-			change = _qty(row.get("actual_qty"))
-			balance[code] = _qty(after) if after is not None else balance.get(code, 0.0) + change
-			tag = _name(row.get("project")) or None
-			kind = KIND_MOVE if row.get("voucher_type") == STOCK_ENTRY else KIND_OTHER
-		if abs(change) <= TOLERANCE:
-			continue
-		day = str(row.get("posting_date") or "")[:10]
-		if tag:
-			entry = tagged.setdefault(
-				(tag, code), {"qty_in": 0.0, "qty_out": 0.0, "last_movement": "", "last_in": ""}
-			)
-			if change > 0:
-				entry["qty_in"] += change
-				entry["last_in"] = max(entry["last_in"], day)
-			else:
-				entry["qty_out"] -= change
-			entry["last_movement"] = max(entry["last_movement"], day)
-		else:
+	for step in _walk(ledger, tag_pool(tags), only_item):
+		code = step["code"]
+		counted = step["kind"] == KIND_COUNT and not step["tagged"]
+		for tag, qty in step["named"]:
+			_credit(tagged, tag, code, qty, step["day"], counted=counted)
+		if step["rest"]:
+			row = step["row"]
 			movements.append(
 				{
-					"posting_date": day,
+					"posting_date": step["day"],
 					"voucher_type": row.get("voucher_type"),
 					"voucher_no": row.get("voucher_no"),
 					"item_code": code,
-					"qty": change,
-					"kind": kind,
+					"qty": step["rest"],
+					"kind": step["kind"],
 				}
 			)
 
@@ -517,6 +627,8 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 				"qty_in": entry["qty_in"],
 				"qty_out": entry["qty_out"],
 				"last_movement": entry["last_movement"],
+				"last_in": entry["last_in"],
+				"counted": entry["counted"],
 			}
 		)
 	if only_project:
@@ -555,6 +667,347 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 		"untagged_movements": movements[: max(int(limit or 0), 0)],
 		"exact": not untagged and not any(row["tagged"] < -TOLERANCE for row in rows),
 	}
+
+
+# ---------------------------------------------------------------------------
+# Whose a count's change is (v1.843.0)
+# ---------------------------------------------------------------------------
+
+
+def claims_of(rows, item_code):
+	"""``[(project, tagged, last_in), ...]`` for one item from :func:`shelf_summary` rows: each
+	job's uncapped tag balance and its latest arrival, the input :func:`allocate` and
+	:func:`count_split` take."""
+	code = _name(item_code)
+	return [
+		(row["project"], _qty(row.get("tagged")), row.get("last_in") or "")
+		for row in rows or ()
+		if row.get("item_code") == code
+	]
+
+
+def _plain(value):
+	value = round(_qty(value), 6)
+	return str(int(value)) if value == int(value) else str(value)
+
+
+def _shares_problem(change, shares, holds, unclaimed, shorts=None):
+	"""A sentence when a person's split of a count cannot be posted, else ``None``.
+
+	On a count up, **no units can be no job's while a job is still short** (``shorts``: how many
+	each job's claim is above what it holds). The shelf gives what is on hand to the jobs' claims
+	before anything is unclaimed (:func:`allocate`), so a "no job" share would silently refill the
+	short job instead, and the split the person saved would not be the one the shelf shows."""
+	if any(qty < -TOLERANCE for qty in shares.values()):
+		return "A job's share of a count cannot be less than nothing."
+	total = sum(shares.values())
+	if abs(total - abs(change)) > TOLERANCE:
+		return (
+			f"The shares add up to {_plain(total)}, and the count changes the shelf by {_plain(abs(change))}. "
+			"Make them add up."
+		)
+	if change < 0:
+		for project, qty in shares.items():
+			if qty <= TOLERANCE:
+				continue
+			if project == NO_JOB:
+				if qty > unclaimed + TOLERANCE:
+					return f"Only {_plain(unclaimed)} of this item on the shelf belongs to no job."
+				continue
+			have = holds.get(project, 0.0)
+			if have <= TOLERANCE:
+				return f"{project} has none of this item on the shelf, so a count cannot take any off it."
+			if qty > have + TOLERANCE:
+				return f"{project} has only {_plain(have)} of this item on the shelf."
+	elif shares.get(NO_JOB, 0.0) > TOLERANCE:
+		still = {
+			project: short - min(max(shares.get(project, 0.0), 0.0), short)
+			for project, short in (shorts or {}).items()
+			if short > TOLERANCE
+		}
+		still = {project: qty for project, qty in still.items() if qty > TOLERANCE}
+		if still:
+			named = ", ".join(f"{project} ({_plain(qty)})" for project, qty in sorted(still.items()))
+			return (
+				f"Found units cannot be no job's while a job is short of this item on the shelf: {named}. "
+				"The shelf gives them to that job first. Give them to it, or to the job they were bought for."
+			)
+	return None
+
+
+def count_split(before, counted, claims, chosen=None):
+	"""Who a count's change at the shelf belongs to, and the tags that say so.
+
+	``before`` is what the shelf had of the item, ``counted`` what was counted, ``claims`` the
+	jobs' tag balances before the count (``[(project, tagged, last_in)]``, :func:`claims_of`).
+	``chosen`` is a person's split, ``{project: quantity}`` of positive amounts with
+	:data:`NO_JOB` for the part that is nobody's; ``None`` asks for the default.
+
+	**Each job holds its capped share** (:func:`allocate`); what is on the shelf beyond every
+	job's share belongs to no job (``unclaimed``).
+
+	* **A count down** comes, by default, first out of the stock no job claims, then out of the
+	  job whose delivery is oldest: the reverse of :func:`allocate`, which keeps the newest
+	  delivery's stock. That is exactly each job's capped share before less its capped share
+	  after. A person's split may take from any job up to what it holds, and from no job up to
+	  ``unclaimed``.
+	* **A count up** goes, by default, first back to a job whose claim was short (its parts had
+	  left without its tag, so the claim already exists and no tag is written for that part),
+	  then to the one job that has a claim on the item if exactly one has, else to no job. A
+	  person's split may give units to any job; only what goes beyond a job's shortfall is a tag.
+
+	Returns ``{"change", "unclaimed", "rows", "no_job", "tags", "choice", "problem"}``: ``rows``
+	``[{project, tagged, holds, short, qty}]`` with each job's share of the change (``qty``,
+	positive), most held first; ``no_job`` the part that is nobody's; ``tags``
+	``[(project, signed qty)]`` to write; ``choice`` true when the default had to choose between
+	sources (several jobs, or a job and unclaimed stock), so a person should look; ``problem`` a
+	sentence when ``chosen`` cannot be posted (``rows`` still lists the jobs, ``tags`` is empty).
+	"""
+	before = max(_qty(before), 0.0)
+	counted = max(_qty(counted), 0.0)
+	change = counted - before
+	claims = [(_name(p), _qty(b), str(last or "")) for p, b, last in claims or () if _name(p)]
+	tagged = {}
+	for project, balance, _last in claims:
+		tagged[project] = tagged.get(project, 0.0) + balance
+	holds = allocate(before, claims)
+	unclaimed = max(before - sum(holds.values()), 0.0)
+	candidates = sorted(p for p, b in tagged.items() if b > TOLERANCE)
+	out = {
+		"change": 0.0 if abs(change) <= TOLERANCE else change,
+		"unclaimed": unclaimed,
+		"rows": [],
+		"no_job": 0.0,
+		"tags": [],
+		"choice": False,
+		"problem": None,
+	}
+
+	def finish(shares, no_job, write=True):
+		rows = []
+		for project in set(candidates) | {p for p, q in shares.items() if q > TOLERANCE and p != NO_JOB}:
+			have = holds.get(project, 0.0)
+			rows.append(
+				{
+					"project": project,
+					"tagged": tagged.get(project, 0.0),
+					"holds": have,
+					"short": max(tagged.get(project, 0.0) - have, 0.0),
+					"qty": max(shares.get(project, 0.0), 0.0),
+				}
+			)
+		rows.sort(key=lambda r: (-r["holds"], -r["tagged"], r["project"]))
+		out["rows"] = rows
+		out["no_job"] = max(no_job, 0.0) if abs(no_job) > TOLERANCE else 0.0
+		tags = []
+		for row in rows if write else ():
+			if row["qty"] <= TOLERANCE:
+				continue
+			if change < 0:
+				tags.append((row["project"], -row["qty"]))
+			else:
+				beyond = row["qty"] - min(row["qty"], row["short"])
+				if beyond > TOLERANCE:
+					tags.append((row["project"], beyond))
+		out["tags"] = tags
+		return out
+
+	if abs(change) <= TOLERANCE:
+		return finish({}, 0.0)
+	if chosen is not None:
+		shares = {}
+		for project, qty in (chosen or {}).items():
+			key = _name(project)
+			shares[key] = shares.get(key, 0.0) + _qty(qty)
+		shorts = {p: max(tagged.get(p, 0.0) - holds.get(p, 0.0), 0.0) for p in tagged}
+		problem = _shares_problem(change, shares, holds, unclaimed, shorts)
+		if problem:
+			out["problem"] = problem
+			return finish({}, 0.0, write=False)
+		return finish(shares, shares.get(NO_JOB, 0.0))
+
+	after = allocate(counted, claims)
+	if change < 0:
+		shares = {p: holds.get(p, 0.0) - after.get(p, 0.0) for p in holds}
+		no_job = -change - sum(shares.values())
+		sources = sum(1 for qty in holds.values() if qty > TOLERANCE) + (1 if unclaimed > TOLERANCE else 0)
+		out["choice"] = sources > 1 and counted > TOLERANCE
+		return finish(shares, no_job)
+	shares = {p: after.get(p, 0.0) - holds.get(p, 0.0) for p in after}
+	rest = change - sum(shares.values())
+	no_job = 0.0
+	if rest > TOLERANCE:
+		if len(candidates) == 1:
+			shares[candidates[0]] = shares.get(candidates[0], 0.0) + rest
+		else:
+			no_job = rest
+	out["choice"] = len(candidates) > 1
+	return finish(shares, no_job)
+
+
+def count_shares(before, change, claims, tags):
+	"""A count's split as a person would enter it, rebuilt from the tags it wrote: ``{project:
+	qty}`` of positive amounts with :data:`NO_JOB` for the rest. What "Change whose" starts on.
+
+	* **A count down**: each job's share is its tag (a count down writes one per share).
+	* **A count up**: a share that refilled a short claim wrote **no tag** for the refill
+	  (:func:`count_split`), so the tags alone would show the job too little, and saving the
+	  dialog unchanged would take the refill away from it. So the shares are worked out the way
+	  the shelf sees them: each job's capped share after the count (its claim plus its tags, the
+	  tagged jobs as the newest arrivals) less its capped share before. A refill split between two
+	  short jobs comes back in :func:`allocate`'s order, which is what the shelf shows either way.
+
+	``before``, ``change`` and ``claims`` are :func:`count_context`'s; ``tags`` are the count's own
+	``[(project, signed qty)]``."""
+	before = max(_qty(before), 0.0)
+	change = _qty(change)
+	shares = {}
+	if change < 0:
+		for project, qty in tags or ():
+			if _qty(qty) < -TOLERANCE:
+				shares[_name(project)] = shares.get(_name(project), 0.0) - _qty(qty)
+	elif change > 0:
+		merged = {}
+		for project, balance, last in claims or ():
+			entry = merged.setdefault(_name(project), [0.0, ""])
+			entry[0] += _qty(balance)
+			entry[1] = max(entry[1], str(last or ""))
+		for project, qty in tags or ():
+			entry = merged.setdefault(_name(project), [0.0, ""])
+			entry[0] += _qty(qty)
+			if _qty(qty) > TOLERANCE:
+				entry[1] = "~"  # after every date: the count is the newest arrival
+		held = allocate(before, [(p, b, last) for p, b, last in claims or ()])
+		after = allocate(before + change, [(p, entry[0], entry[1]) for p, entry in merged.items()])
+		for project in set(held) | set(after):
+			gain = after.get(project, 0.0) - held.get(project, 0.0)
+			if gain > TOLERANCE:
+				shares[project] = gain
+	rest = abs(change) - sum(shares.values())
+	if rest > TOLERANCE:
+		shares[NO_JOB] = rest
+	return shares
+
+
+def chosen_split(jobs):
+	"""A person's split as the page sends it (``{project: qty}``, or a JSON string of one, or
+	``None``) as :func:`count_split` takes it: ``None`` for no split, else a dict of names to
+	numbers. A key that is blank, ``"null"`` or ``"none"`` is :data:`NO_JOB`."""
+	if jobs is None or jobs == "":
+		return None
+	if isinstance(jobs, str):
+		import json
+
+		try:
+			jobs = json.loads(jobs)
+		except ValueError:
+			return {}
+	if not isinstance(jobs, dict):
+		return {}
+	out = {}
+	for project, qty in jobs.items():
+		key = _name(project)
+		if key.lower() in ("null", "none"):
+			key = NO_JOB
+		out[key] = out.get(key, 0.0) + _qty(qty)
+	return out
+
+
+def last_count(ledger, item_code):
+	"""The voucher of the item's latest count at the shelf **that changed its quantity**, or
+	``None``. A reconciliation that only re-valued the item (same quantity) has a ledger row and no
+	change; :func:`count_context` cannot read one, so it is never "the latest count" either."""
+	last = None
+	for step in _walk(ledger, {}, _name(item_code)):
+		if step["kind"] == KIND_COUNT:
+			last = _name(step["row"].get("voucher_no")) or last
+	return last
+
+
+def count_context(ledger, tags, item_code, voucher_type, voucher_no):
+	"""What the shelf held of one item just before one document's rows, for a split made
+	afterwards (the Bin Manager's "Change whose"): ``(before, change, claims)``, or ``None``
+	when the document has no live row for the item at the shelf.
+
+	Every ledger row before the document's first row is read as :func:`shelf_summary` reads it,
+	with every tag **except the document's own**: those are the split being changed. ``change``
+	is the document's whole change to the item there (a count's worked out from the balance
+	before it); ``claims`` is ``[(project, tagged, last_in)]``."""
+	code = _name(item_code)
+	target = (_name(voucher_type), _name(voucher_no))
+	others = [
+		tag for tag in tags or () if (_name(tag.get("voucher_type")), _name(tag.get("voucher_no"))) != target
+	]
+	entries = {}
+	before = None
+	change = 0.0
+	for step in _walk(ledger, tag_pool(others), code):
+		row = step["row"]
+		if (_name(row.get("voucher_type")), _name(row.get("voucher_no"))) == target:
+			if before is None:
+				before = step["before"]
+			change += step["change"]
+			continue
+		if before is not None:
+			break
+		for tag, qty in step["named"]:
+			_credit(entries, tag, code, qty, step["day"])
+	if before is None:
+		return None
+	claims = [
+		(project, entry["qty_in"] - entry["qty_out"], entry["last_in"])
+		for (project, _code), entry in entries.items()
+	]
+	return before, change, claims
+
+
+def settle_untagged(ledger, tags=()):
+	"""The tags that settle every movement **off** the shelf that no job was named for: the
+	cleanup of v1.843.0, keyed on this rule when it runs, not on a list.
+
+	The ledger is read in order, as :func:`shelf_summary` reads it. A movement whose untagged
+	part takes stock off the shelf, and that has no tag of its own yet, gets :func:`count_split`'s
+	default for that part, worked out from what the shelf held at that moment. A transfer made
+	by hand takes the same default as a count: it is the same question, whose units left.
+	Movements onto the shelf are left alone (whose units they are cannot be known from the
+	ledger). Each proposal is counted as it is made, so a later movement sees the claims the
+	earlier ones left.
+
+	Returns ``[{voucher_type, voucher_no, item_code, project, qty, posting_date, kind,
+	choice}]``, in ledger order. ``choice`` says the default chose between sources."""
+	pool = tag_pool(tags)
+	tagged_keys = set(pool)
+	entries = {}
+	out = []
+	for step in _walk(ledger, pool):
+		code = step["code"]
+		row = step["row"]
+		for tag, qty in step["named"]:
+			_credit(entries, tag, code, qty, step["day"])
+		key = _key(row.get("voucher_type"), row.get("voucher_no"), code)
+		if step["rest"] >= -TOLERANCE or key in tagged_keys:
+			continue
+		claims = [
+			(project, entry["qty_in"] - entry["qty_out"], entry["last_in"])
+			for (project, item), entry in entries.items()
+			if item == code
+		]
+		split = count_split(step["before"], step["before"] + step["rest"], claims)
+		for project, qty in split["tags"]:
+			_credit(entries, project, code, qty, step["day"])
+			out.append(
+				{
+					"voucher_type": row.get("voucher_type"),
+					"voucher_no": row.get("voucher_no"),
+					"item_code": code,
+					"project": project,
+					"qty": qty,
+					"posting_date": step["day"],
+					"kind": step["kind"],
+					"choice": split["choice"],
+				}
+			)
+	return out
 
 
 def projects_summary(rows):

@@ -88,6 +88,10 @@ const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "S
 // open across a deploy draws the page without the link). The route is the pure module's.
 const BM_TRANSACTIONS_REPORT = "Warehouse Transactions";
 const BM_SEARCH_DELAY_MS = 250;
+// A count at the Project Shelf names its jobs (v1.843.0): drawn only from a bundle at this level or newer
+// (bin_manager.bundle.js VERSION), so a tab holding an older copy across the deploy counts as it always did
+// and the server's default names the jobs. scripts/test_bin_manager.mjs holds the two numbers equal.
+const BM_SPLIT_LEVEL = 4;
 
 class BinManagerPage {
 	constructor(page, wrapper) {
@@ -438,6 +442,7 @@ class BinManagerPage {
 			else if (act === "add") this.add_dialog();
 			else if (act === "create") this.create_dialog();
 			else if (row && act === "count") this.count_dialog(row);
+			else if (row && act === "whose") this.whose_dialog(row);
 			else if (row && act === "move") this.move_dialog(row);
 			else if (row && act === "boneyard") this.boneyard_dialog(row);
 			else if (row && act === "unassign") this.unassign_dialog(row);
@@ -1373,11 +1378,37 @@ class BinManagerPage {
 	}
 
 	count_dialog(row) {
+		// At the Project Shelf the count says whose the change was (v1.843.0): a split under the quantity, read
+		// from the server each time the quantity settles, which the person may change.
+		const at_shelf = this.split_ready() && this.bm.count_names_jobs(this.perms(), this.here());
+		let split = null;
 		this.save_dialog({
 			kind: "count",
 			row,
 			title: __("Change the quantity of {0}", [this.safe(row.item_name)]),
 			primary_label: __("Save count"),
+			values: at_shelf ? (d, picked) => Object.assign({}, picked || {}, split && split.jobs() ? { jobs: split.jobs() } : {}) : undefined,
+			on_build: at_shelf
+				? (d) => {
+						split = this.split_editor(d, row);
+						let timer = null;
+						// Only the latest question's answer is drawn: replies can come back out of order, and an
+						// older one would show the split for a quantity no longer in the box.
+						let asked = 0;
+						const ask = () => {
+							const mine = ++asked;
+							const qty = Number(d.fields_dict.qty.$input.val());
+							if (!Number.isFinite(qty) || qty < 0) return split.clear();
+							this.ctl.count_plan(row.item_code, qty).then((plan) => {
+								if (mine === asked) split.show(plan && plan.shelf ? plan : null);
+							});
+						};
+						d.fields_dict.qty.$input.on("input change", () => {
+							clearTimeout(timer);
+							timer = setTimeout(ask, BM_SEARCH_DELAY_MS);
+						});
+				  }
+				: undefined,
 			fields: [
 				{
 					fieldtype: "Float",
@@ -1390,8 +1421,180 @@ class BinManagerPage {
 						[this.safe(this.bm.amount(row.on_hand, row.stock_uom))]
 					),
 				},
-			],
+			].concat(at_shelf ? [{ fieldtype: "HTML", fieldname: "bm_split" }] : []),
 		});
+	}
+
+	// Whether the bundle this tab holds can draw a count's split (BM_SPLIT_LEVEL).
+	split_ready() {
+		return !!this.bm && Number(this.bm.version) >= BM_SPLIT_LEVEL && typeof this.bm.split_from_plan === "function";
+	}
+
+	// "Change whose" (v1.843.0): say again whose the item's latest count at the Project Shelf was. Changes no
+	// stock and no GL, only the Project Shelf Tags that name the count's jobs.
+	whose_dialog(row) {
+		if (!this.split_ready()) return;
+		this.ctl.count_whose(row.item_code).then(
+			(answer) => {
+				const count = answer && answer.count;
+				if (!count) {
+					frappe.msgprint(__("{0} has not been counted on the Project Shelf, so there is no count to change.", [this.safe(row.item_name)]));
+					return;
+				}
+				let split = null;
+				this.save_dialog({
+					kind: "whose",
+					row,
+					title: __("Whose was the count of {0}?", [this.safe(row.item_name)]),
+					primary_label: __("Save"),
+					values: () => ({ voucher_no: count.voucher_no, change: count.change, jobs: split.jobs() || {} }),
+					on_build: (d) => {
+						split = this.split_editor(d, row);
+						split.show(count);
+					},
+					fields: [
+						{
+							fieldtype: "HTML",
+							fieldname: "bm_whose_head",
+							options: `<p class="bm-muted">${this.esc(
+								__("{0}, counted {1}. Changing whose it was changes no stock and charges no job: it only keeps each job's share of the shelf true.", [
+									count.voucher_no,
+									count.posting_date || "",
+								])
+							)}</p>`,
+						},
+						{ fieldtype: "HTML", fieldname: "bm_split" },
+					],
+				});
+			},
+			(err) => frappe.msgprint((err && err.message) || __("Could not read the item's count."))
+		);
+	}
+
+	// The split box: one line per job that holds the item on the shelf (what it holds, and its share of the
+	// change), a line for no job, and for a count up a search to give found units to another job. Starts on the
+	// plan's own shares (the server's default, or a count's current split). `jobs()` is { project: qty }, ""
+	// for no job, or null while there is nothing to split.
+	split_editor(d, row) {
+		const wrap = d.fields_dict.bm_split.$wrapper;
+		const state = { plan: null, jobs: {}, extra: [] };
+		let timer = null;
+		let seq = 0;
+		const uom = row.stock_uom;
+		const number = (v) => {
+			const n = Number(v);
+			return Number.isFinite(n) ? n : 0;
+		};
+		const line = (key, label, held) => `<tr>
+				<td>${this.esc(label)}</td>
+				<td class="bm-qty">${held === null ? "" : this.esc(this.bm.amount(held, uom))}</td>
+				<td><input type="number" min="0" step="any" class="form-control input-xs bm-split-qty" data-bm-split="${this.esc(key)}"
+					value="${this.esc(this.bm.plain(state.jobs[key] || 0))}" aria-label="${this.esc(__("Share of {0}", [label]))}"></td>
+			</tr>`;
+		const total = () => {
+			const plan = state.plan;
+			const want = Math.abs(number(plan && plan.change));
+			const have = this.bm.split_total(state.jobs);
+			const ok = Math.abs(have - want) <= this.bm.TOLERANCE;
+			wrap.find(".bm-split-total").html(
+				this.esc(__("Shares: {0} of {1}", [this.bm.amount(have, uom), this.bm.amount(want, uom)]))
+			).toggleClass("bm-dialog-msg", !ok);
+		};
+		const draw = () => {
+			const plan = state.plan;
+			const change = number(plan && plan.change);
+			if (!plan || Math.abs(change) <= this.bm.TOLERANCE) {
+				wrap.html("");
+				return;
+			}
+			const up = change > 0;
+			const rows = (plan.rows || []).map((r) => line(r.project, r.project_name || r.project, number(r.holds)));
+			state.extra.forEach((j) => rows.push(line(j.project, j.project_name || j.project, null)));
+			if (up || number(plan.unclaimed) > this.bm.TOLERANCE || number(plan.no_job) > this.bm.TOLERANCE) {
+				rows.push(line("", __("No job"), up ? null : number(plan.unclaimed)));
+			}
+			const note = plan.choice
+				? `<p class="bm-muted">${this.esc(
+						up
+							? __("Several jobs hold this item, so the found units start under no job. Give them to the job they were bought for.")
+							: __("Several jobs hold this item. The shares start on the oldest delivery first; change them if the missing units were another job's.")
+				  )}</p>`
+				: "";
+			const search = up
+				? `<input type="search" class="form-control bm-split-search" autocomplete="off"
+						placeholder="${this.esc(__("Another job: type part of its name"))}" aria-label="${this.esc(__("Find a job"))}">
+					<div class="bm-split-results"></div>`
+				: "";
+			wrap.html(`<div class="bm-jobpick">
+				<p class="bm-preview-head">${this.esc(__(this.bm.split_question(change, uom)))}</p>
+				<p class="bm-muted">${this.esc(__("The count charges no job either way. Naming the job keeps each job's share of the Project Shelf true."))}</p>
+				${note}
+				<table class="table table-condensed bm-split"><thead><tr>
+					<th>${this.esc(__("Job"))}</th><th>${this.esc(__("On the shelf"))}</th><th>${this.esc(up ? __("Found") : __("Counted off"))}</th>
+				</tr></thead><tbody>${rows.join("")}</tbody></table>
+				<p class="bm-split-total"></p>
+				${search}
+			</div>`);
+			total();
+		};
+		wrap.on("input change", ".bm-split-qty", (e) => {
+			state.jobs[e.currentTarget.getAttribute("data-bm-split")] = number(e.currentTarget.value);
+			total();
+		});
+		wrap.on("input", ".bm-split-search", (e) => {
+			const query = String(e.currentTarget.value || "").trim();
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				const mine = ++seq;
+				const results = wrap.find(".bm-split-results");
+				if (!query) return results.html("");
+				this.ctl.search_jobs(query).then(
+					(found) => {
+						if (mine !== seq) return;
+						const known = new Set([...(state.plan.rows || []).map((r) => r.project), ...state.extra.map((j) => j.project)]);
+						const offer = (found || []).filter((j) => !known.has(j.project));
+						results.html(
+							offer.length
+								? `<ul class="bm-pick-list">${offer
+										.map((j) => `<li><button type="button" class="bm-pick" data-bm-split-add="${this.esc(j.project)}"
+											data-bm-split-name="${this.esc(j.project_name || j.project)}">${this.esc(j.project_name || j.project)}</button></li>`)
+										.join("")}</ul>`
+								: `<p class="bm-muted">${this.esc(__("No job matches."))}</p>`
+						);
+					},
+					() => mine === seq && results.html("")
+				);
+			}, BM_SEARCH_DELAY_MS);
+		});
+		wrap.on("click", "[data-bm-split-add]", (e) => {
+			const project = e.currentTarget.getAttribute("data-bm-split-add");
+			state.extra.push({ project, project_name: e.currentTarget.getAttribute("data-bm-split-name") || project });
+			if (!(project in state.jobs)) state.jobs[project] = 0;
+			draw();
+		});
+		return {
+			show: (plan) => {
+				state.plan = plan;
+				state.extra = [];
+				state.jobs = plan ? this.bm.split_from_plan(plan) : {};
+				draw();
+			},
+			clear: () => {
+				state.plan = null;
+				state.jobs = {};
+				draw();
+			},
+			jobs: () => {
+				const change = state.plan ? Number(state.plan.change) || 0 : 0;
+				if (!state.plan || Math.abs(change) <= this.bm.TOLERANCE) return null;
+				const out = {};
+				Object.keys(state.jobs).forEach((key) => {
+					const qty = number(state.jobs[key]);
+					if (qty > this.bm.TOLERANCE) out[key] = qty;
+				});
+				return out;
+			},
+		};
 	}
 
 	// "Which job?" in a Move or Send to boneyard dialog (v1.812.0, for the Project Shelf's v1.804.0).

@@ -258,14 +258,14 @@ def shelf_shares(on_hand, by_project):
 	"""One item's Project Shelf stock, by the job it is for.
 
 	``on_hand`` is what ``tabBin`` says is on the shelf: how many there are. ``by_project`` is
-	``{project: net ledger quantity}``: what came onto the shelf under each job, less what left
-	under it. Neither is changed to fit the other:
+	``{project: quantity}``: each job's share. Since v1.843.0 the adapter hands in each job's
+	**capped** share (``project_shelf_rules.allocate``, what the Bin Manager shows: never more
+	than is there), and what the cap took off travels beside it as ``over``.
 
-	* a job's share is its ledger net, whatever its sign (a job that had more leave under its
-	  name than arrive reads negative, as it does on the Project Shelf's own screens);
-	* the no-job share (``NO_PROJECT``) is what is on hand less every job's share. It is the
-	  stock no job's rows account for, and it is negative when somebody counted the shelf lower
-	  than the jobs' rows add up to (a count carries no job).
+	* a job's share is the quantity given, whatever its sign;
+	* the no-job share (``NO_PROJECT``) is what is on hand less every job's share: the stock no
+	  job's rows account for. With capped shares it is never negative; it can only be negative
+	  when given uncapped ledger nets, which nothing does any more.
 
 	So the shares always add up to what is on the shelf. Returns ``[(project, qty), ...]``, jobs
 	by name and the no-job share last, with nothing at zero.
@@ -296,6 +296,12 @@ STANDING_FROM_STOCK = "From shop stock"
 WHERE_NOT_STOCK = "Not a stock item: where it is was never recorded"
 WHERE_SHOP_BIN = "Received into a shop bin, where stock is not kept by job"
 WHERE_NOT_LOCATED = "Received before it was a stock item: where it is was never recorded"
+#: v1.843.0: the job's ledger rows claim more on the Project Shelf than is there. ``{0}`` is how many.
+WHERE_OVER_CLAIMED = (
+	"The stock ledger has {0} more on the Project Shelf for this job than is there: "
+	"counted or moved off with no job named"
+)
+WHERE_COUNTED_OFF = "Counted off the Project Shelf"
 
 SHOW_ALL = "Everything"
 SHOW_WAITING = "Still to come"
@@ -348,6 +354,8 @@ def _blank_item():
 		"on_shelf": 0.0,
 		"at_site": 0.0,
 		"used": 0.0,
+		"counted_off": 0.0,
+		"over_claimed": 0.0,
 		"held_value": 0.0,
 		"purchase_orders": set(),
 		"receipts": set(),
@@ -366,6 +374,8 @@ def project_item_rows(
 	supplier_returns=None,
 	items=None,
 	received_into=None,
+	counted_off=None,
+	over_claimed=None,
 ):
 	"""One row per item for one project: what was ordered for the job and where each stands.
 
@@ -385,6 +395,11 @@ def project_item_rows(
 	* ``items``: ``{item_code: {item_name, stock_uom, is_stock_item, item_group}}``.
 	* ``received_into``: ``{item_code: [warehouse, ...]}``, where the job's receipts actually put
 	  stock (:func:`received_into`), already in the words to show.
+	* ``counted_off`` (v1.843.0): ``{item_code: qty}`` that counts at the Project Shelf took off
+	  this job's share (its count tags, net, as a positive number). *Counted Off Shelf* shows it
+	  and *Not Located* no longer absorbs it.
+	* ``over_claimed`` (v1.843.0): ``{item_code: qty}`` the job's ledger rows claim on the shelf
+	  beyond what is there (``on_shelf`` is already capped). The row's note says so.
 
 	**Ordered and received come from different documents on purpose.** Ordered is the order
 	lines. Received is the receipt lines, not the order line's ``received_qty``: a store run is a
@@ -464,6 +479,12 @@ def project_item_rows(
 	for code, qty in (used or {}).items():
 		if abs(_num(qty)) > TOLERANCE:
 			entry(code)["used"] += _num(qty)
+	for code, qty in (counted_off or {}).items():
+		if _num(qty) > TOLERANCE:
+			entry(code)["counted_off"] += _num(qty)
+	for code, qty in (over_claimed or {}).items():
+		if _num(qty) > TOLERANCE:
+			entry(code)["over_claimed"] += _num(qty)
 	for code, qty in returned_by_item(receipt_lines, supplier_returns).items():
 		entry(code)["returned"] += qty
 	for line in supplier_returns or ():
@@ -481,7 +502,9 @@ def project_item_rows(
 		item = items.get(code) or {}
 		is_stock = _on(item.get("is_stock_item"))
 		kept = row["received"] - row["returned"]
-		not_located = max(kept - row["on_shelf"] - row["at_site"] - max(row["used"], 0.0), 0.0)
+		not_located = max(
+			kept - row["on_shelf"] - row["at_site"] - max(row["used"], 0.0) - row["counted_off"], 0.0
+		)
 		if not_located <= TOLERANCE:
 			not_located = 0.0
 		rows.append(
@@ -496,6 +519,7 @@ def project_item_rows(
 				"on_shelf": row["on_shelf"],
 				"at_site": row["at_site"],
 				"used": row["used"],
+				"counted_off": row["counted_off"],
 				"returned": row["returned"],
 				"return_pending": row["return_pending"],
 				"still_to_come": row["still_to_come"],
@@ -504,7 +528,13 @@ def project_item_rows(
 				"ordered_amount": row["ordered_amount"],
 				"standing": standing(row),
 				"received_into": ", ".join(received_into.get(code) or ()),
-				"where_note": where_note(is_stock, not_located, bool(received_into.get(code))),
+				"where_note": where_note(
+					is_stock,
+					not_located,
+					bool(received_into.get(code)),
+					over=row["over_claimed"],
+					counted_off=row["counted_off"],
+				),
 				"first_ordered": row["first_ordered"],
 				"last_received": row["last_received"],
 				"purchase_orders": ", ".join(sorted(row["purchase_orders"])),
@@ -561,11 +591,22 @@ def standing(row):
 	return STANDING_FROM_STOCK
 
 
-def where_note(is_stock_item, not_located, stocked=False):
+def _plain(value):
+	value = round(_num(value), 6)
+	return str(int(value)) if value == int(value) else str(value)
+
+
+def where_note(is_stock_item, not_located, stocked=False, over=0.0, counted_off=0.0):
 	"""Why some of an item has no place in the report, or blank when all of it has one.
-	``stocked`` says the job's receipts put some of it into stock (so it went to a shop bin)."""
+	``stocked`` says the job's receipts put some of it into stock (so it went to a shop bin).
+
+	Two Project Shelf facts come first (v1.843.0): the job's ledger rows claim more on the shelf
+	than is there (``over``: *On Project Shelf* shows only what is there, so the claim is said
+	here), and units of it were counted off the shelf (``counted_off``)."""
+	if _num(over) > TOLERANCE:
+		return WHERE_OVER_CLAIMED.format(_plain(over))
 	if _num(not_located) <= TOLERANCE:
-		return ""
+		return WHERE_COUNTED_OFF if _num(counted_off) > TOLERANCE else ""
 	if not is_stock_item:
 		return WHERE_NOT_STOCK
 	return WHERE_SHOP_BIN if stocked else WHERE_NOT_LOCATED
@@ -716,12 +757,36 @@ def held_by_project(shelf_rows, site_rows, projects=None):
 
 def shelf_gaps(shelf_rows):
 	"""``(unclaimed, short)``: how many items on the shelf have stock no job's rows account for,
-	and how many have less on the shelf than the jobs' rows claim. Read from the no-job shares."""
+	and how many have less on the shelf than the jobs' rows claim.
+
+	Unclaimed is read from the no-job shares. Short is read from each job's ``over`` (v1.843.0:
+	what the cap took off its claim), and from a negative no-job share for a row that carries no
+	``over``. Before v1.843.0 short was read from the no-job share alone, which the capped
+	shares could never make negative: the over-claim was there and the note never said so."""
 	unclaimed = {
 		r.get("item_code") for r in shelf_rows or () if not r.get("project") and _num(r.get("qty")) > 0
 	}
-	short = {r.get("item_code") for r in shelf_rows or () if not r.get("project") and _num(r.get("qty")) < 0}
+	short = {
+		r.get("item_code")
+		for r in shelf_rows or ()
+		if (r.get("project") and _num(r.get("over")) > TOLERANCE)
+		or (not r.get("project") and _num(r.get("qty")) < -TOLERANCE)
+	}
 	return len(unclaimed), len(short)
+
+
+def shelf_over(shelf_rows):
+	"""``(items, units)``: how many items the jobs' rows claim more of than is on the shelf, and
+	by how much in all (each job's ``over``, v1.843.0). The note over Project Materials says it,
+	so a claim the cap hides from a column is still in front of the reader."""
+	items = set()
+	units = 0.0
+	for row in shelf_rows or ():
+		over = _num(row.get("over"))
+		if row.get("project") and over > TOLERANCE:
+			items.add(row.get("item_code"))
+			units += over
+	return len(items), units
 
 
 # --- Job Site Contents ---------------------------------------------------------------------

@@ -410,6 +410,24 @@ export class Controller {
 		);
 	}
 
+	// Who a count of an item at the Project Shelf would belong to (v1.843.0, bin_assignments.count_plan):
+	// { shelf, before, change, rows: [{ project, project_name, holds, short, qty }], no_job, unclaimed,
+	// choice }. A read that fails answers { shelf: false }, and the dialog counts without a split (the
+	// server's own default then names the jobs).
+	count_plan(item_code, qty) {
+		const warehouse = this.state.target && this.state.target.warehouse;
+		if (!warehouse || !item_code) return Promise.resolve({ shelf: false });
+		return this.env.call(logic.READS.count_plan, { item_code, warehouse, qty }, { quiet: true }).then(
+			(answer) => answer || { shelf: false },
+			() => ({ shelf: false })
+		);
+	}
+
+	// The item's latest count at the Project Shelf and whose it was (bin_assignments.count_whose): { count }.
+	count_whose(item_code) {
+		return this.env.call(logic.READS.count_whose, { item_code }, { quiet: true });
+	}
+
 	// Jobs by name, for a move onto the shelf or a job the shelf's list does not show.
 	search_jobs(query) {
 		return this.env.call(logic.READS.search_projects, { query }, { quiet: true });
