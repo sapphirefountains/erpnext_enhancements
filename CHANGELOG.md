@@ -35,7 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       invent a claim.
     - It counts only while the document's ledger rows are live. A canceled or undone count's
       tags are also deleted (a new `on_cancel` hook on Stock Reconciliation and Stock Entry), because
-      frappe refuses to delete a canceled document that a tag still links to.
+      frappe refuses to delete a canceled document that a tag still links to. The deletion runs under
+      a savepoint and is logged if it fails. A deadlock or lock wait timeout is re-raised, so nobody
+      is told "canceled" over a document that stayed submitted.
   - **The default split** (`count_split`), used when nobody names the jobs:
     - A count down comes first out of stock no job claims, then out of the oldest delivery. That is
       the reverse of the cap, which keeps the newest delivery's stock.
@@ -54,9 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       Desk** get the default from one new hook, Stock Reconciliation `on_submit`
       (`project_shelf.tag_reconciliation`).
       - **Each row is judged as of the count's posting time** (`project_shelf_rules.count_context`),
-        never against today's claims. So a draft a Stock Manager submits days later, or a
-        reconciliation backdated in the Desk, takes its loss from the jobs that held the item when
-        it was counted. A delivery or a take posted in between belongs after it.
+        never against today's claims. So a Count Desk draft a Stock Manager submits days later
+        (the Count Desk fixes a draft's posting time when it drafts it), or a reconciliation
+        backdated in the Desk, takes its loss from the jobs that held the item when it was
+        counted. A delivery or a take posted in between belongs after it. The phone audit's draft
+        fixes no posting time, so ERPNext posts it at submit, and it is judged then.
       - **Only `purpose` Stock Reconciliation.** ERPNext 16.60.0's Opening Stock and Adjustment
         Entry reconciliations can read as a count up from nothing and would have handed stock to a
         job.
@@ -64,13 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         logged, and the count still posts. A deadlock or lock wait timeout is re-raised, never
         swallowed inside `on_submit`.
       - Where the default had to choose between jobs it says so: the Count Desk in its result, the
-        Desk in an alert.
+        Desk in an alert. For a backdated count with a later count of the item after it, the alert
+        says that Change whose cannot re-split it, rather than pointing at the button.
     - **"Change whose"** on a shelf row in the Bin Manager re-splits the item's latest count. It is
       checked against what the shelf held just before that count.
       - **Only the latest count.** The server refuses any other: re-splitting an older count would
-        shift what every later count started from.
-      - **Each new tag's note** says who changed it, when, and what the split was before. The old
-        tags stay in Deleted Document.
+        shift what every later count started from. The latest count is the latest one that changed
+        the quantity; a valuation-only reconciliation is skipped.
+      - **Each new tag's note** says who changed it, when, the split before (as the dialog showed it)
+        and the split after. The same words go on the count as a Comment, so a new split that writes
+        no tag (one that only refills a short claim) is still on record. The old tags stay in
+        Deleted Document.
       - **A count up's split is shown as it was entered**, with the refill of a short claim
         included, even though that refill wrote no tag (`project_shelf_rules.count_shares`).
         Saving it unchanged therefore changes nothing.

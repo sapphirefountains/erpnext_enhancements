@@ -1380,7 +1380,8 @@ doc_events = {
 	# count (which passes the split the person named), the Count Desk, the phone audit's draft
 	# and a reconciliation made in the Desk (the default split, project_shelf_rules.count_split).
 	# Runs after ERPNext wrote the count's ledger rows, and judges each row as of the count's posting
-	# time (a draft submitted days later takes its loss from the jobs that held the item then). Only
+	# time (a Count Desk draft submitted days later, posted as of when it was drafted, takes its loss
+	# from the jobs that held the item then; the phone audit's draft is posted at submit). Only
 	# purpose Stock Reconciliation. A default that fails is rolled back to its savepoint and logged and
 	# the count still posts; a named split that no longer adds up refuses the submit.
 	"Stock Reconciliation": {

@@ -913,6 +913,17 @@ def chosen_split(jobs):
 	return out
 
 
+def last_count(ledger, item_code):
+	"""The voucher of the item's latest count at the shelf **that changed its quantity**, or
+	``None``. A reconciliation that only re-valued the item (same quantity) has a ledger row and no
+	change; :func:`count_context` cannot read one, so it is never "the latest count" either."""
+	last = None
+	for step in _walk(ledger, {}, _name(item_code)):
+		if step["kind"] == KIND_COUNT:
+			last = _name(step["row"].get("voucher_no")) or last
+	return last
+
+
 def count_context(ledger, tags, item_code, voucher_type, voucher_no):
 	"""What the shelf held of one item just before one document's rows, for a split made
 	afterwards (the Bin Manager's "Change whose"): ``(before, change, claims)``, or ``None``

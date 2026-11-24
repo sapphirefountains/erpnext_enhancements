@@ -404,20 +404,42 @@ def write_tags(voucher_type, voucher_no, item_code, tags, source, stock_scan_log
 	return made
 
 
+def _items_words(entries):
+	items = ", ".join(entry["item_code"] for entry in entries[:5])
+	more = len(entries) - 5
+	if more > 0:
+		items += _(" and {0} more").format(more)
+	return items
+
+
 def _choice_message(report):
-	"""One sentence naming the items whose count the default split between several places, or
-	``""``. Said where the count was posted, so the person can look."""
+	"""The sentences naming the items whose count the default split between several places, or
+	``""``. Said where the count was posted, so the person can look. Change whose re-splits only an
+	item's latest count, so an entry with ``latest`` false (a backdated count with a later one after
+	it) is told so, rather than pointed at a button that would refuse it."""
 	guessed = [entry for entry in report or () if entry.get("choice")]
 	if not guessed:
 		return ""
-	items = ", ".join(entry["item_code"] for entry in guessed[:5])
-	more = len(guessed) - 5
-	if more > 0:
-		items += _(" and {0} more").format(more)
-	return _(
-		"On the Project Shelf, the count of {0} was shared between jobs by the default rule (oldest delivery first). "
-		"If that is not whose they were, use Change whose on the item's row in the Bin Manager."
-	).format(items)
+	latest = [entry for entry in guessed if entry.get("latest", True)]
+	older = [entry for entry in guessed if not entry.get("latest", True)]
+	parts = [
+		_(
+			"On the Project Shelf, the count of {0} was shared between jobs by the default rule (oldest delivery first)."
+		).format(_items_words(guessed))
+	]
+	if latest:
+		parts.append(
+			_(
+				"If that is not whose they were, use Change whose on the item's row in the Bin Manager ({0})."
+			).format(_items_words(latest))
+		)
+	if older:
+		parts.append(
+			_(
+				"{0}: a later count of the item is already on the shelf, so Change whose cannot re-split this one."
+			).format(_items_words(older))
+		)
+	return " ".join(parts)
 
 
 def _is_lock_error(exc):
@@ -463,7 +485,9 @@ def tag_reconciliation(doc, method=None):
 	Audit's draft, and a reconciliation made by hand in the Desk. Runs after ERPNext has written
 	the count's ledger rows. **Each row is judged at the count's posting time** (:func:`_split_at`),
 	never against today's claims: a draft counted on Monday and submitted on Wednesday takes its
-	loss from the jobs that held the item on Monday.
+	loss from the jobs that held the item on Monday. (A Count Desk draft is posted as of when it
+	was drafted; the phone audit's draft fixes no posting time, so ERPNext posts it at submit, and
+	that is when it is judged.)
 
 	* **Only a count**: ``purpose`` Stock Reconciliation. ERPNext 16.60.0's Opening Stock and
 	  Adjustment Entry reconciliations can read as a count up from nothing and would hand stock to
@@ -523,8 +547,14 @@ def tag_reconciliation(doc, method=None):
 			write_tags(
 				doc.doctype, doc.name, code, split["tags"], rules.TAG_DEFAULT, stock_scan_log=log, shelf=shelf
 			)
+			choice = bool(split["choice"] and split["tags"])
 			report.append(
-				{"item_code": code, "tags": split["tags"], "choice": bool(split["choice"] and split["tags"])}
+				{
+					"item_code": code,
+					"tags": split["tags"],
+					"choice": choice,
+					"latest": (not choice) or rules.last_count(_ledger(shelf, code), code) == doc.name,
+				}
 			)
 		except Exception as exc:
 			if _is_lock_error(exc):
@@ -552,12 +582,22 @@ def drop_tags(doc, method=None):
 	links to (``LinkExistsError``). The deleted tags stay in Deleted Document. An amended count is
 	a new document, and its submit names its jobs afresh. Never raises: a cancel must not fail on
 	this."""
+	point = "shelf_drop_tags"
 	try:
+		frappe.db.savepoint(point)
 		for name in frappe.get_all(
 			TAG, filters={"voucher_type": doc.doctype, "voucher_no": doc.name}, pluck="name"
 		):
 			frappe.delete_doc(TAG, name, ignore_permissions=True, force=True)
-	except Exception:
+	except Exception as exc:
+		# A deadlock or a lock wait timeout means the cancel's transaction is gone: re-raised, so the
+		# person is never told "canceled" over a document that stayed submitted.
+		if _is_lock_error(exc):
+			raise
+		try:
+			frappe.db.rollback(save_point=point)
+		except Exception:
+			pass
 		try:
 			frappe.log_error(title=f"Project Shelf: could not remove the job tags of {doc.name}")
 		except Exception:
@@ -579,11 +619,10 @@ def latest_count(item_code):
 	if not shelf or not item_code:
 		return None
 	ledger = _ledger(shelf, item_code)
-	counts = [row for row in ledger if rules.is_count(row)]
-	if not counts:
+	last = rules.last_count(ledger, item_code)
+	if not last:
 		return None
-	last = counts[-1]
-	return count_on(item_code, last.get("voucher_no"), ledger=ledger)
+	return count_on(item_code, last, ledger=ledger)
 
 
 def count_on(item_code, voucher_no, ledger=None, chosen=None):
@@ -623,9 +662,15 @@ def count_on(item_code, voucher_no, ledger=None, chosen=None):
 	}
 
 
-def _split_words(pairs):
-	words = ", ".join(f"{project} {qty:g}" for project, qty in pairs if project)
-	return words or "no job named"
+def _split_words(shares, change):
+	"""A split in words for a note: each job's share signed like the count's change, and the part
+	under no job."""
+	sign = -1 if change < 0 else 1
+	words = [f"{project} {sign * qty:+g}" for project, qty in sorted(shares.items()) if project]
+	none = shares.get(rules.NO_JOB, 0.0)
+	if none > rules.TOLERANCE:
+		words.append(f"no job {sign * none:+g}")
+	return ", ".join(words) or "nothing"
 
 
 def change_whose(item_code, voucher_no, chosen):
@@ -650,8 +695,14 @@ def change_whose(item_code, voucher_no, chosen):
 		frappe.throw(_(split["problem"]))
 	from frappe.utils import now_datetime
 
-	note = _("Changed by {0} on {1}. Before: {2}.").format(
-		frappe.session.user, now_datetime(), _split_words(answer["own"])
+	after = {row["project"]: row["qty"] for row in split["rows"] if row["qty"] > rules.TOLERANCE}
+	if split["no_job"] > rules.TOLERANCE:
+		after[rules.NO_JOB] = split["no_job"]
+	note = _("Changed by {0} on {1}. Before: {2}. After: {3}.").format(
+		frappe.session.user,
+		now_datetime(),
+		_split_words(answer["current"], answer["change"]),
+		_split_words(after, answer["change"]),
 	)
 	for name in frappe.get_all(
 		TAG,
@@ -671,6 +722,17 @@ def change_whose(item_code, voucher_no, chosen):
 		rules.TAG_CHANGED,
 		note=note,
 	)
+	# On the count itself as well: a new split that refills a short claim writes no tag at all, and
+	# the change must still be on record somewhere a person will look.
+	frappe.get_doc(
+		{
+			"doctype": "Comment",
+			"comment_type": "Comment",
+			"reference_doctype": rules.RECONCILIATION,
+			"reference_name": answer["voucher_no"],
+			"content": _("Project Shelf, whose this count of {0} was: {1}").format(_name(item_code), note),
+		}
+	).insert(ignore_permissions=True)
 	return split
 
 

@@ -1008,9 +1008,11 @@ are deleted by its `on_cancel` hook (`project_shelf.drop_tags`), so frappe can s
   under no job while a job is still short: the shelf would give them to that job anyway.
 
 **A count is judged as of its own posting time** (`project_shelf_rules.count_context`), not against
-today's claims: a Count Desk draft submitted days later, or a reconciliation backdated in the Desk,
-takes its loss from the jobs that held the item when it was counted. Only `purpose` Stock
-Reconciliation names jobs (Opening Stock and Adjustment Entry do not).
+today's claims: a Count Desk draft submitted days later (posted as of when it was drafted), or a
+reconciliation backdated in the Desk, takes its loss from the jobs that held the item when it was
+counted. The phone audit's draft fixes no posting time, so ERPNext posts it at submit and it is
+judged then. Only `purpose` Stock Reconciliation names jobs (Opening Stock and Adjustment Entry do
+not).
 
 **Every path that can count the shelf:**
 

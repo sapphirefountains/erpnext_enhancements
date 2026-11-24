@@ -610,6 +610,58 @@ class TestChangeWhose(_Base):
 		self.assertIn("Before: " + JOB_A + " -1", changed[0]["note"])
 		self.assertIn("Changed by", changed[0]["note"])
 
+	def test_the_note_names_the_old_split_as_shown_and_a_comment_records_it_on_the_count(self):
+		# The round-2 case: a count 6 -> 10 that only refilled A's shortfall wrote no tag. The dialog
+		# shows A 4; changed to A 2 / B 2, the record says "Before: A +4", not "no job named".
+		_held_on(ITEM, (JOB_A, 10, "2026-11-01"))
+		STATE["ledger"].append(
+			shelf_base._row(ITEM, -4, None, voucher_type="Stock Entry", voucher_no="SE-X", after=6)
+		)
+		base._bin(ITEM, SHELF, 6)
+		bins.set_count(ITEM, SHELF, 10, base._ref())
+		self.assertEqual(base._table(TAG), {})
+		count = bins.count_whose(ITEM)["count"]
+		self.assertEqual({r["project"]: r["qty"] for r in count["rows"]}, {JOB_A: 4.0})
+		bins.change_whose(ITEM, count["voucher_no"], {JOB_A: 2, JOB_B: 2})
+		tags = list(base._table(TAG).values())
+		self.assertEqual([(t["project"], t["qty"]) for t in tags], [(JOB_B, 2.0)])
+		self.assertIn(f"Before: {JOB_A} +4.", tags[0]["note"])
+		self.assertIn(f"After: {JOB_A} +2, {JOB_B} +2.", tags[0]["note"])
+		comments = [
+			c for c in base._table("Comment").values() if c.get("reference_name") == count["voucher_no"]
+		]
+		self.assertEqual(len(comments), 1)
+		self.assertIn(f"Before: {JOB_A} +4.", comments[0]["content"])
+		# Back to A alone: no tag is written at all, and the Comment still records the change.
+		bins.change_whose(ITEM, count["voucher_no"], {JOB_A: 4})
+		self.assertEqual(base._table(TAG), {})
+		comments = [
+			c for c in base._table("Comment").values() if c.get("reference_name") == count["voucher_no"]
+		]
+		self.assertEqual(len(comments), 2)
+		self.assertIn(f"Before: {JOB_A} +2, {JOB_B} +2. After: {JOB_A} +4.", comments[1]["content"])
+
+	def test_the_latest_count_is_the_latest_that_changed_the_quantity(self):
+		_two_jobs()
+		bins.set_count(ITEM, SHELF, 5, base._ref())
+		real = bins.count_whose(ITEM)["count"]["voucher_no"]
+		# A reconciliation that only re-valued the item: a ledger row, no change.
+		STATE["ledger"].append(
+			shelf_base._row(
+				ITEM,
+				0,
+				None,
+				voucher_type="Stock Reconciliation",
+				voucher_no="SR-VALUE",
+				after=5,
+				day="2026-11-25",
+			)
+		)
+		self.assertEqual(rules.last_count(STATE["ledger"], ITEM), real)
+		self.assertEqual(bins.count_whose(ITEM)["count"]["voucher_no"], real)
+		bins.change_whose(ITEM, real, {JOB_B: 3})
+		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_B, -3.0)])
+
 	def test_a_count_up_shows_its_refill_and_saving_it_unchanged_changes_nothing(self):
 		# The review's case: A received 10, a move with no job took 4, a count finds 6 more.
 		_held_on(ITEM, (JOB_A, 10, "2026-11-01"))
@@ -687,7 +739,8 @@ class TestTheSubmitHook(_Base):
 		sr = self._reconcile(5)
 		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_A, -3.0)])
 		self.assertEqual(
-			sr.flags.shelf_tagged, [{"item_code": ITEM, "tags": [(JOB_A, -3.0)], "choice": True}]
+			sr.flags.shelf_tagged,
+			[{"item_code": ITEM, "tags": [(JOB_A, -3.0)], "choice": True, "latest": True}],
 		)
 		message, kwargs = STATE["msgprints"][0]
 		self.assertIn("Change whose", message)
@@ -812,13 +865,84 @@ class TestTheSubmitHook(_Base):
 		self.assertEqual(len(base._table(TAG)), 2)
 		shelf.drop_tags(sr)
 		self.assertEqual([t["voucher_no"] for t in base._table(TAG).values()], ["SR-OTHER"])
-		real = FRAPPE.get_all
+		real, real_rollback = FRAPPE.get_all, FRAPPE.db.rollback
+		rolled = []
 		FRAPPE.get_all = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		FRAPPE.db.rollback = lambda save_point=None: rolled.append(save_point)
 		try:
 			shelf.drop_tags(other)
 		finally:
-			FRAPPE.get_all = real
+			FRAPPE.get_all, FRAPPE.db.rollback = real, real_rollback
+		self.assertEqual(rolled, ["shelf_drop_tags"])
 		self.assertTrue(any("could not remove" in (title or "") for title, _m in STATE["errors"]))
+
+	def test_a_lock_error_while_removing_tags_is_never_swallowed(self):
+		class LockWait(Exception):
+			pass
+
+		sr = base.Doc("Stock Reconciliation", {"name": "SR-LOCK"})
+		real = FRAPPE.get_all
+		FRAPPE.get_all = lambda *a, **k: (_ for _ in ()).throw(LockWait("1205"))
+		FRAPPE.db.is_timedout = lambda e: isinstance(e, LockWait)
+		try:
+			with self.assertRaises(LockWait):
+				shelf.drop_tags(sr)
+		finally:
+			FRAPPE.get_all = real
+			del FRAPPE.db.is_timedout
+
+	def test_a_backdated_count_with_a_later_one_is_not_pointed_at_change_whose(self):
+		STATE["ledger"].extend(
+			[
+				shelf_base._row(ITEM, 5, JOB_A, voucher_no="PR-A", after=5, day="2026-11-01"),
+				shelf_base._row(ITEM, 3, JOB_B, voucher_no="PR-B", after=8, day="2026-11-01"),
+				shelf_base._row(
+					ITEM,
+					0,
+					None,
+					voucher_type="Stock Reconciliation",
+					voucher_no="SR-DRAFT",
+					after=6,
+					day="2026-11-02",
+				),
+				shelf_base._row(
+					ITEM,
+					0,
+					None,
+					voucher_type="Stock Reconciliation",
+					voucher_no="SR-LATER",
+					after=5,
+					day="2026-11-03",
+				),
+			]
+		)
+		base._bin(ITEM, SHELF, 5)
+		sr = base.Doc(
+			"Stock Reconciliation",
+			{
+				"name": "SR-DRAFT",
+				"purpose": "Stock Reconciliation",
+				"items": [{"item_code": ITEM, "warehouse": SHELF, "qty": 6}],
+			},
+		)
+		shelf.tag_reconciliation(sr)
+		self.assertEqual(sr.flags.shelf_tagged[0]["latest"], False)
+		message = STATE["msgprints"][0][0]
+		self.assertIn("cannot re-split this one", message)
+		self.assertNotIn("use Change whose", message)
+
+	def test_the_message_points_at_change_whose_only_for_a_latest_count(self):
+		both = shelf._choice_message(
+			[
+				{"item_code": "NEW-1", "tags": [("A", -1)], "choice": True, "latest": True},
+				{"item_code": "OLD-1", "tags": [("A", -1)], "choice": True, "latest": False},
+				{"item_code": "QUIET", "tags": [("A", -1)], "choice": False, "latest": True},
+			]
+		)
+		self.assertIn("use Change whose on the item's row in the Bin Manager (NEW-1)", both)
+		self.assertIn("OLD-1: a later count of the item", both)
+		self.assertNotIn("QUIET", both)
+		self.assertEqual(shelf._choice_message([{"item_code": "X", "choice": False}]), "")
 
 	def test_a_named_split_that_no_longer_fits_refuses_the_submit(self):
 		shelf_base._held(ITEM, (JOB_A, 5))
