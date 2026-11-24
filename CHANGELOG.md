@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.841.0] - 2026-11-24
+
+### Added
+
+- **Map Plaid accounts now works with the way ERPNext 16.60 links, and covers credit cards
+  (WI-056, TASK-2026-00950).** Plaid bank feeds are going live on a production Plaid
+  account, on ERPNext's native integration. Reading the 16.60.0 code turned up two gaps in
+  our mapping step:
+  - **The dialog had nothing to offer after a real link.** A first native Link *always*
+    creates a duplicate Bank Account and a new GL Account per shared account:
+    `add_bank_accounts` reuses a Bank Account only by Plaid `integration_id` or exact native
+    name, and on a first link neither exists. The dialog then listed every account as
+    "already mapped" to its own duplicate. The fix-up, `absorb_native_duplicate`, was
+    reachable only from bench.
+  - **Cards could not become Bank Accounts.** `Bank Account.validate_account` accepts only a
+    GL ledger of type Bank. The QuickBooks sync leaves card ledgers untyped on purpose, since
+    "Payable" would demand a Party on every card line. Native Link would have put each card
+    on a new *Asset* GL Account under the Bank group.
+
+  The dialog now makes one call, `apply_plaid_mappings` (connect roles only, POST). It
+  decides by who holds each Plaid account:
+  - **Nobody:** the id is stamped on the chosen master.
+  - **A Link-created duplicate:** it is folded into the master. The duplicate's GL Account is
+    deleted when unused.
+  - **Another master:** refused. Moving a link between two real accounts is a person's call.
+
+  "Link-created" is judged by the GL Account (named `"<Plaid name> - <institution>"`), not
+  the Bank Account's name, which a master shares the shape of. For a card, you pick its
+  Liability ledger instead of a master:
+  - That ledger's Account Type is set to Bank, only when it was blank, through a normal save.
+    Bank on a Liability root is legal; 13202 Auto Loan has it since WI-042, and ERPNext's
+    matcher expects asset and liability accounts under one bank.
+  - The card gets a Bank Account with **Is Credit Card** ticked (16.60; left out on a site
+    without the field).
+  - The Link-created duplicate is folded into it.
+
+  One **Feed starts on** date becomes every mapped account's `last_integration_date`, so the
+  first pull starts there rather than twelve months back. A future date is refused before
+  any write: the native sync would ask Plaid for a start after its end and log an error every
+  hour. Each row runs in its own savepoint with messages muted, so one refusal is reported
+  without undoing the rest. A credit account's GL field is pre-filled only when exactly one
+  ledger's name carries its mask.
+- **The Bank Balances widget labels card balances.** For a Plaid credit account, "current"
+  is what is owed and "available" is the credit left. The tile now says so instead of
+  showing a bare number beside the checking balances.
+
+### Changed
+
+- **The `plaid_banking` README is re-verified against the `v16.60.0` tag.**
+  - **Re-link.** A re-link now updates the master in place by `integration_id` and
+    overwrites its `account_name` with Plaid's. It leaves no stray GL Account, so
+    `prune_link_created_gl_accounts` should find nothing.
+  - **One token per Bank.** Link each institution once, with every account, cards included.
+    A second Link replaces the first token.
+  - **History.** The native link token requests no extra history, so Plaid's 90-day default
+    applies.
+  - **New sections:** credit cards; the QuickBooks overlap (Bank Transactions write no GL;
+    only submitted vouchers can be matched; "match only, never create" while QuickBooks is
+    the book of record; a checking-to-card payment clears on one side only); and what Plaid
+    bills for (Transactions monthly per Item; a Balance call per bank per widget refresh).
+
+  WI-056 records Nik's approved plan: the accounts to link, cutover 2026-11-01, and the
+  overlap rule. `absorb_native_duplicate` and `map_plaid_account` take an optional
+  `start_date` and refuse a future one. Ten new tests in the existing bench-free
+  `test_plaid_banking.py` step.
+
 ## [1.840.2] - 2026-11-23
 
 ### Changed

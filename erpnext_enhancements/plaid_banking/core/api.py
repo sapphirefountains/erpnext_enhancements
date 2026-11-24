@@ -10,8 +10,8 @@ callable directly, so the RPC gate is the only access boundary):
   Accounts User}``. Returns balances + masks + freshness per bank; never tokens
   or keys.
 * **connect** -- anything that spends a Plaid call or writes a Bank Account's
-  Plaid link (refresh / test / map / absorb): ``{System Manager, Accounts
-  Manager}`` only.
+  Plaid link (refresh / test / map / absorb, and the card step, which also sets a
+  card ledger's Account Type to Bank): ``{System Manager, Accounts Manager}`` only.
 
 There is no link / exchange / disconnect endpoint any more: linking a bank is the
 native ERPNext flow (Plaid Settings -> "Link a new bank account"; Bank ->
@@ -155,10 +155,22 @@ def map_plaid_account(bank_account, account_id, mask=None, start_date=None, bank
 
 
 @frappe.whitelist(methods=["POST"])
-def absorb_native_duplicate(duplicate, into):
+def absorb_native_duplicate(duplicate, into, start_date=None):
 	"""Move a native-created duplicate's Plaid link onto our master and delete the duplicate."""
 	_require_finance_operator(connect=True)
-	return link_accounts.absorb_native_duplicate(duplicate, into)
+	return link_accounts.absorb_native_duplicate(duplicate, into, start_date=start_date or None)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_plaid_mappings(rows, start_date=None):
+	"""The Map Plaid accounts dialog's one call: each row puts a Plaid account on a master
+	or on a card's GL account (creating the card's Bank Account), folding in the duplicate
+	native Link made. Per-row results; one refused row does not undo the others."""
+	_require_finance_operator(connect=True)
+	rows = frappe.parse_json(rows) if isinstance(rows, str) else rows
+	if not isinstance(rows, list):
+		frappe.throw("rows must be a list.")
+	return link_accounts.apply_plaid_mappings(rows, start_date=start_date or None)
 
 
 @frappe.whitelist(methods=["POST"])
