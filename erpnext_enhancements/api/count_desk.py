@@ -39,6 +39,10 @@ this module reads and writes. The things it is careful about:
   submitted tomorrow does not wipe out today's takes and receipts: ERPNext reposts them on top.
 * **A post is idempotent.** A retry after a dropped reply finds the session Finalized and gets the
   first post back with ``repeated``; nothing posts twice.
+* **A count at the Project Shelf names its jobs** (v1.842.0), through the Stock Reconciliation
+  submit hook (``project_shelf.tag_reconciliation``), with the default split: whatever a draft's
+  Stock Manager submits gets the same. The result says which shelf items the default had to
+  share between jobs; the Bin Manager's *Change whose* says it again if that was wrong.
 
 Access: ``count_desk_rules.COUNT_ROLES`` (the phone page's counting roles). A count belongs to
 whoever started it; ``SUPERVISOR_ROLES`` may open and act on anyone's. The session and its lines are
@@ -1104,6 +1108,7 @@ def post_count(session, mode="post"):
 		frappe.throw(_("A variance reason is required before posting: {0}.").format(", ".join(names)))
 
 	posted, drafts = [], []
+	shelf_tagged = []
 	batches = _reconciliations(doc, plan, draft=mode == "draft")
 	who = scan._full_name(doc.counted_by)
 	link = get_url_to_form(SESSION, doc.name)
@@ -1119,6 +1124,10 @@ def post_count(session, mode="post"):
 			),
 		)
 		if mode == "post":
+			# The Project Shelf's submit hook names the jobs of every shelf row (v1.842.0); this page
+			# says so itself in the result, so the hook adds no alert of its own.
+			if getattr(sr, "flags", None) is not None:
+				sr.flags.shelf_quiet = True
 			sr.submit()
 			# A reconciliation of more than 100 rows is submitted by a background job, still a draft
 			# here; none is that long (batches), and this refuses the post, rolling back every one,
@@ -1130,6 +1139,7 @@ def post_count(session, mode="post"):
 					).format(sr.name)
 				)
 			posted.append(sr.name)
+			shelf_tagged.extend((getattr(sr, "flags", None) or {}).get("shelf_tagged") or ())
 		else:
 			drafts.append(sr.name)
 
@@ -1152,4 +1162,20 @@ def post_count(session, mode="post"):
 			"notes": "\n\n".join(notes)[:10000] if notes else doc.notes,
 		}
 	)
-	return _post_result(doc, plan, posted, drafts)
+	result = _post_result(doc, plan, posted, drafts)
+	shelf_note = _shelf_note(shelf_tagged)
+	if shelf_note:
+		result["message"] = f"{result['message']} {shelf_note}".strip()
+		result["shelf_note"] = shelf_note
+	return result
+
+
+def _shelf_note(shelf_tagged):
+	"""The sentence naming the Project Shelf items whose count the default split between jobs
+	(v1.842.0), or ``""``. Never raises: a count that posted is reported as posted."""
+	try:
+		from erpnext_enhancements.inventory_enhancements import project_shelf
+
+		return project_shelf._choice_message(shelf_tagged)
+	except Exception:
+		return ""

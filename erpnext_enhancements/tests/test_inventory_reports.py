@@ -1216,16 +1216,19 @@ class TestSharedReads(_Case):
 			],
 		)
 		rows = data.shelf_stock_by_project("Project Shelf - SF")
+		# v1.842.0: even this reading caps each job by what is there, as the Bin Manager does. B has 6
+		# on the shelf and 12 claimed: with no delivery dates here the shortfall is shared in job order,
+		# and JOB-2's claim beyond what is there is its `over`, never a negative no-job row.
 		self.assertEqual(
-			[(r["item_code"], r["project"], r["qty"], r["value"]) for r in rows],
+			[(r["item_code"], r["project"], r["qty"], r["value"], r["over"]) for r in rows],
 			[
-				("A", "JOB-1", 4.0, 8.0),
-				("A", "", 6.0, 12.0),
-				("B", "JOB-1", 4.0, 6.0),
-				("B", "JOB-2", 8.0, 12.0),
-				("B", "", -6.0, -9.0),
+				("A", "JOB-1", 4.0, 8.0, 0.0),
+				("A", "", 6.0, 12.0, 0.0),
+				("B", "JOB-1", 4.0, 6.0, 0.0),
+				("B", "JOB-2", 2.0, 3.0, 6.0),
 			],
 		)
+		self.assertEqual(rules.shelf_over(rows), (1, 6.0))
 		for query, params, _as_dict in STATE["sql_calls"]:
 			self.assertEqual(params, {"shelf": "Project Shelf - SF"})
 			self.assertNotIn("in %(items)s", query)
@@ -1246,9 +1249,13 @@ class TestSharedReads(_Case):
 			self.assertEqual(params["items"], ("A",))
 
 	def test_a_claim_with_nothing_left_on_the_shelf_still_shows(self):
+		# v1.842.0: shown as nothing held and 3 claimed beyond what is there, for the notes to say.
 		self._shelf_sql([], [{"item_code": "A", "project": "JOB-1", "qty": 3}])
 		rows = data.shelf_stock_by_project("Project Shelf - SF")
-		self.assertEqual([(r["project"], r["qty"]) for r in rows], [("JOB-1", 3.0), ("", -3.0)])
+		self.assertEqual(
+			[(r["project"], r["qty"], r["tagged"], r["over"]) for r in rows], [("JOB-1", 0.0, 3.0, 3.0)]
+		)
+		self.assertEqual(rules.shelf_gaps(rows), (0, 1))
 
 	def test_no_shelf_or_no_items_asks_nothing(self):
 		self.assertEqual(data.shelf_stock_by_project(None), [])
@@ -1846,29 +1853,28 @@ class TestWhereIsThisItem(_Case):
 		)
 
 	def test_a_shelf_counted_lower_than_the_jobs_claim_shows_the_gap_and_says_what_it_means(self):
+		# v1.842.0: the job shows what is there (capped, as the Bin Manager shows it); the 3 its ledger
+		# rows claim beyond that are said in the note, never shown as a negative no-job row.
 		self.shares = [
-			{"item_code": "A", "project": "JOB-1", "qty": 12.0, "value": 120.0},
-			{"item_code": "A", "project": "", "qty": -3.0, "value": -30.0},
+			{"item_code": "A", "project": "JOB-1", "qty": 9.0, "value": 90.0, "tagged": 12.0, "over": 3.0},
 		]
 		_columns, rows, message, _chart, _summary = self.run_report(item_code="A")
 		shelf = [r for r in rows if r["kind"] == rules.KIND_SHELF]
-		self.assertEqual([(r["project"], r["on_hand"]) for r in shelf], [("JOB-1", 12.0), ("", -3.0)])
+		self.assertEqual([(r["project"], r["on_hand"]) for r in shelf][:1], [("JOB-1", 9.0)])
 		self.assertEqual(sum(r["on_hand"] for r in shelf), 9.0)
-		self.assertIn(where_item.SHORT_SHELF_NOTE, message)
+		self.assertIn(where_item.SHORT_SHELF_NOTE.format(1, "3"), message)
 		self.shares = [{"item_code": "A", "project": "JOB-1", "qty": 9.0, "value": 90.0}]
 		self.assertEqual(self.run_report(item_code="A")[2], data.ALL_ROWS_NOTE)
 
-	def test_a_claim_on_an_item_with_nothing_left_on_the_shelf_still_gets_its_rows(self):
+	def test_a_claim_on_an_item_with_nothing_left_on_the_shelf_is_said_not_listed(self):
+		# v1.842.0: a job whose whole claim has left holds nothing on the shelf, so the item gets no shelf
+		# row there (the Bin Manager shows none either); the note over the table says what is claimed.
 		self.shares = [
-			{"item_code": "C", "project": "JOB-2", "qty": 2.0, "value": 0.0},
-			{"item_code": "C", "project": "", "qty": -2.0, "value": 0.0},
+			{"item_code": "C", "project": "JOB-2", "qty": 0.0, "value": 0.0, "tagged": 2.0, "over": 2.0}
 		]
-		rows = [r for r in self.run_report()[1] if r["item_code"] == "C"]
-		self.assertEqual(
-			[(r["kind"], r["project"], r["on_hand"]) for r in rows],
-			[(rules.KIND_SHELF, "JOB-2", 2.0), (rules.KIND_SHELF, "", -2.0)],
-		)
-		self.assertEqual(rows[0]["project_name"], "Second Job")
+		_columns, rows, message, _chart, _summary = self.run_report()
+		self.assertEqual([r for r in rows if r["item_code"] == "C" and r["kind"] == rules.KIND_SHELF], [])
+		self.assertIn(where_item.SHORT_SHELF_NOTE.format(1, "2"), message)
 
 	def test_a_job_site_row_carries_its_job_and_a_shop_row_its_last_movement(self):
 		rows = {r["warehouse"]: r for r in self.run_report(item_code="A")[1] if r["kind"] != rules.KIND_SHELF}
@@ -2191,20 +2197,23 @@ class TestProjectMaterials(_Case):
 		def shelf(shelf, item_codes=None, projects=None):
 			asked.append(projects)
 			return [
-				{"item_code": "A", "project": "JOB-1", "qty": 5.0, "value": 50.0},
-				{"item_code": "A", "project": "", "qty": -2.0, "value": -20.0},
-				{"item_code": "D", "project": "", "qty": -9.0, "value": -9.0},
+				{"item_code": "A", "project": "JOB-1", "qty": 5.0, "value": 50.0, "tagged": 7.0, "over": 2.0},
+				{"item_code": "D", "project": "JOB-2", "qty": 0.0, "value": 0.0, "tagged": 9.0, "over": 9.0},
+				{"item_code": "E", "project": "", "qty": 4.0, "value": 4.0},
 			]
 
 		self.patched.set(data, "shelf_stock_by_project", shelf)
 		_c, rows, message, _ch, _s = self.run_report(project="JOB-1")
 		self.assertEqual(asked, [["JOB-1", ""]])
 		by_item = {r["item_code"]: r for r in rows}
-		# The job's own figure is the ledger's; the no-job share is not the job's stock.
+		# v1.842.0: the job's own figure is capped by what is there (the Bin Manager's); the 2 more its
+		# ledger rows claim are said in the row's note and over the table. The no-job share is nobody's.
 		self.assertEqual(by_item["A"]["on_shelf"], 5)
+		self.assertEqual(by_item["A"]["where_note"], rules.WHERE_OVER_CLAIMED.format("2"))
 		self.assertNotIn("D", by_item)
-		# One of this job's shelf items is short on the shelf; D is not this job's.
-		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1), message)
+		self.assertNotIn("E", by_item)
+		# One of this job's shelf items is over-claimed, by 2; D is another job's.
+		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1, "2"), message)
 
 	def test_a_finished_job_reads_the_same(self):
 		# Nothing in the one-project view reads the job's status.
@@ -2248,10 +2257,12 @@ class TestProjectMaterials(_Case):
 		self.assertEqual(first["total_value"], 80)
 		self.assertEqual((rows[1]["shelf_value"], rows[1]["site_value"]), (8, 20))
 		self.assertIn("1 item(s) on the Project Shelf are under no job", message)
-		self.assertNotIn("counted lower", message)
-		self.shelf_rows.append({"item_code": "B", "project": "", "qty": -4.0, "value": -4.0})
+		self.assertNotIn("more than is on the Project Shelf", message)
+		self.shelf_rows.append(
+			{"item_code": "B", "project": "JOB-1", "qty": 0.0, "value": 0.0, "tagged": 4.0, "over": 4.0}
+		)
 		message = self.run_report(include_finished=1)[2]
-		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1), message)
+		self.assertIn(project_materials.SHORT_SHELF_NOTE.format(1, "4"), message)
 		self.shelf_rows.pop()
 		values = {card["label"]: card["value"] for card in cards}
 		self.assertEqual(values["Jobs holding stock"], 2)

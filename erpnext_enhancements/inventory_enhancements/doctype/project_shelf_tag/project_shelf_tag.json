@@ -1,0 +1,168 @@
+{
+ "actions": [],
+ "autoname": "format:SHELF-TAG-{YYYY}-{#####}",
+ "creation": "2026-11-24 12:00:00.000000",
+ "description": "Which job a Project Shelf movement with no project belongs to (v1.842.0): a count, or a transfer made with no job. Posts nothing: no GL entry and no stock ledger row. Only the shelf's by-job figures read it, and only while its document is live. Written by the Bin Manager, the Stock Reconciliation submit hook and the cleanup patch, never by hand.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "voucher_type",
+  "voucher_no",
+  "item_code",
+  "item_name",
+  "column_break_where",
+  "project",
+  "qty",
+  "warehouse",
+  "section_break_why",
+  "source",
+  "stock_scan_log",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "voucher_type",
+   "fieldtype": "Link",
+   "options": "DocType",
+   "label": "Document Type",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "voucher_no",
+   "fieldtype": "Dynamic Link",
+   "options": "voucher_type",
+   "label": "Document",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "options": "Item",
+   "label": "Item",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "fetch_from": "item_code.item_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_where",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "options": "Project",
+   "label": "Project",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Quantity",
+   "reqd": 1,
+   "in_list_view": 1,
+   "read_only": 1,
+   "description": "This job's share of the document's change on the Project Shelf. Negative: the job's units left the shelf (counted off, or moved off with no job named). Positive: units found on the shelf for the job."
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "options": "Warehouse",
+   "label": "Project Shelf",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_why",
+   "fieldtype": "Section Break",
+   "label": "Why"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "options": "Count\nDefault\nCleanup\nChanged",
+   "label": "Named By",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1,
+   "description": "Count: named in the Bin Manager's count. Default: the rule, when nobody named it (Count Desk, the phone audit, a reconciliation made in the Desk). Cleanup: the one-off patch that settled the movements nobody had named. Changed: re-split with the Bin Manager's Change whose."
+  },
+  {
+   "fieldname": "stock_scan_log",
+   "fieldtype": "Link",
+   "options": "Stock Scan Log",
+   "label": "Stock Scan Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Project Shelf Tag",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager"
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock User"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Inventory Clerk"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "item_code",
+ "track_changes": 1
+}

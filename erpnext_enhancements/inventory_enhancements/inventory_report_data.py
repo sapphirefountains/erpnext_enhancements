@@ -297,17 +297,21 @@ def _shelf_module():
 def shelf_stock_by_project(shelf, item_codes=None, projects=None):
 	"""THE ADAPTER: what is on the Project Shelf, split by the job it is for.
 
-	Returns ``[{item_code, project, qty, value}, ...]``. ``project`` is ``""`` for the row that
-	holds what no job's ledger rows account for. ``item_codes`` and ``projects`` narrow the
-	answer; ``None`` means all. Every report asks this function and nothing else.
+	Returns ``[{item_code, project, qty, value, tagged, over, counted}, ...]``. ``project`` is
+	``""`` for the row that holds what no job's ledger rows account for. ``item_codes`` and
+	``projects`` narrow the answer; ``None`` means all. Every report asks this function and
+	nothing else.
 
 	**Two facts, two sources.** How many there are is ``tabBin`` at the shelf. Whose they are is
-	the stock ledger: the net quantity each job's rows put on the shelf (:func:`_shelf_claims`).
-	``rules.shelf_shares`` puts the two side by side without changing either: each job's share is
-	its ledger net, and the no-job row is what is on hand less every job's share, so the rows
-	always add up to what is on the shelf. That last row is negative when a count left fewer
-	than the jobs' rows claim; the reports say so rather than scale the jobs down, so a job's
-	figure here is the same figure the Project Shelf's own screens show.
+	the stock ledger and the Project Shelf Tags that name a count's jobs (:func:`_shelf_claims`).
+
+	**A job's share is capped by what is physically there** (v1.842.0, made explicit): ``qty`` is
+	the same figure the Bin Manager's By project view shows (``project_shelf_rules.allocate``),
+	never more than is on the shelf, whichever reading answered. ``tagged`` is the job's uncapped
+	ledger balance and ``over`` what the cap took off it: the over-claim, which the reports say in
+	their notes (``rules.shelf_over``) rather than show as stock. ``counted`` is the net the job's
+	count tags gave it (negative: counted off the shelf). The no-job row is what is on hand less
+	every job's share, so the rows always add up to what is on the shelf, and it is never negative.
 
 	Value is each share's quantity at the shelf's valuation rate for the item.
 	"""
@@ -322,10 +326,42 @@ def shelf_stock_by_project(shelf, item_codes=None, projects=None):
 	out = []
 	for code in sorted(set(bins) | set(claims)):
 		on_hand, rate = bins.get(code, (0.0, 0.0))
-		for project, qty in rules.shelf_shares(on_hand, claims.get(code)):
+		jobs = claims.get(code) or {}
+		capped = {project: claim["qty"] for project, claim in jobs.items()}
+		shown = set()
+		for project, qty in rules.shelf_shares(on_hand, capped):
+			shown.add(project)
 			if wanted is not None and project not in wanted:
 				continue
-			out.append({"item_code": code, "project": project, "qty": qty, "value": qty * rate})
+			claim = jobs.get(project) or {}
+			out.append(
+				{
+					"item_code": code,
+					"project": project,
+					"qty": qty,
+					"value": qty * rate,
+					"tagged": claim.get("tagged", qty),
+					"over": claim.get("over", 0.0),
+					"counted": claim.get("counted", 0.0),
+				}
+			)
+		# A job whose whole claim is stock that has left: nothing to show as held, but its over-claim
+		# and its counts belong in the notes.
+		for project, claim in sorted(jobs.items()):
+			if project in shown or (wanted is not None and project not in wanted):
+				continue
+			if claim.get("over", 0.0) > rules.TOLERANCE or abs(claim.get("counted", 0.0)) > rules.TOLERANCE:
+				out.append(
+					{
+						"item_code": code,
+						"project": project,
+						"qty": 0.0,
+						"value": 0.0,
+						"tagged": claim.get("tagged", 0.0),
+						"over": claim.get("over", 0.0),
+						"counted": claim.get("counted", 0.0),
+					}
+				)
 	return out
 
 
@@ -351,7 +387,8 @@ def _shelf_bins(shelf, codes):
 
 
 def _shelf_claims(shelf, codes):
-	"""``{item_code: {project: net ledger quantity}}`` at the shelf.
+	"""``{item_code: {project: {"qty", "tagged", "over", "counted"}}}`` at the shelf: each job's
+	capped share, its uncapped balance, what the cap took off, and its counts' net (v1.842.0).
 
 	Asked of the Project Shelf change's ``project_shelf.shelf_stock`` when that module is
 	installed, so these reports and its screens read one answer. Before it is installed, or if
@@ -371,8 +408,10 @@ def _claims_from_module(module, shelf, codes):
 
 	The agreed shape (the Project Shelf session's note of 2026-11-12):
 	``shelf_stock(project=None, item_code=None)`` returns ``{"warehouse": ..., "rows": [{"project",
-	"item_code", "qty", ...}]}``, ``qty`` being what came onto the shelf under the job less what
-	left under it. One item is asked for by name; several are filtered here.
+	"item_code", "qty", ...}]}``. Since v1.817.0 ``qty`` there is the job's share **capped** by
+	what is on the shelf, with the uncapped balance as ``tagged`` and the difference as
+	``over_tagged``; since v1.842.0 ``counted`` is what its count tags gave it. All four are
+	carried. One item is asked for by name; several are filtered here.
 	"""
 	try:
 		answer = module.shelf_stock(item_code=codes[0] if codes and len(codes) == 1 else None)
@@ -385,7 +424,12 @@ def _claims_from_module(module, shelf, codes):
 			if not code or not project or (wanted is not None and code not in wanted):
 				continue
 			by_project = claims.setdefault(code, {})
-			by_project[project] = by_project.get(project, 0.0) + rules._num(row.get("qty"))
+			claim = by_project.setdefault(project, {"qty": 0.0, "tagged": 0.0, "over": 0.0, "counted": 0.0})
+			qty = rules._num(row.get("qty"))
+			claim["qty"] += qty
+			claim["tagged"] += rules._num(row.get("tagged")) if row.get("tagged") is not None else qty
+			claim["over"] += rules._num(row.get("over_tagged"))
+			claim["counted"] += rules._num(row.get("counted"))
 		return claims
 	except Exception:
 		return None
@@ -402,7 +446,10 @@ def _own_shelf_claims(shelf, codes):
 	rows on production on 2026-11-12). No index is added here.
 
 	 Rows with no Project are not a claim; what they leave
-	shows up as the gap between the claims and ``tabBin``."""
+	shows up as the gap between the claims and ``tabBin``. Each claim is capped by what is on
+	hand (``project_shelf_rules.allocate``) as the module's reading caps it; without delivery
+	dates here, a shortfall is shared out in job order. Project Shelf Tags are not read: this
+	reading is only for a site where the Project Shelf module itself cannot load."""
 	item_clause = "and item_code in %(items)s" if codes else ""
 	params = {"shelf": shelf}
 	if codes:
@@ -417,9 +464,24 @@ def _own_shelf_claims(shelf, codes):
 		params,
 		as_dict=True,
 	)
-	claims = {}
+	nets = {}
 	for row in rows:
-		claims.setdefault(row.get("item_code"), {})[row.get("project")] = rules._num(row.get("qty"))
+		nets.setdefault(row.get("item_code"), {})[row.get("project")] = rules._num(row.get("qty"))
+	from erpnext_enhancements.inventory_enhancements import project_shelf_rules as shelf_rules
+
+	on_hand = {code: qty for code, (qty, _rate) in _shelf_bins(shelf, codes).items()}
+	claims = {}
+	for code, by_project in nets.items():
+		capped = shelf_rules.allocate(on_hand.get(code), [(p, q, "") for p, q in by_project.items()])
+		claims[code] = {
+			project: {
+				"qty": capped.get(project, 0.0),
+				"tagged": net,
+				"over": max(net - capped.get(project, 0.0), 0.0) if net > 0 else 0.0,
+				"counted": 0.0,
+			}
+			for project, net in by_project.items()
+		}
 	return claims
 
 

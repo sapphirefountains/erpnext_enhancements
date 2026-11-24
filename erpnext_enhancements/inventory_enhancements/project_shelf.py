@@ -19,7 +19,10 @@ Frappe, tested bench-free). This module is the part that reads the database.
   drift is reported instead of hidden.
 
 **Other modules call three functions and must not reach past them:** :func:`warehouse`,
-:func:`not_shop_warehouses` and :func:`shelf_stock`. Their signatures and return shapes are
+:func:`not_shop_warehouses` and :func:`shelf_stock`. (v1.842.0 adds the count's: the
+Stock Reconciliation hook :func:`tag_reconciliation`, and :func:`count_plan`,
+:func:`latest_count`, :func:`change_whose` and :func:`settle_plan` for the Bin Manager and the
+cleanup patch.) Their signatures and return shapes are
 fixed; the reports and the Procurement Tracker read them.
 
 Nothing here raises to answer a question: these run inside Stock Scan's boot, the Reorder
@@ -36,6 +39,9 @@ from erpnext_enhancements.inventory_enhancements import project_shelf_rules as r
 
 SETTING = "project_shelf_warehouse"
 FALLBACK_SETTING = "overhead_receiving_warehouse"
+
+#: The record that names the job(s) of a shelf movement that carries none (v1.842.0).
+TAG = "Project Shelf Tag"
 
 
 def _settings():
@@ -170,6 +176,47 @@ def _lookup(doctype, fields, names):
 	return {found.name: found for found in rows}
 
 
+def _ledger(shelf, item_code=None):
+	"""Every live Stock Ledger row at the shelf, in ledger order (posting time, then creation):
+	what ``project_shelf_rules.shelf_summary`` reads. Raises like any query; the callers catch."""
+	params = {"warehouse": shelf}
+	condition = ""
+	if _name(item_code):
+		condition = " and item_code = %(item_code)s"
+		params["item_code"] = _name(item_code)
+	return frappe.db.sql(
+		f"""
+		select item_code, project, actual_qty, qty_after_transaction,
+			voucher_type, voucher_no, posting_date
+		from `tabStock Ledger Entry`
+		where warehouse = %(warehouse)s and is_cancelled = 0{condition}
+		order by posting_datetime asc, creation asc
+		""",
+		params,
+		as_dict=True,
+	)
+
+
+def _tags(shelf, item_code=None):
+	"""The Project Shelf Tags at the shelf (v1.842.0), oldest first, as the rules read them.
+
+	``[]`` when there are none, and when the table cannot be read: on a site where the DocType
+	has not been migrated yet, the shelf's figures are what they were before tags existed
+	rather than nothing at all."""
+	filters = {"warehouse": shelf}
+	if _name(item_code):
+		filters["item_code"] = _name(item_code)
+	try:
+		return frappe.get_all(
+			TAG,
+			filters=filters,
+			fields=["voucher_type", "voucher_no", "item_code", "project", "qty", "source"],
+			order_by="creation asc",
+		)
+	except Exception:
+		return []
+
+
 def shelf_stock(project=None, item_code=None):
 	"""What is on the Project Shelf, by job. **The one function that answers both "what is on
 	the shelf for project X" and "which projects have stock on the shelf".**
@@ -181,7 +228,8 @@ def shelf_stock(project=None, item_code=None):
 		{
 			"warehouse": the shelf's warehouse name, or None when there is no shelf,
 			"rows": [{project, project_name, item_code, item_name, stock_uom,
-			          qty, tagged, over_tagged, qty_in, qty_out, last_movement}],
+			          qty, tagged, over_tagged, qty_in, qty_out, last_movement,
+			          last_in, counted}],
 			"projects": [{project, project_name, status, project_type, items, qty}],
 			"untagged": [{item_code, item_name, stock_uom, on_hand, tagged, qty, over_tagged}],
 			"untagged_movements": [{posting_date, voucher_type, voucher_no, item_code, qty, kind}],
@@ -189,8 +237,9 @@ def shelf_stock(project=None, item_code=None):
 		}
 
 	**Limits.** ERPNext keeps on-hand by item and warehouse, with no project. These numbers
-	are derived from the project on each ledger row, so a movement with no project (a count, a
-	transfer made by hand in the Desk) makes them drift. The drift is in ``untagged`` and
+	are derived from the project on each ledger row, and from the Project Shelf Tags that name
+	the jobs of a movement with none (v1.842.0: every count posted since names its jobs). A
+	movement with no project and no tag (a transfer made by hand in the Desk) makes them drift. The drift is in ``untagged`` and
 	``untagged_movements`` and is never hidden. ``rows[].qty`` is a job's tag balance **capped
 	by what is physically on the shelf**, so it is never negative and an item's rows never add
 	up to more than its on-hand; the uncapped balance is ``rows[].tagged`` (it can be negative)
@@ -205,22 +254,7 @@ def shelf_stock(project=None, item_code=None):
 	if not shelf:
 		return _empty()
 	try:
-		params = {"warehouse": shelf}
-		condition = ""
-		if _name(item_code):
-			condition = " and item_code = %(item_code)s"
-			params["item_code"] = _name(item_code)
-		ledger = frappe.db.sql(
-			f"""
-			select item_code, project, actual_qty, qty_after_transaction,
-				voucher_type, voucher_no, posting_date
-			from `tabStock Ledger Entry`
-			where warehouse = %(warehouse)s and is_cancelled = 0{condition}
-			order by posting_datetime asc, creation asc
-			""",
-			params,
-			as_dict=True,
-		)
+		ledger = _ledger(shelf, item_code)
 		on_hand = {
 			found.item_code: found.actual_qty
 			for found in frappe.get_all(
@@ -229,7 +263,9 @@ def shelf_stock(project=None, item_code=None):
 				fields=["item_code", "actual_qty"],
 			)
 		}
-		summary = rules.shelf_summary(ledger, on_hand, project=project, item_code=item_code)
+		summary = rules.shelf_summary(
+			ledger, on_hand, project=project, item_code=item_code, tags=_tags(shelf, item_code)
+		)
 		items = _lookup(
 			"Item",
 			["item_name", "stock_uom"],
@@ -294,3 +330,261 @@ def holders(item_code, stock=None):
 		{"project": name, "project_name": names.get(name) or name, "qty": qty}
 		for name, qty in rules.holders(stock.get("rows") or (), item_code)
 	]
+
+
+# ---------------------------------------------------------------------------
+# Whose a count's change is (v1.842.0)
+# ---------------------------------------------------------------------------
+#
+# A count is a Stock Reconciliation, which carries no project, so on its own it changes what is
+# on the shelf without changing any job's share. A Project Shelf Tag beside it names the jobs.
+# The tag posts nothing; the count's accounting is ERPNext's, unchanged. The arithmetic is
+# ``project_shelf_rules.count_split``.
+
+
+def _names(projects):
+	"""``{project: project_name}`` for the given jobs, in one query."""
+	return {
+		name: (row.get("project_name") or name)
+		for name, row in _lookup("Project", ["project_name"], projects).items()
+	}
+
+
+def _bin_qty(item_code, shelf):
+	return float(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": shelf}, "actual_qty") or 0)
+
+
+def _named_split(split, names=None):
+	"""A ``count_split`` answer with each job's name beside its id, for a screen."""
+	names = names if names is not None else _names([row["project"] for row in split.get("rows") or ()])
+	for row in split.get("rows") or ():
+		row["project_name"] = names.get(row["project"]) or row["project"]
+	return split
+
+
+def count_plan(item_code, counted, chosen=None, before=None):
+	"""Who a count of one item at the shelf, made now, would belong to: the
+	``project_shelf_rules.count_split`` answer for the shelf's on-hand (``before``, read from
+	``tabBin`` when not given) against ``counted``, with ``chosen`` (``{project: qty}``) or the
+	default, and each job's name. ``None`` when there is no shelf."""
+	shelf = warehouse()
+	if not shelf:
+		return None
+	item_code = _name(item_code)
+	stock = shelf_stock(item_code=item_code)
+	have = _bin_qty(item_code, shelf) if before is None else float(before or 0)
+	split = rules.count_split(have, counted, rules.claims_of(stock.get("rows"), item_code), chosen)
+	split["before"] = have
+	return _named_split(split)
+
+
+def write_tags(voucher_type, voucher_no, item_code, tags, source, stock_scan_log=None, note=None, shelf=None):
+	"""Insert one Project Shelf Tag per ``(project, qty)`` in ``tags``. Past permissions: every
+	caller has already been through the gate of the count it names (a submitted Stock
+	Reconciliation, the Bin Manager's count permission, a patch). Returns the names written."""
+	shelf = shelf or warehouse()
+	made = []
+	for project, qty in tags or ():
+		doc = frappe.get_doc(
+			{
+				"doctype": TAG,
+				"voucher_type": voucher_type,
+				"voucher_no": voucher_no,
+				"item_code": item_code,
+				"warehouse": shelf,
+				"project": project,
+				"qty": qty,
+				"source": source,
+				"stock_scan_log": stock_scan_log,
+				"note": note,
+			}
+		)
+		doc.insert(ignore_permissions=True)
+		made.append(doc.name)
+	return made
+
+
+def _choice_message(report):
+	"""One sentence naming the items whose count the default split between several places, or
+	``""``. Said where the count was posted, so the person can look."""
+	guessed = [entry for entry in report or () if entry.get("choice")]
+	if not guessed:
+		return ""
+	items = ", ".join(entry["item_code"] for entry in guessed[:5])
+	more = len(guessed) - 5
+	if more > 0:
+		items += _(" and {0} more").format(more)
+	return _(
+		"On the Project Shelf, the count of {0} was shared between jobs by the default rule (oldest delivery first). "
+		"If that is not whose they were, use Change whose on the item's row in the Bin Manager."
+	).format(items)
+
+
+def tag_reconciliation(doc, method=None):
+	"""``doc_events``: Stock Reconciliation ``on_submit`` (v1.842.0). Name the jobs of every row
+	the count changed at the Project Shelf.
+
+	One hook for every way a count reaches the shelf: the Bin Manager's count, the Count Desk
+	(posted, or drafted and submitted later by a Stock Manager), the phone Inventory Scanner
+	Audit's draft, and a reconciliation made by hand in the Desk. Runs after ERPNext has written
+	the count's ledger rows, so ``row.current_qty`` is what the shelf had and the jobs' claims
+	(``shelf_stock``) do not yet include this count.
+
+	* **A split the person named** comes in ``doc.flags.shelf_jobs`` (``{item_code: {project:
+	  qty}}``, the Bin Manager's count): it was checked before the count was posted, and is
+	  checked again here; a split that no longer adds up refuses the submit, and the count with
+	  it, rather than post a count whose jobs are wrong. Tags carry ``source`` Count.
+	* **Otherwise the default** (``project_shelf_rules.count_split``), ``source`` Default. A
+	  failure here is logged and the count still posts: the drift it leaves is the drift there
+	  was before this release, reported as untagged, and a count must never be lost to it.
+
+	``doc.flags.shelf_tagged`` gets ``[{item_code, tags, choice}]`` for the caller. When the
+	default had to choose between jobs, a short message says so (an alert in the Desk), unless
+	the caller says it will tell the person itself (``doc.flags.shelf_quiet``, the Count Desk).
+
+	Posts nothing: the count's own GL entries (the difference to the stock adjustment account,
+	no project) are ERPNext's and are not touched.
+	"""
+	try:
+		shelf = warehouse()
+		rows = [row for row in (doc.get("items") or []) if shelf and _name(row.get("warehouse")) == shelf]
+	except Exception:
+		return
+	if not rows:
+		return
+	# Not ``or``: a Document's flags is a frappe._dict, and an empty one is falsy.
+	flags = getattr(doc, "flags", None)
+	if flags is None:
+		flags = frappe._dict()
+	named = flags.get("shelf_jobs") or {}
+	log = flags.get("shelf_log")
+	report = []
+	for row in rows:
+		code = _name(row.get("item_code"))
+		chosen = named.get(code)
+		if chosen is not None:
+			split = count_plan(code, row.get("qty"), chosen=chosen, before=row.get("current_qty"))
+			if split["problem"]:
+				frappe.throw(_("{0} on the Project Shelf: {1}").format(code, _(split["problem"])))
+			write_tags(
+				doc.doctype, doc.name, code, split["tags"], rules.TAG_COUNT, stock_scan_log=log, shelf=shelf
+			)
+			report.append({"item_code": code, "tags": split["tags"], "choice": False})
+			continue
+		try:
+			split = count_plan(code, row.get("qty"), before=row.get("current_qty"))
+			write_tags(
+				doc.doctype, doc.name, code, split["tags"], rules.TAG_DEFAULT, stock_scan_log=log, shelf=shelf
+			)
+			report.append(
+				{"item_code": code, "tags": split["tags"], "choice": bool(split["choice"] and split["tags"])}
+			)
+		except Exception:
+			try:
+				frappe.log_error(title=f"Project Shelf: could not name the jobs of {doc.name}")
+			except Exception:
+				pass
+	flags.shelf_tagged = report
+	message = _choice_message(report)
+	if message and not flags.get("shelf_quiet"):
+		try:
+			frappe.msgprint(message, alert=True, indicator="orange")
+		except Exception:
+			pass
+
+
+def latest_count(item_code):
+	"""The item's latest live count at the shelf, for "Change whose": ``{voucher_no,
+	posting_date, before, change, split, current}`` or ``None``.
+
+	``split`` is ``count_split`` for that count against what the shelf held just before it
+	(``project_shelf_rules.count_context``, with every tag but the count's own), filled with the
+	count's current tags as the person's split (``current``: ``{project: positive qty}``, and
+	the rest of the change under no job)."""
+	shelf = warehouse()
+	item_code = _name(item_code)
+	if not shelf or not item_code:
+		return None
+	ledger = _ledger(shelf, item_code)
+	counts = [row for row in ledger if rules.is_count(row)]
+	if not counts:
+		return None
+	last = counts[-1]
+	return count_on(item_code, last.get("voucher_no"), ledger=ledger)
+
+
+def count_on(item_code, voucher_no, ledger=None, chosen=None):
+	"""One count's split at the shelf: its change, what the shelf held just before it, and
+	``chosen`` checked against that (``None``: the count's current tags). ``None`` when the
+	count has no live row for the item there."""
+	shelf = warehouse()
+	item_code = _name(item_code)
+	voucher_no = _name(voucher_no)
+	if not shelf or not item_code or not voucher_no:
+		return None
+	ledger = ledger if ledger is not None else _ledger(shelf, item_code)
+	tags = _tags(shelf, item_code)
+	context = rules.count_context(ledger, tags, item_code, rules.RECONCILIATION, voucher_no)
+	if context is None:
+		return None
+	before, change, claims = context
+	own = [
+		tag
+		for tag in tags
+		if tag.get("voucher_type") == rules.RECONCILIATION and tag.get("voucher_no") == voucher_no
+	]
+	current = {}
+	for tag in own:
+		current[tag.get("project")] = current.get(tag.get("project"), 0.0) + abs(float(tag.get("qty") or 0))
+	if chosen is None:
+		rest = abs(change) - sum(current.values())
+		chosen = dict(current)
+		if rest > rules.TOLERANCE:
+			chosen[rules.NO_JOB] = rest
+	split = rules.count_split(before, before + change, claims, chosen)
+	day = next(
+		(str(row.get("posting_date") or "")[:10] for row in ledger if row.get("voucher_no") == voucher_no), ""
+	)
+	return {
+		"voucher_type": rules.RECONCILIATION,
+		"voucher_no": voucher_no,
+		"posting_date": day,
+		"before": before,
+		"change": change,
+		"current": current,
+		"split": _named_split(split),
+	}
+
+
+def change_whose(item_code, voucher_no, chosen):
+	"""Replace one count's tags for one item with ``chosen`` (``{project: qty}``), checked
+	against what the shelf held just before that count. Raises the sentence when it does not
+	add up. Returns the new split. The caller holds the permission (the Bin Manager's count)."""
+	answer = count_on(item_code, voucher_no, chosen=chosen or {})
+	if answer is None:
+		frappe.throw(_("{0} is not a live count of {1} on the Project Shelf.").format(voucher_no, item_code))
+	split = answer["split"]
+	if split["problem"]:
+		frappe.throw(_(split["problem"]))
+	for name in frappe.get_all(
+		TAG,
+		filters={
+			"voucher_type": rules.RECONCILIATION,
+			"voucher_no": answer["voucher_no"],
+			"item_code": _name(item_code),
+		},
+		pluck="name",
+	):
+		frappe.delete_doc(TAG, name, ignore_permissions=True, force=True)
+	write_tags(rules.RECONCILIATION, answer["voucher_no"], _name(item_code), split["tags"], rules.TAG_CHANGED)
+	return split
+
+
+def settle_plan():
+	"""The tags the cleanup would write now (``project_shelf_rules.settle_untagged``): every
+	movement off the shelf that names no job and has no tag, with the default split. ``[]``
+	when there is no shelf. Reads only."""
+	shelf = warehouse()
+	if not shelf:
+		return []
+	return rules.settle_untagged(_ledger(shelf), _tags(shelf))

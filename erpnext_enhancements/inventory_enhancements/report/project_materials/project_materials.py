@@ -12,14 +12,15 @@ for them." Two views in one report, chosen by the Project filter.
 |---|---|
 | Ordered | the job's submitted Purchase Order lines, in the item's stock unit |
 | Received | the job's submitted Purchase Receipt lines (a store run is a receipt with no order) |
-| On Project Shelf | ``inventory_report_data.shelf_stock_by_project`` for this job |
+| On Project Shelf | ``inventory_report_data.shelf_stock_by_project`` for this job, capped by what is there |
 | At Job Site | ``tabBin`` at the job's own site warehouse |
 | Used on Job | the job's stock ledger: Material Issues, Delivery Notes and Sales Invoices, less parts brought back |
+| Counted Off Shelf | what counts at the Project Shelf took off this job's share (its count tags, v1.842.0) |
 | Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
 | Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
 | Still to Come | what open order lines are short |
 | Order Closed, Not Received | what lines on Closed or Delivered orders were short |
-| Not Located | received and kept, but not on the shelf, at the site or used |
+| Not Located | received and kept, but not on the shelf, at the site, used or counted off |
 
 *Purchase Orders*, *Receipts* and *Supplier Returns* name the documents behind the row, and each
 name opens its document. It works the same for a finished job: nothing here reads the job's status.
@@ -37,6 +38,16 @@ is stock received into a shop bin, where stock is not kept by job (*Received Int
 read from the stock ledger), or received before Maintain Stock was switched on.
 
 **Stock Item is the item's flag today**, not what it was when the line was received.
+
+**On Project Shelf agrees with the Bin Manager** (v1.842.0). A job's figure is its share capped by
+what is physically on the shelf, the Bin Manager's By project figure. It already was in effect
+from v1.817.0, through the Project Shelf module, but the note that should have said "the ledger
+claims more than is there" read a figure the cap made impossible, so it never appeared, and the
+row's note blamed Maintain Stock for parts a count had taken off the shelf. Now the claim beyond
+what is there is said twice: in the row's Note ("the stock ledger has N more on the Project Shelf
+for this job than is there") and in the line over the table, with the number of items and units.
+A count at the shelf names its jobs since v1.842.0, so what a count took off the job is its own
+column, *Counted Off Shelf*, and *Not Located* no longer absorbs it.
 
 **Without a Project: one row per job that physically holds something**, on the Project Shelf or at
 its job site, with quantity and value for each. Shelf stock no job claims is counted in the note
@@ -58,8 +69,9 @@ from erpnext_enhancements.inventory_enhancements import inventory_report_rules a
 from erpnext_enhancements.inventory_enhancements import stock_scan_rules as scan_rules
 
 SHORT_SHELF_NOTE = (
-	"For {0} item(s) the Project Shelf was counted lower than the jobs' stock ledger rows add up to. "
-	"On Project Shelf is the ledger's figure, so it can be more than is there."
+	"For {0} item(s) the jobs' stock ledger rows claim {1} more than is on the Project Shelf "
+	"(counted or moved off with no job named). On Project Shelf shows only what is there; "
+	"each such row's Note says how much more its ledger claims."
 )
 
 
@@ -90,9 +102,8 @@ def one_project(project, filters, where):
 	shown = [
 		row for row in rows if (not item_code or row["item_code"] == item_code) and rules.show_row(row, show)
 	]
-	mine = {row.get("item_code") for row in shelf_rows if row.get("project") == project}
-	_unclaimed, short = rules.shelf_gaps([row for row in shelf_rows if row.get("item_code") in mine])
-	message = project_message(project, info, where, short)
+	over = rules.shelf_over([row for row in shelf_rows if row.get("project") == project])
+	message = project_message(project, info, where, over)
 	return item_columns(), shown, message, None, item_summary(rows)
 
 
@@ -163,14 +174,15 @@ def job_ledger(project):
 def project_rows(project, where, shelf_rows=()):
 	orders = order_lines(project)
 	receipts = receipt_lines(project)
-	shelf = {}
+	shelf, counted_off, over = {}, {}, {}
 	if where.shelf:
 		for share in shelf_rows:
 			if share.get("project") != project:
 				continue
-			shelf[share.get("item_code")] = shelf.get(share.get("item_code"), 0.0) + rules._num(
-				share.get("qty")
-			)
+			code = share.get("item_code")
+			shelf[code] = shelf.get(code, 0.0) + rules._num(share.get("qty"))
+			counted_off[code] = counted_off.get(code, 0.0) - rules._num(share.get("counted"))
+			over[code] = over.get(code, 0.0) + rules._num(share.get("over"))
 	site = {}
 	for row in data.site_bins(where, projects=[project]):
 		qty, value = site.get(row["item_code"], (0.0, 0.0))
@@ -187,6 +199,8 @@ def project_rows(project, where, shelf_rows=()):
 	returns = data.supplier_return_lines(project)
 	codes = {line.get("item_code") for line in orders} | {line.get("item_code") for line in receipts}
 	codes.update(shelf, site, used)
+	codes.update(code for code, qty in counted_off.items() if qty > rules.TOLERANCE)
+	codes.update(code for code, qty in over.items() if qty > rules.TOLERANCE)
 	codes.update(line.get("item_code") for line in returns)
 	rows = rules.project_item_rows(
 		orders,
@@ -197,6 +211,8 @@ def project_rows(project, where, shelf_rows=()):
 		supplier_returns=returns,
 		items=data.item_info(codes),
 		received_into=into,
+		counted_off=counted_off,
+		over_claimed=over,
 	)
 	rows.sort(key=lambda r: (scan_rules.natural_key(r["item_name"]), r["item_code"]))
 	return rows
@@ -220,6 +236,7 @@ def item_columns():
 		{"label": _("On Project Shelf"), "fieldname": "on_shelf", "fieldtype": "Float", "width": 120},
 		{"label": _("At Job Site"), "fieldname": "at_site", "fieldtype": "Float", "width": 100},
 		{"label": _("Used on Job"), "fieldname": "used", "fieldtype": "Float", "width": 100},
+		{"label": _("Counted Off Shelf"), "fieldname": "counted_off", "fieldtype": "Float", "width": 125},
 		{"label": _("Returned to Supplier"), "fieldname": "returned", "fieldtype": "Float", "width": 140},
 		{"label": _("Return Requested"), "fieldname": "return_pending", "fieldtype": "Float", "width": 125},
 		{"label": _("Still to Come"), "fieldname": "still_to_come", "fieldtype": "Float", "width": 110},
@@ -242,9 +259,10 @@ def item_columns():
 	]
 
 
-def project_message(project, info, where, short=0):
-	"""The line over the table: whose job it is, and where its stock would be. ``short`` is how
-	many of the job's shelf items the shelf holds fewer of than the jobs' ledger rows claim."""
+def project_message(project, info, where, over=(0, 0.0)):
+	"""The line over the table: whose job it is, and where its stock would be. ``over`` is
+	``(items, units)``: how many of the job's shelf items its ledger rows claim more of than is
+	there, and by how much (``rules.shelf_over``)."""
 	parts = [project]
 	for key in ("project_name", "status", "customer"):
 		if info.get(key):
@@ -261,8 +279,9 @@ def project_message(project, info, where, short=0):
 		lines.append(_("This job has no job site warehouse, so nothing is shown as at the job site."))
 	if not where.shelf:
 		lines.append(_(data.NO_SHELF_NOTE))
-	if short:
-		lines.append(_(SHORT_SHELF_NOTE).format(short))
+	items, units = over if isinstance(over, (tuple, list)) else (over, 0.0)
+	if items:
+		lines.append(_(SHORT_SHELF_NOTE).format(items, rules._plain(units)))
 	return data.message(*lines)
 
 
@@ -348,15 +367,16 @@ def held_message(shelf_rows, where):
 	if not where.shelf:
 		lines.append(_(data.NO_SHELF_NOTE))
 	else:
-		unclaimed, short = rules.shelf_gaps(shelf_rows)
+		unclaimed, _short = rules.shelf_gaps(shelf_rows)
 		if unclaimed:
 			lines.append(
 				_("{0} item(s) on the Project Shelf are under no job and are not in this list.").format(
 					unclaimed
 				)
 			)
-		if short:
-			lines.append(_(SHORT_SHELF_NOTE).format(short))
+		items, units = rules.shelf_over(shelf_rows)
+		if items:
+			lines.append(_(SHORT_SHELF_NOTE).format(items, rules._plain(units)))
 	if not where.sites_ready:
 		lines.append(_("Job sites are not set up on this site, so nothing is shown as at a job site."))
 	return data.message(*lines)

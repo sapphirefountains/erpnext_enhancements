@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.842.0] - 2026-11-24
+
+### Added
+
+- **A count at the Project Shelf names the job(s) its change belongs to** (owner's yes, 2026-11-24).
+  Which job owns stock on the shelf is read from the project on each Stock Ledger row there, and a
+  count is a Stock Reconciliation, which has no project. So a count changed what is on the shelf
+  and no job's share. On 2026-11-24 seven Bin Manager counts took 218 units to zero that the ledger
+  still tagged to PRJ-00701, PRJ-00759, PRJ-00604 and PRJ-00746. The Bin Manager capped each job at
+  what was there, but the stale claim stayed, and the next delivery of the item for another job
+  would have been absorbed by it.
+  - **A new record, Project Shelf Tag** (`inventory_enhancements/doctype/project_shelf_tag`): one
+    job's signed share of one document's change to one item at the shelf. **It posts nothing**, no
+    GL entry and no stock ledger row. The count still posts exactly as before: its difference goes
+    to the stock adjustment account with no project, so a count loss never reaches a job's cost.
+  - **Why not a project on the count.** ERPNext 16.60.0's `stock_controller` copies a
+    reconciliation row's project onto the Stock Adjustment GL line, so the loss would land in the
+    job's P&L. A reconciliation also has one row per item and place, so it cannot split one count
+    between two jobs.
+  - **Why not a paired movement.** Transferring the job's units to a holding place and counting them
+    there needs a new warehouse kept out of shop stock, three documents per count, and a harder
+    Undo, for the same result.
+  - **How a tag is read** (`project_shelf_rules.shelf_summary`):
+    - It shares out its own movement's change among the jobs it names.
+    - It never shares out more than that change, nor anything of the other sign, so it cannot
+      invent a claim.
+    - It counts only while the document's ledger rows are live, so an undone or canceled count
+      drops its tags by itself.
+  - **The default split** (`count_split`), used when nobody names the jobs:
+    - A count down comes first out of stock no job claims, then out of the oldest delivery. That is
+      the reverse of the cap, which keeps the newest delivery's stock.
+    - A count up first refills a short claim (no tag needed), then goes to the one job holding the
+      item, else to no job.
+  - **Every path that can count the shelf:**
+    - **The Bin Manager's count** (`bin_assignments.set_count`), which posted the 2026-11-24 counts:
+      - The dialog shows a share box per job, filled in by the default from the new
+        `count_plan` read.
+      - The person can change it. The shares must add up to the change.
+      - The split is checked before anything is written.
+    - **The Count Desk, the phone Inventory Scanner Audit's draft, and a reconciliation made in the
+      Desk** get the default from one new hook, Stock Reconciliation `on_submit`
+      (`project_shelf.tag_reconciliation`).
+      - That covers a draft a Stock Manager submits days later.
+      - Where the default had to choose between jobs it says so: the Count Desk in its result, the
+        Desk in an alert.
+    - **"Change whose"** on a shelf row in the Bin Manager re-splits the item's latest count. It is
+      checked against what the shelf held just before that count.
+  - **The Bin Manager bundle is VERSION 4.** The page draws the split only from a copy at
+    `BM_SPLIT_LEVEL` 4, so a tab open across the deploy counts as it always did and the server's
+    default names the jobs. `scripts/test_bin_manager.mjs` holds the two numbers equal.
+
+### Changed
+
+- **Project Materials agrees with the Bin Manager, and says when the ledger claims more than is
+  there.**
+  - **It was already capped in effect.** From 1.817.0 the shelf adapter took each job's capped
+    figure from the Project Shelf module. Production showed THN6 at 0 on the shelf for PRJ-00701.
+  - **But the over-claim was invisible.** The "counted lower" note read a negative no-job share,
+    which the cap made impossible, so it never appeared. The row's note also blamed Maintain Stock
+    ("Received before it was a stock item") for wire that a count had taken off the shelf.
+  - **What changed:**
+    - `inventory_report_data.shelf_stock_by_project` caps explicitly, whichever reading answers.
+      It returns each job's `tagged`, `over` and `counted` beside `qty`.
+    - The over-claim is said in the row's Note and in the line over the table, with items and
+      units (`inventory_report_rules.shelf_over`).
+    - A new column, **Counted Off Shelf**, holds what counts took off the job, and Not Located no
+      longer absorbs it.
+  - **Where Is This Item** says the over-claim the same way. It shows no zero row for a job whose
+    whole claim has left.
+
+### Fixed
+
+- **The movements off the shelf that never named a job are settled**, by a one-off patch,
+  `patches/settle_project_shelf_untagged` (post model sync).
+  - **It writes Project Shelf Tags only.** No GL entry, no stock ledger row, no change to any count
+    or transfer.
+  - **It is keyed on the rule when it runs, not on a list.** Every movement off the shelf with no
+    job and no tag gets the default split, read in ledger order (`settle_untagged`). Movements onto
+    the shelf are left alone.
+  - **What it would write today.** Run over production's 60 live shelf ledger rows on 2026-11-24, the
+    rule gives 9 tags settling 231 units, each item held by one job, so nothing is guessed:
+    - the seven counts MAT-RECO-2026-00235 to -00241 (218 units);
+    - MAT-STE-2026-00002, the 2026-09-23 transfer to two bins (13 units of PRJ-00759's).
+
+    Afterwards the shelf reads exact.
+  - **Safe to run twice**, and it never raises, because a raising patch aborts the deploy.
+- **The Project Shelf Tag hook** read `doc.flags` with `or`. An empty `frappe._dict` is falsy, so
+  the hook would have kept its report on a throwaway dict. It was caught by the new suite before
+  shipping.
+
+### Tests
+
+- **New bench-free suite, `tests/test_project_shelf_counts.py`**, with its own CI step. It covers
+  the split and its refusals, tag reading, the cleanup on production's own ledger (and that a
+  second run proposes nothing), Change whose, the submit hook, and the wiring: the hook, the patch,
+  the DocType, the bundle level, and that no fixture puts a project on a Stock Reconciliation.
+- **Existing suites that pinned the old behavior were updated:**
+  - `test_inventory_reports`: the old uncapped adapter fallback and the never-firing note.
+  - `test_bin_assignments`: the new endpoints. `change_whose` is listed as the one write that is not
+    logged: it moves no stock, and replacing its tags is its own repeat.
+- **`scripts/test_bin_manager.mjs`** drives the real page:
+  - the split at the shelf, with a refused sum;
+  - no split at a bin;
+  - an older bundle;
+  - Change whose.
+
 ## [1.840.2] - 2026-11-23
 
 ### Changed

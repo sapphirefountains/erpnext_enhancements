@@ -25,9 +25,11 @@ empty bin is on its list of places: that is where the next one goes.
 ``inventory_report_data.shelf_stock_by_project``: each job's share, and a last row under no job
 for what no job's ledger rows account for, which also carries what is on order to the shelf (an
 order's quantity is kept by warehouse, not by job). The rows add up to what is on the shelf. A
-job's share is the ledger's, so when somebody counted the shelf lower than the jobs' rows add up
-to, the no-job row is negative by the difference, and the note over the table says what that
-means. Before a Project Shelf is set, no row is of that kind and the note says so.
+job's share is capped by what is physically there, the figure the Bin Manager shows (v1.842.0
+made it explicit; before it the cap was applied and the note below could never appear). When the
+jobs' ledger rows claim more than is there, the note over the table says for how many items, and
+a job whose whole claim has left gets no row. Before a Project Shelf is set, no row is of that
+kind and the note says so.
 
 **The last movement** is the newest live Stock Ledger row for the item at the place
 (``posting_datetime``, then ``creation``). On the Project Shelf it is the newest row carrying
@@ -63,8 +65,8 @@ MAX_ROWS = 5000
 NO_JOB = "(no job)"
 
 SHORT_SHELF_NOTE = (
-	"A negative (no job) row on the Project Shelf means the shelf was counted lower than the jobs' "
-	"stock ledger rows add up to. The jobs' figures are the ledger's."
+	"For {0} item(s) the jobs' stock ledger rows claim {1} more than is on the Project Shelf "
+	"(counted or moved off with no job named). Each job shows only what is there."
 )
 
 
@@ -263,8 +265,14 @@ def get_rows(filters, where):
 			_("Showing the first {0} places. Choose an item or search to see the rest.").format(MAX_ROWS)
 		)
 	shelf_shares = {}
+	over_items, over_units = 0, 0.0
 	if where.shelf:
-		for share in data.shelf_stock_by_project(where.shelf, item_codes=item_codes):
+		every = data.shelf_stock_by_project(where.shelf, item_codes=item_codes)
+		over_items, over_units = rules.shelf_over(every)
+		for share in every:
+			# A job whose whole claim has left holds nothing here: its over-claim is in the note.
+			if share.get("project") and rules._num(share.get("qty")) <= rules.TOLERANCE:
+				continue
 			shelf_shares.setdefault(share.get("item_code"), []).append(share)
 	codes = {row.get("item_code") for row in bins} | set(shelf_shares)
 	if item_codes is not None:
@@ -277,16 +285,10 @@ def get_rows(filters, where):
 	by_place, by_job = last_movements(item_codes, where.shelf)
 
 	places = {(row.get("item_code"), row.get("warehouse")): row for row in bins}
-	# A job's ledger rows can claim shelf stock a count has since written off: no Bin quantity,
-	# and still a share to show.
 	for code in shelf_shares:
 		places.setdefault((code, where.shelf), {"item_code": code, "warehouse": where.shelf})
-	if any(
-		not s.get("project") and rules._num(s.get("qty")) < 0
-		for shares in shelf_shares.values()
-		for s in shares
-	):
-		notes.append(_(SHORT_SHELF_NOTE))
+	if over_items:
+		notes.append(_(SHORT_SHELF_NOTE).format(over_items, rules._plain(over_units)))
 	if rules._on(filters.get("include_empty")):
 		for code in codes:
 			for warehouse in rules_by_item.get(code, set()) | defaults_by_item.get(code, set()):

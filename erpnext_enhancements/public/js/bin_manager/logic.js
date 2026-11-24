@@ -50,6 +50,10 @@ export const READS = {
 	// shelf_jobs and shelf_jobs_exact, the Project Shelf's v1.804.0), and a job found by name.
 	item: SCAN + "get_item",
 	search_projects: SCAN + "search_projects",
+	// A count at the Project Shelf names its jobs (v1.842.0): who the change would belong to, and an
+	// item's latest count there with whose it was (for Change whose).
+	count_plan: BA + "count_plan",
+	count_whose: BA + "count_whose",
 };
 
 // Opens a job's site warehouse the first time something is sent to the job (v1.801.0). The By
@@ -66,6 +70,7 @@ export const ENDPOINTS = {
 	keep: BA + "assign",
 	add: BA + "assign",
 	create: BA + "create_and_assign",
+	whose: BA + "change_whose",
 	undo: SCAN + "undo",
 };
 
@@ -77,6 +82,7 @@ export const ACTION_LABELS = {
 	unassign: "Unassign",
 	add: "Add existing item",
 	create: "New item",
+	whose: "Change whose",
 };
 
 // ------------------------------------------------------------------ routes
@@ -223,11 +229,20 @@ export function amount(qty, uom) {
 // why in its own words; this only catches what does not need a round trip.
 export function check_values(kind, row, values, current) {
 	const v = values || {};
+	if (kind === "whose") {
+		if (!v.voucher_no) return "There is no count of this item on the Project Shelf to change.";
+		return split_problem(v.jobs, v.change);
+	}
 	if (kind === "count") {
 		const qty = number(v.qty);
 		if (!Number.isFinite(qty) || qty < 0) return "Enter the quantity you counted, 0 or more.";
 		if (row && Math.abs(qty - (Number(row.on_hand) || 0)) <= TOLERANCE) {
 			return "That is what the system already shows.";
+		}
+		// At the Project Shelf the shares of the change must add up to it (v1.842.0).
+		if (v.jobs) {
+			const problem = split_problem(v.jobs, qty - (Number(row && row.on_hand) || 0));
+			if (problem) return problem;
 		}
 		// A unit cost, when the server asked for one (the key is there, and Frappe's own Float hands back null
 		// for a blank box, so null is checked too): a positive number, within the caps.
@@ -272,8 +287,11 @@ export function request(kind, warehouse, row, values, ref) {
 	const method = ENDPOINTS[kind];
 	if (!method) throw new Error(`unknown action ${kind}`);
 	if (kind === "undo") return { method, args: { log: v.log } };
+	if (kind === "whose") return { method, args: { item_code, voucher_no: v.voucher_no, jobs: JSON.stringify(v.jobs || {}) } };
 	if (kind === "count") {
 		const args = { item_code, warehouse, qty: number(v.qty), client_ref: ref };
+		// Whose the change at the Project Shelf was (v1.842.0). Sent only from the shelf's dialog.
+		if (v.jobs) args.jobs = JSON.stringify(v.jobs);
 		// Sent only with a unit cost the person gave when asked; the server uses it only for an item with none.
 		if ("rate" in v && v.rate !== null && v.rate !== undefined && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
 		return { method, args };
@@ -334,7 +352,59 @@ export function permissions(boot) {
 		// The Project Shelf, when a move onto or off it names its job on this site
 		// (bin_views.shelf_job_moves): else null, and the page moves stock as it always did.
 		shelf: b.shelf_job_moves === true && b.shelf_warehouse ? b.shelf_warehouse : null,
+		// The Project Shelf, when a count there names its jobs (v1.842.0, bin_assignments.count_plan):
+		// else null, and a count is the one it always was.
+		shelf_counts: b.shelf_count_jobs === true && b.shelf_warehouse ? b.shelf_warehouse : null,
 	};
+}
+
+// ------------------------------------------------------------------ whose a count is (v1.842.0)
+
+// A count at the Project Shelf is a Stock Reconciliation, which has no job, so the page says whose the
+// change was: a share per job (and "" for the part that is no job's), adding up to the change. The
+// server works out the default (bin_assignments.count_plan, project_shelf_rules.count_split) and checks
+// the person's split again; these only draw it and catch what needs no round trip.
+
+// Whether a count at `warehouse` names its jobs.
+export function count_names_jobs(perms, warehouse) {
+	const p = perms || {};
+	return !!p.shelf_counts && !!warehouse && p.shelf_counts === warehouse;
+}
+
+// The split a plan starts on: { project: qty } with "" for no job, from the server's default (or a
+// count's current shares). Shares of nothing are left out.
+export function split_from_plan(plan) {
+	const out = {};
+	((plan && plan.rows) || []).forEach((row) => {
+		const qty = Number(row.qty) || 0;
+		if (qty > TOLERANCE) out[row.project] = qty;
+	});
+	const none = Number(plan && plan.no_job) || 0;
+	if (none > TOLERANCE) out[""] = none;
+	return out;
+}
+
+export function split_total(jobs) {
+	return Object.values(jobs || {}).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+}
+
+// A sentence when a split cannot be sent, or null: a share below nothing, or shares that do not add up to
+// the change. What each job holds is the server's to check.
+export function split_problem(jobs, change) {
+	const values = Object.values(jobs || {}).map((qty) => Number(qty));
+	if (values.some((qty) => !Number.isFinite(qty) || qty < 0)) return "Each share is a number, 0 or more.";
+	const want = Math.abs(Number(change) || 0);
+	const total = split_total(jobs);
+	if (Math.abs(total - want) > TOLERANCE) return `The shares add up to ${plain(total)}; the count changes the shelf by ${plain(want)}.`;
+	return null;
+}
+
+// The heading over the split: a count down takes units off the shelf, a count up finds some.
+export function split_question(change, uom) {
+	const n = Number(change) || 0;
+	if (n < -TOLERANCE) return `This count takes ${amount(-n, uom)} off the Project Shelf. Whose were they?`;
+	if (n > TOLERANCE) return `This count finds ${amount(n, uom)} more on the Project Shelf. Whose are they?`;
+	return "";
 }
 
 // ------------------------------------------------------------------ the Project Shelf's job
@@ -411,6 +481,7 @@ export function apply_local(kind, row, values) {
 
 // The buttons a row shows, in order. `warehouse` is the bin on screen.
 //   count     Stock Reconciliation create + submit (set_count posts one as the user)
+//   whose     the same, at the Project Shelf when a count there names its jobs (change_whose)
 //   move      Stock Entry create + submit, and something here to move
 //   keep      the module gate, for an item listed here that is not on the bin
 //   boneyard  the module gate, a transfer, a boneyard set, something here, and not the boneyard
@@ -422,6 +493,8 @@ export function row_actions(row, perms, warehouse) {
 	const is_boneyard = !!p.boneyard && p.boneyard === warehouse;
 	const out = [];
 	if (p.can_count) out.push("count");
+	// Say again whose the item's latest count at the Project Shelf was (v1.842.0).
+	if (p.can_count && count_names_jobs(p, warehouse)) out.push("whose");
 	if (p.can_move && here) out.push("move");
 	if (p.can_manage && !r.assigned && !is_boneyard) out.push("keep");
 	if (p.can_manage && p.can_move && p.boneyard && !is_boneyard && here) out.push("boneyard");
