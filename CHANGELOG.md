@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.843.1] - 2026-11-24
+
+### Fixed
+
+- **The Bin Manager no longer offers buttons the server always refuses at the Project Shelf and at a
+  job site.** Seen on prod on 2026-11-24: with the Project Shelf open, every row showed **Keep on
+  this bin** and the header showed **Add existing item** and **New item**. All three are an assign
+  (`bin_assignments.assign` / `create_and_assign`), and `_assignable_location` refuses an assign at
+  the shelf (v1.817.0) and at any job site (v1.801.0), so each click only ended in an error. The page
+  already hid them at the boneyard; it now hides them at those places too.
+  - **How the page knows.** A new `assignable(perms, warehouse)` in
+    `public/js/bin_manager/logic.js`, which `row_actions` and `bin_actions` now ask. `permissions()`
+    gains `not_bins`: the shelf and every job site, read from the kind `manager_boot` already gives
+    each bin (`bin_views.decorate`). That kind is built from the same set the server refuses
+    (`job_sites.site_warehouses`), so the hand-made job site with no job of its own counts too.
+  - **A fallback for a degraded boot.** The bin on screen also answers for itself, from
+    `get_location`'s `project_shelf` and `job_site`. That covers a boot whose kinds could not be
+    read (`decorate` failed and was logged). The controller now passes its location read to
+    `permissions()`.
+  - **Unchanged:** Change quantity, Change whose, Move, Send to boneyard and Unassign. Unassign still
+    shows at a job site, because the server allows it there: it clears a leftover Item Default or
+    records a disabled rule. The server's refusals stay as the guard.
+  - **No server change, and no bundle level bump.** The page script calls nothing new; only the
+    bundle's decisions changed. A tab open across the deploy draws the old buttons until it is
+    reloaded, and the server still refuses them there.
+  - **Stock Scan was checked and needs nothing.** The phone page offers no assign anywhere, and its
+    "Make … this item's bin" box already hides at the shelf and at job sites.
+  - **Tests:** `scripts/test_bin_manager.mjs` gains a logic test and a real-page test. They cover
+    the shelf, a job site, a finished job's site, the hand-made site, a shop bin, a vehicle, the
+    boneyard, and a boot without kinds.
+
 ## [1.843.0] - 2026-11-24
 
 ### Added
