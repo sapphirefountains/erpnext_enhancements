@@ -25,7 +25,7 @@ empty bin is on its list of places: that is where the next one goes.
 ``inventory_report_data.shelf_stock_by_project``: each job's share, and a last row under no job
 for what no job's ledger rows account for, which also carries what is on order to the shelf (an
 order's quantity is kept by warehouse, not by job). The rows add up to what is on the shelf. A
-job's share is capped by what is physically there, the figure the Bin Manager shows (v1.842.0
+job's share is capped by what is physically there, the figure the Bin Manager shows (v1.843.0
 made it explicit; before it the cap was applied and the note below could never appear). When the
 jobs' ledger rows claim more than is there, the note over the table says for how many items, and
 a job whose whole claim has left gets no row. Before a Project Shelf is set, no row is of that

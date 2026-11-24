@@ -39,7 +39,7 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
   off the source bin if that empties it. Never makes a rule at the Boneyard.
 * :func:`set_count` -- correct what is on hand: a submitted **Stock Reconciliation** for one
   item at one bin, never a Material Issue, so the ledger says it was a count and the stock
-  value moves at the item's rate. At the Project Shelf (v1.842.0) it names the job(s) the
+  value moves at the item's rate. At the Project Shelf (v1.843.0) it names the job(s) the
   change belongs to (:func:`count_plan` fills the dialog; :func:`count_whose` and
   :func:`change_whose` say it again afterwards), with Project Shelf Tags that post nothing.
 * :func:`create_and_assign` (v1.693.0, the Bin Manager page) -- create a new Item through the
@@ -838,7 +838,7 @@ def set_count(item_code, warehouse, qty, client_ref, rate=None, jobs=None):
 	it matches what the system already shows, when it is below what is reserved there, and when
 	the bin is empty and the item has no cost on record (``api.stock_scan._receipt_rate``).
 
-	**At the Project Shelf the count names its jobs** (v1.842.0). ``jobs`` is the person's split
+	**At the Project Shelf the count names its jobs** (v1.843.0). ``jobs`` is the person's split
 	of the change, ``{project: qty}`` of positive amounts with ``""`` for the part that is no
 	job's (the page's count dialog, filled from :func:`count_plan`). It is checked before
 	anything is written (``project_shelf_rules.count_split``: the shares add up to the change,
@@ -906,7 +906,7 @@ def _shelf_split(item, location, on_hand, count, jobs):
 	"""The person's split of a count at the Project Shelf, checked: ``{"chosen", "tags"}``, or
 	``None`` when the count is not at the shelf or names no split (the submit hook's default
 	then applies). Raises the sentence when the split cannot be posted, before anything is
-	written (v1.842.0)."""
+	written (v1.843.0)."""
 	if not project_shelf.is_shelf(location.name):
 		return None
 	chosen = project_shelf.rules.chosen_split(jobs)
@@ -951,7 +951,7 @@ def _plan_out(plan):
 
 @frappe.whitelist(methods=["GET"])
 def count_plan(item_code, warehouse, qty):
-	"""Who a count of one item at the Project Shelf would belong to (v1.842.0): the jobs that
+	"""Who a count of one item at the Project Shelf would belong to (v1.843.0): the jobs that
 	hold it there, what each holds, and the default share of the change for each
 	(``project_shelf.count_plan``). The count dialog shows it and lets the person change it.
 
@@ -973,7 +973,7 @@ def count_plan(item_code, warehouse, qty):
 
 @frappe.whitelist(methods=["GET"])
 def count_whose(item_code):
-	"""The item's latest count at the Project Shelf and whose its change was (v1.842.0), for the
+	"""The item's latest count at the Project Shelf and whose its change was (v1.843.0), for the
 	Bin Manager's *Change whose*: ``{"count": None}`` when it has none, else ``{"count":
 	{voucher_no, posting_date, before, change, rows, no_job, unclaimed}}`` with each job's
 	current share (``project_shelf.latest_count``). GET, reads only."""
@@ -996,7 +996,7 @@ def count_whose(item_code):
 
 @frappe.whitelist(methods=["POST"])
 def change_whose(item_code, voucher_no, jobs):
-	"""Say again whose one count's change at the Project Shelf was (v1.842.0): the count's
+	"""Say again whose one count's change at the Project Shelf was (v1.843.0): the count's
 	Project Shelf Tags for the item are replaced by ``jobs`` (``{project: qty}``, ``""`` for no
 	job), checked against what the shelf held just before that count. Changes no stock and no
 	GL: only whose the units were.
@@ -1203,7 +1203,7 @@ def manager_boot():
 			frappe.has_permission("Stock Entry", "create") and frappe.has_permission("Stock Entry", "submit")
 		),
 		"can_create_items": bool(frappe.has_permission("Item", "create")),
-		# A count at the Project Shelf names its jobs (v1.842.0): the dialog asks count_plan, and the
+		# A count at the Project Shelf names its jobs (v1.843.0): the dialog asks count_plan, and the
 		# shelf's rows offer Change whose. A page that does not see this flag counts as it always did.
 		"shelf_count_jobs": bool(project_shelf.warehouse()),
 		# Whether an item's name links to its Item record (TASK-2026-02918).

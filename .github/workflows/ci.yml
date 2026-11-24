@@ -4485,7 +4485,7 @@ jobs:
       # procurement_project.py run on test_job_sites' frappe stub (reused, so its own step). unittest classes.
       - name: The Project Shelf (received for a job, out of shop availability, by job) (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_shelf -v
-      # A count at the Project Shelf names its jobs (v1.842.0, the owner's 2026-11-24 yes): a Project Shelf Tag beside
+      # A count at the Project Shelf names its jobs (v1.843.0, the owner's 2026-11-24 yes): a Project Shelf Tag beside
       # the Stock Reconciliation, which has no project. If this fails, a count could again change what is on the shelf
       # and no job's share (the stale claim then absorbs the next delivery for another job), a tag could invent a claim
       # (more than its count's change, the other sign, or after the count was undone), the default could take a loss

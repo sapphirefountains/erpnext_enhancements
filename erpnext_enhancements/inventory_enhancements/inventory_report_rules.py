@@ -258,7 +258,7 @@ def shelf_shares(on_hand, by_project):
 	"""One item's Project Shelf stock, by the job it is for.
 
 	``on_hand`` is what ``tabBin`` says is on the shelf: how many there are. ``by_project`` is
-	``{project: quantity}``: each job's share. Since v1.842.0 the adapter hands in each job's
+	``{project: quantity}``: each job's share. Since v1.843.0 the adapter hands in each job's
 	**capped** share (``project_shelf_rules.allocate``, what the Bin Manager shows: never more
 	than is there), and what the cap took off travels beside it as ``over``.
 
@@ -296,7 +296,7 @@ STANDING_FROM_STOCK = "From shop stock"
 WHERE_NOT_STOCK = "Not a stock item: where it is was never recorded"
 WHERE_SHOP_BIN = "Received into a shop bin, where stock is not kept by job"
 WHERE_NOT_LOCATED = "Received before it was a stock item: where it is was never recorded"
-#: v1.842.0: the job's ledger rows claim more on the Project Shelf than is there. ``{0}`` is how many.
+#: v1.843.0: the job's ledger rows claim more on the Project Shelf than is there. ``{0}`` is how many.
 WHERE_OVER_CLAIMED = (
 	"The stock ledger has {0} more on the Project Shelf for this job than is there: "
 	"counted or moved off with no job named"
@@ -395,10 +395,10 @@ def project_item_rows(
 	* ``items``: ``{item_code: {item_name, stock_uom, is_stock_item, item_group}}``.
 	* ``received_into``: ``{item_code: [warehouse, ...]}``, where the job's receipts actually put
 	  stock (:func:`received_into`), already in the words to show.
-	* ``counted_off`` (v1.842.0): ``{item_code: qty}`` that counts at the Project Shelf took off
+	* ``counted_off`` (v1.843.0): ``{item_code: qty}`` that counts at the Project Shelf took off
 	  this job's share (its count tags, net, as a positive number). *Counted Off Shelf* shows it
 	  and *Not Located* no longer absorbs it.
-	* ``over_claimed`` (v1.842.0): ``{item_code: qty}`` the job's ledger rows claim on the shelf
+	* ``over_claimed`` (v1.843.0): ``{item_code: qty}`` the job's ledger rows claim on the shelf
 	  beyond what is there (``on_shelf`` is already capped). The row's note says so.
 
 	**Ordered and received come from different documents on purpose.** Ordered is the order
@@ -600,7 +600,7 @@ def where_note(is_stock_item, not_located, stocked=False, over=0.0, counted_off=
 	"""Why some of an item has no place in the report, or blank when all of it has one.
 	``stocked`` says the job's receipts put some of it into stock (so it went to a shop bin).
 
-	Two Project Shelf facts come first (v1.842.0): the job's ledger rows claim more on the shelf
+	Two Project Shelf facts come first (v1.843.0): the job's ledger rows claim more on the shelf
 	than is there (``over``: *On Project Shelf* shows only what is there, so the claim is said
 	here), and units of it were counted off the shelf (``counted_off``)."""
 	if _num(over) > TOLERANCE:
@@ -759,9 +759,9 @@ def shelf_gaps(shelf_rows):
 	"""``(unclaimed, short)``: how many items on the shelf have stock no job's rows account for,
 	and how many have less on the shelf than the jobs' rows claim.
 
-	Unclaimed is read from the no-job shares. Short is read from each job's ``over`` (v1.842.0:
+	Unclaimed is read from the no-job shares. Short is read from each job's ``over`` (v1.843.0:
 	what the cap took off its claim), and from a negative no-job share for a row that carries no
-	``over``. Before v1.842.0 short was read from the no-job share alone, which the capped
+	``over``. Before v1.843.0 short was read from the no-job share alone, which the capped
 	shares could never make negative: the over-claim was there and the note never said so."""
 	unclaimed = {
 		r.get("item_code") for r in shelf_rows or () if not r.get("project") and _num(r.get("qty")) > 0
@@ -777,7 +777,7 @@ def shelf_gaps(shelf_rows):
 
 def shelf_over(shelf_rows):
 	"""``(items, units)``: how many items the jobs' rows claim more of than is on the shelf, and
-	by how much in all (each job's ``over``, v1.842.0). The note over Project Materials says it,
+	by how much in all (each job's ``over``, v1.843.0). The note over Project Materials says it,
 	so a claim the cap hides from a column is still in front of the reader."""
 	items = set()
 	units = 0.0

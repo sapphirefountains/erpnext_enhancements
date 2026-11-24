@@ -19,7 +19,7 @@ Frappe, tested bench-free). This module is the part that reads the database.
   drift is reported instead of hidden.
 
 **Other modules call three functions and must not reach past them:** :func:`warehouse`,
-:func:`not_shop_warehouses` and :func:`shelf_stock`. (v1.842.0 adds the count's: the
+:func:`not_shop_warehouses` and :func:`shelf_stock`. (v1.843.0 adds the count's: the
 Stock Reconciliation hook :func:`tag_reconciliation`, and :func:`count_plan`,
 :func:`latest_count`, :func:`change_whose` and :func:`settle_plan` for the Bin Manager and the
 cleanup patch.) Their signatures and return shapes are
@@ -40,7 +40,7 @@ from erpnext_enhancements.inventory_enhancements import project_shelf_rules as r
 SETTING = "project_shelf_warehouse"
 FALLBACK_SETTING = "overhead_receiving_warehouse"
 
-#: The record that names the job(s) of a shelf movement that carries none (v1.842.0).
+#: The record that names the job(s) of a shelf movement that carries none (v1.843.0).
 TAG = "Project Shelf Tag"
 
 
@@ -198,7 +198,7 @@ def _ledger(shelf, item_code=None):
 
 
 def _tags(shelf, item_code=None):
-	"""The Project Shelf Tags at the shelf (v1.842.0), oldest first, as the rules read them.
+	"""The Project Shelf Tags at the shelf (v1.843.0), oldest first, as the rules read them.
 
 	``[]`` when there are none, and when the table cannot be read: on a site where the DocType
 	has not been migrated yet, the shelf's figures are what they were before tags existed
@@ -238,7 +238,7 @@ def shelf_stock(project=None, item_code=None):
 
 	**Limits.** ERPNext keeps on-hand by item and warehouse, with no project. These numbers
 	are derived from the project on each ledger row, and from the Project Shelf Tags that name
-	the jobs of a movement with none (v1.842.0: every count posted since names its jobs). A
+	the jobs of a movement with none (v1.843.0: every count posted since names its jobs). A
 	movement with no project and no tag (a transfer made by hand in the Desk) makes them drift. The drift is in ``untagged`` and
 	``untagged_movements`` and is never hidden. ``rows[].qty`` is a job's tag balance **capped
 	by what is physically on the shelf**, so it is never negative and an item's rows never add
@@ -333,7 +333,7 @@ def holders(item_code, stock=None):
 
 
 # ---------------------------------------------------------------------------
-# Whose a count's change is (v1.842.0)
+# Whose a count's change is (v1.843.0)
 # ---------------------------------------------------------------------------
 #
 # A count is a Stock Reconciliation, which carries no project, so on its own it changes what is
@@ -421,7 +421,7 @@ def _choice_message(report):
 
 
 def tag_reconciliation(doc, method=None):
-	"""``doc_events``: Stock Reconciliation ``on_submit`` (v1.842.0). Name the jobs of every row
+	"""``doc_events``: Stock Reconciliation ``on_submit`` (v1.843.0). Name the jobs of every row
 	the count changed at the Project Shelf.
 
 	One hook for every way a count reaches the shelf: the Bin Manager's count, the Count Desk

@@ -1738,7 +1738,7 @@ erpnext_enhancements.patches.seed_estimate_scope_item
 # are TIMESTAMP-gated by import_file, so both JSONs' `modified` is bumped and reload_doc(force=True) covers a row edited
 # in the Desk since. Post model sync, so the reports exist; each reload never raises (one Error Log row), safe twice.
 erpnext_enhancements.patches.resync_progress_billing_workspaces
-# v1.842.0 -- project_shelf: name the job of every movement off the Project Shelf that never named one (a count is a
+# v1.843.0 -- project_shelf: name the job of every movement off the Project Shelf that never named one (a count is a
 # Stock Reconciliation, which has no project). Writes Project Shelf Tags only: no GL entry, no stock ledger row. Keyed on
 # the rule when it runs (project_shelf_rules.settle_untagged); on production on 2026-11-24 that was 9 tags settling 231
 # units (seven counts that day, one transfer of 2026-09-23). Post model sync, so the DocType exists. Never raises,

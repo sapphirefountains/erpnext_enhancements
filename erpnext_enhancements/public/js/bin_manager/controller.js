@@ -410,7 +410,7 @@ export class Controller {
 		);
 	}
 
-	// Who a count of an item at the Project Shelf would belong to (v1.842.0, bin_assignments.count_plan):
+	// Who a count of an item at the Project Shelf would belong to (v1.843.0, bin_assignments.count_plan):
 	// { shelf, before, change, rows: [{ project, project_name, holds, short, qty }], no_job, unclaimed,
 	// choice }. A read that fails answers { shelf: false }, and the dialog counts without a split (the
 	// server's own default then names the jobs).

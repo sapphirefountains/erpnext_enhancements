@@ -1368,7 +1368,7 @@ doc_events = {
 			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
 		],
 	},
-	# v1.842.0 -- project_shelf: a count that changes an item at the Project Shelf names the job(s)
+	# v1.843.0 -- project_shelf: a count that changes an item at the Project Shelf names the job(s)
 	# the change belongs to, with a Project Shelf Tag beside it. A Stock Reconciliation has no
 	# project in ERPNext, so without this a count changes what is on the shelf and no job's share.
 	# The tag posts nothing (no GL, no stock ledger row): the count's loss or gain stays on the

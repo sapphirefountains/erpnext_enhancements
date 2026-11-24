@@ -88,7 +88,7 @@ const BM_BOARD_ROLES = ["Purchase Manager", "Purchase User", "Stock Manager", "S
 // open across a deploy draws the page without the link). The route is the pure module's.
 const BM_TRANSACTIONS_REPORT = "Warehouse Transactions";
 const BM_SEARCH_DELAY_MS = 250;
-// A count at the Project Shelf names its jobs (v1.842.0): drawn only from a bundle at this level or newer
+// A count at the Project Shelf names its jobs (v1.843.0): drawn only from a bundle at this level or newer
 // (bin_manager.bundle.js VERSION), so a tab holding an older copy across the deploy counts as it always did
 // and the server's default names the jobs. scripts/test_bin_manager.mjs holds the two numbers equal.
 const BM_SPLIT_LEVEL = 4;
@@ -1378,7 +1378,7 @@ class BinManagerPage {
 	}
 
 	count_dialog(row) {
-		// At the Project Shelf the count says whose the change was (v1.842.0): a split under the quantity, read
+		// At the Project Shelf the count says whose the change was (v1.843.0): a split under the quantity, read
 		// from the server each time the quantity settles, which the person may change.
 		const at_shelf = this.split_ready() && this.bm.count_names_jobs(this.perms(), this.here());
 		let split = null;
@@ -1424,7 +1424,7 @@ class BinManagerPage {
 		return !!this.bm && Number(this.bm.version) >= BM_SPLIT_LEVEL && typeof this.bm.split_from_plan === "function";
 	}
 
-	// "Change whose" (v1.842.0): say again whose the item's latest count at the Project Shelf was. Changes no
+	// "Change whose" (v1.843.0): say again whose the item's latest count at the Project Shelf was. Changes no
 	// stock and no GL, only the Project Shelf Tags that name the count's jobs.
 	whose_dialog(row) {
 		if (!this.split_ready()) return;

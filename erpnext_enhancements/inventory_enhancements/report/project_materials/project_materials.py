@@ -15,7 +15,7 @@ for them." Two views in one report, chosen by the Project filter.
 | On Project Shelf | ``inventory_report_data.shelf_stock_by_project`` for this job, capped by what is there |
 | At Job Site | ``tabBin`` at the job's own site warehouse |
 | Used on Job | the job's stock ledger: Material Issues, Delivery Notes and Sales Invoices, less parts brought back |
-| Counted Off Shelf | what counts at the Project Shelf took off this job's share (its count tags, v1.842.0) |
+| Counted Off Shelf | what counts at the Project Shelf took off this job's share (its count tags, v1.843.0) |
 | Returned to Supplier | ERPNext's return receipts and Supplier Returns whose goods have left, each return counted once |
 | Return Requested | Supplier Return lines asked for and not sent back yet: those goods are still here |
 | Still to Come | what open order lines are short |
@@ -39,14 +39,14 @@ read from the stock ledger), or received before Maintain Stock was switched on.
 
 **Stock Item is the item's flag today**, not what it was when the line was received.
 
-**On Project Shelf agrees with the Bin Manager** (v1.842.0). A job's figure is its share capped by
+**On Project Shelf agrees with the Bin Manager** (v1.843.0). A job's figure is its share capped by
 what is physically on the shelf, the Bin Manager's By project figure. It already was in effect
 from v1.817.0, through the Project Shelf module, but the note that should have said "the ledger
 claims more than is there" read a figure the cap made impossible, so it never appeared, and the
 row's note blamed Maintain Stock for parts a count had taken off the shelf. Now the claim beyond
 what is there is said twice: in the row's Note ("the stock ledger has N more on the Project Shelf
 for this job than is there") and in the line over the table, with the number of items and units.
-A count at the shelf names its jobs since v1.842.0, so what a count took off the job is its own
+A count at the shelf names its jobs since v1.843.0, so what a count took off the job is its own
 column, *Counted Off Shelf*, and *Not Located* no longer absorbs it.
 
 **Without a Project: one row per job that physically holds something**, on the Project Shelf or at

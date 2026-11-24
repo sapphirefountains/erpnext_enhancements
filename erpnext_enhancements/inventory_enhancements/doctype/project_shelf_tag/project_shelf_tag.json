@@ -2,7 +2,7 @@
  "actions": [],
  "autoname": "format:SHELF-TAG-{YYYY}-{#####}",
  "creation": "2026-11-24 12:00:00.000000",
- "description": "Which job a Project Shelf movement with no project belongs to (v1.842.0): a count, or a transfer made with no job. Posts nothing: no GL entry and no stock ledger row. Only the shelf's by-job figures read it, and only while its document is live. Written by the Bin Manager, the Stock Reconciliation submit hook and the cleanup patch, never by hand.",
+ "description": "Which job a Project Shelf movement with no project belongs to (v1.843.0): a count, or a transfer made with no job. Posts nothing: no GL entry and no stock ledger row. Only the shelf's by-job figures read it, and only while its document is live. Written by the Bin Manager, the Stock Reconciliation submit hook and the cleanup patch, never by hand.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [

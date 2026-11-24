@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests for a count that names its jobs on the Project Shelf (v1.842.0).
+"""Bench-free tests for a count that names its jobs on the Project Shelf (v1.843.0).
 
 The owner's yes of 2026-11-24 ("Yes, all recommended"): a count at the Project Shelf is a Stock
 Reconciliation, which has no project, so a **Project Shelf Tag** beside it says whose units the

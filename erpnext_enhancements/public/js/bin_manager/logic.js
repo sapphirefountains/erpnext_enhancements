@@ -50,7 +50,7 @@ export const READS = {
 	// shelf_jobs and shelf_jobs_exact, the Project Shelf's v1.804.0), and a job found by name.
 	item: SCAN + "get_item",
 	search_projects: SCAN + "search_projects",
-	// A count at the Project Shelf names its jobs (v1.842.0): who the change would belong to, and an
+	// A count at the Project Shelf names its jobs (v1.843.0): who the change would belong to, and an
 	// item's latest count there with whose it was (for Change whose).
 	count_plan: BA + "count_plan",
 	count_whose: BA + "count_whose",
@@ -239,7 +239,7 @@ export function check_values(kind, row, values, current) {
 		if (row && Math.abs(qty - (Number(row.on_hand) || 0)) <= TOLERANCE) {
 			return "That is what the system already shows.";
 		}
-		// At the Project Shelf the shares of the change must add up to it (v1.842.0).
+		// At the Project Shelf the shares of the change must add up to it (v1.843.0).
 		if (v.jobs) {
 			const problem = split_problem(v.jobs, qty - (Number(row && row.on_hand) || 0));
 			if (problem) return problem;
@@ -290,7 +290,7 @@ export function request(kind, warehouse, row, values, ref) {
 	if (kind === "whose") return { method, args: { item_code, voucher_no: v.voucher_no, jobs: JSON.stringify(v.jobs || {}) } };
 	if (kind === "count") {
 		const args = { item_code, warehouse, qty: number(v.qty), client_ref: ref };
-		// Whose the change at the Project Shelf was (v1.842.0). Sent only from the shelf's dialog.
+		// Whose the change at the Project Shelf was (v1.843.0). Sent only from the shelf's dialog.
 		if (v.jobs) args.jobs = JSON.stringify(v.jobs);
 		// Sent only with a unit cost the person gave when asked; the server uses it only for an item with none.
 		if ("rate" in v && v.rate !== null && v.rate !== undefined && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
@@ -352,13 +352,13 @@ export function permissions(boot) {
 		// The Project Shelf, when a move onto or off it names its job on this site
 		// (bin_views.shelf_job_moves): else null, and the page moves stock as it always did.
 		shelf: b.shelf_job_moves === true && b.shelf_warehouse ? b.shelf_warehouse : null,
-		// The Project Shelf, when a count there names its jobs (v1.842.0, bin_assignments.count_plan):
+		// The Project Shelf, when a count there names its jobs (v1.843.0, bin_assignments.count_plan):
 		// else null, and a count is the one it always was.
 		shelf_counts: b.shelf_count_jobs === true && b.shelf_warehouse ? b.shelf_warehouse : null,
 	};
 }
 
-// ------------------------------------------------------------------ whose a count is (v1.842.0)
+// ------------------------------------------------------------------ whose a count is (v1.843.0)
 
 // A count at the Project Shelf is a Stock Reconciliation, which has no job, so the page says whose the
 // change was: a share per job (and "" for the part that is no job's), adding up to the change. The
@@ -493,7 +493,7 @@ export function row_actions(row, perms, warehouse) {
 	const is_boneyard = !!p.boneyard && p.boneyard === warehouse;
 	const out = [];
 	if (p.can_count) out.push("count");
-	// Say again whose the item's latest count at the Project Shelf was (v1.842.0).
+	// Say again whose the item's latest count at the Project Shelf was (v1.843.0).
 	if (p.can_count && count_names_jobs(p, warehouse)) out.push("whose");
 	if (p.can_move && here) out.push("move");
 	if (p.can_manage && !r.assigned && !is_boneyard) out.push("keep");

@@ -20,7 +20,7 @@ model, the pure rules and the label reads.
 | `doctype/inventory_count_line/` | One counted row |
 | `doctype/storage_location/` | Sub-warehouse storage locations |
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
-| `doctype/project_shelf_tag/` | Which job a Project Shelf movement with no project belongs to (v1.842.0): a count, or a transfer made with no job. One row is one job's share of one document's change to one item. Posts nothing (no GL, no stock ledger row); read only by `project_shelf_rules.shelf_summary`, and only while its document is live. Written by code: the Bin Manager's count and *Change whose*, the Stock Reconciliation submit hook, the cleanup patch. See *A count names its jobs* below |
+| `doctype/project_shelf_tag/` | Which job a Project Shelf movement with no project belongs to (v1.843.0): a count, or a transfer made with no job. One row is one job's share of one document's change to one item. Posts nothing (no GL, no stock ledger row); read only by `project_shelf_rules.shelf_summary`, and only while its document is live. Written by code: the Bin Manager's count and *Change whose*, the Stock Reconciliation submit hook, the cleanup patch. See *A count names its jobs* below |
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | The phone count page: scan a location, scan items, type what is there |
 | `page/count_desk/` | The **Count Desk** (v1.737.0): counts and audits on a laptop. The warehouse tree with coverage, a keyboard count sheet, the variance review and the post. See *The Count Desk* below |
@@ -37,7 +37,7 @@ model, the pure rules and the label reads.
 | `job_site_rules.py` | Every judgement about job-site warehouses (v1.801.0): a site's name, which jobs get one, whose job a take at a site is, which job a transfer carries, and the arithmetic that takes job sites out of a total and out of ERPNext's rolled-up projected quantities. No Frappe, no I/O. See *Job sites* below |
 | `job_sites.py` | Reads and creates job sites: `ensure_site` (opened on first use, the one write made past permissions), `site_project`, `site_warehouses`, `refuse_as_bin`. Every read is safe before the Warehouse field exists |
 | `project_shelf_rules.py` | Every judgement about the Project Shelf (v1.817.0): where a purchase line is received, whose job a move onto or off the shelf carries, the three-way split of an item's on-hand (shop, shelf, job sites), and the arithmetic that reads the shelf's ledger by job and reports what the tags do not account for. No Frappe, no I/O. See *The Project Shelf* below |
-| `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger and the Project Shelf Tags), `refuse_as_bin`. Nothing here raises to answer a question. Since v1.842.0 also a count's jobs: `tag_reconciliation` (the Stock Reconciliation `on_submit` hook), `count_plan`, `latest_count` / `change_whose`, `settle_plan` |
+| `project_shelf.py` | Reads the shelf: `warehouse` (the one setting), `not_shop_warehouses` (every job site plus the shelf, the set every total reads), `shelf_stock` (what is on the shelf, by job, from the Stock Ledger and the Project Shelf Tags), `refuse_as_bin`. Nothing here raises to answer a question. Since v1.843.0 also a count's jobs: `tag_reconciliation` (the Stock Reconciliation `on_submit` hook), `count_plan`, `latest_count` / `change_whose`, `settle_plan` |
 | `project_stock_rules.py` | Where a project's material is now (v1.811.0), worked out from the stock ledger rows that name the job: the kinds of place (Project Shelf, the job's site, a shop bin, a vehicle, taken to the job, returned to the supplier, place not recorded), `item_places` (never more at a place than its Bin row holds; everything at the job's own site is the job's; a Supplier Return and the ledger's return rows never added together), `capped_shelf_rows`, `return_summary`, `shelf_rows`. No Frappe, no I/O |
 | `project_stock.py` | The reads behind it: `places_for(project, item_codes)` for the Procurement Tracker (one ledger query and three reads whatever the number of lines), `shelf_stock(project)` and `shelf_by_project()` (the one door for "what is on the Project Shelf for this job": `project_shelf.shelf_stock`, cut to what the shelf holds, with a ledger fallback until that module is installed), `shelf_warehouse()` (`project_shelf.warehouse()`, else the setting read with `Document.get`, so a site without the field has no shelf). The job's Supplier Returns come from `supplier_returns.returned_lines`. Both sibling modules are imported where they are used, so the releases can merge in any order. Writes nothing |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
@@ -776,7 +776,7 @@ is read from **the project on each Stock Ledger row** at the shelf:
 | A bin → the shelf (set aside) | The job named. Refused without one, and for a finished job |
 | A job site → the shelf | The site's job |
 | A store run | Refused at the shelf: its receipt carries no project on purpose |
-| A count | None on the count itself: a Stock Reconciliation has no project in ERPNext. Since v1.842.0 a **Project Shelf Tag** beside it names the job(s) (*A count names its jobs*, below) |
+| A count | None on the count itself: a Stock Reconciliation has no project in ERPNext. Since v1.843.0 a **Project Shelf Tag** beside it names the job(s) (*A count names its jobs*, below) |
 
 `project_shelf.shelf_stock(project=None, item_code=None)` adds those rows up, and is **the one
 function that answers both "what is on the shelf for project X" and "which projects have stock on
@@ -795,7 +795,7 @@ rule for sharing out a shortfall nobody recorded, which is why the uncapped numb
 beside it.
 
 **Its limits, which every screen that shows the numbers must say.** A movement with no project and
-no Project Shelf Tag (a count posted before v1.842.0, a transfer made by hand in the Desk) changes
+no Project Shelf Tag (a count posted before v1.843.0, a transfer made by hand in the Desk) changes
 what is on the shelf without changing any job's tag. That drift is reported, never hidden: `untagged` is, per item, what is on hand minus
 what the tags add up to (and `over_tagged`, the claimed stock that is not there);
 `untagged_movements` lists each such ledger row, a count's change worked out from the balance
@@ -977,7 +977,7 @@ on when this module is installed and `move_to` takes `project`: both are true fr
 **Not built:** a way to move a part on the shelf from one job to another without it leaving the
 shelf; and non-stock items, which never enter stock and so never reach the shelf.
 
-### A count names its jobs (v1.842.0)
+### A count names its jobs (v1.843.0)
 
 The owner's yes of 2026-11-24 ("Yes, all recommended"). On production that day seven counts at the
 shelf, all to zero, left 218 units still claimed by four jobs, and a September transfer left 13

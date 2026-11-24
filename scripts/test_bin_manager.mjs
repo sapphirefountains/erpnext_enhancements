@@ -154,7 +154,7 @@ function makeServer(options) {
 			if (name === "get_item") return JSON.parse(JSON.stringify(fixture.shelf_item || { item_code: args.item_code, project_shelf: false, shelf_jobs: [], shelf_jobs_exact: true }));
 			if (name === "search_projects") return JSON.parse(JSON.stringify(fixture.jobs_found || [{ project: "PRJ-90007", project_name: "Courtyard Rill", customer: "Greenway Homes", status: "Active" }]));
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
-			// A count at the Project Shelf names its jobs (v1.842.0): the default split, and an item's latest count there.
+			// A count at the Project Shelf names its jobs (v1.843.0): the default split, and an item's latest count there.
 			if (name === "count_plan") {
 				if (fixture.count_plan) return JSON.parse(JSON.stringify(fixture.count_plan(args)));
 				return { shelf: false };
@@ -2325,7 +2325,7 @@ test("the real page: no Movements link without the report, with an old bundle, o
 	}
 });
 
-// ------------------------------------------------------------------ a count at the Project Shelf names its jobs (v1.842.0)
+// ------------------------------------------------------------------ a count at the Project Shelf names its jobs (v1.843.0)
 
 // The boot of a site where a count at the shelf names its jobs.
 const SHELF_COUNT_BOOT = Object.assign({}, SHELF_BOOT, { shelf_count_jobs: true });

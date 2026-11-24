@@ -1216,7 +1216,7 @@ class TestSharedReads(_Case):
 			],
 		)
 		rows = data.shelf_stock_by_project("Project Shelf - SF")
-		# v1.842.0: even this reading caps each job by what is there, as the Bin Manager does. B has 6
+		# v1.843.0: even this reading caps each job by what is there, as the Bin Manager does. B has 6
 		# on the shelf and 12 claimed: with no delivery dates here the shortfall is shared in job order,
 		# and JOB-2's claim beyond what is there is its `over`, never a negative no-job row.
 		self.assertEqual(
@@ -1249,7 +1249,7 @@ class TestSharedReads(_Case):
 			self.assertEqual(params["items"], ("A",))
 
 	def test_a_claim_with_nothing_left_on_the_shelf_still_shows(self):
-		# v1.842.0: shown as nothing held and 3 claimed beyond what is there, for the notes to say.
+		# v1.843.0: shown as nothing held and 3 claimed beyond what is there, for the notes to say.
 		self._shelf_sql([], [{"item_code": "A", "project": "JOB-1", "qty": 3}])
 		rows = data.shelf_stock_by_project("Project Shelf - SF")
 		self.assertEqual(
@@ -1853,7 +1853,7 @@ class TestWhereIsThisItem(_Case):
 		)
 
 	def test_a_shelf_counted_lower_than_the_jobs_claim_shows_the_gap_and_says_what_it_means(self):
-		# v1.842.0: the job shows what is there (capped, as the Bin Manager shows it); the 3 its ledger
+		# v1.843.0: the job shows what is there (capped, as the Bin Manager shows it); the 3 its ledger
 		# rows claim beyond that are said in the note, never shown as a negative no-job row.
 		self.shares = [
 			{"item_code": "A", "project": "JOB-1", "qty": 9.0, "value": 90.0, "tagged": 12.0, "over": 3.0},
@@ -1867,7 +1867,7 @@ class TestWhereIsThisItem(_Case):
 		self.assertEqual(self.run_report(item_code="A")[2], data.ALL_ROWS_NOTE)
 
 	def test_a_claim_on_an_item_with_nothing_left_on_the_shelf_is_said_not_listed(self):
-		# v1.842.0: a job whose whole claim has left holds nothing on the shelf, so the item gets no shelf
+		# v1.843.0: a job whose whole claim has left holds nothing on the shelf, so the item gets no shelf
 		# row there (the Bin Manager shows none either); the note over the table says what is claimed.
 		self.shares = [
 			{"item_code": "C", "project": "JOB-2", "qty": 0.0, "value": 0.0, "tagged": 2.0, "over": 2.0}
@@ -2206,7 +2206,7 @@ class TestProjectMaterials(_Case):
 		_c, rows, message, _ch, _s = self.run_report(project="JOB-1")
 		self.assertEqual(asked, [["JOB-1", ""]])
 		by_item = {r["item_code"]: r for r in rows}
-		# v1.842.0: the job's own figure is capped by what is there (the Bin Manager's); the 2 more its
+		# v1.843.0: the job's own figure is capped by what is there (the Bin Manager's); the 2 more its
 		# ledger rows claim are said in the row's note and over the table. The no-job share is nobody's.
 		self.assertEqual(by_item["A"]["on_shelf"], 5)
 		self.assertEqual(by_item["A"]["where_note"], rules.WHERE_OVER_CLAIMED.format("2"))

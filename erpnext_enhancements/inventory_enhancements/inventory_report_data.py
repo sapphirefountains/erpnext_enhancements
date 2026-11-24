@@ -305,7 +305,7 @@ def shelf_stock_by_project(shelf, item_codes=None, projects=None):
 	**Two facts, two sources.** How many there are is ``tabBin`` at the shelf. Whose they are is
 	the stock ledger and the Project Shelf Tags that name a count's jobs (:func:`_shelf_claims`).
 
-	**A job's share is capped by what is physically there** (v1.842.0, made explicit): ``qty`` is
+	**A job's share is capped by what is physically there** (v1.843.0, made explicit): ``qty`` is
 	the same figure the Bin Manager's By project view shows (``project_shelf_rules.allocate``),
 	never more than is on the shelf, whichever reading answered. ``tagged`` is the job's uncapped
 	ledger balance and ``over`` what the cap took off it: the over-claim, which the reports say in
@@ -388,7 +388,7 @@ def _shelf_bins(shelf, codes):
 
 def _shelf_claims(shelf, codes):
 	"""``{item_code: {project: {"qty", "tagged", "over", "counted"}}}`` at the shelf: each job's
-	capped share, its uncapped balance, what the cap took off, and its counts' net (v1.842.0).
+	capped share, its uncapped balance, what the cap took off, and its counts' net (v1.843.0).
 
 	Asked of the Project Shelf change's ``project_shelf.shelf_stock`` when that module is
 	installed, so these reports and its screens read one answer. Before it is installed, or if
@@ -410,7 +410,7 @@ def _claims_from_module(module, shelf, codes):
 	``shelf_stock(project=None, item_code=None)`` returns ``{"warehouse": ..., "rows": [{"project",
 	"item_code", "qty", ...}]}``. Since v1.817.0 ``qty`` there is the job's share **capped** by
 	what is on the shelf, with the uncapped balance as ``tagged`` and the difference as
-	``over_tagged``; since v1.842.0 ``counted`` is what its count tags gave it. All four are
+	``over_tagged``; since v1.843.0 ``counted`` is what its count tags gave it. All four are
 	carried. One item is asked for by name; several are filtered here.
 	"""
 	try:

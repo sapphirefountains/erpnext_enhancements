@@ -1,4 +1,4 @@
-"""Name the job of every movement off the Project Shelf that never named one (v1.842.0).
+"""Name the job of every movement off the Project Shelf that never named one (v1.843.0).
 
 The owner's yes of 2026-11-24 ("Yes, all recommended": a count names its jobs with a Project
 Shelf Tag that posts nothing, and the cleanup is keyed on the rule when it runs, not on a list).
@@ -59,7 +59,7 @@ Post model sync, so the Project Shelf Tag DocType exists.
 import frappe
 
 NOTE = (
-	"Settled by the v1.842.0 cleanup: this left the Project Shelf with no job named "
+	"Settled by the v1.843.0 cleanup: this left the Project Shelf with no job named "
 	"(a count, or a transfer made by hand). The default rule named the job."
 )
 

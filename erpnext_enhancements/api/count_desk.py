@@ -39,7 +39,7 @@ this module reads and writes. The things it is careful about:
   submitted tomorrow does not wipe out today's takes and receipts: ERPNext reposts them on top.
 * **A post is idempotent.** A retry after a dropped reply finds the session Finalized and gets the
   first post back with ``repeated``; nothing posts twice.
-* **A count at the Project Shelf names its jobs** (v1.842.0), through the Stock Reconciliation
+* **A count at the Project Shelf names its jobs** (v1.843.0), through the Stock Reconciliation
   submit hook (``project_shelf.tag_reconciliation``), with the default split: whatever a draft's
   Stock Manager submits gets the same. The result says which shelf items the default had to
   share between jobs; the Bin Manager's *Change whose* says it again if that was wrong.
@@ -1124,7 +1124,7 @@ def post_count(session, mode="post"):
 			),
 		)
 		if mode == "post":
-			# The Project Shelf's submit hook names the jobs of every shelf row (v1.842.0); this page
+			# The Project Shelf's submit hook names the jobs of every shelf row (v1.843.0); this page
 			# says so itself in the result, so the hook adds no alert of its own.
 			if getattr(sr, "flags", None) is not None:
 				sr.flags.shelf_quiet = True
@@ -1172,7 +1172,7 @@ def post_count(session, mode="post"):
 
 def _shelf_note(shelf_tagged):
 	"""The sentence naming the Project Shelf items whose count the default split between jobs
-	(v1.842.0), or ``""``. Never raises: a count that posted is reported as posted."""
+	(v1.843.0), or ``""``. Never raises: a count that posted is reported as posted."""
 	try:
 		from erpnext_enhancements.inventory_enhancements import project_shelf
 

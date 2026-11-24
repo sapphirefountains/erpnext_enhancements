@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Controller for the Project Shelf Tag doctype (v1.842.0).
+"""Controller for the Project Shelf Tag doctype (v1.843.0).
 
 Which job a movement on the Project Shelf belongs to, when the movement itself carries no
 project: a count (a Stock Reconciliation, which has no project in ERPNext) or a transfer made

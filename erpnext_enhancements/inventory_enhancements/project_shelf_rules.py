@@ -25,7 +25,7 @@ number. Nothing here hides that: the difference between what is on hand and what
 add up to is returned per item (``untagged``), each such movement is listed
 (``untagged_movements``), and ``exact`` is true only when none of that is there.
 
-**A count names its jobs with a tag that posts nothing** (v1.842.0, the owner's yes of
+**A count names its jobs with a tag that posts nothing** (v1.843.0, the owner's yes of
 2026-11-24). A count is a Stock Reconciliation, and ERPNext 16.60.0 has no project on one: a
 custom field would be copied onto the Stock Adjustment GL line (``stock_controller``), so the
 loss would land in the job's P&L, and a count has one row per item and place, so it could not
@@ -91,7 +91,7 @@ TOLERANCE = 1e-6
 #: How many untagged movements :func:`shelf_summary` returns, newest first.
 MOVEMENT_LIMIT = 200
 
-#: Where a Project Shelf Tag came from (its ``source``, v1.842.0).
+#: Where a Project Shelf Tag came from (its ``source``, v1.843.0).
 TAG_COUNT = "Count"  # named by the person in the Bin Manager's count dialog
 TAG_DEFAULT = "Default"  # the rule's split when nobody named it: Count Desk, the phone audit, the Desk
 TAG_CLEANUP = "Cleanup"  # the one-off patch that settled the movements nobody had named
@@ -553,7 +553,7 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 	then creation), each with ``item_code``, ``project``, ``actual_qty``,
 	``qty_after_transaction``, ``voucher_type``, ``voucher_no`` and ``posting_date``.
 	``on_hand`` is ``{item_code: quantity}`` from ERPNext's on-hand table. ``tags`` are the
-	Project Shelf Tags at the shelf (v1.842.0): each names a job for part of a movement that
+	Project Shelf Tags at the shelf (v1.843.0): each names a job for part of a movement that
 	carries none (:func:`tag_pool`).
 
 	Returns ``{"rows", "untagged", "untagged_movements", "exact"}``:
@@ -670,7 +670,7 @@ def shelf_summary(ledger, on_hand, project=None, item_code=None, limit=MOVEMENT_
 
 
 # ---------------------------------------------------------------------------
-# Whose a count's change is (v1.842.0)
+# Whose a count's change is (v1.843.0)
 # ---------------------------------------------------------------------------
 
 
@@ -889,7 +889,7 @@ def count_context(ledger, tags, item_code, voucher_type, voucher_no):
 
 def settle_untagged(ledger, tags=()):
 	"""The tags that settle every movement **off** the shelf that no job was named for: the
-	cleanup of v1.842.0, keyed on this rule when it runs, not on a list.
+	cleanup of v1.843.0, keyed on this rule when it runs, not on a list.
 
 	The ledger is read in order, as :func:`shelf_summary` reads it. A movement whose untagged
 	part takes stock off the shelf, and that has no tag of its own yet, gets :func:`count_split`'s
