@@ -78,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Also:**
   - **`preview_matching_import` is POST-only** (`methods=["POST"]`). It writes: accepting an
     upload moves and tags the File for the clean-up. It also accepted a CSRF-free GET, and the
-    page now calls it inside the Apply run too. Both of the page's calls already went as POST.
+    page now calls it inside the Apply run too. Both of the page's calls already went as POST. It
+    leaves the methods ratchet's baseline, whose ceiling drops to 354.
   - The token's digest is compared with `==`. It is not a secret, and `secrets.compare_digest`
     raised `TypeError`, a 500, on a token with a non-ASCII character.
 
