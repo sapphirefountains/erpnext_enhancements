@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.842.0] - 2026-11-24
+
+### Added
+
+- **Map Plaid accounts now works with the way ERPNext 16.60 links, and covers credit cards
+  (WI-056, TASK-2026-00950).** Plaid bank feeds are going live on a production Plaid account,
+  on ERPNext's native integration. Reading the 16.60.0 code turned up two gaps in our mapping
+  step:
+  - **The dialog had nothing to offer after a real link.** A first native Link *always*
+    creates a duplicate Bank Account and a new GL Account per shared account:
+    `add_bank_accounts` reuses a Bank Account only by Plaid `integration_id` or exact native
+    name, and on a first link neither exists. The dialog then listed every account as
+    "already mapped" to its own duplicate. The fix-up, `absorb_native_duplicate`, was
+    reachable only from bench.
+  - **Cards could not become Bank Accounts.** `Bank Account.validate_account` accepts only a
+    GL ledger of type Bank. The QuickBooks sync leaves card ledgers untyped on purpose, since
+    "Payable" would demand a Party on every card line. Native Link would have put each card
+    on a new *Asset* GL Account under the Bank group.
+
+  The dialog now works in two calls to `apply_plaid_mappings` (connect roles only, POST):
+  - **Dry run.** `plan_plaid_mapping` works out exactly what each row will do and makes every
+    refusal, writing nothing.
+  - **Confirmation.** The dialog shows the plan's own list of changes, so what a person
+    confirms is what the server decided.
+  - **The write.** Only rows carrying their plan's fingerprint run, and a row whose plan
+    changed in between is refused. A new duplicate or another tab's mapping is never acted on
+    unseen.
+
+  Who holds each Plaid account decides the step:
+  - **Nobody:** the id is stamped on the chosen master.
+  - **A Link-created duplicate under the same Bank:** it is folded into the master. The
+    duplicate's GL Account is deleted when unused.
+  - **Another master:** refused.
+
+  "Link-created" is judged by the GL Account (named `"<Plaid name> - <institution>"`), not by
+  the Bank Account's name, which a master shares the shape of.
+
+  For a card, and only when the card option is ticked, you pick its Liability ledger instead
+  of a master:
+  - That ledger's Account Type is set to Bank (only when it was blank), through a normal save.
+  - The card gets a Bank Account with **Is Credit Card** ticked (16.60; left out on a site
+    without the field).
+  - The duplicate is folded into it.
+  - A Bank Account already on the ledger is reused only if it is an enabled company account
+    of the same company.
+
+  **The card path is held and opt-in** (the owner, 2026-11-24: "Banks now, cards later"),
+  until the CPA says how card balances belong on the Cash Flow statement (WI-036 now carries
+  that as question 8):
+  - The dialog's **Also map credit cards** box is off by default, and its GL field is never
+    pre-filled.
+  - Every entry point refuses a card row unless the caller passes `allow_card_ledgers`:
+    `apply_plaid_mappings`, `plan_plaid_mapping`, and `apply_plaid_mapping` (so
+    `bench execute` too).
+  - While the box is off, a credit card's row shows no picker at all, only a "held" note.
+  - The plan refuses a Plaid credit account onto a master whose GL Account is not a
+    Liability, and a non-credit account onto a card ledger. Picking checking for a card by
+    mistake would have put the card's charges into checking.
+
+  Nothing in the default flow types a ledger Bank.
+
+  The rest of the dialog:
+  - **Skipped accounts.** An account left blank can have its Link-created duplicate switched
+    off (Disabled, on by default). Otherwise it would pull about 90 days onto the duplicate
+    once Automatic Sync is on, and could not be folded in afterwards.
+  - **Feed start.** One **Feed starts on** date becomes every mapped account's
+    `last_integration_date`. A future date is refused before anything runs.
+  - **Card hint.** A credit account's GL field names the likely ledger only when exactly one
+    ledger's name carries its mask.
+- **The Bank Balances widget labels card balances.** For a Plaid credit account, "current"
+  is what is owed and "available" is the credit left. The tile now says so instead of
+  showing a bare number beside the checking balances.
+
+### Fixed
+
+- **A mapping could silently replace a master's live Plaid link.** `map_plaid_account`
+  checked who held the *incoming* Plaid id, never whether the target already carried a
+  different one. Pointing a second card at a ledger whose Bank Account already held the
+  company card's id would have overwritten it, and the company card's feed would have stopped
+  with no error anywhere. The target's own link is now checked in the plan and in
+  `map_plaid_account`, as `absorb_native_duplicate` already did.
+- **A deadlock no longer reads as a partly successful batch.** InnoDB rolls back the whole
+  transaction on a deadlock, savepoints included, so the per-row `ROLLBACK TO SAVEPOINT`
+  then fails. The batch now stops and says nothing was saved, and the GL Account delete
+  re-raises the same way. The card ledger's document cache is cleared before the rollback is
+  attempted.
+- **The `absorb_native_duplicate` endpoint is gone.** It never checked that the "duplicate"
+  was one Plaid Link created, so a direct POST could fold one real master into another and
+  delete it. Folding now happens only inside `apply_plaid_mappings`, behind its plan and
+  confirmation; the bench helper stays. `apply_plaid_mappings` refuses a row that isn't an
+  object, instead of failing with a 500.
+- **`test_connection`, `mapping_overview` and `list_plaid_accounts` are POST-only.** Without
+  `methods=` a whitelisted method answers a CSRF-free GET. These spend Plaid calls, and
+  `test_connection` writes the Settings status.
+
+### Changed
+
+- **The `plaid_banking` README is re-verified against the `v16.60.0` tag.**
+  - **Re-link.** A re-link now updates the master in place by `integration_id` and
+    overwrites its `account_name` with Plaid's. It leaves no stray GL Account, so
+    `prune_link_created_gl_accounts` should find nothing.
+  - **One token per Bank.** Link each institution once, with every account, cards included.
+    A second Link replaces the first token.
+  - **History.** The native link token requests no extra history, so Plaid's 90-day default
+    applies.
+  - **New sections:**
+    - The QuickBooks overlap: Bank Transactions write no GL; only submitted vouchers can be
+      matched; "match only, never create" while QuickBooks is the book of record; a
+      checking-to-card payment clears on one side only.
+    - What Plaid bills for: a monthly Transactions subscription at the Dashboard's rate, and a
+      Balance call per bank per widget refresh.
+    - Credit cards, including what typing a card ledger Bank does to the books. ERPNext's
+      Cash Flow report (`cash_flow.py`, 16.60.0) counts every Bank and Cash ledger as cash, so
+      the ledger's whole history moves out of operating activities into opening and closing
+      cash, and Bank Reconciliation lists its past entries as uncleared. The confirmation list
+      says so for every ledger it would type.
+
+  WI-056 records the owner's approved plan: the accounts to link, cutover 2026-11-01, and the
+  overlap rule, with the cards held. `absorb_native_duplicate` gains an optional
+  `start_date`, and both it and `map_plaid_account` now refuse a future one. Twenty new tests
+  in the existing bench-free `test_plaid_banking.py` step.
+
 ## [1.841.1] - 2026-11-24
 
 ### Fixed

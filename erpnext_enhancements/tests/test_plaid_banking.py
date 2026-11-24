@@ -240,6 +240,8 @@ def install_frappe_stub():
 	frappe.reload_doc = lambda *a, **k: None
 	frappe.delete_doc = lambda *a, **k: None
 	frappe.get_meta = lambda doctype: types.SimpleNamespace(fields=[])
+	frappe.flags = types.SimpleNamespace(mute_messages=False)
+	frappe.parse_json = lambda value: json.loads(value) if isinstance(value, str) else value
 
 	sys.modules.setdefault("frappe", frappe)
 	sys.modules.setdefault("frappe.utils", frappe_utils)
@@ -1230,6 +1232,848 @@ def test_mapping_overview_isolates_a_failing_bank_and_carries_no_token(monkeypat
 	assert out["banks"][0]["plaid_accounts"][0]["account_id"] == "a1" and out["banks"][0]["error"] is None
 	assert out["banks"][1]["plaid_accounts"] == [] and "boom" in out["banks"][1]["error"]
 	assert "tok-" not in json.dumps(out)
+
+
+# --- the 16.60 Link flow: fold duplicates, card masters, the feed start date ---------
+
+
+def _fake_get_all(db):
+	"""``frappe.get_all`` over ``db.docs`` for the filters the mapping code uses:
+	equality, ``in``, ``like`` and ``!=``, plus ``pluck``. A missing int field reads 0."""
+
+	def get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
+		out = []
+		for (dt, _name), row in db.docs.items():
+			if dt != doctype:
+				continue
+			ok = True
+			for key, cond in (filters or {}).items():
+				if isinstance(cond, list | tuple):
+					op, val = cond
+					actual = row.get(key)
+					if op == "in" and actual not in val:
+						ok = False
+					elif op == "like" and val.strip("%") not in (actual or ""):
+						ok = False
+					elif op == "!=" and actual == val:
+						ok = False
+				else:
+					actual = row.get(key, 0 if isinstance(cond, int) else None)
+					if actual != cond:
+						ok = False
+			if ok:
+				out.append(dict(row))
+		return [row.get(pluck) for row in out] if pluck else out
+
+	return get_all
+
+
+class _NewDoc:
+	"""What ``frappe.get_doc({...})`` returns: ``insert`` names it like Bank Account's
+	autoname (``"<account_name> - <bank>"``) and stores it."""
+
+	def __init__(self, db, values, log):
+		self._db, self._values, self._log = db, dict(values), log
+		self.name = None
+
+	def insert(self, ignore_permissions=False):
+		doctype = self._values["doctype"]
+		self.name = f"{self._values['account_name']} - {self._values['bank']}"
+		row = {k: v for k, v in self._values.items() if k != "doctype"}
+		row["name"] = self.name
+		self._db.docs[(doctype, self.name)] = row
+		self._log.append(("insert", doctype, self.name))
+		return self
+
+
+class _AccountDoc:
+	"""What ``frappe.get_doc("Account", name)`` returns: ``save`` writes account_type back."""
+
+	def __init__(self, db, name, log):
+		self._db, self._name, self._log = db, name, log
+		self.account_type = db.docs[("Account", name)].get("account_type")
+
+	def save(self, ignore_permissions=False):
+		self._db.docs[("Account", self._name)]["account_type"] = self.account_type
+		self._log.append(("save", "Account", self._name, self.account_type))
+
+
+def _seed_card_world(frappe):
+	"""Key Bank's masters plus a linked Capital One whose first native Link created the
+	usual duplicate: "Spark Cash - Capital One" on an auto-made Asset GL Account."""
+	db = _seed_bank_accounts(frappe)
+	db.docs[("Bank", "Capital One")] = {"name": "Capital One", "plaid_access_token": "tok-cap"}
+	db.docs[("Bank Account", "Spark Cash - Capital One")] = {
+		"name": "Spark Cash - Capital One",
+		"bank": "Capital One",
+		"account": "Spark Cash - Capital One - SF",
+		"account_name": "Spark Cash",
+		"account_type": "credit",
+		"account_subtype": "credit card",
+		"is_company_account": 1,
+		"integration_id": "acc-card",
+		"mask": "4321",
+		"last_integration_date": None,
+	}
+	db.docs[("Account", "Spark Cash - Capital One - SF")] = {
+		"name": "Spark Cash - Capital One - SF",
+		"account_name": "Spark Cash - Capital One",
+		"root_type": "Asset",
+		"account_type": "Bank",
+	}
+	db.docs[("Account", "22500 - Capital One Spark Card - SF")] = {
+		"name": "22500 - Capital One Spark Card - SF",
+		"account_name": "Capital One Spark Card",
+		"company": "Sapphire Fountains",
+		"root_type": "Liability",
+		"account_type": "",
+		"is_group": 0,
+		"disabled": 0,
+	}
+	db.docs[("Account", "13100 - Key Bank Checking - SF")] = {
+		"name": "13100 - Key Bank Checking - SF",
+		"account_name": "Key Bank Checking",
+		"root_type": "Asset",
+		"account_type": "Bank",
+	}
+	db.docs[("Account", "13101 - Key Bank Savings - SF")] = {
+		"name": "13101 - Key Bank Savings - SF",
+		"account_name": "Key Bank Savings",
+		"root_type": "Asset",
+		"account_type": "Bank",
+	}
+	log = []
+	frappe.get_all = _fake_get_all(db)
+	frappe.get_doc = lambda arg, name=None: (
+		_NewDoc(db, arg, log) if isinstance(arg, dict) else _AccountDoc(db, name, log)
+	)
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(has_field=lambda f: f == "is_credit_card")
+
+	def delete_doc(doctype, name, **k):
+		log.append(("delete", doctype, name))
+		db.docs.pop((doctype, name), None)
+
+	frappe.delete_doc = delete_doc
+	return db, log
+
+
+def test_is_link_created_tells_a_duplicate_from_a_master_by_its_gl_account():
+	"""A master's own name has the same "<account_name> - <bank>" shape as a duplicate's,
+	so only the GL Account tells them apart -- and it still does after a 16.60 re-link has
+	overwritten the master's account_name with Plaid's."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, _log = _seed_card_world(frappe)
+	is_dup = m.link_accounts.is_link_created
+	assert is_dup(db.docs[("Bank Account", "Spark Cash - Capital One")]) is True
+	assert is_dup(db.docs[("Bank Account", "Key Bank Checking - Key Bank")]) is False
+	relinked = dict(db.docs[("Bank Account", "Key Bank Checking - Key Bank")], account_name="Checking")
+	assert is_dup(relinked) is False
+	assert is_dup({"name": "x", "bank": "Key Bank", "account": None, "account_name": "Checking"}) is False
+
+
+def test_mapping_overview_names_each_holder_and_suggests_a_card_gl_only_when_unambiguous(monkeypatch):
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, _log = _seed_card_world(frappe)
+	db.docs[("Account", "22600 - American Express Prime (1008) - SF")] = {
+		"name": "22600 - American Express Prime (1008) - SF",
+		"account_name": "American Express Prime (1008)",
+		"root_type": "Liability",
+	}
+	monkeypatch.setattr(
+		m.link_accounts,
+		"linked_banks",
+		lambda: [
+			{"bank": "Capital One", "access_token": "tok-cap"},
+			{"bank": "Key Bank", "access_token": "tok-key"},
+		],
+	)
+	client = FakeClient(
+		{
+			"tok-cap": {
+				"accounts": [
+					{"account_id": "acc-card", "name": "Spark Cash", "mask": "1008", "type": "credit"},
+				]
+			},
+			"tok-key": {
+				"accounts": [
+					{"account_id": "acc-already", "name": "Savings", "mask": "2222", "type": "depository"},
+					{"account_id": "acc-free", "name": "Checking", "mask": "1111", "type": "depository"},
+				]
+			},
+		}
+	)
+	monkeypatch.setattr(m.link_accounts, "PlaidClient", client)
+	out = m.link_accounts.mapping_overview()
+	cap, key = out["banks"]
+	card = cap["plaid_accounts"][0]
+	assert card["holder"] == "Spark Cash - Capital One" and card["holder_link_created"] is True
+	assert card["suggested_card_gl_account"] == "22600 - American Express Prime (1008) - SF"
+	saved, free = key["plaid_accounts"]
+	assert saved["holder"] == "Key Bank Savings - Key Bank" and saved["holder_link_created"] is False
+	assert free["holder"] is None and free["holder_link_created"] is False
+	assert "suggested_card_gl_account" not in saved
+	assert "tok-" not in json.dumps(out)
+
+	# two ledgers carry the mask (on prod a card and its central bill account do): no guess
+	db.docs[("Account", "Central Bill Account (1008) - SF")] = {
+		"name": "Central Bill Account (1008) - SF",
+		"account_name": "Central Bill Account (1008)",
+		"root_type": "Liability",
+	}
+	out = m.link_accounts.mapping_overview()
+	assert out["banks"][0]["plaid_accounts"][0]["suggested_card_gl_account"] is None
+
+
+def test_apply_folds_the_link_created_duplicate_into_the_master_with_the_feed_start():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	db.docs[("Bank Account", "Checking - Key Bank")] = {
+		"name": "Checking - Key Bank",
+		"bank": "Key Bank",
+		"account": "Checking - Key Bank - SF",
+		"account_name": "Checking",
+		"is_company_account": 1,
+		"integration_id": "acc-dup",
+		"mask": "1111",
+		"last_integration_date": None,
+	}
+	db.docs[("Account", "Checking - Key Bank - SF")] = {
+		"name": "Checking - Key Bank - SF",
+		"account_name": "Checking - Key Bank",
+	}
+	out = m.link_accounts.apply_plaid_mapping(
+		"Key Bank",
+		"acc-dup",
+		bank_account="Key Bank Checking - Key Bank",
+		mask="1111",
+		start_date="2026-08-01",
+	)
+	master = db.docs[("Bank Account", "Key Bank Checking - Key Bank")]
+	assert out["action"] == "absorbed" and out["deleted_duplicate"] == "Checking - Key Bank"
+	assert master["integration_id"] == "acc-dup" and master["mask"] == "1111"
+	# the explicit start wins over "yesterday" -- NULL on the duplicate means nothing here
+	assert master["last_integration_date"] == _dt.date(2026, 8, 1)
+	assert out["last_integration_date"] == "2026-08-01"
+	assert ("Bank Account", "Checking - Key Bank") not in db.docs
+	assert ("Account", "Checking - Key Bank - SF") not in db.docs  # auto-made, unused
+	assert out["card_master_created"] is False and out["gl_account_type_set"] is False
+	assert not [entry for entry in log if entry[0] in ("insert", "save")]
+
+	# run again: the master holds it now, so only the date (and a changed mask) move
+	out = m.link_accounts.apply_plaid_mapping(
+		"Key Bank",
+		"acc-dup",
+		bank_account="Key Bank Checking - Key Bank",
+		mask="9999",
+		start_date="2026-08-15",
+	)
+	assert out["action"] == "already mapped"
+	assert db.set_value_calls[-1] == (
+		"Bank Account",
+		"Key Bank Checking - Key Bank",
+		{"last_integration_date": _dt.date(2026, 8, 15), "mask": "9999"},
+	)
+
+	# nobody holds it yet -> the plain map path, start date included
+	out = m.link_accounts.apply_plaid_mapping(
+		"Key Bank", "acc-new", bank_account="US Bank Checking - US Bank", start_date="2026-08-01"
+	)
+	assert out["action"] == "mapped"
+	moved = db.docs[("Bank Account", "US Bank Checking - US Bank")]
+	assert moved["integration_id"] == "acc-new" and moved["bank"] == "Key Bank"
+	assert moved["last_integration_date"] == _dt.date(2026, 8, 1)
+
+
+def test_apply_card_types_its_ledger_bank_creates_its_master_and_absorbs_the_duplicate():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	out = m.link_accounts.apply_plaid_mapping(
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
+		mask="4321",
+		start_date="2026-08-01",
+	)
+	master_name = "Capital One Spark Card - Capital One"
+	master = db.docs[("Bank Account", master_name)]
+	assert out["action"] == "absorbed" and out["bank_account"] == master_name
+	assert out["card_master_created"] is True and out["gl_account_type_set"] is True
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == "Bank"
+	assert master["account"] == "22500 - Capital One Spark Card - SF"
+	assert master["is_credit_card"] == 1 and master["is_company_account"] == 1
+	assert master["company"] == "Sapphire Fountains" and master["bank"] == "Capital One"
+	assert (master["account_type"], master["account_subtype"]) == ("credit", "credit card")
+	assert master["integration_id"] == "acc-card" and master["mask"] == "4321"
+	assert master["last_integration_date"] == _dt.date(2026, 8, 1)
+	# the duplicate and the Asset GL Account native Link made for a liability are gone
+	assert ("Bank Account", "Spark Cash - Capital One") not in db.docs
+	assert ("Account", "Spark Cash - Capital One - SF") not in db.docs
+	# the ledger is typed BEFORE the Bank Account insert, which ERPNext refuses otherwise
+	order = [entry[0] for entry in log if entry[0] in ("save", "insert")]
+	assert order == ["save", "insert"]
+
+	# a re-run finds the master on that ledger and creates nothing
+	log.clear()
+	out = m.link_accounts.apply_plaid_mapping(
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
+	)
+	assert out["action"] == "already mapped" and out["card_master_created"] is False
+	assert out["gl_account_type_set"] is False and log == []
+
+
+def test_apply_card_without_is_credit_card_on_an_older_erpnext_leaves_the_column_out():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, _log = _seed_card_world(frappe)
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(fields=[])  # no has_field at all
+	m.link_accounts.apply_plaid_mapping(
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
+	)
+	assert "is_credit_card" not in db.docs[("Bank Account", "Capital One Spark Card - Capital One")]
+
+
+def test_apply_card_refuses_a_ledger_that_is_not_an_untyped_liability():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	db.docs[("Account", "2110 - Creditors - SF")] = {
+		"name": "2110 - Creditors - SF",
+		"account_name": "Accounts Payable",
+		"root_type": "Liability",
+		"account_type": "Payable",
+	}
+	db.docs[("Account", "2000 - Liabilities - SF")] = {
+		"name": "2000 - Liabilities - SF",
+		"account_name": "Liabilities",
+		"root_type": "Liability",
+		"is_group": 1,
+	}
+	apply = m.link_accounts.apply_plaid_mapping
+
+	def card(gl):
+		return lambda: apply("Capital One", "acc-card", allow_card_ledgers=True, card_gl_account=gl)
+
+	_expect_throw(card("13100 - Key Bank Checking - SF"), "must be a Liability account", "Asset")
+	_expect_throw(card("2110 - Creditors - SF"), "Account Type 'Payable'")
+	_expect_throw(card("2000 - Liabilities - SF"), "enabled ledger")
+	_expect_throw(card("Nope - SF"), "does not exist")
+	assert log == [] and db.set_value_calls == []
+
+
+def test_apply_refuses_a_link_another_master_holds_and_an_ambiguous_target():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	apply = m.link_accounts.apply_plaid_mapping
+	# "Key Bank Savings - Key Bank" is a master (its GL Account carries our name)
+	_expect_throw(
+		lambda: apply("Key Bank", "acc-already", bank_account="Key Bank Checking - Key Bank"),
+		"already on 'Key Bank Savings - Key Bank'",
+		"a company account",
+	)
+	_expect_throw(
+		lambda: apply(
+			"Key Bank",
+			"acc-x",
+			bank_account="Key Bank Checking - Key Bank",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"exactly one",
+	)
+	# the same refusal comes before a card's ledger is typed or its Bank Account created
+	_expect_throw(
+		lambda: apply(
+			"Key Bank",
+			"acc-already",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"already on 'Key Bank Savings - Key Bank'",
+	)
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
+	_expect_throw(lambda: apply("Key Bank", "acc-x"), "exactly one")
+	_expect_throw(lambda: apply("Key Bank", "", bank_account="Key Bank Checking - Key Bank"), "account id")
+	_expect_throw(
+		lambda: apply("US Bank", "acc-x", bank_account="US Bank Checking - US Bank"), "not linked to Plaid"
+	)
+	assert db.set_value_calls == [] and log == []
+
+
+def test_a_future_feed_start_is_refused_everywhere_before_any_write():
+	"""A start after today makes the native sync ask Plaid for start > end, which fails and
+	logs every hour until the day comes."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	tomorrow = (NOW.date() + _dt.timedelta(days=1)).isoformat()
+	la = m.link_accounts
+	_expect_throw(
+		lambda: la.map_plaid_account("Key Bank Checking - Key Bank", "acc-n", start_date=tomorrow),
+		"in the future",
+	)
+	_expect_throw(
+		lambda: la.absorb_native_duplicate(
+			"Spark Cash - Capital One", "Key Bank Checking - Key Bank", start_date=tomorrow
+		),
+		"in the future",
+	)
+	_expect_throw(
+		lambda: la.apply_plaid_mapping(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+			start_date=tomorrow,
+		),
+		"in the future",
+	)
+	rows = [{"bank": "Key Bank", "account_id": "acc-n", "bank_account": "Key Bank Checking - Key Bank"}]
+	_expect_throw(lambda: la.apply_plaid_mappings(rows, start_date=tomorrow), "in the future")
+	assert db.set_value_calls == [] and log == [] and db.savepoints == []
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
+	# today itself is fine
+	out = la.map_plaid_account("Key Bank Checking - Key Bank", "acc-n", start_date=NOW.date().isoformat())
+	assert out["last_integration_date"] == NOW.date().isoformat()
+
+
+def test_the_batch_isolates_a_refused_row_and_restores_the_mute_flag():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, _log = _seed_card_world(frappe)
+	cleared = []
+	frappe.clear_document_cache = lambda doctype, name=None: cleared.append((doctype, name))
+	frappe.cleared_messages = 0
+	seeded_delete = frappe.delete_doc
+
+	def refusing_account_delete(doctype, name, **k):
+		if doctype == "Account":
+			raise Thrown("Cannot delete: linked with Payment Entry")
+		seeded_delete(doctype, name, **k)
+
+	frappe.delete_doc = refusing_account_delete
+	rows = [
+		# refused: another master holds acc-already
+		{"bank": "Key Bank", "account_id": "acc-already", "bank_account": "Key Bank Checking - Key Bank"},
+		# refused after nothing was written: Asset ledger as a card
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "13100 - Key Bank Checking - SF",
+		},
+		# fine
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "22500 - Capital One Spark Card - SF",
+			"mask": "4321",
+		},
+	]
+	out = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01", allow_card_ledgers=True)
+	assert out["start_date"] == "2026-08-01"
+	assert [r["ok"] for r in out["results"]] == [False, False, True]
+	assert "already on 'Key Bank Savings - Key Bank'" in out["results"][0]["message"]
+	assert "must be a Liability account" in out["results"][1]["message"]
+	assert out["results"][2]["action"] == "absorbed" and out["results"][2]["card_master_created"] is True
+	assert "Payment Entry" in out["results"][2]["gl_account_note"]
+	assert db.savepoints.count("plaid_map_row") == 3
+	assert db.rollbacks == ["plaid_map_row", "plaid_map_row", "plaid_absorb_gl"]
+	# a refused card row may have typed and cached its ledger before the rollback
+	assert cleared == [("Account", "13100 - Key Bank Checking - SF")]
+	assert frappe.flags.mute_messages is False
+	# under mute nothing was queued, so nobody else's message was cleared either
+	assert frappe.cleared_messages == 0
+
+
+def test_api_apply_plaid_mappings_needs_a_dry_run_fingerprint_for_every_written_row(monkeypatch):
+	m = _modules()
+	seen = {}
+
+	def fake_apply(rows, start_date=None, dry_run=False, allow_card_ledgers=False):
+		seen.update(rows=rows, start_date=start_date, dry_run=dry_run, cards=allow_card_ledgers)
+		return {"results": []}
+
+	monkeypatch.setattr(m.link_accounts, "apply_plaid_mappings", fake_apply)
+	rows = [{"bank": "Key Bank", "account_id": "a"}]
+	# the dry run needs no fingerprint; "true" is what a form-encoded boolean arrives as
+	m.api.apply_plaid_mappings(json.dumps(rows), start_date="", dry_run="true")
+	assert seen == {"rows": rows, "start_date": None, "dry_run": True, "cards": False}
+	# a write without the fingerprint of a confirmed plan is refused before anything runs
+	seen.clear()
+	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps(rows)), "fingerprint")
+	assert seen == {}
+	m.api.apply_plaid_mappings(
+		json.dumps([dict(rows[0], fingerprint="f")]), start_date="2026-08-01", allow_card_ledgers="true"
+	)
+	assert seen["dry_run"] is False and seen["rows"][0]["fingerprint"] == "f" and seen["cards"] is True
+	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps({"bank": "x"})), "must be a list")
+	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps(["x"]), dry_run=1), "must be an object")
+
+
+def test_the_plaid_endpoints_that_spend_calls_or_write_are_post_only():
+	"""A whitelisted method with no ``methods=`` answers a CSRF-free GET (frappe's default)."""
+	import ast
+	import pathlib
+
+	src = pathlib.Path(sys.modules["erpnext_enhancements.plaid_banking.core.api"].__file__).read_text(
+		encoding="utf-8"
+	)
+	methods = {}
+	for node in ast.parse(src).body:
+		if not isinstance(node, ast.FunctionDef):
+			continue
+		for deco in node.decorator_list:
+			if isinstance(deco, ast.Call) and getattr(deco.func, "attr", "") == "whitelist":
+				kw = {k.arg: k.value for k in deco.keywords}
+				methods[node.name] = ast.literal_eval(kw["methods"]) if "methods" in kw else None
+	for name in (
+		"refresh_now",
+		"test_connection",
+		"mapping_overview",
+		"list_plaid_accounts",
+		"map_plaid_account",
+		"apply_plaid_mappings",
+		"prune_link_created_gl_accounts",
+	):
+		assert methods[name] == ["POST"], (name, methods[name])
+	# folding a duplicate is a step of apply_plaid_mappings, behind its plan; a bare absorb
+	# endpoint could fold one real master into another and delete it
+	assert "absorb_native_duplicate" not in methods
+
+
+def test_a_master_already_on_another_plaid_account_is_never_stamped_over():
+	"""The silent-overwrite case: a card master already carries the company card's id, and a
+	second card is pointed at the same ledger. Stamping would stop the first card's feed."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	la = m.link_accounts
+	# map_plaid_account itself refuses (bench and the plain map path)
+	db.docs[("Bank Account", "Key Bank Checking - Key Bank")]["integration_id"] = "acc-live"
+	_expect_throw(
+		lambda: la.map_plaid_account("Key Bank Checking - Key Bank", "acc-other"),
+		"already linked to another Plaid account",
+		"acc-live",
+	)
+	# the card path: the ledger already has its master, holding the company card
+	db.docs[("Bank Account", "Capital One Spark Card - Capital One")] = {
+		"name": "Capital One Spark Card - Capital One",
+		"bank": "Capital One",
+		"account": "22500 - Capital One Spark Card - SF",
+		"account_name": "Capital One Spark Card",
+		"company": "Sapphire Fountains",
+		"is_company_account": 1,
+		"integration_id": "acc-company-card",
+	}
+	db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] = "Bank"
+	_expect_throw(
+		lambda: la.apply_plaid_mapping(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"already linked to another Plaid account",
+	)
+	# a blank row's duplicate, deleted by hand earlier, so nobody holds the id: same refusal
+	db.docs.pop(("Bank Account", "Spark Cash - Capital One"))
+	_expect_throw(
+		lambda: la.apply_plaid_mapping(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"already linked to another Plaid account",
+	)
+	assert db.set_value_calls == [] and log == []
+	card = db.docs[("Bank Account", "Capital One Spark Card - Capital One")]
+	assert card["integration_id"] == "acc-company-card"
+
+
+def test_the_dry_run_plan_is_exact_writes_nothing_and_says_what_bank_typing_does():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	db.docs[("Bank", "Key Bank")]["plaid_access_token"] = None  # masters under an unlinked Bank
+	db.docs[("Bank", "KeyBank")] = {"name": "KeyBank", "plaid_access_token": "tok-kb"}
+	rows = [
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "22500 - Capital One Spark Card - SF",
+		},
+		{
+			"bank": "KeyBank",
+			"account_id": "acc-new",
+			"bank_account": "Key Bank Checking - Key Bank",
+			"mask": "1111",
+		},
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "13100 - Key Bank Checking - SF",
+		},
+	]
+	out = m.link_accounts.apply_plaid_mappings(
+		rows, start_date="2026-08-01", dry_run=True, allow_card_ledgers=True
+	)
+	card, bank, bad = out["plans"]
+	assert card["ok"] and card["action"] == "absorbed" and card["create_bank_account"] is True
+	assert (
+		card["set_gl_account_type"] is True and card["bank_account"] == "Capital One Spark Card - Capital One"
+	)
+	assert card["duplicate"] == "Spark Cash - Capital One" and card["duplicate_gl_account_fate"] == "delete"
+	assert card["mask"] == "4321" and card["last_integration_date"] == "2026-08-01"
+	text = " ".join(card["changes"])
+	assert "Account Type changes from blank to Bank" in text and "Cash Flow" in text
+	assert "uncleared" in text and "is deleted" in text
+	assert bank["action"] == "mapped" and bank["repoint_bank_from"] == "Key Bank"
+	assert "moves from Bank 'Key Bank' to 'KeyBank'" in " ".join(bank["changes"])
+	assert bad["ok"] is False and "Liability" in bad["message"]
+	assert len(card["fingerprint"]) == 40 and card["fingerprint"] != bank["fingerprint"]
+	# nothing was written, nothing savepointed, and the mute flag is back
+	assert db.set_value_calls == [] and log == [] and db.savepoints == []
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
+	assert frappe.flags.mute_messages is False
+
+	# the confirmed plans run as shown
+	rows[0]["fingerprint"], rows[1]["fingerprint"] = card["fingerprint"], bank["fingerprint"]
+	done = m.link_accounts.apply_plaid_mappings(rows[:2], start_date="2026-08-01", allow_card_ledgers=True)
+	assert [r["ok"] for r in done["results"]] == [True, True]
+	assert db.docs[("Bank Account", "Key Bank Checking - Key Bank")]["bank"] == "KeyBank"
+
+
+def test_a_row_whose_plan_changed_after_confirmation_is_refused_untouched():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	row = {"bank": "Key Bank", "account_id": "acc-late", "bank_account": "Key Bank Checking - Key Bank"}
+	plan = m.link_accounts.apply_plaid_mappings([row], start_date="2026-08-01", dry_run=True)["plans"][0]
+	assert plan["action"] == "mapped"
+	# after the list was shown, a re-link created a duplicate for that account
+	db.docs[("Bank Account", "Checking - Key Bank")] = {
+		"name": "Checking - Key Bank",
+		"bank": "Key Bank",
+		"account": "Checking - Key Bank - SF",
+		"account_name": "Checking",
+		"is_company_account": 1,
+		"integration_id": "acc-late",
+	}
+	db.docs[("Account", "Checking - Key Bank - SF")] = {
+		"name": "Checking - Key Bank - SF",
+		"account_name": "Checking - Key Bank",
+	}
+	out = m.link_accounts.apply_plaid_mappings(
+		[dict(row, fingerprint=plan["fingerprint"])], start_date="2026-08-01"
+	)
+	assert (
+		out["results"][0]["ok"] is False
+		and "changed after the list you confirmed" in out["results"][0]["message"]
+	)
+	assert ("Bank Account", "Checking - Key Bank") in db.docs and log == []
+	assert db.docs[("Bank Account", "Key Bank Checking - Key Bank")]["integration_id"] is None
+
+
+def test_a_skipped_account_can_have_its_link_created_duplicate_switched_off():
+	"""Left live, the duplicate keeps its Plaid id with a NULL start date, so the first sync
+	pulls ~90 days onto it and the later fold is refused for having Bank Transactions."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	row = {"bank": "Capital One", "account_id": "acc-card", "disable_duplicate": True}
+	plan = m.link_accounts.apply_plaid_mappings([row], dry_run=True)["plans"][0]
+	assert plan["action"] == "disable duplicate" and plan["duplicate"] == "Spark Cash - Capital One"
+	assert "switched off" in plan["changes"][0]
+	out = m.link_accounts.apply_plaid_mappings([dict(row, fingerprint=plan["fingerprint"])])
+	assert out["results"][0]["ok"] is True
+	assert db.docs[("Bank Account", "Spark Cash - Capital One")]["disabled"] == 1
+	assert db.docs[("Bank Account", "Spark Cash - Capital One")]["integration_id"] == "acc-card"
+	# a master is never switched off this way, and neither is nothing
+	_expect_throw(
+		lambda: m.link_accounts.plan_plaid_mapping("Key Bank", "acc-already", disable_duplicate=True),
+		"Nothing to switch off",
+	)
+	_expect_throw(
+		lambda: m.link_accounts.plan_plaid_mapping("Key Bank", "acc-none", disable_duplicate=True),
+		"Nothing to switch off",
+	)
+	# the disabled duplicate still folds into a master later
+	out = m.link_accounts.apply_plaid_mapping(
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
+	)
+	assert out["action"] == "absorbed" and ("Bank Account", "Spark Cash - Capital One") not in db.docs
+
+
+def test_a_duplicate_under_another_bank_and_a_bad_existing_card_master_are_refused():
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	plan = m.link_accounts.plan_plaid_mapping
+	# the browser paired the account with the wrong Bank
+	_expect_throw(
+		lambda: plan("Key Bank", "acc-card", bank_account="Key Bank Checking - Key Bank"),
+		"under Bank 'Capital One'",
+		"not under 'Key Bank'",
+	)
+	# the ledger already has a Bank Account, but a disabled one: refused, not adopted
+	db.docs[("Bank Account", "Old Card - Capital One")] = {
+		"name": "Old Card - Capital One",
+		"bank": "Capital One",
+		"account": "22500 - Capital One Spark Card - SF",
+		"company": "Sapphire Fountains",
+		"is_company_account": 1,
+		"disabled": 1,
+	}
+	_expect_throw(
+		lambda: plan(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"'Old Card - Capital One' already uses",
+		"disabled",
+	)
+	db.docs[("Bank Account", "Old Card - Capital One")].update(disabled=0, company="Other Co")
+	_expect_throw(
+		lambda: plan(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
+		"another company's",
+	)
+	assert log == [] and db.set_value_calls == []
+
+
+def test_a_whole_transaction_rollback_stops_the_batch_and_says_nothing_was_saved():
+	"""On a deadlock InnoDB rolls back everything, the savepoint with it, and ROLLBACK TO
+	SAVEPOINT then fails (1305). The batch must not report earlier rows as done."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, _log = _seed_card_world(frappe)
+	cleared = []
+	frappe.clear_document_cache = lambda doctype, name=None: cleared.append((doctype, name))
+
+	def gone(save_point=None, **k):
+		raise Thrown("(1305, 'SAVEPOINT plaid_map_row does not exist')")
+
+	db.rollback = gone
+	rows = [
+		{"bank": "Capital One", "account_id": "acc-card", "card_gl_account": "13100 - Key Bank Checking - SF"}
+	]
+	_expect_throw(
+		lambda: m.link_accounts.apply_plaid_mappings(rows, allow_card_ledgers=True), "nothing was saved"
+	)
+	assert frappe.flags.mute_messages is False
+	# the cache is cleared before the rollback is attempted, not after it failed
+	assert cleared == [("Account", "13100 - Key Bank Checking - SF")]
+
+
+def test_cards_are_held_by_default_and_nothing_types_a_ledger_bank():
+	"""The owner held the cards (2026-11-24, "Banks now, cards later") until the CPA says how
+	card balances belong on the Cash Flow statement. A card row is refused, in the dry run and
+	in the write, unless the caller opts in; the bank rows around it still run."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	rows = [
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "22500 - Capital One Spark Card - SF",
+		},
+		{"bank": "Key Bank", "account_id": "acc-new", "bank_account": "Key Bank Checking - Key Bank"},
+	]
+	plans = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01", dry_run=True)["plans"]
+	assert plans[0]["ok"] is False and "Card mapping is off" in plans[0]["message"]
+	assert "WI-036" in plans[0]["message"] and plans[1]["ok"] is True
+	rows[1]["fingerprint"] = plans[1]["fingerprint"]
+	results = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01")["results"]
+	assert results[0]["ok"] is False and "Card mapping is off" in results[0]["message"]
+	assert results[1]["ok"] is True
+	# the ledger is untouched, no card Bank Account exists, and no savepoint was even opened for it
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
+	assert ("Bank Account", "Capital One Spark Card - Capital One") not in db.docs
+	assert not [entry for entry in log if entry[0] in ("save", "insert")]
+	assert db.savepoints.count("plaid_map_row") == 1
+
+
+def test_the_card_hold_is_enforced_by_the_plan_and_by_apply_not_only_the_batch():
+	"""``bench execute`` calls apply_plaid_mapping directly; the hold must hold there too."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	la = m.link_accounts
+	gl = "22500 - Capital One Spark Card - SF"
+	_expect_throw(
+		lambda: la.plan_plaid_mapping("Capital One", "acc-card", card_gl_account=gl), "Card mapping is off"
+	)
+	_expect_throw(
+		lambda: la.apply_plaid_mapping("Capital One", "acc-card", card_gl_account=gl), "Card mapping is off"
+	)
+	assert db.docs[("Account", gl)]["account_type"] == "" and log == []
+
+
+def test_a_credit_card_feed_is_never_put_on_a_non_card_master():
+	"""With cards held, the card row still offers masters; picking checking by mistake would
+	pour the card's charges into checking. The plan refuses a Plaid credit account onto a master
+	whose GL Account is not a Liability, and a non-credit account onto a card ledger."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	plan = m.link_accounts.plan_plaid_mapping
+	# known from the type native Link stamped on the duplicate ("credit")
+	db.docs[("Bank Account", "Checking - Capital One")] = {
+		"name": "Checking - Capital One",
+		"bank": "Capital One",
+		"account": "13100 - Key Bank Checking - SF",
+		"is_company_account": 1,
+	}
+	_expect_throw(
+		lambda: plan("Capital One", "acc-card", bank_account="Checking - Capital One"),
+		"as a credit card",
+		"not a Liability",
+	)
+	# known from the dialog's plaid_type when no duplicate holds it
+	_expect_throw(
+		lambda: plan(
+			"Key Bank", "acc-free", bank_account="Key Bank Checking - Key Bank", plaid_type="credit"
+		),
+		"as a credit card",
+	)
+	# a loan or a checking account is not a card
+	_expect_throw(
+		lambda: plan(
+			"Key Bank",
+			"acc-free",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+			plaid_type="depository",
+		),
+		"as depository, not a credit card",
+	)
+	# a credit account onto a Liability master (13202's shape) is fine
+	db.docs[("Account", "13100 - Key Bank Checking - SF")]["root_type"] = "Liability"
+	ok = plan("Capital One", "acc-card", bank_account="Checking - Capital One")
+	assert ok["action"] == "absorbed"
+	assert log == [] and db.set_value_calls == []
 
 
 # --- the rename patch -------------------------------------------------------------
