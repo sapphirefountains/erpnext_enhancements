@@ -14,6 +14,9 @@
  * By person or By item), a Project, a Kind, and a Location label that says a room
  * or a rack includes every shelf under it. The Bin Manager opens this report with
  * its bin or its job filled in (public/js/bin_manager/logic.js transactions_route).
+ *
+ * v1.841.0: Exclude my entries, a box that leaves the signed-in person's own
+ * movements out (stock_movement_rules.owner_filter).
  */
 frappe.query_reports["Warehouse Transactions"] = {
 	filters: [
@@ -69,6 +72,17 @@ frappe.query_reports["Warehouse Transactions"] = {
 			fieldtype: "Link",
 			options: "User",
 			get_query: () => ({ filters: { user_type: "System User" } }),
+		},
+		{
+			// Leave out the signed-in person's own movements, to see how everyone
+			// else has used the warehouse (v1.841.0, TASK-2026-03290). Off unless
+			// ticked; it narrows the rows, both total views and the cards, with
+			// every other filter still applied. With User set to yourself as well,
+			// nothing can match and the report says so.
+			fieldname: "exclude_mine",
+			label: __("Exclude my entries"),
+			fieldtype: "Check",
+			default: 0,
 		},
 		{
 			// What the movement was. stock_movement_rules.KINDS holds the same list.
