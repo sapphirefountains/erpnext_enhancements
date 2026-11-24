@@ -296,7 +296,6 @@ erpnext_enhancements.quickbooks_online.core.api.get_parked_transactions
 erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary
 erpnext_enhancements.quickbooks_online.core.api.oauth_callback
 erpnext_enhancements.quickbooks_online.core.api.preview_existing_matches
-erpnext_enhancements.quickbooks_online.core.api.preview_matching_import
 erpnext_enhancements.quickbooks_online.core.api.quickbooks_webhook
 erpnext_enhancements.quickbooks_online.core.api.reconcile_transactions
 erpnext_enhancements.quickbooks_time.api.qb_timesheet_webhook

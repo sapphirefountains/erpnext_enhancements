@@ -28,6 +28,7 @@ Run: python -m pytest erpnext_enhancements/tests/test_quickbooks_matching_excel.
 """
 
 import ast
+import fnmatch
 import io
 import re
 import types
@@ -877,6 +878,283 @@ def test_apply_refuses_an_expired_preview(monkeypatch):
 	_wire(monkeypatch, matching_excel, frappe, Ledger())
 	with pytest.raises(Exception, match="expired"):
 		matching_excel.apply("nope", [0])
+
+
+# ---------------------------------------------------------------------------
+# The plan outlives clear_cache (v1.841.1)
+# ---------------------------------------------------------------------------
+
+
+def _persistent_cache_keys():
+	"""``persistent_cache_keys`` as hooks.py declares it, read without importing hooks.py."""
+	tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+	for node in tree.body:
+		if isinstance(node, ast.Assign) and any(
+			getattr(target, "id", None) == "persistent_cache_keys" for target in node.targets
+		):
+			return ast.literal_eval(node.value)
+	return []
+
+
+class SiteCache:
+	"""``frappe.cache`` and the two things that empty it. ``clear_cache`` is frappe v16.60.2's
+	no-argument ``cache_manager.clear_cache``: every key of the site goes except those matching a
+	``persistent_cache_keys`` pattern, matched as ``RedisWrapper.get_keys`` does (pattern + "*").
+	``rename_doc`` ends with it, so it is what a merging Link runs. ``flushdb`` is the deploy."""
+
+	def __init__(self, persistent):
+		self.store = {}
+		self.persistent = list(persistent)
+
+	def set_value(self, key, value, expires_in_sec=None):
+		self.store[key] = value
+
+	def get_value(self, key):
+		return self.store.get(key)
+
+	def clear_cache(self):
+		self.store = {
+			key: value
+			for key, value in self.store.items()
+			if any(fnmatch.fnmatchcase(key, pattern + "*") for pattern in self.persistent)
+		}
+
+	def flushdb(self):
+		self.store.clear()
+
+
+def _site(monkeypatch, matching_excel, frappe, ledger, persistent):
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+	cache = SiteCache(persistent)
+	cache.set_value("bootinfo:nik@example.com", {"anything": 1})
+	monkeypatch.setattr(frappe, "cache", cache, raising=False)
+	return cache
+
+
+def _merging_decide(monkeypatch, matching_excel, cache):
+	"""``matching.decide`` with ``merge_duplicate=True`` ends in rename_doc(merge=True), which
+	ends in frappe.clear_cache() -- model/rename_doc.py line 212 at v16.60.2."""
+	original = matching_excel.matching.decide
+
+	def decide(*args, **kwargs):
+		outcome = original(*args, **kwargs)
+		cache.clear_cache()
+		return outcome
+
+	monkeypatch.setattr(matching_excel.matching, "decide", decide)
+
+
+def _real_throw(monkeypatch, frappe):
+	"""``frappe.throw`` raising the class it is given, as the real one does."""
+
+	def throw(message=None, exc=Exception, *args, **kwargs):
+		raise exc(message)
+
+	monkeypatch.setattr(frappe, "throw", throw, raising=False)
+
+
+def test_hooks_keep_the_plan_and_the_export_job_out_of_clear_caches_reach():
+	matching_excel, _ = _excel()
+	patterns = _persistent_cache_keys()
+	for key in (
+		matching_excel._plan_key("nik@example.com", "ab12cd34-0123456789abcdef01234567"),
+		matching_excel._job_key("nik@example.com", "0123456789abcdef"),
+	):
+		assert any(fnmatch.fnmatchcase(key, pattern + "*") for pattern in patterns), key
+	assert all(pattern.startswith("qbo_matching_") for pattern in patterns), "spare only this feature's keys"
+
+
+def test_a_merge_that_clears_the_site_cache_mid_run_no_longer_expires_the_preview(monkeypatch):
+	"""Production, 2026-11-24: the batch holding the first merging Link was the last one to work."""
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, _persistent_cache_keys())
+	_merging_decide(monkeypatch, matching_excel, cache)
+	content = _meg_file(matching_excel)
+	reads = []
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: reads.append(file_name) or content)
+	preview = matching_excel.preview("FILE-1")
+	first = matching_excel.apply(preview["token"], [0], file_name="FILE-1")
+	assert first[0]["ok"] and "Merged the import's copy" in first[0]["message"]
+	assert "bootinfo:nik@example.com" not in cache.store, "the merge really did clear the site cache"
+	rest = matching_excel.apply(preview["token"], [1, 2], file_name="FILE-1")
+	assert [r["ok"] for r in rest] == [True, True]
+	assert [call[0] for call in ledger.calls] == ["decide", "confirm", "sync"]
+	assert reads == ["FILE-1"], "the plan was still cached: nothing was read again"
+
+
+def test_without_the_hook_the_same_run_expires_which_is_the_bug(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, persistent=[])
+	_merging_decide(monkeypatch, matching_excel, cache)
+	_real_throw(monkeypatch, frappe)
+	content = _meg_file(matching_excel)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	matching_excel.apply(preview["token"], [0])
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="expired"):
+		matching_excel.apply(preview["token"], [1, 2])  # a page from before v1.841.1 sends no file
+	assert [call[0] for call in ledger.calls] == ["decide"]
+
+
+def test_a_flushed_cache_is_rebuilt_from_the_uploaded_file(monkeypatch):
+	"""A deploy FLUSHDBs the cache, and no persistent key survives that."""
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, _persistent_cache_keys())
+	content = _meg_file(matching_excel)
+	reads = []
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: reads.append(file_name) or content)
+	preview = matching_excel.preview("FILE-1")
+	matching_excel.apply(preview["token"], [0], file_name="FILE-1")
+	cache.flushdb()
+	second = matching_excel.apply(preview["token"], [1], file_name="FILE-1")
+	assert second[0]["ok"] and ("confirm", "57") in ledger.calls
+	assert reads == ["FILE-1", "FILE-1"], "read again once, for the flushed plan"
+	assert cache.get_value(matching_excel._plan_key("nik@example.com", preview["token"])), "and cached again"
+	third = matching_excel.apply(preview["token"], [2], file_name="FILE-1")
+	assert third[0]["ok"] and len(reads) == 2, "the next batch found it in the cache"
+	# A rebuilt plan still re-checks each row: rows that already ran report "already done".
+	cache.flushdb()
+	again = matching_excel.apply(preview["token"], [0, 1, 2], file_name="FILE-1")
+	assert all(r["skipped"] and r["category"] == "unchanged" for r in again)
+	assert len(ledger.calls) == 3
+
+
+def test_a_rebuilt_plan_keeps_the_previews_duplicate_verdicts(monkeypatch):
+	"""apply sees one row at a time and cannot judge duplicates; the plan carries the preview's
+	verdicts. A plan rebuilt after a flush must reach the same ones, or a copied sheet's second
+	copy of a row would run again, and a disagreeing pair would apply."""
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, _persistent_cache_keys())
+	workbook = openpyxl.load_workbook(io.BytesIO(_meg_file(matching_excel)))
+	copy = workbook.copy_worksheet(workbook["Vendors"])
+	copy.title = "Vendors (2)"
+	headers = {cell.value: cell.column for cell in copy[1]}
+	copy.cell(row=2, column=headers["Decision"], value="Keep")  # disagrees with Vendors row 2 (Link)
+	out = io.BytesIO()
+	workbook.save(out)
+	content = out.getvalue()
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	place = {(row["sheet"], row["qbo_id"]): row["index"] for row in preview["rows"]}
+	first_keep, second_keep = place[("Vendors", "57")], place[("Vendors (2)", "57")]
+	link, conflicting_keep = place[("Vendors", "56")], place[("Vendors (2)", "56")]
+
+	assert matching_excel.apply(preview["token"], [first_keep], file_name="FILE-1")[0]["ok"]
+	cache.flushdb()
+	results = matching_excel.apply(
+		preview["token"], [second_keep, link, conflicting_keep], file_name="FILE-1"
+	)
+	by_index = {r["index"]: r for r in results}
+	assert by_index[second_keep]["skipped"] and by_index[second_keep]["category"] == "unchanged"
+	assert "applied once, there" in by_index[second_keep]["message"]
+	for index in (link, conflicting_keep):
+		assert by_index[index]["skipped"] and by_index[index]["category"] == "invalid"
+		assert "Conflict" in by_index[index]["message"]
+	assert ledger.calls == [("confirm", "57")], "one confirm, no decide"
+
+
+def test_a_rebuilt_plan_is_used_only_when_it_is_the_previewed_plan(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	cache = _site(monkeypatch, matching_excel, frappe, ledger, _persistent_cache_keys())
+	_real_throw(monkeypatch, frappe)
+	content = _meg_file(matching_excel)
+	served = {"FILE-1": content}
+
+	def read(file_name):
+		if file_name not in served:
+			raise PermissionError("You cannot read that file.")
+		return served[file_name]
+
+	monkeypatch.setattr(matching_excel, "_read_upload", read)
+	preview = matching_excel.preview("FILE-1")
+	token = preview["token"]
+	assert matching_excel.token_digest(token) == matching_excel.plan_digest(
+		matching_excel.parse_workbook(content)["rows"]
+	)
+	cache.flushdb()
+	# Another file -- here the same export with one decision changed -- reads into other rows.
+	served["FILE-2"] = _fill(content, {"Vendors": {3: {"Decision": "Link"}}})
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="no longer reads the way"):
+		matching_excel.apply(token, [1], file_name="FILE-2")
+	with pytest.raises(
+		matching_excel.MatchingPreviewExpired, match="could not be read again: You cannot read"
+	):
+		matching_excel.apply(token, [1], file_name="FILE-9")
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="expired"):
+		matching_excel.apply(token, [1])  # no file named
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="expired"):
+		matching_excel.apply("0123456789abcdef", [1], file_name="FILE-1")  # a token from before the digest
+	# A crafted token is refused as expired, not a 500: secrets.compare_digest raised TypeError
+	# on a non-ASCII str.
+	with pytest.raises(matching_excel.MatchingPreviewExpired, match="no longer reads the way"):
+		matching_excel.apply("ab12cd34-é", [1], file_name="FILE-1")
+	assert ledger.calls == [], "nothing was applied from a plan that could not be proved"
+	assert issubclass(matching_excel.MatchingPreviewExpired, frappe.exceptions.ValidationError), "still a 417"
+
+
+def test_each_index_must_still_name_the_row_the_preview_showed(monkeypatch):
+	matching_excel, frappe = _excel()
+	ledger = Ledger()
+	_wire(monkeypatch, matching_excel, frappe, ledger)
+	content = _meg_file(matching_excel)
+	monkeypatch.setattr(matching_excel, "_read_upload", lambda file_name: content)
+	preview = matching_excel.preview("FILE-1")
+	shown = {row["index"]: row for row in preview["rows"]}
+
+	def entry(index, **changes):
+		return {key: shown[index][key] for key in ("index", *matching_excel.ROW_IDENTITY)} | changes
+
+	results = matching_excel.apply(
+		preview["token"],
+		[
+			entry(0, row_number=3),  # index 0 is row 2, not row 3
+			{"index": 1, "sheet": "Vendors", "row_number": 3, "qbo_type": "Vendor"},  # no qbo_id
+			entry(2),
+		],
+		file_name="FILE-1",
+	)
+	assert [(r["ok"], r.get("category")) for r in results] == [
+		(False, "invalid"),
+		(False, "invalid"),
+		(True, None),
+	]
+	assert results[0]["row_number"] == 3, "reported as the row the page asked about"
+	assert "different row under this number" in results[0]["message"]
+	assert ledger.calls == [("sync", "58")]
+	# A tab opened before v1.841.1 sends plain numbers, and they still work.
+	assert matching_excel.apply(preview["token"], [1])[0]["ok"]
+	# And the page's JSON numbers compare as the parsed text does.
+	assert matching_excel.same_row(
+		{"sheet": "Vendors", "row_number": 2, "qbo_type": "Vendor", "qbo_id": "56"},
+		{"sheet": "Vendors", "row_number": "2", "qbo_type": "Vendor", "qbo_id": 56},
+	)
+
+
+def test_the_page_tells_an_expired_preview_by_its_class_and_sends_the_file():
+	matching_excel, _ = _excel()
+	js = PAGE_JS.read_text(encoding="utf-8")
+	assert f'const EXPIRED = "{matching_excel.MatchingPreviewExpired.__name__}";' in js
+	assert "file_name: fileName" in js and "qbo_rm_identity" in js
+	api = CORE_API.read_text(encoding="utf-8")
+	start = api.index("def apply_matching_import(")
+	assert "file_name=file_name" in api[start : start + 1200]
+	# Preview writes (it tags the File for the clean-up) and the Apply run now calls it too: a
+	# CSRF-free GET must not reach it. frappe.call sends POST unless told otherwise.
+	decorators = {
+		node.name: [ast.unparse(decorator) for decorator in node.decorator_list]
+		for node in ast.parse(api).body
+		if isinstance(node, ast.FunctionDef)
+	}
+	for endpoint in ("preview_matching_import", "apply_matching_import", "start_matching_export"):
+		assert "frappe.whitelist(methods=['POST'])" in decorators[endpoint], endpoint
+	assert 'type: "GET"' not in js and "type: 'GET'" not in js
+	ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+	assert "node scripts/test_qbo_matching_import.mjs" in ci
 
 
 def test_preview_lists_every_non_blank_row_with_its_reason(monkeypatch):
