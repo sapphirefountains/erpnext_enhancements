@@ -159,6 +159,9 @@ Plaid account with a Select of that bank's still-unmapped masters plus the maste
 Banks that hold no token (picking one moves it under the linked Bank). A credit account also
 gets a Link to a Liability GL Account, pre-filled when exactly one ledger's name carries the
 card's mask. Accounts a master already holds are shown as mapped, with no control.
+**Map selected** first lists every change it will make, per account (the card ledger's type,
+the card's new Bank Account, each Link-created duplicate deleted, the start date), and writes
+nothing until that list is confirmed.
 
 ## Credit cards
 
@@ -208,8 +211,10 @@ the card) and a Credit Card Payment (debit to the card).
 
 ## What Plaid bills for
 
-Each linked institution is one Plaid Item, and Transactions is charged monthly per Item
-(Plaid's `transactions-active` usage metric). The Bank Balances widget adds a Balance charge
+Transactions is a monthly subscription charge (Plaid's `transactions-active` usage metric).
+Read the rate, and whether it counts Items or accounts, on the Plaid Dashboard's billing page.
+Each linked institution is one Item; the WI-056 plan links 5 Items holding 11 accounts. The
+Bank Balances widget adds a Balance charge
 for every `/accounts/balance/get`, which is one call per linked bank per refresh: the hourly job
 self-throttles to `refresh_poll_minutes` (240 by default, so up to six refreshes a day), plus
 every *Refresh now*. `/accounts/get` and `/item/get` (Map and Test Connection) are not Balance

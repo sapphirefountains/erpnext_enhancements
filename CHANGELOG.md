@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any write: the native sync would ask Plaid for a start after its end and log an error every
   hour. Each row runs in its own savepoint with messages muted, so one refusal is reported
   without undoing the rest. A credit account's GL field is pre-filled only when exactly one
-  ledger's name carries its mask.
+  ledger's name carries its mask. Before anything is written, **Map selected** lists every
+  change per account: the card ledger's type, the new card Bank Account, each duplicate
+  deleted, and the start date. Nothing happens until that list is confirmed.
 - **The Bank Balances widget labels card balances.** For a Plaid credit account, "current"
   is what is owed and "available" is the credit left. The tile now says so instead of
   showing a bare number beside the checking balances.
@@ -66,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **New sections:** credit cards; the QuickBooks overlap (Bank Transactions write no GL;
     only submitted vouchers can be matched; "match only, never create" while QuickBooks is
     the book of record; a checking-to-card payment clears on one side only); and what Plaid
-    bills for (Transactions monthly per Item; a Balance call per bank per widget refresh).
+    bills for (a monthly Transactions subscription at the Dashboard's rate; a Balance call per
+    bank per widget refresh).
 
   WI-056 records Nik's approved plan: the accounts to link, cutover 2026-11-01, and the
   overlap rule. `absorb_native_duplicate` and `map_plaid_account` take an optional
