@@ -47,7 +47,7 @@ APP = Path(__file__).resolve().parents[1]
 BASELINE = APP / "tests" / "data" / "whitelist_methods_baseline.txt"
 
 #: The number of endpoints on the baseline. Lower it when the baseline shrinks; never raise it.
-BASELINE_CEILING = 352
+BASELINE_CEILING = 351
 
 #: The tests tree defines stubs and fixtures, not endpoints.
 SKIP_PARTS = frozenset({"tests", "node_modules", "__pycache__", ".git"})
