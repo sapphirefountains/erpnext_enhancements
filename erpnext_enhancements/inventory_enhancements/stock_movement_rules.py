@@ -42,6 +42,12 @@ item moves. Both need to know what each line *was*, which the ledger does not st
   into the target is outside it). So a move is counted per *voucher and item*, and how much moved
   is the larger of its two sides as far as they are shown.
 
+* **Exclude my entries** (v1.841.0, :func:`owner_filter`). A warehouse user asked to leave their own
+  entries out, to see how everyone else has used the warehouse. On production on 2026-11-24 one person
+  had made 254 of the 278 live ledger lines of the previous 30 days, so their own work buried everyone
+  else's. The box narrows the entry's ``owner`` as the User filter does, and the two together have one
+  case that matches nothing (the User filter naming the reader).
+
 Tabs, per ``CLAUDE.md`` (new file).
 """
 
@@ -111,6 +117,52 @@ def clean_kind(value):
 	"""One of :data:`KINDS`, or ``None`` for "any kind"."""
 	value = str(value or "").strip()
 	return value if value in KINDS else None
+
+
+def checked(value) -> bool:
+	"""A Check filter's value as a bool. The report view sends ``1`` when the box is ticked and leaves an
+	unticked one out; a link's route options send ``"1"``. Any non-zero number is on, anything else off."""
+	return bool(int(flt(value)))
+
+
+#: What :func:`owner_filter` returns when the User filter names the reader and Exclude my entries is on.
+#: No entry can match both, so the report reads nothing. It is falsy, so it never becomes a condition.
+NO_ONE = False
+
+
+def owner_filter(user=None, exclude_mine=False, me=None):
+	"""The condition on a ledger entry's ``owner`` (the person who made it) for the report's User filter
+	and its Exclude my entries box (v1.841.0, TASK-2026-03290).
+
+	============  ==================  ============================================
+	User filter   Exclude my entries  Condition on ``owner``
+	============  ==================  ============================================
+	blank         off                 ``None``: anyone
+	someone       off                 that person
+	blank         on                  ``["!=", me]``: anyone but the reader
+	someone else  on                  that person (who is already not the reader)
+	the reader    on                  :data:`NO_ONE`: nothing can match
+	============  ==================  ============================================
+
+	``me`` is the signed-in user. Without one there is nobody to leave out, so the box does nothing.
+	Names are compared without case, as MariaDB's default collation compares the ``owner`` column.
+	"""
+	user = str(user or "").strip()
+	me = str(me or "").strip()
+	if not exclude_mine or not me:
+		return user or None
+	if not user:
+		return ["!=", me]
+	if user.lower() == me.lower():
+		return NO_ONE
+	return user
+
+
+def without_me(people, me):
+	"""``people`` (``{user: full_name}``) without ``me``, compared without case: the By person view's
+	list of people with Exclude my entries on, so the reader is not a row of zeros in it."""
+	me = str(me or "").strip().lower()
+	return {user: name for user, name in (people or {}).items() if not me or str(user or "").lower() != me}
 
 
 def movement_kind(voucher_type, purpose=None, qty_change=0.0) -> str:

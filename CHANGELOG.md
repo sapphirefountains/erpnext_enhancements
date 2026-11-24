@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.841.0] - 2026-11-24
+
+### Added
+
+- **Warehouse Transactions: an Exclude my entries box.** A warehouse user asked, and marked the request
+  as blocking their work: "I would like an option to exclude all of the entries I've put into the
+  warehouse system. Just so I can more easily see how everyone else has been using the warehouse."
+  In the 30 days before 2026-11-24, one person made 254 of the 278 live ledger lines, so the
+  report showed mostly their own work. The box sits next to the User filter and is off unless
+  ticked.
+  - **What it does.** It adds `owner != <the signed-in user>` to the report's one permission-checked
+    `frappe.get_list`. The dates, location, item, project and kind still apply to what is left. The
+    movement rows, the By person and By item views and every card are worked out from those rows.
+    The condition is a plain filter, not a SQL function in a field string, which Frappe 16 refuses.
+  - **"Mine" is the Stock Ledger Entry's `owner`**, the same person the User filter matches. On
+    production on 2026-11-24, all 278 live entries of the previous 30 days had the same owner as
+    their voucher (Stock Entry, Purchase Receipt, Stock Reconciliation). The owner is whoever
+    *submits* the voucher. A count left as a draft for a Stock Manager becomes the manager's once
+    they submit it. So a manager who ticks the box also hides the counts they approved, just as
+    By person credits those counts to them.
+  - **A count keeps its real change.** ERPNext stores a count's change as 0, and the report works it
+    out from the balance before it (`count_changes`). That read still covers the whole ledger, so a
+    count someone else made just after one of your entries shows the change from your balance, not
+    from zero.
+  - **By person** leaves the reader out of its list of people who keep stock, so they do not show
+    up as a row of zeros in a view meant for everyone else.
+  - **The User filter set to yourself, with the box ticked, matches nothing.** The report reads
+    nothing and its note says to clear one of the two. A user's name is compared without case,
+    as MariaDB compares the column.
+  - The rule is `stock_movement_rules.owner_filter` (no Frappe), with a table of its five cases.
+    `checked` reads the box's value, which is `1` from the report view and `"1"` from a link's
+    route options.
+- **Why only this report.** The Task's breakdown also named the Inventory Scanner Audit page, the
+  Stock Scan Log list, `api/inventory_scanner.py` and an `exclude_self` flag. On production, Route
+  History since 2026-11-05 shows this report as the only list of movements anyone opened. ERPNext's
+  Stock Ledger report had no visits, and the Stock Scan Log list had none since 2026-10-01. The
+  Inventory Scanner Audit page is a counting page, with no list of other people's movements.
+- **Tests.** `tests/test_warehouse_transactions.py`, already its own CI step. Its stub now has a
+  signed-in user and the `!=` operator. It checks:
+  - the rule's table, without case and with nobody signed in;
+  - that the box is off by default and also reads a route option of `"1"`;
+  - every card, and both total views;
+  - the box with each of the dates, item, location, project and kind;
+  - the box and the User filter with a job that has a job site, whose Project filter is an
+    `or_filters` group: the owner condition stays in the plain filters, which `get_list` ANDs
+    onto the group;
+  - the User filter set to someone else, and set to yourself (no ledger read, a note, in all three
+    views);
+  - a count's change when the entry before it was the reader's;
+  - By person without the reader but with a colleague who made nothing;
+  - the JavaScript filter.
+
+  Two mutations were tried: dropping the condition, and dropping the "nothing can match" check.
+  Each fails the new tests. `tests/test_feedback_release_sync.py` lists this release's Refs line
+  in `SHIPPED_REFS`.
+
+Refs: ER-2026-1358314, TASK-2026-03290
+
 ## [1.840.2] - 2026-11-23
 
 ### Changed

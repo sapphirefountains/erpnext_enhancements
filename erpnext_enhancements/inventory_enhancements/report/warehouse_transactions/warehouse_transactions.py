@@ -74,6 +74,21 @@ the reader may already see. The User column is plain text, not a link: User gran
   service account): "who made none" is the question. With the User filter set it lists that person
   alone, zeros included. The people come from ``Has Role`` and ``User`` through ``get_all``: names
   only, the same people the User filter already offers.
+
+**v1.841.0: Exclude my entries (TASK-2026-03290).** A warehouse user asked for their own entries to be
+left out, "to see how everyone else has been using the warehouse". The box adds ``owner != <the
+signed-in user>`` to the same ``get_list`` read, so every other filter still applies, and the rows, the
+By person and By item views and every card are worked out from what is left. "Mine" is the entry's
+``owner``, the same person the User filter matches; on production on 2026-11-24 all 278 live entries of
+the previous 30 days had the same owner as their voucher. The owner is whoever *submits* the voucher,
+though: a count left as a draft for a Stock Manager (the Inventory Scanner Audit's Finalize,
+``api/inventory_scanner.py``, or ``api/count_desk.post_count(mode="draft")``) becomes the manager's
+entry once they submit it, so a manager who ticks the box also hides the counts they approved. By
+person already credits those counts to the manager the same way. The count walk
+(:func:`count_changes`) still reads the whole ledger, so a count someone else made just after one of
+yours still shows its real change. With Exclude my entries on, By person leaves the reader out of its
+list of people. The User filter naming the reader as well matches nothing: the report reads nothing
+and says so (``stock_movement_rules.owner_filter``).
 """
 
 import frappe
@@ -123,13 +138,33 @@ def execute(filters=None):
 	filters = frappe._dict(filters or {})
 	view = rules.clean_view(filters.get("view"))
 	rows = get_data(filters)
+	message = nothing_to_show(filters)
 	if view == rules.VIEW_PEOPLE:
 		people = rules.by_person(rows, stock_people(filters))
-		return person_columns(), people, None, None, person_summary(people)
+		return person_columns(), people, message, None, person_summary(people)
 	if view == rules.VIEW_ITEMS:
 		items = rules.by_item(rows, _lookup("Item", "stock_uom", {r.get("item_code") for r in rows}))
-		return item_columns(), items, None, None, item_summary(items)
-	return get_columns(), rows, None, None, get_summary(rows)
+		return item_columns(), items, message, None, item_summary(items)
+	return get_columns(), rows, message, None, get_summary(rows)
+
+
+def owner_condition(filters):
+	"""What the User filter and Exclude my entries ask of an entry's owner, for the signed-in user:
+	``None``, a user, ``["!=", user]``, or ``stock_movement_rules.NO_ONE``."""
+	return rules.owner_filter(
+		filters.get("user"), rules.checked(filters.get("exclude_mine")), frappe.session.user
+	)
+
+
+def nothing_to_show(filters):
+	"""The note over an empty report when the User filter names the reader and Exclude my entries
+	leaves the reader out, or ``None``."""
+	if owner_condition(filters) is rules.NO_ONE:
+		return _(
+			"The User filter is set to you and Exclude my entries leaves your entries out, so nothing "
+			"can match. Clear one of the two."
+		)
+	return None
 
 
 def get_columns():
@@ -204,7 +239,10 @@ def warehouse_and_descendants(warehouse):
 def build_conditions(filters, sites=None):
 	"""The ``frappe.get_list`` filters for these report filters. ``sites``: the job-site warehouses
 	of the Project filter's job (:func:`project_sites`); with none, the Project filter is a plain
-	condition on the ledger row's project, and with some it is :func:`project_or_filters`."""
+	condition on the ledger row's project, and with some it is :func:`project_or_filters`.
+
+	The User filter and Exclude my entries make one condition on ``owner`` (:func:`owner_condition`).
+	When the two contradict each other there is none here: :func:`get_data` reads nothing at all."""
 	from_date, to_date = date_range(filters)
 	conditions = {
 		"is_cancelled": 0,
@@ -214,8 +252,9 @@ def build_conditions(filters, sites=None):
 		conditions["item_code"] = filters.get("item_code")
 	if filters.get("warehouse"):
 		conditions["warehouse"] = ["in", warehouse_and_descendants(filters.get("warehouse"))]
-	if filters.get("user"):
-		conditions["owner"] = filters.get("user")
+	owner = owner_condition(filters)
+	if owner:
+		conditions["owner"] = owner
 	if filters.get("project") and not sites:
 		conditions["project"] = filters.get("project")
 	return conditions
@@ -250,6 +289,8 @@ def project_sites(project):
 
 
 def get_data(filters):
+	if owner_condition(filters) is rules.NO_ONE:
+		return []
 	sites = project_sites(filters.get("project"))
 	kwargs = {}
 	or_filters = project_or_filters(filters, sites)
@@ -302,23 +343,28 @@ def stock_people(filters):
 
 	With the User filter set, that person alone, so "did they make any?" has an answer whichever way it
 	goes. Otherwise everyone who keeps stock (:data:`STOCK_ROLES`, enabled System Users, without
-	Frappe's own accounts and the service account: ``reorder_rules.EXCLUDED_RECIPIENTS``).
+	Frappe's own accounts and the service account: ``reorder_rules.EXCLUDED_RECIPIENTS``). With Exclude
+	my entries on, never the signed-in user: they asked to see everyone else.
 	"""
 	user = filters.get("user")
 	if user:
-		return {user: _lookup("User", "full_name", {user}).get(user) or user}
-	holders = frappe.get_all(
-		"Has Role", filters={"parenttype": "User", "role": ["in", list(STOCK_ROLES)]}, pluck="parent"
-	)
-	holders = sorted(set(holders or []) - {None, ""})
-	if not holders:
-		return {}
-	users = frappe.get_all(
-		"User",
-		filters={"name": ["in", holders]},
-		fields=["name", "full_name", "enabled", "user_type"],
-	)
-	return rules.stock_people(users, holders, EXCLUDED_RECIPIENTS)
+		people = {user: _lookup("User", "full_name", {user}).get(user) or user}
+	else:
+		people = {}
+		holders = frappe.get_all(
+			"Has Role", filters={"parenttype": "User", "role": ["in", list(STOCK_ROLES)]}, pluck="parent"
+		)
+		holders = sorted(set(holders or []) - {None, ""})
+		if holders:
+			users = frappe.get_all(
+				"User",
+				filters={"name": ["in", holders]},
+				fields=["name", "full_name", "enabled", "user_type"],
+			)
+			people = rules.stock_people(users, holders, EXCLUDED_RECIPIENTS)
+	if rules.checked(filters.get("exclude_mine")):
+		people = rules.without_me(people, frappe.session.user)
+	return people
 
 
 def is_count_row(entry):
