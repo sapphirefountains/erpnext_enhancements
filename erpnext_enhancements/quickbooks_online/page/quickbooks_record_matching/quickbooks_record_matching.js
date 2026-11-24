@@ -76,7 +76,7 @@
  *    server re-checks each one before running it through the same Link / Keep / Retry
  *    code as the buttons on this page. Dialogs only: neither adds a history entry.
  *
- *  - An Apply run always ends in its own "Import finished" dialog (v1.840.3). A Link that merges
+ *  - An Apply run always ends in its own "Import finished" dialog (v1.841.1). A Link that merges
  *    a duplicate runs rename_doc, which ends with frappe.clear_cache() and used to take the
  *    preview's plan with it, so every batch after the first merge came back "This preview has
  *    expired". The server now keeps the plan out of clear_cache's reach and rebuilds it from the
@@ -169,7 +169,7 @@ function qbo_rm_failure(xhr) {
 }
 
 /**
- * One Apply run (v1.840.3). Sends the batches one after another and ALWAYS ends by handing
+ * One Apply run (v1.841.1). Sends the batches one after another and ALWAYS ends by handing
  * `finish` one result per row -- whatever the server, the network or this code does.
  *
  *   send(token, entries)   -> Promise<{ok, message, status, exc_type, error}>  (never rejects)

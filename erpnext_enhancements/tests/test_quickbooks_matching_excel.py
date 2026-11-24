@@ -881,7 +881,7 @@ def test_apply_refuses_an_expired_preview(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The plan outlives clear_cache (v1.840.3)
+# The plan outlives clear_cache (v1.841.1)
 # ---------------------------------------------------------------------------
 
 
@@ -994,7 +994,7 @@ def test_without_the_hook_the_same_run_expires_which_is_the_bug(monkeypatch):
 	preview = matching_excel.preview("FILE-1")
 	matching_excel.apply(preview["token"], [0])
 	with pytest.raises(matching_excel.MatchingPreviewExpired, match="expired"):
-		matching_excel.apply(preview["token"], [1, 2])  # a page from before v1.840.3 sends no file
+		matching_excel.apply(preview["token"], [1, 2])  # a page from before v1.841.1 sends no file
 	assert [call[0] for call in ledger.calls] == ["decide"]
 
 
@@ -1126,7 +1126,7 @@ def test_each_index_must_still_name_the_row_the_preview_showed(monkeypatch):
 	assert results[0]["row_number"] == 3, "reported as the row the page asked about"
 	assert "different row under this number" in results[0]["message"]
 	assert ledger.calls == [("sync", "58")]
-	# A tab opened before v1.840.3 sends plain numbers, and they still work.
+	# A tab opened before v1.841.1 sends plain numbers, and they still work.
 	assert matching_excel.apply(preview["token"], [1])[0]["ok"]
 	# And the page's JSON numbers compare as the parsed text does.
 	assert matching_excel.same_row(

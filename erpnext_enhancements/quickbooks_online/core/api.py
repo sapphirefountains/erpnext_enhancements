@@ -619,7 +619,7 @@ def get_matching_export_status(token):
 def preview_matching_import(file_name):
 	"""RPC: read an uploaded export and say, row by row, what Apply would do. Applies
 	nothing -- an upload is never applied by itself -- but it does write: accepting the upload
-	moves and tags the File for the daily clean-up. So POST only (v1.840.3): a GET is
+	moves and tags the File for the daily clean-up. So POST only (v1.841.1): a GET is
 	CSRF-free, and the page calls this inside the Apply run too. Both page calls are POSTs."""
 	_require_qbo_operator()
 	return matching_excel.preview(file_name)
@@ -630,7 +630,7 @@ def apply_matching_import(token, indexes, file_name=None):
 	"""RPC: apply previewed rows (the page sends a few at a time) through the page's own
 	Link / Keep / Retry code path, each row re-checked first; one result per row. Each entry
 	is a preview row number or ``{index, sheet, row_number, qbo_type, qbo_id}``. ``file_name``
-	(v1.840.3) is the uploaded workbook, read again only if the cache lost the preview."""
+	(v1.841.1) is the uploaded workbook, read again only if the cache lost the preview."""
 	_require_qbo_operator()
 	if isinstance(indexes, str):
 		try:

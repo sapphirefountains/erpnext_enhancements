@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The QuickBooks Record Matching page's Excel Apply run, executed rather than grepped (v1.840.3).
+ * The QuickBooks Record Matching page's Excel Apply run, executed rather than grepped (v1.841.1).
  *
  * On 2026-11-24 an import stopped at row 30 of 532: a Link that merged a duplicate ran rename_doc,
  * which ends with frappe.clear_cache() and took the preview's plan with it, so every batch after

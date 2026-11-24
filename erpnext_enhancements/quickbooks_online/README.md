@@ -409,7 +409,7 @@ spreadsheet (Meg, for Nik, 2026-10-22) and bring the decisions back. Logic in
   `attached_to_field = "qbo_matching_excel"`. The daily `matching_excel.delete_old_files` deletes only
   tagged, unattached Files older than 7 days, never a File that merely sits in the folder. Preview
   accepts only the caller's own private, unattached upload, since accepting one tags it for deletion.
-- **A run survives `frappe.clear_cache()` (v1.840.3).** The preview's plan waits in the cache
+- **A run survives `frappe.clear_cache()` (v1.841.1).** The preview's plan waits in the cache
   between Apply batches. A Link that merges a duplicate runs `rename_doc`, which ends with
   `frappe.clear_cache()`, and that deletes every cache key of the site except the
   `persistent_cache_keys` hook's patterns. On 2026-11-24 every batch after the first merge read

@@ -3888,7 +3888,7 @@ jobs:
         run: |
           python -m pip install "openpyxl~=3.1.5"
           python -m pytest erpnext_enhancements/tests/test_quickbooks_matching_excel.py -q
-      # The same import's Apply run on the page (v1.840.3), executed under node: the page script
+      # The same import's Apply run on the page (v1.841.1), executed under node: the page script
       # runs in `new Function` with a stub frappe and a fake server, and the test clicks Import,
       # Apply and the confirm. A batch that comes back expired is previewed again and retried
       # once under the fresh preview's numbers; a renewal that fails stops the run and lists the

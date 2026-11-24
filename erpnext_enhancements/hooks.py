@@ -4032,7 +4032,7 @@ ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft
 # as it stands.
 ignore_links_on_delete += ["Warehouse Floor Map", "Warehouse Floor Map Shape"]
 
-# Cache keys that `frappe.clear_cache()` must leave alone (v1.840.3). With no arguments it deletes
+# Cache keys that `frappe.clear_cache()` must leave alone (v1.841.1). With no arguments it deletes
 # EVERY cache key of the site except the patterns listed under this hook (frappe v16.60.2,
 # cache_manager.clear_cache; Frappe's own list spares rate limits, the recorder and the like). And
 # it is called by far more than `bench clear-cache`: `rename_doc` ends with it, so every Link on

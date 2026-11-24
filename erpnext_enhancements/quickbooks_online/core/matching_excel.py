@@ -57,7 +57,7 @@ Things this module is careful about:
 * **Built with openpyxl**, which ships with Frappe (``openpyxl~=3.1.5`` on v16), for the
   data validation the dropdowns need -- ``frappe.utils.xlsxutils.make_xlsx`` writes one plain
   sheet through xlsxwriter (``workforce/payroll_export.py`` made the same call).
-* **The preview's plan outlives ``frappe.clear_cache()``** (v1.840.3). The plan lives in the
+* **The preview's plan outlives ``frappe.clear_cache()``** (v1.841.1). The plan lives in the
   cache between the preview and the last Apply batch, and a Link that merges a duplicate goes
   through ``rename_doc``, which ends with ``frappe.clear_cache()`` (frappe v16.60.2,
   ``model/rename_doc.py`` line 212): that deletes every cache key of the site except the
@@ -156,7 +156,7 @@ FILE_TAG = "qbo_matching_excel"
 #: A string cell starting with one of these is a formula to Excel or to whatever the sheet
 #: is pasted into; see ``_put``.
 FORMULA_LEADS = ("=", "+", "-", "@")
-#: What the page sends back with each index it applies (v1.840.3): a row runs only while the
+#: What the page sends back with each index it applies (v1.841.1): a row runs only while the
 #: plan's row under that index is still this one. See ``same_row``.
 ROW_IDENTITY = ("sheet", "row_number", "qbo_type", "qbo_id")
 
@@ -164,7 +164,7 @@ ROW_IDENTITY = ("sheet", "row_number", "qbo_type", "qbo_id")
 class MatchingPreviewExpired(ValidationError):
 	"""The preview's plan is gone and could not be rebuilt from the uploaded file. A class of
 	its own so the page tells it from every other failure by ``exc_type``, never by wording,
-	and previews the same file again rather than failing every batch after it (v1.840.3). A
+	and previews the same file again rather than failing every batch after it (v1.841.1). A
 	ValidationError, so still the 417 it always was."""
 
 
@@ -911,7 +911,7 @@ def plan_digest(rows) -> str:
 
 
 def token_digest(token) -> str:
-	"""The plan digest a token carries, or ``""`` for a token from before v1.840.3. Pure."""
+	"""The plan digest a token carries, or ``""`` for a token from before v1.841.1. Pure."""
 	_nonce, sep, digest = str(token or "").rpartition("-")
 	return digest if sep else ""
 
@@ -1063,7 +1063,7 @@ def delete_old_files() -> int:
 
 
 def _job_key(user, token) -> str:
-	# Listed in hooks.py's persistent_cache_keys (v1.840.3): a merge anywhere on the site while
+	# Listed in hooks.py's persistent_cache_keys (v1.841.1): a merge anywhere on the site while
 	# an export runs used to wipe this, and the page read the missing state as a lost job.
 	return f"qbo_matching_excel:{user}:{token}"
 
@@ -1366,7 +1366,7 @@ def apply(token, indexes, file_name=None) -> list:
 	"""Apply the previewed rows at ``indexes`` (the page sends a few at a time). One failure
 	never stops the rest. Returns one result per index, in order.
 
-	Each entry of ``indexes`` is an index, or (the page since v1.840.3) ``{"index": n, "sheet":
+	Each entry of ``indexes`` is an index, or (the page since v1.841.1) ``{"index": n, "sheet":
 	..., "row_number": ..., "qbo_type": ..., "qbo_id": ...}``; a row that is not the one named
 	is skipped, never applied. ``file_name`` is the uploaded File, read again only when the
 	cache lost the plan (``_rebuild_plan``). A plain index still works, for a tab opened before.
