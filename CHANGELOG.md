@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.841.1] - 2026-11-24
+
+### Fixed
+
+- **One Link that merged a duplicate broke the rest of a Record Matching Excel import.** On
+  2026-11-24 a 532-row import on production stopped at row 30. Every batch after the first merge
+  came back 417 "This preview has expired", and the "Import finished" box never appeared.
+
+  **Why: an upstream `frappe.clear_cache()`.**
+  - `matching_excel.preview` keeps the parsed rows in the cache under
+    `qbo_matching_import:{user}:{token}` (6-hour TTL) until the last Apply batch.
+  - A Link with `merge_duplicate=True` goes through `matching.decide`, which folds the import's
+    copy away with `rename_doc(merge=True)`.
+  - At frappe v16.60.2, `rename_doc` ends with `frappe.clear_cache()` (`model/rename_doc.py`
+    line 212). With no arguments, `cache_manager.clear_cache` deletes every cache key of the site
+    except the patterns listed under the `persistent_cache_keys` hook. Frappe's own list spares
+    rate limits, the recorder and a few queues. Ours spared nothing.
+  - So any merge on the site, from the import or from the page's own Link button, wiped every
+    open preview. The same wipe hit the export job's state (`qbo_matching_excel:{user}:{token}`),
+    and the page reads a missing state as a lost job, so a merge during an export made it report
+    "Export failed" while the job was still running.
+
+  **The fix, in three layers.**
+  - **`hooks.py` declares `persistent_cache_keys = ["qbo_matching_import:*",
+    "qbo_matching_excel:*"]`.** This is the framework's own switch for exactly this. Both keys
+    keep their TTLs, so nothing lives forever.
+  - **A plan the cache loses anyway is rebuilt from the uploaded File.** The deploy `FLUSHDB`s
+    the cache, and no hook survives that.
+    - The page now sends `file_name` with every `apply_matching_import` batch.
+    - The token is `<nonce>-<plan_digest>`, a SHA-256 of the parsed rows in order. A rebuilt plan
+      is used only when its rows digest to the same value, so every index means what it meant at
+      the preview. The digest covers the parsed rows, not the file bytes: a parser changed by a
+      deploy in between would read the same bytes into a different list.
+    - The rebuilt plan recomputes the duplicate-row verdicts and is cached again under the same
+      token.
+    - An unreadable file, a different file, an old-style token or no file at all raises
+      `MatchingPreviewExpired`, a `ValidationError` (still a 417). Nothing is applied.
+  - **Each index travels with its row's sheet, row number and QBO keys.** The server skips a row
+    that is not the one named (`same_row`) instead of applying it. A plain index still works, for
+    a tab opened before this deploy.
+
+  **The page.** The run moved into `qbo_rm_run_import`, a top-level function so it can be tested.
+  - If a batch still comes back `MatchingPreviewExpired` (told by `exc_type`, never by wording),
+    the page previews the same file again and retries that batch once. Every row still to go
+    moves to the fresh preview's number, found by its place in the file.
+  - If the renewal fails, or the retry is expired too, the run stops and lists the rows it never
+    sent. It does not loop. A later batch whose rows the fresh preview all dropped is not sent.
+  - **A batch the server never answered is sent again**: no connection, a 502 or a 503, which is
+    how every call reads while a deploy restarts the bench. The page waits 5, 10, 20 and 40
+    seconds, resending the same batch under the same token each time. That is safe because the
+    server re-checks every row and reports one that already landed as done. If the batch is
+    still unanswered after the last pause, the run stops, rather than spending that minute on
+    every batch after it. **A 504 is never resent**: the worker may still be running that batch,
+    and a resend would race it on merges and notes.
+  - A plain failed batch is reported against its rows, and the run carries on. A plain failure
+    is a 500, a 504, an answer that is not a list, or a call that throws.
+  - The apply calls are `silent`. In frappe v16.60.2 that only gates a failure's
+    `_server_messages`, so a 417's validation messages (an expired preview, a refused row) go into
+    the report instead of Frappe's shared message dialog. A 500, 502, 504, 508, QueryTimeout or
+    Deadlock still opens request.js's own dialog.
+  - **The report is now a Dialog of its own**, with a plain `msgprint` fallback if drawing it
+    fails. `frappe.msgprint` writes into Frappe's single shared message dialog, so per-batch error
+    messages landed in the same dialog. Most likely that is why the report vanished: in frappe
+    v16.60.2, request.js answers a failed call by calling `frappe.hide_msgprint()` and then
+    `frappe.msgprint()`. The hide's `onhide` empties the dialog after its fade, and Bootstrap
+    4.6 ignores a `show()` that arrives mid-fade. This was read from the source, not reproduced
+    in a browser.
+
+  **Also:**
+  - **`preview_matching_import` is POST-only** (`methods=["POST"]`). It writes: accepting an
+    upload moves and tags the File for the clean-up. It also accepted a CSRF-free GET, and the
+    page now calls it inside the Apply run too. Both of the page's calls already went as POST. It
+    leaves the methods ratchet's baseline, whose ceiling drops to 354.
+  - The token's digest is compared with `==`. It is not a secret, and `secrets.compare_digest`
+    raised `TypeError`, a 500, on a token with a non-ASCII character.
+
+  **Tests.** `tests/test_quickbooks_matching_excel.py` gains eight tests (68 in the file), covering:
+  - a model of v16.60.2's `clear_cache` that a merging `decide` calls mid-run, with the hook and,
+    to show the bug, without it;
+  - a `FLUSHDB` between batches, rebuilt from the file;
+  - a rebuilt plan that keeps the preview's duplicate verdicts. An agreeing copy of a row that
+    already ran stays "applied once, there", and a disagreeing pair stays held;
+  - a different, unreadable or unnamed file, an old token, or a non-ASCII token, refused with
+    nothing applied;
+  - an index that names the wrong row, skipped;
+  - the preview endpoint is POST-only;
+  - the hook's patterns, and the page and CI wiring.
+
+  New `scripts/test_qbo_matching_import.mjs` has its own CI step. It runs the page script under
+  node, clicks Import, Apply and the confirm against a fake server that checks row identities,
+  and covers:
+  - expiry after merges (25 rows land once, across two renewals);
+  - a failed renewal, and expiry again;
+  - resends after 502 and 503 with the same token and entries;
+  - a 504 never resent;
+  - a dead connection that stops the run;
+  - a batch emptied by renumbering, never sent;
+  - plain failures and a broken report dialog.
+
+  **Production effect on deploy:** no patch, fixture, schema change or data write. A tab already
+  open on the page keeps the old script until it reloads; the hook alone fixes its runs.
+
 ## [1.841.0] - 2026-11-24
 
 ### Added

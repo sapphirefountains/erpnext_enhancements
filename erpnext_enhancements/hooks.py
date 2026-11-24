@@ -4032,6 +4032,19 @@ ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft
 # as it stands.
 ignore_links_on_delete += ["Warehouse Floor Map", "Warehouse Floor Map Shape"]
 
+# Cache keys that `frappe.clear_cache()` must leave alone (v1.841.1). With no arguments it deletes
+# EVERY cache key of the site except the patterns listed under this hook (frappe v16.60.2,
+# cache_manager.clear_cache; Frappe's own list spares rate limits, the recorder and the like). And
+# it is called by far more than `bench clear-cache`: `rename_doc` ends with it, so every Link on
+# the QuickBooks Record Matching page that merges a duplicate wipes the whole site cache. That
+# killed the Excel import mid-run on 2026-11-24 -- its preview's plan lives in the cache between
+# Apply batches, so every batch after the first merge read "This preview has expired" (stopped at
+# row 30 of 532) -- and it made a running export look lost to the page. Both prefixes belong to
+# quickbooks_online/core/matching_excel.py (`_plan_key`, `_job_key`); each key has its own TTL,
+# so nothing here lives forever. A deploy FLUSHDBs the cache, which no hook survives; the import
+# rebuilds its plan from the uploaded file for that case.
+persistent_cache_keys = ["qbo_matching_import:*", "qbo_matching_excel:*"]
+
 portal_menu_items = [
 	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and
 	# `Training Learner` keeps desk_access = 0, so a customer contact holding it
