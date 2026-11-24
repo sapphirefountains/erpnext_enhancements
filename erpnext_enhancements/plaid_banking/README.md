@@ -98,8 +98,9 @@ names do.
   re-auth, which is what `prune_link_created_gl_accounts` was written for.
 - **Hourly** (`erpnext` `hourly_maintenance`): `automatic_synchronization` runs when both
   `enabled` and `automatic_sync` are on — `sync_transactions` per linked Bank Account, deduped
-  on `transaction_id`, pending skipped, inserted **and submitted**; the first pull is 12 months
-  back unless `last_integration_date` is set, and each run then moves that date to the newest
+  on `transaction_id`, pending skipped, inserted **and submitted**; with no `last_integration_date` the
+  first pull *asks* Plaid for twelve months, and Plaid returns what it holds (about 90 days on
+  a link made with the native token, see "History"), and each run then moves that date to the newest
   transaction it imported. The job runs every hour whether or not Plaid is enabled (it returns
   at once when not); 177 clean runs in the week before 2026-11-24.
 
@@ -139,10 +140,15 @@ unlinked. `core/link_accounts.py` closes that gap, in two calls the dialog makes
   Account is named `"<its account_name> - <its bank>"`, and a master's carries our own name.
   That stays true after a re-link has overwritten the master's `account_name`.
 - **Feed start.** `start_date` becomes `last_integration_date` on every account mapped, so the
-  native first pull starts there rather than twelve months back. A future date is refused
+  native first pull starts there instead of asking for twelve months. A future date is refused
   everywhere: the sync would ask Plaid for a start after its end and log an error every hour.
 - **Per row, on its own.** Each row runs in a savepoint with messages muted. A refused row is
-  rolled back and reported, and the rows around it commit.
+  rolled back and reported, and the rows around it commit. The exception is a whole-transaction
+  rollback (a deadlock): the savepoint is gone with it, so the batch stops and says nothing was
+  saved rather than reporting the earlier rows as done.
+- **Cards are refused by every entry point** unless the caller passes `allow_card_ledgers`
+  (see "Credit cards"), and a Plaid **credit** account is refused onto a master whose GL
+  Account is not a Liability: a card's charges in checking would match nothing.
 
 The pieces, each also callable from `bench execute`:
 
@@ -160,8 +166,8 @@ The pieces, each also callable from `bench execute`:
   under different Banks the master is re-pointed to the duplicate's (token-holding) Bank,
   refused if the master's own Bank holds a token. `last_integration_date` becomes
   `start_date` when given, else the duplicate's, else the master's, else yesterday — a
-  Link-created row that has never synced carries NULL, and NULL means "twelve months,
-  submitted" to the native sync. Refuses if the duplicate has any `Bank Transaction`. Deletes
+  Link-created row that has never synced carries NULL, and NULL means "ask for twelve
+  months and submit whatever comes back" to the native sync. Refuses if the duplicate has any `Bank Transaction`. Deletes
   the duplicate's GL Account **only** if its `account_name` is the native
   `"<Plaid name> - <institution>"` pattern, it has no GL Entry, and nothing else links to it
   — otherwise it is left and the return value says why.
@@ -265,8 +271,9 @@ reports usage counts only.
 1. **Keys.** `/desk/plaid-settings`: Client ID, Secret, Environment (`production` for real
    data; `sandbox` for `user_good` / `pass_good`; `development` is retired by Plaid and this
    module treats it as sandbox), tick **Enabled**, save. Leave **Automatic Sync** off until
-   step 4 is done: a Link-created duplicate syncing first would pull twelve months onto
-   itself, and the absorb then refuses it for having Bank Transactions.
+   step 4 is done: a Link-created duplicate syncing first would pull all the history Plaid
+   holds (about 90 days) onto itself, and folding it in is then refused for having Bank
+   Transactions.
 2. **Name the Bank records the way Plaid does, then link each institution once.** Native Link
    stores the token on the `Bank` named exactly as Plaid's institution string, inserting a
    new Bank when that name does not exist. Our three are "US Bank", "Key Bank", "America
@@ -335,7 +342,11 @@ directly over HTTP, so **the RPC gate is the only access boundary**.
 - **read** — the widget feed: System Manager, Accounts Manager, Accounts User. Returns
   balances, masks and freshness per bank; never a token, secret or client id.
 - **connect** — anything that spends a Plaid call or writes a Bank Account's link (refresh,
-  test, map, absorb): System Manager, Accounts Manager.
+  test, overview, map, apply, prune): System Manager, Accounts Manager. Every one of them is
+  POST-only. There is no absorb endpoint: folding a duplicate happens inside
+  `apply_plaid_mappings`, behind its plan and confirmation, because a bare absorb endpoint could
+  fold one real master into another and delete it. `absorb_native_duplicate` stays a bench
+  helper.
 
 ## Security note: the token is plaintext at rest
 

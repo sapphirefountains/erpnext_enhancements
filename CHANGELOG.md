@@ -58,8 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that as question 8):
   - The dialog's **Also map credit cards** box is off by default, and its GL field is never
     pre-filled.
-  - `apply_plaid_mappings` refuses every card row unless the caller passes
-    `allow_card_ledgers`.
+  - Every entry point refuses a card row unless the caller passes `allow_card_ledgers`:
+    `apply_plaid_mappings`, `plan_plaid_mapping`, and `apply_plaid_mapping` (so
+    `bench execute` too).
+  - While the box is off, a credit card's row shows no picker at all, only a "held" note.
+  - The plan refuses a Plaid credit account onto a master whose GL Account is not a
+    Liability, and a non-credit account onto a card ledger. Picking checking for a card by
+    mistake would have put the card's charges into checking.
 
   Nothing in the default flow types a ledger Bank.
 
@@ -88,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then fails. The batch now stops and says nothing was saved, and the GL Account delete
   re-raises the same way. The card ledger's document cache is cleared before the rollback is
   attempted.
+- **The `absorb_native_duplicate` endpoint is gone.** It never checked that the "duplicate"
+  was one Plaid Link created, so a direct POST could fold one real master into another and
+  delete it. Folding now happens only inside `apply_plaid_mappings`, behind its plan and
+  confirmation; the bench helper stays. `apply_plaid_mappings` refuses a row that isn't an
+  object, instead of failing with a 500.
 - **`test_connection`, `mapping_overview` and `list_plaid_accounts` are POST-only.** Without
   `methods=` a whitelisted method answers a CSRF-free GET. These spend Plaid calls, and
   `test_connection` writes the Settings status.
@@ -115,9 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       says so for every ledger it would type.
 
   WI-056 records the owner's approved plan: the accounts to link, cutover 2026-11-01, and the
-  overlap rule, with the cards held. `absorb_native_duplicate` and
-  `map_plaid_account` take an optional `start_date` and refuse a future one. Eighteen new
-  tests in the existing bench-free `test_plaid_banking.py` step.
+  overlap rule, with the cards held. `absorb_native_duplicate` gains an optional
+  `start_date`, and both it and `map_plaid_account` now refuse a future one. Twenty new tests
+  in the existing bench-free `test_plaid_banking.py` step.
 
 ## [1.841.0] - 2026-11-24
 

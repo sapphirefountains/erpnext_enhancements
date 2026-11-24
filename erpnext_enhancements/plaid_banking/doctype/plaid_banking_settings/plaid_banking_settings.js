@@ -118,7 +118,7 @@ function openMappingDialog(overview) {
 			label: __("Switch off the Plaid Link copy of any account left blank"),
 			default: 1,
 			description: __(
-				"It keeps its Plaid link but the hourly sync skips it, so it can't pull about 90 days of history onto a duplicate. Map it later the same way.",
+				"It keeps its Plaid link but the hourly sync skips it, so it can't pull about 90 days of history onto a duplicate. Map it later the same way. This includes accounts with no company Bank Account yet (and the held cards). Untick to leave every such copy live and syncing instead.",
 			),
 		},
 		{
@@ -163,21 +163,37 @@ function openMappingDialog(overview) {
 				});
 				return;
 			}
+			const isCard = pa.type === "credit";
 			const row = {
 				bank: bank.bank,
 				account_id: pa.account_id,
 				mask: pa.mask,
 				label,
+				plaid_type: pa.type || null,
+				is_card: isCard,
 				// a live Link-created copy that a blank row would leave syncing
 				switch_off: pa.holder_link_created && !pa.holder_disabled,
 			};
 			row.map_field = `map_${bi}_${pi}`;
+			if (isCard) {
+				// While the cards are held, a card row shows no picker at all: choosing a checking
+				// master by mistake would pour the card's charges into checking (the server
+				// refuses that too).
+				fields.push({
+					fieldtype: "HTML",
+					depends_on: "eval:!doc.map_cards",
+					options: `<div class="text-muted">${frappe.utils.escape_html(label)}: ${__("credit card, held until the CPA confirms. Left unmapped.")}</div>`,
+				});
+			}
 			fields.push({
 				fieldtype: "Select",
 				fieldname: row.map_field,
 				label,
 				options: ["", ...unmapped].join("\n"),
-				description: pa.holder_link_created
+				depends_on: isCard ? "eval:doc.map_cards" : undefined,
+				description: isCard
+					? __("Only a card's own Bank Account (on a Liability ledger) belongs here; otherwise use the GL account field below.")
+					: pa.holder_link_created
 					? __(
 							"Plaid Link created {0} for this account. Pick the company Bank Account it really is: the link moves there, and the duplicate (with its GL account, when unused) is deleted.",
 							[frappe.utils.escape_html(pa.holder)],
@@ -223,14 +239,23 @@ function openMappingDialog(overview) {
 			const chosen = [];
 			const seen = {};
 			for (const r of rows) {
-				const bank_account = values[r.map_field] || null;
-				const card_gl_account = (values.map_cards && r.card_field && values[r.card_field]) || null;
+				// a card row's pickers count only while the card option is ticked, even if a value
+				// was chosen and the box then unticked
+				const cardsOn = Boolean(values.map_cards);
+				const bank_account = (r.is_card && !cardsOn ? null : values[r.map_field]) || null;
+				const card_gl_account = (cardsOn && r.card_field && values[r.card_field]) || null;
 				if (bank_account && card_gl_account) {
 					frappe.msgprint(__("{0}: pick a Bank Account or a card's GL account, not both.", [r.label]));
 					return;
 				}
 				const target = bank_account || card_gl_account;
-				const base = { bank: r.bank, account_id: r.account_id, mask: r.mask, label: r.label };
+				const base = {
+					bank: r.bank,
+					account_id: r.account_id,
+					mask: r.mask,
+					plaid_type: r.plaid_type,
+					label: r.label,
+				};
 				if (!target) {
 					if (values.disable_skipped && r.switch_off) chosen.push({ ...base, disable_duplicate: 1 });
 					continue;

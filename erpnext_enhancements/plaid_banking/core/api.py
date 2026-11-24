@@ -10,8 +10,13 @@ callable directly, so the RPC gate is the only access boundary):
   Accounts User}``. Returns balances + masks + freshness per bank; never tokens
   or keys.
 * **connect** -- anything that spends a Plaid call or writes a Bank Account's
-  Plaid link (refresh / test / map / absorb, and the card step, which also sets a
+  Plaid link (refresh / test / map / apply, and the held card step, which also sets a
   card ledger's Account Type to Bank): ``{System Manager, Accounts Manager}`` only.
+
+There is no absorb endpoint any more: folding a duplicate into a master is a step of
+``apply_plaid_mappings``, behind its plan and confirmation. A direct absorb endpoint could fold
+one real master into another and delete it. ``link_accounts.absorb_native_duplicate`` stays
+for ``bench execute``.
 
 There is no link / exchange / disconnect endpoint any more: linking a bank is the
 native ERPNext flow (Plaid Settings -> "Link a new bank account"; Bank ->
@@ -155,13 +160,6 @@ def map_plaid_account(bank_account, account_id, mask=None, start_date=None, bank
 
 
 @frappe.whitelist(methods=["POST"])
-def absorb_native_duplicate(duplicate, into, start_date=None):
-	"""Move a native-created duplicate's Plaid link onto our master and delete the duplicate."""
-	_require_finance_operator(connect=True)
-	return link_accounts.absorb_native_duplicate(duplicate, into, start_date=start_date or None)
-
-
-@frappe.whitelist(methods=["POST"])
 def apply_plaid_mappings(rows, start_date=None, dry_run=0, allow_card_ledgers=0):
 	"""The Map Plaid accounts dialog's two calls. ``dry_run`` plans every row and writes
 	nothing; the dialog shows those plans for confirmation. The write then runs only rows
@@ -173,6 +171,8 @@ def apply_plaid_mappings(rows, start_date=None, dry_run=0, allow_card_ledgers=0)
 	rows = frappe.parse_json(rows) if isinstance(rows, str) else rows
 	if not isinstance(rows, list):
 		frappe.throw("rows must be a list.")
+	if not all(isinstance(row, dict) for row in rows):
+		frappe.throw("Each row must be an object.")
 	dry = _truthy(dry_run)
 	if not dry and any(not (row or {}).get("fingerprint") for row in rows):
 		frappe.throw(

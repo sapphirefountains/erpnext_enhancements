@@ -1494,6 +1494,7 @@ def test_apply_card_types_its_ledger_bank_creates_its_master_and_absorbs_the_dup
 	out = m.link_accounts.apply_plaid_mapping(
 		"Capital One",
 		"acc-card",
+		allow_card_ledgers=True,
 		card_gl_account="22500 - Capital One Spark Card - SF",
 		mask="4321",
 		start_date="2026-08-01",
@@ -1519,7 +1520,10 @@ def test_apply_card_types_its_ledger_bank_creates_its_master_and_absorbs_the_dup
 	# a re-run finds the master on that ledger and creates nothing
 	log.clear()
 	out = m.link_accounts.apply_plaid_mapping(
-		"Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
 	)
 	assert out["action"] == "already mapped" and out["card_master_created"] is False
 	assert out["gl_account_type_set"] is False and log == []
@@ -1531,7 +1535,10 @@ def test_apply_card_without_is_credit_card_on_an_older_erpnext_leaves_the_column
 	db, _log = _seed_card_world(frappe)
 	frappe.get_meta = lambda doctype: types.SimpleNamespace(fields=[])  # no has_field at all
 	m.link_accounts.apply_plaid_mapping(
-		"Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
 	)
 	assert "is_credit_card" not in db.docs[("Bank Account", "Capital One Spark Card - Capital One")]
 
@@ -1555,7 +1562,7 @@ def test_apply_card_refuses_a_ledger_that_is_not_an_untyped_liability():
 	apply = m.link_accounts.apply_plaid_mapping
 
 	def card(gl):
-		return lambda: apply("Capital One", "acc-card", card_gl_account=gl)
+		return lambda: apply("Capital One", "acc-card", allow_card_ledgers=True, card_gl_account=gl)
 
 	_expect_throw(card("13100 - Key Bank Checking - SF"), "must be a Liability account", "Asset")
 	_expect_throw(card("2110 - Creditors - SF"), "Account Type 'Payable'")
@@ -1580,13 +1587,19 @@ def test_apply_refuses_a_link_another_master_holds_and_an_ambiguous_target():
 			"Key Bank",
 			"acc-x",
 			bank_account="Key Bank Checking - Key Bank",
+			allow_card_ledgers=True,
 			card_gl_account="22500 - Capital One Spark Card - SF",
 		),
 		"exactly one",
 	)
 	# the same refusal comes before a card's ledger is typed or its Bank Account created
 	_expect_throw(
-		lambda: apply("Key Bank", "acc-already", card_gl_account="22500 - Capital One Spark Card - SF"),
+		lambda: apply(
+			"Key Bank",
+			"acc-already",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
 		"already on 'Key Bank Savings - Key Bank'",
 	)
 	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
@@ -1620,6 +1633,7 @@ def test_a_future_feed_start_is_refused_everywhere_before_any_write():
 		lambda: la.apply_plaid_mapping(
 			"Capital One",
 			"acc-card",
+			allow_card_ledgers=True,
 			card_gl_account="22500 - Capital One Spark Card - SF",
 			start_date=tomorrow,
 		),
@@ -1704,6 +1718,7 @@ def test_api_apply_plaid_mappings_needs_a_dry_run_fingerprint_for_every_written_
 	)
 	assert seen["dry_run"] is False and seen["rows"][0]["fingerprint"] == "f" and seen["cards"] is True
 	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps({"bank": "x"})), "must be a list")
+	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps(["x"]), dry_run=1), "must be an object")
 
 
 def test_the_plaid_endpoints_that_spend_calls_or_write_are_post_only():
@@ -1728,11 +1743,13 @@ def test_the_plaid_endpoints_that_spend_calls_or_write_are_post_only():
 		"mapping_overview",
 		"list_plaid_accounts",
 		"map_plaid_account",
-		"absorb_native_duplicate",
 		"apply_plaid_mappings",
 		"prune_link_created_gl_accounts",
 	):
 		assert methods[name] == ["POST"], (name, methods[name])
+	# folding a duplicate is a step of apply_plaid_mappings, behind its plan; a bare absorb
+	# endpoint could fold one real master into another and delete it
+	assert "absorb_native_duplicate" not in methods
 
 
 def test_a_master_already_on_another_plaid_account_is_never_stamped_over():
@@ -1762,7 +1779,10 @@ def test_a_master_already_on_another_plaid_account_is_never_stamped_over():
 	db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] = "Bank"
 	_expect_throw(
 		lambda: la.apply_plaid_mapping(
-			"Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
 		),
 		"already linked to another Plaid account",
 	)
@@ -1770,7 +1790,10 @@ def test_a_master_already_on_another_plaid_account_is_never_stamped_over():
 	db.docs.pop(("Bank Account", "Spark Cash - Capital One"))
 	_expect_throw(
 		lambda: la.apply_plaid_mapping(
-			"Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
 		),
 		"already linked to another Plaid account",
 	)
@@ -1888,7 +1911,10 @@ def test_a_skipped_account_can_have_its_link_created_duplicate_switched_off():
 	)
 	# the disabled duplicate still folds into a master later
 	out = m.link_accounts.apply_plaid_mapping(
-		"Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"
+		"Capital One",
+		"acc-card",
+		allow_card_ledgers=True,
+		card_gl_account="22500 - Capital One Spark Card - SF",
 	)
 	assert out["action"] == "absorbed" and ("Bank Account", "Spark Cash - Capital One") not in db.docs
 
@@ -1914,13 +1940,23 @@ def test_a_duplicate_under_another_bank_and_a_bad_existing_card_master_are_refus
 		"disabled": 1,
 	}
 	_expect_throw(
-		lambda: plan("Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"),
+		lambda: plan(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
 		"'Old Card - Capital One' already uses",
 		"disabled",
 	)
 	db.docs[("Bank Account", "Old Card - Capital One")].update(disabled=0, company="Other Co")
 	_expect_throw(
-		lambda: plan("Capital One", "acc-card", card_gl_account="22500 - Capital One Spark Card - SF"),
+		lambda: plan(
+			"Capital One",
+			"acc-card",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+		),
 		"another company's",
 	)
 	assert log == [] and db.set_value_calls == []
@@ -1977,6 +2013,67 @@ def test_cards_are_held_by_default_and_nothing_types_a_ledger_bank():
 	assert ("Bank Account", "Capital One Spark Card - Capital One") not in db.docs
 	assert not [entry for entry in log if entry[0] in ("save", "insert")]
 	assert db.savepoints.count("plaid_map_row") == 1
+
+
+def test_the_card_hold_is_enforced_by_the_plan_and_by_apply_not_only_the_batch():
+	"""``bench execute`` calls apply_plaid_mapping directly; the hold must hold there too."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	la = m.link_accounts
+	gl = "22500 - Capital One Spark Card - SF"
+	_expect_throw(
+		lambda: la.plan_plaid_mapping("Capital One", "acc-card", card_gl_account=gl), "Card mapping is off"
+	)
+	_expect_throw(
+		lambda: la.apply_plaid_mapping("Capital One", "acc-card", card_gl_account=gl), "Card mapping is off"
+	)
+	assert db.docs[("Account", gl)]["account_type"] == "" and log == []
+
+
+def test_a_credit_card_feed_is_never_put_on_a_non_card_master():
+	"""With cards held, the card row still offers masters; picking checking by mistake would
+	pour the card's charges into checking. The plan refuses a Plaid credit account onto a master
+	whose GL Account is not a Liability, and a non-credit account onto a card ledger."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	plan = m.link_accounts.plan_plaid_mapping
+	# known from the type native Link stamped on the duplicate ("credit")
+	db.docs[("Bank Account", "Checking - Capital One")] = {
+		"name": "Checking - Capital One",
+		"bank": "Capital One",
+		"account": "13100 - Key Bank Checking - SF",
+		"is_company_account": 1,
+	}
+	_expect_throw(
+		lambda: plan("Capital One", "acc-card", bank_account="Checking - Capital One"),
+		"as a credit card",
+		"not a Liability",
+	)
+	# known from the dialog's plaid_type when no duplicate holds it
+	_expect_throw(
+		lambda: plan(
+			"Key Bank", "acc-free", bank_account="Key Bank Checking - Key Bank", plaid_type="credit"
+		),
+		"as a credit card",
+	)
+	# a loan or a checking account is not a card
+	_expect_throw(
+		lambda: plan(
+			"Key Bank",
+			"acc-free",
+			allow_card_ledgers=True,
+			card_gl_account="22500 - Capital One Spark Card - SF",
+			plaid_type="depository",
+		),
+		"as depository, not a credit card",
+	)
+	# a credit account onto a Liability master (13202's shape) is fine
+	db.docs[("Account", "13100 - Key Bank Checking - SF")]["root_type"] = "Liability"
+	ok = plan("Capital One", "acc-card", bank_account="Checking - Capital One")
+	assert ok["action"] == "absorbed"
+	assert log == [] and db.set_value_calls == []
 
 
 # --- the rename patch -------------------------------------------------------------

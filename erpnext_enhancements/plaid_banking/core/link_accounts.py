@@ -36,6 +36,13 @@ types that Liability ledger Bank, creates the card's Bank Account (``is_credit_c
 folds the Link-created duplicate -- which sits on a new *Asset* GL Account under the Bank
 group -- into it.
 
+**The card step is held** (the owner, 2026-11-24: "Banks now, cards later"). Typing a card
+ledger Bank makes ERPNext's Cash Flow report count it as cash, so it waits for the CPA
+(WI-036, question 8). Every entry point refuses a card row unless the caller passes
+``allow_card_ledgers``: :func:`plan_plaid_mapping`, :func:`apply_plaid_mapping` (so
+``bench execute`` too) and :func:`apply_plaid_mappings`. The dialog sends it only when its
+"Also map credit cards" box is ticked.
+
 All helpers are plain functions so they work from ``bench execute``
 (``bench execute erpnext_enhancements.plaid_banking.core.link_accounts.map_plaid_account
 --kwargs '{"bank_account": "...", "account_id": "..."}'`` -- ``bench execute`` commits
@@ -162,7 +169,16 @@ def _holders(account_ids) -> dict:
 	rows = frappe.get_all(
 		"Bank Account",
 		filters={"integration_id": ["in", ids]},
-		fields=["name", "bank", "account", "account_name", "integration_id", "mask", "disabled"],
+		fields=[
+			"name",
+			"bank",
+			"account",
+			"account_name",
+			"account_type",
+			"integration_id",
+			"mask",
+			"disabled",
+		],
 	)
 	return {row.get("integration_id"): row for row in rows if row.get("integration_id") in ids}
 
@@ -426,6 +442,8 @@ def plan_plaid_mapping(
 	mask: str | None = None,
 	start_date=None,
 	disable_duplicate: bool = False,
+	plaid_type: str | None = None,
+	allow_card_ledgers: bool = False,
 ) -> dict:
 	"""Work out, without writing anything, exactly what mapping one Plaid account will do.
 
@@ -451,6 +469,12 @@ def plan_plaid_mapping(
 
 	A master that already carries a *different* Plaid id is refused too: stamping over it
 	would silently stop that other account's feed.
+
+	A card row is refused unless ``allow_card_ledgers`` (the card hold, see the module
+	docstring). A Plaid **credit** account -- known from ``plaid_type`` or from the type native
+	Link stamped on its duplicate -- is refused onto a master whose GL Account is not a
+	Liability: a card's feed in checking would match nothing and hide the card. And a Plaid
+	account known not to be credit is refused onto a card ledger.
 	"""
 	if not account_id:
 		frappe.throw("A Plaid account id is required.")
@@ -460,6 +484,8 @@ def plan_plaid_mapping(
 			"Pick a company Bank Account, a card's GL account, or switching off the duplicate "
 			"for this Plaid account: exactly one."
 		)
+	if card_gl_account and not allow_card_ledgers:
+		frappe.throw(CARDS_HELD_MESSAGE)
 	_bank_token(bank)
 	start = _feed_start(start_date)
 	holder = _holders([account_id]).get(account_id)
@@ -468,6 +494,12 @@ def plan_plaid_mapping(
 		frappe.throw(
 			f"Plaid account {account_id} sits on '{holder['name']}' under Bank '{holder.get('bank')}', "
 			f"not under '{bank}'. Reopen Map Plaid accounts."
+		)
+	known_type = (plaid_type or (holder.get("account_type") if holder_is_duplicate else None) or "").lower()
+	if card_gl_account and known_type and known_type != "credit":
+		frappe.throw(
+			f"Plaid lists account {account_id} as {known_type}, not a credit card. Map it to its "
+			"company Bank Account instead of a card's GL account."
 		)
 
 	plan = {key: None for key in _PLAN_FINGERPRINT_FIELDS}
@@ -533,6 +565,7 @@ def plan_plaid_mapping(
 			[
 				"name",
 				"bank",
+				"account",
 				"is_company_account",
 				"disabled",
 				"integration_id",
@@ -553,6 +586,14 @@ def plan_plaid_mapping(
 				f"({trow.get('integration_id')}). Mapping this one onto it would stop that feed. "
 				"Clear its Integration ID first if this account really replaces it."
 			)
+		if bank_account and known_type == "credit":
+			root_type = frappe.db.get_value("Account", trow.get("account"), "root_type")
+			if root_type != "Liability":
+				frappe.throw(
+					f"Plaid lists account {account_id} as a credit card, but '{target}' sits on GL "
+					f"account '{trow.get('account')}', an {root_type or 'untyped'} account, not a Liability. A "
+					"card's feed belongs on the card's own ledger (held until the CPA answers)."
+				)
 
 	if holder is None:
 		plan["action"] = "mapped"
@@ -699,6 +740,8 @@ def apply_plaid_mapping(
 	start_date=None,
 	disable_duplicate: bool = False,
 	expected_fingerprint: str | None = None,
+	plaid_type: str | None = None,
+	allow_card_ledgers: bool = False,
 ) -> dict:
 	"""Run :func:`plan_plaid_mapping`'s plan for one Plaid account. The dialog's per-row write.
 
@@ -716,6 +759,8 @@ def apply_plaid_mapping(
 		mask=mask,
 		start_date=start_date,
 		disable_duplicate=disable_duplicate,
+		plaid_type=plaid_type,
+		allow_card_ledgers=allow_card_ledgers,
 	)
 	if expected_fingerprint and plan["fingerprint"] != expected_fingerprint:
 		frappe.throw(
@@ -851,6 +896,8 @@ def apply_plaid_mappings(rows, start_date=None, dry_run=False, allow_card_ledger
 			"mask": row.get("mask") or None,
 			"start_date": start,
 			"disable_duplicate": bool(row.get("disable_duplicate")),
+			"plaid_type": row.get("plaid_type") or None,
+			"allow_card_ledgers": bool(allow_card_ledgers),
 		}
 		previous = getattr(flags, "mute_messages", False)
 		flags.mute_messages = True

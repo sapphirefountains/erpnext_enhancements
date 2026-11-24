@@ -8,7 +8,7 @@
 > our own would reimplement a native feature, which this plan's native-first rule calls a
 > defect. What actually stood between us and bank feeds was a DocType-name collision (below).
 
-## Update 2026-11-24: production keys, ERPNext 16.60.0, and the cards (v1.841.0)
+## Update 2026-11-24: production keys, ERPNext 16.60.0, and the cards (v1.842.0)
 Nik has a pay-as-you-go **production** Plaid account, so the long pole below is gone. Prod
 runs ERPNext 16.60.0. Before anything was configured (read-only checks): native
 `Plaid Settings` disabled on sandbox with no keys, the hourly native sync job running cleanly,
