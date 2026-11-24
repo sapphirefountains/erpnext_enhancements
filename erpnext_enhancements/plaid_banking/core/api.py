@@ -162,7 +162,7 @@ def absorb_native_duplicate(duplicate, into, start_date=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def apply_plaid_mappings(rows, start_date=None, dry_run=0):
+def apply_plaid_mappings(rows, start_date=None, dry_run=0, allow_card_ledgers=0):
 	"""The Map Plaid accounts dialog's two calls. ``dry_run`` plans every row and writes
 	nothing; the dialog shows those plans for confirmation. The write then runs only rows
 	that carry the ``fingerprint`` of a confirmed plan, and refuses any whose plan changed
@@ -173,13 +173,19 @@ def apply_plaid_mappings(rows, start_date=None, dry_run=0):
 	rows = frappe.parse_json(rows) if isinstance(rows, str) else rows
 	if not isinstance(rows, list):
 		frappe.throw("rows must be a list.")
-	# A form-encoded boolean arrives as the string "true".
-	dry = dry_run is True or str(dry_run).strip().lower() in ("1", "true")
+	dry = _truthy(dry_run)
 	if not dry and any(not (row or {}).get("fingerprint") for row in rows):
 		frappe.throw(
 			"Every row needs the fingerprint of the plan that was confirmed: run it with dry_run first."
 		)
-	return link_accounts.apply_plaid_mappings(rows, start_date=start_date or None, dry_run=dry)
+	return link_accounts.apply_plaid_mappings(
+		rows, start_date=start_date or None, dry_run=dry, allow_card_ledgers=_truthy(allow_card_ledgers)
+	)
+
+
+def _truthy(value) -> bool:
+	"""A form-encoded boolean arrives as the string "true"."""
+	return value is True or str(value).strip().lower() in ("1", "true")
 
 
 @frappe.whitelist(methods=["POST"])

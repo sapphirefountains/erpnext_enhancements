@@ -1666,7 +1666,7 @@ def test_the_batch_isolates_a_refused_row_and_restores_the_mute_flag():
 			"mask": "4321",
 		},
 	]
-	out = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01")
+	out = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01", allow_card_ledgers=True)
 	assert out["start_date"] == "2026-08-01"
 	assert [r["ok"] for r in out["results"]] == [False, False, True]
 	assert "already on 'Key Bank Savings - Key Bank'" in out["results"][0]["message"]
@@ -1686,21 +1686,23 @@ def test_api_apply_plaid_mappings_needs_a_dry_run_fingerprint_for_every_written_
 	m = _modules()
 	seen = {}
 
-	def fake_apply(rows, start_date=None, dry_run=False):
-		seen.update(rows=rows, start_date=start_date, dry_run=dry_run)
+	def fake_apply(rows, start_date=None, dry_run=False, allow_card_ledgers=False):
+		seen.update(rows=rows, start_date=start_date, dry_run=dry_run, cards=allow_card_ledgers)
 		return {"results": []}
 
 	monkeypatch.setattr(m.link_accounts, "apply_plaid_mappings", fake_apply)
 	rows = [{"bank": "Key Bank", "account_id": "a"}]
 	# the dry run needs no fingerprint; "true" is what a form-encoded boolean arrives as
 	m.api.apply_plaid_mappings(json.dumps(rows), start_date="", dry_run="true")
-	assert seen == {"rows": rows, "start_date": None, "dry_run": True}
+	assert seen == {"rows": rows, "start_date": None, "dry_run": True, "cards": False}
 	# a write without the fingerprint of a confirmed plan is refused before anything runs
 	seen.clear()
 	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps(rows)), "fingerprint")
 	assert seen == {}
-	m.api.apply_plaid_mappings(json.dumps([dict(rows[0], fingerprint="f")]), start_date="2026-08-01")
-	assert seen["dry_run"] is False and seen["rows"][0]["fingerprint"] == "f"
+	m.api.apply_plaid_mappings(
+		json.dumps([dict(rows[0], fingerprint="f")]), start_date="2026-08-01", allow_card_ledgers="true"
+	)
+	assert seen["dry_run"] is False and seen["rows"][0]["fingerprint"] == "f" and seen["cards"] is True
 	_expect_throw(lambda: m.api.apply_plaid_mappings(json.dumps({"bank": "x"})), "must be a list")
 
 
@@ -1801,7 +1803,9 @@ def test_the_dry_run_plan_is_exact_writes_nothing_and_says_what_bank_typing_does
 			"card_gl_account": "13100 - Key Bank Checking - SF",
 		},
 	]
-	out = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01", dry_run=True)
+	out = m.link_accounts.apply_plaid_mappings(
+		rows, start_date="2026-08-01", dry_run=True, allow_card_ledgers=True
+	)
 	card, bank, bad = out["plans"]
 	assert card["ok"] and card["action"] == "absorbed" and card["create_bank_account"] is True
 	assert (
@@ -1823,7 +1827,7 @@ def test_the_dry_run_plan_is_exact_writes_nothing_and_says_what_bank_typing_does
 
 	# the confirmed plans run as shown
 	rows[0]["fingerprint"], rows[1]["fingerprint"] = card["fingerprint"], bank["fingerprint"]
-	done = m.link_accounts.apply_plaid_mappings(rows[:2], start_date="2026-08-01")
+	done = m.link_accounts.apply_plaid_mappings(rows[:2], start_date="2026-08-01", allow_card_ledgers=True)
 	assert [r["ok"] for r in done["results"]] == [True, True]
 	assert db.docs[("Bank Account", "Key Bank Checking - Key Bank")]["bank"] == "KeyBank"
 
@@ -1938,10 +1942,41 @@ def test_a_whole_transaction_rollback_stops_the_batch_and_says_nothing_was_saved
 	rows = [
 		{"bank": "Capital One", "account_id": "acc-card", "card_gl_account": "13100 - Key Bank Checking - SF"}
 	]
-	_expect_throw(lambda: m.link_accounts.apply_plaid_mappings(rows), "nothing was saved")
+	_expect_throw(
+		lambda: m.link_accounts.apply_plaid_mappings(rows, allow_card_ledgers=True), "nothing was saved"
+	)
 	assert frappe.flags.mute_messages is False
 	# the cache is cleared before the rollback is attempted, not after it failed
 	assert cleared == [("Account", "13100 - Key Bank Checking - SF")]
+
+
+def test_cards_are_held_by_default_and_nothing_types_a_ledger_bank():
+	"""The owner held the cards (2026-11-24, "Banks now, cards later") until the CPA says how
+	card balances belong on the Cash Flow statement. A card row is refused, in the dry run and
+	in the write, unless the caller opts in; the bank rows around it still run."""
+	m = _modules()
+	frappe = sys.modules["frappe"]
+	db, log = _seed_card_world(frappe)
+	rows = [
+		{
+			"bank": "Capital One",
+			"account_id": "acc-card",
+			"card_gl_account": "22500 - Capital One Spark Card - SF",
+		},
+		{"bank": "Key Bank", "account_id": "acc-new", "bank_account": "Key Bank Checking - Key Bank"},
+	]
+	plans = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01", dry_run=True)["plans"]
+	assert plans[0]["ok"] is False and "Card mapping is off" in plans[0]["message"]
+	assert "WI-036" in plans[0]["message"] and plans[1]["ok"] is True
+	rows[1]["fingerprint"] = plans[1]["fingerprint"]
+	results = m.link_accounts.apply_plaid_mappings(rows, start_date="2026-08-01")["results"]
+	assert results[0]["ok"] is False and "Card mapping is off" in results[0]["message"]
+	assert results[1]["ok"] is True
+	# the ledger is untouched, no card Bank Account exists, and no savepoint was even opened for it
+	assert db.docs[("Account", "22500 - Capital One Spark Card - SF")]["account_type"] == ""
+	assert ("Bank Account", "Capital One Spark Card - Capital One") not in db.docs
+	assert not [entry for entry in log if entry[0] in ("save", "insert")]
+	assert db.savepoints.count("plaid_map_row") == 1
 
 
 # --- the rename patch -------------------------------------------------------------

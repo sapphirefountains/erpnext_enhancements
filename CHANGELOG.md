@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Link-created" is judged by the GL Account (named `"<Plaid name> - <institution>"`), not by
   the Bank Account's name, which a master shares the shape of.
 
-  For a card, you pick its Liability ledger instead of a master:
+  For a card, and only when the card option is ticked, you pick its Liability ledger instead
+  of a master:
   - That ledger's Account Type is set to Bank (only when it was blank), through a normal save.
   - The card gets a Bank Account with **Is Credit Card** ticked (16.60; left out on a site
     without the field).
@@ -52,14 +53,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A Bank Account already on the ledger is reused only if it is an enabled company account
     of the same company.
 
+  **The card path is held and opt-in** (the owner, 2026-11-24: "Banks now, cards later"),
+  until the CPA says how card balances belong on the Cash Flow statement (WI-036 now carries
+  that as question 8):
+  - The dialog's **Also map credit cards** box is off by default, and its GL field is never
+    pre-filled.
+  - `apply_plaid_mappings` refuses every card row unless the caller passes
+    `allow_card_ledgers`.
+
+  Nothing in the default flow types a ledger Bank.
+
   The rest of the dialog:
   - **Skipped accounts.** An account left blank can have its Link-created duplicate switched
     off (Disabled, on by default). Otherwise it would pull about 90 days onto the duplicate
     once Automatic Sync is on, and could not be folded in afterwards.
   - **Feed start.** One **Feed starts on** date becomes every mapped account's
     `last_integration_date`. A future date is refused before anything runs.
-  - **Card pre-fill.** A credit account's GL field is pre-filled only when exactly one ledger's
-    name carries its mask.
+  - **Card hint.** A credit account's GL field names the likely ledger only when exactly one
+    ledger's name carries its mask.
 - **The Bank Balances widget labels card balances.** For a Plaid credit account, "current"
   is what is owed and "available" is the credit left. The tile now says so instead of
   showing a bare number beside the checking balances.
@@ -104,8 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       says so for every ledger it would type.
 
   WI-056 records the owner's approved plan: the accounts to link, cutover 2026-11-01, and the
-  overlap rule. Cards wait on the owner's word. `absorb_native_duplicate` and
-  `map_plaid_account` take an optional `start_date` and refuse a future one. Seventeen new
+  overlap rule, with the cards held. `absorb_native_duplicate` and
+  `map_plaid_account` take an optional `start_date` and refuse a future one. Eighteen new
   tests in the existing bench-free `test_plaid_banking.py` step.
 
 ## [1.841.0] - 2026-11-24

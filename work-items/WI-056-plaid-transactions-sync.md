@@ -17,8 +17,8 @@ card entry still a QuickBooks draft (the ledger is posted through 2025-12-31).
 
 Nik approved this plan (2026-11-24):
 - **Accounts.** One Link per institution, every account shared in that one session: US Bank
-  (checking, savings, the company Mastercard), Key Bank (3), America First (3), Capital One
-  (Spark, 22500), American Express (Prime 1008, 22600). Native ERPNext keeps one token per
+  (checking, savings, the company Mastercard), Key Bank (3), America First (3); later, once
+  the cards are released, Capital One (Spark, 22500) and American Express (Prime 1008, 22600). Native ERPNext keeps one token per
   Bank, so a second Link to the same institution would replace the first. The four US Bank
   employee Mastercards are decided after linking, once we see whether Plaid lists them
   separately or rolls them into the company card.
@@ -34,11 +34,13 @@ Nik approved this plan (2026-11-24):
   gives each card a Bank Account on its own Liability ledger (typed Bank, Is Credit Card
   ticked), and applies one feed start date. It shows the server's exact plan for
   confirmation first and runs only the confirmed plans. The widget labels card balances as owed.
-- **Cards wait for a decision.** Typing a card ledger Bank makes ERPNext's Cash Flow report
-  count it as cash (its whole history moves out of operating activities), and Bank
-  Reconciliation lists its past entries as uncleared. Owner review, 2026-11-24: banks first;
-  map the cards only on the owner's word, which may wait for the CPA. See the README's
-  "Credit cards".
+- **Cards are held: "Banks now, cards later" (owner, 2026-11-24).** Typing a card ledger
+  Bank makes ERPNext's Cash Flow report count it as cash (its whole history moves out of
+  operating activities), and Bank Reconciliation lists its past entries as uncleared. US Bank,
+  Key Bank and America First are linked now. The three card ledgers stay untyped, with no card
+  Bank Accounts, until the CPA answers WI-036 question 8. The card path in the dialog is
+  opt-in (off by default, and refused by the server without `allow_card_ledgers`). See the
+  README's "Credit cards".
 
 Nik's steps are an ERPNext Task with a ToDo. The procedure is in
 `erpnext_enhancements/plaid_banking/README.md` ("Operating procedure"), which supersedes the

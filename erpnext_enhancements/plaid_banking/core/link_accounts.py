@@ -801,11 +801,24 @@ def _has_field(doctype: str, fieldname: str) -> bool:
 		return False
 
 
-def apply_plaid_mappings(rows, start_date=None, dry_run=False) -> dict:
+CARDS_HELD_MESSAGE = (
+	"Card mapping is off. Mapping a card types its GL account Bank, and ERPNext's Cash Flow "
+	"report then counts the card as cash. The cards are held until the CPA confirms how card "
+	"balances should appear (WI-036, question 8). Once that is settled, tick the dialog's card "
+	"option to map them."
+)
+
+
+def apply_plaid_mappings(rows, start_date=None, dry_run=False, allow_card_ledgers=False) -> dict:
 	"""The dialog's two calls: plan every row (``dry_run``), then run the confirmed plans.
 
 	``rows`` is a list of ``{bank, account_id, mask, bank_account | card_gl_account |
 	disable_duplicate, fingerprint}``. The start date is checked once, before anything.
+
+	A ``card_gl_account`` row is refused unless ``allow_card_ledgers`` is set: the card step
+	changes a GL Account's type and with it the Cash Flow statement, and the owner held it
+	(2026-11-24, "Banks now, cards later") until the CPA answers. The dialog sets the flag only
+	when its card option is ticked, so nothing in the default flow types a ledger Bank.
 
 	* ``dry_run``: :func:`plan_plaid_mapping` per row, messages muted, nothing written.
 	  Returns ``{start_date, plans: [...]}``; a refused row is ``{ok: False, message}``.
@@ -822,6 +835,16 @@ def apply_plaid_mappings(rows, start_date=None, dry_run=False) -> dict:
 	out = []
 	for row in rows or []:
 		row = row or {}
+		if row.get("card_gl_account") and not allow_card_ledgers:
+			out.append(
+				{
+					"ok": False,
+					"bank": row.get("bank"),
+					"account_id": row.get("account_id"),
+					"message": CARDS_HELD_MESSAGE,
+				}
+			)
+			continue
 		kwargs = {
 			"bank_account": row.get("bank_account") or None,
 			"card_gl_account": row.get("card_gl_account") or None,

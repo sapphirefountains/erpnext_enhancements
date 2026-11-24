@@ -174,14 +174,23 @@ The **Map Plaid accounts** button on Plaid Banking Settings drives all of it thr
 dialog: a **Feed starts on** date (default the first of the month), then per linked bank each
 Plaid account with a Select of that bank's still-unmapped masters plus the masters under
 Banks that hold no token (picking one moves it under the linked Bank). A credit account also
-gets a Link to a Liability GL Account, pre-filled when exactly one ledger's name carries the
-card's mask. Accounts a master already holds are shown as mapped, with no control.
+gets a Link to a Liability GL Account, shown only when **Also map credit cards** is ticked
+(off by default; see "Credit cards") and never pre-filled; the description names the likely
+ledger when exactly one carries the card's mask. Accounts a master already holds are shown as
+mapped, with no control.
 **Map selected** first asks the server for the plan and lists exactly what it will do, per
 account: the card ledger's type change and what that does, the card's new Bank Account, a
 master moving Bank, each duplicate deleted (and its GL Account) or switched off, masks, the
 start date. Nothing is written until that list is confirmed, and only the confirmed plans run.
 
 ## Credit cards
+
+> **Held (2026-11-24).** The owner's call is "Banks now, cards later". No card ledger is typed
+> Bank, and no card Bank Account is created, until the CPA says how card balances should appear
+> on the Cash Flow statement (WI-036, question 8). The code path stays, but it is opt-in twice
+> over: the dialog's **Also map credit cards** box is off by default, and `apply_plaid_mappings`
+> refuses every card row unless the caller passes `allow_card_ledgers`. Until then, leave each
+> card row blank; its Plaid Link copy is switched off like any other skipped account.
 
 Cards have no Bank Account masters, and the obvious fix does not work: ERPNext's
 `Bank Account.validate_account` accepts only a GL Account that is a ledger of
@@ -271,8 +280,8 @@ reports usage counts only.
    Expect a duplicate Bank Account and GL Account per account; step 3 removes them.
 3. **Map.** `/desk/plaid-banking-settings` → **Map Plaid accounts**. Set **Feed starts on**
    (the cutover date), pick each bank account's master (the mask is the tell), and for each
-   card pick its GL Account instead (only once the cash-flow effect above is agreed; until
-   then leave the card blank). Leave **Switch off the Plaid Link copy of any account left
+   card, once the CPA has answered, tick **Also map credit cards** and pick its GL Account
+   instead. Until then leave the card rows blank. Leave **Switch off the Plaid Link copy of any account left
    blank** ticked. **Map selected** shows the plan; confirm it. The result reports per account
    what it did: mapped, duplicate folded in or switched off, card Bank Account created, the card
    ledger's type set to Bank, the duplicate's GL Account deleted or kept and why.

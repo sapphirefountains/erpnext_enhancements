@@ -121,6 +121,18 @@ function openMappingDialog(overview) {
 				"It keeps its Plaid link but the hourly sync skips it, so it can't pull about 90 days of history onto a duplicate. Map it later the same way.",
 			),
 		},
+		{
+			// Off by default, and the server refuses card rows without it: mapping a card
+			// types its GL account Bank, which changes the Cash Flow statement. Held until
+			// the CPA answers (WI-036, question 8).
+			fieldtype: "Check",
+			fieldname: "map_cards",
+			label: __("Also map credit cards to their GL accounts (held until the CPA confirms)"),
+			default: 0,
+			description: __(
+				"Typing a card's GL account Bank makes ERPNext's Cash Flow report count it as cash: its whole history moves out of operating activities. Leave this off until the CPA has said how card balances should appear.",
+			),
+		},
 	];
 	const rows = [];
 	// Masters whose Bank holds no token: native Link names the Bank after Plaid's
@@ -182,11 +194,17 @@ function openMappingDialog(overview) {
 					fieldname: row.card_field,
 					options: "Account",
 					label: __("…or this card's GL account"),
-					default: pa.suggested_card_gl_account || "",
+					depends_on: "eval:doc.map_cards",
 					get_query: () => ({ filters: { root_type: "Liability", is_group: 0, disabled: 0 } }),
-					description: __(
-						"Cards have no Bank Account yet. Picking the card's Liability account sets its Account Type to Bank (ERPNext requires it), which also makes the Cash Flow report count it as cash; the confirmation spells that out. A Bank Account is created for the card with Is Credit Card ticked.",
-					),
+					// Never pre-filled: picking a ledger here is the one step that changes a GL
+					// Account, so it is always a person's explicit choice.
+					description:
+						__(
+							"Cards have no Bank Account yet. Picking the card's Liability account sets its Account Type to Bank (ERPNext requires it), which also makes the Cash Flow report count it as cash; the confirmation spells that out. A Bank Account is created for the card with Is Credit Card ticked.",
+						) +
+						(pa.suggested_card_gl_account
+							? " " + __("Likely: {0}.", [frappe.utils.escape_html(pa.suggested_card_gl_account)])
+							: ""),
 				});
 			}
 			rows.push(row);
@@ -206,7 +224,7 @@ function openMappingDialog(overview) {
 			const seen = {};
 			for (const r of rows) {
 				const bank_account = values[r.map_field] || null;
-				const card_gl_account = (r.card_field && values[r.card_field]) || null;
+				const card_gl_account = (values.map_cards && r.card_field && values[r.card_field]) || null;
 				if (bank_account && card_gl_account) {
 					frappe.msgprint(__("{0}: pick a Bank Account or a card's GL account, not both.", [r.label]));
 					return;
@@ -233,10 +251,11 @@ function openMappingDialog(overview) {
 				return;
 			}
 			const payload = chosen.map(({ label, ...row }) => row);
+			const allow_card_ledgers = values.map_cards ? 1 : 0;
 			frappe
 				.call({
 					method: `${PLAID_API}.apply_plaid_mappings`,
-					args: { rows: payload, start_date: values.feed_start, dry_run: 1 },
+					args: { rows: payload, start_date: values.feed_start, dry_run: 1, allow_card_ledgers },
 					freeze: true,
 					freeze_message: __("Working out the changes…"),
 				})
@@ -262,6 +281,7 @@ function openMappingDialog(overview) {
 								args: {
 									rows: runnable.map(({ label, ...row }) => row),
 									start_date: values.feed_start,
+									allow_card_ledgers,
 								},
 								freeze: true,
 								freeze_message: __("Mapping {0} account(s)…", [runnable.length]),
