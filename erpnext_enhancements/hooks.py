@@ -1367,6 +1367,10 @@ doc_events = {
 			# so (a warning: issuing is also how a failed unit is scrapped). Never raises.
 			"erpnext_enhancements.product_fulfillment.qc_gate.warn_untested_issue",
 		],
+		# v1.843.0 -- project_shelf: a canceled transfer's Project Shelf Tags (the cleanup patch tags the
+		# moves off the shelf that named no job) are deleted, so frappe can still delete the transfer.
+		# Never raises.
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.project_shelf.drop_tags",
 	},
 	# v1.843.0 -- project_shelf: a count that changes an item at the Project Shelf names the job(s)
 	# the change belongs to, with a Project Shelf Tag beside it. A Stock Reconciliation has no
@@ -1375,10 +1379,15 @@ doc_events = {
 	# stock adjustment account with no project. One hook covers every path: the Bin Manager's
 	# count (which passes the split the person named), the Count Desk, the phone audit's draft
 	# and a reconciliation made in the Desk (the default split, project_shelf_rules.count_split).
-	# Runs after ERPNext wrote the count's ledger rows. A default that fails is logged and the
-	# count still posts; a named split that no longer adds up refuses the submit.
+	# Runs after ERPNext wrote the count's ledger rows, and judges each row as of the count's posting
+	# time (a draft submitted days later takes its loss from the jobs that held the item then). Only
+	# purpose Stock Reconciliation. A default that fails is rolled back to its savepoint and logged and
+	# the count still posts; a named split that no longer adds up refuses the submit.
 	"Stock Reconciliation": {
 		"on_submit": "erpnext_enhancements.inventory_enhancements.project_shelf.tag_reconciliation",
+		# A canceled (or undone) count's tags are deleted: they count for nothing once its ledger rows
+		# are canceled, and frappe refuses to delete a canceled document a tag still links to.
+		"on_cancel": "erpnext_enhancements.inventory_enhancements.project_shelf.drop_tags",
 	},
 	# v1.754.0 -- the other half of the guard above: a bill line for goods such a receipt line
 	# brought in. ERPNext books a stock item's bill line to Stock Received But Not Billed when ANY

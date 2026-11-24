@@ -55,7 +55,9 @@ are the Project Shelf Tag list, *Named By* = Cleanup.
 
 **Safe twice.** A movement that already has a tag is skipped, so a second run writes nothing.
 **Never raises**: a patch that raises aborts ``bench migrate``, which on this repository is the
-deploy (CLAUDE.md). A failure is logged once and printed, and the shelf reads as it did before.
+deploy (CLAUDE.md). A failure rolls back everything it wrote (a half-written split could never
+be finished: a movement with any tag is skipped next time), is logged once and printed, and the
+shelf reads as it did before.
 Each tag is printed (document, item, job, quantity: no person's name).
 
 Post model sync, so the Project Shelf Tag DocType exists.
@@ -153,6 +155,12 @@ def execute():
 			)
 		_report(written)
 	except Exception:
+		# Nothing half-written is kept: the patch is marked run when it returns, and a movement with any
+		# tag at all is skipped next time, so a split cut short here could never be finished.
+		try:
+			frappe.db.rollback()
+		except Exception:
+			pass
 		try:
 			frappe.log_error(title="Project Shelf cleanup could not finish")
 		except Exception:

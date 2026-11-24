@@ -33,13 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - It shares out its own movement's change among the jobs it names.
     - It never shares out more than that change, nor anything of the other sign, so it cannot
       invent a claim.
-    - It counts only while the document's ledger rows are live, so an undone or canceled count
-      drops its tags by itself.
+    - It counts only while the document's ledger rows are live. A canceled or undone count's
+      tags are also deleted (a new `on_cancel` hook on Stock Reconciliation and Stock Entry), because
+      frappe refuses to delete a canceled document that a tag still links to.
   - **The default split** (`count_split`), used when nobody names the jobs:
     - A count down comes first out of stock no job claims, then out of the oldest delivery. That is
       the reverse of the cap, which keeps the newest delivery's stock.
     - A count up first refills a short claim (no tag needed), then goes to the one job holding the
       item, else to no job.
+    - A person's split of a count up may not put units under no job while a job is still short. The
+      shelf gives on-hand stock to the jobs' claims before any is unclaimed, so a no-job share would
+      silently refill that job instead.
   - **Every path that can count the shelf:**
     - **The Bin Manager's count** (`bin_assignments.set_count`), which posted the 2026-11-24 counts:
       - The dialog shows a share box per job, filled in by the default from the new
@@ -49,11 +53,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **The Count Desk, the phone Inventory Scanner Audit's draft, and a reconciliation made in the
       Desk** get the default from one new hook, Stock Reconciliation `on_submit`
       (`project_shelf.tag_reconciliation`).
-      - That covers a draft a Stock Manager submits days later.
+      - **Each row is judged as of the count's posting time** (`project_shelf_rules.count_context`),
+        never against today's claims. So a draft a Stock Manager submits days later, or a
+        reconciliation backdated in the Desk, takes its loss from the jobs that held the item when
+        it was counted. A delivery or a take posted in between belongs after it.
+      - **Only `purpose` Stock Reconciliation.** ERPNext 16.60.0's Opening Stock and Adjustment
+        Entry reconciliations can read as a count up from nothing and would have handed stock to a
+        job.
+      - **Each row's default runs under its own savepoint.** A failure is rolled back to it and
+        logged, and the count still posts. A deadlock or lock wait timeout is re-raised, never
+        swallowed inside `on_submit`.
       - Where the default had to choose between jobs it says so: the Count Desk in its result, the
         Desk in an alert.
     - **"Change whose"** on a shelf row in the Bin Manager re-splits the item's latest count. It is
       checked against what the shelf held just before that count.
+      - **Only the latest count.** The server refuses any other: re-splitting an older count would
+        shift what every later count started from.
+      - **Each new tag's note** says who changed it, when, and what the split was before. The old
+        tags stay in Deleted Document.
+      - **A count up's split is shown as it was entered**, with the refill of a short claim
+        included, even though that refill wrote no tag (`project_shelf_rules.count_shares`).
+        Saving it unchanged therefore changes nothing.
+    - **The count dialog ignores a late answer.** It draws only the split for the latest quantity
+      typed, even when an older answer arrives after a newer one.
   - **The Bin Manager bundle is VERSION 4.** The page draws the split only from a copy at
     `BM_SPLIT_LEVEL` 4, so a tab open across the deploy counts as it always did and the server's
     default names the jobs. `scripts/test_bin_manager.mjs` holds the two numbers equal.
@@ -98,7 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the total;
     - a line saying it matches the approved nine, or else each row outside the approval and each
       approved row it did not write.
-  - **Safe to run twice**, and it never raises, because a raising patch aborts the deploy.
+  - **Safe to run twice**, and it never raises, because a raising patch aborts the deploy. A failure
+    rolls back everything it wrote before the patch is marked run: a movement with any tag is
+    skipped next time, so a split cut short could never be finished.
 - **The Project Shelf Tag hook** read `doc.flags` with `or`. An empty `frappe._dict` is falsy, so
   the hook would have kept its report on a throwaway dict. It was caught by the new suite before
   shipping.

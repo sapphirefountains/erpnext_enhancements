@@ -233,6 +233,23 @@ class TestCountSplit(unittest.TestCase):
 		# A was 2 short: its 1 refills the claim, no tag. C, not on record, gets its 3.
 		self.assertEqual(split["tags"], [("C", 3)])
 
+	def test_found_units_cannot_be_no_jobs_while_a_job_is_short(self):
+		claims = [("A", 10, "2026-11-01")]
+		split = rules.count_split(6, 12, claims, {"A": 2, "": 4})
+		self.assertIn("A (2)", split["problem"])
+		self.assertEqual(rules.count_split(6, 12, claims, {"A": 4, "": 2})["problem"], None)
+		self.assertEqual(rules.count_split(6, 12, claims, {"A": 4, "": 2})["tags"], [])
+		self.assertEqual(rules.count_split(6, 12, claims, {"A": 4, "B": 2})["tags"], [("B", 2)])
+
+	def test_a_counts_shares_are_rebuilt_with_the_refill_that_wrote_no_tag(self):
+		claims = [("A", 10, "2026-11-01")]
+		self.assertEqual(rules.count_shares(6, 6, claims, [("A", 2)]), {"A": 6.0})
+		self.assertEqual(rules.count_shares(6, 6, claims, [("B", 2)]), {"A": 4.0, "B": 2.0})
+		self.assertEqual(rules.count_shares(6, 6, claims, []), {"A": 4.0, "": 2.0})
+		down = [("A", 5, "2026-11-01"), ("B", 3, "2026-11-20")]
+		self.assertEqual(rules.count_shares(8, -3, down, [("B", -3)]), {"B": 3.0})
+		self.assertEqual(rules.count_shares(10, -3, [("A", 5, "2026-11-01")], []), {"": 3.0})
+
 	def test_the_page_split_is_read_from_json_or_a_dict(self):
 		self.assertIsNone(rules.chosen_split(None))
 		self.assertIsNone(rules.chosen_split(""))
@@ -570,6 +587,53 @@ class TestTheBinManagersCount(_Base):
 
 
 class TestChangeWhose(_Base):
+	def test_only_the_latest_count_can_be_changed_and_the_old_split_is_noted(self):
+		_two_jobs()
+		bins.set_count(ITEM, SHELF, 5, base._ref(1))
+		first = bins.count_whose(ITEM)["count"]["voucher_no"]
+		bins.set_count(ITEM, SHELF, 4, base._ref(2))
+		latest = bins.count_whose(ITEM)["count"]["voucher_no"]
+		self.assertNotEqual(first, latest)
+		self.assertRefused(
+			bins.change_whose,
+			"Only the latest count",
+			latest,
+			item_code=ITEM,
+			voucher_no=first,
+			jobs={JOB_B: 3},
+		)
+		bins.change_whose(ITEM, latest, {JOB_B: 1})
+		changed = [t for t in base._table(TAG).values() if t["voucher_no"] == latest]
+		self.assertEqual(
+			[(t["project"], t["qty"], t["source"]) for t in changed], [(JOB_B, -1.0, rules.TAG_CHANGED)]
+		)
+		self.assertIn("Before: " + JOB_A + " -1", changed[0]["note"])
+		self.assertIn("Changed by", changed[0]["note"])
+
+	def test_a_count_up_shows_its_refill_and_saving_it_unchanged_changes_nothing(self):
+		# The review's case: A received 10, a move with no job took 4, a count finds 6 more.
+		_held_on(ITEM, (JOB_A, 10, "2026-11-01"))
+		STATE["ledger"].append(
+			shelf_base._row(ITEM, -4, None, voucher_type="Stock Entry", voucher_no="SE-X", after=6)
+		)
+		base._bin(ITEM, SHELF, 6)
+		bins.set_count(ITEM, SHELF, 12, base._ref())
+		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_A, 2.0)])
+		count = bins.count_whose(ITEM)["count"]
+		self.assertEqual(
+			({r["project"]: r["qty"] for r in count["rows"]}, count["no_job"]), ({JOB_A: 6.0}, 0.0)
+		)
+		bins.change_whose(ITEM, count["voucher_no"], {JOB_A: 6})
+		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_A, 2.0)])
+		self.assertEqual({r["project"]: r["qty"] for r in shelf.shelf_stock()["rows"]}, {JOB_A: 12.0})
+		self.assertRefused(
+			bins.change_whose,
+			"while a job is short",
+			item_code=ITEM,
+			voucher_no=count["voucher_no"],
+			jobs={JOB_A: 2, "": 4},
+		)
+
 	def test_a_counts_split_can_be_said_again(self):
 		_two_jobs()
 		bins.set_count(ITEM, SHELF, 5, base._ref())
@@ -603,7 +667,7 @@ class TestChangeWhose(_Base):
 		shelf_base._held(ITEM, (JOB_A, 5))
 		self.assertIsNone(bins.count_whose(ITEM)["count"])
 		self.assertRefused(
-			bins.change_whose, "not a live count", item_code=ITEM, voucher_no="SR-404", jobs={}
+			bins.change_whose, "Only the latest count", item_code=ITEM, voucher_no="SR-404", jobs={}
 		)
 
 
@@ -641,17 +705,120 @@ class TestTheSubmitHook(_Base):
 		sr.submit()
 		self.assertEqual(base._table(TAG), {})
 
-	def test_a_default_that_fails_is_logged_and_the_count_still_posts(self):
+	def test_a_default_that_fails_is_rolled_back_to_its_savepoint_logged_and_the_count_still_posts(self):
 		shelf_base._held(ITEM, (JOB_A, 5))
-		real = shelf.count_plan
-		shelf.count_plan = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		real, real_rollback = shelf._split_at, FRAPPE.db.rollback
+		rolled = []
+		shelf._split_at = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		FRAPPE.db.rollback = lambda save_point=None: rolled.append(save_point)
 		try:
 			self._reconcile(1)
 		finally:
-			shelf.count_plan = real
+			shelf._split_at, FRAPPE.db.rollback = real, real_rollback
 		self.assertEqual(base._table(TAG), {})
+		self.assertEqual(rolled, ["shelf_tag_0"])
 		self.assertTrue(any("could not name the jobs" in (title or "") for title, _m in STATE["errors"]))
 		self.assertEqual(len(base._table("Stock Reconciliation")), 1)
+
+	def test_a_deadlock_or_a_lock_timeout_is_never_swallowed(self):
+		class Deadlock(Exception):
+			pass
+
+		shelf_base._held(ITEM, (JOB_A, 5))
+		real = shelf._split_at
+		shelf._split_at = lambda *a, **k: (_ for _ in ()).throw(Deadlock("1213"))
+		FRAPPE.db.is_deadlocked = lambda e: isinstance(e, Deadlock)
+		try:
+			with self.assertRaises(Deadlock):
+				self._reconcile(1)
+		finally:
+			shelf._split_at = real
+			del FRAPPE.db.is_deadlocked
+
+	def test_only_a_count_names_jobs(self):
+		# ERPNext 16.60.0's Opening Stock and Adjustment Entry would read as a count up from nothing.
+		shelf_base._held(ITEM, (JOB_A, 5))
+		for purpose in ("Opening Stock", "Adjustment Entry"):
+			sr = FRAPPE.new_doc("Stock Reconciliation")
+			sr.purpose = purpose
+			sr.append("items", {"item_code": ITEM, "warehouse": SHELF, "qty": 9})
+			sr.insert()
+			sr.submit()
+		self.assertEqual(base._table(TAG), {})
+
+	def _backdated(self, after_rows, final_on_hand):
+		"""A count of 6 posted on 11-02 (A had 10 from 11-01) and submitted after ``after_rows``
+		landed on 11-03: the hook runs on the ledger as it stands at submit."""
+		STATE["ledger"].append(shelf_base._row(ITEM, 10, JOB_A, after=10, day="2026-11-01"))
+		STATE["ledger"].append(
+			shelf_base._row(
+				ITEM,
+				0,
+				None,
+				voucher_type="Stock Reconciliation",
+				voucher_no="SR-DRAFT",
+				after=6,
+				day="2026-11-02",
+			)
+		)
+		STATE["ledger"].extend(after_rows)
+		base._bin(ITEM, SHELF, final_on_hand)
+		sr = base.Doc(
+			"Stock Reconciliation",
+			{
+				"name": "SR-DRAFT",
+				"purpose": "Stock Reconciliation",
+				"posting_date": "2026-11-02",
+				"items": [{"item_code": ITEM, "warehouse": SHELF, "qty": 6, "current_qty": 10}],
+			},
+		)
+		shelf.tag_reconciliation(sr)
+		return sr
+
+	def test_a_draft_submitted_later_takes_its_loss_from_who_held_it_on_its_date(self):
+		# The review's case A: B's 10 arrived the day after the count. Its loss is A's, never B's.
+		self._backdated([shelf_base._row(ITEM, 10, JOB_B, voucher_no="PR-B", after=16, day="2026-11-03")], 16)
+		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_A, -4.0)])
+		out = shelf.shelf_stock()
+		self.assertTrue(out["exact"])
+		self.assertEqual({r["project"]: r["qty"] for r in out["rows"]}, {JOB_A: 6.0, JOB_B: 10.0})
+
+	def test_a_take_after_the_counts_date_does_not_hide_its_loss(self):
+		# The review's case B: A took its 6 the day after the count. The count still names A's 4.
+		self._backdated(
+			[
+				shelf_base._row(
+					ITEM,
+					-6,
+					JOB_A,
+					voucher_type="Stock Entry",
+					voucher_no="SE-TAKE",
+					after=0,
+					day="2026-11-03",
+				)
+			],
+			0,
+		)
+		self.assertEqual([(t["project"], t["qty"]) for t in base._table(TAG).values()], [(JOB_A, -4.0)])
+		out = shelf.shelf_stock()
+		self.assertTrue(out["exact"])
+		self.assertEqual(out["rows"], [])
+
+	def test_a_canceled_documents_tags_are_removed(self):
+		shelf_base._held(ITEM, (JOB_A, 5))
+		sr = self._reconcile(1)
+		other = base.Doc("Stock Reconciliation", {"name": "SR-OTHER"})
+		shelf.write_tags("Stock Reconciliation", "SR-OTHER", ITEM, [(JOB_A, -1)], rules.TAG_DEFAULT)
+		self.assertEqual(len(base._table(TAG)), 2)
+		shelf.drop_tags(sr)
+		self.assertEqual([t["voucher_no"] for t in base._table(TAG).values()], ["SR-OTHER"])
+		real = FRAPPE.get_all
+		FRAPPE.get_all = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+		try:
+			shelf.drop_tags(other)
+		finally:
+			FRAPPE.get_all = real
+		self.assertTrue(any("could not remove" in (title or "") for title, _m in STATE["errors"]))
 
 	def test_a_named_split_that_no_longer_fits_refuses_the_submit(self):
 		shelf_base._held(ITEM, (JOB_A, 5))
@@ -734,14 +901,17 @@ class TestTheCleanupPatch(_Base):
 		self.assertIn("matches the 9 rows approved on 2026-11-24", out.getvalue())
 		self.assertIn("9 tag(s) written, 231 unit(s) named", out.getvalue())
 
-	def test_it_never_raises(self):
-		real = shelf.settle_plan
+	def test_it_never_raises_and_keeps_nothing_half_written(self):
+		real, real_rollback = shelf.settle_plan, FRAPPE.db.rollback
+		rolled = []
 		shelf.settle_plan = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+		FRAPPE.db.rollback = lambda save_point=None: rolled.append(save_point)
 		try:
 			printed = self._patch()
 		finally:
-			shelf.settle_plan = real
+			shelf.settle_plan, FRAPPE.db.rollback = real, real_rollback
 		self.assertIn("could not finish", printed)
+		self.assertEqual(rolled, [None], "the whole transaction, before the patch is marked run")
 		self.assertTrue(any("cleanup" in (title or "") for title, _m in STATE["errors"]))
 
 	def test_with_no_shelf_it_does_nothing(self):
@@ -761,6 +931,10 @@ class TestTheWiring(unittest.TestCase):
 			'"on_submit": "erpnext_enhancements.inventory_enhancements.project_shelf.tag_reconciliation"',
 			block.group(1),
 		)
+		drop = '"on_cancel": "erpnext_enhancements.inventory_enhancements.project_shelf.drop_tags"'
+		self.assertIn(drop, block.group(1))
+		entry = re.search(r'"Stock Entry": \{(.*?)\n\t\},', source, re.S)
+		self.assertIn(drop, entry.group(1))
 
 	def test_the_patch_runs_after_model_sync(self):
 		text = PATCHES_TXT.read_text(encoding="utf-8")

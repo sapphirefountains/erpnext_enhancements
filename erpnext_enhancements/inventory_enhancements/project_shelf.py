@@ -420,6 +420,40 @@ def _choice_message(report):
 	).format(items)
 
 
+def _is_lock_error(exc):
+	"""Whether ``exc`` (or what caused it) is a deadlock or a lock wait timeout: the transaction is
+	already gone, so swallowing it inside ``on_submit`` would let the request carry on over a
+	rolled-back transaction. Those are re-raised; anything else in the default branch is logged."""
+	seen = set()
+	while exc is not None and id(exc) not in seen:
+		seen.add(id(exc))
+		for name in ("is_deadlocked", "is_timedout"):
+			check = getattr(frappe.db, name, None)
+			try:
+				if callable(check) and check(exc):
+					return True
+			except Exception:
+				pass
+		exc = exc.__cause__ or exc.__context__
+	return False
+
+
+def _split_at(doc, code, shelf, chosen=None):
+	"""``count_split`` for one row of a submitted count, **as of the count's own place in the
+	ledger** (``project_shelf_rules.count_context``): what the shelf held and which jobs claimed it
+	just before the count's posting time, not today. A Count Desk draft submitted days later, or a
+	reconciliation backdated in the Desk, is judged against the shelf as it was when it was counted;
+	a delivery or a take posted in between belongs after it. ``None`` when the count changed nothing
+	there."""
+	context = rules.count_context(_ledger(shelf, code), _tags(shelf, code), code, doc.doctype, doc.name)
+	if context is None:
+		return None
+	before, change, claims = context
+	split = rules.count_split(before, before + change, claims, chosen)
+	split["before"] = before
+	return _named_split(split)
+
+
 def tag_reconciliation(doc, method=None):
 	"""``doc_events``: Stock Reconciliation ``on_submit`` (v1.843.0). Name the jobs of every row
 	the count changed at the Project Shelf.
@@ -427,16 +461,21 @@ def tag_reconciliation(doc, method=None):
 	One hook for every way a count reaches the shelf: the Bin Manager's count, the Count Desk
 	(posted, or drafted and submitted later by a Stock Manager), the phone Inventory Scanner
 	Audit's draft, and a reconciliation made by hand in the Desk. Runs after ERPNext has written
-	the count's ledger rows, so ``row.current_qty`` is what the shelf had and the jobs' claims
-	(``shelf_stock``) do not yet include this count.
+	the count's ledger rows. **Each row is judged at the count's posting time** (:func:`_split_at`),
+	never against today's claims: a draft counted on Monday and submitted on Wednesday takes its
+	loss from the jobs that held the item on Monday.
 
+	* **Only a count**: ``purpose`` Stock Reconciliation. ERPNext 16.60.0's Opening Stock and
+	  Adjustment Entry reconciliations can read as a count up from nothing and would hand stock to
+	  a job; they are left alone.
 	* **A split the person named** comes in ``doc.flags.shelf_jobs`` (``{item_code: {project:
 	  qty}}``, the Bin Manager's count): it was checked before the count was posted, and is
 	  checked again here; a split that no longer adds up refuses the submit, and the count with
 	  it, rather than post a count whose jobs are wrong. Tags carry ``source`` Count.
-	* **Otherwise the default** (``project_shelf_rules.count_split``), ``source`` Default. A
-	  failure here is logged and the count still posts: the drift it leaves is the drift there
-	  was before this release, reported as untagged, and a count must never be lost to it.
+	* **Otherwise the default** (``project_shelf_rules.count_split``), ``source`` Default, each row
+	  under its own savepoint. A failure is rolled back to that savepoint, logged, and the count
+	  still posts: the drift it leaves is reported as untagged, and a count must never be lost to
+	  it. A deadlock or a lock wait timeout is re-raised: the transaction is already gone.
 
 	``doc.flags.shelf_tagged`` gets ``[{item_code, tags, choice}]`` for the caller. When the
 	default had to choose between jobs, a short message says so (an alert in the Desk), unless
@@ -445,6 +484,8 @@ def tag_reconciliation(doc, method=None):
 	Posts nothing: the count's own GL entries (the difference to the stock adjustment account,
 	no project) are ERPNext's and are not touched.
 	"""
+	if (doc.get("purpose") or rules.RECONCILIATION) != rules.RECONCILIATION:
+		return
 	try:
 		shelf = warehouse()
 		rows = [row for row in (doc.get("items") or []) if shelf and _name(row.get("warehouse")) == shelf]
@@ -459,11 +500,13 @@ def tag_reconciliation(doc, method=None):
 	named = flags.get("shelf_jobs") or {}
 	log = flags.get("shelf_log")
 	report = []
-	for row in rows:
+	for index, row in enumerate(rows):
 		code = _name(row.get("item_code"))
 		chosen = named.get(code)
 		if chosen is not None:
-			split = count_plan(code, row.get("qty"), chosen=chosen, before=row.get("current_qty"))
+			split = _split_at(doc, code, shelf, chosen=chosen)
+			if split is None:
+				continue
 			if split["problem"]:
 				frappe.throw(_("{0} on the Project Shelf: {1}").format(code, _(split["problem"])))
 			write_tags(
@@ -471,15 +514,22 @@ def tag_reconciliation(doc, method=None):
 			)
 			report.append({"item_code": code, "tags": split["tags"], "choice": False})
 			continue
+		point = f"shelf_tag_{index}"
+		frappe.db.savepoint(point)
 		try:
-			split = count_plan(code, row.get("qty"), before=row.get("current_qty"))
+			split = _split_at(doc, code, shelf)
+			if split is None:
+				continue
 			write_tags(
 				doc.doctype, doc.name, code, split["tags"], rules.TAG_DEFAULT, stock_scan_log=log, shelf=shelf
 			)
 			report.append(
 				{"item_code": code, "tags": split["tags"], "choice": bool(split["choice"] and split["tags"])}
 			)
-		except Exception:
+		except Exception as exc:
+			if _is_lock_error(exc):
+				raise
+			frappe.db.rollback(save_point=point)
 			try:
 				frappe.log_error(title=f"Project Shelf: could not name the jobs of {doc.name}")
 			except Exception:
@@ -493,14 +543,37 @@ def tag_reconciliation(doc, method=None):
 			pass
 
 
+def drop_tags(doc, method=None):
+	"""``doc_events``: Stock Reconciliation and Stock Entry ``on_cancel`` (v1.843.0). Delete the
+	document's Project Shelf Tags.
+
+	They would count for nothing anyway (the shelf reads only live ledger rows), but a tag is a
+	Dynamic Link to its document, and frappe refuses to delete a canceled document something still
+	links to (``LinkExistsError``). The deleted tags stay in Deleted Document. An amended count is
+	a new document, and its submit names its jobs afresh. Never raises: a cancel must not fail on
+	this."""
+	try:
+		for name in frappe.get_all(
+			TAG, filters={"voucher_type": doc.doctype, "voucher_no": doc.name}, pluck="name"
+		):
+			frappe.delete_doc(TAG, name, ignore_permissions=True, force=True)
+	except Exception:
+		try:
+			frappe.log_error(title=f"Project Shelf: could not remove the job tags of {doc.name}")
+		except Exception:
+			pass
+
+
 def latest_count(item_code):
 	"""The item's latest live count at the shelf, for "Change whose": ``{voucher_no,
-	posting_date, before, change, split, current}`` or ``None``.
+	posting_date, before, change, split, current}`` or ``None``. The only count that may be
+	re-split (:func:`change_whose`).
 
 	``split`` is ``count_split`` for that count against what the shelf held just before it
 	(``project_shelf_rules.count_context``, with every tag but the count's own), filled with the
-	count's current tags as the person's split (``current``: ``{project: positive qty}``, and
-	the rest of the change under no job)."""
+	count's current split as the person would have entered it (``current``,
+	``project_shelf_rules.count_shares``: a count up's refill of a short claim included, though it
+	wrote no tag)."""
 	shelf = warehouse()
 	item_code = _name(item_code)
 	if not shelf or not item_code:
@@ -515,7 +588,7 @@ def latest_count(item_code):
 
 def count_on(item_code, voucher_no, ledger=None, chosen=None):
 	"""One count's split at the shelf: its change, what the shelf held just before it, and
-	``chosen`` checked against that (``None``: the count's current tags). ``None`` when the
+	``chosen`` checked against that (``None``: the count's current split). ``None`` when the
 	count has no live row for the item there."""
 	shelf = warehouse()
 	item_code = _name(item_code)
@@ -529,19 +602,12 @@ def count_on(item_code, voucher_no, ledger=None, chosen=None):
 		return None
 	before, change, claims = context
 	own = [
-		tag
+		(tag.get("project"), float(tag.get("qty") or 0))
 		for tag in tags
 		if tag.get("voucher_type") == rules.RECONCILIATION and tag.get("voucher_no") == voucher_no
 	]
-	current = {}
-	for tag in own:
-		current[tag.get("project")] = current.get(tag.get("project"), 0.0) + abs(float(tag.get("qty") or 0))
-	if chosen is None:
-		rest = abs(change) - sum(current.values())
-		chosen = dict(current)
-		if rest > rules.TOLERANCE:
-			chosen[rules.NO_JOB] = rest
-	split = rules.count_split(before, before + change, claims, chosen)
+	current = rules.count_shares(before, change, claims, own)
+	split = rules.count_split(before, before + change, claims, dict(current) if chosen is None else chosen)
 	day = next(
 		(str(row.get("posting_date") or "")[:10] for row in ledger if row.get("voucher_no") == voucher_no), ""
 	)
@@ -552,20 +618,41 @@ def count_on(item_code, voucher_no, ledger=None, chosen=None):
 		"before": before,
 		"change": change,
 		"current": current,
+		"own": own,
 		"split": _named_split(split),
 	}
+
+
+def _split_words(pairs):
+	words = ", ".join(f"{project} {qty:g}" for project, qty in pairs if project)
+	return words or "no job named"
 
 
 def change_whose(item_code, voucher_no, chosen):
 	"""Replace one count's tags for one item with ``chosen`` (``{project: qty}``), checked
 	against what the shelf held just before that count. Raises the sentence when it does not
-	add up. Returns the new split. The caller holds the permission (the Bin Manager's count)."""
+	add up. Returns the new split. The caller holds the permission (the Bin Manager's count).
+
+	**Only the item's latest count at the shelf** (:func:`latest_count`): re-splitting an older one
+	would change what every later count started from, and a later count's tags could then take
+	from a job more than it held. Each new tag's ``note`` says who changed it, when, and what the
+	split was before; the old tags themselves stay in Deleted Document."""
+	latest = latest_count(item_code)
+	if latest is None or latest["voucher_no"] != _name(voucher_no):
+		frappe.throw(
+			_("Only the latest count of {0} on the Project Shelf can be changed{1}.").format(
+				item_code, _(", which is {0}").format(latest["voucher_no"]) if latest else ""
+			)
+		)
 	answer = count_on(item_code, voucher_no, chosen=chosen or {})
-	if answer is None:
-		frappe.throw(_("{0} is not a live count of {1} on the Project Shelf.").format(voucher_no, item_code))
 	split = answer["split"]
 	if split["problem"]:
 		frappe.throw(_(split["problem"]))
+	from frappe.utils import now_datetime
+
+	note = _("Changed by {0} on {1}. Before: {2}.").format(
+		frappe.session.user, now_datetime(), _split_words(answer["own"])
+	)
 	for name in frappe.get_all(
 		TAG,
 		filters={
@@ -576,7 +663,14 @@ def change_whose(item_code, voucher_no, chosen):
 		pluck="name",
 	):
 		frappe.delete_doc(TAG, name, ignore_permissions=True, force=True)
-	write_tags(rules.RECONCILIATION, answer["voucher_no"], _name(item_code), split["tags"], rules.TAG_CHANGED)
+	write_tags(
+		rules.RECONCILIATION,
+		answer["voucher_no"],
+		_name(item_code),
+		split["tags"],
+		rules.TAG_CHANGED,
+		note=note,
+	)
 	return split
 
 

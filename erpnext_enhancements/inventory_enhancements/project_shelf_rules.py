@@ -34,8 +34,8 @@ adjustment account, no project), and a **Project Shelf Tag** beside it says whos
 change was: document, item, job, signed quantity. :func:`shelf_summary` reads a tag as sharing
 out that movement's own change among the jobs it names, **never more than the change and only
 of its sign**, so a tag cannot invent a claim; whatever the tags do not cover stays untagged.
-A tag counts only while its document's ledger rows are live, so an undone or canceled count
-drops its tags by itself. :func:`count_split` is who a count's change belongs to when nobody
+A tag counts only while its document's ledger rows are live, and a canceled document's tags
+are deleted too (``project_shelf.drop_tags``). :func:`count_split` is who a count's change belongs to when nobody
 says (the default) and whether a person's own split adds up; :func:`settle_untagged` is the
 same default applied to the movements off the shelf that were never named (the cleanup patch).
 
@@ -691,8 +691,13 @@ def _plain(value):
 	return str(int(value)) if value == int(value) else str(value)
 
 
-def _shares_problem(change, shares, holds, unclaimed):
-	"""A sentence when a person's split of a count cannot be posted, else ``None``."""
+def _shares_problem(change, shares, holds, unclaimed, shorts=None):
+	"""A sentence when a person's split of a count cannot be posted, else ``None``.
+
+	On a count up, **no units can be no job's while a job is still short** (``shorts``: how many
+	each job's claim is above what it holds). The shelf gives what is on hand to the jobs' claims
+	before anything is unclaimed (:func:`allocate`), so a "no job" share would silently refill the
+	short job instead, and the split the person saved would not be the one the shelf shows."""
 	if any(qty < -TOLERANCE for qty in shares.values()):
 		return "A job's share of a count cannot be less than nothing."
 	total = sum(shares.values())
@@ -714,6 +719,19 @@ def _shares_problem(change, shares, holds, unclaimed):
 				return f"{project} has none of this item on the shelf, so a count cannot take any off it."
 			if qty > have + TOLERANCE:
 				return f"{project} has only {_plain(have)} of this item on the shelf."
+	elif shares.get(NO_JOB, 0.0) > TOLERANCE:
+		still = {
+			project: short - min(max(shares.get(project, 0.0), 0.0), short)
+			for project, short in (shorts or {}).items()
+			if short > TOLERANCE
+		}
+		still = {project: qty for project, qty in still.items() if qty > TOLERANCE}
+		if still:
+			named = ", ".join(f"{project} ({_plain(qty)})" for project, qty in sorted(still.items()))
+			return (
+				f"Found units cannot be no job's while a job is short of this item on the shelf: {named}. "
+				"The shelf gives them to that job first. Give them to it, or to the job they were bought for."
+			)
 	return None
 
 
@@ -801,7 +819,8 @@ def count_split(before, counted, claims, chosen=None):
 		for project, qty in (chosen or {}).items():
 			key = _name(project)
 			shares[key] = shares.get(key, 0.0) + _qty(qty)
-		problem = _shares_problem(change, shares, holds, unclaimed)
+		shorts = {p: max(tagged.get(p, 0.0) - holds.get(p, 0.0), 0.0) for p in tagged}
+		problem = _shares_problem(change, shares, holds, unclaimed, shorts)
 		if problem:
 			out["problem"] = problem
 			return finish({}, 0.0, write=False)
@@ -824,6 +843,50 @@ def count_split(before, counted, claims, chosen=None):
 			no_job = rest
 	out["choice"] = len(candidates) > 1
 	return finish(shares, no_job)
+
+
+def count_shares(before, change, claims, tags):
+	"""A count's split as a person would enter it, rebuilt from the tags it wrote: ``{project:
+	qty}`` of positive amounts with :data:`NO_JOB` for the rest. What "Change whose" starts on.
+
+	* **A count down**: each job's share is its tag (a count down writes one per share).
+	* **A count up**: a share that refilled a short claim wrote **no tag** for the refill
+	  (:func:`count_split`), so the tags alone would show the job too little, and saving the
+	  dialog unchanged would take the refill away from it. So the shares are worked out the way
+	  the shelf sees them: each job's capped share after the count (its claim plus its tags, the
+	  tagged jobs as the newest arrivals) less its capped share before. A refill split between two
+	  short jobs comes back in :func:`allocate`'s order, which is what the shelf shows either way.
+
+	``before``, ``change`` and ``claims`` are :func:`count_context`'s; ``tags`` are the count's own
+	``[(project, signed qty)]``."""
+	before = max(_qty(before), 0.0)
+	change = _qty(change)
+	shares = {}
+	if change < 0:
+		for project, qty in tags or ():
+			if _qty(qty) < -TOLERANCE:
+				shares[_name(project)] = shares.get(_name(project), 0.0) - _qty(qty)
+	elif change > 0:
+		merged = {}
+		for project, balance, last in claims or ():
+			entry = merged.setdefault(_name(project), [0.0, ""])
+			entry[0] += _qty(balance)
+			entry[1] = max(entry[1], str(last or ""))
+		for project, qty in tags or ():
+			entry = merged.setdefault(_name(project), [0.0, ""])
+			entry[0] += _qty(qty)
+			if _qty(qty) > TOLERANCE:
+				entry[1] = "~"  # after every date: the count is the newest arrival
+		held = allocate(before, [(p, b, last) for p, b, last in claims or ()])
+		after = allocate(before + change, [(p, entry[0], entry[1]) for p, entry in merged.items()])
+		for project in set(held) | set(after):
+			gain = after.get(project, 0.0) - held.get(project, 0.0)
+			if gain > TOLERANCE:
+				shares[project] = gain
+	rest = abs(change) - sum(shares.values())
+	if rest > TOLERANCE:
+		shares[NO_JOB] = rest
+	return shares
 
 
 def chosen_split(jobs):

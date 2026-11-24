@@ -2428,6 +2428,23 @@ test("the real page: a count at the shelf asks whose, starts on the default, and
 	check("and no split is sent", "jobs" in server.writes().pop().args, false);
 });
 
+test("the real page: an older answer for the split never replaces a newer one", async () => {
+	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_plan: SHELF_PLAN }));
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0001" });
+	const d = registry.dialogs.pop();
+	let release = null;
+	server.delay.set("count_plan", new Promise((resolve) => (release = resolve)));
+	await typeQty(d, 0);
+	server.delay.delete("count_plan");
+	await typeQty(d, 2);
+	check("the newer question is answered: 2 off", /takes 2 Unit off/.test(splitHtml(d)), true);
+	release();
+	await settle();
+	check("the older answer (4 off) arrives late and is not drawn", [/takes 2 Unit off/.test(splitHtml(d)), /takes 4 Unit off/.test(splitHtml(d))], [true, false]);
+});
+
 test("the real page: an older bundle in the tab counts at the shelf as it always did", async () => {
 	const { server, world, registry, click } = loadPage(Object.assign({}, VIEW_FIXTURE, { boot: SHELF_COUNT_BOOT, count_plan: SHELF_PLAN, bundle_version: 3 }));
 	world.go_to("/desk/bin-manager/" + encodeURIComponent(SHELF));

@@ -996,15 +996,21 @@ out of shop stock, three documents per count, and a harder Undo, for the same re
 **How the shelf reads a tag** (`project_shelf_rules.shelf_summary`): it shares out that movement's
 own change among the jobs it names, never more than the change and only of its sign, so a tag
 cannot invent a claim. Whatever the tags do not cover stays untagged and is reported as before. A
-tag counts only while its document's ledger rows are live: an undone or canceled count drops its
-tags by itself.
+tag counts only while its document's ledger rows are live, and a canceled or undone document's tags
+are deleted by its `on_cancel` hook (`project_shelf.drop_tags`), so frappe can still delete it.
 
 **Who a change belongs to when nobody says** (`project_shelf_rules.count_split`):
 
 * **A count down**: first out of stock no job claims, then out of the job whose delivery is
   oldest. That is the reverse of `allocate`, which keeps the newest delivery's stock.
 * **A count up**: first back to a job whose claim was short (no tag: the claim exists), then to the
-  one job holding the item if exactly one does, else to no job.
+  one job holding the item if exactly one does, else to no job. A person's split may not put units
+  under no job while a job is still short: the shelf would give them to that job anyway.
+
+**A count is judged as of its own posting time** (`project_shelf_rules.count_context`), not against
+today's claims: a Count Desk draft submitted days later, or a reconciliation backdated in the Desk,
+takes its loss from the jobs that held the item when it was counted. Only `purpose` Stock
+Reconciliation names jobs (Opening Stock and Adjustment Entry do not).
 
 **Every path that can count the shelf:**
 
@@ -1012,7 +1018,7 @@ tags by itself.
 |---|---|
 | The Bin Manager's count (the one used on 2026-11-24) | The dialog asks `bin_assignments.count_plan` and shows a share box per job, filled in by the default. The person can change it; the shares must add up to the change. `set_count(jobs=...)` checks it before anything is written and hands it to the submit hook. Tags: `Count` |
 | The Count Desk (posted, or drafted and submitted later), the phone Inventory Scanner Audit's draft, a reconciliation made in the Desk | The Stock Reconciliation `on_submit` hook (`project_shelf.tag_reconciliation`) writes the default. Where it had to choose between jobs it says so: the Count Desk in its result, the Desk in an alert. Tags: `Default` |
-| Afterwards, for any of them | *Change whose* on a shelf row in the Bin Manager re-splits the item's latest count there, checked against what the shelf held just before it (`project_shelf_rules.count_context`). Tags: `Changed` |
+| Afterwards, for any of them | *Change whose* on a shelf row in the Bin Manager re-splits the item's **latest** count there (the server refuses any other), checked against what the shelf held just before it (`project_shelf_rules.count_context`). It starts on the split as it was entered, a count up's refill included (`count_shares`). Each new tag's note says who changed it, when, and the split before. Tags: `Changed` |
 
 **The cleanup** (`patches/settle_project_shelf_untagged`): every movement off the shelf that names no
 job and has no tag gets the default, read in ledger order (`settle_untagged`). Keyed on that rule

@@ -13,7 +13,8 @@ it names posts exactly as it always did: the difference to the stock adjustment 
 no project. The only reader is ``project_shelf_rules.shelf_summary``, which uses a tag to share
 out that movement's own change among the jobs it names and never more than the change, so a
 tag cannot create a claim on stock that is not there. A tag counts only while its document's
-ledger rows are live: an undone or canceled count drops its tags without anyone touching them.
+ledger rows are live, and the document's cancel deletes its tags (``project_shelf.drop_tags``):
+frappe would otherwise refuse to delete the canceled document, which a tag still links to.
 
 **Written by code only** (``in_create``): the Bin Manager's count and "Change whose"
 (``bin_assignments``), the Stock Reconciliation submit hook

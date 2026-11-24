@@ -1392,10 +1392,16 @@ class BinManagerPage {
 				? (d) => {
 						split = this.split_editor(d, row);
 						let timer = null;
+						// Only the latest question's answer is drawn: replies can come back out of order, and an
+						// older one would show the split for a quantity no longer in the box.
+						let asked = 0;
 						const ask = () => {
+							const mine = ++asked;
 							const qty = Number(d.fields_dict.qty.$input.val());
 							if (!Number.isFinite(qty) || qty < 0) return split.clear();
-							this.ctl.count_plan(row.item_code, qty).then((plan) => split.show(plan && plan.shelf ? plan : null));
+							this.ctl.count_plan(row.item_code, qty).then((plan) => {
+								if (mine === asked) split.show(plan && plan.shelf ? plan : null);
+							});
 						};
 						d.fields_dict.qty.$input.on("input change", () => {
 							clearTimeout(timer);
