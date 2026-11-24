@@ -92,6 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - MAT-STE-2026-00002, the 2026-09-23 transfer to two bins (13 units of PRJ-00759's).
 
     Afterwards the shelf reads exact.
+  - **The owner approved those nine rows on 2026-11-24 ("Yes, 9 tags").** The patch still writes by
+    the rule, and the deploy log shows what it did:
+    - each tag it wrote, with its name, document, date, item, job and quantity;
+    - the total;
+    - a line saying it matches the approved nine, or else each row outside the approval and each
+      approved row it did not write.
   - **Safe to run twice**, and it never raises, because a raising patch aborts the deploy.
 - **The Project Shelf Tag hook** read `doc.flags` with `or`. An empty `frappe._dict` is falsy, so
   the hook would have kept its report on a throwaway dict. It was caught by the new suite before

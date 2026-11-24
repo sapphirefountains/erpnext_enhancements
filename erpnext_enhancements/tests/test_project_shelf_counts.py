@@ -703,9 +703,36 @@ class TestTheCleanupPatch(_Base):
 		)
 		self.assertIn(f"{JOB_A} -6", printed)
 		self.assertIn("No GL entry", printed)
+		# Every tag is printed with its name and document, and checked against the owner's approval: this
+		# test world's row is not one of the 9, and none of the 9 is here.
+		name = next(iter(base._table(TAG)))
+		self.assertIn(f"wrote {name}: Stock Reconciliation", printed)
+		self.assertIn("1 tag(s) written, 6 unit(s) named", printed)
+		self.assertIn("NOT IN THE 2026-11-24 APPROVAL: SR-", printed)
+		self.assertEqual(printed.count("approved but not written"), 9)
 		self.assertTrue(shelf.shelf_stock()["exact"])
-		self.assertIn("already names its job", self._patch())
+		again = self._patch()
+		self.assertIn("already names its job", again)
+		self.assertNotIn("approved but not written", again)
 		self.assertEqual(len(base._table(TAG)), 1)
+
+	def test_on_production_it_would_write_exactly_the_approved_nine(self):
+		from erpnext_enhancements.patches import settle_project_shelf_untagged as patch
+
+		plan = rules.settle_untagged(PRODUCTION)
+		written = [(t["voucher_no"], t["item_code"], t["project"], t["qty"]) for t in plan]
+		self.assertEqual(patch.compare(written), ([], []))
+		self.assertEqual(len(patch.APPROVED), 9)
+		self.assertEqual(-sum(row[3] for row in patch.APPROVED), 231)
+		extra, missing = patch.compare([*written, ("MAT-RECO-2026-00242", "X", "PRJ-1", -1.0)])
+		self.assertEqual((extra, missing), ([("MAT-RECO-2026-00242", "X", "PRJ-1", -1.0)], []))
+		extra, missing = patch.compare(written[1:])
+		self.assertEqual((extra, len(missing)), ([], 1))
+		out = io.StringIO()
+		with contextlib.redirect_stdout(out):
+			patch._report(written)
+		self.assertIn("matches the 9 rows approved on 2026-11-24", out.getvalue())
+		self.assertIn("9 tag(s) written, 231 unit(s) named", out.getvalue())
 
 	def test_it_never_raises(self):
 		real = shelf.settle_plan
