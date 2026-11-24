@@ -337,8 +337,27 @@ export function request(kind, warehouse, row, values, ref) {
 
 // ------------------------------------------------------------------ who sees what
 
-// What the caller may do, from manager_boot. Missing means no.
-export function permissions(boot) {
+// The kinds of place nothing is ever put on as an item's bin, besides the boneyard: the Project Shelf
+// (v1.817.0) and a job site (v1.801.0). The server refuses both (bin_assignments._assignable_location).
+export const NOT_BIN_KINDS = ["project_shelf", "job_site"];
+
+// Those places by name. Read from the kind the boot gives each bin (bin_views.decorate), which counts every
+// job site the server refuses, the hand-made one with no job included. The bin on screen also answers for
+// itself (get_location's project_shelf and job_site), for a boot whose kinds could not be read.
+function not_bins(boot, location) {
+	const b = boot || {};
+	const out = (Array.isArray(b.bins) ? b.bins : [])
+		.filter((bin) => bin && bin.warehouse && NOT_BIN_KINDS.includes(bin.kind))
+		.map((bin) => bin.warehouse);
+	if (b.shelf_warehouse) out.push(b.shelf_warehouse);
+	const loc = location || {};
+	if (loc.warehouse && (loc.project_shelf || loc.job_site)) out.push(loc.warehouse);
+	return out;
+}
+
+// What the caller may do, from manager_boot. Missing means no. `location` is the bin on screen's read, or
+// nothing.
+export function permissions(boot, location) {
 	const b = boot || {};
 	return {
 		can_manage: !!b.can_manage,
@@ -355,7 +374,19 @@ export function permissions(boot) {
 		// The Project Shelf, when a count there names its jobs (v1.843.0, bin_assignments.count_plan):
 		// else null, and a count is the one it always was.
 		shelf_counts: b.shelf_count_jobs === true && b.shelf_warehouse ? b.shelf_warehouse : null,
+		// The Project Shelf and the job sites: nothing is put on them (assignable).
+		not_bins: not_bins(b, location),
 	};
+}
+
+// Whether an item may be put on `warehouse`: not the boneyard, the Project Shelf or a job site. Keep on this
+// bin, Add existing item and New item are all an assign, and the server refuses each one at those places, so
+// the page does not offer them there.
+export function assignable(perms, warehouse) {
+	const p = perms || {};
+	if (!warehouse) return false;
+	if (p.boneyard && p.boneyard === warehouse) return false;
+	return !(Array.isArray(p.not_bins) && p.not_bins.includes(warehouse));
 }
 
 // ------------------------------------------------------------------ whose a count is (v1.843.0)
@@ -483,7 +514,8 @@ export function apply_local(kind, row, values) {
 //   count     Stock Reconciliation create + submit (set_count posts one as the user)
 //   whose     the same, at the Project Shelf when a count there names its jobs (change_whose)
 //   move      Stock Entry create + submit, and something here to move
-//   keep      the module gate, for an item listed here that is not on the bin
+//   keep      the module gate, for an item listed here that is not on the bin, at a place items may be
+//             put on (assignable: not the boneyard, the Project Shelf or a job site)
 //   boneyard  the module gate, a transfer, a boneyard set, something here, and not the boneyard
 //   unassign  the module gate, for an item this bin holds by rule, default or nobody's decision
 export function row_actions(row, perms, warehouse) {
@@ -496,16 +528,17 @@ export function row_actions(row, perms, warehouse) {
 	// Say again whose the item's latest count at the Project Shelf was (v1.843.0).
 	if (p.can_count && count_names_jobs(p, warehouse)) out.push("whose");
 	if (p.can_move && here) out.push("move");
-	if (p.can_manage && !r.assigned && !is_boneyard) out.push("keep");
+	if (p.can_manage && !r.assigned && assignable(p, warehouse)) out.push("keep");
 	if (p.can_manage && p.can_move && p.boneyard && !is_boneyard && here) out.push("boneyard");
 	if (p.can_manage && (r.assigned || r.is_default || r.undecided)) out.push("unassign");
 	return out;
 }
 
-// The bin's own buttons: add an existing item, or create one and put it here.
+// The bin's own buttons: add an existing item, or create one and put it here. None where nothing is put on
+// a bin (assignable).
 export function bin_actions(perms, warehouse) {
 	const p = perms || {};
-	if (!p.can_manage || (p.boneyard && p.boneyard === warehouse)) return [];
+	if (!p.can_manage || !assignable(p, warehouse)) return [];
 	return p.can_create_items ? ["add", "create"] : ["add"];
 }
 

@@ -67,7 +67,8 @@ export class Controller {
 	}
 
 	perms() {
-		return logic.permissions(this.state.boot);
+		// The bin on screen's read too: it says for itself whether it is the Project Shelf or a job site.
+		return logic.permissions(this.state.boot, this.state.location);
 	}
 
 	new_ref() {

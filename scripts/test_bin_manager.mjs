@@ -1676,6 +1676,53 @@ test("by project: the two places, and which way each row moves", () => {
 	check("no site yet", views.project_counts_text({ shelf_items: 2, site: null }), "2 on the Project Shelf · no job site yet");
 });
 
+// Keep on this bin, Add existing item and New item are all an assign, and the server refuses one at the Project
+// Shelf and at a job site (bin_assignments._assignable_location): the page does not offer them there (v1.843.1).
+test("no assign at the Project Shelf or a job site: Keep, Add existing item and New item are not offered", () => {
+	const perms = logic.permissions(VIEW_BOOT);
+	check("where an item may be put, from the boot's kinds", [BIN_A, BIN_B, VAN, BONEYARD, SHELF, SITE, OLD_SITE].map((w) => logic.assignable(perms, w)), [true, true, true, false, false, false, false]);
+	check("nowhere, with no place named", logic.assignable(perms, null), false);
+	const undecided = { on_hand: 2, undecided: true };
+	check("no Keep at the shelf, a job site or a finished job's site", [SHELF, SITE, OLD_SITE].map((w) => logic.row_actions(undecided, perms, w).includes("keep")), [false, false, false]);
+	check("no Add existing item or New item there either", [logic.bin_actions(perms, SHELF), logic.bin_actions(perms, SITE), logic.bin_actions(perms, OLD_SITE)], [[], [], []]);
+	// The shelf's rows carry no assigned/default/undecided flags (api.stock_scan._items_at clears them there).
+	const counting = logic.permissions(Object.assign({}, VIEW_BOOT, { shelf_count_jobs: true }));
+	check("the shelf keeps Change quantity, Change whose, Move and Send to boneyard", logic.row_actions({ on_hand: 3 }, counting, SHELF), ["count", "whose", "move", "boneyard"]);
+	check("a job site keeps everything but Keep", logic.row_actions(undecided, perms, SITE), ["count", "move", "boneyard", "unassign"]);
+	check("a shop bin is as it was", [logic.row_actions({ on_hand: 0, undecided: true }, perms, BIN_A), logic.bin_actions(perms, BIN_A)], [["count", "keep", "unassign"], ["add", "create"]]);
+	check("so is a vehicle", [logic.row_actions({ on_hand: 0, undecided: true }, perms, VAN), logic.bin_actions(perms, VAN)], [["count", "keep", "unassign"], ["add", "create"]]);
+	check("and the boneyard still offers none", [logic.row_actions({ on_hand: 2 }, perms, BONEYARD), logic.bin_actions(perms, BONEYARD)], [["count", "move"], []]);
+	// The hand-made site with no job of its own: a job site to the server (job_sites.site_warehouses) and to the
+	// boot's kinds, though its own read names no job.
+	const HANDMADE = "Job Site - SF";
+	const with_handmade = logic.permissions(Object.assign({}, VIEW_BOOT, { bins: VIEW_BOOT.bins.concat([{ warehouse: HANDMADE, warehouse_name: "Job Site", trail: "Job Sites", kind: "job_site" }]) }), { warehouse: HANDMADE, project_shelf: false, job_site: null });
+	check("a site with no job is still no bin", logic.bin_actions(with_handmade, HANDMADE), []);
+	// A boot whose kinds could not be read (bin_views.decorate failed: no kinds, no shelf_warehouse). The bin on
+	// screen says for itself what it is, from get_location's project_shelf and job_site.
+	check("without kinds or a read, a place is offered as before", logic.bin_actions(logic.permissions(BOOT), SHELF), ["add", "create"]);
+	check("the shelf's own read says it is the shelf", logic.bin_actions(logic.permissions(BOOT, { warehouse: SHELF, project_shelf: true, job_site: null }), SHELF), []);
+	check("a site's own read says it is a site", logic.row_actions(undecided, logic.permissions(BOOT, { warehouse: SITE, project_shelf: false, job_site: { project: "PRJ-90001", project_name: "Water Wall" } }), SITE).includes("keep"), false);
+	check("a read of one place says nothing of another", logic.bin_actions(logic.permissions(BOOT, { warehouse: SHELF, project_shelf: true }), BIN_A), ["add", "create"]);
+	check("a shop bin's own read changes nothing", logic.bin_actions(logic.permissions(VIEW_BOOT, { warehouse: BIN_A, project_shelf: false, job_site: null }), BIN_A), ["add", "create"]);
+});
+
+test("the real page: the shelf and a job site draw no Keep on this bin, Add existing item or New item", async () => {
+	const draw = async (warehouse) => {
+		const { world, registry } = loadPage(VIEW_FIXTURE);
+		world.go_to("/desk/bin-manager/" + encodeURIComponent(warehouse));
+		await settle();
+		return { items: registry.found[".bm-items"][0].innerHTML, toolbar: (registry.found[".bm-bin-actions"] || [{}])[0].innerHTML || "" };
+	};
+	for (const [label, warehouse] of [["the shelf", SHELF], ["a job site", SITE]]) {
+		const { items, toolbar } = await draw(warehouse);
+		check(`${label}: the rows and their other buttons are drawn`, [/PUMP, 1 HP/.test(items), /data-act="count" data-item="PDT-0001"/.test(items), /data-act="move" data-item="PDT-0001"/.test(items)], [true, true, true]);
+		check(`${label}: no Keep on this bin`, /data-act="keep"/.test(items), false);
+		check(`${label}: no Add existing item or New item`, [/data-act="add"/.test(toolbar), /data-act="create"/.test(toolbar)], [false, false]);
+	}
+	const bin = await draw(BIN_A);
+	check("a shop bin still offers all three", [/data-act="keep" data-item="PDT-0002"/.test(bin.items), /data-act="add"/.test(bin.toolbar), /data-act="create"/.test(bin.toolbar)], [true, true, true]);
+});
+
 test("problems: four lists in a fixed order, counted", () => {
 	const sections = views.problem_sections(PROBLEMS);
 	check("order", sections.map((s) => s.key), ["assigned_empty", "unassigned_stock", "finished_shelf", "finished_site"]);
