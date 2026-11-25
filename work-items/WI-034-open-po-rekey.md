@@ -1,28 +1,30 @@
-# WI-034: Re-key open Purchase Orders (and confirm zero open Sales Orders)
+# WI-034: Re-key QuickBooks purchase orders missing from ERPNext (and confirm zero open Sales Orders)
 **Phase:** 1   **Type:** DATA   **Size:** S
-**Blocked by:** WI-003, WI-029, WI-025   **Blocks:** WI-035
+**Blocked by:** WI-003 (the open-PO list from QuickBooks' December close, locked 2027-01-13)   **Blocks:** WI-035
+**Re-scoped 2026-11-25.** Purchasing already runs in ERPNext, so this item no longer re-keys every open order. It re-keys only the QuickBooks purchase orders open at 2026-12-31 that have no ERPNext counterpart. Due **2027-01-15**; Parker keys, Lisa checks. The old dependencies on WI-029 (chart rebuild, canceled) and WI-025 (Item Group rollout, moved to Phase 2) are gone: orders land on the live chart and items. ERPNext Task: TASK-2026-00927.
 
 ## Why
-Commitments that straddle the cutover must live in ERPNext to be received and billed against in 2027. Prod's existing 96 POs are legacy QBO imports (65 submitted/30 draft/1 cancelled — prod_customers_items) and are cancelled/cleared during WI-029 prep; genuinely-open orders are re-keyed fresh on the new chart/items. Sales Orders: `tabSales Order` is empty on prod (verified) and QBO has no SO concept — nothing to migrate; open customer work is represented by Projects.
+Commitments that straddle the cutover must live in ERPNext to be received and billed against in 2027. Since about September 2026 purchase orders have been raised in ERPNext directly (on 2026-11-25 prod held 183 open submitted POs, 140 of them created since September), so most open commitments are already there. What can still be missing is a purchase order raised only in QuickBooks: the Record Matching page had 31 QuickBooks PO records Pending Review on 2026-11-25, 8 of them dated 2026. Sales Orders: QuickBooks has no Sales Order concept and nothing to migrate; open customer work is represented by Projects.
 
 ## Native-first check
 Native Purchase Order entry / Data Import. Verdict: native, no tooling.
 
 ## Preconditions
-- WI-003 close package includes the QBO open-PO list as of 2026-12-31.
-- Item Group rollout (WI-025) done so re-keyed PO lines land on correctly-classified items; suppliers exist (1,156 imported).
+- WI-003: QuickBooks' open-PO list as of 2026-12-31, exported from the December close.
+- The QuickBooks PO records on the Record Matching page triaged (Meg; Lisa decides): each is linked to the ERPNext PO it duplicates, or marked as missing from ERPNext.
 
 ## Scope
-- Enter one ERPNext Purchase Order per open QBO PO (new 2027-side naming, original expected dates, `project` link where applicable), expense accounts per the new chart. Population is the QBO open-PO list (expected small: prod's whole PO history is 96 docs).
-- Record a re-key crosswalk (QBO PO # → ERPNext PO name) in the migration runbook.
+- For each QuickBooks PO open at 2026-12-31 **with no ERPNext counterpart**: enter one ERPNext Purchase Order (2027-side naming per WI-030, original expected dates, `project` where applicable) on the live chart.
+- Record a crosswalk (QuickBooks PO number → ERPNext PO name) on the Task, covering every QuickBooks PO on the open list: either the ERPNext PO it already matched, or the one keyed here.
 
 ## Acceptance criteria
-- `SELECT COUNT(*) FROM \`tabPurchase Order\` WHERE docstatus=1 AND status IN ('To Receive and Bill','To Receive','To Bill')` equals the open-PO list count.
-- Sum of open PO amounts matches the QBO list total.
-- Crosswalk archived.
+- Every QuickBooks PO on the 2026-12-31 open list has a crosswalk row.
+- ``SELECT COUNT(*) FROM `tabPurchase Order` WHERE name IN (<crosswalk ERPNext names>) AND docstatus=1`` = the crosswalk's row count.
+- The open amount of each keyed PO matches its QuickBooks line.
+- Crosswalk archived on TASK-2026-00927.
 
 ## Rollback
 Cancel the re-keyed POs.
 
 ## Explicitly NOT in this work item
-Receipts/billing against them (business-as-usual 2027); the dollar-threshold PO Authorization Rule (WI-013); Material Request history.
+Receipts and billing against them (business as usual in 2027); POs already raised in ERPNext; the dollar-threshold PO Authorization Rule (WI-013); Material Request history.

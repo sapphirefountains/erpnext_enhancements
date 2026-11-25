@@ -15,6 +15,7 @@ This is the executable counterpart to the analysis in `TASK-2026-01236`: an orde
 - **IS NOT** the Jan-1 go-live. Per the Final Review's Open Question #10, these are **two events**. This one runs first.
 - **Supersedes [WI-028](../../work-items/WI-028-draft-mirror-quarantine.md)** (draft-mirror delete) — **cancelled** by the OD-6 reversal.
 - **Subsumes the opening-balance work.** Posting the full history *through 2026-12-31* produces the opening position directly, so [WI-032/WI-033](../../work-items/WI-032-opening-trial-balance-je.md) opening-balance JEs are **not** separately posted; [WI-035](../../work-items/WI-035-opening-reconciliation-signoff.md)'s tie-out becomes "posted-history balances == QBO close." The [Jan-1 cutover runbook (WI-051)](wi051-cutover-runbook.md) then shrinks to go-live config flips + QBO disconnect **on top of** this already-posted ledger.
+- **2026 posts in three waves (decided 2026-11-25).** The pre-2026 history posted on 2026-08-31. 2026 runs §5 three times, each restricted to the months QuickBooks has locked: Jan–Sep on 2026-12-09, Oct–Nov on 12-18, December on 2027-01-14. Each wave's gate, including 0 autopay customers, is in the [WI-051 runbook §3](wi051-cutover-runbook.md#3-posting-2026-in-three-waves).
 
 ### Current population (live-verified 2026-08-31)
 
@@ -116,7 +117,7 @@ Expected GL growth: **4 → ~3,550 (after SIs) → ~34,000 (after JEs).**
 - **Keep `sync_enabled=0`** until the §2 `upsert_entity` docstatus guard ships — otherwise re-sync churns submitted docs into manual-review and destroys `owned_fields`.
 - **Undeposited Funds reconciliation** (512 PEs debit `13800` ~$965k vs 462 JEs credit it ~$941k; ~$24k residual) — a separate job from A/R.
 - **A/P per-bill matching decision:** unfixable after submit (`Journal Entry.accounts` is `allow_on_submit=0`, no `reference_type`). Either ship mapper code emitting `reference_type` **before** this event, or accept supplier-level netting — record the decision.
-- **Monday-after:** verify A/R ≈ $2.5M; confirm the customer payment portal is not exposing settled 2009–2020 invoices (double-pay risk); start Undeposited Funds reconciliation; then this posted ledger is the base the **[Jan-1 cutover (WI-051)](wi051-cutover-runbook.md)** goes live on (its S4 delete and S7/S8 opening-balance steps are now N/A; S9 tie-out and S10 disconnect still apply).
+- **Monday-after:** verify A/R ≈ $2.5M; confirm the customer payment portal is not exposing settled 2009–2020 invoices (double-pay risk); start Undeposited Funds reconciliation; then this posted ledger is the base the **[Jan-1 cutover (WI-051)](wi051-cutover-runbook.md)** goes live on (rewritten 2026-11-25: no draft delete and no opening-balance entries; the tie-out is its §8.2 and the disconnect its §8.4).
 
 ---
 
