@@ -1809,3 +1809,9 @@ def test_the_library_is_never_exempt_from_a_card(site, monkeypatch):
 	assert K.SOURCE_DOCTYPE in gate.NEVER_EXEMPT
 	assert gate.TOOL_TARGET_DOCTYPES["save_knowledge_source"] == K.SOURCE_DOCTYPE
 	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+
+
+def test_without_urllib3_the_host_check_has_nothing_to_disagree_with(monkeypatch):
+	monkeypatch.setitem(sys.modules, "urllib3.util", None)
+	assert source_fetch.url_problem("https://example.com/page") is None
+	assert "cannot hold" in source_fetch.url_problem("https://example.com/a|b")
