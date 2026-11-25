@@ -52,6 +52,26 @@
 >
 > §1 and §3 are edited in place for the format; §6's "cite KB numbers" now means article numbers.
 
+> **Amendment (2026-11-25, a reference library beside the articles).** Nik asked for "the ability to
+> submit links for the AI to fetch and save the articles information to ERPNext, as well as uploading
+> documents and files for analysis and reference", and, asked whether the AI may answer from that
+> material, chose "Answer, labeled".
+> - **A third doctype, Knowledge Source**, holds saved links and uploaded files with their text and a
+>   summary. It is **reference, not knowledge**: never approved, never numbered, never an article. Every
+>   staff user reads it; KB Authors add to it; KB Approvers may delete a source. Restricted material
+>   stays out (§5).
+> - **The AI may quote it, labeled.** §3's search results gain a second `result_type`, `"reference"`, an
+>   added value the contract was written to allow; approved articles always rank first, and every
+>   reference result says that nobody reviewed it. The frozen tool names do not change. (The AI side is
+>   its own PR, after the library.)
+> - **The server fetches links**, so the fetch refuses malformed links, checks the address of every
+>   connection at connect time before anything is sent, checks every redirect hop, sends no credentials
+>   and caps the size and time. Google links are read through the Drive API as ERPNext's Drive service
+>   account, and **only a KB Approver may save one**, because that account reaches far more than one
+>   person may.
+> - **It replaces WI-080 PR 4a**, the Markdown import: a Google Doc is saved by its link or uploaded, and
+>   an article is drafted from its text.
+
 ## Context
 
 **The goal is continuity.** Nik holds most of how Sapphire runs in his head, and he is the only engineer. Parker, the purchasing agent and inventory clerk, is to become his backup. Parker is not an engineer, and James approves. The knowledge base therefore has to be something:

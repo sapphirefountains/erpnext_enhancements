@@ -1,0 +1,312 @@
+{
+ "actions": [],
+ "allow_copy": 0,
+ "allow_guest_to_view": 0,
+ "allow_import": 0,
+ "allow_rename": 0,
+ "autoname": "KBS-.#####",
+ "creation": "2026-11-25 12:00:00.000000",
+ "description": "Reference material in the company knowledge base: a saved link or an uploaded file, with its text and a summary. Not approved company knowledge: the AI tools label it as unreviewed reference (WI-080, 2026-11-25).",
+ "doctype": "DocType",
+ "email_append_to": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_source",
+  "title",
+  "source_type",
+  "url",
+  "source_file",
+  "column_break_source",
+  "status",
+  "department_block",
+  "extraction_state",
+  "extraction_message",
+  "section_summary",
+  "summary",
+  "keywords",
+  "column_break_summary",
+  "notes",
+  "summary_by_ai",
+  "title_from_source",
+  "section_reading",
+  "fetched_url",
+  "fetched_on",
+  "snapshot_file",
+  "column_break_reading",
+  "content_type",
+  "text_chars",
+  "content_hash",
+  "section_text",
+  "extracted_text"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "bold": 1,
+   "description": "What it is, in a few words. Left blank, it is taken from the page or the file.",
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title"
+  },
+  {
+   "default": "Link",
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "Link\nFile",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.source_type=='Link'",
+   "description": "A public web page, PDF or picture, or a Google Docs, Sheets, Slides or Drive link. ERPNext reads it and keeps a private copy.",
+   "fieldname": "url",
+   "fieldtype": "Data",
+   "label": "Link",
+   "length": 1000,
+   "mandatory_depends_on": "eval:doc.source_type=='Link'",
+   "options": "URL"
+  },
+  {
+   "depends_on": "eval:doc.source_type=='File'",
+   "description": "A PDF, Word document (.docx), Markdown, text or CSV file, or a picture, up to 15 MB. It is kept private.",
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "File",
+   "mandatory_depends_on": "eval:doc.source_type=='File'"
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Active",
+   "description": "Archived sources stay here and drop out of the AI's answers.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nArchived"
+  },
+  {
+   "fieldname": "department_block",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "\n00 Company Wide\n01 Executive\n02 Design\n03 Finance\n04 HR\n05 Marketing\n06 Operations\n07 Product Management\n08 Production\n09 Sales"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "extraction_state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Reading",
+   "options": "Pending\nReady\nFailed\nNot supported\nRefused",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "extraction_message",
+   "fieldtype": "Small Text",
+   "label": "Reading note",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "description": "Two or three sentences on what this is and what it is for. Left blank, Gemini writes one after the text is read; a summary you type is never replaced.",
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary"
+  },
+  {
+   "description": "Words people search for, separated by commas: model numbers, part numbers, acronyms.",
+   "fieldname": "keywords",
+   "fieldtype": "Small Text",
+   "label": "Keywords"
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What someone should know about it: which jobs it applies to, or how far to trust it.",
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Why it's here"
+  },
+  {
+   "default": "0",
+   "fieldname": "summary_by_ai",
+   "fieldtype": "Check",
+   "label": "Summary written by Gemini",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The title was taken from the source (its page, file name or address), not typed by a person. The next read may replace it.",
+   "fieldname": "title_from_source",
+   "fieldtype": "Check",
+   "label": "Title taken from the source",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_reading",
+   "fieldtype": "Section Break",
+   "label": "What was read"
+  },
+  {
+   "fieldname": "fetched_url",
+   "fieldtype": "Data",
+   "label": "Read from",
+   "length": 1000,
+   "options": "URL",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "fetched_on",
+   "fieldtype": "Datetime",
+   "label": "Read on",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_file",
+   "fieldtype": "Attach",
+   "label": "Saved copy",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_reading",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "content_type",
+   "fieldtype": "Data",
+   "label": "Content type",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "text_chars",
+   "fieldtype": "Int",
+   "label": "Characters of text",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Text fingerprint",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_text",
+   "fieldtype": "Section Break",
+   "label": "Text"
+  },
+  {
+   "description": "The text the AI reads, exactly as it was taken from the source.",
+   "fieldname": "extracted_text",
+   "fieldtype": "Long Text",
+   "label": "Text",
+   "permlevel": 1,
+   "read_only": 1
+  }
+ ],
+ "has_web_view": 0,
+ "index_web_pages_for_search": 0,
+ "is_submittable": 0,
+ "links": [],
+ "make_attachments_public": 0,
+ "modified": "2026-11-25 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Knowledge Base",
+ "name": "Knowledge Source",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Desk User"
+  },
+  {
+   "create": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "KB Author",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "KB Approver",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Desk User"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "KB Author"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "KB Approver"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "quick_entry": 0,
+ "search_fields": "title,keywords",
+ "show_name_in_global_search": 0,
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

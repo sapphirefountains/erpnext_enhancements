@@ -518,6 +518,10 @@ doctype_js = {
 	# double-load note above).
 	"Knowledge Article Version": "public/js/knowledge_base/knowledge_article_version.js",
 	"Knowledge Article": "public/js/knowledge_base/knowledge_article.js",
+	# knowledge_base reference library (2026-11-25): the Knowledge Source form's Fetch again and Open
+	# link buttons, its reading indicator, and the line saying a source is reference material, not
+	# approved knowledge. The doctype folder holds no .js (the double-load note above).
+	"Knowledge Source": "public/js/knowledge_base/knowledge_source.js",
 }
 
 doctype_list_js = {
@@ -1661,7 +1665,9 @@ doc_events = {
 		# attaches to either KB doctype may not be detached or moved (read_only is never
 		# enforced on the server, so its owner could otherwise detach an article's image and
 		# then delete it) unless KB code sets flags.kb_action. before_validate runs even
-		# under flags.ignore_validate. See knowledge_base/files.py.
+		# under flags.ignore_validate. Since 2026-11-25 the same holds for a File attached to a
+		# Knowledge Source (the reference library): private, and staying where it is. Not the
+		# delete refusal, which keeps to the two article doctypes. See knowledge_base/files.py.
 		#
 		# sapphire_maintenance (v1.610.0): a File attached to a Sapphire Maintenance Record by its
 		# pre-rename random name (a Visit Wizard page left open across the deploy uploads with
@@ -2536,6 +2542,14 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
+		# knowledge_base reference library (2026-11-25): queue again every Knowledge Source left
+		# Pending for more than 15 minutes. Saving a source queues its read on the "long" queue, and the
+		# deploy's FLUSHDB destroys queued jobs, so without this a source saved just before a merge
+		# would wait forever. A source still Pending 3 hours after its last change is marked Failed
+		# instead, so one that defeats its job cannot loop the queue. At most 50 a run; the job id is
+		# per change and deduplicated. Does nothing while the table does not exist. See
+		# knowledge_base/sources.py.
+		"erpnext_enhancements.knowledge_base.sources.requeue_pending",
 		# carrier_tracking (v1.819.0, ER-2026-1333277): ask FedEx and UPS about the packages on open purchase
 		# orders. Does nothing and logs nothing until Carrier Tracking Settings has a carrier switched on with
 		# credentials. At most 25 packages and 120 s a run, each package at most every 2 h, never-checked then

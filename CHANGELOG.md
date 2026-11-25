@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.844.0] - 2026-11-25
+
+### Added
+
+- **A reference library in the Knowledge Base: save a link or upload a file, and ERPNext reads it,
+  keeps a private copy and its text, and has Gemini summarize it.** Asked for on 2026-11-25: links for
+  the AI to fetch and save into ERPNext, and documents and files uploaded for analysis and reference.
+  A new doctype, **Knowledge Source** (`KBS-.#####`, module Knowledge Base), holds one link or one
+  file. It is **reference material, not company knowledge**: nobody approves it, so it is never an
+  article and never numbered, and the AI tools (the next PR) will return it labeled as unreviewed
+  reference, ranked after approved articles (WI-080's decision of 2026-11-25, ADR 0017's amendment).
+  - **Who:** every staff user reads it (`Desk User`, as for articles); KB Authors and KB Approvers
+    add and edit; KB Approvers and System Managers may delete, so a file uploaded by mistake can go.
+    No share, export, import or email; no web view, guest access or global search; attachments
+    private. Everything the server read (the text, the state, the copy, the fingerprint) sits at
+    permlevel 1, read-only for everyone: v16 resets a permlevel the saver cannot write before
+    `validate`, so nobody can type text into `extracted_text` through REST and have it read as the
+    source's.
+  - **Reading it** (`knowledge_base/sources.extract_source`, queued on save, one job per change): an
+    upload from its File, and only a File attached to the source itself; a Google Docs, Sheets, Slides or
+    Drive link through the Drive API as ERPNext's Drive service account (a Doc exported as HTML, so
+    headings and tables survive), which **only a KB Approver may save**, because that account reaches far
+    more than one person may; any other link through the link guard below. A link's bytes are kept as a private File on the source,
+    so it still reads after the page moves. The text (`knowledge_base/source_text.py`): HTML without
+    scripts or styles and with tables as `a | b` rows, PDF through `pypdf` (a Frappe dependency, so it
+    is on a server where nothing can be pip-installed), Word `.docx` through `zipfile` with a zip-bomb
+    guard, Markdown, text and CSV, at most 200,000 characters. A picture goes to Gemini, which
+    describes it and transcribes its words.
+  - **Secrets refused.** The knowledge base's own scan runs on the text: a finding stores nothing,
+    keeps no copy and sends no text to Gemini; the state is Refused and the note names the line and
+    the kind, never the value. The summary, keywords and notes people type are scanned on save.
+  - **The summary** is Gemini's JSON, distrusted and cut to size, written only while the summary is
+    blank or was Gemini's: a summary a person typed is never replaced. Gemini down leaves the source
+    Ready with a note.
+  - **Re-drivable, and bounded.** The deploy's FLUSHDB destroys queued jobs, so
+    `sources.requeue_pending` (hourly) queues again every source left Pending for 15 minutes, and
+    **Fetch again** on the form does it at once (`api/knowledge_base_sources.refetch`, POST, write
+    permission on the source). A source still Pending 3 hours after its last change is marked Failed
+    instead, so a source that defeats its job cannot loop the queue. Every failure, storing included,
+    ends Failed and logs the exception's type only, never its message: a traceback could carry the
+    document's own text. A read that finishes after another change locks the row and stores only if
+    the source is unchanged; one that loses to a person's save leaves their save standing. An upload
+    that arrived public is copied to a private file on the source, never flipped in place (the public
+    file may be shared with a website image). The page's title is used until a person types one
+    (`title_from_source`). A summary a person edits stops being Gemini's and is never replaced; Version
+    tracking is off, since every re-read would copy the whole text into a Version row.
+  - **Where to find it:** a **Reference library** shortcut on the Knowledge Base workspace and an item in
+    its sidebar (both timestamp-gated files bumped to 2026-11-25 and re-pinned); the form says a source
+    is reference, not approved knowledge, and that nothing restricted belongs there.
+- **The link guard** (`knowledge_base/source_fetch.py`). The fetch runs on the production server inside
+  Google Cloud, so a link is an instruction to that server, and the guard keeps it from reaching
+  anything internal. A link must be well formed (web schemes, standard ports, no credentials, an ASCII
+  host, only characters RFC 3986 allows, and the same host to both URL parsers); **the address is
+  checked at connect time, before anything is sent**, on the socket actually opened, failing closed;
+  redirects are followed by the code and each hop is checked again; an IPv6 address that carries an
+  IPv4 address is judged by that address too; no cookies, credentials or environment proxy go with a
+  request; only uncompressed answers are asked for and a compressed one is refused unread, so nothing
+  is expanded before the size cap sees it; and a fetch is capped at 15 MB and 60 seconds, each hop
+  given only the time left and a watchdog closing the connection at the deadline, reading only the
+  content types the library understands.
+
+### Changed
+
+- **Files attached to a Knowledge Source are forced private and stay attached**, by the same
+  `knowledge_base/files.force_private` hook as the articles' (`constants.PRIVATE_FILE_DOCTYPES`). Not
+  the delete refusal on articles' and drafts' files, which keeps to the two article doctypes
+  (`KB_DOCTYPES`, which also feeds the AI gate's never-exempt list and is unchanged).
+- **WI-080 PR 4a (the Markdown import) is replaced by the reference library**: a Google Doc is saved by
+  its link or uploaded, and its text is what an article is drafted from.
+- **The knowledge base's secret scan runs in linear time on any text.** One of its patterns (a password
+  written into a web address) could take a long time on unusual input, which a library source can be.
+  Its scheme part is now bounded and possessive (`knowledge_base/content.py`): it finds what it found
+  before, for any scheme of up to 32 characters, without backtracking.
+
+### Tests
+
+- `tests/test_knowledge_base_sources.py`, a **pytest** suite on its own CI step: the guarded session
+  against a real local server (an internal address refused before any request reaches it, and a
+  response that closes its connection read whole), malformed links refused, every address family the
+  guard must refuse, a redirect inward refused before it is requested, the size and time caps,
+  unreadable kinds refused unread, no credentials sent; a file not attached to the source never read;
+  Google links for KB Approvers only; a source that keeps failing given up on; a failed store still
+  Failed; a person's summary kept; HTML, Word, a real
+  PDF and Markdown; the job over a fake frappe installed per test (a link read, copied and summarized;
+  secret-shaped text never stored, copied or sent; a typed summary never replaced; Gemini down still
+  Ready; a source edited mid-read left alone; a failure logged by type only; a picture read through
+  Gemini; a public upload made private); the controller, Fetch again's write check, the exact permission
+  matrix, every server-set field read-only at permlevel 1, the hooks, and a form script whose names
+  cannot collide with the article scripts'.
+- `test_knowledge_base_entry_points` (the new shortcut and sidebar item, seen by every staff user, the
+  re-pinned stamps) and `test_whitelist_placement` (the new file's whole surface is `refetch`).
+
 ## [1.843.1] - 2026-11-24
 
 ### Fixed
