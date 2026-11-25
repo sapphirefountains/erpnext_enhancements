@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.845.2] - 2026-11-25
+
+### Fixed
+
+- **The Project form's Budget tab is whole again, with the procurement tracker at the top, and the
+  three tabs ERPNext 16.60 added are gone from it** (fixtures only; no code, patch or bundle change).
+  Since prod moved to ERPNext 16.60.0 on 2026-11-23, Projects showed tabs nobody here asked for.
+  They come from ERPNext, not from this app:
+  - **Tasks**, frappe/erpnext#59586 ("Project UX cleanup", merged 2026-10-05): a sortable, inline-editable
+    list of the Project's Tasks with Add Task. The same PR added a "More Info" tab, which has no
+    fields in our layout, so Frappe never shows it.
+  - **Overview**, frappe/erpnext#60646 ("Project overview dashboard", 2026-10-22, re-rendered as a Vue
+    island by #64077 on 2026-11-12): a dashboard built from the Project's Tasks, with progress,
+    overdue, blocked and unassigned tasks, planned vs done, people, and billed amount and margin.
+    The same PR renamed the first tab "Details".
+  - **Budgets**, frappe/erpnext#63053 ("Projects costing tab", 2026-11-04): a list of ERPNext Budget
+    records against the Project, shown only to users who can read Budget. The same PR put a costing
+    dashboard on the Costing tab, which this app already hides.
+
+  **Why they landed inside our Budget tab.** `Project-main-field_order` listed none of the twelve new
+  fields. For a standard field missing from that array, Frappe v16's `Meta.sort_fields` inserts it
+  after the field that precedes it in ERPNext's own order. That put `tasks_tab` after `cost_center`,
+  `budgets_tab` after `per_gross_margin`, and the new "Accounting" section after `actual_time`: all
+  three inside our Budget tab. Everything below `per_gross_margin` moved to ERPNext's Budgets tab:
+  the procurement tracker, the six procurement buttons, Material Pickup and Budget Notes. "Accounting"
+  took Total Time Elapsed out of Project Estimated Amount. Overview, which comes before every field in
+  our array, was prepended, so every Project opened on it instead of Details. The live form's meta
+  matched this exactly before the change.
+
+  **What changed.** Nikolas chose the layout on 2026-11-25. The array now places all twelve fields
+  explicitly:
+  - The Budget tab runs, top to bottom: procurement tracker; Procurement buttons; Material Pickup;
+    Project Estimated Amount (Total Time Elapsed back in it); Budget Notes; Project Estimated Cost;
+    Customer Payment; Initial Invoice; Budget by Category; and a new **Account Budgets** section
+    holding ERPNext's Budgets list.
+  - That order ranks the sections by use on prod over the six months before. 238 of 296 Purchase
+    Orders carried a project. Project Dollar Amount was set on 45 of the 65 Projects created; Budget
+    Notes on 10, copied from the Opportunity. Project Estimated Cost was set on 1. Customer Payment
+    and Initial Invoice were filled on one Project each, ever, and Budget by Category on none. Nobody
+    can measure clicks on the buttons or Pick Routing Map, so they sit beside the tracker by
+    judgment.
+  - **Overview, Tasks and Budgets are hidden** with Property Setters on their Tab Breaks, never
+    deleted, and moved to the end of the array, each holding only its own field. Projects open on
+    Details again: Frappe activates the first tab that isn't hidden. To bring one back, untick Hidden
+    on the Tab Break. Our Scope tab's Tasks Tree and the Project Planner cover what the Tasks tab
+    did.
+  - ERPNext's "Accounting" section is left with no fields: its company, estimated cost and cost
+    center fields stay in our hidden Costing and Billing section, as before 16.60. Frappe hides an
+    empty section.
+  - Every `insert_after` on the Budget tab now agrees with the array, so the next edit isn't misled.
+    `tests/test_project_budget_tab_layout.py` pins the order, the hidden tabs and that agreement.
+  - **Known cost, unchanged by this release.** ERPNext's own `refresh` shows the Overview dashboard
+    field to everyone who can read Task, so the hidden tab still mounts the component and fetches
+    its data, as it did when the tab was visible. ERPNext's Tasks list loads only when its tab is
+    opened, so hiding that tab stops its request.
+
 ## [1.845.1] - 2026-11-25
 
 ### Changed
