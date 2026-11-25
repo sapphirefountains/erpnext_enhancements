@@ -363,8 +363,13 @@ def test_the_guarded_session_takes_no_cookies_and_no_environment_proxy():
 
 
 def test_a_slow_drip_stops_at_the_deadline(monkeypatch):
-	ticks = iter([0, 0, 30, 61, 90, 120])
-	monkeypatch.setattr(source_fetch, "_clock", lambda: next(ticks))
+	now = {"t": 0.0}
+
+	def clock():
+		now["t"] += 20
+		return now["t"]
+
+	monkeypatch.setattr(source_fetch, "_clock", clock)
 	slow = FakeResponse(headers={"Content-Type": "text/plain"}, body=b"x" * (64 * 1024 * 4))
 	session = FakeSession({"https://example.com/a": slow})
 	with pytest.raises(source_fetch.FetchRefused) as caught:
@@ -635,6 +640,7 @@ class FakeSite:
 		self.roles = ["KB Author"]
 		self.rollbacks = 0
 		self.sql_calls = []
+		self.locked = []
 
 	def module(self):
 		site = self
@@ -722,7 +728,9 @@ class FakeSite:
 
 		frappe.db = Db()
 
-		def get_doc(doctype, name=None):
+		def get_doc(doctype, name=None, for_update=False):
+			if for_update:
+				site.locked.append(name)
 			if isinstance(doctype, dict):
 				return FakeDoc(site, doctype["doctype"], doctype)
 			if doctype == K.SOURCE_DOCTYPE:
@@ -769,6 +777,7 @@ class FakeSite:
 			raise (exc if isinstance(exc, type) and issubclass(exc, Exception) else ThrowError)(message)
 
 		frappe.ThrowError = ThrowError
+		frappe.TimestampMismatchError = type("TimestampMismatchError", (Exception,), {})
 		frappe.throw = throw
 		frappe.PermissionError = type("PermissionError", (Exception,), {})
 		frappe.DoesNotExistError = type("DoesNotExistError", (Exception,), {})
@@ -840,6 +849,7 @@ def add_source(site, name="KBS-00001", **values):
 		"extraction_state": "Pending",
 		"summary": "",
 		"summary_by_ai": 0,
+		"title_from_source": 0,
 		"keywords": "",
 		"snapshot_file": "",
 	}
@@ -1066,7 +1076,11 @@ def test_an_uploaded_public_file_is_made_private_and_read(site, monkeypatch):
 	row = site.sources["KBS-00001"]
 	assert row["extraction_state"] == "Ready"
 	assert "Keep the hopper dry." in row["extracted_text"]
-	assert ("File", 1) in [(d, v.get("is_private")) for d, v, _f in site.saved]
+	(copy,) = [f for f in site.files if f.get("attached_to_field") == "source_file"]
+	assert copy["is_private"] == 1 and copy["attached_to_name"] == "KBS-00001"
+	assert row["source_file"] == copy["file_url"]
+	assert ("File", "FILE-1") in site.deleted
+	assert all(d != "File" for d, _v, _f in site.saved), "the public File itself is never re-saved"
 	assert row["snapshot_file"] == ""
 	assert calls
 
@@ -1130,6 +1144,7 @@ BASE = {
 	"extracted_text": "old text",
 	"snapshot_file": "/private/files/old-copy.html",
 	"modified": "2026-11-25 10:00:00",
+	"title_from_source": 0,
 }
 
 
@@ -1140,6 +1155,7 @@ def test_a_new_link_is_pending_with_a_default_title(site):
 	assert doc.extraction_state == "Pending"
 	assert doc.extracted_text is None
 	assert doc.title == "example.com/manual"
+	assert doc.title_from_source == 1
 
 
 def test_a_bad_link_is_refused_on_save(site):
@@ -1278,6 +1294,7 @@ def test_the_exact_permission_matrix():
 
 def test_what_the_server_reads_is_read_only_at_level_one():
 	server_set = {
+		"title_from_source",
 		"extraction_state",
 		"extraction_message",
 		"summary_by_ai",
@@ -1724,17 +1741,49 @@ def test_a_new_copy_replaces_every_older_copy(site, monkeypatch):
 	assert ("File", "FILE-OLD") in site.deleted
 
 
-def test_the_url_password_scan_is_linear():
-	import time
-
+def _url_password_pattern():
 	from erpnext_enhancements.knowledge_base import content
 
+	text = (APP / "knowledge_base" / "content.py").read_text(encoding="utf-8")
+	line = next(ln for ln in text.splitlines() if "://[^" in ln and "@" in ln)
+	return content, line
+
+
+def test_the_url_password_scheme_is_bounded_and_possessive():
+	"""Structural: the scheme part may not use an unbounded quantifier, which is what made the old
+	pattern slow; a bounded possessive one stays linear."""
+	_content, line = _url_password_pattern()
+	scheme = line.split("://", 1)[0]
+	assert "{0,31}+" in scheme
+	assert "*" not in scheme and "+[" not in scheme.replace("{0,31}+", "")
+
+
+def test_the_url_password_scan_is_quick_on_long_ordinary_text():
+	import time
+
+	content, _line = _url_password_pattern()
+	prose = " ".join(f"word{i} and-another.term" for i in range(20_000))
 	start = time.perf_counter()
-	content.secret_findings("a." * 40_000)
-	content.secret_findings("a-" * 40_000)
+	content.secret_findings(prose)
 	assert time.perf_counter() - start < 1.0
-	found = content.secret_findings("see https://" + "admin:" + "hunter2" + "@erp.example.com/ now")
-	assert [f.kind for f in found] == ["a password in a web address"]
+
+
+@pytest.mark.parametrize(
+	"text,found",
+	[
+		("see https://" + "admin:" + "hunter2" + "@erp.example.com/ now", True),
+		("--https://" + "u:" + "pw" + "@h", True),
+		("(-ftp://" + "u:" + "pw" + "@h)", True),
+		("x.git://" + "u:" + "pw" + "@h", True),
+		("git+ssh://" + "u:" + "pw" + "@h", True),
+		("_https://" + "u:" + "pw" + "@h", False),
+		("see http://host/path", False),
+	],
+)
+def test_the_url_password_scan_keeps_the_old_matches(text, found):
+	content, _line = _url_password_pattern()
+	kinds = [f.kind for f in content.secret_findings(text)]
+	assert ("a password in a web address" in kinds) is found
 
 
 def test_word_documents_are_capped_lower():
@@ -1815,3 +1864,149 @@ def test_without_urllib3_the_host_check_has_nothing_to_disagree_with(monkeypatch
 	monkeypatch.setitem(sys.modules, "urllib3.util", None)
 	assert source_fetch.url_problem("https://example.com/page") is None
 	assert "cannot hold" in source_fetch.url_problem("https://example.com/a|b")
+
+
+# ------------------------------------------------------------------ round-2 review fixes
+
+
+def test_a_compressed_answer_is_refused_unread():
+	packed = FakeResponse(headers={"Content-Type": "text/html", "Content-Encoding": "gzip"}, body=b"\x1f\x8b")
+	session = FakeSession({"https://example.com/a": packed})
+	with pytest.raises(source_fetch.FetchRefused) as caught:
+		source_fetch.fetch("https://example.com/a", session=session, resolve=PUBLIC)
+	assert caught.value.kind == "unsupported" and "compressed" in caught.value.message
+	assert packed.read is False
+	((_url, kwargs),) = session.calls
+	assert kwargs["headers"]["Accept-Encoding"] == "identity"
+
+
+def test_an_identity_encoding_is_read():
+	plain = FakeResponse(headers={"Content-Type": "text/plain", "Content-Encoding": "identity"}, body=b"ok")
+	session = FakeSession({"https://example.com/a": plain})
+	assert source_fetch.fetch("https://example.com/a", session=session, resolve=PUBLIC).data == b"ok"
+
+
+def test_the_guarded_session_asks_for_uncompressed_answers():
+	assert source_fetch.guarded_session().headers["Accept-Encoding"] == "identity"
+
+
+def test_a_percent_sign_in_the_host_is_refused():
+	assert "not a web address" in source_fetch.url_problem("http://example%2ecom/")
+
+
+@pytest.mark.parametrize(
+	"address,public",
+	[
+		("::127.0.0.1", False),
+		("::10.0.0.1", False),
+		("64:ff9b::7f00:1", False),
+		("64:ff9b::a9fe:a9fe", False),
+		("2002:7f00:1::1", False),
+		("::8.8.8.8", True),
+		("64:ff9b::808:808", True),
+	],
+)
+def test_ipv6_forms_carrying_an_ipv4_address_are_judged_by_it(address, public):
+	assert source_fetch.address_is_public(address) is public
+
+
+def test_each_hop_gets_only_the_time_left():
+	session = FakeSession(
+		{"https://example.com/a": FakeResponse(headers={"Content-Type": "text/plain"}, body=b"ok")}
+	)
+	source_fetch.fetch("https://example.com/a", session=session, resolve=PUBLIC)
+	((_url, kwargs),) = session.calls
+	connect, read = kwargs["timeout"]
+	assert connect <= source_fetch.TIMEOUT[0] and read <= source_fetch.TIMEOUT[1]
+
+
+def test_a_site_that_drips_is_cut_off_at_the_deadline_by_the_watchdog(monkeypatch):
+	"""A real server that sends a byte every 0.2 s: the read would never time out, and the watchdog
+	shuts the connection at the deadline instead."""
+	import http.server
+	import threading
+	import time
+
+	class Drip(http.server.BaseHTTPRequestHandler):
+		protocol_version = "HTTP/1.0"
+
+		def do_GET(self):
+			self.send_response(200)
+			self.send_header("Content-Type", "text/plain")
+			self.end_headers()
+			try:
+				for _ in range(100):
+					self.wfile.write(b"x")
+					self.wfile.flush()
+					time.sleep(0.2)
+			except OSError:
+				pass
+
+		def log_message(self, *args):
+			pass
+
+	httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+	threading.Thread(target=httpd.serve_forever, daemon=True).start()
+	try:
+		port = httpd.server_address[1]
+		monkeypatch.setattr(source_fetch, "ALLOWED_PORTS", (None, 80, 443, port))
+		monkeypatch.setattr(source_fetch, "address_is_public", lambda address: True)
+		monkeypatch.setattr(source_fetch, "DEADLINE_SECONDS", 1)
+		start = time.monotonic()
+		with pytest.raises(source_fetch.FetchRefused) as caught:
+			source_fetch.fetch(f"http://127.0.0.1:{port}/drip")
+		assert time.monotonic() - start < 5
+		assert "too slowly" in caught.value.message
+	finally:
+		httpd.shutdown()
+		httpd.server_close()
+
+
+def test_the_store_locks_the_row_before_it_reads_it(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site)
+	fetched(monkeypatch, sources, b"<p>Text</p>")
+	gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	assert "KBS-00001" in site.locked
+
+
+def test_a_save_that_lost_a_race_leaves_the_source_alone(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site)
+	fetched(monkeypatch, sources, b"<p>Text</p>")
+	gemini(monkeypatch, sources, SUMMARY)
+
+	def lost(*args, **kwargs):
+		raise site.frappe.TimestampMismatchError("changed meanwhile")
+
+	monkeypatch.setattr(sources, "_store", lost)
+	sources.extract_source("KBS-00001")
+	assert site.sources["KBS-00001"]["extraction_state"] == "Pending"
+	assert site.rollbacks == 1 and site.error_logs == []
+
+
+def test_a_page_title_replaces_the_default_but_never_a_typed_one(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site, title="example.com/manual", title_from_source=1)
+	fetched(monkeypatch, sources, b"<title>Pump Manual</title><p>Text</p>")
+	gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	assert site.sources["KBS-00001"]["title"] == "Pump Manual"
+	add_source(site, "KBS-00002", title="Typed by a person", title_from_source=0)
+	sources.extract_source("KBS-00002")
+	assert site.sources["KBS-00002"]["title"] == "Typed by a person"
+
+
+def test_a_person_editing_the_title_makes_it_theirs(site):
+	before = dict(BASE, url="https://example.com/manual", title="example.com/manual", title_from_source=1)
+	doc = make(site, dict(before, title="Pump manual, typed"), before=before)
+	doc.validate()
+	assert doc.title_from_source == 0 and doc.title == "Pump manual, typed"
+
+
+def test_a_new_link_drops_a_title_taken_from_the_old_page(site):
+	before = dict(BASE, url="https://example.com/old", title="Old Page", title_from_source=1)
+	doc = make(site, dict(before, url="https://example.com/manual"), before=before)
+	doc.validate()
+	assert doc.title == "example.com/manual" and doc.title_from_source == 1

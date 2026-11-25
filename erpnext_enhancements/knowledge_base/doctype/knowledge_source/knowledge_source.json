@@ -27,6 +27,7 @@
   "column_break_summary",
   "notes",
   "summary_by_ai",
+  "title_from_source",
   "section_reading",
   "fetched_url",
   "fetched_on",
@@ -151,6 +152,15 @@
    "fieldname": "summary_by_ai",
    "fieldtype": "Check",
    "label": "Summary written by Gemini",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The title was taken from the source (its page, file name or address), not typed by a person. The next read may replace it.",
+   "fieldname": "title_from_source",
+   "fieldtype": "Check",
+   "label": "Title taken from the source",
    "permlevel": 1,
    "read_only": 1
   },

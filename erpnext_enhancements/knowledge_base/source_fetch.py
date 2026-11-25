@@ -40,6 +40,7 @@ real local server).
 import ipaddress
 import re
 import socket
+import threading
 import time
 from collections import namedtuple
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
@@ -84,7 +85,18 @@ DEADLINE_SECONDS = 60
 HEADERS = {
 	"User-Agent": "SapphireFountains-KnowledgeBase/1.0 (+reference library)",
 	"Accept": "text/html,application/xhtml+xml,application/pdf,text/plain,*/*;q=0.5",
+	# Uncompressed only, and a compressed answer is refused unread: a decompressing reader expands the
+	# bytes before any size cap can see them.
+	"Accept-Encoding": "identity",
 }
+
+SLOW_MESSAGE = "The site sent the page too slowly. Try again later."
+
+#: The ``Content-Encoding`` values read: none at all.
+_PLAIN_ENCODINGS = ("", "identity")
+
+#: NAT64's well-known prefix (RFC 6052), whose last 32 bits are an IPv4 address.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
 BLOCKED_MESSAGE = (
 	"That link points inside the company's own network or servers, which the reference library never "
@@ -140,6 +152,8 @@ def url_problem(url):
 		return "Only web links (starting https:// or http://) can be saved."
 	if not parts.hostname:
 		return "That is not a web address. Copy it from the browser's address bar."
+	if "%" in parts.hostname:
+		return "That is not a web address. Copy it from the browser's address bar."
 	if not parts.hostname.isascii():
 		return "The site's name has letters a web address cannot hold as typed. Copy the link from the browser's address bar."
 	if parts.username or parts.password or "@" in parts.netloc:
@@ -189,15 +203,37 @@ def google_file(url):
 
 
 def address_is_public(address):
-	"""Whether ``address`` (an IP address as text) is one the library may connect to."""
+	"""Whether ``address`` (an IP address as text) is one the library may connect to. An IPv6 address
+	that carries an IPv4 address (mapped, compatible, 6to4, Teredo, NAT64) must also carry a public one."""
 	try:
 		ip = ipaddress.ip_address(str(address).split("%", 1)[0])
 	except ValueError:
 		return False
-	mapped = getattr(ip, "ipv4_mapped", None)
-	if mapped is not None:
-		ip = mapped
-	return bool(ip.is_global) and not ip.is_multicast
+	if not (ip.is_global and not ip.is_multicast) and getattr(ip, "ipv4_mapped", None) is None:
+		return False
+	for embedded in _embedded_ipv4(ip):
+		if not (embedded.is_global and not embedded.is_multicast):
+			return False
+	return True
+
+
+def _embedded_ipv4(ip):
+	"""The IPv4 addresses an IPv6 address carries, each judged on its own."""
+	if ip.version != 6:
+		return []
+	found = []
+	if ip.ipv4_mapped is not None:
+		found.append(ip.ipv4_mapped)
+	if ip.sixtofour is not None:
+		found.append(ip.sixtofour)
+	if ip.teredo is not None:
+		found.extend(ip.teredo)
+	value = int(ip)
+	if value >> 32 == 0:
+		found.append(ipaddress.IPv4Address(value & 0xFFFFFFFF))
+	if ip in _NAT64:
+		found.append(ipaddress.IPv4Address(value & 0xFFFFFFFF))
+	return found
 
 
 def resolve_public(host, port, resolve=None):
@@ -270,6 +306,7 @@ def guarded_session():
 
 	session = requests.Session()
 	session.trust_env = False
+	session.headers["Accept-Encoding"] = "identity"
 	session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
 	adapter = _GuardedAdapter(max_retries=0)
 	session.mount("http://", adapter)
@@ -298,7 +335,11 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 		port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
 		resolve_public(parts.hostname, port, resolve=resolve)
 		_clear_cookies(session)
-		response = _get(session, current)
+		remaining = deadline - _clock()
+		if remaining <= 0:
+			raise FetchRefused("network", SLOW_MESSAGE)
+		response = _get(session, current, (min(TIMEOUT[0], remaining), min(TIMEOUT[1], remaining)))
+		watchdog = _Watchdog(response, remaining)
 		try:
 			if 300 <= response.status_code < 400 and response.headers.get("Location"):
 				current = urljoin(current, response.headers["Location"])
@@ -307,6 +348,13 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 				raise FetchRefused(
 					"http", f"The site answered with an error ({response.status_code}). Check the link."
 				)
+			encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
+			if encoding not in _PLAIN_ENCODINGS:
+				raise FetchRefused(
+					"unsupported",
+					"The site sent the page compressed, which the library does not read. Download the "
+					"file and upload it instead.",
+				)
 			content_type = _content_type(response, current)
 			if content_type not in ALLOWED_TYPES:
 				raise FetchRefused(
@@ -314,9 +362,10 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 					f"The link is a {content_type or 'kind of file'} the library cannot read. A web "
 					"page, PDF, Word document, text file or picture can be saved.",
 				)
-			data = _read_capped(response, max_bytes, deadline)
+			data = _read_capped(response, max_bytes, deadline, watchdog)
 			return Fetched(data, content_type, current, _filename(response, current, content_type))
 		finally:
+			watchdog.cancel()
 			close = getattr(response, "close", None)
 			if callable(close):
 				close()
@@ -330,9 +379,51 @@ def _clear_cookies(session):
 		clear()
 
 
-def _get(session, url):
+class _Watchdog:
+	"""Shuts the response's connection down once the fetch's time is up, so a read blocked on a site
+	that sends a byte at a time stops at the deadline rather than at the next read's timeout."""
+
+	def __init__(self, response, seconds):
+		self.response = response
+		self.fired = False
+		self.timer = threading.Timer(max(seconds, 0), self._fire)
+		self.timer.daemon = True
+		self.timer.start()
+
+	def _fire(self):
+		self.fired = True
+		sock = _socket_of(self.response)
+		if sock is not None:
+			try:
+				sock.shutdown(socket.SHUT_RDWR)
+			except OSError:
+				pass
+		close = getattr(self.response, "close", None)
+		if callable(close):
+			try:
+				close()
+			except Exception:
+				pass
+
+	def cancel(self):
+		self.timer.cancel()
+
+
+def _socket_of(response):
+	"""The socket under a streamed ``requests`` response, or ``None``."""
+	raw = getattr(response, "raw", None)
+	for path in (("connection", "sock"), ("_connection", "sock"), ("_fp", "fp", "raw", "_sock")):
+		obj = raw
+		for attr in path:
+			obj = getattr(obj, attr, None)
+		if obj is not None and callable(getattr(obj, "shutdown", None)):
+			return obj
+	return None
+
+
+def _get(session, url, timeout=TIMEOUT):
 	try:
-		return session.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True, allow_redirects=False)
+		return session.get(url, headers=HEADERS, timeout=timeout, stream=True, allow_redirects=False)
 	except FetchRefused:
 		raise
 	except Exception as exc:
@@ -378,21 +469,30 @@ def _content_type(response, url):
 	return value
 
 
-def _read_capped(response, max_bytes, deadline=None):
+def _read_capped(response, max_bytes, deadline=None, watchdog=None):
 	declared = response.headers.get("Content-Length")
 	if declared and declared.isdigit() and int(declared) > max_bytes:
 		raise FetchRefused("too_large", _too_large(max_bytes))
 	chunks = []
 	total = 0
-	for chunk in response.iter_content(_CHUNK):
-		if deadline is not None and _clock() > deadline:
-			raise FetchRefused("network", "The site sent the page too slowly. Try again later.")
-		if not chunk:
-			continue
-		total += len(chunk)
-		if total > max_bytes:
-			raise FetchRefused("too_large", _too_large(max_bytes))
-		chunks.append(chunk)
+	try:
+		for chunk in response.iter_content(_CHUNK):
+			if deadline is not None and _clock() > deadline:
+				raise FetchRefused("network", SLOW_MESSAGE)
+			if not chunk:
+				continue
+			total += len(chunk)
+			if total > max_bytes:
+				raise FetchRefused("too_large", _too_large(max_bytes))
+			chunks.append(chunk)
+	except FetchRefused:
+		raise
+	except Exception:
+		if (watchdog is not None and watchdog.fired) or (deadline is not None and _clock() > deadline):
+			raise FetchRefused("network", SLOW_MESSAGE) from None
+		raise FetchRefused("network", "The site stopped sending the page. Try again later.") from None
+	if watchdog is not None and watchdog.fired:
+		raise FetchRefused("network", SLOW_MESSAGE)
 	return b"".join(chunks)
 
 

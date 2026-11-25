@@ -99,7 +99,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     permission on the source). A source still Pending 3 hours after its last change is marked Failed
     instead, so a source that defeats its job cannot loop the queue. Every failure, storing included,
     ends Failed and logs the exception's type only, never its message: a traceback could carry the
-    document's own text. A summary a person edits stops being Gemini's and is never replaced; Version
+    document's own text. A read that finishes after another change locks the row and stores only if
+    the source is unchanged; one that loses to a person's save leaves their save standing. An upload
+    that arrived public is copied to a private file on the source, never flipped in place (the public
+    file may be shared with a website image). The page's title is used until a person types one
+    (`title_from_source`). A summary a person edits stops being Gemini's and is never replaced; Version
     tracking is off, since every re-read would copy the whole text into a Version row.
   - **Where to find it:** a **Reference library** shortcut on the Knowledge Base workspace and an item in
     its sidebar (both timestamp-gated files bumped to 2026-11-25 and re-pinned); the form says a source
@@ -109,8 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anything internal. A link must be well formed (web schemes, standard ports, no credentials, an ASCII
   host, only characters RFC 3986 allows, and the same host to both URL parsers); **the address is
   checked at connect time, before anything is sent**, on the socket actually opened, failing closed;
-  redirects are followed by the code and each hop is checked again; no cookies, credentials or
-  environment proxy go with a request; and a fetch is capped at 15 MB and 60 seconds, reading only the
+  redirects are followed by the code and each hop is checked again; an IPv6 address that carries an
+  IPv4 address is judged by that address too; no cookies, credentials or environment proxy go with a
+  request; only uncompressed answers are asked for and a compressed one is refused unread, so nothing
+  is expanded before the size cap sees it; and a fetch is capped at 15 MB and 60 seconds, each hop
+  given only the time left and a watchdog closing the connection at the deadline, reading only the
   content types the library understands.
 
 ### Changed
@@ -122,8 +129,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WI-080 PR 4a (the Markdown import) is replaced by the reference library**: a Google Doc is saved by
   its link or uploaded, and its text is what an article is drafted from.
 - **The knowledge base's secret scan runs in linear time on any text.** One of its patterns (a password
-  written into a web address) took seconds on certain long runs of text, which a library source can be;
-  it is rewritten to find the same things without backtracking (`knowledge_base/content.py`).
+  written into a web address) could take a long time on unusual input, which a library source can be.
+  Its scheme part is now bounded and possessive (`knowledge_base/content.py`): it finds what it found
+  before, for any scheme of up to 32 characters, without backtracking.
 
 ### Tests
 

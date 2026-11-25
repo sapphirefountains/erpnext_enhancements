@@ -75,6 +75,9 @@ class KnowledgeSource(Document):
 		if changed:
 			self._refuse_google_link_unless_approver()
 		self._keep_a_persons_summary()
+		self._keep_a_persons_title()
+		if changed and self.title_from_source:
+			self.title = ""
 		if changed:
 			self.extraction_state = "Pending"
 			for fieldname in READ_FIELDS:
@@ -84,6 +87,7 @@ class KnowledgeSource(Document):
 				self.summary_by_ai = 0
 		if not (self.title or "").strip():
 			self.title = self._default_title()
+			self.title_from_source = 1
 
 	def on_update(self):
 		if self.flags.get(sources.JOB_FLAG):
@@ -125,6 +129,14 @@ class KnowledgeSource(Document):
 		before = self.get_doc_before_save()
 		if before is not None and (before.get("summary") or "") != (self.summary or ""):
 			self.summary_by_ai = 0
+
+	def _keep_a_persons_title(self):
+		"""A title a person types is theirs: the next read no longer replaces it with the page's."""
+		if not self.title_from_source or self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if before is not None and (before.get("title") or "") != (self.title or ""):
+			self.title_from_source = 0
 
 	def _default_title(self):
 		if self.source_type == "File":

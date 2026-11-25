@@ -1281,9 +1281,11 @@ can be removed. **Restricted material never goes in** (ADR 0017 §5), and the fo
 job per source):
 
 1. **The bytes.** An upload from its File: **only a File attached to the source itself**, never a file
-   found by its URL alone (the form also refuses a file address outside this site's files), and made
-   private first if it arrived public (Frappe attaches an Attach field's upload with `db.set_value`,
-   which runs no File hook). A Google Docs, Sheets, Slides or Drive link through the Drive API as
+   found by its URL alone (the form also refuses a file address outside this site's files). One that
+   arrived public is copied into a new private File on the source and the public row dropped (Frappe
+   attaches an Attach field's upload with `db.set_value`, which runs no File hook); it is never flipped
+   in place, because Frappe would move the bytes for every File row that shares them, a website image
+   included. A Google Docs, Sheets, Slides or Drive link through the Drive API as
    ERPNext's Drive service account (`google_drive.drive_utils`), a Doc exported as HTML so its headings
    and tables survive. **Only a KB Approver may save a Google link**, because that account reaches far
    more than one person may (the shared drives' project, customer and opportunity folders); anyone else
@@ -1310,7 +1312,10 @@ Gemini). The job id carries the source's `modified`, so a change made while an o
 queued rather than deduplicated away, and the older read then stores nothing. A failure anywhere,
 storing included, ends Failed, with an Error Log naming the source and the exception's **type** only:
 a message or traceback could carry the document's own text. A person who edits a Gemini summary makes
-it theirs (`summary_by_ai` is cleared), and a new link drops the old saved copy. Version tracking is off
+it theirs (`summary_by_ai` is cleared); the same holds for a title (`title_from_source`: the page's
+title replaces one the system filled in, never one a person typed); and a new link drops the old saved
+copy and a title taken from the old page. The store locks the source's row first, so two reads, or a
+read and a person's save, never collide; one that loses to a person's save leaves it standing. Version tracking is off
 on this doctype: every re-read would copy up to 200,000 characters into a Version row.
 
 ### The link guard (`source_fetch.py`)
@@ -1326,7 +1331,9 @@ the bench, a private address) and store the answer where every staff user can op
 | The host's addresses are also checked before connecting | A clear message for an internal link, rather than a connection error |
 | Redirects followed by the code, at most 5, each hop checked again from the top | A public page cannot bounce the request inward |
 | No cookies (the jar accepts none and is cleared between hops), no `Authorization`, no environment proxy | Nothing of the server's leaves with a request |
-| 15 MB and 60 seconds in all; only readable content types, refused before the body is downloaded | A slow or huge response cannot hold a worker; nothing is downloaded only to be refused |
+| An IPv6 address that carries an IPv4 address (mapped, compatible, 6to4, Teredo, NAT64) is judged by it too; a `%` in the host is refused | No IPv6 spelling of an internal address gets through |
+| Uncompressed answers only (`Accept-Encoding: identity`); a compressed one is refused unread | A decompressing reader expands bytes before any size cap can see them |
+| 15 MB and 60 seconds in all: each hop gets only the time left, and a watchdog shuts the connection at the deadline; only readable content types, refused before the body is downloaded | A slow, dripping or huge response cannot hold a worker; nothing is downloaded only to be refused |
 
 `tests/test_knowledge_base_sources.py` runs the guarded session against a real local server: an
 internal address is refused before the server sees any request, and a response that closes its
