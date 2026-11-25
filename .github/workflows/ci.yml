@@ -1712,8 +1712,12 @@ jobs:
       # summary never replaced; Gemini down still Ready; a failure logged by its type only), the
       # controller, Fetch again's write check, and the schema's exact permission matrix. Plain pytest
       # functions with their own frappe stub, so a step of its own.
+      # requests and pypdf at Frappe v16.61's pins: the guarded session is real urllib3 connection
+      # classes, tested against a real local server, and the PDF text is read by the real pypdf.
       - name: Knowledge base reference library (bench-free pytest suite)
-        run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_sources.py -q
+        run: |
+          python -m pip install "requests~=2.33.0" "pypdf==6.21.4"
+          python -m pytest erpnext_enhancements/tests/test_knowledge_base_sources.py -q
       # v1.569.0: an article as the company register's template (POL-0002/0003/0004), printed, in a
       # draft's preview and on its form. The templates' sections and a new draft's starting text; the
       # check that stops their guidance being submitted, however the editor wraps it; the page

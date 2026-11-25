@@ -1447,3 +1447,9 @@ def test_the_url_password_scan_is_linear():
 
 def test_word_documents_are_capped_lower():
 	assert source_text.MAX_DOCX_XML_BYTES <= 10 * 1024 * 1024
+
+
+def test_without_urllib3_the_host_check_has_nothing_to_disagree_with(monkeypatch):
+	monkeypatch.setitem(sys.modules, "urllib3.util", None)
+	assert source_fetch.url_problem("https://example.com/page") is None
+	assert "cannot hold" in source_fetch.url_problem("https://example.com/a|b")

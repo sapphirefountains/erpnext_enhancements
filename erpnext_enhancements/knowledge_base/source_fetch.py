@@ -152,10 +152,14 @@ def url_problem(url):
 
 
 def _connecting_host(url):
-	"""The host urllib3, the library that connects, reads from ``url``, lower case and unbracketed."""
+	"""The host urllib3, the library that connects, reads from ``url``, lower case and unbracketed;
+	``None`` when urllib3 cannot parse it. Where urllib3 is not installed nothing can connect, so there
+	is no second reading to disagree with and the standard library's host is returned."""
 	try:
 		from urllib3.util import parse_url
-
+	except ImportError:
+		return (urlsplit(url).hostname or "").lower()
+	try:
 		host = parse_url(url).host or ""
 	except Exception:
 		return None
