@@ -505,11 +505,11 @@ _SECRET_PATTERNS = tuple(
 			re.IGNORECASE,
 			_basic_credential,
 		),
-		# The scheme may not start inside a longer run of scheme characters, and the possessive *+ never
-		# hands characters back: linear on any text (a long run of "a." took seconds with \b and *).
+		# The scheme is bounded (32 characters, longer than any real one) and possessive, so the scan
+		# stays linear on any text and finds what the unbounded pattern found.
 		(
 			"a password in a web address",
-			r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*+://[^\s/:@<>\"']+:[^\s/@<>\"']+@",
+			r"\b[a-z][a-z0-9+.-]{0,31}+://[^\s/:@<>\"']+:[^\s/@<>\"']+@",
 			re.IGNORECASE,
 			None,
 		),

@@ -216,6 +216,10 @@ def extract_source(name):
 		outcome.update(state="Failed", message="The source could not be read just now. Use Fetch again.")
 	try:
 		_store(name, read_from, outcome, snapshot)
+	except frappe.TimestampMismatchError:
+		# Someone saved the source while this read was storing: theirs stands, and if it changed what
+		# is read, it queued its own read.
+		frappe.db.rollback()
 	except Exception as exc:
 		# Never leave it Pending for the sweep to loop: say it failed, without a save that could fail
 		# the same way.
@@ -257,13 +261,6 @@ def _read_file(doc):
 	if not name:
 		raise SourceProblem("Failed", "The uploaded file could not be found on this source. Attach it again.")
 	file_doc = frappe.get_doc("File", name)
-	if not cint(file_doc.is_private):
-		# Frappe attaches an Attach field's upload with db.set_value, which runs no File hook, so
-		# files.force_private never saw it; a public File is served to anyone holding its URL.
-		file_doc.is_private = 1
-		file_doc.flags.ignore_permissions = True
-		file_doc.save()
-		doc.db_set("source_file", file_doc.file_url)
 	if cint(file_doc.file_size) > constants.SOURCE_MAX_BYTES:
 		raise SourceProblem("Failed", _too_large())
 	data = file_doc.get_content()
@@ -272,7 +269,34 @@ def _read_file(doc):
 	if len(data or b"") > constants.SOURCE_MAX_BYTES:
 		raise SourceProblem("Failed", _too_large())
 	filename = file_doc.file_name or file_url.rsplit("/", 1)[-1]
+	if not cint(file_doc.is_private):
+		_make_private_copy(doc, file_doc, data, filename)
 	return data, source_text.content_type_for(filename), filename, "", None
+
+
+def _make_private_copy(doc, public, data, filename):
+	"""Put a public upload's bytes in a new private File on the source and drop the public row.
+
+	Frappe attaches an Attach field's upload with ``db.set_value``, which runs no File hook, so
+	``files.force_private`` never saw it, and a public File is served to anyone holding its URL. The
+	public File is not flipped to private: Frappe moves a flipped file and rewrites every File row
+	that shares its bytes, which could break a website image that is the same picture. Deleting this
+	source's row leaves the bytes to any other row that uses them."""
+	private = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": source_fetch.safe_filename(filename),
+			"attached_to_doctype": constants.SOURCE_DOCTYPE,
+			"attached_to_name": doc.name,
+			"attached_to_field": "source_file",
+			"is_private": 1,
+			"content": data,
+		}
+	)
+	private.flags.ignore_permissions = True
+	private.insert()
+	doc.db_set("source_file", private.file_url)
+	frappe.delete_doc("File", public.name, ignore_permissions=True)
 
 
 def _read_drive(kind, file_id):
@@ -423,7 +447,9 @@ def parse_summary(answer):
 
 def _store(name, read_from, outcome, snapshot):
 	"""Write ``outcome`` onto the source, unless it was changed to read something else meanwhile."""
-	doc = frappe.get_doc(constants.SOURCE_DOCTYPE, name)
+	# Locked, so nothing changes the row between this read of it and the save, whichever other read or
+	# person is writing at the same time.
+	doc = frappe.get_doc(constants.SOURCE_DOCTYPE, name, for_update=True)
 	if (doc.source_type, doc.url or "", doc.source_file or "") != read_from:
 		return
 	state = outcome.get("state") or "Failed"
@@ -437,8 +463,9 @@ def _store(name, read_from, outcome, snapshot):
 	doc.extracted_text = text
 	doc.text_chars = len(text)
 	doc.content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
-	if ready and not (doc.title or "").strip() and outcome.get("title"):
+	if ready and outcome.get("title") and (doc.title_from_source or not (doc.title or "").strip()):
 		doc.title = outcome["title"][:140]
+		doc.title_from_source = 1
 	summary = outcome.get("summary") if ready else None
 	if summary and summary.get("summary") and _wants_summary(doc):
 		doc.summary = summary["summary"]
