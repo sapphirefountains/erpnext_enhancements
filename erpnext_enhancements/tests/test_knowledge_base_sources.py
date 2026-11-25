@@ -31,6 +31,7 @@ What it pins, and the bug each part stops:
 """
 
 import ast
+import datetime
 import importlib
 import io
 import json
@@ -57,7 +58,7 @@ HOOKS = APP / "hooks.py"
 	[
 		("", "Enter the link"),
 		("   ", "Enter the link"),
-		("https://example.com/a b", "space"),
+		("https://example.com/a b", "a space"),
 		("ftp://example.com/file.pdf", "Only web links"),
 		("javascript:alert(1)", "Only web links"),
 		("file:///etc/passwd", "Only web links"),
@@ -264,19 +265,111 @@ def test_too_many_redirects_stop():
 	assert len(session.calls) == source_fetch.MAX_REDIRECTS + 1
 
 
-def test_a_socket_that_connected_somewhere_internal_is_refused_before_the_body_is_read():
-	page = FakeResponse(headers={"Content-Type": "text/html"}, body=b"secret", peer="10.0.0.9")
-	session = FakeSession({"https://example.com/a": page})
+@pytest.mark.parametrize("char", ["\\", '"', "<", ">", "^", "`", "{", "|", "}", "\x00", "\x1f", "\x7f", "\t"])
+def test_a_character_outside_rfc_3986_is_refused(char):
+	assert "cannot hold" in source_fetch.url_problem(f"https://example.com/a{char}b")
+
+
+def test_a_host_written_outside_ascii_is_refused():
+	assert "letters a web address cannot hold" in source_fetch.url_problem("https://ex\u00e4mple.com/")
+
+
+def test_the_two_url_parsers_must_agree_on_the_host(monkeypatch):
+	monkeypatch.setattr(source_fetch, "_connecting_host", lambda url: "elsewhere.example")
+	assert "not a web address" in source_fetch.url_problem("https://example.com/")
+
+
+class _Server:
+	"""A real HTTP server on 127.0.0.1 that counts the requests it is sent and answers with
+	``Connection: close`` and no length, the shape that once left a socket check nothing to read."""
+
+	def __init__(self, body=b"<p>Hello from a closing server</p>"):
+		import http.server
+		import threading
+
+		server = self
+		self.requests = 0
+
+		class Handler(http.server.BaseHTTPRequestHandler):
+			protocol_version = "HTTP/1.0"
+
+			def do_GET(self):
+				server.requests += 1
+				self.send_response(200)
+				self.send_header("Content-Type", "text/html")
+				self.send_header("Connection", "close")
+				self.end_headers()
+				self.wfile.write(body)
+
+			def log_message(self, *args):
+				pass
+
+		self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+		self.port = self.httpd.server_address[1]
+		self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+		self.thread.start()
+
+	def close(self):
+		self.httpd.shutdown()
+		self.httpd.server_close()
+
+
+@pytest.fixture
+def server(monkeypatch):
+	running = _Server()
+	monkeypatch.setattr(source_fetch, "ALLOWED_PORTS", (None, 80, 443, running.port))
+	yield running
+	running.close()
+
+
+def test_an_internal_address_is_refused_at_connect_time_before_a_byte_is_sent(server):
+	"""The lookup check is told the address is public; the connection still lands on 127.0.0.1, and
+	the guarded session refuses it there, so the server never sees a request."""
+	lying = resolver({"127.0.0.1": ["93.184.216.34"]})
+	with pytest.raises(source_fetch.FetchRefused) as caught:
+		source_fetch.fetch(f"http://127.0.0.1:{server.port}/page", resolve=lying)
+	assert caught.value.kind == "blocked"
+	assert server.requests == 0
+
+
+def test_a_closing_response_is_read_whole_through_the_guarded_session(server, monkeypatch):
+	monkeypatch.setattr(source_fetch, "address_is_public", lambda address: True)
+	fetched = source_fetch.fetch(f"http://127.0.0.1:{server.port}/page")
+	assert fetched.data == b"<p>Hello from a closing server</p>"
+	assert fetched.content_type == "text/html"
+	assert server.requests == 1
+
+
+def test_a_socket_whose_peer_cannot_be_read_is_refused():
+	class Broken:
+		closed = False
+
+		def getpeername(self):
+			raise OSError("gone")
+
+		def close(self):
+			self.closed = True
+
+	sock = Broken()
+	with pytest.raises(source_fetch.FetchRefused):
+		source_fetch.require_public_socket(sock)
+	assert sock.closed
+
+
+def test_the_guarded_session_takes_no_cookies_and_no_environment_proxy():
+	session = source_fetch.guarded_session()
+	assert session.trust_env is False
+	assert tuple(session.cookies._policy.allowed_domains()) == ()
+
+
+def test_a_slow_drip_stops_at_the_deadline(monkeypatch):
+	ticks = iter([0, 0, 30, 61, 90, 120])
+	monkeypatch.setattr(source_fetch, "_clock", lambda: next(ticks))
+	slow = FakeResponse(headers={"Content-Type": "text/plain"}, body=b"x" * (64 * 1024 * 4))
+	session = FakeSession({"https://example.com/a": slow})
 	with pytest.raises(source_fetch.FetchRefused) as caught:
 		source_fetch.fetch("https://example.com/a", session=session, resolve=PUBLIC)
-	assert caught.value.kind == "blocked"
-	assert page.read is False
-
-
-def test_a_public_socket_passes_the_peer_check():
-	page = FakeResponse(headers={"Content-Type": "text/plain"}, body=b"ok", peer="93.184.216.34")
-	session = FakeSession({"https://example.com/a": page})
-	assert source_fetch.fetch("https://example.com/a", session=session, resolve=PUBLIC).data == b"ok"
+	assert caught.value.kind == "network" and "too slowly" in caught.value.message
 
 
 def test_an_error_page_is_not_saved():
@@ -539,6 +632,8 @@ class FakeSite:
 		self.inserted = []
 		self.perms = {}
 		self.list_calls = []
+		self.roles = ["KB Author"]
+		self.rollbacks = 0
 
 	def module(self):
 		site = self
@@ -546,8 +641,10 @@ class FakeSite:
 		frappe.__path__ = []
 		utils = types.ModuleType("frappe.utils")
 		utils.cint = lambda v: int(v or 0)
-		utils.now_datetime = lambda: "2026-11-25 12:00:00"
-		utils.add_to_date = lambda when, minutes=0: f"{when}{minutes:+d}m"
+		utils.now_datetime = lambda: datetime.datetime(2026, 11, 25, 12, 0, 0)
+		utils.add_to_date = lambda when, minutes=0, hours=0: when + datetime.timedelta(
+			minutes=minutes, hours=hours
+		)
 		utils.get_url = lambda: "https://erp.example.com"
 		frappe.utils = utils
 		frappe.has_permission = lambda doctype, ptype="read", *a, **k: site.perms.get((doctype, ptype), True)
@@ -591,6 +688,9 @@ class FakeSite:
 			def set_value(self, doctype, name, values, update_modified=True):
 				site.sources[name].update(values)
 
+			def rollback(self):
+				site.rollbacks += 1
+
 		frappe.db = Db()
 
 		def get_doc(doctype, name=None):
@@ -603,12 +703,31 @@ class FakeSite:
 			raise KeyError(doctype)
 
 		frappe.get_doc = get_doc
-		frappe.get_all = lambda doctype, filters=None, pluck=None, limit=None: [
-			name
-			for name, row in site.sources.items()
-			if doctype == K.SOURCE_DOCTYPE
-			and row.get("extraction_state") == (filters or {}).get("extraction_state")
-		]
+
+		def get_all(doctype, filters=None, fields=None, pluck=None, limit=None):
+			filters = dict(filters or {})
+			rows = []
+			if doctype == K.SOURCE_DOCTYPE:
+				before = (filters.pop("modified", None) or [None, None])[1]
+				for row in site.sources.values():
+					if all(row.get(k) == v for k, v in filters.items()):
+						if before is None or str(row.get("modified")) < str(before):
+							rows.append(row)
+			elif doctype == "File":
+				rows = [
+					row
+					for row in site.file_rows.values()
+					if all(
+						row.get(k) != v[1] if isinstance(v, list) else row.get(k) == v
+						for k, v in filters.items()
+					)
+				]
+			if pluck:
+				return [row.get(pluck) for row in rows]
+			return [{f: row.get(f) for f in (fields or ["name"])} for row in rows]
+
+		frappe.get_all = get_all
+		frappe.get_roles = lambda user=None: list(site.roles)
 		frappe.enqueue = lambda method, **kwargs: site.enqueued.append((method, kwargs))
 		frappe.delete_doc = lambda doctype, name, ignore_permissions=False: site.deleted.append(
 			(doctype, name)
@@ -762,7 +881,7 @@ def test_secret_shaped_text_is_never_stored_kept_or_sent_to_gemini(site, monkeyp
 	row = site.sources["KBS-00001"]
 	assert row["extraction_state"] == "Refused"
 	assert row["extracted_text"] == ""
-	assert secret not in json.dumps(row)
+	assert secret not in json.dumps(row, default=str)
 	assert "line 1" in row["extraction_message"]
 	assert calls == []
 	assert site.files == []
@@ -808,12 +927,12 @@ def test_gemini_down_still_leaves_the_text_ready(site, monkeypatch):
 
 def test_a_typed_summary_is_never_replaced(site, monkeypatch):
 	sources = site.sources_module
-	add_source(site, summary="Parker's note on this manual.", summary_by_ai=0)
+	add_source(site, summary="A note a person typed about this manual.", summary_by_ai=0)
 	fetched(monkeypatch, sources, b"<p>Text</p>")
 	calls = gemini(monkeypatch, sources, SUMMARY)
 	sources.extract_source("KBS-00001")
 	row = site.sources["KBS-00001"]
-	assert row["summary"] == "Parker's note on this manual."
+	assert row["summary"] == "A note a person typed about this manual."
 	assert calls == []
 
 
@@ -936,16 +1055,22 @@ def test_parse_summary_cuts_and_checks(site):
 	assert fenced["summary"] == "Fine."
 
 
-def test_requeue_picks_up_sources_left_pending(site):
+def test_requeue_picks_up_sources_left_pending_and_gives_up_on_old_ones(site):
 	sources = site.sources_module
-	add_source(site, "KBS-00001", extraction_state="Pending")
-	add_source(site, "KBS-00002", extraction_state="Ready")
+	add_source(site, "KBS-00001", extraction_state="Pending", modified="2026-11-25 11:00:00")
+	add_source(site, "KBS-00002", extraction_state="Ready", modified="2026-11-25 08:00:00")
+	add_source(site, "KBS-00003", extraction_state="Pending", modified="2026-11-25 11:55:00")
+	add_source(site, "KBS-00004", extraction_state="Pending", modified="2026-11-25 08:00:00")
 	sources.requeue_pending()
 	assert [kwargs["name"] for _method, kwargs in site.enqueued] == ["KBS-00001"]
 	((method, kwargs),) = site.enqueued
 	assert method == sources.EXTRACT_METHOD
-	assert kwargs["deduplicate"] is True and kwargs["job_id"] == "kb-source::KBS-00001"
+	assert kwargs["deduplicate"] is True
+	assert kwargs["job_id"] == "kb-source::KBS-00001::2026-11-25 11:00:00"
 	assert kwargs["enqueue_after_commit"] is True
+	assert site.sources["KBS-00004"]["extraction_state"] == "Failed"
+	assert site.sources["KBS-00004"]["extraction_message"] == sources.GAVE_UP_MESSAGE
+	assert site.sources["KBS-00003"]["extraction_state"] == "Pending"
 
 
 # ------------------------------------------------------------------ the controller and Fetch again
@@ -974,6 +1099,8 @@ BASE = {
 	"notes": "",
 	"extraction_state": "Ready",
 	"extracted_text": "old text",
+	"snapshot_file": "/private/files/old-copy.html",
+	"modified": "2026-11-25 10:00:00",
 }
 
 
@@ -999,13 +1126,15 @@ def test_a_file_source_needs_its_file(site):
 
 
 def test_changing_the_link_resets_it_and_drops_only_a_gemini_summary(site):
-	before = dict(BASE, url="https://example.com/old")
-	ai = make(site, dict(BASE, summary="AI wrote this", summary_by_ai=1), before=before)
+	ai_before = dict(BASE, url="https://example.com/old", summary="AI wrote this", summary_by_ai=1)
+	ai = make(site, dict(BASE, summary="AI wrote this", summary_by_ai=1), before=ai_before)
 	ai.validate()
 	assert ai.extraction_state == "Pending" and ai.summary == "" and ai.summary_by_ai == 0
-	typed = make(site, dict(BASE, summary="Typed by Parker"), before=before)
+	typed = make(
+		site, dict(BASE, summary="Typed by a person"), before=dict(BASE, url="https://example.com/old")
+	)
 	typed.validate()
-	assert typed.extraction_state == "Pending" and typed.summary == "Typed by Parker"
+	assert typed.extraction_state == "Pending" and typed.summary == "Typed by a person"
 
 
 def test_an_unchanged_source_keeps_what_was_read(site):
@@ -1426,3 +1555,156 @@ def test_the_tools_are_registered_and_search_names_the_references():
 	assert "include_reference" in search and "unreviewed" in search
 	save = (APP / "assistant_tools" / "save_knowledge_source.py").read_text(encoding="utf-8")
 	assert '"source_title"' in save and '"title"' not in save
+
+
+# ------------------------------------------------------------------ review fixes (2026-11-25)
+
+
+def test_a_file_not_attached_to_this_source_is_never_read(site, monkeypatch):
+	"""Another record's private file, named by URL, is not this source's file."""
+	sources = site.sources_module
+	add_source(site, source_type="File", url="", source_file="/private/files/someone-elses.pdf")
+	site.file_rows["FILE-9"] = {
+		"name": "FILE-9",
+		"file_url": "/private/files/someone-elses.pdf",
+		"file_name": "someone-elses.pdf",
+		"is_private": 1,
+		"attached_to_doctype": "Employee",
+		"attached_to_name": "HR-EMP-00001",
+		"_content": b"private text that must never be published",
+	}
+	calls = gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	row = site.sources["KBS-00001"]
+	assert row["extraction_state"] == "Failed"
+	assert "could not be found on this source" in row["extraction_message"]
+	assert "private text" not in json.dumps(row, default=str)
+	assert calls == []
+
+
+@pytest.mark.parametrize(
+	"value",
+	[
+		"https://example.com/x.pdf",
+		"/private/files/../site_config.json",
+		"private/files/x.pdf",
+		"/api/method/x",
+	],
+)
+def test_a_file_source_must_point_at_this_sites_files(site, value):
+	doc = make(site, dict(BASE, source_type="File", url="", source_file=value), new=True)
+	with pytest.raises(Exception, match="Attach the file with the Attach button"):
+		doc.validate()
+
+
+def test_a_file_source_clears_its_link_and_a_link_source_its_file(site):
+	file_doc = make(site, dict(BASE, source_type="File", source_file="/private/files/a.pdf"), new=True)
+	file_doc.validate()
+	assert file_doc.url == ""
+	link_doc = make(site, dict(BASE, source_file="/private/files/a.pdf"), new=True)
+	link_doc.validate()
+	assert link_doc.source_file == ""
+
+
+def test_only_a_kb_approver_saves_a_google_link(site):
+	google = "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit"
+	author = make(site, dict(BASE, url=google), new=True)
+	with pytest.raises(Exception, match="Only a KB Approver"):
+		author.validate()
+	site.roles = ["KB Approver"]
+	make(site, dict(BASE, url=google), new=True).validate()
+
+
+def test_an_unchanged_google_link_is_not_checked_again(site):
+	google = "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit"
+	doc = make(site, dict(BASE, url=google, summary="edited"), before=dict(BASE, url=google))
+	doc.validate()
+	assert doc.extraction_state == "Ready"
+
+
+def test_a_person_editing_a_gemini_summary_makes_it_theirs(site):
+	before = dict(BASE, url="https://example.com/manual", summary="Gemini's words", summary_by_ai=1)
+	doc = make(site, dict(before, summary="A person's correction"), before=before)
+	doc.validate()
+	assert doc.summary_by_ai == 0 and doc.summary == "A person's correction"
+
+
+def test_a_new_link_drops_the_old_saved_copy(site):
+	doc = make(site, dict(BASE), before=dict(BASE, url="https://example.com/old"))
+	doc.validate()
+	assert doc.snapshot_file is None
+
+
+def test_a_picture_too_large_for_gemini_says_so(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site, url="https://example.com/plate.jpg")
+	monkeypatch.setattr(sources, "MAX_IMAGE_BYTES", 10)
+	monkeypatch.setattr(
+		sources.source_fetch,
+		"fetch",
+		lambda url: source_fetch.Fetched(b"\xff\xd8" * 20, "image/jpeg", url, "p.jpg"),
+	)
+	calls = gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	row = site.sources["KBS-00001"]
+	assert row["extraction_state"] == "Failed" and "larger than" in row["extraction_message"]
+	assert calls == []
+
+
+def test_a_store_that_fails_marks_the_source_failed_not_pending(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site)
+	fetched(monkeypatch, sources, b"<p>Text</p>")
+	gemini(monkeypatch, sources, SUMMARY)
+
+	def explode(*args, **kwargs):
+		raise RuntimeError("save failed")
+
+	monkeypatch.setattr(sources, "_store", explode)
+	sources.extract_source("KBS-00001")
+	row = site.sources["KBS-00001"]
+	assert row["extraction_state"] == "Failed" and row["extraction_message"] == sources.STORE_FAILED_MESSAGE
+	assert site.rollbacks == 1
+	assert "RuntimeError" in site.error_logs[-1]["error"]
+
+
+def test_the_address_read_from_is_stored_quoted(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site)
+	fetched(monkeypatch, sources, b"<p>Text</p>", final="https://example.com/café")
+	gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	assert site.sources["KBS-00001"]["fetched_url"] == "https://example.com/caf%C3%A9"
+
+
+def test_a_new_copy_replaces_every_older_copy(site, monkeypatch):
+	sources = site.sources_module
+	add_source(site, snapshot_file="/private/files/old.html")
+	site.file_rows["FILE-OLD"] = {
+		"name": "FILE-OLD",
+		"file_url": "/private/files/old.html",
+		"attached_to_doctype": K.SOURCE_DOCTYPE,
+		"attached_to_name": "KBS-00001",
+		"attached_to_field": "snapshot_file",
+	}
+	fetched(monkeypatch, sources, b"<p>New</p>")
+	gemini(monkeypatch, sources, SUMMARY)
+	sources.extract_source("KBS-00001")
+	assert ("File", "FILE-OLD") in site.deleted
+
+
+def test_the_url_password_scan_is_linear():
+	import time
+
+	from erpnext_enhancements.knowledge_base import content
+
+	start = time.perf_counter()
+	content.secret_findings("a." * 40_000)
+	content.secret_findings("a-" * 40_000)
+	assert time.perf_counter() - start < 1.0
+	found = content.secret_findings("see https://" + "admin:" + "hunter2" + "@erp.example.com/ now")
+	assert [f.kind for f in found] == ["a password in a web address"]
+
+
+def test_word_documents_are_capped_lower():
+	assert source_text.MAX_DOCX_XML_BYTES <= 10 * 1024 * 1024

@@ -8,10 +8,12 @@ information to ERPNext, as well as uploading documents and files for analysis an
 **Knowledge Source** (``doctype/knowledge_source``) is one link or one uploaded file. Saving one
 queues :func:`extract_source`, which:
 
-1. **Reads the bytes.** An uploaded file from its private File. A Google Docs, Sheets, Slides or
-   Drive link through the Drive API, as the company's Drive service account
-   (``google_drive.drive_utils.get_drive_service``), exporting a Doc as HTML so its headings and
-   tables survive. Any other link through ``source_fetch.fetch``, which refuses internal addresses.
+1. **Reads the bytes.** An uploaded file from its private File, and only a File attached to this
+   source. A Google Docs, Sheets, Slides or Drive link through the Drive API, as the company's Drive
+   service account (``google_drive.drive_utils.get_drive_service``), exporting a Doc as HTML so its
+   headings and tables survive; only a KB Approver may save such a link (the controller refuses anyone
+   else), because that account reaches far more than one person may. Any other link through
+   ``source_fetch.fetch``, which checks every connection's address before anything is sent.
 2. **Keeps a copy of a link**, as a private File attached to the source (``snapshot_file``), so the
    source still reads when the page moves or disappears.
 3. **Extracts the text** (``source_text.extract``), at most :data:`constants.SOURCE_MAX_TEXT_CHARS`.
@@ -62,6 +64,9 @@ GEMINI_FEATURE = "knowledge_source_summary"
 #: The largest picture sent to Gemini (it travels base64-encoded inside the request).
 MAX_IMAGE_BYTES = 7 * 1024 * 1024
 
+GAVE_UP_MESSAGE = "The source could not be read after several tries. Use Fetch again to start over."
+STORE_FAILED_MESSAGE = "What was read could not be saved. Use Fetch again."
+
 _DOC = "application/vnd.google-apps.document"
 _SHEET = "application/vnd.google-apps.spreadsheet"
 _SLIDES = "application/vnd.google-apps.presentation"
@@ -92,13 +97,18 @@ class SourceProblem(Exception):
 # ------------------------------------------------------------------ queueing
 
 
-def enqueue_extraction(name):
-	"""Queue :func:`extract_source` for ``name`` after the current transaction commits."""
+def enqueue_extraction(name, modified=None):
+	"""Queue :func:`extract_source` for ``name`` after the current transaction commits.
+
+	The job id carries the source's ``modified``: the same change is never queued twice, while a new
+	change (a new link, Fetch again) is queued even when a read of the old one is still running, which
+	Frappe's deduplication would otherwise swallow. The older read then finds the source changed and
+	stores nothing."""
 	frappe.enqueue(
 		EXTRACT_METHOD,
 		queue="long",
 		timeout=600,
-		job_id=f"kb-source::{name}",
+		job_id=f"kb-source::{name}::{modified or ''}",
 		deduplicate=True,
 		enqueue_after_commit=True,
 		name=name,
@@ -106,18 +116,29 @@ def enqueue_extraction(name):
 
 
 def requeue_pending():
-	"""Hourly: queue again every source left Pending, whose job a deploy's FLUSHDB destroyed."""
+	"""Hourly: queue again every source left Pending, whose job a deploy's FLUSHDB destroyed; and mark
+	Failed one still Pending :data:`constants.SOURCE_GIVE_UP_HOURS` after its last change, so a source
+	that kills its job every time is not retried forever."""
 	if not frappe.db.table_exists(constants.SOURCE_DOCTYPE):
 		return
-	cutoff = add_to_date(now_datetime(), minutes=-constants.SOURCE_REQUEUE_AFTER_MINUTES)
-	names = frappe.get_all(
+	now = now_datetime()
+	cutoff = add_to_date(now, minutes=-constants.SOURCE_REQUEUE_AFTER_MINUTES)
+	give_up = add_to_date(now, hours=-constants.SOURCE_GIVE_UP_HOURS)
+	rows = frappe.get_all(
 		constants.SOURCE_DOCTYPE,
 		filters={"extraction_state": "Pending", "modified": ["<", cutoff]},
-		pluck="name",
+		fields=["name", "modified"],
 		limit=50,
 	)
-	for name in names:
-		enqueue_extraction(name)
+	for row in rows:
+		if str(row.get("modified")) < str(give_up):
+			frappe.db.set_value(
+				constants.SOURCE_DOCTYPE,
+				row.get("name"),
+				{"extraction_state": "Failed", "extraction_message": GAVE_UP_MESSAGE},
+			)
+		else:
+			enqueue_extraction(row.get("name"), row.get("modified"))
 
 
 # ------------------------------------------------------------------ the job
@@ -153,6 +174,12 @@ def extract_source(name):
 		summary = None
 		notes = []
 		if kind == "image":
+			if len(data) > MAX_IMAGE_BYTES:
+				raise SourceProblem(
+					"Failed",
+					f"The picture is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB, the most the library "
+					"sends to Gemini to read. Save a smaller copy.",
+				)
 			summary = _summarize(doc, "", image=(data, content_type))
 			if summary is None:
 				raise SourceProblem(
@@ -187,7 +214,18 @@ def extract_source(name):
 	except Exception as exc:
 		_log_failure(name, exc)
 		outcome.update(state="Failed", message="The source could not be read just now. Use Fetch again.")
-	_store(name, read_from, outcome, snapshot)
+	try:
+		_store(name, read_from, outcome, snapshot)
+	except Exception as exc:
+		# Never leave it Pending for the sweep to loop: say it failed, without a save that could fail
+		# the same way.
+		frappe.db.rollback()
+		_log_failure(name, exc)
+		frappe.db.set_value(
+			constants.SOURCE_DOCTYPE,
+			name,
+			{"extraction_state": "Failed", "extraction_message": STORE_FAILED_MESSAGE},
+		)
 
 
 def read_source(doc):
@@ -207,17 +245,19 @@ def read_source(doc):
 
 
 def _read_file(doc):
+	# Only a File attached to THIS source is read, never another record's file found by its URL: that
+	# would publish a private file's text to every staff user. An upload made on the form is attached
+	# to the source when it is first saved, before the read is queued.
 	file_url = doc.source_file or ""
-	attached = frappe.db.get_value(
+	name = frappe.db.get_value(
 		"File",
 		{"file_url": file_url, "attached_to_doctype": constants.SOURCE_DOCTYPE, "attached_to_name": doc.name},
 		"name",
 	)
-	name = attached or frappe.db.get_value("File", {"file_url": file_url}, "name")
 	if not name:
-		raise SourceProblem("Failed", "The uploaded file could not be found. Attach it again.")
+		raise SourceProblem("Failed", "The uploaded file could not be found on this source. Attach it again.")
 	file_doc = frappe.get_doc("File", name)
-	if attached and not cint(file_doc.is_private):
+	if not cint(file_doc.is_private):
 		# Frappe attaches an Attach field's upload with db.set_value, which runs no File hook, so
 		# files.force_private never saw it; a public File is served to anyone holding its URL.
 		file_doc.is_private = 1
@@ -392,7 +432,7 @@ def _store(name, read_from, outcome, snapshot):
 	doc.extraction_state = state
 	doc.extraction_message = (outcome.get("message") or "")[:1000]
 	doc.content_type = (outcome.get("content_type") or "")[:140]
-	doc.fetched_url = (outcome.get("fetched_url") or "")[: constants.SOURCE_MAX_URL_CHARS]
+	doc.fetched_url = _quoted(outcome.get("fetched_url"))[: constants.SOURCE_MAX_URL_CHARS]
 	doc.fetched_on = now_datetime()
 	doc.extracted_text = text
 	doc.text_chars = len(text)
@@ -413,7 +453,6 @@ def _store(name, read_from, outcome, snapshot):
 
 def _replace_snapshot(doc, snapshot):
 	"""Keep the fetched copy of a link as a private File on the source, replacing an older one."""
-	old = doc.snapshot_file or ""
 	if snapshot is None:
 		return
 	data, filename = snapshot
@@ -431,18 +470,30 @@ def _replace_snapshot(doc, snapshot):
 	file_doc.flags.ignore_permissions = True
 	file_doc.insert()
 	doc.snapshot_file = file_doc.file_url
-	if old and old != file_doc.file_url:
-		for old_name in frappe.get_all(
-			"File",
-			filters={
-				"file_url": old,
-				"attached_to_doctype": constants.SOURCE_DOCTYPE,
-				"attached_to_name": doc.name,
-				"attached_to_field": "snapshot_file",
-			},
-			pluck="name",
-		):
-			frappe.delete_doc("File", old_name, ignore_permissions=True)
+	# Every older copy on this source goes, whichever link it was read from.
+	for old_name in frappe.get_all(
+		"File",
+		filters={
+			"attached_to_doctype": constants.SOURCE_DOCTYPE,
+			"attached_to_name": doc.name,
+			"attached_to_field": "snapshot_file",
+			"name": ["!=", file_doc.name],
+		},
+		pluck="name",
+	):
+		frappe.delete_doc("File", old_name, ignore_permissions=True)
+
+
+def _quoted(url):
+	"""``url`` with anything a URL should not carry percent-encoded (``requests.utils.requote_uri``)."""
+	if not url:
+		return ""
+	try:
+		from requests.utils import requote_uri
+
+		return requote_uri(url)
+	except Exception:
+		return ""
 
 
 def _log_failure(name, exc):

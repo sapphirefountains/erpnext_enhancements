@@ -532,3 +532,8 @@ SOURCE_KEYWORD_MAX_CHARS = 40
 
 #: A Pending source untouched for this long is queued again by the hourly sweep: its job was lost.
 SOURCE_REQUEUE_AFTER_MINUTES = 15
+
+#: A source still Pending this long after its last change has had about three tries (the first read and
+#: two hourly re-queues) and is marked Failed instead of being queued again, so one that kills its job
+#: every time cannot loop the queue, and Gemini, forever. Fetch again starts it over.
+SOURCE_GIVE_UP_HOURS = 3

@@ -1280,11 +1280,14 @@ can be removed. **Restricted material never goes in** (ADR 0017 §5), and the fo
 **Saving one queues it to be read** (`sources.extract_source`, on the `long` queue, one deduplicated
 job per source):
 
-1. **The bytes.** An upload from its File (made private first if it arrived public: Frappe attaches an
-   Attach field's upload with `db.set_value`, which runs no File hook). A Google Docs, Sheets, Slides
-   or Drive link through the Drive API as ERPNext's Drive service account (`google_drive.drive_utils`),
-   a Doc exported as HTML so its headings and tables survive; a file the account cannot open says to
-   share it with that account or upload it instead. Any other link through `source_fetch.fetch`.
+1. **The bytes.** An upload from its File: **only a File attached to the source itself**, never a file
+   found by its URL alone (the form also refuses a file address outside this site's files), and made
+   private first if it arrived public (Frappe attaches an Attach field's upload with `db.set_value`,
+   which runs no File hook). A Google Docs, Sheets, Slides or Drive link through the Drive API as
+   ERPNext's Drive service account (`google_drive.drive_utils`), a Doc exported as HTML so its headings
+   and tables survive. **Only a KB Approver may save a Google link**, because that account reaches far
+   more than one person may (the shared drives' project, customer and opportunity folders); anyone else
+   downloads the file and uploads it. Any other link through `source_fetch.fetch`.
 2. **A private copy of a link** (`snapshot_file`), so the source still reads after the page moves.
 3. **The text** (`source_text`): HTML without scripts or styles and with tables as `a | b` rows, PDF
    (`pypdf`, which Frappe depends on), Word `.docx`, Markdown, text and CSV, at most 200,000 characters.
@@ -1301,24 +1304,33 @@ job per source):
 The states (`constants.SOURCE_STATES`): Pending, Ready, Failed, Not supported, Refused. **The deploy's
 FLUSHDB destroys queued jobs**, so `sources.requeue_pending` (hourly) queues again every source Pending
 for more than 15 minutes, and **Fetch again** on the form (`api/knowledge_base_sources.refetch`, POST,
-write permission) does it at once. An unexpected failure is Failed with an Error Log naming the source
-and the exception's **type** only: a message or traceback could carry the document's own text.
+write permission) does it at once. **A source still Pending 3 hours after its last change is marked
+Failed** rather than queued again, so one that kills its job every time cannot loop the queue (and
+Gemini). The job id carries the source's `modified`, so a change made while an older read runs is
+queued rather than deduplicated away, and the older read then stores nothing. A failure anywhere,
+storing included, ends Failed, with an Error Log naming the source and the exception's **type** only:
+a message or traceback could carry the document's own text. A person who edits a Gemini summary makes
+it theirs (`summary_by_ai` is cleared), and a new link drops the old saved copy. Version tracking is off
+on this doctype: every re-read would copy up to 200,000 characters into a Version row.
 
 ### The link guard (`source_fetch.py`)
 
 The fetch runs on the production server inside Google Cloud, so a link is an instruction to that server.
-Without a guard, a link to `http://169.254.169.254/` (the metadata server), `http://localhost` (the
-bench) or a private address would have ERPNext read its own infrastructure and store the answer where
-every staff user can open it. So, on every hop of a redirect chain:
+Without a guard, a link could have ERPNext read its own infrastructure (the cloud's metadata service,
+the bench, a private address) and store the answer where every staff user can open it. So:
 
 | Rule | Why |
 |---|---|
-| `http`/`https` only, default ports, no `user:password@` | No file, gopher or internal-port tricks; no credentials stored in a URL |
-| Every address the host resolves to must be `is_global`; IPv4 written inside IPv6 judged as IPv4 | Loopback, private, link-local (the metadata server), carrier-grade NAT, multicast and reserved addresses are all refused |
-| Redirects followed by the code, at most 5, each checked again | A public page cannot bounce the request inward |
-| The connected socket's peer checked before the body is read (when urllib3 exposes it) | DNS rebinding: a name that answers public to the check and private to the connection |
-| No cookies, no `Authorization`, `trust_env` off | Nothing of the server's leaves with the request, and no proxy from the environment |
-| 15 MB cap; only readable content types, refused before the body is downloaded | No disk or memory exhaustion; no video downloaded only to be refused |
+| A well-formed link only: `http`/`https`, default ports, no user name or password, an ASCII host, no character outside RFC 3986, and the connecting library must read the same host | HTTP libraries disagree about malformed URLs, so a malformed one is refused, never interpreted |
+| **The address is checked at connect time, before a byte is sent** (`guarded_session`: urllib3 connection classes that check the socket's peer the moment it opens, failing closed) | The check is on the socket actually connected, whatever a name resolved to earlier and whichever host the library settled on |
+| The host's addresses are also checked before connecting | A clear message for an internal link, rather than a connection error |
+| Redirects followed by the code, at most 5, each hop checked again from the top | A public page cannot bounce the request inward |
+| No cookies (the jar accepts none and is cleared between hops), no `Authorization`, no environment proxy | Nothing of the server's leaves with a request |
+| 15 MB and 60 seconds in all; only readable content types, refused before the body is downloaded | A slow or huge response cannot hold a worker; nothing is downloaded only to be refused |
+
+`tests/test_knowledge_base_sources.py` runs the guarded session against a real local server: an
+internal address is refused before the server sees any request, and a response that closes its
+connection is still read whole.
 
 ### Where the AI comes in (v1.845.0)
 

@@ -2,40 +2,45 @@
 
 Nik, 2026-11-25: "submit links for the AI to fetch and save the articles information to ERPNext".
 The fetch runs **on the production server**, inside Google Cloud, so a URL is an instruction to that
-server to make a request. Without care, a link to ``http://169.254.169.254/`` (the cloud metadata
-server), ``http://localhost:8000/`` (the bench itself) or a private address would have ERPNext read
-its own infrastructure and store the answer as a "source" every staff user can open. That is a
-server-side request forgery, and this module is what stops it.
+server to make a request. Without care, a link could have ERPNext read its own infrastructure (the
+cloud's metadata service, the bench itself, a private address) and store the answer as a "source"
+every staff user can open. That is a server-side request forgery, and this module is what stops it.
 
-**The rules, every one applied to every hop of a redirect chain:**
+**The rules:**
 
-- ``http`` or ``https`` only, on the default port (80 or 443). No ``user:password@`` in the address.
-- The host is resolved first, and **every** address it resolves to must be a global (public) one:
-  ``ipaddress``'s ``is_global`` refuses loopback, private (10/8, 172.16/12, 192.168/16), link-local
-  (169.254/16, where the metadata server lives), carrier-grade NAT (100.64/10), multicast, reserved
-  and unspecified addresses, and their IPv6 counterparts. An IPv4 address written inside IPv6
-  (``::ffff:127.0.0.1``) is judged as the IPv4 address it is.
-- Redirects are followed **by this code**, at most five, and each new address is checked again, so a
-  public page cannot bounce the request to an internal one.
-- **After connecting, the address actually connected to is checked too**, when the HTTP library
-  exposes it, so a hostname that answers a public address to the check and a private one to the
-  connection (DNS rebinding) is refused before its body is read. Where the library does not expose
-  the socket, the resolve-time check stands alone; the metadata server also refuses any request
-  without its ``Metadata-Flavor`` header, which this never sends.
-- At most :data:`constants.SOURCE_MAX_BYTES` are read, and only the content types the library can
-  read (:data:`ALLOWED_TYPES`); anything else is refused before its body is downloaded.
+- **A link must be well formed.** ``http`` or ``https`` only, on the default port, with no user name
+  or password, an ASCII host, and no character outside RFC 3986 (:data:`_FORBIDDEN`). Two parsers
+  must also agree on the host: the standard library's and urllib3's, which is the one that connects.
+  HTTP libraries disagree about malformed URLs, so a malformed one is refused, never interpreted.
+- **The address is checked at connect time, before anything is sent.** :func:`guarded_session` mounts
+  connection classes whose ``_new_conn`` checks the socket's peer address against
+  :func:`address_is_public` the moment the TCP connection opens, and closes it otherwise. So whatever
+  address a name resolves to when the connection is made, and whichever host the connecting library
+  settled on, nothing reaches an internal address: the check is on the socket, not on a lookup made
+  earlier. ``is_global`` refuses loopback, private, link-local, carrier-grade NAT, multicast, reserved
+  and unspecified addresses and their IPv6 counterparts, and an IPv4 address written as IPv6 is judged
+  as the IPv4 address it is.
+- **The host's addresses are also checked before connecting** (:func:`resolve_public`), so an internal
+  link gets a clear message instead of a connection error.
+- **Redirects are followed by this code**, at most five, and each hop is checked again from the top.
+- **Nothing of the server's leaves with a request**: no cookies (the session's cookie jar accepts none,
+  and is cleared between hops), no ``Authorization``, no proxy from the environment.
+- **Bounded**: at most :data:`constants.SOURCE_MAX_BYTES`, within :data:`DEADLINE_SECONDS` of wall
+  clock in all, and only the content types the library reads (:data:`ALLOWED_TYPES`), refused before
+  the body is downloaded.
 
 Google Docs and Drive links are not fetched here: :func:`google_file` recognizes them and
-``sources.py`` reads them through the Drive API as the company's service account, because a Docs
-page fetched anonymously is a sign-in page.
+``sources.py`` reads them through the Drive API, for KB Approvers only.
 
-Standard library plus ``requests``, which is imported only when :func:`fetch` runs without an
-injected session, so the rules are tested bench-free (``tests/test_knowledge_base_sources.py``).
+Standard library, plus ``requests`` and ``urllib3`` imported where they are used, so the rules are
+tested bench-free (``tests/test_knowledge_base_sources.py``, which runs the guarded session against a
+real local server).
 """
 
 import ipaddress
 import re
 import socket
+import time
 from collections import namedtuple
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
@@ -63,11 +68,17 @@ ALLOWED_TYPES = frozenset(
 	}
 )
 
+#: The ports a link may name: none (the scheme's default), 80 or 443.
+ALLOWED_PORTS = (None, 80, 443)
+
 #: The most redirects followed for one link.
 MAX_REDIRECTS = 5
 
 #: Seconds to connect, and to wait between bytes once connected.
 TIMEOUT = (5, 20)
+
+#: The most seconds one fetch may take in all, redirects and download included.
+DEADLINE_SECONDS = 60
 
 #: Sent with every request. Plain, honest, and no cookies or credentials of any kind.
 HEADERS = {
@@ -75,7 +86,18 @@ HEADERS = {
 	"Accept": "text/html,application/xhtml+xml,application/pdf,text/plain,*/*;q=0.5",
 }
 
+BLOCKED_MESSAGE = (
+	"That link points inside the company's own network or servers, which the reference library never "
+	"reads. Save a public web page, or upload the file instead."
+)
+
+#: Characters RFC 3986 does not allow anywhere in a URI, plus every control character.
+_FORBIDDEN = re.compile(r'[\\"<>^`{|}\x00-\x20\x7f]')
+
 _CHUNK = 64 * 1024
+
+#: The clock the deadline reads (a module attribute, so a test can move time).
+_clock = time.monotonic
 
 #: Google Docs, Sheets, Slides and Drive file links, and the id in each.
 _GOOGLE_PATH = re.compile(r"^/(document|spreadsheets|presentation|file)/(?:u/\d+/)?d/([A-Za-z0-9_-]{10,})")
@@ -97,15 +119,18 @@ class FetchRefused(Exception):
 def url_problem(url):
 	"""Why ``url`` cannot be saved as a link, in a sentence, or ``None``. Syntax only: no lookup.
 
-	The form calls this on save, so a typo is refused at once; :func:`fetch` checks the addresses.
+	The form calls this on save, so a typo is refused at once; :func:`fetch` calls it on every hop.
 	"""
 	if not isinstance(url, str) or not url.strip():
 		return "Enter the link to save."
 	url = url.strip()
 	if len(url) > constants.SOURCE_MAX_URL_CHARS:
 		return f"The link is longer than {constants.SOURCE_MAX_URL_CHARS} characters."
-	if any(ch.isspace() for ch in url):
-		return "The link has a space in it. Copy it from the browser's address bar."
+	if _FORBIDDEN.search(url):
+		return (
+			"The link has a space or a character a web address cannot hold. Copy it from the "
+			"browser's address bar."
+		)
 	try:
 		parts = urlsplit(url)
 		port = parts.port
@@ -115,11 +140,26 @@ def url_problem(url):
 		return "Only web links (starting https:// or http://) can be saved."
 	if not parts.hostname:
 		return "That is not a web address. Copy it from the browser's address bar."
-	if parts.username or parts.password:
+	if not parts.hostname.isascii():
+		return "The site's name has letters a web address cannot hold as typed. Copy the link from the browser's address bar."
+	if parts.username or parts.password or "@" in parts.netloc:
 		return "The link has a user name or password in it. Save the link without it."
-	if port not in (None, 80, 443):
+	if port not in ALLOWED_PORTS:
 		return "Only links on the standard web ports can be saved."
+	if _connecting_host(url) != parts.hostname.lower():
+		return "That is not a web address. Copy it from the browser's address bar."
 	return None
+
+
+def _connecting_host(url):
+	"""The host urllib3, the library that connects, reads from ``url``, lower case and unbracketed."""
+	try:
+		from urllib3.util import parse_url
+
+		host = parse_url(url).host or ""
+	except Exception:
+		return None
+	return host.strip("[]").lower()
 
 
 def google_file(url):
@@ -158,7 +198,8 @@ def address_is_public(address):
 
 def resolve_public(host, port, resolve=None):
 	"""Every address ``host`` resolves to, after checking each is public; raises
-	:class:`FetchRefused` if one is not, or if it does not resolve."""
+	:class:`FetchRefused` if one is not, or if it does not resolve. An early, readable refusal: the
+	enforcement is the connect-time check in :func:`guarded_session`."""
 	resolve = resolve or socket.getaddrinfo
 	try:
 		infos = resolve(host, port, proto=socket.IPPROTO_TCP)
@@ -169,28 +210,81 @@ def resolve_public(host, port, resolve=None):
 		raise FetchRefused("network", f"Could not find the site {host}. Check the link.")
 	for address in addresses:
 		if not address_is_public(address):
-			raise FetchRefused(
-				"blocked",
-				"That link points inside the company's own network or servers, which the "
-				"reference library never reads. Save a public web page, or upload the file instead.",
-			)
+			raise FetchRefused("blocked", BLOCKED_MESSAGE)
 	return addresses
+
+
+def require_public_socket(sock):
+	"""Close ``sock`` and refuse unless its peer is a public address. Called the moment a connection
+	opens, before a byte is sent; fails closed when the peer cannot be read."""
+	try:
+		peer = sock.getpeername()[0]
+	except (OSError, IndexError, TypeError):
+		peer = None
+	if peer is None or not address_is_public(peer):
+		try:
+			sock.close()
+		finally:
+			raise FetchRefused("blocked", BLOCKED_MESSAGE)
+
+
+def guarded_session():
+	"""A ``requests`` session whose every connection is checked at connect time (see the module
+	docstring), that accepts no cookies, retries nothing and uses no proxy from the environment."""
+	from http.cookiejar import DefaultCookiePolicy
+
+	import requests
+	from requests.adapters import HTTPAdapter
+	from urllib3.connection import HTTPConnection, HTTPSConnection
+	from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+
+	class _GuardedHTTPConnection(HTTPConnection):
+		def _new_conn(self):
+			sock = super()._new_conn()
+			require_public_socket(sock)
+			return sock
+
+	class _GuardedHTTPSConnection(HTTPSConnection):
+		def _new_conn(self):
+			sock = super()._new_conn()
+			require_public_socket(sock)
+			return sock
+
+	class _GuardedHTTPPool(HTTPConnectionPool):
+		ConnectionCls = _GuardedHTTPConnection
+
+	class _GuardedHTTPSPool(HTTPSConnectionPool):
+		ConnectionCls = _GuardedHTTPSConnection
+
+	class _GuardedAdapter(HTTPAdapter):
+		def init_poolmanager(self, *args, **kwargs):
+			super().init_poolmanager(*args, **kwargs)
+			self.poolmanager.pool_classes_by_scheme = {"http": _GuardedHTTPPool, "https": _GuardedHTTPSPool}
+
+		def proxy_manager_for(self, *args, **kwargs):
+			raise FetchRefused("blocked", BLOCKED_MESSAGE)
+
+	session = requests.Session()
+	session.trust_env = False
+	session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+	adapter = _GuardedAdapter(max_retries=0)
+	session.mount("http://", adapter)
+	session.mount("https://", adapter)
+	return session
 
 
 def fetch(url, *, session=None, resolve=None, max_bytes=None):
 	"""Read ``url`` under the rules in the module docstring and return a :class:`Fetched`.
 
-	Raises :class:`FetchRefused` with a message for the person, for every expected failure.
+	``session`` is for tests only; production always uses :func:`guarded_session`. Raises
+	:class:`FetchRefused` with a message for the person, for every expected failure.
 	"""
 	problem = url_problem(url)
 	if problem:
 		raise FetchRefused("blocked", problem)
 	max_bytes = max_bytes or constants.SOURCE_MAX_BYTES
-	if session is None:
-		import requests
-
-		session = requests.Session()
-		session.trust_env = False
+	session = session if session is not None else guarded_session()
+	deadline = _clock() + DEADLINE_SECONDS
 	current = url.strip()
 	for _hop in range(MAX_REDIRECTS + 1):
 		problem = url_problem(current)
@@ -199,9 +293,9 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 		parts = urlsplit(current)
 		port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
 		resolve_public(parts.hostname, port, resolve=resolve)
+		_clear_cookies(session)
 		response = _get(session, current)
 		try:
-			_check_peer(response)
 			if 300 <= response.status_code < 400 and response.headers.get("Location"):
 				current = urljoin(current, response.headers["Location"])
 				continue
@@ -216,7 +310,7 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 					f"The link is a {content_type or 'kind of file'} the library cannot read. A web "
 					"page, PDF, Word document, text file or picture can be saved.",
 				)
-			data = _read_capped(response, max_bytes)
+			data = _read_capped(response, max_bytes, deadline)
 			return Fetched(data, content_type, current, _filename(response, current, content_type))
 		finally:
 			close = getattr(response, "close", None)
@@ -225,44 +319,42 @@ def fetch(url, *, session=None, resolve=None, max_bytes=None):
 	raise FetchRefused("http", "The link redirects too many times.")
 
 
+def _clear_cookies(session):
+	cookies = getattr(session, "cookies", None)
+	clear = getattr(cookies, "clear", None)
+	if callable(clear):
+		clear()
+
+
 def _get(session, url):
 	try:
 		return session.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True, allow_redirects=False)
+	except FetchRefused:
+		raise
 	except Exception as exc:
-		name = type(exc).__name__
-		if "Timeout" in name:
+		refused = _refusal_inside(exc)
+		if refused is not None:
+			raise refused from None
+		if "Timeout" in type(exc).__name__:
 			raise FetchRefused("network", "The site took too long to answer. Try again later.") from None
 		raise FetchRefused(
 			"network", "Could not reach the site. Check the link, or try again later."
 		) from None
 
 
-def _check_peer(response):
-	"""Refuse when the socket actually connected to is not public (DNS rebinding); see the module
-	docstring. Silent when the HTTP library does not expose the socket."""
-	address = peer_address(response)
-	if address is not None and not address_is_public(address):
-		raise FetchRefused(
-			"blocked",
-			"That link points inside the company's own network or servers, which the reference "
-			"library never reads.",
-		)
-
-
-def peer_address(response):
-	"""The IP address ``response`` came from, or ``None`` when it cannot be read.
-
-	urllib3 2.x keeps the connection on the streamed response (``HTTPResponse.connection``).
-	"""
-	raw = getattr(response, "raw", None)
-	for attr in ("connection", "_connection"):
-		conn = getattr(raw, attr, None)
-		sock = getattr(conn, "sock", None)
-		if sock is not None:
-			try:
-				return sock.getpeername()[0]
-			except (OSError, IndexError, TypeError):
-				return None
+def _refusal_inside(exc):
+	"""A :class:`FetchRefused` an HTTP library wrapped on its way up, or ``None``."""
+	seen = set()
+	while exc is not None and id(exc) not in seen:
+		if isinstance(exc, FetchRefused):
+			return exc
+		seen.add(id(exc))
+		inner = None
+		for arg in getattr(exc, "args", ()):
+			if isinstance(arg, BaseException):
+				inner = arg
+				break
+		exc = getattr(exc, "reason", None) or inner or exc.__cause__ or exc.__context__
 	return None
 
 
@@ -282,13 +374,15 @@ def _content_type(response, url):
 	return value
 
 
-def _read_capped(response, max_bytes):
+def _read_capped(response, max_bytes, deadline=None):
 	declared = response.headers.get("Content-Length")
 	if declared and declared.isdigit() and int(declared) > max_bytes:
 		raise FetchRefused("too_large", _too_large(max_bytes))
 	chunks = []
 	total = 0
 	for chunk in response.iter_content(_CHUNK):
+		if deadline is not None and _clock() > deadline:
+			raise FetchRefused("network", "The site sent the page too slowly. Try again later.")
 		if not chunk:
 			continue
 		total += len(chunk)

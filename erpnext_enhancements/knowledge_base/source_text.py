@@ -38,8 +38,9 @@ Extracted = namedtuple("Extracted", "text title kind")
 #: The most PDF pages read.
 MAX_PDF_PAGES = 300
 
-#: The largest ``word/document.xml`` unpacked.
-MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
+#: The largest ``word/document.xml`` unpacked. ElementTree holds the whole tree, at many times the
+#: XML's size, on a server that runs everything else too.
+MAX_DOCX_XML_BYTES = 10 * 1024 * 1024
 
 _TYPE_KINDS = {
 	"text/html": "html",

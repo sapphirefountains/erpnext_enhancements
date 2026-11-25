@@ -505,7 +505,14 @@ _SECRET_PATTERNS = tuple(
 			re.IGNORECASE,
 			_basic_credential,
 		),
-		("a password in a web address", r"\b[a-z][a-z0-9+.-]*://[^\s/:@<>\"']+:[^\s/@<>\"']+@", re.IGNORECASE, None),
+		# The scheme may not start inside a longer run of scheme characters, and the possessive *+ never
+		# hands characters back: linear on any text (a long run of "a." took seconds with \b and *).
+		(
+			"a password in a web address",
+			r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*+://[^\s/:@<>\"']+:[^\s/@<>\"']+@",
+			re.IGNORECASE,
+			None,
+		),
 		(
 			"a written-out password",
 			r"\b(?:password|passwd|passcode|passphrase)\s*(?:[:=]|\bis\b:?)\s*[\"'“‘]?([^\s\"'“”‘’<>]{8,})",
