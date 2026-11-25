@@ -1320,13 +1320,23 @@ every staff user can open it. So, on every hop of a redirect chain:
 | No cookies, no `Authorization`, `trust_env` off | Nothing of the server's leaves with the request, and no proxy from the environment |
 | 15 MB cap; only readable content types, refused before the body is downloaded | No disk or memory exhaustion; no video downloaded only to be refused |
 
-### Where the AI comes in
+### Where the AI comes in (v1.845.0)
 
-**Not in this change.** The AI tools that save a link from a chat (as an approval card), and that
-search and read the library with every result labeled as reference, are the next PR. Until it lands,
-the library is a Desk feature: the AwesomeBar finds `Knowledge Source`, and the workspace and sidebar
-link it as **Reference library**. FAC's generic `extract_file_content` can already read a source's
-file, as it can any file the caller may read.
+Three tools, all through `source_tools.py` and run by `assistant_tools/_knowledge_base.run_source`
+(a failure is one deferred Error Log naming the method and the exception's type, never the arguments):
+
+| Tool | Gate | What it does |
+|---|---|---|
+| `search_company_knowledge` (existing) | read | Unchanged `results` (approved articles only), plus **`references`**: up to 3 Active, Ready sources the caller may read, ranked by the same BM25 engine over title, keywords, summary and the first 60,000 characters of text. Each carries `result_type: "reference"`, `reviewed: false` and a label; the note says to prefer an article and to name a reference as unreviewed. None when a `kind` is given (a kind is an article's), when `include_reference` is false, or when the query or a filter is a problem; a failure becomes a `problems` entry and never costs the articles |
+| `fetch_knowledge_source` (new) | read (`EXPLICIT_READONLY`) | One source as the caller: its text (at most 40,000 characters), summary, original link, reading state and why it was saved, labeled. `KBS-00012`, `kbs 12` and `KBS_12` all read; every miss is the same `found: false` |
+| `save_knowledge_source` (new) | write (`APP_MUTATING`, Low) | A new Link source, created as the person who confirms the card, so their own create permission applies (KB Author or KB Approver). The card shows the link the server will fetch. A link the library already holds comes back as that source. Arguments: `url`, `source_title`, `why_saved`, `department` (no property is named `title`) |
+
+**Why `references` is its own list.** ADR 0017 §3 lets the contract gain fields, not change meaning: a
+client that reads `results` (Triton's snapshot included) still sees approved articles only, and a
+reference can never be mistaken for one by position. Triton chat offers `search*` and `fetch*` tools by
+prefix, so it reads references and `fetch_knowledge_source` within its cache; the deployed agents need
+their frozen snapshot regenerated. `save_knowledge_source` is a write: whether Triton offers it is
+Triton's choice (its `_NOT_OFFERED_PREFIXES`).
 
 ## File map
 
@@ -1353,6 +1363,8 @@ file, as it can any file the caller may read.
 | `sources.py` | The reference library's reading job (2026-11-25): `extract_source` (read, copy, extract, refuse secrets, summarize, store unless the source changed meanwhile), `requeue_pending` (hourly, for FLUSHDB), `parse_summary` (Gemini's JSON, distrusted), the Drive branch |
 | `source_fetch.py` | The link guard (2026-11-25): `url_problem`, `google_file`, `address_is_public`, `resolve_public`, `fetch` (every hop checked, the peer checked, a size cap, readable types only). Standard library plus `requests` |
 | `source_text.py` | A source's text (2026-11-25): HTML, PDF, Word, Markdown, text and CSV as Markdown-flavored text, and `kind_of`. Standard library at import |
+| `source_tools.py` | The reference library for AI tools (v1.845.0): `reference_hits` (search's `references`, as the caller), `fetch_payload`, `save_payload`, `source_id` |
+| [`../assistant_tools/fetch_knowledge_source.py`](../assistant_tools/fetch_knowledge_source.py), [`save_knowledge_source.py`](../assistant_tools/save_knowledge_source.py) | The two reference-library tools' thin FAC wrappers (v1.845.0): one `EXPLICIT_READONLY`, one `APP_MUTATING` and Low |
 | `doctype/knowledge_source/` | The reference library's record (2026-11-25), `KBS-.#####`. Controller `KnowledgeSource`: when a source must be read again, the secret scan on typed text, the queueing |
 | [`../api/knowledge_base_sources.py`](../api/knowledge_base_sources.py) | Fetch again (2026-11-25): `refetch`, POST, write permission on the source |
 | [`../tests/test_knowledge_base_sources.py`](../tests/test_knowledge_base_sources.py) | The reference library (2026-11-25), **pytest**, its own step: the link guard, the text, the job over a fake frappe, the controller, Fetch again, the schema and the hooks |
@@ -1397,8 +1409,8 @@ In order, one PR at a time, each verified on prod before the next merges (see WI
 - ~~**PR 4a** (only if the Google Docs Markdown export keeps pictures and tables): Markdown import.~~
   Replaced on 2026-11-25 by the reference library: a Google Doc is saved by its link (read through the
   Drive API) or uploaded as a file, and its text is what an author or the AI drafts an article from.
-- **The reference library's AI tools**: save a link from a chat as an approval card, and search and
-  read the library as the caller, every result labeled as reference, approved articles first.
+- ~~**The reference library's AI tools**~~. Written in v1.845.0: `references` on search,
+  `fetch_knowledge_source` and `save_knowledge_source`. See "Where the AI comes in (v1.845.0)".
 - ~~**PR 5**: in-app search~~. Done in v1.558.0, holding to what PR 4 left it: the published Article
   only, as the caller, never the Version doctype and never a SQL-function string; no `Global Search
   DocType` row and no `in_global_search` field; a hit opens the article with `frappe.set_route`; the

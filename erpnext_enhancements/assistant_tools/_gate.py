@@ -147,6 +147,10 @@ EXPLICIT_READONLY = {
     "search_company_knowledge",
     "fetch_knowledge_article",
     "list_company_knowledge",
+    # 2026-11-25 -- read one reference-library source (a saved link or upload) as the caller, labeled
+    # unreviewed (knowledge_base/source_tools.py). Writes nothing. Its write half, save_knowledge_source,
+    # is in APP_MUTATING.
+    "fetch_knowledge_source",
     # v1.571.0 (WI-079 slice 5) -- dry-run a design review bundle: every check an import makes, nothing
     # written. Its write half, submit_design_review, is in APP_MUTATING.
     "check_design_review_bundle",
@@ -224,6 +228,11 @@ APP_MUTATING = {
     # and element codes are append-only), and it opens nothing -- a person adds the participants and
     # sets the review Open. Prechecked, so an invalid bundle or a service-account caller gets no card.
     "submit_design_review",
+    # 2026-11-25 -- save a link to the knowledge base's reference library (knowledge_base/source_tools.py):
+    # one Knowledge Source, created as the person who confirms, which ERPNext then reads in the
+    # background through its guarded fetch. Low (below): one create, deleted as easily by a KB
+    # Approver, and nothing existing changes.
+    "save_knowledge_source",
 }
 
 HIGH_RISK = {
@@ -252,6 +261,7 @@ LOW_RISK = {
     "log_marketing_event",
     "save_water_design",
     "author_training_course",
+    "save_knowledge_source",
     # a private File the requester owns; nothing existing changes and deleting it undoes it
     "generate_document",
 }
@@ -911,6 +921,11 @@ def summarize_tool_call(tool_name, arguments):
     if tool_name == "generate_document":
         label = (args.get("title") or args.get("filename") or "").strip()
         return f"Generate a PDF document {label}".strip()
+    if tool_name == "save_knowledge_source":
+        # 2026-11-25. The card's decision is which link the server will fetch, so it shows the link.
+        link = " ".join(str(args.get("url") or "").split())
+        shown = (link[:90] + "…") if len(link) > 90 else link
+        return f"Save link to the reference library: {shown or '(no link)'}"
     if tool_name == "log_marketing_event":
         text = (args.get("title") or "").strip()
         snippet = (text[:60] + "…") if len(text) > 60 else text

@@ -60,10 +60,11 @@
 >   summary. It is **reference, not knowledge**: never approved, never numbered, never an article. Every
 >   staff user reads it; KB Authors add to it; KB Approvers may delete a source. Restricted material
 >   stays out (§5).
-> - **The AI may quote it, labeled.** §3's search results gain a second `result_type`, `"reference"`, an
->   added value the contract was written to allow; approved articles always rank first, and every
->   reference result says that nobody reviewed it. The frozen tool names do not change. (The AI side is
->   its own PR, after the library.)
+> - **The AI may quote it, labeled.** §3's search answer gains a separate `references` list whose items
+>   carry `result_type: "reference"` and `reviewed: false`, an added field the contract was written to
+>   allow; `results` keeps approved articles only, so they always come first and no client mistakes a
+>   reference for one. The frozen tool names do not change; two tools are added,
+>   `fetch_knowledge_source` (read) and `save_knowledge_source` (a Low write, behind a card).
 > - **The server fetches links**, so the fetch refuses every internal address (loopback, private,
 >   link-local where the metadata server lives, carrier-grade NAT), checks every redirect hop and the
 >   connected socket, sends no credentials and caps the size. Google links are read through the Drive

@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.845.0] - 2026-11-25
+
+### Added
+
+- **The AI answers from the reference library, labeled, and can save a link to it.** The second half of
+  the 2026-11-25 decision ("Answer, labeled"): an AI may quote saved links and uploads as long as it
+  says nobody reviewed them, and approved articles come first. Built on v1.844.0's Knowledge Source;
+  everything runs through `knowledge_base/source_tools.py`.
+  - **`search_company_knowledge` returns `references`**, a separate list after the articles: up to 3
+    Active, Ready sources the caller may read, ranked by the knowledge base's own BM25 engine over the
+    title, keywords, summary and the first 60,000 characters of text. Each carries
+    `result_type: "reference"`, `reviewed: false` and a label, and the note tells the model to prefer
+    an article and to name a reference as unreviewed. `results` is unchanged and holds approved articles
+    only, so a client that reads it (Triton's frozen snapshot included) never sees a reference there:
+    an added field, as ADR 0017 §3 allows. None when a `kind` is asked for, when the new
+    `include_reference` is false, or when the query or a filter is a problem; if the library cannot be
+    searched, that is a `problems` entry and the articles still come back.
+  - **`fetch_knowledge_source`** (new, read-only): one source as the caller, with its text (at most
+    40,000 characters), summary, original link, reading state and why it was saved, every answer
+    labeled. `KBS-00012`, `kbs 12` and `KBS_12` all read; every miss is one `found: false`.
+  - **`save_knowledge_source`** (new, a write behind a card, Low): saves a link as a new Knowledge
+    Source, created as the person who confirms, so their own create permission applies (KB Author or
+    KB Approver); ERPNext then reads it through v1.844.0's guarded fetch. The card's line is the link
+    the server will fetch. A link the library already holds comes back as that source, not a second
+    one. A bad link, an unknown department or a missing create permission is refused before any write.
+  - A failure in any of the three logs one deferred Error Log naming the method and the exception's
+    type, never the arguments (`assistant_tools/_knowledge_base.run_source`), as the other knowledge
+    base tools do.
+
+### Tests
+
+- `tests/test_knowledge_base_sources.py` (its own pytest step) gains the AI side: references labeled,
+  only Active and Ready sources, read as the caller, the department filter; fetch's label, truncation,
+  archived and unread notes, and every miss answered alike; save's cleaned arguments, the duplicate, and
+  each refusal before a write; `search_payload` keeping references out of `results`, out of a kind
+  search and out when switched off, and surviving a broken library; the gate's classification and the
+  card's line.
+- `test_knowledge_base_tools` (search's properties gain `include_reference`) and
+  `test_knowledge_base_actions` (the search payload's keys gain `reference_count` and `references`).
+  `test_assistant_tools_schema` classifies, annotates and validates the two new tools like every other.
+
 ## [1.844.0] - 2026-11-25
 
 ### Added

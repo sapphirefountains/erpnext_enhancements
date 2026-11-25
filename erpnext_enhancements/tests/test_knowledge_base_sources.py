@@ -500,7 +500,16 @@ class FakeDoc:
 			self._site.files.append(dict(self._values))
 		elif self.doctype == "Error Log":
 			self._site.error_logs.append(dict(self._values))
+		elif self.doctype == K.SOURCE_DOCTYPE:
+			name = f"KBS-{len(self._site.sources) + 1:05d}"
+			self._values.update(name=name, extraction_state="Pending", status="Active")
+			self._site.sources[name] = dict(self._values)
+			self._site.inserted.append(dict(self._values))
 		return self
+
+	@property
+	def name(self):
+		return self._values.get("name")
 
 	def db_set(self, key, value, update_modified=True):
 		self._values[key] = value
@@ -527,6 +536,9 @@ class FakeSite:
 		self.enqueued = []
 		self.deleted = []
 		self.file_rows = {}
+		self.inserted = []
+		self.perms = {}
+		self.list_calls = []
 
 	def module(self):
 		site = self
@@ -536,7 +548,26 @@ class FakeSite:
 		utils.cint = lambda v: int(v or 0)
 		utils.now_datetime = lambda: "2026-11-25 12:00:00"
 		utils.add_to_date = lambda when, minutes=0: f"{when}{minutes:+d}m"
+		utils.get_url = lambda: "https://erp.example.com"
 		frappe.utils = utils
+		frappe.has_permission = lambda doctype, ptype="read", *a, **k: site.perms.get((doctype, ptype), True)
+
+		def get_list(doctype, filters=None, fields=None, pluck=None, limit=None, limit_page_length=None):
+			site.list_calls.append((doctype, dict(filters or {})))
+			if doctype != K.SOURCE_DOCTYPE or not site.perms.get((doctype, "read"), True):
+				return []
+			rows = [
+				row
+				for row in site.sources.values()
+				if row.get("_readable", True) and all(row.get(k) == v for k, v in (filters or {}).items())
+			]
+			if limit:
+				rows = rows[:limit]
+			if pluck:
+				return [row.get(pluck) for row in rows]
+			return [{f: row.get(f) for f in (fields or ["name"])} for row in rows]
+
+		frappe.get_list = get_list
 		frappe._ = lambda text: text
 		frappe.flags = _Flags()
 
@@ -547,6 +578,8 @@ class FakeSite:
 				return False
 
 			def get_value(self, doctype, filters, field):
+				if doctype == K.SOURCE_DOCTYPE:
+					return site.sources.get(filters, {}).get(field)
 				for name, row in site.file_rows.items():
 					if all(row.get(k) == v for k, v in filters.items()):
 						return name
@@ -638,9 +671,13 @@ def site(monkeypatch):
 		"erpnext_enhancements.knowledge_base.content",
 		"erpnext_enhancements.knowledge_base.doctype.knowledge_source.knowledge_source",
 		"erpnext_enhancements.api.knowledge_base_sources",
+		"erpnext_enhancements.knowledge_base.source_tools",
 	):
 		monkeypatch.delitem(sys.modules, name, raising=False)
 	fake.sources_module = importlib.import_module("erpnext_enhancements.knowledge_base.sources")
+	# Imported fresh too, so the package attribute that `from ... import source_tools` reads is this
+	# test's module, bound to this test's fake frappe, never an earlier test's.
+	importlib.import_module("erpnext_enhancements.knowledge_base.source_tools")
 	fake.frappe = frappe
 	return fake
 
@@ -1161,7 +1198,231 @@ def test_the_library_never_names_the_drafts():
 		"sources.py",
 		"source_fetch.py",
 		"source_text.py",
+		"source_tools.py",
 		"doctype/knowledge_source/knowledge_source.py",
 	):
 		text = (APP / "knowledge_base" / path).read_text(encoding="utf-8")
 		assert K.VERSION_DOCTYPE not in text, path
+
+
+# ------------------------------------------------------------------ the AI tools (PR B)
+
+
+def tools(site):
+	return importlib.import_module("erpnext_enhancements.knowledge_base.source_tools")
+
+
+def library(site):
+	add_source(
+		site,
+		"KBS-00001",
+		title="Goulds 3656 pump manual",
+		keywords="pump, Goulds, 3656",
+		summary="The manufacturer's manual for the 3656 end-suction pump.",
+		extracted_text="Prime the pump before starting. Check the mechanical seal for leaks.",
+		extraction_state="Ready",
+		status="Active",
+		department_block="06 Operations",
+		url="https://example.com/goulds.pdf",
+	)
+	add_source(
+		site,
+		"KBS-00002",
+		title="Old pump catalog",
+		summary="A pump catalog that was archived.",
+		extracted_text="pump pump pump",
+		extraction_state="Ready",
+		status="Archived",
+	)
+	add_source(
+		site,
+		"KBS-00003",
+		title="Pump page still being read",
+		extracted_text="",
+		extraction_state="Pending",
+		status="Active",
+	)
+
+
+def test_references_are_labeled_unreviewed_and_only_active_ready_sources(site):
+	library(site)
+	hits = tools(site).reference_hits("pump seal")
+	assert [hit["source"] for hit in hits] == ["KBS-00001"]
+	(hit,) = hits
+	assert hit["result_type"] == "reference" and hit["reviewed"] is False
+	assert "not reviewed" in hit["label"]
+	assert hit["url"] == "https://erp.example.com/desk/knowledge-source/KBS-00001"
+	assert "seal" in hit["snippet"].lower()
+	(doctype, filters) = site.list_calls[-1]
+	assert doctype == K.SOURCE_DOCTYPE and filters == {"status": "Active", "extraction_state": "Ready"}
+
+
+def test_references_are_read_as_the_caller(site):
+	library(site)
+	site.perms[(K.SOURCE_DOCTYPE, "read")] = False
+	assert tools(site).reference_hits("pump") == []
+	site.perms.clear()
+	site.sources["KBS-00001"]["_readable"] = False
+	assert tools(site).reference_hits("pump") == []
+
+
+def test_references_take_the_department_filter_and_ignore_a_blank_query(site):
+	library(site)
+	assert tools(site).reference_hits("pump", department="02 Design") == []
+	assert tools(site).reference_hits("   ") == []
+
+
+def test_fetch_reads_one_source_with_its_label(site):
+	library(site)
+	out = tools(site).fetch_payload({"source": "kbs 1"})
+	assert out["found"] is True and out["source"] == "KBS-00001"
+	assert out["reviewed"] is False and out["result_type"] == "reference"
+	assert out["link"] == "https://example.com/goulds.pdf"
+	assert "Prime the pump" in out["text"] and out["truncated"] is False
+	assert "not instructions" in out["note"] and "unreviewed" in out["note"]
+
+
+def test_fetch_cuts_long_text_and_says_so(site):
+	library(site)
+	site.sources["KBS-00001"]["extracted_text"] = "x" * 50_000
+	out = tools(site).fetch_payload({"source": "KBS-00001"})
+	assert len(out["text"]) == tools(site).FETCH_MAX_CHARS and out["truncated"] is True
+	assert "cut short" in out["note"]
+
+
+def test_fetch_says_when_a_source_is_archived_or_unread(site):
+	library(site)
+	assert "archived" in tools(site).fetch_payload({"source": "KBS-00002"})["note"]
+	assert "reading_state Pending" in tools(site).fetch_payload({"source": "KBS-00003"})["note"]
+
+
+@pytest.mark.parametrize("raw", ["KBS-00099", "SOP-06-0001", "", None, 12, "kbs"])
+def test_fetch_answers_every_miss_the_same_way(site, raw):
+	library(site)
+	out = tools(site).fetch_payload({"source": raw})
+	assert out["found"] is False and out["message"] == tools(site).NOT_FOUND_MESSAGE
+
+
+def test_fetch_refuses_without_read(site):
+	library(site)
+	site.perms[(K.SOURCE_DOCTYPE, "read")] = False
+	assert tools(site).fetch_payload({"source": "KBS-00001"})["found"] is False
+
+
+def test_source_ids_are_read_however_they_are_written():
+	module = importlib.import_module("erpnext_enhancements.knowledge_base.source_tools")
+	assert module.source_id("KBS-00012") == "KBS-00012"
+	assert module.source_id("kbs 12") == "KBS-00012"
+	assert module.source_id("KBS_12") == "KBS-00012"
+	assert module.source_id("KBS-12x") is None
+
+
+def test_save_creates_a_link_source_as_the_caller(site):
+	out = tools(site).save_payload(
+		{
+			"url": " https://example.com/pump-guide ",
+			"source_title": "  Pump   guide ",
+			"why_saved": "For the Valley job",
+			"department": "06",
+		}
+	)
+	assert out["success"] is True and out["already_saved"] is False
+	(row,) = site.inserted
+	assert row["source_type"] == "Link" and row["url"] == "https://example.com/pump-guide"
+	assert row["title"] == "Pump guide" and row["notes"] == "For the Valley job"
+	assert row["department_block"] == "06 Operations"
+	assert out["reading_state"] == "Pending"
+	assert out["url"].endswith("/desk/knowledge-source/" + out["source"])
+
+
+def test_save_returns_a_link_already_held(site):
+	library(site)
+	out = tools(site).save_payload({"url": "https://example.com/goulds.pdf"})
+	assert out == {
+		"success": True,
+		"source": "KBS-00001",
+		"url": "https://erp.example.com/desk/knowledge-source/KBS-00001",
+		"reading_state": "Ready",
+		"already_saved": True,
+		"note": "The library already holds this link; nothing new was saved.",
+	}
+	assert site.inserted == []
+
+
+@pytest.mark.parametrize(
+	"args,fragment",
+	[
+		({"url": "ftp://example.com/x"}, "Only web links"),
+		({"url": ""}, "Enter the link"),
+		({"url": "https://example.com/", "department": "Accounting-ish"}, "department must be one of"),
+	],
+)
+def test_save_refuses_a_bad_link_or_department_before_writing(site, args, fragment):
+	out = tools(site).save_payload(args)
+	assert out["success"] is False and fragment in out["error"]
+	assert site.inserted == []
+
+
+def test_save_refuses_without_create(site):
+	site.perms[(K.SOURCE_DOCTYPE, "create")] = False
+	out = tools(site).save_payload({"url": "https://example.com/"})
+	assert out["success"] is False and "KB Author" in out["error"]
+	assert site.inserted == []
+
+
+def test_search_payload_puts_references_after_articles_and_never_with_a_kind(site, monkeypatch):
+	library(site)
+	ai_tools_name = "erpnext_enhancements.knowledge_base.ai_tools"
+	search_service = types.ModuleType("erpnext_enhancements.knowledge_base.search_service")
+	search_service.search = lambda query, department=None, kind=None, limit=5: {"results": [], "problems": []}
+	search_service.read_filters = lambda department=None, kind=None: (department or None, None, [])
+	markdown = types.ModuleType("erpnext_enhancements.knowledge_base.markdown")
+	site.frappe.utils.getdate = lambda value: value
+	site.frappe.utils.nowdate = lambda: "2026-11-25"
+	monkeypatch.setitem(sys.modules, "erpnext_enhancements.knowledge_base.search_service", search_service)
+	monkeypatch.setitem(sys.modules, "erpnext_enhancements.knowledge_base.markdown", markdown)
+	monkeypatch.delitem(sys.modules, ai_tools_name, raising=False)
+	package = importlib.import_module("erpnext_enhancements.knowledge_base")
+	monkeypatch.setattr(package, "search_service", search_service, raising=False)
+	monkeypatch.setattr(package, "markdown", markdown, raising=False)
+	ai_tools = importlib.import_module(ai_tools_name)
+	out = ai_tools.search_payload({"query": "pump seal"})
+	assert out["results"] == [] and out["reference_count"] == 1
+	assert out["references"][0]["source"] == "KBS-00001"
+	assert out["note"].startswith(ai_tools.NO_MATCH_NOTE) and "unreviewed" in out["note"]
+	assert ai_tools.search_payload({"query": "pump seal", "kind": "SOP"})["references"] == []
+	assert ai_tools.search_payload({"query": "pump seal", "include_reference": False})["references"] == []
+
+	def broken(*args, **kwargs):
+		raise RuntimeError("index")
+
+	monkeypatch.setattr(ai_tools.source_tools, "reference_hits", broken)
+	failed = ai_tools.search_payload({"query": "pump"})
+	assert failed["references"] == [] and ai_tools.REFERENCES_UNAVAILABLE in failed["problems"]
+	monkeypatch.delitem(sys.modules, ai_tools_name, raising=False)
+
+
+def test_the_tools_are_classified_and_the_card_shows_the_link(site, monkeypatch):
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+	gate = importlib.import_module("erpnext_enhancements.assistant_tools._gate")
+	assert "fetch_knowledge_source" in gate.EXPLICIT_READONLY
+	assert "save_knowledge_source" in gate.APP_MUTATING and "save_knowledge_source" in gate.LOW_RISK
+	assert "save_knowledge_source" not in gate.EXPLICIT_READONLY
+	line = gate.summarize_tool_call("save_knowledge_source", {"url": "https://example.com/pump"})
+	assert line == "Save link to the reference library: https://example.com/pump"
+	long = gate.summarize_tool_call("save_knowledge_source", {"url": "https://example.com/" + "a" * 200})
+	assert long.endswith("…") and len(long) < 140
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+
+
+def test_the_tools_are_registered_and_search_names_the_references():
+	tools_hook = _hook("assistant_tools")
+	for path in (
+		"erpnext_enhancements.assistant_tools.save_knowledge_source.SaveKnowledgeSource",
+		"erpnext_enhancements.assistant_tools.fetch_knowledge_source.FetchKnowledgeSource",
+	):
+		assert path in tools_hook
+	search = (APP / "assistant_tools" / "search_company_knowledge.py").read_text(encoding="utf-8")
+	assert "include_reference" in search and "unreviewed" in search
+	save = (APP / "assistant_tools" / "save_knowledge_source.py").read_text(encoding="utf-8")
+	assert '"source_title"' in save and '"title"' not in save

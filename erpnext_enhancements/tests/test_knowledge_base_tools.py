@@ -301,7 +301,8 @@ class TestSchemas(unittest.TestCase):
 		self.assertEqual(
 			{name: sorted(tool.inputSchema["properties"]) for name, tool in tools.items()},
 			{
-				"search_company_knowledge": ["department", "kind", "limit", "query"],
+				# include_reference (2026-11-25): the reference library's matches, in their own list.
+				"search_company_knowledge": ["department", "include_reference", "kind", "limit", "query"],
 				"fetch_knowledge_article": ["kb_number"],
 				"list_company_knowledge": ["department", "include_summaries", "kind", "page", "page_size"],
 			},

@@ -110,3 +110,32 @@ def run(payload, arguments):
     except Exception:
         pass
     return {"success": False, "error": FAILURE}
+
+
+#: What the reference-library tools (2026-11-25) answer when something unexpected failed.
+SOURCE_FAILURE = "The reference library could not be read just now. Nothing was changed."
+SAVE_FAILURE = "The link could not be saved just now. Nothing was saved."
+
+#: The Error Log's title (its ``method``) for such a failure.
+SOURCE_LOG_TITLE = "Knowledge base reference tool"
+
+
+def run_source(method, arguments, failure=SOURCE_FAILURE):
+    """``source_tools.<method>(arguments)``, or ``failure`` if it raises: :func:`run`'s failure path
+    for the reference library's tools (2026-11-25). The one Error Log names the method and the
+    exception's type, built by hand and deferred, never ``frappe.log_error`` (the request's form_dict
+    holds the arguments, a link included)."""
+    failed = None
+    try:
+        from erpnext_enhancements.knowledge_base import source_tools
+
+        return getattr(source_tools, method)(arguments if isinstance(arguments, dict) else {})
+    except Exception as exc:
+        failed = type(exc).__name__
+    try:
+        frappe.get_doc(
+            {"doctype": "Error Log", "method": SOURCE_LOG_TITLE, "error": f"{method} raised {failed}"}
+        ).deferred_insert()
+    except Exception:
+        pass
+    return {"success": False, "error": failure}
