@@ -634,6 +634,7 @@ class FakeSite:
 		self.list_calls = []
 		self.roles = ["KB Author"]
 		self.rollbacks = 0
+		self.sql_calls = []
 
 	def module(self):
 		site = self
@@ -656,7 +657,11 @@ class FakeSite:
 			rows = [
 				row
 				for row in site.sources.values()
-				if row.get("_readable", True) and all(row.get(k) == v for k, v in (filters or {}).items())
+				if row.get("_readable", True)
+				and all(
+					row.get(k) in v[1] if isinstance(v, list) and v[0] == "in" else row.get(k) == v
+					for k, v in (filters or {}).items()
+				)
 			]
 			if limit:
 				rows = rows[:limit]
@@ -667,6 +672,7 @@ class FakeSite:
 		frappe.get_list = get_list
 		frappe._ = lambda text: text
 		frappe.flags = _Flags()
+		frappe.local = types.SimpleNamespace(site="test-site")
 
 		class Db:
 			def exists(self, doctype, name=None):
@@ -690,6 +696,29 @@ class FakeSite:
 
 			def rollback(self):
 				site.rollbacks += 1
+
+			def sql(self, query, values=None, as_dict=False):
+				site.sql_calls.append(query)
+				rows = [
+					row
+					for row in site.sources.values()
+					if row.get("status") == "Active" and row.get("extraction_state") == "Ready"
+				]
+				if "count(*)" in query:
+					newest = max((str(row.get("modified") or "") for row in rows), default=None)
+					return [(len(rows), newest)]
+				cut = values[0]
+				return [
+					{
+						"name": row["name"],
+						"title": row.get("title"),
+						"keywords": row.get("keywords"),
+						"summary": row.get("summary"),
+						"department_block": row.get("department_block"),
+						"body": (row.get("extracted_text") or "")[:cut],
+					}
+					for row in rows
+				]
 
 		frappe.db = Db()
 
@@ -1382,8 +1411,10 @@ def test_references_are_labeled_unreviewed_and_only_active_ready_sources(site):
 	assert "not reviewed" in hit["label"]
 	assert hit["url"] == "https://erp.example.com/desk/knowledge-source/KBS-00001"
 	assert "seal" in hit["snippet"].lower()
-	(doctype, filters) = site.list_calls[-1]
-	assert doctype == K.SOURCE_DOCTYPE and filters == {"status": "Active", "extraction_state": "Ready"}
+	assert hit["summary_written_by_ai"] is False
+	readable, shown = site.list_calls[-2:]
+	assert readable == (K.SOURCE_DOCTYPE, {"status": "Active", "extraction_state": "Ready"})
+	assert shown[1]["name"] == ["in", ["KBS-00001"]] and shown[1]["status"] == "Active"
 
 
 def test_references_are_read_as_the_caller(site):
@@ -1708,3 +1739,73 @@ def test_the_url_password_scan_is_linear():
 
 def test_word_documents_are_capped_lower():
 	assert source_text.MAX_DOCX_XML_BYTES <= 10 * 1024 * 1024
+
+
+def test_the_reference_index_is_built_once_and_rebuilt_when_the_library_changes(site):
+	library(site)
+	module = tools(site)
+	module.reference_hits("pump")
+	module.reference_hits("seal")
+	corpus = [q for q in site.sql_calls if "left(extracted_text" in q]
+	assert len(corpus) == 1
+	site.sources["KBS-00001"]["modified"] = "2026-11-25 11:59:00"
+	module.reference_hits("pump")
+	assert len([q for q in site.sql_calls if "left(extracted_text" in q]) == 2
+
+
+def test_the_index_reads_text_cut_by_the_database(site):
+	library(site)
+	site.sources["KBS-00001"]["extracted_text"] = "pump " + "x" * 100_000 + " zebrafinch"
+	module = tools(site)
+	assert module.reference_hits("zebrafinch") == []
+	assert [hit["source"] for hit in module.reference_hits("pump")] == ["KBS-00001"]
+
+
+def test_a_source_the_caller_cannot_read_takes_no_slot(site):
+	library(site)
+	add_source(
+		site,
+		"KBS-00009",
+		title="Pump seal pump seal",
+		extracted_text="pump seal pump seal pump seal",
+		extraction_state="Ready",
+		status="Active",
+		_readable=False,
+	)
+	hits = tools(site).reference_hits("pump seal", limit=1)
+	assert [hit["source"] for hit in hits] == ["KBS-00001"]
+
+
+def test_a_gemini_summary_is_marked_in_references(site):
+	library(site)
+	site.sources["KBS-00001"]["summary_by_ai"] = 1
+	(hit,) = tools(site).reference_hits("seal")
+	assert hit["summary_written_by_ai"] is True
+
+
+@pytest.mark.parametrize("value", [False, 0, "false", "False", "0", "no", "off"])
+def test_include_reference_switched_off_however_it_is_sent(value):
+	sys_modules_ai = importlib.import_module("erpnext_enhancements.knowledge_base.search")
+	assert sys_modules_ai  # the engine imports without frappe
+	source = (APP / "knowledge_base" / "ai_tools.py").read_text(encoding="utf-8")
+	body = source.split("def _off(value):", 1)[1].split("\ndef ", 1)[0]
+	namespace = {}
+	exec("def _off(value):" + body, namespace)
+	assert namespace["_off"](value) is True
+
+
+@pytest.mark.parametrize("value", [None, True, 1, "true", "yes", ""])
+def test_include_reference_stays_on_otherwise(value):
+	source = (APP / "knowledge_base" / "ai_tools.py").read_text(encoding="utf-8")
+	body = source.split("def _off(value):", 1)[1].split("\ndef ", 1)[0]
+	namespace = {}
+	exec("def _off(value):" + body, namespace)
+	assert namespace["_off"](value) is False
+
+
+def test_the_library_is_never_exempt_from_a_card(site, monkeypatch):
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+	gate = importlib.import_module("erpnext_enhancements.assistant_tools._gate")
+	assert K.SOURCE_DOCTYPE in gate.NEVER_EXEMPT
+	assert gate.TOOL_TARGET_DOCTYPES["save_knowledge_source"] == K.SOURCE_DOCTYPE
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)

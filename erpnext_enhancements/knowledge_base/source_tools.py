@@ -66,7 +66,11 @@ SAVE_NOTE = (
 
 _SOURCE_ID = re.compile(r"^\s*kbs[\s_-]*0*([0-9]{1,6})\s*$", re.IGNORECASE)
 
-SEARCH_FIELDS = ("name", "title", "keywords", "summary", "department_block", "extracted_text")
+#: The sources search and the index read: Active and Ready.
+READY = {"status": "Active", "extraction_state": "Ready"}
+
+#: What a hit's result shows, read for the hits alone.
+HIT_FIELDS = ("name", "title", "summary", "summary_by_ai", "department_block", "extracted_text")
 SHOWN_FIELDS = (
 	"name",
 	"title",
@@ -89,34 +93,31 @@ SHOWN_FIELDS = (
 
 def reference_hits(query, department=None, limit=REFERENCE_LIMIT):
 	"""Reference results for ``query``, best first, as the caller. ``department`` is an option
-	(already read by ``search_service.read_filters``) or ``None``."""
+	(already read by ``search_service.read_filters``) or ``None``.
+
+	**Permission before ranking**, as for articles: the caller's readable set (``get_list``, names
+	only) is handed to the engine, which removes everything else before scoring. The index itself is
+	built once per site and worker from every Active, Ready source (:func:`_index`) and rebuilt only
+	when the library changes, so a search reads no text but the few hits' own."""
 	if not isinstance(query, str) or not query.strip():
 		return []
 	if not frappe.has_permission(SOURCE, "read"):
 		return []
+	allowed = set(frappe.get_list(SOURCE, filters=dict(READY), pluck="name", limit_page_length=0))
+	if not allowed:
+		return []
+	index = _index()
+	if index is None:
+		return []
+	hits = engine.search(index, query, allowed=allowed, department=department, limit=limit)
+	if not hits:
+		return []
 	rows = frappe.get_list(
 		SOURCE,
-		filters={"status": "Active", "extraction_state": "Ready"},
-		fields=list(SEARCH_FIELDS),
+		filters={**READY, "name": ["in", [hit.key for hit in hits]]},
+		fields=list(HIT_FIELDS),
 		limit_page_length=0,
 	)
-	if not rows:
-		return []
-	documents = [
-		engine.Document(
-			row.get("name"),
-			None,
-			row.get("title") or "",
-			row.get("keywords") or "",
-			row.get("summary") or "",
-			(row.get("extracted_text") or "")[:INDEX_CHARS],
-			None,
-			row.get("department_block") or None,
-		)
-		for row in rows
-	]
-	index = engine.build_index(documents)
-	hits = engine.search(index, query, department=department, limit=limit)
 	by_name = {row.get("name"): row for row in rows}
 	results = []
 	for hit in hits:
@@ -131,8 +132,9 @@ def reference_hits(query, department=None, limit=REFERENCE_LIMIT):
 				"title": row.get("title"),
 				"department": row.get("department_block") or None,
 				"summary": row.get("summary") or None,
+				"summary_written_by_ai": bool(row.get("summary_by_ai")),
 				"snippet": engine.snippet(
-					row.get("extracted_text") or "", query, fallback=row.get("summary") or ""
+					(row.get("extracted_text") or "")[:INDEX_CHARS], query, fallback=row.get("summary") or ""
 				),
 				"matched": list(hit.matched),
 				"url": _desk_url(row.get("name")),
@@ -140,6 +142,59 @@ def reference_hits(query, department=None, limit=REFERENCE_LIMIT):
 			}
 		)
 	return results
+
+
+# ------------------------------------------------------------------ the index, per site and worker
+
+#: ``site -> {"stamp", "index"}``. The index keeps postings, never text.
+_STATE = {}
+
+
+def _index():
+	"""This site's reference index, rebuilt when the library's ``(count, newest modified)`` of Active,
+	Ready sources changed. ``None`` when a rebuild fails (the search then has no references)."""
+	site = getattr(getattr(frappe, "local", None), "site", None) or ""
+	stamp = _stamp()
+	state = _STATE.get(site)
+	if state is not None and state["stamp"] == stamp:
+		return state["index"]
+	try:
+		index = engine.build_index(_corpus())
+	except Exception:
+		return None
+	_STATE[site] = {"stamp": stamp, "index": index}
+	return index
+
+
+def _stamp():
+	rows = frappe.db.sql(
+		"select count(*), max(modified) from `tabKnowledge Source` where status = %s and extraction_state = %s",
+		(READY["status"], READY["extraction_state"]),
+	)
+	count, modified = (rows[0] if rows else (0, None))[:2]
+	return (int(count or 0), str(modified or ""))
+
+
+def _corpus():
+	"""Every Active, Ready source as an engine document, its text cut to :data:`INDEX_CHARS` by the
+	database, so a large library is never read whole. Permission is applied at search time."""
+	rows = frappe.db.sql(
+		"select name, title, keywords, summary, department_block, left(extracted_text, %s) as body "
+		"from `tabKnowledge Source` where status = %s and extraction_state = %s",
+		(INDEX_CHARS, READY["status"], READY["extraction_state"]),
+		as_dict=True,
+	)
+	for row in rows:
+		yield engine.Document(
+			row.get("name"),
+			None,
+			row.get("title") or "",
+			row.get("keywords") or "",
+			row.get("summary") or "",
+			row.get("body") or "",
+			None,
+			row.get("department_block") or None,
+		)
 
 
 # ------------------------------------------------------------------ fetch

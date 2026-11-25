@@ -187,12 +187,22 @@ def search_payload(args):
 	}
 
 
+def _off(value):
+	"""``include_reference`` switched off, however a client sent it: ``False``, ``0`` or a string
+	such as ``"false"``."""
+	if isinstance(value, bool):
+		return value is False
+	if isinstance(value, (int, float)):
+		return value == 0
+	return isinstance(value, str) and value.strip().lower() in ("false", "0", "no", "off")
+
+
 def _references(query, args, problems):
 	"""The reference library's matches for ``query`` (2026-11-25, "Answer, labeled"), in their own list
 	after the articles, never in ``results``. None when the query or a filter is a problem, when a
 	``kind`` is asked for (a kind is an article's: Policy, Process or SOP), or when
 	``include_reference`` is false. A failure here never costs the articles: it becomes a problem."""
-	if not query or problems or args.get("kind") not in (None, "") or args.get("include_reference") is False:
+	if not query or problems or args.get("kind") not in (None, "") or _off(args.get("include_reference")):
 		return []
 	department, _kind, filter_problems = search_service.read_filters(args.get("department"), None)
 	if filter_problems:

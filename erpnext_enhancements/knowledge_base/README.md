@@ -1339,9 +1339,14 @@ Three tools, all through `source_tools.py` and run by `assistant_tools/_knowledg
 
 | Tool | Gate | What it does |
 |---|---|---|
-| `search_company_knowledge` (existing) | read | Unchanged `results` (approved articles only), plus **`references`**: up to 3 Active, Ready sources the caller may read, ranked by the same BM25 engine over title, keywords, summary and the first 60,000 characters of text. Each carries `result_type: "reference"`, `reviewed: false` and a label; the note says to prefer an article and to name a reference as unreviewed. None when a `kind` is given (a kind is an article's), when `include_reference` is false, or when the query or a filter is a problem; a failure becomes a `problems` entry and never costs the articles |
+| `search_company_knowledge` (existing) | read | Unchanged `results` (approved articles only), plus **`references`**: up to 3 Active, Ready sources the caller may read, ranked by the same BM25 engine over title, keywords, summary and the first 60,000 characters of text. The index is built once per site and worker (keyed on the library's count and newest change, the text cut by the database) and the caller's readable set is applied before ranking, so a search reads no text but its hits'. Each carries `result_type: "reference"`, `reviewed: false`, `summary_written_by_ai` and a label; the note says to prefer an article and to name a reference as unreviewed. None when a `kind` is given (a kind is an article's), when `include_reference` is false, or when the query or a filter is a problem; a failure becomes a `problems` entry and never costs the articles |
 | `fetch_knowledge_source` (new) | read (`EXPLICIT_READONLY`) | One source as the caller: its text (at most 40,000 characters), summary, original link, reading state and why it was saved, labeled. `KBS-00012`, `kbs 12` and `KBS_12` all read; every miss is the same `found: false` |
 | `save_knowledge_source` (new) | write (`APP_MUTATING`, Low) | A new Link source, created as the person who confirms the card, so their own create permission applies (KB Author or KB Approver). The card shows the link the server will fetch. A link the library already holds comes back as that source. Arguments: `url`, `source_title`, `why_saved`, `department` (no property is named `title`) |
+
+**The library is never exempt from a card.** `_gate.KNOWLEDGE_BASE_LIBRARY_DOCTYPES` puts Knowledge Source
+in `NEVER_EXEMPT`, so no settings row lets a generic write to it skip confirmation, and a
+`save_knowledge_source` card names the library as its target and starts unticked in the batch dialog.
+`include_reference` is read as off when sent as `false`, `0` or a string such as `"false"`.
 
 **Why `references` is its own list.** ADR 0017 §3 lets the contract gain fields, not change meaning: a
 client that reads `results` (Triton's snapshot included) still sees approved articles only, and a

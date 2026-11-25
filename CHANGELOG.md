@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A failure in any of the three logs one deferred Error Log naming the method and the exception's
     type, never the arguments (`assistant_tools/_knowledge_base.run_source`), as the other knowledge
     base tools do.
+  - **Search stays cheap as the library grows.** The reference index is built once per site and
+    worker from text the database cuts to 60,000 characters, keyed on the library's count and newest
+    change, and the caller's readable set is applied before ranking; a search reads only its hits'
+    text. Each reference also says whether its summary was written by Gemini
+    (`summary_written_by_ai`), and `include_reference` sent as the string `"false"` switches them off.
+  - **The library is never exempt from a card**: Knowledge Source joins the gate's `NEVER_EXEMPT`
+    (`KNOWLEDGE_BASE_LIBRARY_DOCTYPES`, with the knowledge base's own reason in the batch dialog), and a
+    `save_knowledge_source` card names it as its target.
 
 ### Tests
 
@@ -44,8 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each refusal before a write; `search_payload` keeping references out of `results`, out of a kind
   search and out when switched off, and surviving a broken library; the gate's classification and the
   card's line.
-- `test_knowledge_base_tools` (search's properties gain `include_reference`) and
+- `test_knowledge_base_tools` (search's properties gain `include_reference`; the gate's targets and
+  `NEVER_EXEMPT` gain the library), `test_ai_gate_batch` (the never-exempt kinds) and
   `test_knowledge_base_actions` (the search payload's keys gain `reference_count` and `references`).
+  The library suite also checks the index is built once and rebuilt on a change, the text cut by the
+  database, an unreadable source taking no slot, and every way `include_reference` is switched off.
   `test_assistant_tools_schema` classifies, annotates and validates the two new tools like every other.
 
 ## [1.844.0] - 2026-11-25

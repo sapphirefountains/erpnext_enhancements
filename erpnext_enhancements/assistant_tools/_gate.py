@@ -394,6 +394,12 @@ KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Ver
 #: either. Part of the knowledge base's kind below, with its phrase.
 KNOWLEDGE_BASE_CHILD_DOCTYPES = frozenset({"Knowledge Article Revision"})
 
+#: The knowledge base's reference library (2026-11-25): saved links and uploads the AI answers from.
+#: A source's link is fetched by the server and its text is read by every staff user and assistant,
+#: so no settings row may let an assistant's write to one skip its card. Part of the knowledge base's
+#: kind below, with its phrase.
+KNOWLEDGE_BASE_LIBRARY_DOCTYPES = frozenset({"Knowledge Source"})
+
 #: Doctypes the settings allowlist may never exempt, whatever a row says. There are three kinds,
 #: each never exempt for its own reason:
 #:
@@ -401,14 +407,18 @@ KNOWLEDGE_BASE_CHILD_DOCTYPES = frozenset({"Knowledge Article Revision"})
 #:   Task would ungate Task creation along with its updates — the one write ADR 0016 §6 exists
 #:   to confirm.
 #: - The gate's own records, ``GATE_OWN_DOCTYPES``.
-#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES`` and its child tables,
-#:   ``KNOWLEDGE_BASE_CHILD_DOCTYPES``.
+#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES``, its child tables,
+#:   ``KNOWLEDGE_BASE_CHILD_DOCTYPES``, and its reference library, ``KNOWLEDGE_BASE_LIBRARY_DOCTYPES``.
 #:
 #: A card that targets any of them never starts ticked in the batch dialog, and the reason it
 #: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
 #: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
 NEVER_EXEMPT = (
-    frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES | KNOWLEDGE_BASE_CHILD_DOCTYPES
+    frozenset({"Task"})
+    | GATE_OWN_DOCTYPES
+    | KNOWLEDGE_BASE_DOCTYPES
+    | KNOWLEDGE_BASE_CHILD_DOCTYPES
+    | KNOWLEDGE_BASE_LIBRARY_DOCTYPES
 )
 
 #: App tools whose card writes a doctype its arguments do not name (v1.560.0, WI-080 PR 6b). A card's
@@ -419,7 +429,11 @@ NEVER_EXEMPT = (
 #: the result's `name`). A `doctype` smuggled into their arguments is ignored here, and still refused by
 #: the denylist in step 0 when it names a denylisted doctype. Each value is one of NEVER_EXEMPT's kinds,
 #: so `gating_api._review_reasons` gives the card its reason and starts it unticked.
-TOOL_TARGET_DOCTYPES = {"draft_knowledge_article": "Knowledge Article Version"}
+TOOL_TARGET_DOCTYPES = {
+    "draft_knowledge_article": "Knowledge Article Version",
+    # 2026-11-25: a saved link becomes a Knowledge Source, which the server then fetches.
+    "save_knowledge_source": "Knowledge Source",
+}
 
 #: App tools the gate asks, before it queues a card, whether the call could ever run (v1.560.0). Each
 #: has a `precheck(arguments)` method returning its problems as short clauses; any problem refuses the
