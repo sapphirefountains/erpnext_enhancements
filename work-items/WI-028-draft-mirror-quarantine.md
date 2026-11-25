@@ -2,6 +2,8 @@
 **Phase:** 1   **Type:** DATA   **Size:** M
 **Blocked by:** WI-023, final QBO sync completed + sync retirement initiated (webhook subscription removed — WI-045's early step), full site backup (OD-6 RESOLVED 2026-07-14: branch (a) bulk delete)   **Blocks:** WI-029
 
+> **CANCELED 2026-08-31** by the [OD-6 reversal](../decisions/OPEN-DECISIONS.md): QuickBooks' full history is kept and posted to the GL, not deleted. Pre-2026 posted on 2026-08-31; 2026 posts in three waves (WI-051 runbook §3). ERPNext Task TASK-2026-00921 is Canceled. The text below is the original plan, kept for the record.
+
 ## Why
 Prod contains 12,341 draft Journal Entries (sum total_debit $13,339,246.15), 1,563 draft Sales Invoices (~$9,175,219 grand_total), 1,405 draft Payment Entries, and 638 draft Quotations — 100% docstatus=0, imported from QBO (test_vs_prod, prod_customers_items). They carry zero GL value but three live risks: (1) accidental submit posts phantom history into the new ledger; (2) they hard-block the CoA rebuild — Frappe's link check refuses to delete an Account referenced by any document, draft or not; (3) list-view noise and naming-series pollution. **Recommendation: bulk delete**, because reference value is preserved three ways without them — QBO itself stays accessible read-only after cutover, every imported record's JSON is archived in `QuickBooks Raw Payload` (repo_qbo_sync), and a pre-delete CSV export is taken. Alternatives rejected: *mark+filter* leaves the accidental-submit risk and still blocks Account deletion; *a separate 'historical' flag doctype* costs APP_CODE for data with no GL meaning.
 

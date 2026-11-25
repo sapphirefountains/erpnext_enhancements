@@ -1,6 +1,6 @@
 # Sapphire Fountains ERPNext Migration — Master Plan
 
-Sapphire Fountains (fountain/water-feature design, build, service, rentals, products; Utah) migrates from QuickBooks Online + QuickBooks Time to ERPNext v16 (Frappe Cloud) with Stripe payments. **Target cutover: January 1, 2027** — the date is fixed; scope flexes into Phase 2.
+Sapphire Fountains (fountain/water-feature design, build, service, rentals, products; Utah) migrates from QuickBooks Online + QuickBooks Time to ERPNext v16 (Frappe Cloud) with Stripe payments. **Target cutover: January 1, 2027** — the date is fixed; scope flexes into Phase 2. *(2026-11-25: Jan 1 held, with a hold-or-move check on Dec 11 and a Feb 1 fallback; see §3.)*
 
 This plan was built against the **live systems on 14 July 2026** (production `erp.sapphirefountains.com`, test `sapphirefountainstest.v.frappe.cloud`, and the `erpnext_enhancements` v1.155.0 custom app repo), not against the planning brief's assumptions. Where the brief and the live system disagreed, the live system won and the conflict is flagged below.
 
@@ -82,22 +82,31 @@ Companion documents:
 ## 3. Phases and rationale
 
 - **Phase 0 (now → Nov 2026)** — everything that changes no production behavior (fixtures land dormant, designs, TEST-side config, master-data prep) or must run for months to be real (QBO monthly closes, the reconnect). Risk-free lead time; all of it promotes through the verified fixtures/feature-flag pipeline.
-- **Phase 1 (Dec 2026 → Jan 2027)** — the December window and cutover week: kiosk pilot + parallel run on TEST, then the destructive/ledger operations on prod in strict order inside one freeze window with backups, then go-live config flips.
+- **Phase 1 (Dec 2026 → Jan 2027)** — the December window and cutover: a finance UAT on TEST, the 2026 ledger posted on prod in three waves as QuickBooks months lock, go-live config flips, then December's wave, the tie-out and the QuickBooks disconnect in January. *(Written 14 Jul as "kiosk pilot + parallel run, then destructive operations inside one freeze window"; superseded by the 2026-11-25 sequence below.)*
 - **Phase 2 (2027)** — anything requiring people to change habits first (budget discipline → percentage escalation), anything gated on a late-landing business/legal decision (JDH, surcharge, segment), and efficiency upgrades over working manual paths (Plaid transactions, doc-AI, forecasting, perpetual inventory). Nothing in Phase 2 blocks January 1.
 
-### Cutover-window ordering (binding, encoded in WI-051's runbook)
+### Cutover sequence (binding, encoded in WI-051's runbook) — rewritten 2026-11-25
+
+The 14 Jul clean cut (final sync → partial kill → WI-028 draft delete → WI-029 chart rebuild → WI-032/WI-033 opening entries in January) no longer applies. Three decisions replaced it: the [OD-6 reversal](decisions/OPEN-DECISIONS.md) (2026-08-31: carry full history; pre-2026 posted that day), keeping the live chart (2026-08-31: WI-029 canceled), and Nikolas's cutover decisions of 2026-11-25 (Jan 1 held with a Dec 11 check and a Feb 1 fallback; WI-032/WI-033 canceled; TEST restored by Dec 2; 2026 posted in waves; James approves bills and payments).
 
 ```
-final CDC/Import All  →  sync_enabled=0 + DELETE Intuit webhook subscription (partial kill; OAuth tokens stay ALIVE)
-  →  WI-028 draft-mirror delete  →  WI-029 CoA rebuild (+ re-point Sync Mapping, Company defaults, Stripe settings)
-  →  WI-030 FY/naming + WI-031 modes of payment
-  →  WI-032 opening TB JE (pulls the QBO TB via the still-live API)  →  WI-033 opening AR/AP  →  WI-034 open POs
-  →  WI-035 tie-out + sign-off  →  QBO to read-only  →  WI-045 full Disconnect
+WI-003 QBO locked through Sep 30 (Dec 4)  →  Wave 1: Jan–Sep 2026 + pre-2026 leftovers (Dec 9)
+  →  hold-or-move check (Dec 11; any miss → Feb 1)
+  →  WI-003 locked through Nov 30 (Dec 16)  →  Wave 2: Oct–Nov (Dec 18)
+  →  go/no-go (Dec 22)  →  cutover release + config replays (Dec 28–31)
+  →  GO-LIVE Jan 1 (first working day Jan 4): QBO users reports-only except Lisa and John; CDC sync stays ON
+  →  WI-003 December close locked (Jan 13)  →  Wave 3: December (Jan 14)
+  →  WI-035 tie-out: posted ledger at 2026-12-31 == QBO December close; freeze 2026-12-31 (Jan 22)
+  →  WI-045 full kill: sync off, webhook deleted, QBO read-only, Disconnect (Jan 29)
 ```
 
-Tokens stay alive until after WI-035 because the opening tools (`opening_balances.py`, `compare_account_balances`) call the live QBO API; the webhook deletion happens **first** because inbound webhooks bypass `sync_enabled` and could re-import deleted drafts.
+Each wave runs Sales Invoices → Payment-only resync (Preview, Run, then Refresh drafts for flagged rows) → Payment Entries → Journal Entries, as in [`backlog-gl-posting-runbook.md`](docs/migration/backlog-gl-posting-runbook.md) §5, behind a per-wave gate that includes **0 customers with `custom_stripe_autopay_enabled=1`**: the 365-day `AUTO_CHARGE_MAX_AGE_DAYS` guard does not cover 2026 invoices. The CDC sync and the tokens stay alive until the tie-out, because December's late QuickBooks entries must arrive as drafts for Wave 3 and `compare_account_balances` calls the live QuickBooks API. With no draft delete, there is no longer a reason to cut the webhook early.
 
-**Opening-AR timing (honest):** opening AR cannot exist before the December close completes (~Jan 10–15). From Jan 1 until WI-033 posts, payments against pre-cutover invoices are recorded as on-account Payment Entries and reconciled to the opening invoices via native Payment Reconciliation afterward. Stripe autopay enrollment is hard-gated on WI-033 acceptance.
+**January receipts (honest):** December invoices stay drafts until Wave 3, so a customer payment received Jan 4–14 against one is recorded as an unapplied Payment Entry (party set, no invoice reference) and cleared with native Payment Reconciliation after Wave 3. Stripe autopay enrollment opens only after the WI-035 freeze.
+
+**TEST:** restored from a prod backup by Dec 2 for the finance UAT (WI-022). Its QuickBooks sync, Plaid, Stripe, email and scheduler are off before anyone uses it (WI-051 runbook §2).
+
+**Still open:** clock-in (WI-021 kiosk, WI-016 costing, the QuickBooks Time subscription) is decision 5, not yet taken; none of it gates the books, and the QuickBooks Time guest webhook dies at the cutover release regardless (WI-046).
 
 ---
 
@@ -120,35 +129,34 @@ graph TD
     WI009[WI-009 PRJ naming fixture]
     WI018[WI-018 workspace] --> WI019[WI-019 form pruning]
     WI020[WI-020 print formats]
+    WI068[WI-068 group-account remap, 2026 window]
   end
   subgraph P1["Phase 1 (Dec 2026 – Jan 2027)"]
-    WI011 --> WI021[WI-021 Time Kiosk pilot]
+    WI011 --> WI021[WI-021 Time Kiosk pilot — timing: decision 5, open]
     WI016 --> WI021
-    WI021 --> WI022[WI-022 parallel run/UAT]
     WI021 --> WI017[WI-017 hours export validated]
     WI017 --> WI047[WI-047 payroll JE return]
-    WI002 --> FINAL[final sync + webhook removed]
-    FINAL --> WI028[WI-028 draft-mirror delete]
-    WI004 --> WI029[WI-029 CoA rebuild]
-    WI028 --> WI029
-    WI029 --> WI030[WI-030 FY2027/naming] --> WI032
-    WI029 --> WI031[WI-031 modes of payment]
-    WI003 --> WI032[WI-032 opening TB JE]
-    WI032 --> WI033[WI-033 opening AR/AP] --> WI035[WI-035 tie-out + sign-off]
-    WI034[WI-034 open POs] --> WI035
-    WI035 --> WI045[WI-045 QBO disconnect]
-    WI033 --> WI044[WI-044 workflows active]
-    WI015 --> WI044
+    TEST[TEST restored from prod + isolated, Dec 2] --> WI022[WI-022 finance UAT on TEST]
+    WI068 --> WAVES
+    WI003 --> WAVES[2026 posting waves Dec 9 / Dec 18 / Jan 14 — TASK-2026-01236]
+    WI002 --> WAVES
+    WAVES --> WI035[WI-035 tie-out to QBO Dec close + freeze]
+    WI034[WI-034 re-key missing QBO POs] --> WI035
+    WI035 --> WI045[WI-045 QBO disconnect, Jan 29]
+    WI030[WI-030 FY2027/naming]
+    WI042 --> WI031[WI-031 modes of payment, live chart]
+    WI015 --> WI044[WI-044 workflows active — not during a wave]
+    WI011 --> WI044
     WI005 --> WI040[WI-040 payout JE APP_CODE]
     WI005 --> WI039[WI-039 Stripe go-live]
-    WI033 --> WI039
+    WI035 --> WI039
     WI042[WI-042 bank masters] --> WI043[WI-043 bank rec runbook]
     WI040 --> WI043
     WI021 --> WI046[WI-046 QB Time retired]
     WI022 --> WI051[WI-051 runbook + go/no-go]
+    WAVES --> WI051
     WI035 --> WI051
-    WI023[WI-023 quotation triage] --> WI028
-    WI050[WI-050 hazard verification] -.gates ALL bulk DATA incl. WI-023..028.-> WI028
+    WI050[WI-050 hazard verification] -.gates ALL bulk DATA incl. each wave.-> WAVES
   end
   subgraph P2["Phase 2 (2027)"]
     WI045 --> WI052[WI-052 QBO code removal]
@@ -166,25 +174,28 @@ graph TD
   OD2{{OD-2 RESOLVED: Utah-law branch b — CPA written matrix = sign-off gate}} -.-> WI036[WI-036/037/038 tax config+report]
   WI026[WI-026 customer groups — OD-4 resolved a]
   WI065[WI-065 Rent→Events rename] --> WI027[WI-027 project types]
-  OD6{{OD-6 RESOLVED: bulk delete}} -.-> WI028
+  OD6{{OD-6 REVERSED 2026-08-31: carry full history}} -.-> WAVES
 ```
 
-*(Decision resolutions of 14 Jul 2026 baked in: OD-1 No → WI-061 ON HOLD and removed from the graph; OD-3 rename → WI-065 added; OD-4 branch a, OD-6 delete, OD-7 no-surcharge-at-launch recorded in the register.)*
+*(Decision resolutions of 14 Jul 2026 baked in: OD-1 No → WI-061 ON HOLD and removed from the graph; OD-3 rename → WI-065 added; OD-4 branch a, OD-7 no-surcharge-at-launch recorded in the register. **2026-11-25:** the graph follows the rewritten cutover sequence in §3. WI-028 and WI-029 (canceled 2026-08-31) and WI-032 and WI-033 (superseded 2026-11-25) are no longer in it, and WI-023 moved to Phase 2 with the delete it fed.)*
 
 The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) + **WI-016** (costing rates) → labor actuals on jobs; **WI-014** → material actuals; both → **WI-057** (budgets have actuals to calibrate against) → **WI-058** (the 75% rule can finally fire). **WI-046 (QuickBooks Time retirement) is downstream of WI-021 adoption — retiring QB Time is a prerequisite chain-link, not a side quest** (though its unauthenticated guest webhook dies at cutover regardless).
 
-*The graph is a reduced view; the work-item index Blocked-by column is authoritative (transitive edges such as WI-034←WI-003/WI-025, WI-031←WI-042, WI-047←WI-029 are omitted for readability).*
+*The graph is a reduced view; the work-item index Blocked-by column is authoritative (transitive edges such as WI-034←WI-003 are omitted for readability).*
 
 ---
 
 ## 5. Critical path to January 1
 
-1. **Ledger chain (longest, least compressible):** WI-003 monthly closes (December close lands ~Jan 10–15) → WI-032 → WI-033 → WI-035. Everything upstream (WI-023 → WI-028 → WI-029 → WI-030/031) must complete in the last week of December. The company transacts live in ERPNext from Jan 1 on an empty ledger; opening entries post backdated once the December close freezes. Pre-cutover receivables have no ERPNext invoices until ~Jan 10–15 — the on-account interim procedure covers collections. **Slack: zero after ~Dec 26.**
-2. **QBO reconnect (WI-001 → WI-002) is this-sprint urgent** — every week widens the catch-up gap, and it unblocks the opening tools (CSV fallback documented: +2–4 days of manual keying).
-3. **People chain:** WI-010 → WI-011 by end-November; WI-021 kiosk pilot needs the FULL December window (human behavior change is not compressible), feeding WI-022 UAT → WI-051 go/no-go (~Dec 22).
-4. **Stripe chain:** WI-040 (the only L-size APP_CODE on the path) starts early against Stripe test mode; its degraded fallback (manual clearing-sweep JE per payout, in WI-043) means it cannot block go-live.
-5. **Everything else** (tax automation if the CPA confirmation lands late, segment reporting, Plaid, surcharge, doc-AI) has a documented manual fallback or lives in Phase 2. Scope flexes; the date does not (OD-5: Jan 1 committed).
-6. **Finishing sooner (OD-5 note):** a cutover is structurally identical at any month-end — the opening TB just cuts from that month's close. The binding constraints on pulling forward are the close discipline being real, the kiosk-adoption month, and the parallel-run month. If every Phase-0 item is green by late October, evaluate a Dec-1 cutover (Nov-30 close) at that point; otherwise hold Jan 1.
+*Rewritten 2026-11-25 for the cutover decisions of that day; the dated plan is the calendar in the [WI-051 runbook](docs/migration/wi051-cutover-runbook.md).*
+
+1. **Ledger chain (longest, least compressible):** WI-003 QuickBooks locks (through Sep 30 by Dec 4, through Nov 30 by Dec 16, December by Jan 13) → the three posting waves (Dec 9, Dec 18, Jan 14) → WI-035 tie-out and freeze (Jan 22) → WI-045 Disconnect (Jan 29). On 2026-11-25 no 2026 month was closed in QuickBooks and every 2026 document in ERPNext was a draft, so **the first QuickBooks lock (Dec 4) and Wave 1 (Dec 9) are the binding dates**: the Dec 11 hold-or-move check tests exactly them. Wave 1 also needs WI-068's 2026-window group-account lines at 0, the 2026 Record Matching queue cleared for Jan–Sep, a tested backup and a rehearsal on the refreshed local mirror.
+2. **The go-live position is the posted ledger.** No opening entries (WI-032/WI-033 superseded). The company transacts live in ERPNext from Jan 1 on top of the ledger posted through Nov 30; December posts on Jan 14. Customer payments received Jan 4–14 for December invoices are recorded unapplied and reconciled after Wave 3.
+3. **QuickBooks stays connected through the December close.** WI-001/WI-002 are done: QuickBooks is connected and its hourly CDC healthy (verified 2026-11-25). Users go reports-only on Jan 1 except Lisa and John; the full kill waits for the tie-out.
+4. **Finance UAT chain:** TEST restored from a prod backup and isolated by Dec 2 → WI-022 finance UAT, Dec 7–18 (Lisa and James) → WI-051 go/no-go (Dec 22). WI-044's approver list (James approves, Nikolas backs up, Lisa prepares only) is confirmed on TEST. The kiosk (WI-021) is not on this chain: clock-in timing is decision 5, still open.
+5. **Stripe chain:** WI-040 code is live and closes on the first live payout JE. Autopay enrollment opens only after the WI-035 freeze, and every wave is gated on 0 enrolled customers.
+6. **Everything else** (tax automation if John's matrix misses Dec 15: go live with the three existing templates picked by hand; segment reporting; Plaid card feeds; surcharge; doc-AI) has a documented manual fallback or lives in Phase 2.
+7. **Fallback (replaces the OD-5 "finishing sooner" note):** a miss at the Dec 11 check, or a no-go on Dec 22, moves go-live to **Feb 1**, cut at the Jan 31 close with the same steps a month later: December posts as Wave 3, January 2027 as a fourth wave, and the tie-out moves to 2027-01-31. The window for finishing sooner than Jan 1 has passed.
 
 ---
 
@@ -210,39 +221,39 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-016](work-items/WI-016-activity-cost-labor-costing.md) | Activity Type + Activity Cost labor costing | 0 | CONFIG | M | burdened rates from payroll firm |
 | [WI-017](work-items/WI-017-payroll-hours-export.md) | Payroll hours-export report + firm contract | 0 | FIXTURE | M | WI-021 for validation |
 | [WI-018](work-items/WI-018-accountant-workspace.md) | Accountant workspace + desk curation | 0 | CONFIG | M | WI-011 |
-| [WI-019](work-items/WI-019-form-simplification.md) | Form simplification Property Setter fixtures | 0 | FIXTURE | M | WI-018 |
+| [WI-019](work-items/WI-019-form-simplification.md) | Form simplification Property Setter fixtures — moved to Phase 2 on 2026-11-25 (not needed to go live) | 2 | FIXTURE | M | WI-018 |
 | [WI-020](work-items/WI-020-sales-print-formats.md) | Print formats: Quotation / SO / SI (+ Letter Head) | 0 | FIXTURE | M | — |
 | [WI-021](work-items/WI-021-time-kiosk-rollout.md) | Time Kiosk pilot → field rollout (Dec) | 1 | CONFIG | L | WI-011, WI-016 |
-| [WI-022](work-items/WI-022-december-parallel-run-uat.md) | December parallel run, UAT + training (on TEST) | 1 | DATA | L | Phase-0 set |
-| [WI-023](work-items/WI-023-quotation-disposition.md) | Disposition of 638 draft QBO-Estimate Quotations | 1 | DATA | M | WI-007 |
+| [WI-022](work-items/WI-022-december-parallel-run-uat.md) | December **finance UAT** on TEST, Dec 7–18 (re-scoped 2026-11-25) | 1 | DATA | L | TEST restored from prod + isolated (Dec 2); Phase-0 config |
+| [WI-023](work-items/WI-023-quotation-disposition.md) | Disposition of 638 draft QBO-Estimate Quotations — moved to Phase 2 on 2026-11-25 (it fed the canceled WI-028) | 2 | DATA | M | WI-007 |
 | [WI-024](work-items/WI-024-opportunity-project-link-triage.md) | Opp↔Project canonical link + 196-orphan triage | 1 | DATA | M | — |
-| [WI-025](work-items/WI-025-item-group-rollout.md) | Item Group rollout (583 items into taxonomy) | 1 | DATA | M | — |
-| [WI-026](work-items/WI-026-customer-group-backfill.md) | Customer Group backfill (1,146 ungrouped) | 1 | DATA | M | — (OD-4 resolved: branch a) |
+| [WI-025](work-items/WI-025-item-group-rollout.md) | Item Group rollout (583 items into taxonomy) — moved to Phase 2 on 2026-11-25 | 2 | DATA | M | — |
+| [WI-026](work-items/WI-026-customer-group-backfill.md) | Customer Group backfill (1,146 ungrouped) — moved to Phase 2 on 2026-11-25 | 2 | DATA | M | — (OD-4 resolved: branch a) |
 | [WI-027](work-items/WI-027-project-type-backfill.md) | project_type backfill (71 untyped + 2 'Group Projects') | 1 | DATA | S | WI-065 (OD-3 resolved: rename) |
-| [WI-028](work-items/WI-028-draft-mirror-quarantine.md) | Draft-mirror quarantine: bulk delete QBO drafts | 1 | DATA | M | WI-023, final sync + webhook removed (OD-6 ratified: delete) |
-| [WI-029](work-items/WI-029-coa-rebuild-execution.md) | Execute CoA rebuild on prod | 1 | DATA | L | WI-004, WI-028 |
-| [WI-030](work-items/WI-030-fy2027-naming-hygiene.md) | FY2027 + disable legacy FYs + naming-series reset | 1 | CONFIG | S | WI-029 |
-| [WI-031](work-items/WI-031-mode-of-payment-rationalization.md) | Mode of Payment rationalization + defaults + AP run | 1 | CONFIG | M | WI-029, WI-042 |
-| [WI-032](work-items/WI-032-opening-trial-balance-je.md) | Opening Trial Balance JE @2026-12-31 | 1 | DATA | M | WI-003, WI-029, WI-030 |
-| [WI-033](work-items/WI-033-opening-ar-ap-invoices.md) | Opening AR/AP as is_opening invoices | 1 | DATA | L | WI-032; autopay=0 gate |
-| [WI-034](work-items/WI-034-open-po-rekey.md) | Re-key open Purchase Orders (SOs confirmed zero) | 1 | DATA | S | WI-003, WI-029, WI-025 |
-| [WI-035](work-items/WI-035-opening-reconciliation-signoff.md) | Opening reconciliation + sign-off gate | 1 | DATA | S | WI-032/033/034 |
-| [WI-036](work-items/WI-036-sales-tax-templates.md) | Sales-tax templates rebuild (Utah-law branch b) | 1 | CONFIG | M | WI-029; CPA written matrix = sign-off gate |
+| [WI-028](work-items/WI-028-draft-mirror-quarantine.md) | ~~Draft-mirror quarantine: bulk delete QBO drafts~~ **Canceled 2026-08-31** (OD-6 reversed: full history kept) | 1 | DATA | M | — |
+| [WI-029](work-items/WI-029-coa-rebuild-execution.md) | ~~Execute CoA rebuild on prod~~ **Canceled 2026-08-31** (live chart kept) | 1 | DATA | L | — |
+| [WI-030](work-items/WI-030-fy2027-naming-hygiene.md) | FY2027 + disable legacy FYs + naming-series reset (2027 series by Dec 18) | 1 | CONFIG | S | — (live chart) |
+| [WI-031](work-items/WI-031-mode-of-payment-rationalization.md) | Mode of Payment rationalization + defaults (live chart) + AP run | 1 | CONFIG | M | WI-042 |
+| [WI-032](work-items/WI-032-opening-trial-balance-je.md) | ~~Opening Trial Balance JE @2026-12-31~~ **Superseded 2026-11-25** (the posted ledger is the opening position) | 1 | DATA | M | — |
+| [WI-033](work-items/WI-033-opening-ar-ap-invoices.md) | ~~Opening AR/AP as is_opening invoices~~ **Superseded 2026-11-25** (2026 invoices post as themselves) | 1 | DATA | L | — |
+| [WI-034](work-items/WI-034-open-po-rekey.md) | Re-key only the QBO POs missing from ERPNext (SOs confirmed zero), by Jan 15 (re-scoped 2026-11-25) | 1 | DATA | S | WI-003 |
+| [WI-035](work-items/WI-035-opening-reconciliation-signoff.md) | Tie-out: posted ledger at 2026-12-31 == QBO December close; freeze + sign-off, by Jan 22 (re-scoped 2026-11-25) | 1 | DATA | S | 2026 posting waves (Wave 3), WI-003, WI-034 |
+| [WI-036](work-items/WI-036-sales-tax-templates.md) | Sales-tax templates rebuild (Utah-law branch b) | 1 | CONFIG | M | CPA written matrix = sign-off gate (manual tax at go-live if it misses Dec 15) |
 | [WI-037](work-items/WI-037-tax-category-rule-automation.md) | Tax Category + Tax Rule automation (branch b) | 1 | CONFIG | M | WI-036; CPA written matrix = sign-off gate |
 | [WI-038](work-items/WI-038-sales-tax-filing-procedure.md) | Utah sales-tax filing procedure (native reports) | 1 | CONFIG | S | WI-036/037 |
-| [WI-039](work-items/WI-039-stripe-production-golive.md) | Stripe production go-live (keys, webhook, /pay, autopay gate) | 1 | CONFIG | M | WI-005; enrollment gated on WI-033 |
+| [WI-039](work-items/WI-039-stripe-production-golive.md) | Stripe production go-live (keys, webhook, /pay, autopay gate) | 1 | CONFIG | M | WI-005; enrollment gated on WI-035 |
 | [WI-040](work-items/WI-040-stripe-payout-ingestion.md) | Stripe payout ingestion → clearing-sweep JE + fee expense | 1 | APP_CODE | L | WI-005 |
 | [WI-041](work-items/WI-041-stripe-refund-dispute-handling.md) | Stripe refund-reversal PE + dispute alerting | 1 | APP_CODE | M | WI-005/039 |
 | [WI-042](work-items/WI-042-bank-masters.md) | Bank + Bank Account masters | 1 | CONFIG | S | account list from finance |
 | [WI-043](work-items/WI-043-bank-reconciliation-runbook.md) | Bank rec runbook: statement import + payout matching | 1 | CONFIG | M | WI-042 (WI-040 for auto-match) |
-| [WI-044](work-items/WI-044-pi-pe-workflow-activation.md) | Activate PI/PE approval workflows w/ real SoD | 1 | FIXTURE | M | WI-015, WI-011, WI-033 done, Stripe-PE test |
-| [WI-045](work-items/WI-045-qbo-retirement-kill-checklist.md) | QBO retirement kill checklist (webhook step early) | 1 | CONFIG | S | WI-035 |
+| [WI-044](work-items/WI-044-pi-pe-workflow-activation.md) | Activate PI/PE approval workflows w/ real SoD | 1 | FIXTURE | M | WI-015, WI-011, approver list (James approves), Stripe-PE test; never active while a wave posts payments |
+| [WI-045](work-items/WI-045-qbo-retirement-kill-checklist.md) | QBO retirement kill checklist (reports-only Jan 1; full kill Jan 29) | 1 | CONFIG | S | WI-035 |
 | [WI-046](work-items/WI-046-qb-time-retirement.md) | QB Time retirement + guest-webhook removal | 1 | APP_CODE | M | WI-021 adoption gate (webhook dies at cutover regardless) |
-| [WI-047](work-items/WI-047-payroll-summary-je.md) | Payroll summary-JE return (template + mapping) | 1 | CONFIG | S | WI-017, WI-029 |
+| [WI-047](work-items/WI-047-payroll-summary-je.md) | Payroll summary-JE return (template + mapping) | 1 | CONFIG | S | WI-017 |
 | [WI-048](work-items/WI-048-process-automation-flag-gonogo.md) | process_automation_enabled go/no-go | 1 | CONFIG | S | WI-009, WI-010, WI-011 |
 | [WI-049](work-items/WI-049-month-end-close-adoption.md) | Month-End Close adoption (dry-run Dec; first close Feb) | 1 | CONFIG | S | WI-011, WI-035 |
 | [WI-050](work-items/WI-050-integration-hazard-verification.md) | Integration-hazard verification before DATA windows | 1 | CONFIG | S | — (gates all bulk DATA) |
-| [WI-051](work-items/WI-051-cutover-runbook.md) | Cutover runbook, go/no-go checklist, day-1 support | 1 | DATA | M | WI-022 + gates |
+| [WI-051](work-items/WI-051-cutover-runbook.md) | Cutover runbook, go/no-go checklist, day-1 support (rewritten 2026-11-25) | 1 | DATA | M | WI-022, posting waves, WI-035 + gates |
 | [WI-052](work-items/WI-052-qbo-code-removal.md) | Remove QBO hooks; retire/tolerate QBO surfaces | 2 | APP_CODE | M | WI-045 + 30 days |
 | [WI-053](work-items/WI-053-period-summary-je-import.md) | Period-summary JE trend import (24 months; optional, recommended) | 2 | DATA | M | WI-003, WI-004, WI-035 |
 | [WI-054](work-items/WI-054-revenue-by-segment.md) | Revenue-by-segment via Accounting Dimension (OD-4 branch a) | 2 | CONFIG | M | WI-026, WI-027 |

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.843.2] - 2026-11-25
+
+### Changed
+
+- **The cutover runbook and the migration plan now follow the cutover decisions of 2026-11-25** (docs
+  only; no code, fixture or patch changes). The WI-051 runbook still walked the Aug 31 clean-cut path
+  (S4 draft-mirror delete, S5 chart rebuild, S7–S8 opening trial-balance JE and opening AR/AP) under
+  an amendment note, although the full history had been kept and posted (OD-6 reversal, 2026-08-31)
+  and the live chart kept (WI-029 canceled the same day). On 2026-11-25 Nikolas settled the rest:
+  keep Jan 1 with a hold-or-move check on Dec 11 and a Feb 1 fallback, cancel the opening-balance
+  entries, restore the TEST site by Dec 2, post 2026 in three waves, and have James approve bills and
+  payments. Clock-in (decision 5) is still open.
+  - **`docs/migration/wi051-cutover-runbook.md`, rewritten.** Three posting waves as QuickBooks months
+    lock: Jan–Sep on Dec 9, Oct–Nov on Dec 18, December on Jan 14. Each runs the backlog runbook's §5
+    order (Sales Invoices → Payment-only resync with Refresh drafts → Payment Entries → Journal
+    Entries) behind a per-wave gate. Then the Dec 11 check and Dec 22 go/no-go, go-live on Jan 1
+    (first working day Jan 4), the tie-out by Jan 22 with the freeze at 2026-12-31, and the Disconnect
+    on Jan 29. The abort path (now with the Feb 1 fallback) and the bulk-write appendix are kept.
+  - **Why the waves only post QBO-linked drafts.** Purchasing has run in ERPNext since about
+    September, so a 2026 draft made natively in ERPNext may duplicate a QuickBooks transaction. Each
+    wave counts only drafts named on a live `QuickBooks Sync Mapping` row; Lisa decides any other
+    draft one by one.
+  - **Why every wave checks for zero autopay customers.** Stripe is enabled and Live.
+    `auto_charge_on_invoice_submit` skips only invoices older than `AUTO_CHARGE_MAX_AGE_DAYS` (365
+    days), and every 2026 invoice is younger than that when its wave runs. So submitting one would
+    charge an enrolled customer's saved card. Enrollment opens only after the WI-035 freeze.
+  - **Why the QuickBooks sync now stays on until Jan 29.** The early webhook delete and
+    `sync_enabled=0` protected a draft delete that no longer exists. December's late QuickBooks
+    entries must reach ERPNext as drafts for Wave 3, and the tie-out's `compare_account_balances`
+    calls the live API. QuickBooks users go reports-only on Jan 1, except Lisa and John, and the
+    runbook adds a daily January check that no QuickBooks-imported document is dated 2027.
+  - **January receipts.** December invoices stay drafts until Wave 3, so customer payments received
+    Jan 4–14 against them are recorded unapplied and cleared with Payment Reconciliation after Wave 3.
+  - **TEST isolation.** A TEST site restored from a prod backup carries prod's live tokens and keys.
+    Its scheduler, email, QuickBooks, Plaid and Stripe are switched off before anyone signs in, with
+    the scheduler paused and the workers stopped before the restore. The QuickBooks tokens are
+    cleared locally with `clear_oauth_tokens`, never with `disconnect`, which revokes the grant at
+    Intuit, and that grant is prod's.
+  - **`PLAN.md` §3–§6.** The binding sequence, dependency graph, critical path and work-item index
+    follow the new plan. WI-019, WI-023, WI-025 and WI-026 move to Phase 2.
+  - **Work items.** WI-028 and WI-029 are marked canceled (2026-08-31), and WI-032 and WI-033
+    superseded (2026-11-25). WI-022 becomes a finance UAT on TEST, Dec 7–18. WI-034 re-keys only
+    QuickBooks POs missing from ERPNext. WI-035 ties the posted ledger at 2026-12-31 to QuickBooks'
+    December close. WI-045 runs reports-only on Jan 1 and the full kill on Jan 29. WI-051 is
+    rewritten. `backlog-gl-posting-runbook.md` gains a pointer to the waves and loses its stale S9/S10
+    references.
+
 ## [1.843.1] - 2026-11-24
 
 ### Fixed

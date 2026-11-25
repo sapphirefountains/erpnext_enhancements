@@ -2,6 +2,12 @@
 **Phase:** 1   **Type:** DATA   **Size:** L
 **Blocked by:** WI-032 (transitively WI-003/WI-029/WI-030); hard autopay=0 gate (H4)   **Blocks:** WI-035; Stripe autopay enrollment (WI-039) stays gated on this item (review correction C12)
 
+> **SUPERSEDED 2026-11-25** (Nikolas's cutover decision 2). Every 2026 QuickBooks invoice and bill is posted in ERPNext as itself in the three posting waves, so open AR and AP at 2026-12-31 already exist invoice by invoice; opening invoices would duplicate them. Two parts of this item survive elsewhere:
+> - **Interim collections:** payments received Jan 4–14 for December invoices (still drafts until Wave 3) are recorded unapplied and reconciled after Wave 3 — WI-051 runbook §7.5.
+> - **Autopay gate (H4):** 0 customers with `custom_stripe_autopay_enabled=1` before **every** wave, because the 365-day `AUTO_CHARGE_MAX_AGE_DAYS` guard does not cover 2026 invoices; enrollment opens only after the WI-035 freeze — WI-051 runbook §3.0 G6 and §8.3.
+>
+> ERPNext Task TASK-2026-00926 goes to Canceled. The text below is the original plan, kept for the record.
+
 ## Why
 A lump AR/AP balance cannot age, cannot be collected invoice-by-invoice, and cannot match Stripe payments. Each QBO invoice open at 2026-12-31 becomes one ERPNext Sales Invoice with `is_opening='Yes'` posting Debit AR / Credit Temporary Opening; each open vendor bill becomes a mirrored opening Purchase Invoice (Credit AP / Debit Temporary Opening). Together they extinguish the Temporary Opening residue left by WI-032, and day-one dunning/payment (including Stripe payment links) works per invoice. Timing correction (review correction C12): opening AR cannot exist before the December close completes (~Jan 10–15) — earlier "AR loads first week of January" phrasing is superseded; the interim-collections procedure below covers Jan 1–~15.
 

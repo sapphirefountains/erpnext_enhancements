@@ -2,6 +2,8 @@
 **Phase:** 1   **Type:** DATA   **Size:** M
 **Blocked by:** WI-003, WI-029, WI-030   **Blocks:** WI-033, WI-035
 
+> **SUPERSEDED 2026-11-25** (Nikolas's cutover decision 2). Under the full-history load, the posted ledger through 2026-12-31 **is** the opening position: an opening trial-balance JE on top of it would count every balance twice. In its place, WI-035 ties the posted ledger at 2026-12-31 to QuickBooks' December close and books any residual as **one** Journal Entry that John approves (WI-051 runbook §8.2). No Opening Entry is posted (0 exist on prod, correctly). ERPNext Task TASK-2026-00925 goes to Canceled. The text below is the original plan, kept for the record.
+
 ## Why
 Replicates the validated test pilot (test has exactly one submitted Journal Entry, voucher_type='Opening Entry', total_debit $909,722.12, posting_date 2025-12-31, producing 157 GL entries — test_vs_prod) on prod, re-dated to 2026-12-31. This entry seeds every balance-sheet account — bank accounts, Undeposited Funds, the Stripe Clearing balance (card payments in transit at midnight), fixed assets, liabilities, equity — EXCEPT AR/AP, which load as individual open invoices in WI-033 so aging and payment matching work day one.
 
