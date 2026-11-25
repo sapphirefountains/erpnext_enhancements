@@ -74,7 +74,9 @@ class SaveKnowledgeSource(BaseTool):
 
 		from erpnext_enhancements.knowledge_base import source_tools
 
-		return source_tools.save_problems(arguments if isinstance(arguments, dict) else {}, frappe.session.user)
+		return source_tools.save_problems(
+			arguments if isinstance(arguments, dict) else {}, frappe.session.user
+		)
 
 	def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
 		return run_source("save_payload", arguments, failure=SAVE_FAILURE)

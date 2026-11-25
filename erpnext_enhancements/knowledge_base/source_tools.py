@@ -301,8 +301,14 @@ def save_problems(args, user=None):
 			for finding in content.secret_findings(value):
 				problems.append(f"{key} line {finding.line} looks like {finding.kind}; leave it out")
 	if not frappe.has_permission(SOURCE, "create", user=user):
-		problems.append("you cannot add to the reference library (it needs the KB Author or KB Approver role)")
-	elif not problem and source_fetch.google_file(url) and constants.APPROVER_ROLE not in frappe.get_roles(user):
+		problems.append(
+			"you cannot add to the reference library (it needs the KB Author or KB Approver role)"
+		)
+	elif (
+		not problem
+		and source_fetch.google_file(url)
+		and constants.APPROVER_ROLE not in frappe.get_roles(user)
+	):
 		problems.append(
 			"only a KB Approver can save a Google Docs or Drive link, because ERPNext reads it with the "
 			"company's Drive account; download the file and upload it to the reference library instead"

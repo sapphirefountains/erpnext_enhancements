@@ -2010,3 +2010,57 @@ def test_a_new_link_drops_a_title_taken_from_the_old_page(site):
 	doc = make(site, dict(before, url="https://example.com/manual"), before=before)
 	doc.validate()
 	assert doc.title == "example.com/manual" and doc.title_from_source == 1
+
+
+# ------------------------------------------------------------------ round-2 review fixes (PR B)
+
+
+def test_a_google_link_from_a_kb_author_is_refused_before_any_card(site):
+	problems = tools(site).save_problems({"url": "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit"})
+	assert any("only a KB Approver" in p for p in problems)
+	site.roles = ["KB Approver"]
+	assert (
+		tools(site).save_problems({"url": "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit"}) == []
+	)
+
+
+def test_a_secret_in_the_note_or_title_is_refused_without_quoting_it(site):
+	secret = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+	problems = tools(site).save_problems(
+		{"url": "https://example.com/", "why_saved": f"key {secret}", "source_title": "fine"}
+	)
+	assert problems and all(secret not in p for p in problems)
+	assert any(p.startswith("why_saved line 1") for p in problems)
+
+
+def test_save_says_why_rather_than_failing_deep_inside(site):
+	out = tools(site).save_payload({"url": "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit"})
+	assert out["success"] is False and "only a KB Approver" in out["error"]
+	assert site.inserted == []
+
+
+def test_save_checks_types_and_create_permission(site):
+	assert "why_saved must be text" in tools(site).save_problems(
+		{"url": "https://example.com/", "why_saved": 5}
+	)
+	site.perms[(K.SOURCE_DOCTYPE, "create")] = False
+	assert any("cannot add" in p for p in tools(site).save_problems({"url": "https://example.com/"}))
+
+
+def test_references_and_fetch_say_where_the_title_came_from(site):
+	library(site)
+	site.sources["KBS-00001"]["title_from_source"] = 1
+	(hit,) = tools(site).reference_hits("seal")
+	assert hit["title_from_source"] is True
+	assert tools(site).fetch_payload({"source": "KBS-00001"})["title_from_source"] is True
+
+
+def test_the_save_tool_is_prechecked_and_its_refused_rows_keep_no_text(site, monkeypatch):
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+	gate = importlib.import_module("erpnext_enhancements.assistant_tools._gate")
+	assert "save_knowledge_source" in gate.APP_PRECHECKED_TOOLS
+	assert set(gate.WITHHELD_WHEN_UNQUEUED["save_knowledge_source"]) == {"url", "source_title", "why_saved"}
+	assert gate.KEPT_WHEN_UNQUEUED["save_knowledge_source"] == ("department",)
+	monkeypatch.delitem(sys.modules, "erpnext_enhancements.assistant_tools._gate", raising=False)
+	tool_source = (APP / "assistant_tools" / "save_knowledge_source.py").read_text(encoding="utf-8")
+	assert "def precheck" in tool_source and "save_problems" in tool_source

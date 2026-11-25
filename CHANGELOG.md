@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     change, and the caller's readable set is applied before ranking; a search reads only its hits'
     text. Each reference also says whether its summary was written by Gemini
     (`summary_written_by_ai`), and `include_reference` sent as the string `"false"` switches them off.
+  - **A save that could never run gets a clear answer, not a card.** `save_knowledge_source` is in the
+    gate's `APP_PRECHECKED_TOOLS` (`source_tools.save_problems`, asked again when a card runs): a
+    malformed link, a Google link from someone who is not a KB Approver, a secret-shaped title or
+    note, or no create permission is refused up front, and a refused row keeps none of the link,
+    title or note. References and fetch also say whether the title was taken from the page rather
+    than typed (`title_from_source`).
   - **The library is never exempt from a card**: Knowledge Source joins the gate's `NEVER_EXEMPT`
     (`KNOWLEDGE_BASE_LIBRARY_DOCTYPES`, with the knowledge base's own reason in the batch dialog), and a
     `save_knowledge_source` card names it as its target.
