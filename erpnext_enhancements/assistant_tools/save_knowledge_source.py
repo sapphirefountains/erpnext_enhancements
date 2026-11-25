@@ -65,6 +65,17 @@ class SaveKnowledgeSource(BaseTool):
 			"required": ["url"],
 		}
 
+	def precheck(self, arguments: dict[str, Any]) -> list[str]:
+		"""Why the AI write gate must not queue this call, as short clauses (``_gate``'s
+		APP_PRECHECKED_TOOLS): a malformed link, a Google link from someone who is not a KB Approver, a
+		secret-shaped title or note, no create permission. It may raise: the gate then logs the type
+		and queues the card, and ``save_payload`` checks again when it runs."""
+		import frappe
+
+		from erpnext_enhancements.knowledge_base import source_tools
+
+		return source_tools.save_problems(arguments if isinstance(arguments, dict) else {}, frappe.session.user)
+
 	def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
 		return run_source("save_payload", arguments, failure=SAVE_FAILURE)
 

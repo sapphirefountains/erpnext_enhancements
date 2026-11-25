@@ -439,7 +439,7 @@ TOOL_TARGET_DOCTYPES = {
 #: has a `precheck(arguments)` method returning its problems as short clauses; any problem refuses the
 #: call with no card (`_precheck_refusal`). A precheck that raises queues the card as before, logged by
 #: type only (`_log_failure_type`), because execution runs the same check again.
-APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_review"})
+APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_review", "save_knowledge_source"})
 
 #: What a log row with no card keeps of a listed tool's arguments (v1.560.0, WI-080 finding 8). The gate
 #: redacts only by key name, so a refused drafting call's AI Action Log row would otherwise hold the
@@ -450,6 +450,9 @@ APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_revi
 #: what they confirm, and it is the AI's own proposal (decided 2026-09-28).
 WITHHELD_WHEN_UNQUEUED = {
     "draft_knowledge_article": ("article_title", "summary", "keywords", "body_markdown", "change_note"),
+    # 2026-11-25: a refused save may be refused for a secret in its title or note, or a password in
+    # its link, so none of the three stays in the row.
+    "save_knowledge_source": ("url", "source_title", "why_saved"),
 }
 WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
 
@@ -461,6 +464,7 @@ WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
 #: tool does not know. WITHHELD_WHEN_UNQUEUED and this split the tool's arguments between them.
 KEPT_WHEN_UNQUEUED = {
     "draft_knowledge_article": ("kb_number", "department", "kind", "process_owner", "submit_for_review"),
+    "save_knowledge_source": ("department",),
 }
 KEPT_LIMIT = 140
 

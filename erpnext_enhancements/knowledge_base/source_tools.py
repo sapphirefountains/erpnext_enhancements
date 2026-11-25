@@ -29,7 +29,7 @@ import re
 
 import frappe
 
-from erpnext_enhancements.knowledge_base import constants, source_fetch
+from erpnext_enhancements.knowledge_base import constants, content, source_fetch
 from erpnext_enhancements.knowledge_base import search as engine
 
 SOURCE = constants.SOURCE_DOCTYPE
@@ -70,7 +70,15 @@ _SOURCE_ID = re.compile(r"^\s*kbs[\s_-]*0*([0-9]{1,6})\s*$", re.IGNORECASE)
 READY = {"status": "Active", "extraction_state": "Ready"}
 
 #: What a hit's result shows, read for the hits alone.
-HIT_FIELDS = ("name", "title", "summary", "summary_by_ai", "department_block", "extracted_text")
+HIT_FIELDS = (
+	"name",
+	"title",
+	"title_from_source",
+	"summary",
+	"summary_by_ai",
+	"department_block",
+	"extracted_text",
+)
 SHOWN_FIELDS = (
 	"name",
 	"title",
@@ -83,6 +91,7 @@ SHOWN_FIELDS = (
 	"status",
 	"extraction_state",
 	"summary_by_ai",
+	"title_from_source",
 	"fetched_on",
 	"modified",
 )
@@ -130,6 +139,7 @@ def reference_hits(query, department=None, limit=REFERENCE_LIMIT):
 				"reviewed": False,
 				"source": row.get("name"),
 				"title": row.get("title"),
+				"title_from_source": bool(row.get("title_from_source")),
 				"department": row.get("department_block") or None,
 				"summary": row.get("summary") or None,
 				"summary_written_by_ai": bool(row.get("summary_by_ai")),
@@ -231,6 +241,7 @@ def fetch_payload(args):
 		"reviewed": False,
 		"source": row.get("name"),
 		"title": row.get("title"),
+		"title_from_source": bool(row.get("title_from_source")),
 		"link": row.get("url") or None,
 		"source_type": row.get("source_type"),
 		"department": row.get("department_block") or None,
@@ -267,28 +278,48 @@ def _not_found(requested):
 # ------------------------------------------------------------------ save
 
 
-def save_payload(args):
-	"""``save_knowledge_source``: save ``url`` as a new Link source, as the session user. Returns
-	``{"success", "source", "url", "reading_state", "already_saved", "note"}`` or a refusal."""
+def save_problems(args, user=None):
+	"""Why ``save_knowledge_source`` cannot save ``args`` for ``user`` (the session user by default),
+	as short clauses; ``[]`` when it can. The gate asks this before it queues a card
+	(``_gate.APP_PRECHECKED_TOOLS``), so a call that could never run gets a clear answer and no card,
+	and :func:`save_payload` asks again when the card is confirmed. No clause quotes a value."""
 	args = args if isinstance(args, dict) else {}
+	problems = []
 	url = args.get("url")
 	url = url.strip() if isinstance(url, str) else ""
 	problem = source_fetch.url_problem(url)
 	if problem:
-		return {"success": False, "error": problem}
+		problems.append(problem)
 	department = args.get("department")
-	if department not in (None, ""):
-		department = constants.department_option(department)
-		if department is None:
-			return {
-				"success": False,
-				"error": "department must be one of: " + ", ".join(constants.DEPARTMENT_BLOCK_OPTIONS),
-			}
-	if not frappe.has_permission(SOURCE, "create"):
-		return {
-			"success": False,
-			"error": "You cannot add to the reference library (it needs the KB Author or KB Approver role).",
-		}
+	if department not in (None, "") and constants.department_option(department) is None:
+		problems.append("department must be one of: " + ", ".join(constants.DEPARTMENT_BLOCK_OPTIONS))
+	for key in ("source_title", "why_saved"):
+		value = args.get(key)
+		if value is not None and not isinstance(value, str):
+			problems.append(f"{key} must be text")
+		elif value:
+			for finding in content.secret_findings(value):
+				problems.append(f"{key} line {finding.line} looks like {finding.kind}; leave it out")
+	if not frappe.has_permission(SOURCE, "create", user=user):
+		problems.append("you cannot add to the reference library (it needs the KB Author or KB Approver role)")
+	elif not problem and source_fetch.google_file(url) and constants.APPROVER_ROLE not in frappe.get_roles(user):
+		problems.append(
+			"only a KB Approver can save a Google Docs or Drive link, because ERPNext reads it with the "
+			"company's Drive account; download the file and upload it to the reference library instead"
+		)
+	return problems
+
+
+def save_payload(args):
+	"""``save_knowledge_source``: save ``url`` as a new Link source, as the session user. Returns
+	``{"success", "source", "url", "reading_state", "already_saved", "note"}`` or a refusal."""
+	args = args if isinstance(args, dict) else {}
+	problems = save_problems(args)
+	if problems:
+		return {"success": False, "error": "; ".join(problems)}
+	url = args["url"].strip()
+	department = args.get("department")
+	department = constants.department_option(department) if department not in (None, "") else None
 	existing = frappe.get_list(SOURCE, filters={"url": url, "status": "Active"}, pluck="name", limit=1)
 	if existing:
 		name = existing[0]
