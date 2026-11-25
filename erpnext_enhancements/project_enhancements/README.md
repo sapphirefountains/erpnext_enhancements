@@ -310,7 +310,7 @@ can be inside one of our tabs. `tests/test_project_budget_tab_layout.py` lists t
 the next release's there too.
 
 **The tab, top to bottom** (Nik approved the order; it ranks by six months of prod use, see
-`CHANGELOG.md` 1.845.2 for the counts): procurement tracker (`custom_material_request_feed`);
+`CHANGELOG.md` 1.845.2 for the reasons): procurement tracker (`custom_material_request_feed`);
 Procurement buttons; Material Pickup; Project Estimated Amount; Budget Notes; Project Estimated
 Cost; Customer Payment; Initial Invoice; Budget by Category; **Account Budgets**
 (`custom_account_budgets_section`, holding ERPNext's `budgets_html` list, which only users who can
@@ -319,9 +319,10 @@ Accounting section, Costing and Billing, and Margin.
 
 **Overview, Tasks and Budgets are hidden** by Property Setters on their Tab Breaks, never deleted, and
 sit at the end of the array. Projects open on Details because Frappe activates the first visible
-tab. ERPNext's `refresh` still shows `overview_dashboard` to Task readers, so the hidden Overview
-still fetches its data. The Tasks list fetches only when its tab is opened, so hiding the tab stops
-its request.
+tab. The hidden Overview still mounts its dashboard and fetches its data for everyone who opens a
+Project. Frappe's control `refresh()` calls `refresh_input()` on hidden fields too. Blanking
+`overview_dashboard.options` to stop the mount would make fixture import throw. The Tasks list
+fetches only when its tab is opened, so hiding the tab stops its request.
 
 ## Scope of Work (WI-075, v1.447.0)
 

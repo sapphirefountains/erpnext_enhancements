@@ -67,6 +67,58 @@ HIDDEN_TAIL = ("custom_section_break_kyvkd", "accounting_section", "project_deta
 #: Nik's answers: hidden, never deleted (Custom Fields and standard fields alike).
 HIDDEN_TABS = ("overview_tab", "tasks_tab", "budgets_tab")
 
+#: Every field in ERPNext v16.60.0's ``projects/doctype/project/project.json``, in its own order
+#: (identical at v16.61.0). CI has no ERPNext checkout, so the list is copied here; refresh it from the
+#: tag prod runs after an upgrade, and extend ``UPSTREAM_16_60_FIELDS`` with what is new.
+STANDARD_16_60 = (
+	"overview_tab", "overview_dashboard", "details_tab", "naming_series", "project_name", "status",
+	"project_type", "percent_complete_method", "column_break_5", "project_template", "priority",
+	"department", "is_active", "percent_complete", "section_break_18", "expected_start_date",
+	"expected_end_date", "column_break_20", "actual_start_date", "actual_end_date", "actual_time",
+	"accounting_section", "company", "estimated_costing", "column_break_accounting", "cost_center",
+	"tasks_tab", "tasks_html", "more_info_tab", "customer_details", "customer", "column_break_14",
+	"sales_order", "section_break0", "notes", "costing_tab", "costing_dashboard", "project_details",
+	"total_costing_amount", "total_purchase_cost", "column_break_28", "total_sales_amount",
+	"total_billable_amount", "total_billed_amount", "total_consumed_material_cost", "margin",
+	"gross_margin", "column_break_37", "per_gross_margin", "budgets_tab", "budgets_html",
+	"monitor_progress_tab", "section_break_sjmx", "collect_progress", "holiday_list", "frequency",
+	"from_time", "to_time", "first_email", "second_email", "daily_time_to_send", "day_to_send",
+	"weekly_time_to_send", "column_break_45", "subject", "message", "users_tab", "users_section",
+	"users", "copied_from", "connections_tab",
+)  # fmt: skip
+
+#: The 26 Project Custom Fields prod holds outside the fixtures (``is_system_generated = 1``; checked
+#: 2026-11-25), each with the file that creates it, or None for the six the 2026-04 contact work left
+#: on the site and no current code creates (``migrate_contact_data`` only copies values into them).
+CODE_OWNED = {
+	"custom_procurement_section": "patches/reorder_procurement_buttons.py",
+	"custom_btn_material_request": "patches/reorder_procurement_buttons.py",
+	"custom_btn_purchase_order": "patches/reorder_procurement_buttons.py",
+	"custom_col_break_1": "patches/reorder_procurement_buttons.py",
+	"custom_btn_request_quote": "patches/reorder_procurement_buttons.py",
+	"custom_btn_purchase_receipt": "patches/reorder_procurement_buttons.py",
+	"custom_col_break_2": "patches/reorder_procurement_buttons.py",
+	"custom_btn_supplier_quotation": "patches/reorder_procurement_buttons.py",
+	"custom_btn_purchase_invoice": "patches/reorder_procurement_buttons.py",
+	"custom_pickup_routing_section": "patches/add_project_pick_routing_button.py",
+	"custom_btn_pick_routing_map": "patches/add_project_pick_routing_button.py",
+	"primary_contact": "setup/custom_fields.py",
+	"section_break_contacts": "setup/custom_fields.py",
+	"contact_list_html": "setup/custom_fields.py",
+	"section_break_map": "setup/custom_fields.py",
+	"primary_address": "setup/custom_fields.py",
+	"location_map_col_break": "setup/custom_fields.py",
+	"location_map_html": "setup/custom_fields.py",
+	"section_break_address_list": "setup/custom_fields.py",
+	"address_list_html": "setup/custom_fields.py",
+	"primary_contact_job_title": None,
+	"primary_contact_phone": None,
+	"primary_contact_section": None,
+	"primary_contact_col_break": None,
+	"primary_contact_email": None,
+	"address_and_contact": None,
+}
+
 #: Breaks and fields whose type the tests need; the patch-created ones are not in the fixtures.
 SECTION_BREAKS_NOT_IN_FIXTURES = {
 	"custom_procurement_section",
@@ -106,6 +158,24 @@ class TestTheUpstreamFieldsArePlaced(unittest.TestCase):
 		for name in UPSTREAM_16_60_FIELDS:
 			self.assertIn(name, order, name)
 		self.assertEqual(len(order), len(set(order)), "field_order has a duplicate")
+
+	def test_every_entry_in_the_array_is_a_real_field(self):
+		"""sort_fields drops a name it does not know, so a stale entry is silent; this makes it loud."""
+		known = set(STANDARD_16_60) | set(_custom_fields()) | set(CODE_OWNED)
+		unknown = [name for name in _field_order() if name not in known]
+		self.assertEqual(unknown, [])
+
+	def test_the_code_owned_fields_are_where_the_list_says(self):
+		for fieldname, source in CODE_OWNED.items():
+			self.assertNotIn(fieldname, _custom_fields(), f"{fieldname} is in the fixtures now")
+			if source:
+				text = (APP / source).read_text(encoding="utf-8")
+				self.assertIn(f'"{fieldname}"', text, f"{fieldname} not created in {source}")
+
+	def test_the_standard_list_holds_every_16_60_field(self):
+		for name in UPSTREAM_16_60_FIELDS:
+			self.assertIn(name, STANDARD_16_60, name)
+		self.assertEqual(len(STANDARD_16_60), len(set(STANDARD_16_60)))
 
 	def test_details_is_the_first_tab(self):
 		"""With Details first, sort_fields prepends nothing and Projects open on Details."""
@@ -195,6 +265,17 @@ class TestTheBudgetTab(unittest.TestCase):
 		self.assertEqual((section["fieldtype"], section["label"]), ("Section Break", "Account Budgets"))
 		self.assertEqual(section["hidden"], 0)
 		self.assertEqual(self.tab[self.tab.index("custom_account_budgets_section") + 1], "budgets_html")
+
+	def test_nothing_outside_the_array_is_placed_inside_the_tab(self):
+		"""A Custom Field left out of the array is placed by its insert_after. Pointing into this tab, a
+		Section Break would take every field after it, up to the next break, under its heading."""
+		tab = set(self.tab)
+		strays = sorted(
+			name
+			for name, row in self.fields.items()
+			if name not in self.order and row.get("insert_after") in tab
+		)
+		self.assertEqual(strays, [], "add these to Project-main-field_order explicitly")
 
 	def test_insert_after_agrees_with_the_array(self):
 		"""v16 places by the array; an insert_after that disagrees is a trap for the next edit."""

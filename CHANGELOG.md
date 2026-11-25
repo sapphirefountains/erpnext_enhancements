@@ -42,12 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Project Estimated Amount (Total Time Elapsed back in it); Budget Notes; Project Estimated Cost;
     Customer Payment; Initial Invoice; Budget by Category; and a new **Account Budgets** section
     holding ERPNext's Budgets list.
-  - That order ranks the sections by use on prod over the six months before. 238 of 296 Purchase
-    Orders carried a project. Project Dollar Amount was set on 45 of the 65 Projects created; Budget
-    Notes on 10, copied from the Opportunity. Project Estimated Cost was set on 1. Customer Payment
-    and Initial Invoice were filled on one Project each, ever, and Budget by Category on none. Nobody
-    can measure clicks on the buttons or Pick Routing Map, so they sit beside the tracker by
-    judgment.
+  - That order ranks the sections by use on prod over the six months before, from read-only queries
+    of which fields are filled and the Version log of hand edits:
+    - Most Purchase Orders carry a project, so the tracker has the most to show.
+    - Project Dollar Amount is set on most new Projects and is the field people edit by hand.
+    - Budget Notes are filled on some, copied from the Opportunity.
+    - Project Estimated Cost is rarely filled.
+    - Customer Payment and Initial Invoice are almost never filled.
+    - Budget by Category has never been used.
+
+    No one can measure clicks on the buttons or Pick Routing Map, so placing them beside the tracker
+    is a judgment call.
   - **Overview, Tasks and Budgets are hidden** with Property Setters on their Tab Breaks, never
     deleted, and moved to the end of the array, each holding only its own field. Projects open on
     Details again: Frappe activates the first tab that isn't hidden. To bring one back, untick Hidden
@@ -57,11 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     center fields stay in our hidden Costing and Billing section, as before 16.60. Frappe hides an
     empty section.
   - Every `insert_after` on the Budget tab now agrees with the array, so the next edit isn't misled.
-    `tests/test_project_budget_tab_layout.py` pins the order, the hidden tabs and that agreement.
-  - **Known cost, unchanged by this release.** ERPNext's own `refresh` shows the Overview dashboard
-    field to everyone who can read Task, so the hidden tab still mounts the component and fetches
-    its data, as it did when the tab was visible. ERPNext's Tasks list loads only when its tab is
-    opened, so hiding that tab stops its request.
+  - `Project-main-field_order` drops two names that don't exist on this site, both silently ignored
+    by `sort_fields`:
+    - `total_expense_claim`, an HRMS field; HRMS isn't installed.
+    - `custom_project_notes`.
+  - `tests/test_project_budget_tab_layout.py` pins:
+    - the order and the hidden tabs;
+    - that every name in the array is a real field: ERPNext 16.60's own, a fixture Custom Field, or
+      one of the 26 code-owned ones;
+    - that no Custom Field left out of the array points its `insert_after` into the Budget tab.
+  - **Known cost, unchanged by this release.** The hidden Overview still mounts its dashboard and
+    calls `get_project_overview` for everyone who opens a Project, as it did when the tab was
+    visible. Frappe's control `refresh()` calls `refresh_input()` whether or not the field is hidden
+    (`base_control.js`). Don't try to stop the mount by blanking `overview_dashboard.options`:
+    `validate_fields` would throw during fixture import and abort the whole `custom_field.json`
+    sync. ERPNext's Tasks list loads only when its tab is opened, so hiding that tab stops its
+    request.
 
 ## [1.845.1] - 2026-11-25
 
