@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.844.0] - 2026-11-25
+
+### Added
+
+- **A reference library in the Knowledge Base: save a link or upload a file, and ERPNext reads it,
+  keeps a private copy and its text, and has Gemini summarize it.** Asked for on 2026-11-25: links for
+  the AI to fetch and save into ERPNext, and documents and files uploaded for analysis and reference.
+  A new doctype, **Knowledge Source** (`KBS-.#####`, module Knowledge Base), holds one link or one
+  file. It is **reference material, not company knowledge**: nobody approves it, so it is never an
+  article and never numbered, and the AI tools (the next PR) will return it labeled as unreviewed
+  reference, ranked after approved articles (WI-080's decision of 2026-11-25, ADR 0017's amendment).
+  - **Who:** every staff user reads it (`Desk User`, as for articles); KB Authors and KB Approvers
+    add and edit; KB Approvers and System Managers may delete, so a file uploaded by mistake can go.
+    No share, export, import or email; no web view, guest access or global search; attachments
+    private. Everything the server read (the text, the state, the copy, the fingerprint) sits at
+    permlevel 1, read-only for everyone: v16 resets a permlevel the saver cannot write before
+    `validate`, so nobody can type text into `extracted_text` through REST and have it read as the
+    source's.
+  - **Reading it** (`knowledge_base/sources.extract_source`, queued on save, one deduplicated job per
+    source): an upload from its File; a Google Docs, Sheets, Slides or Drive link through the Drive API
+    as ERPNext's Drive service account (a Doc exported as HTML, so headings and tables survive); any
+    other link through the link guard below. A link's bytes are kept as a private File on the source,
+    so it still reads after the page moves. The text (`knowledge_base/source_text.py`): HTML without
+    scripts or styles and with tables as `a | b` rows, PDF through `pypdf` (a Frappe dependency, so it
+    is on a server where nothing can be pip-installed), Word `.docx` through `zipfile` with a zip-bomb
+    guard, Markdown, text and CSV, at most 200,000 characters. A picture goes to Gemini, which
+    describes it and transcribes its words.
+  - **Secrets refused.** The knowledge base's own scan runs on the text: a finding stores nothing,
+    keeps no copy and sends no text to Gemini; the state is Refused and the note names the line and
+    the kind, never the value. The summary, keywords and notes people type are scanned on save.
+  - **The summary** is Gemini's JSON, distrusted and cut to size, written only while the summary is
+    blank or was Gemini's: a summary a person typed is never replaced. Gemini down leaves the source
+    Ready with a note.
+  - **Re-drivable.** The deploy's FLUSHDB destroys queued jobs, so `sources.requeue_pending` (hourly)
+    queues again every source left Pending for 15 minutes, and **Fetch again** on the form does it at
+    once (`api/knowledge_base_sources.refetch`, POST, write permission on the source). An unexpected
+    failure logs the exception's type only, never its message: a traceback could carry the document's
+    own text.
+  - **Where to find it:** a **Reference library** shortcut on the Knowledge Base workspace and an item in
+    its sidebar (both timestamp-gated files bumped to 2026-11-25 and re-pinned); the form says a source
+    is reference, not approved knowledge, and that nothing restricted belongs there.
+- **The link guard** (`knowledge_base/source_fetch.py`). The fetch runs on the production server inside
+  Google Cloud, so a link is an instruction to that server: without a guard, `http://169.254.169.254/`
+  (the metadata server), `http://localhost` (the bench) or a private address would have ERPNext read its
+  own infrastructure and store the answer where every staff user can open it. On every hop: `http` or
+  `https` on the default port with no `user:password@`; every address the host resolves to must be
+  global (loopback, private, link-local, carrier-grade NAT, multicast, reserved, unspecified, and IPv4
+  written inside IPv6, all refused); redirects followed by the code, at most five, each checked again;
+  the connected socket's address checked before the body is read, where urllib3 exposes it (DNS
+  rebinding); no cookies, no `Authorization`, `trust_env` off; a 15 MB cap; and only content types the
+  library reads, refused before the body is downloaded.
+
+### Changed
+
+- **Files attached to a Knowledge Source are forced private and stay attached**, by the same
+  `knowledge_base/files.force_private` hook as the articles' (`constants.PRIVATE_FILE_DOCTYPES`). Not
+  the delete refusal on articles' and drafts' files, which keeps to the two article doctypes
+  (`KB_DOCTYPES`, which also feeds the AI gate's never-exempt list and is unchanged).
+- **WI-080 PR 4a (the Markdown import) is replaced by the reference library**: a Google Doc is saved by
+  its link or uploaded, and its text is what an article is drafted from.
+
+### Tests
+
+- `tests/test_knowledge_base_sources.py`, a **pytest** suite on its own CI step: every address family the
+  guard must refuse, a redirect inward refused before it is requested, an internal socket refused before
+  the body is read, the size cap, unreadable kinds refused unread, no credentials sent; HTML, Word, a real
+  PDF and Markdown; the job over a fake frappe installed per test (a link read, copied and summarized;
+  secret-shaped text never stored, copied or sent; a typed summary never replaced; Gemini down still
+  Ready; a source edited mid-read left alone; a failure logged by type only; a picture read through
+  Gemini; a public upload made private); the controller, Fetch again's write check, the exact permission
+  matrix, every server-set field read-only at permlevel 1, the hooks, and a form script whose names
+  cannot collide with the article scripts'.
+- `test_knowledge_base_entry_points` (the new shortcut and sidebar item, seen by every staff user, the
+  re-pinned stamps) and `test_whitelist_placement` (the new file's whole surface is `refetch`).
+
 ## [1.843.1] - 2026-11-24
 
 ### Fixed

@@ -197,6 +197,9 @@ EXACT_SURFACE = {
     # One read-only GET for the private mirror's service account (v1.561.0). A decorator on
     # `stamp_of` or a helper would expose it to every signed-in user, without the role check.
     "api/knowledge_base_mirror.py": {"snapshot"},
+    # The reference library's Fetch again (2026-11-25): POST, and a write-permission check on the
+    # source. Any other endpoint here would reach a fetch of an arbitrary link from the server.
+    "api/knowledge_base_sources.py": {"refetch"},
     # The contact/address directory and the Package Dispatch auto-fill (v1.561.1). Six of
     # these had no permission check until then, so any signed-in user could read any party's
     # contacts or re-link any Contact. Each carries its own gate now, fenced endpoint by

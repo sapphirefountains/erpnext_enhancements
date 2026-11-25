@@ -59,6 +59,7 @@ WORKSPACE_PATH = KB / "workspace" / "knowledge_base" / "knowledge_base.json"
 SIDEBAR_PATH = APP / "workspace_sidebar" / "knowledge_base.json"
 ARTICLE_JSON = KB / "doctype" / "knowledge_article" / "knowledge_article.json"
 VERSION_JSON = KB / "doctype" / "knowledge_article_version" / "knowledge_article_version.json"
+SOURCE_JSON = KB / "doctype" / "knowledge_source" / "knowledge_source.json"
 REPORT_DIR = KB / "report"
 DUE_REPORT = "Knowledge Articles Due for Review"
 INTEGRITY_REPORT = "Knowledge Base Integrity"
@@ -74,6 +75,7 @@ EMAILED_MODULE = "erpnext_enhancements.knowledge_base.emailed_reports"
 WORKSPACE = "Knowledge Base"
 ARTICLE = K.ARTICLE_DOCTYPE
 VERSION = K.VERSION_DOCTYPE
+SOURCE = K.SOURCE_DOCTYPE
 
 #: What each file held when its ``modified`` was last set, and that stamp. A workspace or sidebar is
 #: imported only when the file's ``modified`` beats the stored row's (``modules/import_file.py``), so an
@@ -81,12 +83,12 @@ VERSION = K.VERSION_DOCTYPE
 #: its ``modified`` past the stamp below; then put the new fingerprint and stamp here.
 PINNED = {
 	WORKSPACE_PATH: (
-		"089a93f00ba44c05a2d60c1a0b438b5465021a8f3a158be6ae4b561f1d944bd9",
-		"2026-10-07 12:00:00.000000",
+		"3bea083c17b60d51b2b8eadf42ca76909475cd5a2b806cb390a95eef293b7819",
+		"2026-11-25 12:00:00.000000",
 	),
 	SIDEBAR_PATH: (
-		"ec3c2b2a332407ab16040f5db79842db72b20db01b743d4ccbe90977e32110ea",
-		"2026-10-07 12:00:00.000000",
+		"150821ddf7d2efcdc65fe6de0e82c92c57054a6141012acf87e87897283f906b",
+		"2026-11-25 12:00:00.000000",
 	),
 }
 
@@ -98,7 +100,7 @@ APPROVER = READER | {K.APPROVER_ROLE}
 PORTAL = frozenset({"All", "Guest"})
 
 #: What each of them sees on the workspace (blocks, by label) and in its sidebar (items, by label).
-READER_BLOCKS = {"Published articles", "Newest articles"}
+READER_BLOCKS = {"Published articles", "Newest articles", "Reference library"}
 AUTHOR_BLOCKS = READER_BLOCKS | {
 	"My drafts",
 	"In review",
@@ -107,7 +109,7 @@ AUTHOR_BLOCKS = READER_BLOCKS | {
 	"Writing and review",
 }
 APPROVER_BLOCKS = AUTHOR_BLOCKS
-READER_SIDEBAR = {"Home", "Published articles"}
+READER_SIDEBAR = {"Home", "Published articles", "Reference library"}
 AUTHOR_SIDEBAR = READER_SIDEBAR | {
 	"Writing and review",
 	"Drafts",
@@ -182,12 +184,12 @@ def perms(doctype_json):
 
 def readable(doctype, roles):
 	"""Whether a user holding ``roles`` reads ``doctype`` at level 0 (v16 ``can_read``)."""
-	path = {ARTICLE: ARTICLE_JSON, VERSION: VERSION_JSON}[doctype]
+	path = {ARTICLE: ARTICLE_JSON, VERSION: VERSION_JSON, SOURCE: SOURCE_JSON}[doctype]
 	return any(row.get("read") and row["role"] in roles for row in perms(load(path)))
 
 
 def reportable(doctype, roles):
-	path = {ARTICLE: ARTICLE_JSON, VERSION: VERSION_JSON}[doctype]
+	path = {ARTICLE: ARTICLE_JSON, VERSION: VERSION_JSON, SOURCE: SOURCE_JSON}[doctype]
 	return any(row.get("report") and row["role"] in roles for row in perms(load(path)))
 
 
@@ -581,6 +583,7 @@ class TestWorkspace(unittest.TestCase):
 			{label: (row["type"], row["link_to"], row.get("doc_view")) for label, row in rows.items()},
 			{
 				"Published articles": ("DocType", ARTICLE, "List"),
+				"Reference library": ("DocType", SOURCE, "List"),
 				"My drafts": ("DocType", VERSION, "List"),
 				"In review": ("DocType", VERSION, "List"),
 				"Due for review": ("Report", DUE_REPORT, None),
@@ -650,6 +653,7 @@ class TestFilters(unittest.TestCase):
 		self.fields = {
 			ARTICLE: {f["fieldname"]: f for f in load(ARTICLE_JSON)["fields"]},
 			VERSION: {f["fieldname"]: f for f in load(VERSION_JSON)["fields"]},
+			SOURCE: {f["fieldname"]: f for f in load(SOURCE_JSON)["fields"]},
 		}
 
 	def _check(self, doctype, field, value):
@@ -674,7 +678,7 @@ class TestFilters(unittest.TestCase):
 				for field, (op, value) in parsed.items():
 					self.assertEqual(op, "=")
 					self._check(row["link_to"], field, value)
-		self.assertEqual(seen, 3)
+		self.assertEqual(seen, 4)
 
 	def test_my_drafts_are_the_viewers_own_drafts(self):
 		(row,) = [r for r in self.ws["shortcuts"] if r["label"] == "My drafts"]
@@ -704,7 +708,7 @@ class TestFilters(unittest.TestCase):
 				for field, value in json.loads(raw).items():
 					self.assertIsInstance(value, str)
 					self._check(item["link_to"], field, value)
-		self.assertEqual(seen, 3)
+		self.assertEqual(seen, 4)
 
 	def test_the_states_filtered_on_are_the_constants(self):
 		self.assertIn("Draft", K.OPEN_REVIEW_STATES)
@@ -789,10 +793,11 @@ class TestSidebar(unittest.TestCase):
 				self.assertEqual(item["child"], 1)
 				self.assertFalse(target_visible(item["link_type"], item["link_to"], READER))
 
-	def test_it_links_both_doctypes_so_their_pages_keep_it(self):
-		"""v16 shows a doctype's list and form with the sidebar that links that doctype."""
+	def test_it_links_every_kb_doctype_so_their_pages_keep_it(self):
+		"""v16 shows a doctype's list and form with the sidebar that links that doctype. Since
+		2026-11-25 that includes the reference library's Knowledge Source."""
 		linked = {item.get("link_to") for item in self.sidebar["items"] if item.get("link_type") == "DocType"}
-		self.assertEqual(linked, {ARTICLE, VERSION})
+		self.assertEqual(linked, {ARTICLE, VERSION, SOURCE})
 
 	def test_every_icon_is_in_v16s_sprites(self):
 		"""Skipped where there is no frappe checkout beside this repo (CI included)."""

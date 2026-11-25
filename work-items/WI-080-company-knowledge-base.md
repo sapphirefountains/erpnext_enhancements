@@ -94,6 +94,34 @@ Slice 4. v1.569.0.
   and that the current version is in ERPNext. A draft's preview carries a red "Draft - not approved"
   box and a faint DRAFT across each printed page.
 
+## Decided 2026-11-25: first articles, and a reference library
+
+Checked on prod (read-only) the same day: everything above is live, Triton reads the three tools, and
+there are **0 Knowledge Articles**, published or retired. Exactly one version has ever existed
+(the `KBV-` series stands at 1): the "Receiving a PO against a packing slip" draft of 2026-09-29, which
+went to review, came back to its author to edit and was never resubmitted. The code was not what held
+the knowledge base back; content and approval were. Nik chose, from a short plan:
+
+- **Draft the first articles now, with no code.** Five, from the POL-0000 register's written documents,
+  through `draft_knowledge_article` (a card each, confirmed by Nik, landing as Drafts for an approver):
+  the travel policy, the attendance and time-off policy, the work non-compliance policy, the packaging
+  for shipping SOP and the expense reimbursement SOP. Tracked on ERPNext.
+- **Build a reference library** for what he asked that day: *"submit links for the AI to fetch and save
+  the articles information to ERPNext, as well as uploading documents and files for analysis and
+  reference"*. A **Knowledge Source** is a saved link or an uploaded file; ERPNext reads it, keeps a
+  private copy and its text, and Gemini summarizes it. Every staff user reads the library; KB Authors
+  add to it. It **replaces PR 4a** (the Markdown import): a Google Doc is saved by its link, through the
+  Drive API, or uploaded, so Parker's export test no longer decides anything.
+- **The AI answers from it, labeled** ("Answer, labeled", over "drafting input only"). A source is
+  never approved, so it is never an article: the AI tools return it as reference with a label saying
+  nobody reviewed it, and approved articles rank first. That is ADR 0017's amendment of 2026-11-25. The
+  AI tools are the next PR; this one (v1.844.0) is the library itself.
+- **A fifth KB Approver stays.** One more staff member holds the role, through the "KB Approvers"
+  profile, given after the four were named. Nik, asked whether to keep her: "Keep her".
+- **Later:** the Drive copy (PR 7) and the mirror's credentials, which were never set up (no mirror
+  account exists; one staff account holds the KB Mirror role, which on a System User grants only the
+  snapshot).
+
 ## Why
 
 Nik wants a company knowledge base that people *and* every AI tool Sapphire uses read from the same place, so that Parker, James and the crews can keep the company running without him. On 2026-09-24 he chose ERPNext as its home. After comparing Frappe Wiki v3, the recommendation is to build a narrow native module (ADR 0017).
