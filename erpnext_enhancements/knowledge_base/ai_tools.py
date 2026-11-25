@@ -51,7 +51,7 @@ import unicodedata
 import frappe
 from frappe.utils import get_url, getdate, nowdate
 
-from erpnext_enhancements.knowledge_base import constants, markdown, search_service
+from erpnext_enhancements.knowledge_base import constants, markdown, search_service, source_tools
 
 ARTICLE = constants.ARTICLE_DOCTYPE
 PUBLISHED = constants.ARTICLE_STATUSES[0]
@@ -107,6 +107,8 @@ NO_MATCH_NOTE = (
 	"list_company_knowledge shows what exists."
 )
 NO_QUERY_PROBLEM = "no query was given; say what to look for"
+#: Added to search's ``problems`` when the reference library could not be read (2026-11-25).
+REFERENCES_UNAVAILABLE = "the reference library could not be searched just now; the articles were"
 #: The one answer for every miss, so it says nothing about which miss it was. It says what a number
 #: looks like, which helps an agent that learned the retired format and leaks nothing.
 NOT_FOUND_MESSAGE = (
@@ -170,14 +172,46 @@ def search_payload(args):
 	if retired:
 		problems.append(RETIRED_FORMAT_PROBLEM.format(written=retired.group(0).strip()[:REQUESTED_MAX]))
 	results = [_search_result(result) for result in out.get("results") or ()]
+	references = _references(query, args, problems)
 	note = SEARCH_NOTE.format(cite_as=results[0]["cite_as"]) if results else NO_MATCH_NOTE
+	if references:
+		note = f"{note} {source_tools.REFERENCES_NOTE}"
 	return {
 		"query": query,
 		"result_count": len(results),
 		"results": results,
+		"reference_count": len(references),
+		"references": references,
 		"problems": problems,
 		"note": note,
 	}
+
+
+def _off(value):
+	"""``include_reference`` switched off, however a client sent it: ``False``, ``0`` or a string
+	such as ``"false"``."""
+	if isinstance(value, bool):
+		return value is False
+	if isinstance(value, (int, float)):
+		return value == 0
+	return isinstance(value, str) and value.strip().lower() in ("false", "0", "no", "off")
+
+
+def _references(query, args, problems):
+	"""The reference library's matches for ``query`` (2026-11-25, "Answer, labeled"), in their own list
+	after the articles, never in ``results``. None when the query or a filter is a problem, when a
+	``kind`` is asked for (a kind is an article's: Policy, Process or SOP), or when
+	``include_reference`` is false. A failure here never costs the articles: it becomes a problem."""
+	if not query or problems or args.get("kind") not in (None, "") or _off(args.get("include_reference")):
+		return []
+	department, _kind, filter_problems = search_service.read_filters(args.get("department"), None)
+	if filter_problems:
+		return []
+	try:
+		return source_tools.reference_hits(query, department=department)
+	except Exception:
+		problems.append(REFERENCES_UNAVAILABLE)
+		return []
 
 
 def _search_result(result):

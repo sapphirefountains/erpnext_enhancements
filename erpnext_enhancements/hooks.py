@@ -4242,6 +4242,12 @@ assistant_tools = [
 	# so an agent such as the SEO session records its own changes. Mutating: gated (APP_MUTATING),
 	# Low risk (one create).
 	"erpnext_enhancements.assistant_tools.log_marketing_event.LogMarketingEvent",
+	# 2026-11-25 -- the knowledge base's reference library. save_knowledge_source saves a link as a
+	# Knowledge Source (gated: APP_MUTATING, Low), which ERPNext then reads through its guarded fetch;
+	# fetch_knowledge_source reads one source as the caller (EXPLICIT_READONLY), labeled unreviewed.
+	# search_company_knowledge returns the library's matches in its own `references` list.
+	"erpnext_enhancements.assistant_tools.save_knowledge_source.SaveKnowledgeSource",
+	"erpnext_enhancements.assistant_tools.fetch_knowledge_source.FetchKnowledgeSource",
 	# v1.545.0 — cancel a submitted document. FAC has submit_document and no cancel, and its
 	# update_document refuses any change to a submitted document, so an approved
 	# {"docstatus": 2} card could only fail. HIGH risk and never exempt, like submit

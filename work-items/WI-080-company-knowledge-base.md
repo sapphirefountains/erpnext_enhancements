@@ -115,7 +115,9 @@ the knowledge base back; content and approval were. Nik chose, from a short plan
 - **The AI answers from it, labeled** ("Answer, labeled", over "drafting input only"). A source is
   never approved, so it is never an article: the AI tools return it as reference with a label saying
   nobody reviewed it, and approved articles rank first. That is ADR 0017's amendment of 2026-11-25. The
-  AI tools are the next PR; this one (v1.844.0) is the library itself.
+  AI tools are the next PR; this one (v1.844.0) is the library itself. *(v1.845.0 adds them:
+  `references` on `search_company_knowledge`, `fetch_knowledge_source`, and
+  `save_knowledge_source` behind a Low card.)*
 - **A fifth KB Approver stays.** One more staff member holds the role, through the "KB Approvers"
   profile, given after the four were named. Nik, asked whether to keep her: "Keep her".
 - **Later:** the Drive copy (PR 7) and the mirror's credentials, which were never set up (no mirror

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.845.0] - 2026-11-25
+
+### Added
+
+- **The AI answers from the reference library, labeled, and can save a link to it.** The second half of
+  the 2026-11-25 decision ("Answer, labeled"): an AI may quote saved links and uploads as long as it
+  says nobody reviewed them, and approved articles come first. Built on v1.844.0's Knowledge Source;
+  everything runs through `knowledge_base/source_tools.py`.
+  - **`search_company_knowledge` returns `references`**, a separate list after the articles: up to 3
+    Active, Ready sources the caller may read, ranked by the knowledge base's own BM25 engine over the
+    title, keywords, summary and the first 60,000 characters of text. Each carries
+    `result_type: "reference"`, `reviewed: false` and a label, and the note tells the model to prefer
+    an article and to name a reference as unreviewed. `results` is unchanged and holds approved articles
+    only, so a client that reads it (Triton's frozen snapshot included) never sees a reference there:
+    an added field, as ADR 0017 §3 allows. None when a `kind` is asked for, when the new
+    `include_reference` is false, or when the query or a filter is a problem; if the library cannot be
+    searched, that is a `problems` entry and the articles still come back.
+  - **`fetch_knowledge_source`** (new, read-only): one source as the caller, with its text (at most
+    40,000 characters), summary, original link, reading state and why it was saved, every answer
+    labeled. `KBS-00012`, `kbs 12` and `KBS_12` all read; every miss is one `found: false`.
+  - **`save_knowledge_source`** (new, a write behind a card, Low): saves a link as a new Knowledge
+    Source, created as the person who confirms, so their own create permission applies (KB Author or
+    KB Approver); ERPNext then reads it through v1.844.0's guarded fetch. The card's line is the link
+    the server will fetch. A link the library already holds comes back as that source, not a second
+    one. A bad link, an unknown department or a missing create permission is refused before any write.
+  - A failure in any of the three logs one deferred Error Log naming the method and the exception's
+    type, never the arguments (`assistant_tools/_knowledge_base.run_source`), as the other knowledge
+    base tools do.
+  - **Search stays cheap as the library grows.** The reference index is built once per site and
+    worker from text the database cuts to 60,000 characters, keyed on the library's count and newest
+    change, and the caller's readable set is applied before ranking; a search reads only its hits'
+    text. Each reference also says whether its summary was written by Gemini
+    (`summary_written_by_ai`), and `include_reference` sent as the string `"false"` switches them off.
+  - **A save that could never run gets a clear answer, not a card.** `save_knowledge_source` is in the
+    gate's `APP_PRECHECKED_TOOLS` (`source_tools.save_problems`, asked again when a card runs): a
+    malformed link, a Google link from someone who is not a KB Approver, a secret-shaped title or
+    note, or no create permission is refused up front, and a refused row keeps none of the link,
+    title or note. References and fetch also say whether the title was taken from the page rather
+    than typed (`title_from_source`).
+  - **The library is never exempt from a card**: Knowledge Source joins the gate's `NEVER_EXEMPT`
+    (`KNOWLEDGE_BASE_LIBRARY_DOCTYPES`, with the knowledge base's own reason in the batch dialog), and a
+    `save_knowledge_source` card names it as its target.
+
+### Tests
+
+- `tests/test_knowledge_base_sources.py` (its own pytest step) gains the AI side: references labeled,
+  only Active and Ready sources, read as the caller, the department filter; fetch's label, truncation,
+  archived and unread notes, and every miss answered alike; save's cleaned arguments, the duplicate, and
+  each refusal before a write; `search_payload` keeping references out of `results`, out of a kind
+  search and out when switched off, and surviving a broken library; the gate's classification and the
+  card's line.
+- `test_knowledge_base_tools` (search's properties gain `include_reference`; the gate's targets and
+  `NEVER_EXEMPT` gain the library), `test_ai_gate_batch` (the never-exempt kinds) and
+  `test_knowledge_base_actions` (the search payload's keys gain `reference_count` and `references`).
+  The library suite also checks the index is built once and rebuilt on a change, the text cut by the
+  database, an unreadable source taking no slot, and every way `include_reference` is switched off.
+  `test_assistant_tools_schema` classifies, annotates and validates the two new tools like every other.
+
 ## [1.844.0] - 2026-11-25
 
 ### Added
