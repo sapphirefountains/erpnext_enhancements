@@ -147,6 +147,10 @@ EXPLICIT_READONLY = {
     "search_company_knowledge",
     "fetch_knowledge_article",
     "list_company_knowledge",
+    # 2026-11-25 -- read one reference-library source (a saved link or upload) as the caller, labeled
+    # unreviewed (knowledge_base/source_tools.py). Writes nothing. Its write half, save_knowledge_source,
+    # is in APP_MUTATING.
+    "fetch_knowledge_source",
     # v1.571.0 (WI-079 slice 5) -- dry-run a design review bundle: every check an import makes, nothing
     # written. Its write half, submit_design_review, is in APP_MUTATING.
     "check_design_review_bundle",
@@ -224,6 +228,11 @@ APP_MUTATING = {
     # and element codes are append-only), and it opens nothing -- a person adds the participants and
     # sets the review Open. Prechecked, so an invalid bundle or a service-account caller gets no card.
     "submit_design_review",
+    # 2026-11-25 -- save a link to the knowledge base's reference library (knowledge_base/source_tools.py):
+    # one Knowledge Source, created as the person who confirms, which ERPNext then reads in the
+    # background through its guarded fetch. Low (below): one create, deleted as easily by a KB
+    # Approver, and nothing existing changes.
+    "save_knowledge_source",
 }
 
 HIGH_RISK = {
@@ -252,6 +261,7 @@ LOW_RISK = {
     "log_marketing_event",
     "save_water_design",
     "author_training_course",
+    "save_knowledge_source",
     # a private File the requester owns; nothing existing changes and deleting it undoes it
     "generate_document",
 }
@@ -384,6 +394,12 @@ KNOWLEDGE_BASE_DOCTYPES = frozenset({"Knowledge Article", "Knowledge Article Ver
 #: either. Part of the knowledge base's kind below, with its phrase.
 KNOWLEDGE_BASE_CHILD_DOCTYPES = frozenset({"Knowledge Article Revision"})
 
+#: The knowledge base's reference library (2026-11-25): saved links and uploads the AI answers from.
+#: A source's link is fetched by the server and its text is read by every staff user and assistant,
+#: so no settings row may let an assistant's write to one skip its card. Part of the knowledge base's
+#: kind below, with its phrase.
+KNOWLEDGE_BASE_LIBRARY_DOCTYPES = frozenset({"Knowledge Source"})
+
 #: Doctypes the settings allowlist may never exempt, whatever a row says. There are three kinds,
 #: each never exempt for its own reason:
 #:
@@ -391,14 +407,18 @@ KNOWLEDGE_BASE_CHILD_DOCTYPES = frozenset({"Knowledge Article Revision"})
 #:   Task would ungate Task creation along with its updates — the one write ADR 0016 §6 exists
 #:   to confirm.
 #: - The gate's own records, ``GATE_OWN_DOCTYPES``.
-#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES`` and its child tables,
-#:   ``KNOWLEDGE_BASE_CHILD_DOCTYPES``.
+#: - The knowledge base, ``KNOWLEDGE_BASE_DOCTYPES``, its child tables,
+#:   ``KNOWLEDGE_BASE_CHILD_DOCTYPES``, and its reference library, ``KNOWLEDGE_BASE_LIBRARY_DOCTYPES``.
 #:
 #: A card that targets any of them never starts ticked in the batch dialog, and the reason it
 #: shows names the kind (`gating_api._never_exempt_reason`). A new entry joins one of the three
 #: kinds or gets its own phrase in that function; `test_ai_gate_batch` fails on one with neither.
 NEVER_EXEMPT = (
-    frozenset({"Task"}) | GATE_OWN_DOCTYPES | KNOWLEDGE_BASE_DOCTYPES | KNOWLEDGE_BASE_CHILD_DOCTYPES
+    frozenset({"Task"})
+    | GATE_OWN_DOCTYPES
+    | KNOWLEDGE_BASE_DOCTYPES
+    | KNOWLEDGE_BASE_CHILD_DOCTYPES
+    | KNOWLEDGE_BASE_LIBRARY_DOCTYPES
 )
 
 #: App tools whose card writes a doctype its arguments do not name (v1.560.0, WI-080 PR 6b). A card's
@@ -409,13 +429,17 @@ NEVER_EXEMPT = (
 #: the result's `name`). A `doctype` smuggled into their arguments is ignored here, and still refused by
 #: the denylist in step 0 when it names a denylisted doctype. Each value is one of NEVER_EXEMPT's kinds,
 #: so `gating_api._review_reasons` gives the card its reason and starts it unticked.
-TOOL_TARGET_DOCTYPES = {"draft_knowledge_article": "Knowledge Article Version"}
+TOOL_TARGET_DOCTYPES = {
+    "draft_knowledge_article": "Knowledge Article Version",
+    # 2026-11-25: a saved link becomes a Knowledge Source, which the server then fetches.
+    "save_knowledge_source": "Knowledge Source",
+}
 
 #: App tools the gate asks, before it queues a card, whether the call could ever run (v1.560.0). Each
 #: has a `precheck(arguments)` method returning its problems as short clauses; any problem refuses the
 #: call with no card (`_precheck_refusal`). A precheck that raises queues the card as before, logged by
 #: type only (`_log_failure_type`), because execution runs the same check again.
-APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_review"})
+APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_review", "save_knowledge_source"})
 
 #: What a log row with no card keeps of a listed tool's arguments (v1.560.0, WI-080 finding 8). The gate
 #: redacts only by key name, so a refused drafting call's AI Action Log row would otherwise hold the
@@ -426,6 +450,9 @@ APP_PRECHECKED_TOOLS = frozenset({"draft_knowledge_article", "submit_design_revi
 #: what they confirm, and it is the AI's own proposal (decided 2026-09-28).
 WITHHELD_WHEN_UNQUEUED = {
     "draft_knowledge_article": ("article_title", "summary", "keywords", "body_markdown", "change_note"),
+    # 2026-11-25: a refused save may be refused for a secret in its title or note, or a password in
+    # its link, so none of the three stays in the row.
+    "save_knowledge_source": ("url", "source_title", "why_saved"),
 }
 WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
 
@@ -437,6 +464,7 @@ WITHHELD_SUMMARY = "Draft knowledge article (text withheld)"
 #: tool does not know. WITHHELD_WHEN_UNQUEUED and this split the tool's arguments between them.
 KEPT_WHEN_UNQUEUED = {
     "draft_knowledge_article": ("kb_number", "department", "kind", "process_owner", "submit_for_review"),
+    "save_knowledge_source": ("department",),
 }
 KEPT_LIMIT = 140
 
@@ -911,6 +939,11 @@ def summarize_tool_call(tool_name, arguments):
     if tool_name == "generate_document":
         label = (args.get("title") or args.get("filename") or "").strip()
         return f"Generate a PDF document {label}".strip()
+    if tool_name == "save_knowledge_source":
+        # 2026-11-25. The card's decision is which link the server will fetch, so it shows the link.
+        link = " ".join(str(args.get("url") or "").split())
+        shown = (link[:90] + "…") if len(link) > 90 else link
+        return f"Save link to the reference library: {shown or '(no link)'}"
     if tool_name == "log_marketing_event":
         text = (args.get("title") or "").strip()
         snippet = (text[:60] + "…") if len(text) > 60 else text

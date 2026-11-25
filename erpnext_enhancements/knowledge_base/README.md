@@ -31,7 +31,10 @@ article prints, previews and opens as its kind's company register template** (PO
 Process, POL-0004 SOP), with a Revision History drawn from the approved versions; see "The document:
 print, preview and the form (2026-09-30)". **The KB roles were granted on 2026-09-28**: Parker, Nik and James
 hold KB Author and KB Approver, and Lisa holds KB Approver through the "KB Approvers" profile (see
-"Roles, and how a person gets one").
+"Roles, and how a person gets one"). **Since 2026-11-25 there is a reference library beside the articles**:
+a Knowledge Source is a saved link or an uploaded file, whose text ERPNext reads, keeps and has Gemini
+summarize, for the AI and everyone to read as unreviewed reference (never as an article). See "The
+reference library (2026-11-25)".
 
 ## The shape of it
 
@@ -1251,6 +1254,114 @@ kind's template in the company register, measured from the templates' Google Doc
   draw opens its Article Text section instead, and the failure's type goes to the Error Log (deferred:
   the form loads on a GET, which v16 does not commit).
 
+## The reference library (2026-11-25)
+
+Nik, 2026-11-25: *"I'd like the ability to submit links for the AI to fetch and save the articles
+information to ERPNext, as well as uploading documents and files for analysis and reference."* Asked
+whether the AI may answer from that material or only draft articles from it, he chose **"Answer,
+labeled"**: reference material is read and quoted, always marked as unreviewed, and approved articles
+rank first. It is a different kind of thing from an article, so it is a different doctype.
+
+**Knowledge Source** (`doctype/knowledge_source`, `KBS-.#####`) is one saved link or one uploaded file.
+
+| | Knowledge Source |
+|---|---|
+| Every staff user (`Desk User`) | read, report, print |
+| KB Author | read, create, write, report, print |
+| KB Approver, System Manager | read, create, write, **delete**, report, print |
+| Everyone who reads it, permlevel 1 | **read only**: everything the server read (the text, the state, the copy) |
+
+No share, export, import or email anywhere; no web view, guest access or global search; attachments
+private. A source is never approved, so it carries none of the article rules, and it is outside
+`constants.KB_DOCTYPES` on purpose: those two doctypes carry the gate's never-exempt list and the
+delete refusal on drafts' files. Deleting is allowed, for a KB Approver, so a file uploaded by mistake
+can be removed. **Restricted material never goes in** (ADR 0017 §5), and the form says so.
+
+**Saving one queues it to be read** (`sources.extract_source`, on the `long` queue, one deduplicated
+job per source):
+
+1. **The bytes.** An upload from its File: **only a File attached to the source itself**, never a file
+   found by its URL alone (the form also refuses a file address outside this site's files). One that
+   arrived public is copied into a new private File on the source and the public row dropped (Frappe
+   attaches an Attach field's upload with `db.set_value`, which runs no File hook); it is never flipped
+   in place, because Frappe would move the bytes for every File row that shares them, a website image
+   included. A Google Docs, Sheets, Slides or Drive link through the Drive API as
+   ERPNext's Drive service account (`google_drive.drive_utils`), a Doc exported as HTML so its headings
+   and tables survive. **Only a KB Approver may save a Google link**, because that account reaches far
+   more than one person may (the shared drives' project, customer and opportunity folders); anyone else
+   downloads the file and uploads it. Any other link through `source_fetch.fetch`.
+2. **A private copy of a link** (`snapshot_file`), so the source still reads after the page moves.
+3. **The text** (`source_text`): HTML without scripts or styles and with tables as `a | b` rows, PDF
+   (`pypdf`, which Frappe depends on), Word `.docx`, Markdown, text and CSV, at most 200,000 characters.
+   A picture's text is whatever Gemini reads in it.
+4. **No secrets.** The knowledge base's own scan (`content.secret_findings`) on the text: a finding
+   stores nothing, keeps no copy and sends nothing more to Gemini; the state is **Refused** and the
+   note names the line and the kind, never the value. (A picture has been sent to Gemini to be read
+   before its words can be scanned.) The summary, keywords and notes a person types are scanned on
+   save.
+5. **A summary**, from Gemini (`api/gemini.py`, JSON, cut to size: the answer is untrusted input),
+   only while the summary is blank or was Gemini's: a summary a person typed is never replaced. If
+   Gemini is down the source is still Ready, with a note.
+
+The states (`constants.SOURCE_STATES`): Pending, Ready, Failed, Not supported, Refused. **The deploy's
+FLUSHDB destroys queued jobs**, so `sources.requeue_pending` (hourly) queues again every source Pending
+for more than 15 minutes, and **Fetch again** on the form (`api/knowledge_base_sources.refetch`, POST,
+write permission) does it at once. **A source still Pending 3 hours after its last change is marked
+Failed** rather than queued again, so one that kills its job every time cannot loop the queue (and
+Gemini). The job id carries the source's `modified`, so a change made while an older read runs is
+queued rather than deduplicated away, and the older read then stores nothing. A failure anywhere,
+storing included, ends Failed, with an Error Log naming the source and the exception's **type** only:
+a message or traceback could carry the document's own text. A person who edits a Gemini summary makes
+it theirs (`summary_by_ai` is cleared); the same holds for a title (`title_from_source`: the page's
+title replaces one the system filled in, never one a person typed); and a new link drops the old saved
+copy and a title taken from the old page. The store locks the source's row first, so two reads, or a
+read and a person's save, never collide; one that loses to a person's save leaves it standing. Version tracking is off
+on this doctype: every re-read would copy up to 200,000 characters into a Version row.
+
+### The link guard (`source_fetch.py`)
+
+The fetch runs on the production server inside Google Cloud, so a link is an instruction to that server.
+Without a guard, a link could have ERPNext read its own infrastructure (the cloud's metadata service,
+the bench, a private address) and store the answer where every staff user can open it. So:
+
+| Rule | Why |
+|---|---|
+| A well-formed link only: `http`/`https`, default ports, no user name or password, an ASCII host, no character outside RFC 3986, and the connecting library must read the same host | HTTP libraries disagree about malformed URLs, so a malformed one is refused, never interpreted |
+| **The address is checked at connect time, before a byte is sent** (`guarded_session`: urllib3 connection classes that check the socket's peer the moment it opens, failing closed) | The check is on the socket actually connected, whatever a name resolved to earlier and whichever host the library settled on |
+| The host's addresses are also checked before connecting | A clear message for an internal link, rather than a connection error |
+| Redirects followed by the code, at most 5, each hop checked again from the top | A public page cannot bounce the request inward |
+| No cookies (the jar accepts none and is cleared between hops), no `Authorization`, no environment proxy | Nothing of the server's leaves with a request |
+| An IPv6 address that carries an IPv4 address (mapped, compatible, 6to4, Teredo, NAT64) is judged by it too; a `%` in the host is refused | No IPv6 spelling of an internal address gets through |
+| Uncompressed answers only (`Accept-Encoding: identity`); a compressed one is refused unread | A decompressing reader expands bytes before any size cap can see them |
+| 15 MB and 60 seconds in all: each hop gets only the time left, and a watchdog shuts the connection at the deadline; only readable content types, refused before the body is downloaded | A slow, dripping or huge response cannot hold a worker; nothing is downloaded only to be refused |
+
+`tests/test_knowledge_base_sources.py` runs the guarded session against a real local server: an
+internal address is refused before the server sees any request, and a response that closes its
+connection is still read whole.
+
+### Where the AI comes in (v1.845.0)
+
+Three tools, all through `source_tools.py` and run by `assistant_tools/_knowledge_base.run_source`
+(a failure is one deferred Error Log naming the method and the exception's type, never the arguments):
+
+| Tool | Gate | What it does |
+|---|---|---|
+| `search_company_knowledge` (existing) | read | Unchanged `results` (approved articles only), plus **`references`**: up to 3 Active, Ready sources the caller may read, ranked by the same BM25 engine over title, keywords, summary and the first 60,000 characters of text. The index is built once per site and worker (keyed on the library's count and newest change, the text cut by the database) and the caller's readable set is applied before ranking, so a search reads no text but its hits'. Each carries `result_type: "reference"`, `reviewed: false`, `summary_written_by_ai`, `title_from_source` (the title came from the page or file, not a person) and a label; the note says to prefer an article and to name a reference as unreviewed. None when a `kind` is given (a kind is an article's), when `include_reference` is false, or when the query or a filter is a problem; a failure becomes a `problems` entry and never costs the articles |
+| `fetch_knowledge_source` (new) | read (`EXPLICIT_READONLY`) | One source as the caller: its text (at most 40,000 characters), summary, original link, reading state and why it was saved, labeled. `KBS-00012`, `kbs 12` and `KBS_12` all read; every miss is the same `found: false` |
+| `save_knowledge_source` (new) | write (`APP_MUTATING`, Low, `APP_PRECHECKED_TOOLS`) | A new Link source, created as the person who confirms the card, so their own create permission applies (KB Author or KB Approver). **Prechecked** (`source_tools.save_problems`): a malformed link, a Google link from someone who is not a KB Approver, a secret-shaped title or note, or no create permission is answered with a clear refusal and no card, and a refused row keeps none of the link, title or note. The card shows the link the server will fetch. A link the library already holds comes back as that source. Arguments: `url`, `source_title`, `why_saved`, `department` (no property is named `title`) |
+
+**The library is never exempt from a card.** `_gate.KNOWLEDGE_BASE_LIBRARY_DOCTYPES` puts Knowledge Source
+in `NEVER_EXEMPT`, so no settings row lets a generic write to it skip confirmation, and a
+`save_knowledge_source` card names the library as its target and starts unticked in the batch dialog.
+`include_reference` is read as off when sent as `false`, `0` or a string such as `"false"`.
+
+**Why `references` is its own list.** ADR 0017 §3 lets the contract gain fields, not change meaning: a
+client that reads `results` (Triton's snapshot included) still sees approved articles only, and a
+reference can never be mistaken for one by position. Triton chat offers `search*` and `fetch*` tools by
+prefix, so it reads references and `fetch_knowledge_source` within its cache; the deployed agents need
+their frozen snapshot regenerated. `save_knowledge_source` is a write: whether Triton offers it is
+Triton's choice (its `_NOT_OFFERED_PREFIXES`).
+
 ## File map
 
 | Path | What it is |
@@ -1273,6 +1384,14 @@ kind's template in the company register, measured from the templates' Google Doc
 | `doctype/knowledge_article_version/` | Drafts and history, submittable, `KBV-.#####`. Controller `KnowledgeArticleVersion`: refuses a submit without `flags.kb_publish` or that breaks an approval rule, and every cancel, amend, delete and rename; applies the content rules on save |
 | `workflow.py` | The approval rules, content-edit and contributor rules, article numbers (`next_article_number`, `identity_problem`, `number_problems`, 2026-09-29) and review dates (PR 2); the state machine (`TRANSITIONS`), who may make each move (`*_problems`), what the forms offer (`version_actions`, `article_actions`) and who is asked to review (`reviewers_for`) (PR 3). Standard library only, plus `signed_in_browser` from Marketing |
 | `content.py` | Presentation stripping, the secret scan and the content hash (PR 2); `shows_anything`, `referenced_files` and `text_diff` (PR 3); `guidance_left`, the register template's guidance still in a draft (2026-09-30). Standard library only |
+| `sources.py` | The reference library's reading job (2026-11-25): `extract_source` (read, copy, extract, refuse secrets, summarize, store unless the source changed meanwhile), `requeue_pending` (hourly, for FLUSHDB), `parse_summary` (Gemini's JSON, distrusted), the Drive branch |
+| `source_fetch.py` | The link guard (2026-11-25): `url_problem`, `google_file`, `address_is_public`, `resolve_public`, `fetch` (every hop checked, the peer checked, a size cap, readable types only). Standard library plus `requests` |
+| `source_text.py` | A source's text (2026-11-25): HTML, PDF, Word, Markdown, text and CSV as Markdown-flavored text, and `kind_of`. Standard library at import |
+| `source_tools.py` | The reference library for AI tools (v1.845.0): `reference_hits` (search's `references`, as the caller), `fetch_payload`, `save_payload`, `source_id` |
+| [`../assistant_tools/fetch_knowledge_source.py`](../assistant_tools/fetch_knowledge_source.py), [`save_knowledge_source.py`](../assistant_tools/save_knowledge_source.py) | The two reference-library tools' thin FAC wrappers (v1.845.0): one `EXPLICIT_READONLY`, one `APP_MUTATING` and Low |
+| `doctype/knowledge_source/` | The reference library's record (2026-11-25), `KBS-.#####`. Controller `KnowledgeSource`: when a source must be read again, the secret scan on typed text, the queueing |
+| [`../api/knowledge_base_sources.py`](../api/knowledge_base_sources.py) | Fetch again (2026-11-25): `refetch`, POST, write permission on the source |
+| [`../tests/test_knowledge_base_sources.py`](../tests/test_knowledge_base_sources.py) | The reference library (2026-11-25), **pytest**, its own step: the link guard, the text, the job over a fake frappe, the controller, Fetch again, the schema and the hooks |
 | `files.py` | The two `File` hooks: private Files, bytes included, that stay attached where they are, and no deleting an article's image (PR 2) or a version's once it has left Draft (PR 3) |
 | `publish.py` | Every write the actions make (PR 3): `transition`, the only writer of `review_state`; `publish`, the one-transaction publish; `start_revision` (PR 6b: optional `content` and `provenance`, for the drafting tool), `retire`, `confirm_still_accurate`; `run`, the deadlock retry; `asker`; the forms' `onload` payloads (since 2026-09-30 the article's includes `document`); the Revision History row each publish adds |
 | `notify.py` | Review ToDos (PR 3): closed on every move, raised inline for the new state, title and link only |
@@ -1311,7 +1430,11 @@ kind's template in the company register, measured from the templates' Google Doc
 
 In order, one PR at a time, each verified on prod before the next merges (see WI-080):
 
-- **PR 4a** (only if the Google Docs Markdown export keeps pictures and tables): Markdown import.
+- ~~**PR 4a** (only if the Google Docs Markdown export keeps pictures and tables): Markdown import.~~
+  Replaced on 2026-11-25 by the reference library: a Google Doc is saved by its link (read through the
+  Drive API) or uploaded as a file, and its text is what an author or the AI drafts an article from.
+- ~~**The reference library's AI tools**~~. Written in v1.845.0: `references` on search,
+  `fetch_knowledge_source` and `save_knowledge_source`. See "Where the AI comes in (v1.845.0)".
 - ~~**PR 5**: in-app search~~. Done in v1.558.0, holding to what PR 4 left it: the published Article
   only, as the caller, never the Version doctype and never a SQL-function string; no `Global Search
   DocType` row and no `in_global_search` field; a hit opens the article with `frappe.set_route`; the

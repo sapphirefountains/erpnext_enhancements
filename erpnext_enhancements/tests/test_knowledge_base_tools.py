@@ -301,7 +301,8 @@ class TestSchemas(unittest.TestCase):
 		self.assertEqual(
 			{name: sorted(tool.inputSchema["properties"]) for name, tool in tools.items()},
 			{
-				"search_company_knowledge": ["department", "kind", "limit", "query"],
+				# include_reference (2026-11-25): the reference library's matches, in their own list.
+				"search_company_knowledge": ["department", "include_reference", "kind", "limit", "query"],
 				"fetch_knowledge_article": ["kb_number"],
 				"list_company_knowledge": ["department", "include_summaries", "kind", "page", "page_size"],
 			},
@@ -693,7 +694,11 @@ class TestDraftToolClassification(unittest.TestCase):
 		self.assertFalse(kept & set(gate.WITHHELD_WHEN_UNQUEUED[DRAFT_TOOL]))
 		self.assertEqual(kept | set(gate.WITHHELD_WHEN_UNQUEUED[DRAFT_TOOL]), set(ai_draft.ARGUMENTS))
 		self.assertEqual(set(gate.KEPT_WHEN_UNQUEUED), set(gate.WITHHELD_WHEN_UNQUEUED))
-		self.assertEqual(gate.TOOL_TARGET_DOCTYPES, {DRAFT_TOOL: constants.VERSION_DOCTYPE})
+		# 2026-11-25: a saved link's card targets the reference library, which is never exempt too.
+		self.assertEqual(
+			gate.TOOL_TARGET_DOCTYPES,
+			{DRAFT_TOOL: constants.VERSION_DOCTYPE, "save_knowledge_source": constants.SOURCE_DOCTYPE},
+		)
 		self.assertIn(constants.VERSION_DOCTYPE, gate.KNOWLEDGE_BASE_DOCTYPES)
 		self.assertIn(constants.VERSION_DOCTYPE, gate.NEVER_EXEMPT)
 
@@ -708,8 +713,11 @@ class TestDraftToolClassification(unittest.TestCase):
 			frozenset({"Task"})
 			| gate.GATE_OWN_DOCTYPES
 			| gate.KNOWLEDGE_BASE_DOCTYPES
-			| gate.KNOWLEDGE_BASE_CHILD_DOCTYPES,
+			| gate.KNOWLEDGE_BASE_CHILD_DOCTYPES
+			# 2026-11-25: the reference library, which the server fetches and every assistant reads.
+			| gate.KNOWLEDGE_BASE_LIBRARY_DOCTYPES,
 		)
+		self.assertEqual(gate.KNOWLEDGE_BASE_LIBRARY_DOCTYPES, frozenset({constants.SOURCE_DOCTYPE}))
 
 	def test_the_denylist_still_reads_its_arguments(self):
 		self.assertIsNone(gate.denylist_hit(DRAFT_TOOL, _draft_args(kb_number="SOP-06-0001")))

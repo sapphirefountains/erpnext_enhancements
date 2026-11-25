@@ -86,6 +86,7 @@ from frappe.utils import cint
 from erpnext_enhancements.knowledge_base.constants import (
 	ARTICLE_DOCTYPE,
 	KB_DOCTYPES,
+	PRIVATE_FILE_DOCTYPES,
 	REVIEW_STATES,
 	VERSION_DOCTYPE,
 )
@@ -98,15 +99,20 @@ DRAFT_STATE = REVIEW_STATES[0]
 
 
 def force_private(doc, method=None):
-	"""Make a File attached to either KB doctype private, bytes included, and keep it attached
-	where it is. See the module docstring."""
+	"""Make a File attached to either KB doctype, or to a reference-library source, private,
+	bytes included, and keep it attached where it is. See the module docstring.
+
+	Since 2026-11-25 the reference library's sources (``constants.SOURCE_DOCTYPE``) are covered too
+	(``constants.PRIVATE_FILE_DOCTYPES``): a source may be a vendor manual or a customer's drawing.
+	Only this hook: :func:`file_has_permission` keeps to the two article doctypes, so a source's file
+	may be deleted by whoever may delete it."""
 	attached = getattr(doc, "attached_to_doctype", None) or ""
 	# Only a saved File has a stored row, and before_insert never sees one.
 	stored = _stored_row(doc) if method == "before_validate" else None
 	was_attached = (_read(stored, "attached_to_doctype") or "") if stored is not None else ""
-	if attached not in KB_DOCTYPES and was_attached not in KB_DOCTYPES:
+	if attached not in PRIVATE_FILE_DOCTYPES and was_attached not in PRIVATE_FILE_DOCTYPES:
 		return
-	if was_attached in KB_DOCTYPES:
+	if was_attached in PRIVATE_FILE_DOCTYPES:
 		_refuse_moving(doc, stored)
 	if cint(getattr(doc, "is_private", 0)):
 		return

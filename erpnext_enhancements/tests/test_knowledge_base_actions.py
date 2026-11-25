@@ -2663,7 +2663,10 @@ class AiToolPayloadsTest(Base):
 	def test_the_search_payload_fields_and_note(self):
 		number = self._publish(body='<div class="ql-editor read-mode"><p>Count every carton on the slip.</p></div>')
 		out = self._call("search_payload", {"query": "  cartons "})
-		self.assertEqual(list(out), ["query", "result_count", "results", "problems", "note"])
+		# 2026-11-25: the reference library's matches in their own list, after the articles (additive).
+		self.assertEqual(
+			list(out), ["query", "result_count", "results", "reference_count", "references", "problems", "note"]
+		)
 		self.assertEqual((out["query"], out["result_count"], out["problems"]), ("cartons", 1, []))
 		(result,) = out["results"]
 		self.assertEqual(list(result), self.SEARCH_KEYS)
@@ -2712,7 +2715,15 @@ class AiToolPayloadsTest(Base):
 		self._publish()
 		self.assertEqual(
 			self._call("search_payload", {"query": "zeppelin"}),
-			{"query": "zeppelin", "result_count": 0, "results": [], "problems": [], "note": ai_tools.NO_MATCH_NOTE},
+			{
+				"query": "zeppelin",
+				"result_count": 0,
+				"results": [],
+				"reference_count": 0,
+				"references": [],
+				"problems": [],
+				"note": ai_tools.NO_MATCH_NOTE,
+			},
 		)
 		self.assertEqual(
 			ai_tools.NO_MATCH_NOTE,

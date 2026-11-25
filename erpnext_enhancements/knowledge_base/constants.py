@@ -477,3 +477,63 @@ _DEPARTMENT_LOOKUP = {
 	for code, label in DEPARTMENT_BLOCKS
 	for key in (code, str(int(code)), label, f"{code} {label}")
 }
+
+
+# ------------------------------------------------------------------ the reference library (2026-11-25)
+
+#: Reference material people save for the AI and each other to read: a link or an uploaded file,
+#: with its text (``knowledge_base/sources.py``). **Not company knowledge.** Nobody approves it, so
+#: it is never an article and never cited as one; the AI tools label it as unreviewed reference
+#: (Nik, 2026-11-25: "Answer, labeled"). It is a third doctype, outside :data:`KB_DOCTYPES` on
+#: purpose: those two carry the approval rules, the gate's never-exempt list and the draft-file
+#: delete refusal, and none of that applies to a source.
+SOURCE_DOCTYPE = "Knowledge Source"
+
+#: The doctypes whose attached Files are forced private (``files.force_private``): the two article
+#: doctypes and the reference library. A source's file may be a vendor manual or a customer
+#: drawing, and a public File is served by nginx to anyone holding its URL.
+PRIVATE_FILE_DOCTYPES = KB_DOCTYPES | {SOURCE_DOCTYPE}
+
+#: ``Knowledge Source.source_type``.
+SOURCE_TYPES = ("Link", "File")
+
+#: ``Knowledge Source.status``. An archived source stays readable in the Desk and drops out of the
+#: AI tools' results; nothing is deleted by archiving.
+SOURCE_STATUSES = ("Active", "Archived")
+
+#: ``Knowledge Source.extraction_state``, set only by the server.
+#:
+#: - Pending: saved, and the text has not been read yet (a job is queued, or the deploy's FLUSHDB
+#:   killed it and the hourly sweep will queue it again).
+#: - Ready: the text was read. The summary may still be blank if Gemini was unavailable.
+#: - Failed: the link or file could not be read; ``extraction_message`` says why. Fetch again retries.
+#: - Not supported: a kind of file the library cannot read (a spreadsheet, a video).
+#: - Refused: the text holds something shaped like a password, key or token, so it was not stored
+#:   and never sent to Gemini.
+SOURCE_STATES = ("Pending", "Ready", "Failed", "Not supported", "Refused")
+
+#: The largest download or upload the library reads, in bytes. Above it the source is Failed with a
+#: message, not truncated: half a PDF reads as a whole one.
+SOURCE_MAX_BYTES = 15 * 1024 * 1024
+
+#: The most text kept from one source. Longer text is cut here and ``extraction_message`` says so.
+SOURCE_MAX_TEXT_CHARS = 200_000
+
+#: How much of the text Gemini reads to write the summary.
+SOURCE_SUMMARY_INPUT_CHARS = 40_000
+
+#: The longest ``Knowledge Source.url`` accepted (the column is ``varchar(1000)``).
+SOURCE_MAX_URL_CHARS = 1000
+
+#: The summary and keyword limits for what Gemini returns (its answer is untrusted input).
+SOURCE_SUMMARY_MAX_CHARS = 600
+SOURCE_MAX_KEYWORDS = 12
+SOURCE_KEYWORD_MAX_CHARS = 40
+
+#: A Pending source untouched for this long is queued again by the hourly sweep: its job was lost.
+SOURCE_REQUEUE_AFTER_MINUTES = 15
+
+#: A source still Pending this long after its last change has had about three tries (the first read and
+#: two hourly re-queues) and is marked Failed instead of being queued again, so one that kills its job
+#: every time cannot loop the queue, and Gemini, forever. Fetch again starts it over.
+SOURCE_GIVE_UP_HOURS = 3

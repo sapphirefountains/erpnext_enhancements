@@ -783,7 +783,9 @@ class TestReviewReasons(BatchHarness):
         kinds = (
             {"Task"},
             _gate.GATE_OWN_DOCTYPES,
-            _gate.KNOWLEDGE_BASE_DOCTYPES | _gate.KNOWLEDGE_BASE_CHILD_DOCTYPES,
+            _gate.KNOWLEDGE_BASE_DOCTYPES
+            | _gate.KNOWLEDGE_BASE_CHILD_DOCTYPES
+            | _gate.KNOWLEDGE_BASE_LIBRARY_DOCTYPES,
         )
         self.assertEqual(frozenset().union(*kinds), _gate.NEVER_EXEMPT)
         self.assertEqual(sum(len(kind) for kind in kinds), len(_gate.NEVER_EXEMPT))

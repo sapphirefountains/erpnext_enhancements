@@ -1701,6 +1701,23 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_service_calls.py -q
       - name: Knowledge base search (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_knowledge_base_search.py -q
+      # 2026-11-25: the knowledge base's reference library, where people save a link or upload a file
+      # for the AI and each other to read. The fetch runs ON THE PRODUCTION SERVER, inside Google Cloud,
+      # so the link guard is what keeps a URL from making ERPNext read its own infrastructure and store
+      # the answer as a "source" every staff user can open: malformed links refused, the address checked
+      # at connect time against a REAL local server (no request ever reaches an internal address, and a
+      # response that closes its connection is still read), every redirect hop checked again, no
+      # credentials sent, size and time caps, unreadable kinds refused before the body is downloaded. Then the text (HTML without scripts, Word, a real PDF, Markdown), the job over a
+      # fake frappe installed per test (secret-shaped text never stored, kept or sent to Gemini; a typed
+      # summary never replaced; Gemini down still Ready; a failure logged by its type only), the
+      # controller, Fetch again's write check, and the schema's exact permission matrix. Plain pytest
+      # functions with their own frappe stub, so a step of its own.
+      # requests and pypdf at Frappe v16.61's pins: the guarded session is real urllib3 connection
+      # classes, tested against a real local server, and the PDF text is read by the real pypdf.
+      - name: Knowledge base reference library (bench-free pytest suite)
+        run: |
+          python -m pip install "requests~=2.33.0" "pypdf==6.21.4"
+          python -m pytest erpnext_enhancements/tests/test_knowledge_base_sources.py -q
       # v1.569.0: an article as the company register's template (POL-0002/0003/0004), printed, in a
       # draft's preview and on its form. The templates' sections and a new draft's starting text; the
       # check that stops their guidance being submitted, however the editor wraps it; the page
