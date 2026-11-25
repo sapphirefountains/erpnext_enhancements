@@ -64,10 +64,11 @@
 >   added value the contract was written to allow; approved articles always rank first, and every
 >   reference result says that nobody reviewed it. The frozen tool names do not change. (The AI side is
 >   its own PR, after the library.)
-> - **The server fetches links**, so the fetch refuses every internal address (loopback, private,
->   link-local where the metadata server lives, carrier-grade NAT), checks every redirect hop and the
->   connected socket, sends no credentials and caps the size. Google links are read through the Drive
->   API as ERPNext's Drive service account.
+> - **The server fetches links**, so the fetch refuses malformed links, checks the address of every
+>   connection at connect time before anything is sent, checks every redirect hop, sends no credentials
+>   and caps the size and time. Google links are read through the Drive API as ERPNext's Drive service
+>   account, and **only a KB Approver may save one**, because that account reaches far more than one
+>   person may.
 > - **It replaces WI-080 PR 4a**, the Markdown import: a Google Doc is saved by its link or uploaded, and
 >   an article is drafted from its text.
 

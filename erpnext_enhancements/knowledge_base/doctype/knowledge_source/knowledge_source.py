@@ -40,7 +40,12 @@ READ_FIELDS = (
 	"text_chars",
 	"content_hash",
 	"extracted_text",
+	"snapshot_file",
 )
+
+#: Where an uploaded file's URL may point: this site's own files. Frappe does not check an Attach
+#: field's value, and the job reads only a File attached to the source itself in any case.
+FILE_URL_PREFIXES = ("/private/files/", "/files/")
 
 #: The fields a person types that the AI also reads, so they are scanned for secrets.
 SCANNED_FIELDS = (("summary", "Summary"), ("keywords", "Keywords"), ("notes", "Why it's here"))
@@ -49,19 +54,28 @@ SCANNED_FIELDS = (("summary", "Summary"), ("keywords", "Keywords"), ("notes", "W
 class KnowledgeSource(Document):
 	def validate(self):
 		self.url = (self.url or "").strip()
+		self.source_file = (self.source_file or "").strip()
 		if self.source_type == "Link":
+			self.source_file = ""
 			problem = source_fetch.url_problem(self.url)
 			if problem:
 				frappe.throw(_(problem), title=_("Check the link"))
 		elif self.source_type == "File":
-			if not (self.source_file or "").strip():
+			self.url = ""
+			if not self.source_file:
 				frappe.throw(_("Attach the file to save."), title=_("Attach a file"))
+			if not self.source_file.startswith(FILE_URL_PREFIXES) or ".." in self.source_file:
+				frappe.throw(_("Attach the file with the Attach button."), title=_("Attach a file"))
 		else:
 			frappe.throw(_("Choose Link or File."))
 		self._refuse_secrets()
 		if self.flags.get(sources.JOB_FLAG):
 			return
-		if self._source_changed():
+		changed = self._source_changed()
+		if changed:
+			self._refuse_google_link_unless_approver()
+		self._keep_a_persons_summary()
+		if changed:
 			self.extraction_state = "Pending"
 			for fieldname in READ_FIELDS:
 				self.set(fieldname, None)
@@ -75,7 +89,7 @@ class KnowledgeSource(Document):
 		if self.flags.get(sources.JOB_FLAG):
 			return
 		if self.extraction_state == "Pending":
-			sources.enqueue_extraction(self.name)
+			sources.enqueue_extraction(self.name, self.modified)
 
 	def _source_changed(self):
 		if self.is_new():
@@ -87,6 +101,30 @@ class KnowledgeSource(Document):
 			(before.get(field) or "") != (self.get(field) or "")
 			for field in ("source_type", "url", "source_file")
 		)
+
+	def _refuse_google_link_unless_approver(self):
+		"""A Google link is read with ERPNext's Drive account, which reaches far more than the person
+		saving it may: the shared drives' project, customer and opportunity folders. So only a KB
+		Approver saves one (chosen in the 2026-11-25 review); anyone else uploads the file."""
+		if self.source_type != "Link" or not source_fetch.google_file(self.url):
+			return
+		if constants.APPROVER_ROLE in frappe.get_roles():
+			return
+		frappe.throw(
+			_(
+				"Only a KB Approver can save a Google Docs or Drive link, because ERPNext reads it with "
+				"the company's Drive account. Download the file and upload it here instead."
+			),
+			title=_("Upload the file instead"),
+		)
+
+	def _keep_a_persons_summary(self):
+		"""A summary a person edits is theirs: it stops being Gemini's, so no later read replaces it."""
+		if not self.summary_by_ai or self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if before is not None and (before.get("summary") or "") != (self.summary or ""):
+			self.summary_by_ai = 0
 
 	def _default_title(self):
 		if self.source_type == "File":

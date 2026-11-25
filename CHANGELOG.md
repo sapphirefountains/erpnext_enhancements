@@ -25,10 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     permlevel 1, read-only for everyone: v16 resets a permlevel the saver cannot write before
     `validate`, so nobody can type text into `extracted_text` through REST and have it read as the
     source's.
-  - **Reading it** (`knowledge_base/sources.extract_source`, queued on save, one deduplicated job per
-    source): an upload from its File; a Google Docs, Sheets, Slides or Drive link through the Drive API
-    as ERPNext's Drive service account (a Doc exported as HTML, so headings and tables survive); any
-    other link through the link guard below. A link's bytes are kept as a private File on the source,
+  - **Reading it** (`knowledge_base/sources.extract_source`, queued on save, one job per change): an
+    upload from its File, and only a File attached to the source itself; a Google Docs, Sheets, Slides or
+    Drive link through the Drive API as ERPNext's Drive service account (a Doc exported as HTML, so
+    headings and tables survive), which **only a KB Approver may save**, because that account reaches far
+    more than one person may; any other link through the link guard below. A link's bytes are kept as a private File on the source,
     so it still reads after the page moves. The text (`knowledge_base/source_text.py`): HTML without
     scripts or styles and with tables as `a | b` rows, PDF through `pypdf` (a Frappe dependency, so it
     is on a server where nothing can be pip-installed), Word `.docx` through `zipfile` with a zip-bomb
@@ -40,24 +41,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **The summary** is Gemini's JSON, distrusted and cut to size, written only while the summary is
     blank or was Gemini's: a summary a person typed is never replaced. Gemini down leaves the source
     Ready with a note.
-  - **Re-drivable.** The deploy's FLUSHDB destroys queued jobs, so `sources.requeue_pending` (hourly)
-    queues again every source left Pending for 15 minutes, and **Fetch again** on the form does it at
-    once (`api/knowledge_base_sources.refetch`, POST, write permission on the source). An unexpected
-    failure logs the exception's type only, never its message: a traceback could carry the document's
-    own text.
+  - **Re-drivable, and bounded.** The deploy's FLUSHDB destroys queued jobs, so
+    `sources.requeue_pending` (hourly) queues again every source left Pending for 15 minutes, and
+    **Fetch again** on the form does it at once (`api/knowledge_base_sources.refetch`, POST, write
+    permission on the source). A source still Pending 3 hours after its last change is marked Failed
+    instead, so a source that defeats its job cannot loop the queue. Every failure, storing included,
+    ends Failed and logs the exception's type only, never its message: a traceback could carry the
+    document's own text. A summary a person edits stops being Gemini's and is never replaced; Version
+    tracking is off, since every re-read would copy the whole text into a Version row.
   - **Where to find it:** a **Reference library** shortcut on the Knowledge Base workspace and an item in
     its sidebar (both timestamp-gated files bumped to 2026-11-25 and re-pinned); the form says a source
     is reference, not approved knowledge, and that nothing restricted belongs there.
 - **The link guard** (`knowledge_base/source_fetch.py`). The fetch runs on the production server inside
-  Google Cloud, so a link is an instruction to that server: without a guard, `http://169.254.169.254/`
-  (the metadata server), `http://localhost` (the bench) or a private address would have ERPNext read its
-  own infrastructure and store the answer where every staff user can open it. On every hop: `http` or
-  `https` on the default port with no `user:password@`; every address the host resolves to must be
-  global (loopback, private, link-local, carrier-grade NAT, multicast, reserved, unspecified, and IPv4
-  written inside IPv6, all refused); redirects followed by the code, at most five, each checked again;
-  the connected socket's address checked before the body is read, where urllib3 exposes it (DNS
-  rebinding); no cookies, no `Authorization`, `trust_env` off; a 15 MB cap; and only content types the
-  library reads, refused before the body is downloaded.
+  Google Cloud, so a link is an instruction to that server, and the guard keeps it from reaching
+  anything internal. A link must be well formed (web schemes, standard ports, no credentials, an ASCII
+  host, only characters RFC 3986 allows, and the same host to both URL parsers); **the address is
+  checked at connect time, before anything is sent**, on the socket actually opened, failing closed;
+  redirects are followed by the code and each hop is checked again; no cookies, credentials or
+  environment proxy go with a request; and a fetch is capped at 15 MB and 60 seconds, reading only the
+  content types the library understands.
 
 ### Changed
 
@@ -67,12 +69,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`KB_DOCTYPES`, which also feeds the AI gate's never-exempt list and is unchanged).
 - **WI-080 PR 4a (the Markdown import) is replaced by the reference library**: a Google Doc is saved by
   its link or uploaded, and its text is what an article is drafted from.
+- **The knowledge base's secret scan runs in linear time on any text.** One of its patterns (a password
+  written into a web address) took seconds on certain long runs of text, which a library source can be;
+  it is rewritten to find the same things without backtracking (`knowledge_base/content.py`).
 
 ### Tests
 
-- `tests/test_knowledge_base_sources.py`, a **pytest** suite on its own CI step: every address family the
-  guard must refuse, a redirect inward refused before it is requested, an internal socket refused before
-  the body is read, the size cap, unreadable kinds refused unread, no credentials sent; HTML, Word, a real
+- `tests/test_knowledge_base_sources.py`, a **pytest** suite on its own CI step: the guarded session
+  against a real local server (an internal address refused before any request reaches it, and a
+  response that closes its connection read whole), malformed links refused, every address family the
+  guard must refuse, a redirect inward refused before it is requested, the size and time caps,
+  unreadable kinds refused unread, no credentials sent; a file not attached to the source never read;
+  Google links for KB Approvers only; a source that keeps failing given up on; a failed store still
+  Failed; a person's summary kept; HTML, Word, a real
   PDF and Markdown; the job over a fake frappe installed per test (a link read, copied and summarized;
   secret-shaped text never stored, copied or sent; a typed summary never replaced; Gemini down still
   Ready; a source edited mid-read left alone; a failure logged by type only; a picture read through

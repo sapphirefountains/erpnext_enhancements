@@ -34,5 +34,5 @@ def refetch(source):
 		{"extraction_state": "Pending", "extraction_message": ""},
 		update_modified=True,
 	)
-	sources.enqueue_extraction(name)
+	sources.enqueue_extraction(name, frappe.db.get_value(constants.SOURCE_DOCTYPE, name, "modified"))
 	return {"source": name, "extraction_state": "Pending"}

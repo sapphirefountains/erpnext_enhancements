@@ -2545,8 +2545,9 @@ scheduler_events = {
 		# knowledge_base reference library (2026-11-25): queue again every Knowledge Source left
 		# Pending for more than 15 minutes. Saving a source queues its read on the "long" queue, and the
 		# deploy's FLUSHDB destroys queued jobs, so without this a source saved just before a merge
-		# would wait forever. At most 50 a run; the job id is per source and deduplicated, so a source
-		# is never read twice at once. Does nothing while the table does not exist. See
+		# would wait forever. A source still Pending 3 hours after its last change is marked Failed
+		# instead, so one that defeats its job cannot loop the queue. At most 50 a run; the job id is
+		# per change and deduplicated. Does nothing while the table does not exist. See
 		# knowledge_base/sources.py.
 		"erpnext_enhancements.knowledge_base.sources.requeue_pending",
 		# carrier_tracking (v1.819.0, ER-2026-1333277): ask FedEx and UPS about the packages on open purchase
