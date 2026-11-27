@@ -13,6 +13,13 @@ pure and tested; this file only fetches.
 Every custom column is guarded with ``has_column`` so the report renders, empty, on a bench
 where the fixtures have not landed.
 
+**Invoiced and ROAS (invoiced) are for Accounts Manager and System Manager only** (owner decision
+2026-11-19, applied here 2026-11-27, ``kpi_dashboards/money.py``). They state billed revenue, read
+from the Project's ``total_billed_amount``, which sits at a permission level only those two roles
+read, but a SQL read does not meet that level. For anyone else the two columns are left out, not
+zeroed, and the billed amount is never read. Contract value and ROAS (contract) stay: bookings,
+not revenue. The Marketing Performance page reads its ROAS through ``execute`` and inherits this.
+
 **Read the newest months as incomplete.** Rows are cohorts by lead month: a month's spend
 against the deals its leads produce, whenever they close. September's ROAS will rise for a
 year.
@@ -23,6 +30,7 @@ from frappe import _
 from frappe.utils import add_months, cint, get_first_day, getdate, nowdate
 
 from erpnext_enhancements.crm_enhancements.attribution import PAID_MEDIUMS
+from erpnext_enhancements.kpi_dashboards import money
 from erpnext_enhancements.marketing.core import roas
 
 ATTRIBUTION_FIELDS = (
@@ -33,6 +41,9 @@ ATTRIBUTION_FIELDS = (
 	"custom_lead_source",
 )
 
+#: The columns that state billed revenue. Shown only to a caller ``money.can_see_revenue`` admits.
+REVENUE_COLUMNS = ("invoiced", "roas_invoiced")
+
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
@@ -41,10 +52,11 @@ def execute(filters=None):
 	window = cint(filters.get("window_days")) or roas.DEFAULT_WINDOW_DAYS
 	group_by = "platform" if filters.get("group_by") == "Platform" else "campaign"
 	platform = filters.get("platform") or None
+	show_revenue = money.can_see_revenue()
 
 	campaigns = _campaigns(platform)
 	leads = _leads(from_date, to_date)
-	opportunities = _opportunities(from_date, to_date)
+	opportunities = _opportunities(from_date, to_date, with_billed=show_revenue)
 	clicks = _clicks(leads + opportunities)
 	spend = _spend(from_date, to_date, {c["name"] for c in campaigns})
 
@@ -60,7 +72,14 @@ def execute(filters=None):
 	)
 	if platform:
 		rows = [r for r in rows if r["platform"] == platform]
-	return get_columns(group_by), rows, _message(coverage, window)
+	if not show_revenue:
+		rows = without_revenue(rows)
+	return get_columns(group_by, show_revenue), rows, _message(coverage, window)
+
+
+def without_revenue(rows):
+	"""``rows`` without the billed-revenue columns. Pure; the input is not changed."""
+	return [{k: v for k, v in row.items() if k not in REVENUE_COLUMNS} for row in rows]
 
 
 # ---------------------------------------------------------------- fetch
@@ -109,7 +128,7 @@ def _leads(from_date, to_date):
 	)
 
 
-def _opportunities(from_date, to_date):
+def _opportunities(from_date, to_date, with_billed=True):
 	touched = (
 		"COALESCE(o.custom_attribution_captured_on, o.creation)"
 		if frappe.db.has_column("Opportunity", "custom_attribution_captured_on")
@@ -125,11 +144,13 @@ def _opportunities(from_date, to_date):
 		if frappe.db.has_column("Project", "custom_opportunity")
 		else "LEFT JOIN `tabProject` p ON 1 = 0"
 	)
+	# Billed revenue is read only for a caller who may see it (see the module docstring).
+	billed = "p.total_billed_amount" if with_billed else "NULL AS total_billed_amount"
 	return frappe.db.sql(
 		f"""
 		SELECT o.name, o.status, o.creation, o.opportunity_amount, {captured},
 		       {_columns("Opportunity", "o")},
-		       p.name AS project, p.total_billed_amount
+		       p.name AS project, {billed}
 		FROM `tabOpportunity` o
 		{project_join}
 		WHERE {touched} >= %(from)s AND {touched} < DATE_ADD(%(to)s, INTERVAL 1 DAY)
@@ -150,7 +171,7 @@ def _clicks(records):
 # ---------------------------------------------------------------- shape
 
 
-def get_columns(group_by):
+def get_columns(group_by, show_revenue=True):
 	columns = [{"label": _("Lead Month"), "fieldname": "month", "fieldtype": "Data", "width": 95}]
 	columns.append({"label": _("Platform"), "fieldname": "platform", "fieldtype": "Data", "width": 110})
 	if group_by == "campaign":
@@ -184,6 +205,8 @@ def get_columns(group_by):
 		{"label": _("ROAS (contract)"), "fieldname": "roas_contract", **ratio},
 		{"label": _("ROAS (invoiced)"), "fieldname": "roas_invoiced", **ratio},
 	]
+	if not show_revenue:
+		columns = [column for column in columns if column["fieldname"] not in REVENUE_COLUMNS]
 	return columns
 
 

@@ -126,18 +126,34 @@ def unlinked_won_opportunities(filters=None):
 
 
 def _candidate_projects(customer):
-	"""Every Project for a customer, with what we need to score it."""
+	"""Every Project for a customer, with what we need to score it.
+
+	A project's value is its Project Dollar Amount, the estimate project managers keep. Until
+	v1.845.3 this read ``custom_project_estimated_amount``, which is a Section Break with no column,
+	so the query failed on every call. The Sales Order total (``total_sales_amount``) is the
+	fallback only for a caller who holds Accounts Manager or System Manager: ERPNext's money
+	totals on Project are theirs alone (``project_revenue.py``), and a SQL read does not meet the
+	field's permission level, so the rule is applied here.
+	"""
 	if not customer:
 		return []
+	from erpnext_enhancements.kpi_dashboards import money
+
+	estimate = (
+		"NULLIF(p.custom_project_dollar_amount, 0)"
+		if frappe.db.has_column("Project", "custom_project_dollar_amount")
+		else "NULL"
+	)
+	fallback = "p.total_sales_amount" if money.can_see_revenue() else "NULL"
 	return frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			p.name,
 			p.project_name,
 			p.status,
 			p.custom_opportunity,
 			COALESCE(p.custom_project_start_date, p.expected_start_date, p.creation) AS start_date,
-			COALESCE(p.custom_project_estimated_amount, p.total_sales_amount, 0) AS value
+			COALESCE({estimate}, {fallback}, 0) AS value
 		FROM `tabProject` p
 		WHERE p.customer = %(customer)s
 		ORDER BY start_date DESC

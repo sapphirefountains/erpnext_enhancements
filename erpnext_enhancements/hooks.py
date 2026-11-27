@@ -2976,6 +2976,14 @@ after_install = [
 	# site does not serve ERPNext's stock web forms tasks, issues and addresses (or their portal
 	# menu rows) until its first migrate. ERPNext installs first, so the forms exist. Never raises.
 	"erpnext_enhancements.setup.stock_web_forms.unpublish_stock_web_forms",
+	# Project permission levels (v1.845.3): the same reason once more. Without these a fresh site
+	# would get the fixture Property Setters that put ERPNext's eight money totals at level 3 and the
+	# labor forecast at level 2, but no Custom DocPerm row granting either level, so nobody but
+	# Administrator could read them. Both need only Role and Custom DocPerm, which exist by now; both
+	# run setup_custom_perms first, skip roles the site lacks, insert only what is missing, and never
+	# raise, so they are safe to run again on the migrate that follows.
+	"erpnext_enhancements.patches.grant_project_revenue_visibility.execute",
+	"erpnext_enhancements.patches.grant_labor_forecast_visibility.execute",
 ]
 
 # Run at the END of `bench install-app`, after fixtures have synced.
@@ -3616,6 +3624,15 @@ override_whitelisted_methods = {
 	# frappe does for an unknown email. Sealed in before_request (portal_login.seal_original),
 	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
 	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
+	# ERPNext's Project Costing tab (v1.845.3): ERPNext's eight revenue, cost and margin totals on
+	# Project sit at permlevel 3, read by Accounts Manager and System Manager only (owner decision
+	# 2026-11-19, extended 2026-11-27). The Costing tab works its billed, Sales Order, cost and margin
+	# figures out of the documents themselves, so the level cannot reach it: this answers it unchanged
+	# for a caller who can read level 3 and, for anyone else, with every money section None and
+	# flagged in `errors`, the shape ERPNext's island renders for a failed section. The original is
+	# sealed in before_request (project_revenue.seal_original), as fieldlevel_read's are. See
+	# erpnext_enhancements/project_revenue.py.
+	"erpnext.projects.doctype.project.costing.project_costing.get_project_costing": "erpnext_enhancements.project_revenue.get_project_costing",
 	# Field references in read requests (v1.835.0): a list, count, value, search, next-record,
 	# number-card, chart or calendar request that names a field the caller cannot read at its permlevel, in
 	# filters / or_filters / order_by / group_by / an aggregate, is refused with a plain permission
@@ -3684,6 +3701,10 @@ before_request = [
 	# name (frappe.www.login.frappe.www.login.send_login_link) that the override above does not
 	# match; taking the function object off the whitelist closes every alias. Never raises.
 	"erpnext_enhancements.portal_login.seal_original",
+	# Project Costing (v1.845.3): the same seal for ERPNext's get_project_costing, so the override
+	# above is the only way in under any dotted name. Never raises. See
+	# project_revenue.seal_original.
+	"erpnext_enhancements.project_revenue.seal_original",
 	# The runtime monkeypatches (see the bottom of this file), applied here too: v16 serves hooks from
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).

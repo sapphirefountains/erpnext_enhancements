@@ -718,7 +718,16 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 			step = "link"
 			progress.mark_step(opportunity_name, requester, step)
-			project_doc = project.as_dict()
+			# Only what the dialogs and the email read, never the whole Project (v1.845.3). This
+			# goes out by realtime to every listed user, whatever their roles, so it cannot be
+			# scrubbed to one session's permission levels; ERPNext's money totals on Project are at
+			# permlevel 3, for Accounts Manager and System Manager only (project_revenue.py).
+			project_doc = {
+				"doctype": "Project",
+				"name": project.name,
+				"project_name": project.get("project_name"),
+				"custom_drive_folder_id": project.get("custom_drive_folder_id"),
+			}
 			opp.custom_created_project = project.name
 			opp.save(ignore_permissions=True)
 			frappe.db.commit()

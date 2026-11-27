@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.845.3] - 2026-11-27
+
+### Changed
+
+- **ERPNext's revenue, cost and margin totals on Project are for Accounts Manager and System Manager
+  only.** This applies Nikolas's 2026-11-19 rule, already in force on the KPI dashboards since
+  v1.836.6: revenue and margin figures go to those two roles. On 2026-11-27 he chose all eight of
+  ERPNext's totals on Project:
+  - Sales Order total, timesheet billable, billed;
+  - timesheet cost, purchase cost, consumed material cost;
+  - gross margin, gross margin %.
+
+  Project Dollar Amount, Estimated Cost, Bid Cost and Materials Budget stay open, on purpose: project
+  managers work from them, and none states revenue or margin. All eight were already hidden on the
+  Project form, so no field anyone can see today goes away.
+  - **Permission level 3.** Each of the eight gets a fixture Property Setter
+    (`Project-<field>-permlevel`, value 3). The patch `grant_project_revenue_visibility` gives
+    Accounts Manager and System Manager `read` and `write` at level 3.
+    - Level 1 won't do: ERPNext grants Desk User read there, which every desk user holds.
+    - Level 2 is the labor-forecast level, held by the cost roles a site has (four on prod).
+    - Level 3 was free on prod. Custom DocPerm and DocPerm for Project were read, read-only, on
+      2026-11-27.
+  - **What the level covers.** Frappe now leaves the eight out of every document it sends a user
+    without level-3 read: the form, `frappe.client.get`, REST reads and save responses. This app's
+    `fieldlevel_read` and `fieldlevel_filters` already apply the same levels to version diffs, write
+    responses and filters. ERPNext's Overview panel already drops its billed and margin card when
+    `get_permitted_fields` hides them.
+  - **Totals stay current.** `write` is granted because ERPNext computes these values on every save.
+    For a user without it, Frappe resets a higher-level field to its stored value in
+    `validate_higher_perm_levels`. That runs *before* `validate` (frappe v16.61.0
+    `Document._save`), and ERPNext's `Project.validate` recomputes seven of the eight in
+    `update_costing`, so a save by a Projects User still lands the new totals. The eighth, consumed
+    material cost, and ERPNext's background updates are written with `db_set`, which never meets the
+    reset.
+  - **The patch is a patch, not a `custom_docperm.json` row,** because that fixture captures a
+    doctype's permissions wholesale. It runs `setup_custom_perms("Project")` first, so the standard
+    rows survive on a fresh site; on prod, which is already on Custom DocPerm for Project, that does
+    nothing. It is insert-only and never raises. Patches run before fixtures sync, so the two rows
+    exist before the fields move.
+  - **Fresh installs get the rows too.** `bench install-app` marks every patch as run without running
+    it, so a fresh site would have had the level-3 Property Setters and nobody granted the level. The
+    patch's `execute` is now in `hooks.after_install`. So is `grant_labor_forecast_visibility`,
+    which had the same gap for level 2 since v1.582.0; both are insert-only and safe to run again.
+- **ERPNext's Costing tab follows the same rule.** It works its billed, Sales Order, cost and
+  margin figures out of the documents themselves rather than reading the stored totals, so it gets
+  its own check: `project_revenue.get_project_costing` (`override_whitelisted_methods`).
+  - A user who can read level 3 gets it unchanged.
+  - Anyone else gets the same payload with every money section set to None and flagged in
+    `errors`. That is the shape ERPNext's own island already draws for a section that failed, so
+    nothing throws. The tab stays hidden on our form.
+  - A `before_request` hook, `project_revenue.seal_original`, takes ERPNext's original off the
+    whitelist while the override is in place, as `fieldlevel_read` does for frappe's functions.
+- **Four reports leave billed revenue out for anyone without Accounts Manager or System Manager**
+  (Nikolas, 2026-11-27, "Hide in all"). Each reads `total_billed_amount` in SQL, which doesn't meet
+  the field's permission level, so each applies the rule itself through
+  `kpi_dashboards.money.can_see_revenue`. The columns are left out, not zeroed, and the billed
+  amount isn't read at all.
+  - **Value Stream Performance:** Revenue, and Avg Deal, which is revenue ÷ won, plus the chart's
+    Revenue series. Rows are ranked by deals won instead of by revenue, and the message says the
+    two columns are for those roles.
+  - **Ad Spend ROAS:** Invoiced and ROAS (invoiced).
+  - **Social Post Performance:** Invoiced.
+  - **The Marketing Performance page's ROAS block:** it reads through Ad Spend ROAS, so it now
+    leaves Invoiced and ROAS (invoiced) out instead of summing them to zero. The page shows only
+    ROAS (contract), so nothing on screen changes.
+  - Contract value, ROAS (contract), spend, leads and cost per lead stay as before for Sales
+    Manager and Marketing Manager. That narrows the 2026-10-29 choice that gave those roles
+    Invoiced.
+- **The "project created" realtime message carries only what its readers use.** It goes to every
+  listed user, whatever their roles, so it can't be fitted to one session's permission levels. It now
+  holds the name, project name and Drive folder, which is all the dialogs and the email read.
+
+### Fixed
+
+- **Closed Won Reconciliation's "find matching projects" works again.** Since v1.242.0 it read
+  `Project.custom_project_estimated_amount`, which is a Section Break with no database column, so
+  every call failed. It now scores a project's value on Project Dollar Amount. The Sales Order
+  total, now a protected figure, is the fallback only for Accounts Manager and System Manager.
+
+### Tests
+
+- `tests/test_project_revenue_fields.py` (bench-free, its own CI step) pins:
+  - the eight fields and their Property Setters at level 3;
+  - that nothing else in the app's fixtures or patches uses level 3 on Project;
+  - that the open fields stay at level 0;
+  - the patch: its roles, read and write at level 3, `setup_custom_perms` first, insert-only, never
+    raises, and listed in `patches.txt`;
+  - that the patch's roles match `project_revenue.ROLES` and `kpi_dashboards.money.REVENUE_ROLES`;
+  - the override, seal and `after_install` wiring in `hooks.py`;
+  - the Costing payload rule, run over a stand-in `frappe`;
+  - the four reports' column rules for both kinds of viewer;
+  - the trimmed realtime payload and the reconciliation query.
+
 ## [1.845.2] - 2026-11-25
 
 ### Fixed

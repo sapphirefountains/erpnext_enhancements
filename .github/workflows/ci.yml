@@ -409,6 +409,14 @@ jobs:
       # Its own step: it installs its own frappe stub and restores sys.modules afterward.
       - name: KPI revenue and margin figures (Accounts Manager / System Manager only)
         run: python -m unittest erpnext_enhancements.tests.test_kpi_money_roles -v
+      # The same rule on Project (v1.845.3): ERPNext's eight revenue, cost and margin totals sit at
+      # permlevel 3 (fixture Property Setters), granted to Accounts Manager and System Manager by
+      # patches/grant_project_revenue_visibility. Pins the rows and the patch, the Costing tab
+      # override and its seal in hooks.py, and runs the Costing payload rule, the four reports
+      # that read billed revenue in SQL and the reconciliation query over a stand-in frappe.
+      # Its own step: it installs its own frappe stub and restores sys.modules afterward.
+      - name: Project revenue, cost and margin totals (Accounts Manager / System Manager only)
+        run: python -m unittest erpnext_enhancements.tests.test_project_revenue_fields -v
       # Three UOM patches whose ORDER is load-bearing: the Gallon rename has to
       # land before the disable pass, or that pass sees `Gallon` unused and
       # switches off a UOM three live documents point at. Also pins that the
