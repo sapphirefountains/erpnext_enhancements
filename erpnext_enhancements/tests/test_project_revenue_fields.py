@@ -405,6 +405,20 @@ class ThePatch(Base):
 			lines.index(ours), lines.index("erpnext_enhancements.patches.grant_labor_forecast_visibility")
 		)
 
+	def test_a_fresh_install_runs_both_grants(self):
+		"""``bench install-app`` marks every patch as run without running it. Without these, a fresh
+		site gets the level-3 (and level-2) Property Setters and no row granting either level."""
+		after_install = _hooks_literal("after_install")
+		for grant in (
+			"erpnext_enhancements.patches.grant_project_revenue_visibility.execute",
+			"erpnext_enhancements.patches.grant_labor_forecast_visibility.execute",
+		):
+			with self.subTest(grant=grant):
+				self.assertIn(grant, after_install)
+				self.assertTrue(
+					(APP / "patches" / (grant.split(".")[-2] + ".py")).exists(), f"{grant} points at no file"
+				)
+
 
 # ----------------------------------------------------------------- the Costing tab
 

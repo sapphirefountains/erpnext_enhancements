@@ -7,9 +7,9 @@ decision, 2026-11-19, extended to these fields on 2026-11-27: revenue and margin
 Manager and System Manager only. This grants the two roles ``read`` and ``write`` at that level.
 
 **Why level 3.** Level 1 on Project is read by Desk User, which every desk user holds
-(ERPNext's own ``project.json``). Level 2 is the labor-forecast level, held by five cost roles
-(``grant_labor_forecast_visibility``). Level 3 was held by nobody on production (read
-2026-11-27), so these two rows are the whole of who may read the totals.
+(ERPNext's own ``project.json``). Level 2 is the labor-forecast level, held by the cost roles a
+site has (``grant_labor_forecast_visibility``; four on production). Level 3 was held by nobody on
+production (read 2026-11-27), so these two rows are the whole of who may read the totals.
 
 **Why write as well as read.** ERPNext computes the totals on every save. Frappe resets a field
 above the caller's write level to its stored value before ``validate`` runs, and ERPNext's
@@ -29,6 +29,10 @@ captures a doctype's rows wholesale and Project's permission set is site-owned.
 exist while the eight fields are still at level 0. Nothing changes for anyone in that moment.
 If this patch failed and the Property Setters still landed, the totals would fail closed: hidden
 from everyone but Administrator until the rows exist.
+
+**And on a fresh install.** ``bench install-app`` writes every patch to Patch Log as run without
+running it, so ``execute`` is also named in ``hooks.after_install``; without that a fresh site
+would get the level-3 Property Setters and no row granting the level.
 
 Insert-only, keyed on ``(parent = "Project", role, permlevel = 3)``, so a human's later edit to
 a row survives. Never raises. Safe twice.

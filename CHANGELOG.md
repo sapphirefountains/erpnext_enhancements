@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`Project-<field>-permlevel`, value 3). The patch `grant_project_revenue_visibility` gives
     Accounts Manager and System Manager `read` and `write` at level 3.
     - Level 1 won't do: ERPNext grants Desk User read there, which every desk user holds.
-    - Level 2 is the labor-forecast level, held by five cost roles.
+    - Level 2 is the labor-forecast level, held by the cost roles a site has (four on prod).
     - Level 3 was free on prod. Custom DocPerm and DocPerm for Project were read, read-only, on
       2026-11-27.
   - **What the level covers.** Frappe now leaves the eight out of every document it sends a user
@@ -46,20 +46,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rows survive on a fresh site; on prod, which is already on Custom DocPerm for Project, that does
     nothing. It is insert-only and never raises. Patches run before fixtures sync, so the two rows
     exist before the fields move.
-- **ERPNext's Costing tab answers without its amounts for anyone outside those two roles.** The
-  permission level can't reach it. `get_project_costing` doesn't read the stored totals: it works
-  billed, Sales Order value, cost and margin out of the invoices, orders, timesheets and stock
-  entries themselves, for every user who can read the Project.
-  - It now goes through `project_revenue.get_project_costing` (`override_whitelisted_methods`).
-    For a user who can read level 3, it answers unchanged. For anyone else, it sends the same
-    payload with every money section set to None and flagged in `errors`. That is the shape
-    ERPNext's own island already draws for a section that failed, so nothing throws.
-  - The tab stays hidden on our form, and its island loads only when on screen, so nobody meets
-    this in the Desk.
-  - ERPNext's own test module imports the function, so the original also answers under that
-    module's dotted name, which no override matches. A `before_request` hook,
-    `project_revenue.seal_original`, takes the original off the whitelist while the override is in
-    place, as `fieldlevel_read` does for frappe's functions.
+  - **Fresh installs get the rows too.** `bench install-app` marks every patch as run without running
+    it, so a fresh site would have had the level-3 Property Setters and nobody granted the level. The
+    patch's `execute` is now in `hooks.after_install`. So is `grant_labor_forecast_visibility`,
+    which had the same gap for level 2 since v1.582.0; both are insert-only and safe to run again.
+- **ERPNext's Costing tab follows the same rule.** It works its billed, Sales Order, cost and
+  margin figures out of the documents themselves rather than reading the stored totals, so it gets
+  its own check: `project_revenue.get_project_costing` (`override_whitelisted_methods`).
+  - A user who can read level 3 gets it unchanged.
+  - Anyone else gets the same payload with every money section set to None and flagged in
+    `errors`. That is the shape ERPNext's own island already draws for a section that failed, so
+    nothing throws. The tab stays hidden on our form.
+  - A `before_request` hook, `project_revenue.seal_original`, takes ERPNext's original off the
+    whitelist while the override is in place, as `fieldlevel_read` does for frappe's functions.
 - **Four reports leave billed revenue out for anyone without Accounts Manager or System Manager**
   (Nikolas, 2026-11-27, "Hide in all"). Each reads `total_billed_amount` in SQL, which doesn't meet
   the field's permission level, so each applies the rule itself through
@@ -76,10 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Contract value, ROAS (contract), spend, leads and cost per lead stay as before for Sales
     Manager and Marketing Manager. That narrows the 2026-10-29 choice that gave those roles
     Invoiced.
-- **Creating a Project from an Opportunity no longer broadcasts the whole Project.** The realtime
-  `project_creation_status` message goes to every listed user, whatever their roles, so it can't be
-  trimmed to one session's permission levels. It now carries only what the dialogs and the email
-  read: name, project name and Drive folder.
+- **The "project created" realtime message carries only what its readers use.** It goes to every
+  listed user, whatever their roles, so it can't be fitted to one session's permission levels. It now
+  holds the name, project name and Drive folder, which is all the dialogs and the email read.
 
 ### Fixed
 
@@ -97,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the patch: its roles, read and write at level 3, `setup_custom_perms` first, insert-only, never
     raises, and listed in `patches.txt`;
   - that the patch's roles match `project_revenue.ROLES` and `kpi_dashboards.money.REVENUE_ROLES`;
-  - the override and seal wiring in `hooks.py`;
+  - the override, seal and `after_install` wiring in `hooks.py`;
   - the Costing payload rule, run over a stand-in `frappe`;
   - the four reports' column rules for both kinds of viewer;
   - the trimmed realtime payload and the reconciliation query.

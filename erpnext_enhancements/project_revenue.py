@@ -9,7 +9,8 @@ Project, cost totals included ("All eight"): ``PROTECTED_FIELDS`` below.
 (``Project-<field>-permlevel``), and ``patches/grant_project_revenue_visibility`` gives the two
 roles ``read`` and ``write`` at that level. Level 1 on Project is no use: ERPNext grants Desk
 User read there, which every desk user holds. Level 2 is already the labor-forecast level
-(``patches/grant_labor_forecast_visibility``, held by five cost roles). Level 3 was free on
+(``patches/grant_labor_forecast_visibility``: the cost roles a site has, four on production).
+Level 3 was free on
 production (Custom DocPerm and DocPerm read 2026-11-27). Frappe then strips the eight from every
 document it sends a caller without level-3 read (``getdoc``, ``frappe.client.get``, REST reads,
 save responses), and this app's ``fieldlevel_read`` and ``fieldlevel_filters`` already hold
@@ -24,20 +25,17 @@ still lands on a save by any Projects User. The background writers (``db_set_cos
 **ERPNext's Overview panel** (``project_overview.profitability``) already returns nothing when
 ``get_permitted_fields`` hides billed or margin from the caller, so the level is enough there.
 
-**ERPNext's Costing tab is not covered by the level**, and that is what this module is for.
+**ERPNext's Costing tab needs its own check**, and that is what this module is for.
 ``get_project_costing`` does not read the stored totals: it works billed, Sales Order value,
-cost and margin out of the invoices, orders, timesheets and stock entries themselves, and hands
-them to every user who can read the Project. The tab is hidden on Sapphire's form and its island
-loads only when on screen, so nobody meets it by accident, but anyone who can read a Project can
-call it. The override below answers it unchanged for a caller who can read the protected fields
-and, for anyone else, sends the same payload with every money section set to None and flagged in
-``errors``: the shape ERPNext's own island already renders when a section fails, so nothing
-throws.
+cost and margin out of the invoices, orders, timesheets and stock entries themselves, so a field
+level on Project never applies to it. The override below answers it unchanged for a caller who
+can read the protected fields and, for anyone else, sends the same payload with every money
+section set to None and flagged in ``errors``: the shape ERPNext's own island already renders
+when a section fails, so nothing throws.
 
-**An override matches a name, the whitelist matches a function.** ERPNext's own test module
-(``costing/test_project_costing.py``) imports ``get_project_costing``, so the original is also
-reachable under that module's dotted path, which no override matches. ``seal_original`` (a
-``before_request`` hook) takes the original off frappe's whitelist while it is overridden, as
+**An override matches a name, the whitelist matches a function**, as ``fieldlevel_read``
+explains. ``seal_original`` (a ``before_request`` hook) takes ERPNext's original off frappe's
+whitelist while it is overridden, so the override is the only way in under any dotted name, as
 ``fieldlevel_read.seal_wrapped_originals`` does for frappe's own functions. In-process calls are
 unaffected; only HTTP dispatch checks the whitelist.
 
