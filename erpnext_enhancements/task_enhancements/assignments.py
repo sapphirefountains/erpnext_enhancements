@@ -502,6 +502,19 @@ def blocking_dependency(depends_on):
 	return None
 
 
+def assignment_entitles(owner, assigned_by, user):
+	"""Whether an open assignment lets ``user`` finish its Task without Task write permission.
+
+	Only an assignment someone else made counts: created by another account (``owner``, which Frappe
+	stamps with the session user on insert, so the API cannot set it) and assigned by another person.
+	The All role may create a ToDo, and ``ToDo.validate`` never checks the record it points at, so a
+	ToDo a person made for themselves proves nothing about the Task (review of #1521, 2026-11-27).
+	Callers also require read permission on the Task, which Assign To's share gives a real assignee
+	and a ToDo re-pointed at another Task does not.
+	"""
+	return bool(user and owner and assigned_by) and owner != user and assigned_by != user
+
+
 # ---------------------------------------------------------------------------
 # Where a link to an assignment goes (Nik, 2026-10-23: "the email for when a document is assigned to
 # someone needs to link to the ToDo and or Task that is specifically that ToDo or Task, and not the

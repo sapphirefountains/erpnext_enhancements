@@ -214,6 +214,7 @@ def _install_frappe():
 	utils.escape_html = lambda v: html.escape(str(v))
 	utils.get_fullname = lambda u: u
 	utils.cint = lambda v: int(v or 0)
+	utils.flt = lambda v, *a: float(v or 0)
 	utils.get_url = lambda path="": "https://erp.test" + path
 	utils.get_url_to_form = lambda dt, dn: f"https://erp.test/desk/{dt.lower().replace(' ', '-')}/{dn}"
 	utils.formatdate = lambda d: str(d)
@@ -1252,7 +1253,82 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 		task = FakeTask(name="TASK-1", status="Working", completed_on=None, completed_by=None)
 		fake.get_doc = lambda doctype, name=None: task
 		api._complete_task("TASK-1")
+		# Someone who may write the Task saves under ERPNext's own checks.
+		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", None)])
+
+	def test_an_assignee_without_write_saves_after_the_project_check(self):
+		task = FakeTask(
+			name="TASK-1", status="Working", completed_on=None, completed_by=None, project="PRJ-1"
+		)
+		fake.get_doc = lambda doctype, name=None: task
+		asked = []
+
+		def has_permission(doctype=None, ptype="read", doc=None, user=None, **k):
+			asked.append((doctype, ptype, str(doc)))
+			return doctype == "Project"
+
+		fake.has_permission = has_permission
+		try:
+			api._complete_task("TASK-1")
+		finally:
+			fake.__dict__.pop("has_permission", None)
 		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", True)])
+		self.assertIn(("Project", "select", "PRJ-1"), asked, "ERPNext skips this check under ignore")
+
+	def test_an_assignee_outside_the_project_is_refused(self):
+		task = FakeTask(name="TASK-1", status="Working", project="PRJ-1")
+		fake.get_doc = lambda doctype, name=None: task
+		fake.has_permission = lambda *a, **k: False
+		fake.PermissionError = Refused
+		try:
+			with self.assertRaises(Refused):
+				api._complete_task("TASK-1")
+		finally:
+			fake.__dict__.pop("has_permission", None)
+			fake.__dict__.pop("PermissionError", None)
+		self.assertEqual(task.saves, [])
+
+	def _no_write(self, readable=True):
+		def has_permission(doctype=None, ptype="read", doc=None, user=None, **k):
+			return ptype == "read" and readable
+
+		return has_permission
+
+	def test_a_todo_someone_made_for_themselves_does_not_complete_a_task_they_cannot_write(self):
+		"""Review of #1521: the All role may create a ToDo on any Task, allocated to itself."""
+		fake.has_permission = self._no_write()
+		try:
+			for owner, assigned_by in (("ann@x", "boss@x"), ("boss@x", "ann@x"), ("ann@x", "ann@x"), ("boss@x", None)):
+				with self.subTest(owner=owner, assigned_by=assigned_by):
+					todo = self.todo(allocated_to="ann@x", owner=owner, assigned_by=assigned_by)
+					self.assertIsNone(api._task_to_complete(todo))
+		finally:
+			fake.__dict__.pop("has_permission", None)
+
+	def test_an_assignment_someone_else_made_completes_the_task(self):
+		fake.has_permission = self._no_write()
+		try:
+			todo = self.todo(allocated_to="ann@x", owner="boss@x", assigned_by="boss@x")
+			self.assertEqual(api._task_to_complete(todo), "TASK-1")
+		finally:
+			fake.__dict__.pop("has_permission", None)
+
+	def test_an_assignment_on_a_task_they_cannot_read_does_not(self):
+		"""A real assignee holds Assign To's read share; a ToDo re-pointed at another Task does not."""
+		fake.has_permission = self._no_write(readable=False)
+		try:
+			todo = self.todo(allocated_to="ann@x", owner="boss@x", assigned_by="boss@x")
+			self.assertIsNone(api._task_to_complete(todo))
+		finally:
+			fake.__dict__.pop("has_permission", None)
+
+	def test_the_floor_rule(self):
+		self.assertTrue(rules.assignment_entitles("boss@x", "boss@x", "ann@x"))
+		self.assertFalse(rules.assignment_entitles("ann@x", "boss@x", "ann@x"))
+		self.assertFalse(rules.assignment_entitles("boss@x", "ann@x", "ann@x"))
+		self.assertFalse(rules.assignment_entitles("boss@x", None, "ann@x"))
+		self.assertFalse(rules.assignment_entitles(None, "boss@x", "ann@x"))
+		self.assertFalse(rules.assignment_entitles("boss@x", "boss@x", None))
 
 	def test_done_closes_the_assignment_first_and_says_which_task(self):
 		calls = []

@@ -8,28 +8,40 @@ Undo. ERPNext owns the rule; Triton draws the card and the celebration.
 
 What the two calls promise:
 
+* **Nothing is said about a Task the caller may not change.** Whether it exists, its status and
+  its subject are answered only after the caller is found entitled. Anyone else gets the same
+  sentence for a Task that is missing and one they may not change, so the endpoint cannot be
+  walked to read subjects. A blocking dependency is named only when the caller may read it.
+* **Who is entitled.** Task write permission on this Task, which ``frappe.has_permission``
+  answers with user permissions applied. Or an open assignment on it that someone else made
+  (``assignments.assignment_entitles``: created by another account and assigned by another
+  person), together with read permission on the Task. A ToDo a person made for themselves does
+  not count: the All role may create ToDos, and ``ToDo.validate`` never checks the record they
+  point at (review of #1521).
 * **ERPNext's own Task save does the work.** Nothing here copies a Task rule. The status changes
-  and ``doc.save()`` runs, so ERPNext's ``validate_status`` (a Task it depends on must be done
-  first), its project access check, ``close_all_assignments``, the project's % complete, the
-  dependent-task reschedule and this site's own Task hooks all happen as they would from the form.
-  The 16.60 date checks judge only the expected dates, and only when one changed, so completing
-  never trips them.
-* **Task permissions hold.** The person needs Task write permission on this Task, which
-  ``frappe.has_permission`` answers with their user permissions applied. An open assignment on it
-  counts too, as it does for My Work's Done (``api/my_work._complete_task``): being assigned the
-  Task is what entitles someone to finish it, and an assignee may hold only the read share
-  Assign To gives.
+  and ``doc.save()`` runs, so ``validate_status`` (a Task it depends on must be done first),
+  ``close_all_assignments``, the project's % complete, the dependent-task reschedule and this
+  site's own Task hooks all happen as they would from the form. The 16.60 date checks judge only
+  the expected dates, and only when one changed, so completing never trips them. For a caller
+  with write permission ERPNext's ``validate_project_access`` runs too. An assignee saves with
+  ``ignore_permissions``, which skips that check in ERPNext, so it is made here first
+  (:func:`require_project_access`).
 * **A refusal is a sentence, never a crash.** Whatever ERPNext refuses comes back as
   ``{"ok": False, "message": ...}`` in plain text, with the transaction rolled back and the
-  message log cleared, so the dashboard shows it on its toast and the card stays open. A
-  dependency or an open subtask is caught before the save, so the sentence names the Task in the
-  way rather than quoting ERPNext's bolded one.
-* **Undo puts back what the completion changed.** :func:`complete_task` keeps, for 15 minutes in
-  the cache, the Task's previous status and progress and the assignments it was about to close.
-  :func:`reopen_task` restores the status and progress (ERPNext's ``clear_completion_on_reopen``
-  clears Completed On and Completed By) and reopens exactly those assignments. Without the record
-  (it expired, or a deploy flushed redis) Undo still reopens the Task, as Open, for someone with
-  write permission, and says that no assignment came back.
+  message log cleared, so the dashboard shows it on its toast and the card stays open. A second
+  tap that loses the race to the first answers "already completed", not an error.
+* **Undo puts back what the completion changed, and only that.** :func:`complete_task` keeps,
+  for 15 minutes in the cache, the Task's previous status and progress, the assignments it was
+  about to close, and the Task's ``modified`` after the save. :func:`reopen_task` refuses when
+  the Task has changed since, or was completed by someone else, so a late Undo cannot wipe a
+  manager's own reopen and complete. It restores the status and progress (ERPNext's
+  ``clear_completion_on_reopen`` clears Completed On and Completed By, and zeroes a progress the
+  save left unchanged, so a Task that was at 100% gets its 100 back with a second save), then
+  reopens exactly those assignments. Reopening an assignment goes through the ToDo controller,
+  whose ``validate`` words any status change as "Assignment of ... removed by ...", so that
+  line appears on the Task's timeline after an Undo. Without the record (it expired, or a deploy
+  flushed redis) Undo still reopens the Task, as Open, for someone with write permission, and
+  says that no assignment came back.
 
 Both are POST only: a GET is CSRF-free in Frappe, and these write.
 """
@@ -53,6 +65,9 @@ REOPENABLE = ("Open", "Working", "Pending Review", "Overdue")
 #: The statuses of a Task another depends on that let that other Task be completed.
 DEPENDENCY_DONE = assignments.TASK_DEPENDENCY_DONE
 
+#: The one answer for a Task that is missing and for one the caller may not change.
+NOT_FOUND = "That task wasn't found, or you can't change it."
+
 
 @frappe.whitelist(methods=["POST"])
 def complete_task(task: str) -> dict:
@@ -66,6 +81,26 @@ def reopen_task(task: str) -> dict:
 	return _guarded(lambda: _reopen(task), _("reopen"))
 
 
+def require_project_access(doc):
+	"""Raise ``frappe.PermissionError`` unless the session user may pick the Task's project.
+
+	ERPNext's ``Task.validate_project_access`` makes this check on every status change, but only
+	when the save is not ``ignore_permissions``. A completion that rests on an assignment saves
+	with ``ignore_permissions``, so it calls this first. It prefers ERPNext's own
+	``check_project_access`` (v16.60) and falls back to the same select check where an older
+	ERPNext lacks it. My Work's Done uses it too.
+	"""
+	project = doc.get("project")
+	if not project:
+		return
+	check = getattr(doc, "check_project_access", None)
+	if callable(check):
+		check(project)
+		return
+	if not frappe.has_permission("Project", "select", doc=project):
+		raise frappe.PermissionError(_("You can't pick project {0}.").format(project))
+
+
 # ---------------------------------------------------------------------------
 # The two actions
 
@@ -75,28 +110,24 @@ def _complete(task):
 	if not name:
 		return _refuse(_("No task was named."))
 	if not frappe.db.exists("Task", name):
-		return _refuse(_("That task no longer exists."))
+		return _refuse(_(NOT_FOUND))
 
 	doc = frappe.get_doc("Task", name)
+	user = frappe.session.user
+	how = _entitlement(doc, user)
+	if not how:
+		return _refuse(_(NOT_FOUND))
+
 	if doc.status == "Completed":
 		return _result(doc, already=True)
 	if doc.status in assignments.TASK_FINISHED:
 		return _refuse(_("{0} is {1}, so there is nothing to complete.").format(_label(doc), _(doc.status)))
 
-	user = frappe.session.user
-	open_todos = _open_assignments(name)
-	can_write = bool(frappe.has_permission("Task", "write", doc=doc))
-	if not can_write and not any(row.get("allocated_to") == user for row in open_todos):
-		return _refuse(
-			_(
-				"You can't change {0}. Completing it needs Task write permission, or an assignment on it."
-			).format(_label(doc))
-		)
-
 	blocker = _blocker(doc)
 	if blocker:
 		return _refuse(blocker)
 
+	open_todos = _open_assignments(name)
 	previous = {
 		"status": doc.status,
 		"progress": flt(doc.get("progress")),
@@ -106,11 +137,21 @@ def _complete(task):
 	doc.status = "Completed"
 	doc.completed_on = nowdate()
 	doc.completed_by = user
-	if not can_write:
+	if how == "assignment":
+		require_project_access(doc)
 		doc.flags.ignore_permissions = True
-	doc.save()
+	try:
+		doc.save()
+	except frappe.TimestampMismatchError:
+		# Two taps, or two screens, raced: the other save won. Say what is true now.
+		_abandon()
+		fresh = frappe.get_doc("Task", name)
+		if fresh.status == "Completed":
+			return _result(fresh, already=True)
+		return _refuse(_("{0} changed while you were completing it. Try again.").format(_label(fresh)))
 
 	notes = _take_messages()
+	previous["modified"] = _modified(name, doc)
 	frappe.cache.set_value(_undo_key(user, name), previous, expires_in_sec=UNDO_SECONDS)
 	return _result(doc, notes=notes, undo=True)
 
@@ -120,7 +161,7 @@ def _reopen(task):
 	if not name:
 		return _refuse(_("No task was named."))
 	if not frappe.db.exists("Task", name):
-		return _refuse(_("That task no longer exists."))
+		return _refuse(_(NOT_FOUND))
 
 	doc = frappe.get_doc("Task", name)
 	user = frappe.session.user
@@ -129,25 +170,46 @@ def _reopen(task):
 	if not isinstance(record, dict):
 		record = None
 
+	# The record says this person completed it in the last 15 minutes, which is what entitled them
+	# then; without it, reopening is an ordinary edit and needs write permission.
+	how = _entitlement(doc, user)
+	if not how and not record:
+		return _refuse(_(NOT_FOUND))
+
 	if doc.status != "Completed":
 		frappe.cache.delete_value(key)
 		return _result(doc, already=True, restored=0)
 
-	# The record says this person completed it in the last 15 minutes, which is what entitled them
-	# then; without it, reopening is an ordinary edit and needs write permission.
-	can_write = bool(frappe.has_permission("Task", "write", doc=doc))
-	if not can_write and not record:
+	if record:
+		changed = (record.get("modified") and str(doc.get("modified") or "") != record.get("modified")) or (
+			doc.get("completed_by") and doc.get("completed_by") != user
+		)
+		if changed:
+			frappe.cache.delete_value(key)
+			return _refuse(
+				_(
+					"{0} has changed since you completed it, so Undo can't put it back. Reopen it from the Task itself."
+				).format(_label(doc))
+			)
+	elif how != "write":
 		return _refuse(
 			_("You can't reopen {0}. Reopening it needs Task write permission.").format(_label(doc))
 		)
 
 	previous = (record or {}).get("status")
+	restore_progress = record.get("progress") if record else None
 	doc.status = previous if previous in REOPENABLE else "Open"
-	if record and record.get("progress") is not None:
-		doc.progress = flt(record.get("progress"))
-	if not can_write:
+	if restore_progress is not None:
+		doc.progress = flt(restore_progress)
+	if how != "write":
+		require_project_access(doc)
 		doc.flags.ignore_permissions = True
 	doc.save()
+	if restore_progress is not None and flt(doc.get("progress")) != flt(restore_progress):
+		# clear_completion_on_reopen zeroed a progress this save left unchanged (it was 100 before
+		# the completion). Now the Task is open that rule no longer applies, so a second save keeps it.
+		doc.progress = flt(restore_progress)
+		doc.save()
 
 	restored = _reopen_assignments(name, (record or {}).get("todos") or [])
 	frappe.cache.delete_value(key)
@@ -161,8 +223,28 @@ def _reopen(task):
 # Helpers
 
 
+def _entitlement(doc, user):
+	"""``"write"``, ``"assignment"`` or ``None``: what lets ``user`` complete ``doc``."""
+	if frappe.has_permission("Task", "write", doc=doc):
+		return "write"
+	if not frappe.has_permission("Task", "read", doc=doc):
+		return None
+	for row in _open_assignments(doc.name):
+		if row.get("allocated_to") == user and assignments.assignment_entitles(
+			row.get("owner"), row.get("assigned_by"), user
+		):
+			return "assignment"
+	return None
+
+
 def _undo_key(user, task):
 	return f"ee_task_completion_undo::{user}::{task}"
+
+
+def _modified(name, doc):
+	"""The Task's ``modified`` as stored once every hook of the save has run."""
+	value = frappe.db.get_value("Task", name, "modified")
+	return str(value or doc.get("modified") or "")
 
 
 def _label(doc):
@@ -175,7 +257,7 @@ def _open_assignments(task):
 	return frappe.get_all(
 		"ToDo",
 		filters={"reference_type": "Task", "reference_name": task, "status": "Open"},
-		fields=["name", "allocated_to"],
+		fields=["name", "allocated_to", "assigned_by", "owner"],
 	)
 
 
@@ -185,7 +267,8 @@ def _blocker(doc):
 	ERPNext refuses while any Task in ``depends_on`` is not Completed or Cancelled (this site's
 	Task override lets "Canceled" through too). A group Task lists each of its subtasks there
 	(``populate_depends_on``), so for a phase the sentence counts the open subtasks instead of
-	naming the first. ERPNext still makes the decision when the Task saves; this only words it.
+	naming the first. A dependency the caller may not read is not named. ERPNext still makes the
+	decision when the Task saves; this only words it.
 	"""
 	names = [row.get("task") for row in (doc.get("depends_on") or []) if row.get("task")]
 	if not names:
@@ -212,14 +295,17 @@ def _blocker(doc):
 		)
 
 	other = blocking[0]
-	row = rows.get(other) or {}
+	if other not in rows or not frappe.has_permission("Task", "read", doc=other):
+		return _(
+			"Not completed: {0} depends on another task that isn't done yet. Ask its project manager."
+		).format(_label(doc))
+	row = rows[other]
 	subject = assignments.truncate(row.get("subject") or "", 60)
 	label = f"{other} ({subject})" if subject else other
-	status = row.get("status")
 	return _(
 		"Not completed: {0} depends on {1}, which is {2}. ERPNext completes a Task only once every "
 		"Task it depends on is Completed or Cancelled."
-	).format(_label(doc), label, _(status) if status else _("missing"))
+	).format(_label(doc), label, _(row.get("status")))
 
 
 def _reopen_assignments(task, names):

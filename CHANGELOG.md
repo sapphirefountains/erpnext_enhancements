@@ -18,18 +18,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or milestone complete from it, and he picked the Countdown lanes concept. Triton calls these as
   the person who pressed the check, over their own ERPNext sign-in. Domain rules stay in ERPNext,
   and Triton draws the card and the celebration.
+  - **Nothing is said about a Task the caller may not change.** Whether it exists, its status and its
+    subject are answered only after the caller is found entitled. Everyone else gets one sentence,
+    the same for a missing Task and a forbidden one ("That task wasn't found, or you can't change
+    it."), so the endpoint cannot be walked from TASK-2026-00001 onward to read subjects. A blocking
+    dependency is named only when the caller may read it.
+  - **Who is entitled.** Task write permission on that Task, with user permissions applied. Or an
+    open assignment on it **that someone else made**, together with read permission on the Task.
+    "Someone else made" means created by another account and assigned by another person
+    (`assignments.assignment_entitles`). The owner check is the one that cannot be faked: Frappe
+    stamps `owner` with the session user on insert, while `assigned_by` is a plain field anyone can
+    set. A ToDo someone made for themselves counts for nothing, because in Frappe 16.61 the All role
+    may create a ToDo on any record and `ToDo.validate` never checks the record it points at.
+    Requiring read permission stops a real ToDo from being re-pointed at another Task: Assign To
+    shares the Task with a real assignee, and a re-pointed ToDo carries no such share.
   - **ERPNext's own Task save does the completing.** The status, Completed On (today) and Completed
     By (the person) are set and the Task is saved, so everything runs as it would from the form:
-    ERPNext's `validate_status` dependency check, its project access check (16.60:
-    `validate_project_access`), `close_all_assignments`, the project's % complete, the
-    dependent-task reschedule, and this app's own Task hooks. Read at ERPNext v16.60.0, the
+    ERPNext's `validate_status` dependency check, `close_all_assignments`, the project's % complete,
+    the dependent-task reschedule, and this app's own Task hooks. Read at ERPNext v16.60.0, the
     expected-date checks (`report_date_conflict`) judge only a date that changed, so completing never
     trips them. ERPNext never sets Completed By on its own, so it is set here, as My Work's Done
-    does.
-  - **Task permissions hold.** The person needs Task write permission on that Task, with their user
-    permissions applied, or an open assignment on it. The assignment rule is the one My Work's Done
-    uses: being assigned the Task entitles someone to finish it. Only that case saves with
-    `ignore_permissions`. Someone who may write saves under ERPNext's own checks.
+    does. **The project access check:** for someone with write permission, ERPNext's own
+    `validate_project_access` runs. An assignee saves with `ignore_permissions`, and ERPNext skips
+    that check on such a save (`elif not self.flags.ignore_permissions`), so `require_project_access`
+    makes it first: ERPNext's `check_project_access`, or a Project select check on an older ERPNext.
+    Prod grants Project select to the Employee and Employee Self Service roles, so staff assignees
+    keep the ability to finish their work.
   - **A refusal is one plain sentence, never a crash.** Anything ERPNext refuses, a permission error
     and any unexpected failure all come back as `{"ok": false, "message": ...}`. The tags are
     stripped, the transaction is rolled back and the message log is cleared, so the dashboard shows
@@ -37,14 +51,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Log *after* the rollback, or the rollback would remove the Error Log row too. An open dependency
     is caught before the save, so the sentence names the Task in the way. This site's "Canceled"
     spelling does not block, matching the Task override. A phase (a group Task, which lists its
-    subtasks in `depends_on`) says how many subtasks are still open.
-  - **Undo puts back what the completion changed.** For 15 minutes the cache keeps, per person and
-    Task, the previous status and progress and the assignments the completion was about to close.
-    `reopen_task` restores the status and progress, and ERPNext's `clear_completion_on_reopen`
-    clears Completed On and Completed By. It reopens only those assignments, and only while they
-    are still Closed and still on this Task. Without the record (expired, or a deploy's FLUSHDB),
-    Undo needs write permission, reopens the Task as Open, and says no assignment came back.
-  - Bench-free suite `tests/test_task_completion.py` (26 tests, its own CI step).
+    subtasks in `depends_on`) says how many subtasks are still open. When two taps or two screens
+    race, the one that loses `TimestampMismatchError` reloads the Task and answers "already
+    completed" rather than an error.
+  - **Undo puts back what the completion changed, and only if nothing else has changed since.** For
+    15 minutes the cache keeps, per person and Task, the previous status and progress, the
+    assignments the completion was about to close, and the Task's `modified` once the save is done.
+    `reopen_task` refuses, in a sentence, when the Task has been saved since or was completed by
+    someone else, so a late Undo cannot wipe a manager's own reopen and complete. Otherwise it
+    restores the status and progress, and ERPNext's `clear_completion_on_reopen` clears Completed On
+    and Completed By. That rule also zeroes a progress the reopen left unchanged, so a Task that was
+    at 100% before it was completed gets its 100 back from a second save, which the rule no longer
+    touches once the Task is open. Undo reopens only the assignments the completion closed, and
+    only while they are still Closed and still on this Task. It reopens them through the ToDo
+    controller, whose `validate` words any status change as "Assignment of ... removed by ...", so
+    that line appears on the Task's timeline after an Undo. It is Frappe's wording, kept rather
+    than writing the ToDo around its controller. Without the record (expired, or a deploy's
+    FLUSHDB), Undo needs write permission, reopens the Task as Open, and says no assignment came
+    back.
+  - Bench-free suite `tests/test_task_completion.py` (38 tests, its own CI step).
+
+### Security
+
+- **My Work's Done no longer completes a Task on the strength of a ToDo the person made for
+  themselves.** `api/my_work._task_to_complete` and `_complete_task` had the same opening as the
+  first draft of the endpoint above. Any desk user could create a ToDo on any Task, allocated to
+  themselves, press Done, and complete that Task with `ignore_permissions`, project access check
+  skipped. Done now completes the Task only for someone with Task write permission (saved under
+  ERPNext's own checks), or for an assignee whose assignment someone else made and who may read
+  the Task, saved after `require_project_access`. A self-made ToDo still closes on Done and leaves
+  the Task as it was. Found in review of #1521; `tests/test_my_work.py` holds all three cases.
 
 ## [1.845.2] - 2026-11-25
 
