@@ -750,6 +750,13 @@ jobs:
       # or the triage cancels Triton's live call follow-ups. Its own step: it installs a frappe stub.
       - name: My Work rules, abilities, auto-close and wiring (bench-free, frappe stub)
         run: python -m unittest erpnext_enhancements.tests.test_my_work -v
+      # One-tap complete and Undo (v1.846.0), the endpoint behind the check buttons on Triton's
+      # Projects Dashboard. Wrong, a Task is completed around ERPNext's own save (its dependency
+      # check and project % skipped), someone with no write permission and no assignment completes
+      # it, a refusal reaches the wall TV as a crash instead of a sentence, or Undo reopens
+      # assignments the completion never closed. Its own step: it installs a frappe stub.
+      - name: Task one-tap complete and Undo (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_task_completion -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the

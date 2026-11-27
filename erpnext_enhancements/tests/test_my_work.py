@@ -214,6 +214,7 @@ def _install_frappe():
 	utils.escape_html = lambda v: html.escape(str(v))
 	utils.get_fullname = lambda u: u
 	utils.cint = lambda v: int(v or 0)
+	utils.flt = lambda v, *a: float(v or 0)
 	utils.get_url = lambda path="": "https://erp.test" + path
 	utils.get_url_to_form = lambda dt, dn: f"https://erp.test/desk/{dt.lower().replace(' ', '-')}/{dn}"
 	utils.formatdate = lambda d: str(d)
@@ -1252,7 +1253,72 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 		task = FakeTask(name="TASK-1", status="Working", completed_on=None, completed_by=None)
 		fake.get_doc = lambda doctype, name=None: task
 		api._complete_task("TASK-1")
-		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", True)])
+		# Someone who may write the Task saves under ERPNext's own checks.
+		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", None)])
+
+	def test_the_task_saves_after_the_project_check(self):
+		task = FakeTask(
+			name="TASK-1", status="Working", completed_on=None, completed_by=None, project="PRJ-1"
+		)
+		fake.get_doc = lambda doctype, name=None: task
+		asked = []
+
+		def has_permission(doctype=None, ptype="read", doc=None, user=None, **k):
+			asked.append((doctype, ptype, str(doc)))
+			return True
+
+		fake.has_permission = has_permission
+		try:
+			api._complete_task("TASK-1")
+		finally:
+			fake.__dict__.pop("has_permission", None)
+		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", None)])
+		self.assertIn(("Project", "select", "PRJ-1"), asked)
+
+	def test_someone_outside_the_project_is_refused(self):
+		task = FakeTask(name="TASK-1", status="Working", project="PRJ-1")
+		fake.get_doc = lambda doctype, name=None: task
+		fake.has_permission = lambda doctype=None, *a, **k: doctype != "Project"
+		fake.PermissionError = Refused
+		try:
+			with self.assertRaises(Refused):
+				api._complete_task("TASK-1")
+		finally:
+			fake.__dict__.pop("has_permission", None)
+			fake.__dict__.pop("PermissionError", None)
+		self.assertEqual(task.saves, [])
+
+	def test_without_write_permission_done_only_closes_the_todo(self):
+		"""Review of #1521: an assignment is not permission on the Task, whoever made it."""
+		fake.has_permission = lambda doctype=None, ptype="read", *a, **k: ptype != "write"
+		try:
+			for owner, assigned_by in (("boss@x", "boss@x"), ("ann@x", "ann@x")):
+				with self.subTest(owner=owner, assigned_by=assigned_by):
+					todo = self.todo(allocated_to="ann@x", owner=owner, assigned_by=assigned_by)
+					self.assertIsNone(api._task_to_complete(todo))
+		finally:
+			fake.__dict__.pop("has_permission", None)
+
+	def test_a_self_made_todo_completes_a_task_its_owner_may_write(self):
+		todo = self.todo(allocated_to="ann@x", owner="ann@x", assigned_by="ann@x")
+		self.assertEqual(api._task_to_complete(todo), "TASK-1")
+
+	def test_the_done_hint_follows_the_same_rule(self):
+		row = Row(reference_type="Task", reference_name="TASK-1", custom_repeat=None)
+		self.assertTrue(api._done_completes_task(row))
+		self.assertFalse(api._done_completes_task(Row(row, custom_repeat="Weekly")))
+		self.assertFalse(api._done_completes_task(Row(row, reference_type="Opportunity")))
+		fake.has_permission = lambda doctype=None, ptype="read", *a, **k: ptype != "write"
+		try:
+			self.assertFalse(
+				api._done_completes_task(row), "the form must not promise a completion Done won't make"
+			)
+		finally:
+			fake.__dict__.pop("has_permission", None)
+
+	def test_get_items_reads_the_hint_from_the_rule(self):
+		source = (Path(__file__).resolve().parents[1] / "api" / "my_work.py").read_text()
+		self.assertIn('"completes_task": _done_completes_task(row)', source)
 
 	def test_done_closes_the_assignment_first_and_says_which_task(self):
 		calls = []

@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.846.0] - 2026-11-27
+
+### Added
+
+- **One-tap complete, and its Undo, for a Task shown outside its own form**
+  (`api/task_completion.py`: `complete_task`, `reopen_task`; both POST). These back the check
+  buttons on the new first page of Triton's Projects Dashboard. Nikolas asked on 2026-11-25 for that
+  page to be "driven by deadlines, milestones and task due dates", with people able to mark a task
+  or milestone complete from it, and he picked the Countdown lanes concept. Triton calls these as
+  the person who pressed the check, over their own ERPNext sign-in. Domain rules stay in ERPNext,
+  and Triton draws the card and the celebration.
+  - **Who may: Task write permission on the Task, and access to its Project.** That holds for
+    completing and for undoing, with user permissions applied. Anyone else gets one sentence, the
+    same for a missing Task and a forbidden one ("That task wasn't found, or you can't change it."),
+    and nothing about the Task: not its subject, not its status. A blocking dependency is named only
+    when the caller may read it.
+  - **ERPNext's own Task save does the completing.** The status, Completed On (today) and Completed
+    By (the person) are set and the Task is saved under the caller's own permissions, so everything
+    runs as it would from the form: ERPNext's `validate_status` dependency check, its
+    `validate_project_access`, `close_all_assignments`, the project's % complete, the dependent-task
+    reschedule, and this app's own Task hooks. Read at ERPNext v16.60.0, the expected-date checks
+    (`report_date_conflict`) judge only a date that changed, so completing never trips them. ERPNext
+    never sets Completed By on its own, so it is set here, as My Work's Done does. The Project
+    access check is also made explicitly before the save (`require_project_access`), so it is a
+    refusal before anything is written.
+  - **A refusal is one plain sentence, never a crash.** Anything ERPNext refuses, a permission error
+    and any unexpected failure all come back as `{"ok": false, "message": ...}`. The tags are
+    stripped, the transaction is rolled back and the message log is cleared, so the dashboard shows
+    the refusal on its toast and the card stays open. An unexpected failure is logged to the Error
+    Log *after* the rollback, or the rollback would remove the Error Log row too. An open dependency
+    is caught before the save, so the sentence names the Task in the way. This site's "Canceled"
+    spelling does not block, matching the Task override. A phase (a group Task, which lists its
+    subtasks in `depends_on`) says how many subtasks are still open. When two taps or two screens
+    race, the one that loses `TimestampMismatchError` reloads the Task and answers "already
+    completed" rather than an error.
+  - **Undo puts back what the completion changed, and only if nothing else has changed since.** For
+    15 minutes the cache keeps, per person and Task, the previous status and progress, the
+    assignments the completion was about to close, and the Task's `modified` once the save is done.
+    `reopen_task` refuses, in a sentence, when the Task has been saved since or was completed by
+    someone else, so a late Undo cannot wipe a manager's own reopen and complete. Otherwise it
+    restores the status and progress, and ERPNext's `clear_completion_on_reopen` clears Completed On
+    and Completed By. That rule also zeroes a progress the reopen left unchanged, so a Task that was
+    at 100% before it was completed gets its 100 back from a second save, which the rule no longer
+    touches once the Task is open. Undo reopens only the assignments the completion closed, and
+    only while they are still Closed and still on this Task. It reopens them through the ToDo
+    controller, whose `validate` words any status change as "Assignment of ... removed by ...", so
+    that line appears on the Task's timeline after an Undo. It is Frappe's wording, kept rather
+    than writing the ToDo around its controller. Undo cannot recall a "Task Completed" notification
+    the completion already queued. Without the record (expired, or a deploy's FLUSHDB), Undo
+    reopens the Task as Open and says no assignment came back.
+  - Bench-free suite `tests/test_task_completion.py` (38 tests, its own CI step).
+
+### Changed
+
+- **Completing a Task from My Work's Done, or from the Projects Dashboard, now requires write
+  permission on the Task and access to its Project.** Done still closes the person's own
+  assignment either way. It completes the Task too only when they may change it, and the "This
+  also marks the Task Completed" hint on the page and the form banner now says so only then.
+
 ## [1.845.2] - 2026-11-25
 
 ### Fixed
