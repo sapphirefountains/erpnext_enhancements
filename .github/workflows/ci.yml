@@ -448,6 +448,12 @@ jobs:
       # real shared script against a fake DOM; node is on PATH in this job.
       - name: Project form hides (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
+      # Project Budget tab (v1.845.2): ERPNext 16.60's Overview, Tasks and Budgets tabs split the
+      # Budget tab because Project-main-field_order did not list them. Pins the array: procurement
+      # tracker first, the approved section order, the three tabs hidden at the end, and every
+      # insert_after on the tab agreeing with the array. Reads fixtures only, no frappe stub.
+      - name: Project Budget tab layout (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_budget_tab_layout -v
       # Project ID mirror (v1.816.2): project.js shows the name in custom_project_id on every refresh.
       # It used to use frm.set_value, which dirties the form whenever the stored value differs, so
       # Projects opened as "Not Saved" and a reload asked "Leave site?". Runs the real script under

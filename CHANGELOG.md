@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.845.2] - 2026-11-25
+
+### Fixed
+
+- **The Project form's Budget tab is whole again, with the procurement tracker at the top, and the
+  three tabs ERPNext 16.60 added are gone from it** (fixtures only; no code, patch or bundle change).
+  Since prod moved to ERPNext 16.60.0 on 2026-11-23, Projects showed tabs nobody here asked for.
+  They come from ERPNext, not from this app:
+  - **Tasks**, frappe/erpnext#59586 ("Project UX cleanup", merged 2026-10-05): a sortable, inline-editable
+    list of the Project's Tasks with Add Task. The same PR added a "More Info" tab, which has no
+    fields in our layout, so Frappe never shows it.
+  - **Overview**, frappe/erpnext#60646 ("Project overview dashboard", 2026-10-22, re-rendered as a Vue
+    island by #64077 on 2026-11-12): a dashboard built from the Project's Tasks, with progress,
+    overdue, blocked and unassigned tasks, planned vs done, people, and billed amount and margin.
+    The same PR renamed the first tab "Details".
+  - **Budgets**, frappe/erpnext#63053 ("Projects costing tab", 2026-11-04): a list of ERPNext Budget
+    records against the Project, shown only to users who can read Budget. The same PR put a costing
+    dashboard on the Costing tab, which this app already hides.
+
+  **Why they landed inside our Budget tab.** `Project-main-field_order` listed none of the twelve new
+  fields. For a standard field missing from that array, Frappe v16's `Meta.sort_fields` inserts it
+  after the field that precedes it in ERPNext's own order. That put `tasks_tab` after `cost_center`,
+  `budgets_tab` after `per_gross_margin`, and the new "Accounting" section after `actual_time`: all
+  three inside our Budget tab. Everything below `per_gross_margin` moved to ERPNext's Budgets tab:
+  the procurement tracker, the six procurement buttons, Material Pickup and Budget Notes. "Accounting"
+  took Total Time Elapsed out of Project Estimated Amount. Overview, which comes before every field in
+  our array, was prepended, so every Project opened on it instead of Details. The live form's meta
+  matched this exactly before the change.
+
+  **What changed.** Nikolas chose the layout on 2026-11-25. The array now places all twelve fields
+  explicitly:
+  - The Budget tab runs, top to bottom: procurement tracker; Procurement buttons; Material Pickup;
+    Project Estimated Amount (Total Time Elapsed back in it); Budget Notes; Project Estimated Cost;
+    Customer Payment; Initial Invoice; Budget by Category; and a new **Account Budgets** section
+    holding ERPNext's Budgets list.
+  - That order ranks the sections by use on prod over the six months before, from read-only queries
+    of which fields are filled and the Version log of hand edits:
+    - Most Purchase Orders carry a project, so the tracker has the most to show.
+    - Project Dollar Amount is set on most new Projects and is the field people edit by hand.
+    - Budget Notes are filled on some, copied from the Opportunity.
+    - Project Estimated Cost is rarely filled.
+    - Customer Payment and Initial Invoice are almost never filled.
+    - Budget by Category has never been used.
+
+    No one can measure clicks on the buttons or Pick Routing Map, so placing them beside the tracker
+    is a judgment call.
+  - **Overview, Tasks and Budgets are hidden** with Property Setters on their Tab Breaks, never
+    deleted, and moved to the end of the array, each holding only its own field. Projects open on
+    Details again: Frappe activates the first tab that isn't hidden. To bring one back, untick Hidden
+    on the Tab Break. Our Scope tab's Tasks Tree and the Project Planner cover what the Tasks tab
+    did.
+  - ERPNext's "Accounting" section is left with no fields: its company, estimated cost and cost
+    center fields stay in our hidden Costing and Billing section, as before 16.60. Frappe hides an
+    empty section.
+  - Every `insert_after` on the Budget tab now agrees with the array, so the next edit isn't misled.
+  - `Project-main-field_order` drops two names that don't exist on this site, both silently ignored
+    by `sort_fields`:
+    - `total_expense_claim`, an HRMS field; HRMS isn't installed.
+    - `custom_project_notes`.
+  - `tests/test_project_budget_tab_layout.py` pins:
+    - the order and the hidden tabs;
+    - that every name in the array is a real field: ERPNext 16.60's own, a fixture Custom Field, or
+      one of the 26 code-owned ones;
+    - that no Custom Field left out of the array points its `insert_after` into the Budget tab.
+  - **Known cost, unchanged by this release.** The hidden Overview still mounts its dashboard and
+    calls `get_project_overview` for everyone who opens a Project, as it did when the tab was
+    visible. Frappe's control `refresh()` calls `refresh_input()` whether or not the field is hidden
+    (`base_control.js`). Don't try to stop the mount by blanking `overview_dashboard.options`:
+    `validate_fields` would throw during fixture import and abort the whole `custom_field.json`
+    sync. ERPNext's Tasks list loads only when its tab is opened, so hiding that tab stops its
+    request.
+
 ## [1.845.1] - 2026-11-25
 
 ### Changed

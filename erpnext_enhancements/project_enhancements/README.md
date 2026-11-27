@@ -292,6 +292,38 @@ parents included, after every save, and runs **after** the roll-up so an old par
 the rule, bottom-up, logs instead of raising, and is safe to re-run. `tests/test_task_parent_dates.py`
 holds all of it.
 
+## The Budget tab, and ERPNext 16.60's extra tabs (v1.845.2)
+
+Nik, 2026-11-25: the Project form showed Overview, Budgets and Tasks tabs nobody had asked for, and the
+Budget tab needed the procurement tracker at the top, then everything else by use.
+
+**Where the tabs came from.** ERPNext 16.60.0 (on prod since 2026-11-23) added them:
+Tasks in frappe/erpnext#59586, Overview in #60646 (a Vue island since #64077), Budgets in #63053.
+`Project-main-field_order` listed none of the twelve new fields, and v16's `Meta.sort_fields` puts a
+standard field that is missing from the array after its neighbour in ERPNext's own order. So Tasks and
+Budgets landed inside our Budget tab, and the tracker, the procurement buttons, Material Pickup and
+Budget Notes ended up on ERPNext's Budgets tab.
+
+**The rule this leaves.** After an ERPNext upgrade, compare the Project doctype's fields with this
+array. A new standard field that the array doesn't list goes wherever ERPNext's order puts it, which
+can be inside one of our tabs. `tests/test_project_budget_tab_layout.py` lists the 16.60 fields; add
+the next release's there too.
+
+**The tab, top to bottom** (Nik approved the order; it ranks by six months of prod use, see
+`CHANGELOG.md` 1.845.2 for the reasons): procurement tracker (`custom_material_request_feed`);
+Procurement buttons; Material Pickup; Project Estimated Amount; Budget Notes; Project Estimated
+Cost; Customer Payment; Initial Invoice; Budget by Category; **Account Budgets**
+(`custom_account_budgets_section`, holding ERPNext's `budgets_html` list, which only users who can
+read Budget see). After those come hidden sections: the QuickBooks jobcode, ERPNext's empty
+Accounting section, Costing and Billing, and Margin.
+
+**Overview, Tasks and Budgets are hidden** by Property Setters on their Tab Breaks, never deleted, and
+sit at the end of the array. Projects open on Details because Frappe activates the first visible
+tab. The hidden Overview still mounts its dashboard and fetches its data for everyone who opens a
+Project. Frappe's control `refresh()` calls `refresh_input()` on hidden fields too. Blanking
+`overview_dashboard.options` to stop the mount would make fixture import throw. The Tasks list
+fetches only when its tab is opened, so hiding the tab stops its request.
+
 ## Scope of Work (WI-075, v1.447.0)
 
 `Project Scope of Work` is the scope authored once and locked — one submitted record per
@@ -1041,7 +1073,7 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 
 ## Procurement Tracker
 
-The collapsible procurement tree at the bottom of the Budget tab. A self-contained **Vue 3** app
+The collapsible procurement tree at the top of the Budget tab (since v1.845.2). A self-contained **Vue 3** app
 (no table library) mounted into the `custom_material_request_feed` HTML field by
 [`public/js/project_enhancements.js`](../public/js/project_enhancements.js) — the field label
 "Material Request Feed" is a historical misnomer, it renders all six procurement doctypes.
