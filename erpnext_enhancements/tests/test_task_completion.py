@@ -7,12 +7,11 @@ What each part guards, in the terms it fails in:
   get the same sentence with no subject, so the endpoint cannot be walked to read subjects. Its
   status ("already completed", "Canceled") is told only to someone entitled. A blocking dependency
   is named only when the caller may read it.
-* **Who is entitled.** Task write permission, or an open assignment someone else made (created by
-  another account and assigned by another person) together with read permission. A ToDo a person
-  made for themselves does not count: the All role may create ToDos on any record.
-* **It goes through ERPNext's own save.** The Task is saved, never written with ``db_set`` or
-  ``db.set_value``. A writer saves without ``ignore_permissions``. An assignee saves with it, and
-  so the project access check ERPNext then skips is made first.
+* **Who is entitled.** Task write permission on the Task and access to its Project, for completing
+  and for undoing alike. An assignment grants nothing, whoever made it.
+* **It goes through ERPNext's own save.** The Task is saved under the caller's own permissions,
+  never with ``ignore_permissions`` and never written with ``db_set`` or ``db.set_value``, after
+  the project access check.
 * **A refusal is a plain sentence.** A ValidationError, a PermissionError or anything unexpected
   comes back as ``{"ok": False, "message": ...}`` with tags stripped, the transaction rolled back
   and the message log cleared. An unexpected error is logged after the rollback. A second tap
@@ -355,21 +354,9 @@ class CompleteTests(Base):
 		self.assertEqual(record["modified"], self.stored()["modified"], "Undo must know the state it left")
 		self.assertEqual(fake.cache.ttl["ee_task_completion_undo::me@x::TASK-1"], 15 * 60)
 
-	def test_an_assignment_someone_else_made_completes_after_the_project_check(self):
+	def test_a_writer_outside_the_project_is_refused_and_nothing_saves(self):
 		self.task(project="PRJ-1")
-		self.todo("TD-1", allocated_to="me@x", owner="boss@x", assigned_by="boss@x")
-		fake.readers.add(("me@x", "TASK-1"))
-		fake.projects.add(("me@x", "PRJ-1"))
-
-		out = api.complete_task("TASK-1")
-
-		self.assertTrue(out["ok"], out)
-		self.assertTrue(self.saves()[0]["ignore_permissions"])
-
-	def test_an_assignee_outside_the_project_is_refused_and_nothing_saves(self):
-		self.task(project="PRJ-1")
-		self.todo("TD-1", allocated_to="me@x", owner="boss@x", assigned_by="boss@x")
-		fake.readers.add(("me@x", "TASK-1"))
+		fake.writers.add(("me@x", "TASK-1"))
 
 		out = api.complete_task("TASK-1")
 
@@ -377,26 +364,23 @@ class CompleteTests(Base):
 		self.assertEqual(self.saves(), [])
 		self.assertEqual(fake.cache.store, {})
 
-	def test_a_todo_someone_made_for_themselves_counts_for_nothing(self):
-		"""The All role may create a ToDo on any Task; ToDo.validate never checks the record."""
+	def test_a_writer_inside_the_project_completes(self):
+		self.task(project="PRJ-1")
+		fake.writers.add(("me@x", "TASK-1"))
+		fake.projects.add(("me@x", "PRJ-1"))
+
+		self.assertTrue(api.complete_task("TASK-1")["ok"])
+		self.assertFalse(self.saves()[0]["ignore_permissions"])
+
+	def test_an_assignment_never_stands_in_for_write_permission(self):
+		"""Review of #1521: whoever made the ToDo, it grants nothing on the Task."""
 		self.task(subject="Secret subject")
 		fake.readers.add(("me@x", "TASK-1"))
-		fake.projects.add(("me@x", None))
-		for i, (owner, assigned_by) in enumerate(
-			(("me@x", "boss@x"), ("boss@x", "me@x"), ("me@x", "me@x"), ("boss@x", None))
-		):
+		for i, (owner, assigned_by) in enumerate((("boss@x", "boss@x"), ("me@x", "me@x"))):
 			with self.subTest(owner=owner, assigned_by=assigned_by):
 				fake.todos.clear()
 				self.todo(f"TD-{i}", allocated_to="me@x", owner=owner, assigned_by=assigned_by)
-				out = api.complete_task("TASK-1")
-				self.assertEqual(out, {"ok": False, "message": NOT_FOUND})
-		self.assertEqual(self.saves(), [])
-
-	def test_an_assignment_on_a_task_the_caller_cannot_read_counts_for_nothing(self):
-		self.task()
-		self.todo("TD-1", allocated_to="me@x", owner="boss@x", assigned_by="boss@x")
-
-		self.assertEqual(api.complete_task("TASK-1"), {"ok": False, "message": NOT_FOUND})
+				self.assertEqual(api.complete_task("TASK-1"), {"ok": False, "message": NOT_FOUND})
 		self.assertEqual(self.saves(), [])
 
 	def test_missing_and_forbidden_get_the_same_sentence_with_no_subject(self):
@@ -652,36 +636,34 @@ class ReopenTests(Base):
 		self.assertFalse(out["ok"])
 		self.assertEqual(self.stored()["status"], "Completed")
 
-	def test_the_completer_may_undo_without_write_after_the_project_check(self):
-		self.todo("TD-1", allocated_to="me@x", owner="boss@x", assigned_by="boss@x")
+	def test_the_completer_who_lost_write_cannot_undo(self):
+		fake.writers.add(("me@x", "TASK-1"))
+		self.complete_first()
+		fake.writers.clear()
 		fake.readers.add(("me@x", "TASK-1"))
+
+		self.assertEqual(api.reopen_task("TASK-1"), {"ok": False, "message": NOT_FOUND})
+		self.assertEqual(self.stored()["status"], "Completed")
+
+	def test_undo_makes_the_project_check_too(self):
+		fake.writers.add(("me@x", "TASK-1"))
 		fake.projects.add(("me@x", "PRJ-1"))
 		self.complete_first(project="PRJ-1")
-		fake.todos["TD-1"].status = "Closed"
-		fake.readers.clear()  # the read share may even be gone; the record is the licence
+		fake.projects.clear()
 
 		out = api.reopen_task("TASK-1")
 
-		self.assertTrue(out["ok"], out)
-		self.assertTrue(self.saves()[-1]["ignore_permissions"])
+		self.assertEqual(out["message"], "You don't have permission to change this task.")
+		self.assertEqual(self.stored()["status"], "Completed")
 
 	def test_without_a_record_reopening_needs_write_and_says_nothing_otherwise(self):
 		self.task(status="Completed", subject="Secret subject")
+		fake.readers.add(("me@x", "TASK-1"))
 
 		out = api.reopen_task("TASK-1")
 
 		self.assertEqual(out, {"ok": False, "message": NOT_FOUND})
 		self.assertEqual(self.saves(), [])
-
-	def test_a_reader_without_a_record_is_told_it_needs_write(self):
-		self.task(status="Completed")
-		self.todo("TD-1", allocated_to="me@x", owner="boss@x", assigned_by="boss@x")
-		fake.readers.add(("me@x", "TASK-1"))
-
-		out = api.reopen_task("TASK-1")
-
-		self.assertFalse(out["ok"])
-		self.assertIn("needs Task write permission", out["message"])
 
 	def test_without_a_record_a_writer_reopens_as_open_and_is_told(self):
 		self.task(status="Completed", progress=100)
@@ -752,13 +734,22 @@ class SourceTests(unittest.TestCase):
 		for shortcut in (".db_set(", "db.set_value(", "db.sql(", "set_single_value("):
 			self.assertNotIn(shortcut, code, f"{shortcut} skips ERPNext's Task rules")
 
-	def test_every_ignore_permissions_save_is_preceded_by_the_project_check(self):
-		"""ERPNext's validate_project_access does not run under ignore_permissions."""
+	def test_the_task_is_never_saved_with_ignore_permissions(self):
+		"""Review of #1521: the caller's own Task write permission, or nothing."""
+		code = "\n".join(line for line in self.source.splitlines() if not line.lstrip().startswith("#"))
+		self.assertNotIn("flags.ignore_permissions", code)
+		self.assertEqual(code.count("ignore_permissions=True"), 1, "only restoring the closed ToDos")
+		self.assertIn('doc = frappe.get_doc("ToDo", todo)', code)
+
+	def test_each_task_save_follows_the_project_check(self):
 		lines = self.source.splitlines()
-		flagged = [i for i, line in enumerate(lines) if "doc.flags.ignore_permissions = True" in line]
-		self.assertEqual(len(flagged), 2, "complete and reopen")
-		for i in flagged:
-			self.assertIn("require_project_access(doc)", lines[i - 1])
+		for fn in ("def _complete(", "def _reopen("):
+			body = lines[next(i for i, line in enumerate(lines) if line.startswith(fn)) :]
+			first_save = next(i for i, line in enumerate(body) if "doc.save()" in line)
+			self.assertTrue(
+				any("require_project_access(doc)" in line for line in body[:first_save]),
+				f"{fn} saves before the project check",
+			)
 
 	def test_tabs_like_every_new_api_file(self):
 		indented = [line for line in self.source.splitlines() if line[:1] in (" ", "\t")]

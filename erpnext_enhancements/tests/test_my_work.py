@@ -1256,7 +1256,7 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 		# Someone who may write the Task saves under ERPNext's own checks.
 		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", None)])
 
-	def test_an_assignee_without_write_saves_after_the_project_check(self):
+	def test_the_task_saves_after_the_project_check(self):
 		task = FakeTask(
 			name="TASK-1", status="Working", completed_on=None, completed_by=None, project="PRJ-1"
 		)
@@ -1265,20 +1265,20 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 
 		def has_permission(doctype=None, ptype="read", doc=None, user=None, **k):
 			asked.append((doctype, ptype, str(doc)))
-			return doctype == "Project"
+			return True
 
 		fake.has_permission = has_permission
 		try:
 			api._complete_task("TASK-1")
 		finally:
 			fake.__dict__.pop("has_permission", None)
-		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", True)])
-		self.assertIn(("Project", "select", "PRJ-1"), asked, "ERPNext skips this check under ignore")
+		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", None)])
+		self.assertIn(("Project", "select", "PRJ-1"), asked)
 
-	def test_an_assignee_outside_the_project_is_refused(self):
+	def test_someone_outside_the_project_is_refused(self):
 		task = FakeTask(name="TASK-1", status="Working", project="PRJ-1")
 		fake.get_doc = lambda doctype, name=None: task
-		fake.has_permission = lambda *a, **k: False
+		fake.has_permission = lambda doctype=None, *a, **k: doctype != "Project"
 		fake.PermissionError = Refused
 		try:
 			with self.assertRaises(Refused):
@@ -1288,47 +1288,37 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 			fake.__dict__.pop("PermissionError", None)
 		self.assertEqual(task.saves, [])
 
-	def _no_write(self, readable=True):
-		def has_permission(doctype=None, ptype="read", doc=None, user=None, **k):
-			return ptype == "read" and readable
-
-		return has_permission
-
-	def test_a_todo_someone_made_for_themselves_does_not_complete_a_task_they_cannot_write(self):
-		"""Review of #1521: the All role may create a ToDo on any Task, allocated to itself."""
-		fake.has_permission = self._no_write()
+	def test_without_write_permission_done_only_closes_the_todo(self):
+		"""Review of #1521: an assignment is not permission on the Task, whoever made it."""
+		fake.has_permission = lambda doctype=None, ptype="read", *a, **k: ptype != "write"
 		try:
-			for owner, assigned_by in (("ann@x", "boss@x"), ("boss@x", "ann@x"), ("ann@x", "ann@x"), ("boss@x", None)):
+			for owner, assigned_by in (("boss@x", "boss@x"), ("ann@x", "ann@x")):
 				with self.subTest(owner=owner, assigned_by=assigned_by):
 					todo = self.todo(allocated_to="ann@x", owner=owner, assigned_by=assigned_by)
 					self.assertIsNone(api._task_to_complete(todo))
 		finally:
 			fake.__dict__.pop("has_permission", None)
 
-	def test_an_assignment_someone_else_made_completes_the_task(self):
-		fake.has_permission = self._no_write()
+	def test_a_self_made_todo_completes_a_task_its_owner_may_write(self):
+		todo = self.todo(allocated_to="ann@x", owner="ann@x", assigned_by="ann@x")
+		self.assertEqual(api._task_to_complete(todo), "TASK-1")
+
+	def test_the_done_hint_follows_the_same_rule(self):
+		row = Row(reference_type="Task", reference_name="TASK-1", custom_repeat=None)
+		self.assertTrue(api._done_completes_task(row))
+		self.assertFalse(api._done_completes_task(Row(row, custom_repeat="Weekly")))
+		self.assertFalse(api._done_completes_task(Row(row, reference_type="Opportunity")))
+		fake.has_permission = lambda doctype=None, ptype="read", *a, **k: ptype != "write"
 		try:
-			todo = self.todo(allocated_to="ann@x", owner="boss@x", assigned_by="boss@x")
-			self.assertEqual(api._task_to_complete(todo), "TASK-1")
+			self.assertFalse(
+				api._done_completes_task(row), "the form must not promise a completion Done won't make"
+			)
 		finally:
 			fake.__dict__.pop("has_permission", None)
 
-	def test_an_assignment_on_a_task_they_cannot_read_does_not(self):
-		"""A real assignee holds Assign To's read share; a ToDo re-pointed at another Task does not."""
-		fake.has_permission = self._no_write(readable=False)
-		try:
-			todo = self.todo(allocated_to="ann@x", owner="boss@x", assigned_by="boss@x")
-			self.assertIsNone(api._task_to_complete(todo))
-		finally:
-			fake.__dict__.pop("has_permission", None)
-
-	def test_the_floor_rule(self):
-		self.assertTrue(rules.assignment_entitles("boss@x", "boss@x", "ann@x"))
-		self.assertFalse(rules.assignment_entitles("ann@x", "boss@x", "ann@x"))
-		self.assertFalse(rules.assignment_entitles("boss@x", "ann@x", "ann@x"))
-		self.assertFalse(rules.assignment_entitles("boss@x", None, "ann@x"))
-		self.assertFalse(rules.assignment_entitles(None, "boss@x", "ann@x"))
-		self.assertFalse(rules.assignment_entitles("boss@x", "boss@x", None))
+	def test_get_items_reads_the_hint_from_the_rule(self):
+		source = (Path(__file__).resolve().parents[1] / "api" / "my_work.py").read_text()
+		self.assertIn('"completes_task": _done_completes_task(row)', source)
 
 	def test_done_closes_the_assignment_first_and_says_which_task(self):
 		calls = []

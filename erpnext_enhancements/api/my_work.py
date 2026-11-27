@@ -360,10 +360,9 @@ def _present(rows, user, today, with_facts=True):
 				"record_missing": bool(row.reference_type and row.reference_name and not info),
 				"team": assignments.team_label(row.get("role")) if row.get("role") else None,
 				"repeat": row.get("custom_repeat") or None,
-				# Done on it also completes its Task (the page and banner say so before you press it).
-				"completes_task": assignments.done_completes_task(
-					row.reference_type, row.get("custom_repeat")
-				),
+				# Done on it also completes its Task (the page and banner say so before you press it),
+				# by the same rule Done applies: only for someone who may write that Task.
+				"completes_task": _done_completes_task(row),
 				"checklist": checklists.get(row.name, []),
 				"can": _abilities(row, user, is_manager, roles),
 			}
@@ -671,6 +670,14 @@ def complete(todo: str, note: str | None = None):
 	return {"ok": True, "completed": task}
 
 
+def _done_completes_task(row):
+	"""Whether Done on ``row`` would also complete its Task, for the session user: the same rule as
+	``_task_to_complete`` before it reads the Task, so the hint never promises what Done won't do."""
+	if not assignments.done_completes_task(row.reference_type, row.get("custom_repeat")):
+		return False
+	return bool(frappe.has_permission("Task", "write", doc=row.reference_name))
+
+
 def _task_to_complete(doc):
 	"""The Task that Done on ``doc`` completes, or ``None``; refuses the Done if ERPNext would.
 
@@ -687,16 +694,9 @@ def _task_to_complete(doc):
 	if not task or task.status in assignments.TASK_FINISHED:
 		return None
 	# Done always closes the person's own ToDo; it completes the Task only for someone who may write
-	# it, or whose assignment someone else made and who may read the Task (review of #1521,
-	# 2026-11-27). The All role may create a ToDo on any record, so a ToDo someone made for
-	# themselves is not a licence to complete a Task they could not otherwise change.
+	# that Task (review of #1521, 2026-11-27). An assignment is not permission on the record.
 	if not frappe.has_permission("Task", "write", doc=task.name):
-		user = frappe.session.user
-		if not (
-			assignments.assignment_entitles(doc.get("owner"), doc.get("assigned_by"), user)
-			and frappe.has_permission("Task", "read", doc=task.name)
-		):
-			return None
+		return None
 	names = frappe.get_all(
 		"Task Depends On",
 		filters={"parent": task.name, "parenttype": "Task", "parentfield": "depends_on"},
@@ -733,24 +733,20 @@ def _complete_task(name):
 
 	``completed_by`` is set here because ERPNext never sets it (its form asks; the list's bulk
 	action and the Kanban leave it blank); ``completed_on`` too, rather than leaving it to
-	ERPNext's ``today()`` fallback, so both say who and when in one place. Someone who may write
-	the Task saves under ERPNext's own checks. An assignee who may not (``_task_to_complete`` has
-	already required that someone else made the assignment) saves with ``ignore_permissions``:
-	being assigned the Task is what entitles them to finish it, and they may hold only the read
-	share Assign To gives. ERPNext skips its project access check on such a save, so it is made here
-	first (``task_completion.require_project_access``, review of #1521). Saving runs ERPNext's own
+	ERPNext's ``today()`` fallback, so both say who and when in one place. ``_task_to_complete`` has
+	already required Task write permission; the Task saves under the person's own permissions, after
+	the same Project access check the Projects Dashboard makes
+	(``task_completion.require_project_access``, review of #1521). Saving runs ERPNext's own
 	completion -- the other assignees' assignments close, a recurring Task makes its next one -- and
 	its validation; anything it refuses fails the whole Done, with the ToDo still open.
 	"""
+	from erpnext_enhancements.api.task_completion import require_project_access
+
 	task = frappe.get_doc("Task", name)
 	task.status = "Completed"
 	task.completed_on = nowdate()
 	task.completed_by = frappe.session.user
-	if not frappe.has_permission("Task", "write", doc=name):
-		from erpnext_enhancements.api.task_completion import require_project_access
-
-		require_project_access(task)
-		task.flags.ignore_permissions = True
+	require_project_access(task)
 	task.save()
 
 
