@@ -46,7 +46,9 @@ ROLES = ("Accounts Manager", "System Manager")
 def execute() -> None:
 	try:
 		created = grant_project_revenue_visibility()
-		print(f"Project permlevel-{PERMLEVEL} read/write (revenue, cost, margin totals): {created} row(s) created")
+		print(
+			f"Project permlevel-{PERMLEVEL} read/write (revenue, cost, margin totals): {created} row(s) created"
+		)
 	except Exception:
 		frappe.log_error(title="grant_project_revenue_visibility", message=frappe.get_traceback())
 
