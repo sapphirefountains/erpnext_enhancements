@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.846.0] - 2026-11-27
+
+### Added
+
+- **One-tap complete, and its Undo, for a Task shown outside its own form**
+  (`api/task_completion.py`: `complete_task`, `reopen_task`; both POST). These back the check
+  buttons on the new first page of Triton's Projects Dashboard. Nikolas asked on 2026-11-25 for that
+  page to be "driven by deadlines, milestones and task due dates", with people able to mark a task
+  or milestone complete from it, and he picked the Countdown lanes concept. Triton calls these as
+  the person who pressed the check, over their own ERPNext sign-in. Domain rules stay in ERPNext,
+  and Triton draws the card and the celebration.
+  - **ERPNext's own Task save does the completing.** The status, Completed On (today) and Completed
+    By (the person) are set and the Task is saved, so everything runs as it would from the form:
+    ERPNext's `validate_status` dependency check, its project access check (16.60:
+    `validate_project_access`), `close_all_assignments`, the project's % complete, the
+    dependent-task reschedule, and this app's own Task hooks. Read at ERPNext v16.60.0, the
+    expected-date checks (`report_date_conflict`) judge only a date that changed, so completing never
+    trips them. ERPNext never sets Completed By on its own, so it is set here, as My Work's Done
+    does.
+  - **Task permissions hold.** The person needs Task write permission on that Task, with their user
+    permissions applied, or an open assignment on it. The assignment rule is the one My Work's Done
+    uses: being assigned the Task entitles someone to finish it. Only that case saves with
+    `ignore_permissions`. Someone who may write saves under ERPNext's own checks.
+  - **A refusal is one plain sentence, never a crash.** Anything ERPNext refuses, a permission error
+    and any unexpected failure all come back as `{"ok": false, "message": ...}`. The tags are
+    stripped, the transaction is rolled back and the message log is cleared, so the dashboard shows
+    the refusal on its toast and the card stays open. An unexpected failure is logged to the Error
+    Log *after* the rollback, or the rollback would remove the Error Log row too. An open dependency
+    is caught before the save, so the sentence names the Task in the way. This site's "Canceled"
+    spelling does not block, matching the Task override. A phase (a group Task, which lists its
+    subtasks in `depends_on`) says how many subtasks are still open.
+  - **Undo puts back what the completion changed.** For 15 minutes the cache keeps, per person and
+    Task, the previous status and progress and the assignments the completion was about to close.
+    `reopen_task` restores the status and progress, and ERPNext's `clear_completion_on_reopen`
+    clears Completed On and Completed By. It reopens only those assignments, and only while they
+    are still Closed and still on this Task. Without the record (expired, or a deploy's FLUSHDB),
+    Undo needs write permission, reopens the Task as Open, and says no assignment came back.
+  - Bench-free suite `tests/test_task_completion.py` (26 tests, its own CI step).
+
 ## [1.845.2] - 2026-11-25
 
 ### Fixed
