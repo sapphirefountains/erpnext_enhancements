@@ -274,7 +274,13 @@ def _spend_section(start, end, views):
 
 
 def _roas(start, end):
-	"""The Ad Spend ROAS report's rows over the range, summed per platform."""
+	"""The Ad Spend ROAS report's rows over the range, summed per platform.
+
+	Invoiced and ROAS (invoiced) are billed revenue: the report leaves them out for anyone without
+	Accounts Manager or System Manager (``kpi_dashboards/money.py``), so they are left out here
+	too, never summed to a zero (v1.845.3). The page shows ROAS (contract) only.
+	"""
+	from erpnext_enhancements.kpi_dashboards import money
 	from erpnext_enhancements.marketing.report.ad_spend_roas import ad_spend_roas
 
 	try:
@@ -284,7 +290,10 @@ def _roas(start, end):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Marketing Performance: ROAS")
 		return None
-	keys = ("spend", "clicks", "leads", "opportunities", "won", "contract_value", "invoiced")
+	show_revenue = money.can_see_revenue()
+	keys = ("spend", "clicks", "leads", "opportunities", "won", "contract_value")
+	if show_revenue:
+		keys += ("invoiced",)
 	by_platform = {}
 	for row in rows or ():
 		p = by_platform.setdefault(row.get("platform") or "", {k: 0.0 for k in keys})
@@ -295,7 +304,8 @@ def _roas(start, end):
 		p["platform"] = platform
 		p["cost_per_lead"] = rules.ratio(p["spend"], p["leads"])
 		p["roas_contract"] = rules.ratio(p["contract_value"], p["spend"])
-		p["roas_invoiced"] = rules.ratio(p["invoiced"], p["spend"])
+		if show_revenue:
+			p["roas_invoiced"] = rules.ratio(p["invoiced"], p["spend"])
 		out.append(p)
 	return out
 

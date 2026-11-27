@@ -10,7 +10,10 @@ carries since v1.516.0 (``utm_content`` = the post, ``utm_source`` = the network
 
 Revenue columns make this a financial report, so it is for System Manager, Sales Manager and
 Marketing Manager -- not Marketing Team, which a marketing hire holds without financials
-(TASK-2026-01486).
+(TASK-2026-01486). Within it, **Invoiced is for Accounts Manager and System Manager only** (owner
+decision 2026-11-19, applied here 2026-11-27, ``kpi_dashboards/money.py``): it is billed revenue,
+read from the Project's ``total_billed_amount``. For anyone else the column is left out, not
+zeroed, and the billed amount is never read. Contract value stays: bookings, not revenue.
 
 Every custom column is guarded with ``has_column``, so the report renders, empty, on a bench where
 the fixtures have not landed.
@@ -20,10 +23,13 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, cint, getdate, nowdate
 
+from erpnext_enhancements.kpi_dashboards import money
 from erpnext_enhancements.marketing.core import roas
 from erpnext_enhancements.marketing.publish import metrics, performance, tracking
 
 UTM_FIELDS = ("custom_utm_content", "custom_utm_source")
+#: The column that states billed revenue. Shown only to a caller ``money.can_see_revenue`` admits.
+REVENUE_COLUMNS = ("invoiced",)
 
 
 def execute(filters=None):
@@ -32,6 +38,7 @@ def execute(filters=None):
 	to_date = getdate(filters.get("to_date") or nowdate())
 	window = cint(filters.get("window_days")) or roas.DEFAULT_WINDOW_DAYS
 	network = filters.get("network") or None
+	show_revenue = money.can_see_revenue()
 
 	jobs = _jobs(from_date, to_date, network)
 	posts = _posts({j["social_post"] for j in jobs})
@@ -41,12 +48,14 @@ def execute(filters=None):
 		jobs,
 		_metric_rows([j["name"] for j in jobs]),
 		_records("Lead", slugs),
-		_opportunities(slugs),
+		_opportunities(slugs, with_billed=show_revenue),
 		window,
 	)
 	if network:
 		rows = [r for r in rows if r["network"] in (network, performance.NETWORK_NOT_RECORDED)]
-	return get_columns(), rows, _message(rows)
+	if not show_revenue:
+		rows = [{k: v for k, v in row.items() if k not in REVENUE_COLUMNS} for row in rows]
+	return get_columns(show_revenue), rows, _message(rows)
 
 
 # ---------------------------------------------------------------- fetch
@@ -128,7 +137,7 @@ def _records(doctype, slugs):
 	)
 
 
-def _opportunities(slugs):
+def _opportunities(slugs, with_billed=True):
 	if not slugs or not frappe.db.has_column("Opportunity", "custom_utm_content"):
 		return []
 	captured = (
@@ -141,11 +150,13 @@ def _opportunities(slugs):
 		if frappe.db.has_column("Project", "custom_opportunity")
 		else "LEFT JOIN `tabProject` p ON 1 = 0"
 	)
+	# Billed revenue is read only for a caller who may see it (see the module docstring).
+	billed = "p.total_billed_amount" if with_billed else "NULL AS total_billed_amount"
 	return frappe.db.sql(
 		f"""
 		SELECT o.name, o.status, o.creation, o.opportunity_amount, {captured},
 		       {_utm_columns("Opportunity", "o")},
-		       p.name AS project, p.total_billed_amount
+		       p.name AS project, {billed}
 		FROM `tabOpportunity` o
 		{project_join}
 		WHERE LOWER(TRIM(o.custom_utm_content)) IN %(slugs)s
@@ -158,10 +169,10 @@ def _opportunities(slugs):
 # ---------------------------------------------------------------- shape
 
 
-def get_columns():
+def get_columns(show_revenue=True):
 	count = {"fieldtype": "Int", "width": 95}
-	money = {"fieldtype": "Currency", "width": 115}
-	return [
+	currency = {"fieldtype": "Currency", "width": 115}
+	columns = [
 		{
 			"label": _("Post"),
 			"fieldname": "social_post",
@@ -181,10 +192,13 @@ def get_columns():
 		{"label": _("Leads"), "fieldname": "leads", **count},
 		{"label": _("Opportunities"), "fieldname": "opportunities", **count},
 		{"label": _("Won"), "fieldname": "won", **count},
-		{"label": _("Contract Value"), "fieldname": "contract_value", **money},
-		{"label": _("Invoiced"), "fieldname": "invoiced", **money},
+		{"label": _("Contract Value"), "fieldname": "contract_value", **currency},
+		{"label": _("Invoiced"), "fieldname": "invoiced", **currency},
 		{"label": _("Link"), "fieldname": "permalink", "fieldtype": "Data", "width": 1, "hidden": 1},
 	]
+	if not show_revenue:
+		columns = [column for column in columns if column["fieldname"] not in REVENUE_COLUMNS]
+	return columns
 
 
 def _message(rows):

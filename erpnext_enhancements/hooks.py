@@ -3616,6 +3616,15 @@ override_whitelisted_methods = {
 	# frappe does for an unknown email. Sealed in before_request (portal_login.seal_original),
 	# and backed by the on_login guard below. See erpnext_enhancements/portal_login.py.
 	"frappe.www.login.send_login_link": "erpnext_enhancements.portal_login.send_login_link",
+	# ERPNext's Project Costing tab (v1.845.3): ERPNext's eight revenue, cost and margin totals on
+	# Project sit at permlevel 3, read by Accounts Manager and System Manager only (owner decision
+	# 2026-11-19, extended 2026-11-27). The Costing tab works its billed, Sales Order, cost and margin
+	# figures out of the documents themselves, so the level cannot reach it: this answers it unchanged
+	# for a caller who can read level 3 and, for anyone else, with every money section None and
+	# flagged in `errors`, the shape ERPNext's island renders for a failed section. Sealed in
+	# before_request (project_revenue.seal_original), because ERPNext's own test module re-exports
+	# the original under a second dotted name. See erpnext_enhancements/project_revenue.py.
+	"erpnext.projects.doctype.project.costing.project_costing.get_project_costing": "erpnext_enhancements.project_revenue.get_project_costing",
 	# Field references in read requests (v1.835.0): a list, count, value, search, next-record,
 	# number-card, chart or calendar request that names a field the caller cannot read at its permlevel, in
 	# filters / or_filters / order_by / group_by / an aggregate, is refused with a plain permission
@@ -3684,6 +3693,11 @@ before_request = [
 	# name (frappe.www.login.frappe.www.login.send_login_link) that the override above does not
 	# match; taking the function object off the whitelist closes every alias. Never raises.
 	"erpnext_enhancements.portal_login.seal_original",
+	# Project Costing (v1.845.3): ERPNext's get_project_costing is imported by its own test module,
+	# so it is reachable under that dotted name too, which the override above does not match.
+	# Taking the function object off the whitelist closes every alias. Never raises. See
+	# project_revenue.seal_original.
+	"erpnext_enhancements.project_revenue.seal_original",
 	# The runtime monkeypatches (see the bottom of this file), applied here too: v16 serves hooks from
 	# the redis cache and imports this file only on a miss, so a worker that never misses would run
 	# without them. Idempotent and cheap; never raises (2026-10-01).

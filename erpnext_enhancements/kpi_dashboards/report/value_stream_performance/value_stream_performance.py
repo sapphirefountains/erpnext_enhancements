@@ -39,6 +39,10 @@ to exist for everyone.
   backlog is worked through, some won deals have no Project and therefore no
   billed figure — the report counts those on the opportunity amount and reports
   how many it did that for.
+  **Revenue and Avg Deal are for Accounts Manager and System Manager only** (owner decision
+  2026-11-19, applied here 2026-11-27, ``kpi_dashboards/money.py``). Avg Deal is revenue / won,
+  so it states revenue too. For anyone else both columns and the chart's Revenue series are
+  left out, not zeroed, the revenue query is not run, and rows are ranked by deals won.
 * **Spend** is only what has been explicitly allocated to a stream on
   `Marketing Spend.value_stream`. A channel serving several streams is left
   blank on purpose, and shows up in the **Unallocated** row rather than being
@@ -57,6 +61,7 @@ from frappe import _
 from frappe.utils import add_months, flt, getdate, nowdate
 
 from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+from erpnext_enhancements.kpi_dashboards import money
 
 # The window in the message reads 10/14/2026, as every report face date does (form kit P3.3).
 from erpnext_enhancements.utils import normalize
@@ -82,18 +87,31 @@ DEFAULT_MONTHS = 12
 #: Label for spend that has not been attributed to a stream.
 UNALLOCATED = "Unallocated"
 
+#: Columns that state revenue: Revenue itself and Avg Deal (revenue / won). Shown only to a
+#: caller ``money.can_see_revenue`` admits.
+REVENUE_COLUMNS = ("revenue", "avg_deal")
+
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
 	from_date, to_date = _window(filters)
 
+	show_revenue = money.can_see_revenue()
+
 	streams = _all_streams()
 	opportunities = _opportunity_rollup(from_date, to_date)
-	revenue = _revenue_rollup(from_date, to_date)
+	revenue = _revenue_rollup(from_date, to_date) if show_revenue else {}
 	spend = _spend_rollup(from_date, to_date)
 
 	data = _assemble(streams, opportunities, revenue, spend)
-	return get_columns(), data, _message(from_date, to_date, spend, revenue), get_chart(data)
+	if not show_revenue:
+		data = without_revenue(data)
+	return (
+		get_columns(show_revenue),
+		data,
+		_message(from_date, to_date, spend, revenue, show_revenue),
+		get_chart(data, show_revenue),
+	)
 
 
 def _window(filters):
@@ -102,8 +120,8 @@ def _window(filters):
 	return from_date, to_date
 
 
-def get_columns():
-	return [
+def get_columns(show_revenue=True):
+	columns = [
 		# The report face (form kit P3.3): each stream as a chip in its pillar's colors. The
 		# Unallocated row is not a stream and stays plain text.
 		{"label": _("Value Stream"), "fieldname": "value_stream", "fieldtype": "Data", "width": 150, "sf_face": "pillar"},
@@ -116,6 +134,9 @@ def get_columns():
 		{"label": _("Avg Deal"), "fieldname": "avg_deal", "fieldtype": "Currency", "width": 130},
 		{"label": _("Cost / Opp"), "fieldname": "cost_per_opportunity", "fieldtype": "Currency", "width": 120},
 	]
+	if show_revenue:
+		return columns
+	return [column for column in columns if column["fieldname"] not in REVENUE_COLUMNS]
 
 
 # ------------------------------------------------------------------ the queries
@@ -259,7 +280,20 @@ def _assemble(streams, opportunities, revenue, spend):
 	return data
 
 
-def _message(from_date, to_date, spend, revenue):
+def without_revenue(data):
+	"""``data`` without the revenue columns, ranked by deals won then opportunities.
+
+	Pure. The ranking ``_assemble`` gives is by revenue, which would itself tell the order of
+	what each stream earned, so it is replaced; the Unallocated row stays last.
+	"""
+	rows = [{k: v for k, v in row.items() if k not in REVENUE_COLUMNS} for row in data]
+	streams = [row for row in rows if row["value_stream"] != UNALLOCATED]
+	rest = [row for row in rows if row["value_stream"] == UNALLOCATED]
+	streams.sort(key=lambda row: (-int(row.get("won") or 0), -int(row.get("opportunities") or 0)))
+	return streams + rest
+
+
+def _message(from_date, to_date, spend, revenue, show_revenue=True):
 	notes = [
 		_("{0} to {1}. An opportunity tagged with several value streams counts once toward "
 		  "<b>each</b>, so these columns do not sum to the company total — that is the right "
@@ -294,19 +328,22 @@ def _message(from_date, to_date, spend, revenue):
 			  "report to close that gap.").format(orphaned)
 		)
 
+	if not show_revenue:
+		notes.append(_("Revenue and average deal are shown to Accounts Manager and System Manager only."))
+
 	return "<br><br>".join(notes)
 
 
-def get_chart(data):
+def get_chart(data, show_revenue=True):
 	rows = [row for row in data if row["value_stream"] != UNALLOCATED]
 	labels = [row["value_stream"] for row in rows]
+	datasets = [{"name": _("Spend"), "values": [flt(row["spend"]) for row in rows]}]
+	if show_revenue:
+		datasets.insert(0, {"name": _("Revenue"), "values": [flt(row.get("revenue")) for row in rows]})
 	return {
 		"data": {
 			"labels": labels,
-			"datasets": [
-				{"name": _("Revenue"), "values": [flt(row["revenue"]) for row in rows]},
-				{"name": _("Spend"), "values": [flt(row["spend"]) for row in rows]},
-			],
+			"datasets": datasets,
 		},
 		"type": "bar",
 	}
